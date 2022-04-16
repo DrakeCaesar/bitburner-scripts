@@ -1,5 +1,3 @@
-
-
 /** @param {import("..").NS } ns */
 export function main(ns) {
     let knownservers = {"home":[]}
@@ -9,17 +7,23 @@ export function main(ns) {
         ns.tprint("servers: " + Object.keys(knownservers).length)
     }
     else{
-        ns.args.forEach(key => {
-            //var connectString = ns.tprintf(JSON.stringify(knownservers[key], null, 2))
-            var connectString = "home; "
-            knownservers[key].forEach(hop => {
-                connectString += "connect " + hop +"; "
-            });
-            navigator.clipboard.writeText(connectString)
-            ns.tprint(connectString)
-        })
+        var keys = Object.keys(knownservers); 
+        keys.sort();
+        for (const key of keys) {
+            for (const arg of ns.args) {
+                if (key.toLowerCase().includes(arg.toLowerCase())){
+                    var connectString = "home; "
+                    for (const hop of knownservers[key]) {
+                        connectString += "connect " + hop +"; "
+                    }
+                    navigator.clipboard.writeText(connectString)
+                    ns.tprint("")
+                    ns.tprint(key + ":")
+                    ns.tprint(connectString)
+                }
+            }
+        }
     }
-    //ns.tprint(knownservers)
 }
 
 /** @param {import("..").NS } ns */

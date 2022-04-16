@@ -13,11 +13,13 @@ export async function main(ns) {
         ns.print("money:    " + String(Math.round(money/moneyMax*100    )).padStart(offset,' ') + "%")
         ns.print("security: " + String(Math.round(security/securityT*100)).padStart(offset,' ') + "%")
         if (security > securityT) {
-        ns.print("action:   " )
+            ns.print("action:   weaken" )
             await ns.weaken(target);
         } else if (money < moneyT) {
+            ns.print("action:   grow" )
             await ns.grow(target);
         } else {
+            ns.print("action:   hack" )
             await ns.hack(target);
         }
     }

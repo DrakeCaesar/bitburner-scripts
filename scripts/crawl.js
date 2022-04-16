@@ -1,5 +1,3 @@
-
-
 /** @param {import("..").NS } ns */
 export function main(ns) {
     let knownservers = new Array
