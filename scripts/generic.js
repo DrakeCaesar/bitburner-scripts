@@ -18,9 +18,12 @@ export async function main(ns) {
         } else if (money < moneyT) {
             ns.print("action:   grow" )
             await ns.grow(target);
-        } else {
-            ns.print("action:   hack" )
-            await ns.hack(target);
+        } else if (money < moneyMax){
+            ns.print("action:   grow" )
+            await ns.grow(target);
+        } else{
+            ns.print("action:   weaken" )
+            await ns.weaken(target);
         }
     }
 }
