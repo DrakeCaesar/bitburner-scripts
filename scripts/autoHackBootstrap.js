@@ -19,11 +19,13 @@ export function main(ns) {
         let playerLevel = ns.getPlayer().hacking
         if (
             level <= playerLevel && 
+            key != "I.I.I.I"  && 
             key != "avmnite-02h" && 
             key != "CSEC" &&
             key != "darkweb" && 
-
             key != "home" && 
+            key != "run4theh111z" &&
+
             !(key.includes("node"))){
             items.push([key, level])
         }
@@ -40,10 +42,13 @@ export function main(ns) {
             "    level: " + 
             String(level).padStart(paddinglevels,' ') 
         )
-        */
         if (!(ns.run("autoHack.js", 1 , server))){
             ns.tprint("error " + server)
         }
+        */
+
+        ns.run("autoHack.js", 1 , server)
+        
     }
 }
 

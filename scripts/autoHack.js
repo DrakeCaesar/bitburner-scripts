@@ -10,6 +10,7 @@ export async function main(ns) {
 
     let pid = 0
     let pidW = 0
+    let weaken = 0
 
     while(true) {
         await ns.sleep(100)
@@ -25,19 +26,20 @@ export async function main(ns) {
             let threads
             let runtime
 
-            if (securityCur > securityT){
+            if (ns.getRunningScript(pidW) == null && securityCur > securityT){
                 for (threads = 1; securityCur > ns.weakenAnalyze(threads); threads ++){}
                 action = "weak"
                 runtime = ns.getWeakenTime(target)
-                pid = ns.run("weaken.js", threads, target)
+                pidW = ns.run("weaken.js", threads, target)
+                weaken = 1
 
-            } else if (moneyCur == moneyMax ){
+            } else if (moneyCur == moneyMax && securityCur < securityT*2){
                 threads = Math.ceil(ns.hackAnalyzeThreads(target, moneyMax*mF))
                 action = "hack"
                 runtime = ns.getHackTime(target)
                 pid = ns.run("hack.js", threads, target)
 
-            } else if (moneyCur < moneyMax){
+            } else if (moneyCur < moneyMax && securityCur < securityT*2){
                 //threads = Math.ceil(ns.growthAnalyze(target,1.0/(1.0-mF)))
                 if (moneyCur < moneyMax*0.01){
                     threads = 1000
@@ -50,22 +52,24 @@ export async function main(ns) {
                 pid = ns.run("grow.js", threads, target)
             }
 
-            var message =
+            
+
+            if (ns.getRunningScript(pid) != null || weaken == 1){
+
+                var message =
                     target.padEnd(18) + " | " +
                     action + " | " +
                     "t " + String(threads).padStart(4) + " | " + 
                     "S " + String(securityMin).padStart(3) + " + " + (securityCur).padStart(6)  + " | " + 
                     "$ " + moneyP + " | " + 
                     "T " + ns.tFormat(runtime).padStart(30)
-
-            if (ns.getRunningScript(pid) != null){
                 
-
                 //ns.tprint(message)
                 ns.print(message)
+                weaken = 0;
 
             }else{
-                ns.print("failed")
+                //ns.print("failed")
             }
         }
     }

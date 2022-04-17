@@ -52,6 +52,7 @@ export function main(ns) {
             ++numPortsOpen
         }
         if (ns.fileExists("NUKE.exe", "home") && level <= player.hacking && ns.getServerNumPortsRequired(server) <= numPortsOpen){
+            /*
             ns.tprint(
                 "server: " + 
                 server.padEnd(paddingservers,' ') + 
@@ -64,6 +65,7 @@ export function main(ns) {
                 " <= " + 
                 numPortsOpen
                 )
+            */
             //ns.tprint(server +"\t level" + level + " is lower than player hacking level of " + player.hacking + ", executing nuke")
             ns.nuke(server)
         }
