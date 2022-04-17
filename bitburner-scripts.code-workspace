@@ -9,7 +9,9 @@
 		"bitburner.showFileWatcherEnabledNotification": false,
 		"bitburner.scriptRoot": "./scripts/",
 		"cSpell.words": [
-			"bitburner"
+			"bitburner",
+			"n00dles",
+			"tprint"
 		],
 		"gitlens.currentLine.enabled": false,
 		"gitlens.codeLens.authors.enabled": false,

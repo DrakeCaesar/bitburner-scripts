@@ -9,7 +9,7 @@ export async function main(ns) {
     let hackTime
     let hackSecurity
     let hackWeakThreads
-    let hackweakTime
+    let hackWeakTime
 
     let growThreads
     let growTime
@@ -53,7 +53,7 @@ export async function main(ns) {
 
             for (hackWeakThreads = 0; ns.weakenAnalyze(hackWeakThreads) <= hackSecurity; ++hackWeakThreads);
             hackWeakThreads = Math.ceil(hackWeakThreads)
-            hackweakTime = ns.getWeakenTime(target)
+            hackWeakTime = ns.getWeakenTime(target)
             needSetHack = false
             if (needSetGrow) {
                 ns.tprint("hacking variables setup")
@@ -63,7 +63,7 @@ export async function main(ns) {
                     "\nhack Security " + hackSecurity.toFixed(2) +
                     "\n" +
                     "\nweak Threads  " + hackWeakThreads +
-                    "\nweak Time     " + ns.tFormat(hackweakTime) +
+                    "\nweak Time     " + ns.tFormat(hackWeakTime) +
                     "\n" +
                     "\nmoney         " + ((moneyCur / moneyMax) * 100).toFixed(2) + "%" +
                     "\nsecurity      " + (securityMin).toFixed(2) + " + " + (securityCur - securityMin).toFixed(2) + " = " + securityCur.toFixed(2) +
@@ -79,7 +79,7 @@ export async function main(ns) {
                     ns.tprint("out of Memory")
                     continue;
                 }
-                await ns.sleep(Math.max(hackTime, hackWeakThreads ? hackweakTime : 0))
+                await ns.sleep(Math.max(hackTime, hackWeakThreads ? hackWeakTime : 0))
                 while (ns.getRunningScript(pid1) != null || ns.getRunningScript(pid2) != null) {
                     ns.tprint("this should not happen")
                     await ns.sleep(100)
@@ -144,7 +144,7 @@ export async function main(ns) {
             }
 
         } else {
-
+            ns.tprint("undesirable")
         }
         await ns.sleep(1000)
     }
@@ -155,7 +155,7 @@ export async function main(ns) {
         "\nhack Security " + hackSecurity.toFixed(2) +
         "\n" +
         "\nweak Threads  " + hackWeakThreads +
-        "\nweak Time     " + ns.tFormat(hackweakTime) +
+        "\nweak Time     " + ns.tFormat(hackWeakTime) +
         "\n" +
         "\ngrow Threads  " + growThreads +
         "\ngrow Time     " + ns.tFormat(growTime) +
