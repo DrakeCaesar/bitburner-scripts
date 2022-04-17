@@ -3,8 +3,8 @@ export async function main(ns) {
     let array = []
 
     let servers = ns.scan();
-    while (true){
-        var hostname = servers[Math.floor(Math.random()*servers.length)];
+    while (true) {
+        var hostname = servers[Math.floor(Math.random() * servers.length)];
         if (!array.includes(hostname)) {
             array.push(hostname);
         }

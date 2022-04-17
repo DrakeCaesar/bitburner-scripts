@@ -1,9 +1,7 @@
 {
-	"folders": [
-		{
-			"path": "./"
-		}
-	],
+	"folders": [{
+		"path": "./"
+	}],
 	"settings": {
 		"bitburner.fileWatcher.enable": true,
 		"bitburner.authToken": "Uzfu9GGOFczl1ocoyTKRYR2WgqVE20HJPxXRXEH7h13nmMeNiNjhmW3zRRvU+CXH",

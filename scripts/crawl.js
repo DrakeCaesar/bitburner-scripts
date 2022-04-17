@@ -7,7 +7,7 @@ export function main(ns) {
 }
 
 /** @param {import("..").NS } ns */
-export function crawl(ns, knownservers, hostname, depth = 0){
+export function crawl(ns, knownservers, hostname, depth = 0) {
     let servers = ns.scan(hostname)
     for (const element of servers) {
         if (!knownservers.includes(element)) {

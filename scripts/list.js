@@ -6,10 +6,10 @@ export function main(ns) {
     let paddingservers = 0
     let paddinglevels = 0
     for (const key of knownservers) {
-        
-            paddingservers = Math.max(key.length, paddingservers)
 
-            paddinglevels = Math.max(String(ns.getServerRequiredHackingLevel(key)).length, paddinglevels)
+        paddingservers = Math.max(key.length, paddingservers)
+
+        paddinglevels = Math.max(String(ns.getServerRequiredHackingLevel(key)).length, paddinglevels)
 
     }
 
@@ -17,7 +17,7 @@ export function main(ns) {
     for (const key of knownservers) {
         items.push([key, ns.getServerRequiredHackingLevel(key)])
     }
-    items.sort(function(first, second) {
+    items.sort(function (first, second) {
         return first[1] - second[1];
     });
 
@@ -25,16 +25,16 @@ export function main(ns) {
         let player = ns.getPlayer();
         let numPortsOpen = 0
         ns.tprint(
-                "server: " + 
-                server.padEnd(paddingservers,' ') + 
-                "    level: " + 
-                String(level).padStart(paddinglevels,' ') +
-                ((level <= player.hacking) ?  " <== " :  "  >  ") +
-                player.hacking
-                )
-            //ns.tprint(server +"\t level" + level + " is lower than player hacking level of " + player.hacking + ", executing nuke")
-            ns.nuke(server)
-            
+            "server: " +
+            server.padEnd(paddingservers, ' ') +
+            "    level: " +
+            String(level).padStart(paddinglevels, ' ') +
+            ((level <= player.hacking) ? " <== " : "  >  ") +
+            player.hacking
+        )
+        //ns.tprint(server +"\t level" + level + " is lower than player hacking level of " + player.hacking + ", executing nuke")
+        ns.nuke(server)
+
     }
 
 
@@ -46,7 +46,7 @@ export function main(ns) {
 }
 
 /** @param {import("..").NS } ns */
-export function crawl(ns, knownservers, hostname, depth = 0){
+export function crawl(ns, knownservers, hostname, depth = 0) {
     let servers = ns.scan(hostname)
     for (const element of servers) {
         if (!knownservers.includes(element)) {

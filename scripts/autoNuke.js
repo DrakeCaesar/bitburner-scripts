@@ -8,7 +8,7 @@ export function main(ns) {
     for (const key of knownservers) {
         let playerLevel = ns.getPlayer().hacking;
         let serverLevel = ns.getServerRequiredHackingLevel(key);
-        if (serverLevel <= playerLevel){
+        if (serverLevel <= playerLevel) {
             paddingservers = Math.max(key.length, paddingservers)
 
             paddinglevels = Math.max(String(ns.getServerRequiredHackingLevel(key)).length, paddinglevels)
@@ -20,38 +20,38 @@ export function main(ns) {
     for (const key of knownservers) {
         items.push([key, ns.getServerRequiredHackingLevel(key)])
     }
-    items.sort(function(first, second) {
+    items.sort(function (first, second) {
         return first[1] - second[1];
     });
 
     for (const [server, level] of items) {
         let player = ns.getPlayer();
         let numPortsOpen = 0
-        if (ns.fileExists("BruteSSH.exe", "home")){
+        if (ns.fileExists("BruteSSH.exe", "home")) {
             ns.brutessh(server)
-            ++numPortsOpen
+                ++numPortsOpen
         }
-        if (ns.fileExists("FTPCrack.exe", "home")){
+        if (ns.fileExists("FTPCrack.exe", "home")) {
             ns.ftpcrack(server)
-            ++numPortsOpen
+                ++numPortsOpen
         }
-        if (ns.fileExists("relaySMTP.exe", "home")){
+        if (ns.fileExists("relaySMTP.exe", "home")) {
             ns.relaysmtp(server)
-            ++numPortsOpen
+                ++numPortsOpen
         }
-        if (ns.fileExists("relaySMTP.exe", "home")){
+        if (ns.fileExists("relaySMTP.exe", "home")) {
             ns.relaysmtp(server)
-            ++numPortsOpen
+                ++numPortsOpen
         }
-        if (ns.fileExists("HTTPWorm.exe", "home")){
+        if (ns.fileExists("HTTPWorm.exe", "home")) {
             ns.httpworm(server)
-            ++numPortsOpen
+                ++numPortsOpen
         }
-        if (ns.fileExists("SQLInject.exe", "home")){
+        if (ns.fileExists("SQLInject.exe", "home")) {
             ns.sqlinject(server)
-            ++numPortsOpen
+                ++numPortsOpen
         }
-        if (ns.fileExists("NUKE.exe", "home") && level <= player.hacking && ns.getServerNumPortsRequired(server) <= numPortsOpen){
+        if (ns.fileExists("NUKE.exe", "home") && level <= player.hacking && ns.getServerNumPortsRequired(server) <= numPortsOpen) {
             /*
             ns.tprint(
                 "server: " + 
@@ -69,7 +69,7 @@ export function main(ns) {
             //ns.tprint(server +"\t level" + level + " is lower than player hacking level of " + player.hacking + ", executing nuke")
             ns.nuke(server)
         }
-            
+
     }
 
 
@@ -81,7 +81,7 @@ export function main(ns) {
 }
 
 /** @param {import("..").NS } ns */
-export function crawl(ns, knownservers, hostname, depth = 0){
+export function crawl(ns, knownservers, hostname, depth = 0) {
     let servers = ns.scan(hostname)
     for (const element of servers) {
         if (!knownservers.includes(element)) {
