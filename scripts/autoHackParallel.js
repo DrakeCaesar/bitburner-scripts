@@ -58,6 +58,7 @@ export async function main(ns) {
             if (needSetGrow) {
                 ns.tprint("hacking variables setup")
                 ns.tprint(
+                    "\n" +
                     "\nhack Threads  " + hackThreads +
                     "\nhack Time     " + ns.tFormat(hackTime) +
                     "\nhack Security " + hackSecurity.toFixed(2) +
@@ -108,6 +109,7 @@ export async function main(ns) {
             if (needSetHack) {
                 ns.tprint("growing variables setup")
                 ns.tprint(
+                    "\n" +
                     "\ngrow Threads  " + growThreads +
                     "\ngrow Time     " + ns.tFormat(growTime) +
                     "\ngrow Security " + growSecurity.toFixed(2) +
@@ -144,12 +146,36 @@ export async function main(ns) {
             }
 
         } else {
-            ns.tprint("undesirable")
+            ns.tprint("undesirable state")
+            var tempGrowThreads = Math.ceil(ns.growthAnalyze(target, moneyMax / moneyCur))
+            var tempGrowTime = ns.getGrowTime(target)
+            var tempGrowSecurity = ns.growthAnalyzeSecurity(tempGrowThreads, target, 1) + securityCur - securityMin
+            var tempGrowWeakThreads
+            for (tempGrowWeakThreads = 0; ns.weakenAnalyze(tempGrowWeakThreads) <= tempGrowSecurity; ++tempGrowWeakThreads);
+            var tempGrowWeakTime = ns.getWeakenTime(target)
+            tempGrowWeakThreads = Math.ceil(tempGrowWeakThreads)
+            ns.tprint("RUN GROW AFTER BUG")
+            var pid1 = ns.run("grow.js", tempGrowThreads, target)
+            ns.tprint("RUN WEAK AFTER BUG")
+            var pid2 = tempGrowWeakThreads ? ns.run("weaken.js", tempGrowWeakThreads, target) : pid1
+            if (ns.getRunningScript(pid1) == null || ns.getRunningScript(pid2) == null) {
+                ns.kill(pid1);
+                ns.kill(pid2);
+                ns.tprint("out of Memory")
+                continue;
+            }
+            await ns.sleep(Math.max(tempGrowTime, tempGrowWeakThreads ? tempGrowWeakTime : 0))
+            while (ns.getRunningScript(pid1) != null || ns.getRunningScript(pid2) != null) {
+                ns.tprint("this should not happen")
+                await ns.sleep(100)
+            }
+
         }
         await ns.sleep(1000)
     }
     ns.tprint("end print")
     ns.tprint(
+        "\n" +
         "\nhack Threads  " + hackThreads +
         "\nhack Time     " + ns.tFormat(hackTime) +
         "\nhack Security " + hackSecurity.toFixed(2) +
