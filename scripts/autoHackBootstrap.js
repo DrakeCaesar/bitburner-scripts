@@ -25,6 +25,8 @@ export function main(ns) {
             key != "darkweb" && 
             key != "home" && 
             key != "run4theh111z" &&
+            key != "n00dles"  && 
+
 
             !(key.includes("node"))){
             items.push([key, level])
