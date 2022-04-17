@@ -1,18 +1,18 @@
 /** @param {import("..").NS } ns */
 export function main(ns) {
-    let knownservers = new Array
-    crawl(ns, knownservers)
-    ns.tprint("servers: " + knownservers.length)
-    ns.tprint(knownservers)
+    let knownServers = new Array
+    crawl(ns, knownServers)
+    ns.tprint("servers: " + knownServers.length)
+    ns.tprint(knownServers)
 }
 
 /** @param {import("..").NS } ns */
-export function crawl(ns, knownservers, hostname, depth = 0) {
+export function crawl(ns, knownServers, hostname, depth = 0) {
     let servers = ns.scan(hostname)
     for (const element of servers) {
-        if (!knownservers.includes(element)) {
-            knownservers.push(element);
-            crawl(ns, knownservers, element, depth + 1)
+        if (!knownServers.includes(element)) {
+            knownServers.push(element);
+            crawl(ns, knownServers, element, depth + 1)
         }
     }
 }

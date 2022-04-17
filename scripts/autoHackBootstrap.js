@@ -1,20 +1,20 @@
 /** @param {import("..").NS } ns */
 export function main(ns) {
-    let knownservers = new Array
-    crawl(ns, knownservers)
-    knownservers.sort();
-    let paddingservers = 0
-    let paddinglevels = 0
-    for (const key of knownservers) {
+    let knownServers = new Array
+    crawl(ns, knownServers)
+    knownServers.sort();
+    let paddingServers = 0
+    let paddingLevels = 0
+    for (const key of knownServers) {
 
-        paddingservers = Math.max(key.length, paddingservers)
+        paddingServers = Math.max(key.length, paddingServers)
 
-        paddinglevels = Math.max(String(ns.getServerRequiredHackingLevel(key)).length, paddinglevels)
+        paddingLevels = Math.max(String(ns.getServerRequiredHackingLevel(key)).length, paddingLevels)
 
     }
 
     var items = []
-    for (const key of knownservers) {
+    for (const key of knownServers) {
         let level = ns.getServerRequiredHackingLevel(key)
         let playerLevel = ns.getPlayer().hacking
         if (
@@ -40,9 +40,9 @@ export function main(ns) {
         /*
         ns.tprint(
             "server: " + 
-            server.padEnd(paddingservers,' ') + 
+            server.padEnd(paddingServers,' ') + 
             "    level: " + 
-            String(level).padStart(paddinglevels,' ') 
+            String(level).padStart(paddingLevels,' ') 
         )
         if (!(ns.run("autoHack.js", 1 , server))){
             ns.tprint("error " + server)
@@ -55,12 +55,12 @@ export function main(ns) {
 }
 
 /** @param {import("..").NS } ns */
-export function crawl(ns, knownservers, hostname, depth = 0) {
+export function crawl(ns, knownServers, hostname, depth = 0) {
     let servers = ns.scan(hostname)
     for (const element of servers) {
-        if (!knownservers.includes(element)) {
-            knownservers.push(element);
-            crawl(ns, knownservers, element, depth + 1)
+        if (!knownServers.includes(element)) {
+            knownServers.push(element);
+            crawl(ns, knownServers, element, depth + 1)
         }
     }
 }

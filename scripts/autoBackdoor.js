@@ -1,28 +1,28 @@
 /** @param {import("..").NS } ns */
 export function main(ns) {
-    let knownservers = {
+    let knownServers = {
         "home": []
     }
-    crawl(ns, knownservers)
+    crawl(ns, knownServers)
 
 
 
-    var sorteditems = []
-    for (const key of Object.keys(knownservers)) {
+    var sortedItems = []
+    for (const key of Object.keys(knownServers)) {
         let playerLevel = ns.getPlayer().hacking;
         let serverLevel = ns.getServerRequiredHackingLevel(key);
         if (serverLevel <= playerLevel) {
-            sorteditems.push([key, ns.getServerRequiredHackingLevel(key)])
+            sortedItems.push([key, ns.getServerRequiredHackingLevel(key)])
         }
 
     }
-    sorteditems.sort(function (first, second) {
+    sortedItems.sort(function (first, second) {
         return first[1] - second[1];
     });
     var bigConnectString = "\n";
-    for (const [arg, level] of sorteditems) {
+    for (const [arg, level] of sortedItems) {
         var connectString = "home; "
-        for (const hop of knownservers[arg]) {
+        for (const hop of knownServers[arg]) {
             connectString += "connect " + hop + "; "
         }
         connectString += "backdoor;\n"
@@ -38,13 +38,13 @@ export function main(ns) {
 }
 
 /** @param {import("..").NS } ns */
-export function crawl(ns, knownservers, hostname, depth = 0, path = new Array) {
+export function crawl(ns, knownServers, hostname, depth = 0, path = new Array) {
     let servers = ns.scan(hostname)
     for (const element of servers) {
 
-        if (!(element in knownservers)) {
-            knownservers[element] = path.concat([element])
-            crawl(ns, knownservers, element, depth + 1, path.concat([element]))
+        if (!(element in knownServers)) {
+            knownServers[element] = path.concat([element])
+            crawl(ns, knownServers, element, depth + 1, path.concat([element]))
         }
     }
 }

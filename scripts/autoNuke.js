@@ -1,23 +1,23 @@
 /** @param {import("..").NS } ns */
 export function main(ns) {
-    let knownservers = new Array
-    crawl(ns, knownservers)
-    knownservers.sort();
-    let paddingservers = 0
-    let paddinglevels = 0
-    for (const key of knownservers) {
+    let knownServers = new Array
+    crawl(ns, knownServers)
+    knownServers.sort();
+    let paddingServers = 0
+    let paddingLevels = 0
+    for (const key of knownServers) {
         let playerLevel = ns.getPlayer().hacking;
         let serverLevel = ns.getServerRequiredHackingLevel(key);
         if (serverLevel <= playerLevel) {
-            paddingservers = Math.max(key.length, paddingservers)
+            paddingServers = Math.max(key.length, paddingServers)
 
-            paddinglevels = Math.max(String(ns.getServerRequiredHackingLevel(key)).length, paddinglevels)
+            paddingLevels = Math.max(String(ns.getServerRequiredHackingLevel(key)).length, paddingLevels)
         }
 
     }
 
     var items = []
-    for (const key of knownservers) {
+    for (const key of knownServers) {
         items.push([key, ns.getServerRequiredHackingLevel(key)])
     }
     items.sort(function (first, second) {
@@ -55,9 +55,9 @@ export function main(ns) {
             /*
             ns.tprint(
                 "server: " + 
-                server.padEnd(paddingservers,' ') + 
+                server.padEnd(paddingServers,' ') + 
                 "    level: " + 
-                String(level).padStart(paddinglevels,' ') +
+                String(level).padStart(paddingLevels,' ') +
                 " <= " + 
                 player.hacking +
                 "    ports: " +
@@ -74,19 +74,19 @@ export function main(ns) {
 
 
     for (const [server, level] of items) {
-        //ns.tprint( server.padEnd(paddingservers,' ') + " " + String(level).padStart(paddinglevels,' '))
+        //ns.tprint( server.padEnd(paddingServers,' ') + " " + String(level).padStart(paddingLevels,' '))
     }
 
     //ns.tprint(items);
 }
 
 /** @param {import("..").NS } ns */
-export function crawl(ns, knownservers, hostname, depth = 0) {
+export function crawl(ns, knownServers, hostname, depth = 0) {
     let servers = ns.scan(hostname)
     for (const element of servers) {
-        if (!knownservers.includes(element)) {
-            knownservers.push(element);
-            crawl(ns, knownservers, element, depth + 1)
+        if (!knownServers.includes(element)) {
+            knownServers.push(element);
+            crawl(ns, knownServers, element, depth + 1)
         }
     }
 }

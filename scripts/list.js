@@ -1,20 +1,20 @@
 /** @param {import("..").NS } ns */
 export function main(ns) {
-    let knownservers = new Array
-    crawl(ns, knownservers)
-    knownservers.sort();
-    let paddingservers = 0
+    let knownServers = new Array
+    crawl(ns, knownServers)
+    knownServers.sort();
+    let paddingServers = 0
     let paddinglevels = 0
-    for (const key of knownservers) {
+    for (const key of knownServers) {
 
-        paddingservers = Math.max(key.length, paddingservers)
+        paddingServers = Math.max(key.length, paddingServers)
 
         paddinglevels = Math.max(String(ns.getServerRequiredHackingLevel(key)).length, paddinglevels)
 
     }
 
     var items = []
-    for (const key of knownservers) {
+    for (const key of knownServers) {
         items.push([key, ns.getServerRequiredHackingLevel(key)])
     }
     items.sort(function (first, second) {
@@ -26,7 +26,7 @@ export function main(ns) {
         let numPortsOpen = 0
         ns.tprint(
             "server: " +
-            server.padEnd(paddingservers, ' ') +
+            server.padEnd(paddingServers, ' ') +
             "    level: " +
             String(level).padStart(paddinglevels, ' ') +
             ((level <= player.hacking) ? " <== " : "  >  ") +
@@ -39,19 +39,19 @@ export function main(ns) {
 
 
     for (const [server, level] of items) {
-        //ns.tprint( server.padEnd(paddingservers,' ') + " " + String(level).padStart(paddinglevels,' '))
+        //ns.tprint( server.padEnd(paddingServers,' ') + " " + String(level).padStart(paddinglevels,' '))
     }
 
     //ns.tprint(items);
 }
 
 /** @param {import("..").NS } ns */
-export function crawl(ns, knownservers, hostname, depth = 0) {
+export function crawl(ns, knownServers, hostname, depth = 0) {
     let servers = ns.scan(hostname)
     for (const element of servers) {
-        if (!knownservers.includes(element)) {
-            knownservers.push(element);
-            crawl(ns, knownservers, element, depth + 1)
+        if (!knownServers.includes(element)) {
+            knownServers.push(element);
+            crawl(ns, knownServers, element, depth + 1)
         }
     }
 }

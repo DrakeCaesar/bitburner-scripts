@@ -9,9 +9,21 @@
 		"bitburner.showFileWatcherEnabledNotification": false,
 		"bitburner.scriptRoot": "./scripts/",
 		"cSpell.words": [
+			"avmnite-02h",
 			"bitburner",
+			"brutessh",
+			"CSEC",
+			"darkweb",
+			"ftpcrack",
+			"httpworm",
+			"killall",
 			"n00dles",
-			"tprint"
+			"paddinglevels",
+			"relaysmtp",
+			"run4theh111z",
+			"sqlinject",
+			"tprint",
+			"tprintf"
 		],
 		"gitlens.currentLine.enabled": false,
 		"gitlens.codeLens.authors.enabled": false,
