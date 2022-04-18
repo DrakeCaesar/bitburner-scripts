@@ -155,7 +155,7 @@ export async function main(ns) {
             var tempGrowWeakTime = ns.getWeakenTime(target)
             tempGrowWeakThreads = Math.ceil(tempGrowWeakThreads)
             ns.tprint("RUN GROW AFTER BUG")
-            var pid1 = ns.run("grow.js", tempGrowThreads, target)
+            var pid1 = ns.run("grow.js", (tempGrowThreads > 0) ? tempGrowThreads : 1, target)
             ns.tprint("RUN WEAK AFTER BUG")
             var pid2 = tempGrowWeakThreads ? ns.run("weaken.js", tempGrowWeakThreads, target) : pid1
             if (ns.getRunningScript(pid1) == null || ns.getRunningScript(pid2) == null) {
@@ -171,7 +171,7 @@ export async function main(ns) {
             }
 
         }
-        await ns.sleep(1000)
+        await ns.sleep(100)
     }
     ns.tprint("end print")
     ns.tprint(
@@ -194,7 +194,38 @@ export async function main(ns) {
         "\nsecurity      " + (securityMin).toFixed(2) + " + " + (securityCur - securityMin).toFixed(2) + " = " + securityCur.toFixed(2) +
         "\n"
     )
+    let sleepOffset = 32;
+    let loop = 0;
+    if (moneyCur <= moneyMax) {
+        ns.run("grow.js", growThreads, target, growWeakTime - growTime, ++loop)
+        await debugPrint(ns, sleepOffset, target)
+        ns.run("weaken.js", growWeakThreads, target, 0, ++loop)
+        await debugPrint(ns, sleepOffset, target)
+    }
+    while (true) {
+        ns.run("hack.js", hackThreads, target, hackWeakTime - hackTime, ++loop)
+        let message = "| " + await debugPrint(ns, sleepOffset, target)
+        ns.run("weaken.js", hackWeakThreads, target, 0, ++loop)
+        message += await debugPrint(ns, sleepOffset, target)
+        ns.run("grow.js", growThreads, target, growWeakTime - growTime, ++loop)
+        message += await debugPrint(ns, sleepOffset, target)
+        ns.run("weaken.js", growWeakThreads, target, 0, ++loop)
+        message += await debugPrint(ns, sleepOffset, target)
+        ns.tprint(message)
+    }
+
+}
 
 
 
+/** @param {import("..").NS } ns */
+export async function debugPrint(ns, sleepOffset, target) {
+    await ns.sleep(sleepOffset * .9)
+    let moneyMax = ns.getServerMaxMoney(target)
+    let securityMin = ns.getServerMinSecurityLevel(target);
+    let moneyCur = ns.getServerMoneyAvailable(target)
+    let securityCur = ns.getServerSecurityLevel(target);
+    let message = (moneyCur / moneyMax * 100).toFixed(2).padStart(6) + "% " + (securityCur - securityMin).toFixed(2) + " | "
+    await ns.sleep(sleepOffset * .1)
+    return message
 }
