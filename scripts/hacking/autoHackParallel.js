@@ -207,7 +207,7 @@ export async function main(ns) {
     ns.print("runtime:         " + ns.tFormat(growWeakTime, true))
     ns.print("delay:           " + ns.tFormat(delay, true))
 
-    delay = Math.max(delay, 1024) / 4
+    delay = Math.max(delay, 10000) / 4
 
     let loop = 0;
     let oldSkill = ns.getPlayer().hacking
@@ -247,7 +247,7 @@ export async function main(ns) {
                 instanceMemory = (2.6 * (2 * hackWeakTime - hackTime - growTime) + 1.7 * (hackTime * hackThreads) + 1.75 * (growTime * growThreads)) / hackWeakTime + 1.75 * (hackWeakThreads + growWeakThreads)
                 instances = Math.floor(availableMemory / instanceMemory)
                 delay = growWeakTime / instances
-                delay = Math.max(delay, 1024) / 4
+                delay = Math.max(delay, 10000) / 4
             }
         }
         if (needSetHack) {
@@ -268,10 +268,8 @@ export async function main(ns) {
                 instanceMemory = (2.6 * (2 * hackWeakTime - hackTime - growTime) + 1.7 * (hackTime * hackThreads) + 1.75 * (growTime * growThreads)) / hackWeakTime + 1.75 * (hackWeakThreads + growWeakThreads)
                 instances = Math.floor(availableMemory / instanceMemory)
                 delay = growWeakTime / instances
-                delay = Math.max(delay, 1024) / 4
+                delay = Math.max(delay, 10000) / 4
             }
-
-
         }
 
         ns.run("/hacking/hackRunner.js", 1, hackThreads, target, hackWeakTime - hackTime, ++loop)
@@ -300,9 +298,4 @@ export async function debugPrint(ns, sleepOffset, target) {
     let message = (moneyCur / moneyMax * 100).toFixed(2).padStart(6) + "% " + (securityCur - securityMin).toFixed(2) + " | "
     await ns.sleep(sleepOffset * .1)
     return message
-}
-
-/** @param {import("../..").NS } ns */
-export async function parameters(ns, sleepOffset, target) {
-
 }

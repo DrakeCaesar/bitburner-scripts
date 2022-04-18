@@ -1,5 +1,5 @@
 /** @param {import("..").NS } ns */
-export function main(ns) {
+export async function main(ns) {
     let knownServers = new Array
     crawl(ns, knownServers)
     knownServers.sort();
@@ -25,8 +25,7 @@ export function main(ns) {
             key != "darkweb" &&
             key != "home" &&
             key != "run4theh111z" &&
-            key != "n00dles" &&
-
+            //key != "n00dles" &&
 
             !(key.includes("node"))) {
             items.push([key, level])
@@ -35,23 +34,34 @@ export function main(ns) {
     items.sort(function (first, second) {
         return first[1] - second[1];
     });
+    let i = 0;
+    for (const [target, level] of items) {
+        let node = "node" + String(i).padStart(2, '0')
+        i++
 
-    for (const [server, level] of items) {
-        /*
+        //ns.run("autoHack.js", 1, target)
+
         ns.tprint(
-            "server: " + 
-            server.padEnd(paddingServers,' ') + 
-            "    level: " + 
-            String(level).padStart(paddingLevels,' ') 
+            "server: " +
+            target.padEnd(paddingServers, ' ') +
+            "    level: " +
+            String(level).padStart(paddingLevels, ' ') + "  " + node
         )
-        if (!(ns.run("autoHack.js", 1 , server))){
-            ns.tprint("error " + server)
-        }
-        */
+        //ns.killall(node)
+        await ns.scp([
+            "/hacking/hack.js",
+            "/hacking/hackRunner.js",
+            "/hacking/grow.js",
+            "/hacking/growRunner.js",
+            "/hacking/weaken.js",
+            "/hacking/autoHackParallel.js"
+        ], node)
+        ns.killall(node)
+        ns.exec("/hacking/autoHackParallel.js", node, 1, target)
 
-        ns.run("autoHack.js", 1, server)
 
     }
+    ns.tprint("total hackable servers: " + items.length)
 }
 
 /** @param {import("..").NS } ns */
