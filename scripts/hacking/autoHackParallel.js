@@ -71,9 +71,9 @@ export async function main(ns) {
                     "\n"
                 )
                 ns.print("RUN HACK")
-                var pid1 = ns.run("/hacking/hack.js", hackThreads, target)
+                let pid1 = ns.run("/hacking/hack.js", hackThreads, target)
                 ns.print("RUN WEAK")
-                var pid2 = hackWeakThreads ? ns.run("/hacking/weaken.js", hackWeakThreads, target) : pid1
+                let pid2 = hackWeakThreads ? ns.run("/hacking/weaken.js", hackWeakThreads, target) : pid1
                 if (ns.getRunningScript(pid1) == null || ns.getRunningScript(pid2) == null) {
                     ns.kill(pid1);
                     ns.kill(pid2);
@@ -122,9 +122,9 @@ export async function main(ns) {
                     "\n"
                 )
                 ns.print("RUN GROW")
-                var pid1 = ns.run("/hacking/grow.js", growThreads, target)
+                let pid1 = ns.run("/hacking/grow.js", growThreads, target)
                 ns.print("RUN WEAK")
-                var pid2 = growWeakThreads ? ns.run("/hacking/weaken.js", growWeakThreads, target) : pid1
+                let pid2 = growWeakThreads ? ns.run("/hacking/weaken.js", growWeakThreads, target) : pid1
                 if (ns.getRunningScript(pid1) == null || ns.getRunningScript(pid2) == null) {
                     ns.kill(pid1);
                     ns.kill(pid2);
@@ -147,17 +147,17 @@ export async function main(ns) {
 
         } else {
             ns.print("undesirable state")
-            var tempGrowThreads = Math.ceil(ns.growthAnalyze(target, moneyMax / moneyCur))
-            var tempGrowTime = ns.getGrowTime(target)
-            var tempGrowSecurity = ns.growthAnalyzeSecurity(tempGrowThreads, target, 1) + securityCur - securityMin
-            var tempGrowWeakThreads
+            let tempGrowThreads = Math.ceil(ns.growthAnalyze(target, moneyMax / moneyCur))
+            let tempGrowTime = ns.getGrowTime(target)
+            let tempGrowSecurity = ns.growthAnalyzeSecurity(tempGrowThreads, target, 1) + securityCur - securityMin
+            let tempGrowWeakThreads
             for (tempGrowWeakThreads = 0; ns.weakenAnalyze(tempGrowWeakThreads) <= tempGrowSecurity; ++tempGrowWeakThreads);
-            var tempGrowWeakTime = ns.getWeakenTime(target)
+            let tempGrowWeakTime = ns.getWeakenTime(target)
             tempGrowWeakThreads = Math.ceil(tempGrowWeakThreads)
             ns.print("RUN GROW AFTER BUG")
-            var pid1 = ns.run("/hacking/grow.js", (tempGrowThreads > 0) ? tempGrowThreads : 1, target)
+            let pid1 = ns.run("/hacking/grow.js", (tempGrowThreads > 0) ? tempGrowThreads : 1, target)
             ns.print("RUN WEAK AFTER BUG")
-            var pid2 = tempGrowWeakThreads ? ns.run("/hacking/weaken.js", tempGrowWeakThreads, target) : pid1
+            let pid2 = tempGrowWeakThreads ? ns.run("/hacking/weaken.js", tempGrowWeakThreads, target) : pid1
             if (ns.getRunningScript(pid1) == null || ns.getRunningScript(pid2) == null) {
                 ns.kill(pid1);
                 ns.kill(pid2);
@@ -201,13 +201,18 @@ export async function main(ns) {
 
     let availableMemory = ns.getServerMaxRam(ns.getHostname()) - ns.getServerUsedRam(ns.getHostname()) * 0.8;
     let instances = Math.floor(availableMemory / instanceMemory)
-    let delay = growWeakTime / instances
+
+    let delay
+
+    let temp = growWeakTime / instances
+    for (let i = 1; growWeakTime / i > Math.max(temp, 8000); i++) {
+        delay = growWeakTime / i / 4;
+    }
     ns.print("instance memory: " + instanceMemory)
     ns.print("instances:       " + instances)
     ns.print("runtime:         " + ns.tFormat(growWeakTime, true))
     ns.print("delay:           " + ns.tFormat(delay, true))
 
-    delay = Math.max(delay, 10000) / 4
 
     let loop = 0;
     let oldSkill = ns.getPlayer().hacking
@@ -246,8 +251,10 @@ export async function main(ns) {
 
                 instanceMemory = (2.6 * (2 * hackWeakTime - hackTime - growTime) + 1.7 * (hackTime * hackThreads) + 1.75 * (growTime * growThreads)) / hackWeakTime + 1.75 * (hackWeakThreads + growWeakThreads)
                 instances = Math.floor(availableMemory / instanceMemory)
-                delay = growWeakTime / instances
-                delay = Math.max(delay, 10000) / 4
+                let temp = growWeakTime / instances
+                for (let i = 1; growWeakTime / i > Math.max(temp, 8000); i++) {
+                    delay = growWeakTime / i / 4;
+                }
             }
         }
         if (needSetHack) {
@@ -267,8 +274,10 @@ export async function main(ns) {
 
                 instanceMemory = (2.6 * (2 * hackWeakTime - hackTime - growTime) + 1.7 * (hackTime * hackThreads) + 1.75 * (growTime * growThreads)) / hackWeakTime + 1.75 * (hackWeakThreads + growWeakThreads)
                 instances = Math.floor(availableMemory / instanceMemory)
-                delay = growWeakTime / instances
-                delay = Math.max(delay, 10000) / 4
+                let temp = growWeakTime / instances
+                for (let i = 1; growWeakTime / i > Math.max(temp, 8000); i++) {
+                    delay = growWeakTime / i / 4;
+                }
             }
         }
 

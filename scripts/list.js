@@ -15,7 +15,9 @@ export function main(ns) {
 
     var items = []
     for (const key of knownServers) {
-        items.push([key, ns.getServerRequiredHackingLevel(key)])
+        if ( key != "home" && !(key.includes("node"))) {
+                items.push([key, ns.getServerRequiredHackingLevel(key)])
+        }
     }
     items.sort(function (first, second) {
         return first[1] - second[1];
@@ -30,7 +32,10 @@ export function main(ns) {
             "    level: " +
             String(level).padStart(paddinglevels, ' ') +
             ((level <= player.hacking) ? " <== " : "  >  ") +
-            player.hacking
+            player.hacking +
+            "    weaken: " + ns.tFormat(ns.getWeakenTime(server)).padEnd(30) +
+            "    grow:   " + ns.tFormat(ns.getGrowTime(server)).padEnd(30) +
+            "    hack:   " + ns.tFormat(ns.getHackTime(server)).padEnd(30)
         )
         //ns.tprint(server +"\t level" + level + " is lower than player hacking level of " + player.hacking + ", executing nuke")
         ns.nuke(server)
