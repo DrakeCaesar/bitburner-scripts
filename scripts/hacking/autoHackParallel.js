@@ -2,7 +2,6 @@
 export async function main(ns) {
     ns.disableLog("ALL")
     let target = ns.args[0]
-    target = "n00dles"
     let steal = 0.9
     let monT = 0.05
 
@@ -195,56 +194,95 @@ export async function main(ns) {
         "\nsecurity      " + (securityMin).toFixed(2) + " + " + (securityCur - securityMin).toFixed(2) + " = " + securityCur.toFixed(2) +
         "\n"
     )
-    let sleepOffset = 100;
-    let loop = 0;
-    /*
-    if (moneyCur <= moneyMax) {
-        ns.run("/hacking/grow.js", growThreads, target, growWeakTime - growTime, ++loop)
-        await debugPrint(ns, sleepOffset, target)
-        ns.run("/hacking/weaken.js", growWeakThreads, target, 0, ++loop)
-        await debugPrint(ns, sleepOffset, target)
-    }
-    */
 
-    let totalMemory = (2.6 * (2 * hackWeakTime - hackTime - growTime) + 1.7 * (hackTime * hackThreads) + 1.75 * (growTime * growThreads)) / hackWeakTime +
+
+    let instanceMemory = (2.6 * (2 * hackWeakTime - hackTime - growTime) + 1.7 * (hackTime * hackThreads) + 1.75 * (growTime * growThreads)) / hackWeakTime +
         1.75 * (hackWeakThreads + growWeakThreads)
 
-    let realMemory = 0
+    let availableMemory = ns.getServerMaxRam(ns.getHostname()) - ns.getServerUsedRam(ns.getHostname()) * 0.8;
+    let instances = Math.floor(availableMemory / instanceMemory)
+    let delay = growWeakTime / instances
+    ns.print("instance memory: " + instanceMemory)
+    ns.print("instances:       " + instances)
+    ns.print("runtime:         " + ns.tFormat(growWeakTime, true))
+    ns.print("delay:           " + ns.tFormat(delay, true))
 
-    ns.tprint("total: " + totalMemory)
-    ns.tprint("real : " + realMemory)
+    delay = Math.max(delay, 1024) / 4
+
+    let loop = 0;
+    let oldSkill = ns.getPlayer().hacking
+    needSetGrow = true
+    needSetGrow = true
+
+
+    if (moneyCur <= moneyMax) {
+        ns.run("/hacking/grow.js", growThreads, target, growWeakTime - growTime, ++loop)
+        await debugPrint(ns, delay, target)
+        ns.run("/hacking/weaken.js", growWeakThreads, target, 0, ++loop)
+        await debugPrint(ns, delay, target)
+    }
 
     while (true) {
-        ns.run("/hacking/hackRunner.js", 1, hackThreads, target, hackWeakTime - hackTime, ++loop)
-        //let message = "| " + await debugPrint(ns, sleepOffset, target)
-        ns.run("/hacking/weaken.js", hackWeakThreads, target, ++loop)
-        //message += await debugPrint(ns, sleepOffset, target)
-        ns.run("/hacking/growRunner.js", 1, growThreads, target, growWeakTime - growTime, ++loop)
-        //message += await debugPrint(ns, sleepOffset, target)
-        ns.run("/hacking/weaken.js", growWeakThreads, target, ++loop)
-        //message += await debugPrint(ns, sleepOffset, target)
-        //ns.print(message)
-        let time = 0
-        let sum = 0
-        while (true) {
-            let currentMem = ns.getServerUsedRam(ns.getHostname()) - 9.05
-            time++
-            if (currentMem != 0) {
-                sum += currentMem
-                //ns.tprint(currentMem)
-                await ns.sleep(100)
-            } else {
-                ns.tprint(
-                    "\n" +
-                    "\nestimate:   " + totalMemory +
-                    "\nactual:     " + sum / time +
-                    "\ndifference: " + (totalMemory - sum / time) +
-                    "\n"
-                )
-                return
+        let newSkill = ns.getPlayer().hacking
+        if (newSkill > oldSkill) {
+            needSetGrow = true
+            needSetGrow = true
+            oldSkill = newSkill
+        }
+        if (needSetGrow) {
+            moneyCur = ns.getServerMoneyAvailable(target)
+            securityCur = ns.getServerSecurityLevel(target)
+            if (moneyCur >= moneyMax * (1 - steal) * (1 - monT) && moneyCur <= moneyMax * (1 - steal) * (1 + monT) && securityMin == securityCur) {
+                moneyCur = ns.getServerMoneyAvailable(target)
+                securityCur = ns.getServerSecurityLevel(target)
+                growThreads = Math.ceil(ns.growthAnalyze(target, 1 / (1 - steal)))
+                growTime = ns.getGrowTime(target)
+                growSecurity = ns.growthAnalyzeSecurity(growThreads, target, 1)
+
+                for (growWeakThreads = 0; ns.weakenAnalyze(growWeakThreads) <= growSecurity; ++growWeakThreads);
+                growWeakTime = ns.getWeakenTime(target)
+                growWeakThreads = Math.ceil(growWeakThreads)
+                needSetGrow = false
+
+                instanceMemory = (2.6 * (2 * hackWeakTime - hackTime - growTime) + 1.7 * (hackTime * hackThreads) + 1.75 * (growTime * growThreads)) / hackWeakTime + 1.75 * (hackWeakThreads + growWeakThreads)
+                instances = Math.floor(availableMemory / instanceMemory)
+                delay = growWeakTime / instances
+                delay = Math.max(delay, 1024) / 4
+            }
+        }
+        if (needSetHack) {
+            moneyCur = ns.getServerMoneyAvailable(target)
+            securityCur = ns.getServerSecurityLevel(target)
+            if (moneyMax == moneyCur && securityMin == securityCur) {
+                moneyCur = ns.getServerMoneyAvailable(target)
+                securityCur = ns.getServerSecurityLevel(target)
+                hackThreads = Math.floor(ns.hackAnalyzeThreads(target, moneyMax * steal));
+                hackTime = ns.getHackTime(target)
+                hackSecurity = ns.hackAnalyzeSecurity(hackThreads, target)
+
+                for (hackWeakThreads = 0; ns.weakenAnalyze(hackWeakThreads) <= hackSecurity; ++hackWeakThreads);
+                hackWeakThreads = Math.ceil(hackWeakThreads)
+                hackWeakTime = ns.getWeakenTime(target)
+                needSetHack = false
+
+                instanceMemory = (2.6 * (2 * hackWeakTime - hackTime - growTime) + 1.7 * (hackTime * hackThreads) + 1.75 * (growTime * growThreads)) / hackWeakTime + 1.75 * (hackWeakThreads + growWeakThreads)
+                instances = Math.floor(availableMemory / instanceMemory)
+                delay = growWeakTime / instances
+                delay = Math.max(delay, 1024) / 4
             }
 
+
         }
+
+        ns.run("/hacking/hackRunner.js", 1, hackThreads, target, hackWeakTime - hackTime, ++loop)
+        let message = "| " + await debugPrint(ns, delay, target)
+        ns.run("/hacking/weaken.js", hackWeakThreads, target, ++loop)
+        message += await debugPrint(ns, delay, target)
+        ns.run("/hacking/growRunner.js", 1, growThreads, target, growWeakTime - growTime, ++loop)
+        message += await debugPrint(ns, delay, target)
+        ns.run("/hacking/weaken.js", growWeakThreads, target, ++loop)
+        message += await debugPrint(ns, delay, target)
+        ns.print(message)
 
     }
 
