@@ -3,7 +3,7 @@ export async function main(ns) {
     ns.disableLog("ALL")
     let target = ns.args[0]
     target = "n00dles"
-    let steal = 0.09
+    let steal = 0.9
     let monT = 0.05
 
     let hackThreads
@@ -195,24 +195,57 @@ export async function main(ns) {
         "\nsecurity      " + (securityMin).toFixed(2) + " + " + (securityCur - securityMin).toFixed(2) + " = " + securityCur.toFixed(2) +
         "\n"
     )
-    let sleepOffset = 1;
+    let sleepOffset = 100;
     let loop = 0;
+    /*
     if (moneyCur <= moneyMax) {
         ns.run("/hacking/grow.js", growThreads, target, growWeakTime - growTime, ++loop)
         await debugPrint(ns, sleepOffset, target)
         ns.run("/hacking/weaken.js", growWeakThreads, target, 0, ++loop)
         await debugPrint(ns, sleepOffset, target)
     }
+    */
+
+    let totalMemory = (2.6 * (2 * hackWeakTime - hackTime - growTime) + 1.7 * (hackTime * hackThreads) + 1.75 * (growTime * growThreads)) / hackWeakTime +
+        1.75 * (hackWeakThreads + growWeakThreads)
+
+    let realMemory = 0
+
+    ns.tprint("total: " + totalMemory)
+    ns.tprint("real : " + realMemory)
+
     while (true) {
         ns.run("/hacking/hackRunner.js", 1, hackThreads, target, hackWeakTime - hackTime, ++loop)
-        let message = "| " + await debugPrint(ns, sleepOffset, target)
+        //let message = "| " + await debugPrint(ns, sleepOffset, target)
         ns.run("/hacking/weaken.js", hackWeakThreads, target, ++loop)
-        message += await debugPrint(ns, sleepOffset, target)
+        //message += await debugPrint(ns, sleepOffset, target)
         ns.run("/hacking/growRunner.js", 1, growThreads, target, growWeakTime - growTime, ++loop)
-        message += await debugPrint(ns, sleepOffset, target)
+        //message += await debugPrint(ns, sleepOffset, target)
         ns.run("/hacking/weaken.js", growWeakThreads, target, ++loop)
-        message += await debugPrint(ns, sleepOffset, target)
-        ns.print(message)
+        //message += await debugPrint(ns, sleepOffset, target)
+        //ns.print(message)
+        let time = 0
+        let sum = 0
+        while (true) {
+            let currentMem = ns.getServerUsedRam(ns.getHostname()) - 9.05
+            time++
+            if (currentMem != 0) {
+                sum += currentMem
+                //ns.tprint(currentMem)
+                await ns.sleep(100)
+            } else {
+                ns.tprint(
+                    "\n" +
+                    "\nestimate:   " + totalMemory +
+                    "\nactual:     " + sum / time +
+                    "\ndifference: " + (totalMemory - sum / time) +
+                    "\n"
+                )
+                return
+            }
+
+        }
+
     }
 
 }
