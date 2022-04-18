@@ -2,9 +2,13 @@
 export async function main(ns) {
     let target = ns.args[0]
     ns.killall(target)
-    await ns.scp("hack.js", target)
-    await ns.scp("grow.js", target)
-    await ns.scp("weaken.js", target)
-    await ns.scp("autoHackParallel.js", target)
-    ns.exec("autoHackParallel.js", target)
+    await ns.scp([
+        "/hacking/hack.js",
+        "/hacking/hackRunner.js",
+        "/hacking/grow.js",
+        "/hacking/growRunner.js",
+        "/hacking/weaken.js",
+        "/hacking/autoHackParallel.js"
+    ], target)
+    ns.exec("/hacking/autoHackParallel.js", target)
 }

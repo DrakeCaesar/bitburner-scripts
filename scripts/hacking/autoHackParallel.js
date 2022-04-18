@@ -1,8 +1,9 @@
-/** @param {import("..").NS } ns */
+/** @param {import("../..").NS } ns */
 export async function main(ns) {
+    ns.disableLog("ALL")
     let target = ns.args[0]
     target = "n00dles"
-    let steal = 0.8
+    let steal = 0.09
     let monT = 0.05
 
     let hackThreads
@@ -24,8 +25,8 @@ export async function main(ns) {
     let securityCur = ns.getServerSecurityLevel(target);
 
 
-    ns.tprint("start")
-    ns.tprint(
+    ns.print("start")
+    ns.print(
         "\nmoney         " + ((moneyCur / moneyMax) * 100).toFixed(2) + "%" +
         "\nmoney         " + (moneyMax * (1 - steal) * (1 - monT)).toFixed(0) + " <= " + moneyCur.toFixed(0) + " <= " + (moneyMax * (1 - steal) * (1 + monT)).toFixed(0) +
         "\nsecurity      " + (securityMin).toFixed(2) + " + " + (securityCur - securityMin).toFixed(2) + " = " + securityCur.toFixed(2) +
@@ -37,7 +38,7 @@ export async function main(ns) {
     let needSetGrow = true
     let needSetHack = true
 
-    ns.tprint("variable setup")
+    ns.print("variable setup")
 
 
     while (needSetGrow || needSetHack) {
@@ -56,8 +57,8 @@ export async function main(ns) {
             hackWeakTime = ns.getWeakenTime(target)
             needSetHack = false
             if (needSetGrow) {
-                ns.tprint("hacking variables setup")
-                ns.tprint(
+                ns.print("hacking variables setup")
+                ns.print(
                     "\n" +
                     "\nhack Threads  " + hackThreads +
                     "\nhack Time     " + ns.tFormat(hackTime) +
@@ -70,24 +71,24 @@ export async function main(ns) {
                     "\nsecurity      " + (securityMin).toFixed(2) + " + " + (securityCur - securityMin).toFixed(2) + " = " + securityCur.toFixed(2) +
                     "\n"
                 )
-                ns.tprint("RUN HACK")
-                var pid1 = ns.run("hack.js", hackThreads, target)
-                ns.tprint("RUN WEAK")
-                var pid2 = hackWeakThreads ? ns.run("weaken.js", hackWeakThreads, target) : pid1
+                ns.print("RUN HACK")
+                var pid1 = ns.run("/hacking/hack.js", hackThreads, target)
+                ns.print("RUN WEAK")
+                var pid2 = hackWeakThreads ? ns.run("/hacking/weaken.js", hackWeakThreads, target) : pid1
                 if (ns.getRunningScript(pid1) == null || ns.getRunningScript(pid2) == null) {
                     ns.kill(pid1);
                     ns.kill(pid2);
-                    ns.tprint("out of Memory")
+                    ns.print("out of Memory")
                     continue;
                 }
                 await ns.sleep(Math.max(hackTime, hackWeakThreads ? hackWeakTime : 0))
                 while (ns.getRunningScript(pid1) != null || ns.getRunningScript(pid2) != null) {
-                    ns.tprint("this should not happen")
+                    ns.print("this should not happen")
                     await ns.sleep(100)
                 }
                 moneyCur = ns.getServerMoneyAvailable(target)
                 securityCur = ns.getServerSecurityLevel(target);
-                ns.tprint(
+                ns.print(
                     "\nmoney         " + ((moneyCur / moneyMax) * 100).toFixed(2) + "%" +
                     "\nsecurity      " + (securityMin).toFixed(2) + " + " + (securityCur - securityMin).toFixed(2) + " = " + securityCur.toFixed(2) +
                     "\n"
@@ -107,8 +108,8 @@ export async function main(ns) {
             needSetGrow = false
 
             if (needSetHack) {
-                ns.tprint("growing variables setup")
-                ns.tprint(
+                ns.print("growing variables setup")
+                ns.print(
                     "\n" +
                     "\ngrow Threads  " + growThreads +
                     "\ngrow Time     " + ns.tFormat(growTime) +
@@ -121,24 +122,24 @@ export async function main(ns) {
                     "\nsecurity      " + (securityMin).toFixed(2) + " + " + (securityCur - securityMin).toFixed(2) + " = " + securityCur.toFixed(2) +
                     "\n"
                 )
-                ns.tprint("RUN GROW")
-                var pid1 = ns.run("grow.js", growThreads, target)
-                ns.tprint("RUN WEAK")
-                var pid2 = growWeakThreads ? ns.run("weaken.js", growWeakThreads, target) : pid1
+                ns.print("RUN GROW")
+                var pid1 = ns.run("/hacking/grow.js", growThreads, target)
+                ns.print("RUN WEAK")
+                var pid2 = growWeakThreads ? ns.run("/hacking/weaken.js", growWeakThreads, target) : pid1
                 if (ns.getRunningScript(pid1) == null || ns.getRunningScript(pid2) == null) {
                     ns.kill(pid1);
                     ns.kill(pid2);
-                    ns.tprint("out of Memory")
+                    ns.print("out of Memory")
                     continue;
                 }
                 await ns.sleep(Math.max(growTime, growWeakThreads ? growWeakTime : 0))
                 while (ns.getRunningScript(pid1) != null || ns.getRunningScript(pid2) != null) {
-                    ns.tprint("this should not happen")
+                    ns.print("this should not happen")
                     await ns.sleep(100)
                 }
                 moneyCur = ns.getServerMoneyAvailable(target)
                 securityCur = ns.getServerSecurityLevel(target);
-                ns.tprint(
+                ns.print(
                     "\nmoney         " + ((moneyCur / moneyMax) * 100).toFixed(2) + "%" +
                     "\nsecurity      " + (securityMin).toFixed(2) + " + " + (securityCur - securityMin).toFixed(2) + " = " + securityCur.toFixed(2) +
                     "\n"
@@ -146,7 +147,7 @@ export async function main(ns) {
             }
 
         } else {
-            ns.tprint("undesirable state")
+            ns.print("undesirable state")
             var tempGrowThreads = Math.ceil(ns.growthAnalyze(target, moneyMax / moneyCur))
             var tempGrowTime = ns.getGrowTime(target)
             var tempGrowSecurity = ns.growthAnalyzeSecurity(tempGrowThreads, target, 1) + securityCur - securityMin
@@ -154,27 +155,27 @@ export async function main(ns) {
             for (tempGrowWeakThreads = 0; ns.weakenAnalyze(tempGrowWeakThreads) <= tempGrowSecurity; ++tempGrowWeakThreads);
             var tempGrowWeakTime = ns.getWeakenTime(target)
             tempGrowWeakThreads = Math.ceil(tempGrowWeakThreads)
-            ns.tprint("RUN GROW AFTER BUG")
-            var pid1 = ns.run("grow.js", (tempGrowThreads > 0) ? tempGrowThreads : 1, target)
-            ns.tprint("RUN WEAK AFTER BUG")
-            var pid2 = tempGrowWeakThreads ? ns.run("weaken.js", tempGrowWeakThreads, target) : pid1
+            ns.print("RUN GROW AFTER BUG")
+            var pid1 = ns.run("/hacking/grow.js", (tempGrowThreads > 0) ? tempGrowThreads : 1, target)
+            ns.print("RUN WEAK AFTER BUG")
+            var pid2 = tempGrowWeakThreads ? ns.run("/hacking/weaken.js", tempGrowWeakThreads, target) : pid1
             if (ns.getRunningScript(pid1) == null || ns.getRunningScript(pid2) == null) {
                 ns.kill(pid1);
                 ns.kill(pid2);
-                ns.tprint("out of Memory")
+                ns.print("out of Memory")
                 continue;
             }
             await ns.sleep(Math.max(tempGrowTime, tempGrowWeakThreads ? tempGrowWeakTime : 0))
             while (ns.getRunningScript(pid1) != null || ns.getRunningScript(pid2) != null) {
-                ns.tprint("this should not happen")
+                ns.print("this should not happen")
                 await ns.sleep(100)
             }
 
         }
         await ns.sleep(100)
     }
-    ns.tprint("end print")
-    ns.tprint(
+    ns.print("end print")
+    ns.print(
         "\n" +
         "\nhack Threads  " + hackThreads +
         "\nhack Time     " + ns.tFormat(hackTime) +
@@ -194,31 +195,31 @@ export async function main(ns) {
         "\nsecurity      " + (securityMin).toFixed(2) + " + " + (securityCur - securityMin).toFixed(2) + " = " + securityCur.toFixed(2) +
         "\n"
     )
-    let sleepOffset = 32;
+    let sleepOffset = 1;
     let loop = 0;
     if (moneyCur <= moneyMax) {
-        ns.run("grow.js", growThreads, target, growWeakTime - growTime, ++loop)
+        ns.run("/hacking/grow.js", growThreads, target, growWeakTime - growTime, ++loop)
         await debugPrint(ns, sleepOffset, target)
-        ns.run("weaken.js", growWeakThreads, target, 0, ++loop)
+        ns.run("/hacking/weaken.js", growWeakThreads, target, 0, ++loop)
         await debugPrint(ns, sleepOffset, target)
     }
     while (true) {
-        ns.run("hack.js", hackThreads, target, hackWeakTime - hackTime, ++loop)
+        ns.run("/hacking/hackRunner.js", 1, hackThreads, target, hackWeakTime - hackTime, ++loop)
         let message = "| " + await debugPrint(ns, sleepOffset, target)
-        ns.run("weaken.js", hackWeakThreads, target, 0, ++loop)
+        ns.run("/hacking/weaken.js", hackWeakThreads, target, ++loop)
         message += await debugPrint(ns, sleepOffset, target)
-        ns.run("grow.js", growThreads, target, growWeakTime - growTime, ++loop)
+        ns.run("/hacking/growRunner.js", 1, growThreads, target, growWeakTime - growTime, ++loop)
         message += await debugPrint(ns, sleepOffset, target)
-        ns.run("weaken.js", growWeakThreads, target, 0, ++loop)
+        ns.run("/hacking/weaken.js", growWeakThreads, target, ++loop)
         message += await debugPrint(ns, sleepOffset, target)
-        ns.tprint(message)
+        ns.print(message)
     }
 
 }
 
 
 
-/** @param {import("..").NS } ns */
+/** @param {import("../..").NS } ns */
 export async function debugPrint(ns, sleepOffset, target) {
     await ns.sleep(sleepOffset * .9)
     let moneyMax = ns.getServerMaxMoney(target)
@@ -228,4 +229,9 @@ export async function debugPrint(ns, sleepOffset, target) {
     let message = (moneyCur / moneyMax * 100).toFixed(2).padStart(6) + "% " + (securityCur - securityMin).toFixed(2) + " | "
     await ns.sleep(sleepOffset * .1)
     return message
+}
+
+/** @param {import("../..").NS } ns */
+export async function parameters(ns, sleepOffset, target) {
+
 }
