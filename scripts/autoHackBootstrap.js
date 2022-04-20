@@ -25,7 +25,9 @@ export async function main(ns) {
             key != "darkweb" &&
             key != "home" &&
             key != "run4theh111z" &&
-            //key != "n00dles" &&
+            key != "." &&
+            
+            key != "n00dles" &&
 
             !(key.includes("node"))) {
             items.push([key, level])
@@ -38,6 +40,10 @@ export async function main(ns) {
     for (const [target, level] of items) {
         let node = "node" + String(i).padStart(2, '0')
         i++
+        
+        if (node == "node25"){
+            return
+        }
 
         //ns.run("autoHack.js", 1, target)
 
@@ -47,7 +53,7 @@ export async function main(ns) {
             "    level: " +
             String(level).padStart(paddingLevels, ' ') + "  " + node
         )
-        //ns.killall(node)
+        ns.killall(node)
         await ns.scp([
             "/hacking/hack.js",
             "/hacking/hackRunner.js",
@@ -56,7 +62,7 @@ export async function main(ns) {
             "/hacking/weaken.js",
             "/hacking/autoHackParallel.js"
         ], node)
-        ns.killall(node)
+        //ns.killall(node)
         ns.exec("/hacking/autoHackParallel.js", node, 1, target)
 
 

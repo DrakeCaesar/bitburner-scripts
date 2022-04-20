@@ -151,7 +151,12 @@ export async function main(ns) {
 
         } else {
             ns.print("undesirable state")
-            let tempGrowThreads = Math.ceil(ns.growthAnalyze(target, moneyMax / moneyCur))
+            let tempGrowThreads
+            if (moneyCur == 0){
+                tempGrowThreads = 1000
+            } else{
+                tempGrowThreads = Math.min(Math.ceil(ns.growthAnalyze(target, moneyMax / moneyCur)),10000)
+            }
             let tempGrowTime = ns.getGrowTime(target)
             let tempGrowSecurity = ns.growthAnalyzeSecurity(tempGrowThreads, target, 1) + securityCur - securityMin
             let tempGrowWeakThreads

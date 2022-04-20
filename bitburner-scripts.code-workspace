@@ -4,7 +4,7 @@
 	}],
 	"settings": {
 		"bitburner.fileWatcher.enable": true,
-		"bitburner.authToken": "Uzfu9GGOFczl1ocoyTKRYR2WgqVE20HJPxXRXEH7h13nmMeNiNjhmW3zRRvU+CXH",
+		"bitburner.authToken": "4aJ8Z6SV6aqa06yhYl0iV3v6Cuo7Tz7q1gc7hdNCZRqIICNd5ru+5OV33b3i9Wj9",
 		"bitburner.showPushSuccessNotification": false,
 		"bitburner.showFileWatcherEnabledNotification": false,
 		"bitburner.scriptRoot": "./scripts/",
