@@ -1,7 +1,6 @@
 /** @param {import("../..").NS } ns */
 export async function main(ns) {
     let target = ns.args[0]
-    ns.tprint(target)
     let proc = 0.9
     let params = await getLoopParams(ns, target, proc)
     ns.tprint(params)
@@ -9,7 +8,6 @@ export async function main(ns) {
 
 /** @param {import("../..").NS } ns */
 export function getHack(ns, target, proc) {
-    ns.tprint("get hack")
     let server = ns.getServer(target)
 
     if (
@@ -23,20 +21,17 @@ export function getHack(ns, target, proc) {
     )
     const security = threads * 0.002
     const weakenThreads = Math.ceil(security / 0.05)
-
     return {
         threads: threads,
         time: ns.getHackTime(target),
         security: security,
-        weakenThreads: weakenThreads,
+        weakenThreads,
         weakenTime: ns.getWeakenTime(target),
     }
 }
 
 /** @param {import("../..").NS } ns */
 export function getGrow(ns, target, proc) {
-    ns.tprint("get grow")
-
     let server = ns.getServer(target)
 
     if (
@@ -63,16 +58,12 @@ export function getGrow(ns, target, proc) {
 export async function getLoopParams(ns, target, proc) {
     let grow
     let hack
+    let actionPid
+    let weakenPid
     do {
         serverStats(ns, target)
         grow ??= getGrow(ns, target, proc)
-        ns.tprint(grow)
-
         hack ??= getHack(ns, target, proc)
-        ns.tprint(hack)
-
-        let actionPid
-        let weakenPid
         if (grow != null && hack == null) {
             actionPid = ns.run("/hacking/grow.js", grow.threads, target)
             weakenPid = ns.run("/hacking/weaken.js", grow.weakenThreads, target)
@@ -82,8 +73,6 @@ export async function getLoopParams(ns, target, proc) {
             weakenPid = ns.run("/hacking/weaken.js", hack.weakenThreads, target)
             await ns.sleep(hack.weakenTime)
         } else if (hack == null && grow == null) {
-            ns.tprint("normalize")
-
             let threads = Math.ceil(ns.growthAnalyze(target, 1 / (1 - proc)))
             if (threads == Infinity) {
                 threads = ns.getServerMaxRam(ns.getHostname()) / 4
@@ -92,16 +81,12 @@ export async function getLoopParams(ns, target, proc) {
                 threads * 0.004 +
                 ns.getServerSecurityLevel(target) -
                 ns.getServerMinSecurityLevel(target)
-            let weakenThreads = Math.ceil(security / 0.05)
+            let weakenThreads = Math.ceil(security / 0.05) * 1.25
             let weakenTime = ns.getWeakenTime(target)
-            actionPid = ns.run("/hacking/grow.js", threads, target)
+            actionPid = ns.run("/hacking/grow.js", threads, target, 0, true)
             weakenPid = ns.run("/hacking/weaken.js", weakenThreads, target)
             await ns.sleep(weakenTime)
         }
-        ns.tprint(actionPid)
-        ns.tprint(weakenPid)
-        ns.tprint("")
-
         while (
             ns.getRunningScript(actionPid) != null ||
             ns.getRunningScript(weakenPid) != null
