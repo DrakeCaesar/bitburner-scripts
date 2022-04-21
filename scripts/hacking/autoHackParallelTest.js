@@ -2,44 +2,19 @@
 export async function main(ns) {
     let target = ns.args[0]
     ns.tprint(target)
-
     let proc = 0.9
-    let monT = 0.15
-
-    let moneyMax = ns.getServerMaxMoney(target)
-    let securityMin = ns.getServerMinSecurityLevel(target)
-
-    let moneyCur = ns.getServerMoneyAvailable(target)
-    let securityCur = ns.getServerSecurityLevel(target)
-
-    ns.tprint("start")
-    ns.tprint(
-        "\nmoney         " +
-            ((moneyCur / moneyMax) * 100).toFixed(2) +
-            "%" +
-            "\nmoney         " +
-            (moneyMax * (1 - proc) * (1 - monT)).toFixed(0) +
-            " <= " +
-            moneyCur.toFixed(0) +
-            " <= " +
-            (moneyMax * (1 - proc) * (1 + monT)).toFixed(0) +
-            "\nsecurity      " +
-            securityMin.toFixed(2) +
-            " + " +
-            (securityCur - securityMin).toFixed(2) +
-            " = " +
-            securityCur.toFixed(2) +
-            "\n"
-    )
+    let params = await getLoopParams(ns, target, proc)
+    ns.tprint(params)
 }
 
 /** @param {import("../..").NS } ns */
-export function getHackProp(ns, target, proc) {
+export function getHack(ns, target, proc) {
+    ns.tprint("get hack")
     let server = ns.getServer(target)
 
     if (
         server.moneyAvailable != server.moneyMax ||
-        server.baseDifficulty != server.hackDifficulty
+        server.minDifficulty != server.hackDifficulty
     ) {
         return null
     }
@@ -59,11 +34,13 @@ export function getHackProp(ns, target, proc) {
 }
 
 /** @param {import("../..").NS } ns */
-export function getGrowProp(ns, target, proc) {
+export function getGrow(ns, target, proc) {
+    ns.tprint("get grow")
+
     let server = ns.getServer(target)
 
     if (
-        server.baseDifficulty != server.hackDifficulty ||
+        server.minDifficulty != server.hackDifficulty ||
         server.moneyAvailable > server.moneyMax * (1 - proc) * 1.2 ||
         server.moneyAvailable < (server.moneyMax * (1 - proc)) / 1.2
     ) {
@@ -83,56 +60,71 @@ export function getGrowProp(ns, target, proc) {
 }
 
 /** @param {import("../..").NS } ns */
-
-export async function normalize(ns, target, proc) {
-    let growProp
-    let hackProp
-
+export async function getLoopParams(ns, target, proc) {
+    let grow
+    let hack
     do {
-        growProp ??= getGrowProp(ns, target, proc)
-        hackProp ??= getHackProp(ns, target, proc)
+        serverStats(ns, target)
+        grow ??= getGrow(ns, target, proc)
+        ns.tprint(grow)
 
-        if (growProp != null && hackProp == null) {
-            let growPid = ns.run("/hacking/grow.js", growProp.threads)
-            let weakPid = ns.run("/hacking/weaken.js", growProp.weakenThreads)
-            await ns.sleep(growProp.weakenTime)
-            while (
-                ns.getRunningScript(growPid) != null ||
-                ns.getRunningScript(weakPid) != null
-            ) {
-                await ns.sleep(100)
-            }
-        } else if (hackProp != null && growProp == null) {
-            let hackPid = ns.run("/hacking/hack.js", hackProp.threads)
-            let weakPid = ns.run("/hacking/weaken.js", hackProp.weakenThreads)
-            await ns.sleep(hackProp.weakenTime)
-            while (
-                ns.getRunningScript(hackPid) != null ||
-                ns.getRunningScript(weakPid) != null
-            ) {
-                await ns.sleep(100)
-            }
-        } else {
+        hack ??= getHack(ns, target, proc)
+        ns.tprint(hack)
+
+        let actionPid
+        let weakenPid
+        if (grow != null && hack == null) {
+            actionPid = ns.run("/hacking/grow.js", grow.threads, target)
+            weakenPid = ns.run("/hacking/weaken.js", grow.weakenThreads, target)
+            await ns.sleep(grow.weakenTime)
+        } else if (hack != null && grow == null) {
+            actionPid = ns.run("/hacking/hack.js", hack.threads, target)
+            weakenPid = ns.run("/hacking/weaken.js", hack.weakenThreads, target)
+            await ns.sleep(hack.weakenTime)
+        } else if (hack == null && grow == null) {
+            ns.tprint("normalize")
+
             let threads = Math.ceil(ns.growthAnalyze(target, 1 / (1 - proc)))
             if (threads == Infinity) {
-                threads = 10000
+                threads = ns.getServerMaxRam(ns.getHostname()) / 4
             }
             let security =
                 threads * 0.004 +
                 ns.getServerSecurityLevel(target) -
                 ns.getServerMinSecurityLevel(target)
             let weakenThreads = Math.ceil(security / 0.05)
-            let growPid = ns.run("/hacking/grow.js", threads)
-            let weakPid = ns.run("/hacking/weaken.js", weakenThreads)
-            await ns.sleep(growProp.weakenTime)
-            while (
-                ns.getRunningScript(growPid) != null ||
-                ns.getRunningScript(weakPid) != null
-            ) {
-                await ns.sleep(100)
-            }
+            let weakenTime = ns.getWeakenTime(target)
+            actionPid = ns.run("/hacking/grow.js", threads, target)
+            weakenPid = ns.run("/hacking/weaken.js", weakenThreads, target)
+            await ns.sleep(weakenTime)
         }
-    } while (growProp != null && hackProp != null)
+        ns.tprint(actionPid)
+        ns.tprint(weakenPid)
+        ns.tprint("")
+
+        while (
+            ns.getRunningScript(actionPid) != null ||
+            ns.getRunningScript(weakenPid) != null
+        ) {
+            await ns.sleep(100)
+        }
+    } while (grow == null || hack == null)
+    ns.tprint("finished")
+
+    return { grow: grow, hack: hack }
 }
 
 /** @param {import("../..").NS } ns */
+export function serverStats(ns, target) {
+    let server = ns.getServer(target)
+    ns.tprint(
+        "server security: " +
+            (server.hackDifficulty - server.minDifficulty).toFixed(2)
+    )
+
+    ns.tprint(
+        "server money:    " +
+            ((server.moneyAvailable / server.moneyMax) * 100).toFixed(2) +
+            "%"
+    )
+}

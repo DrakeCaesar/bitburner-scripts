@@ -12,12 +12,9 @@ export async function main(ns) {
         ns.getServerSecurityLevel(ns.args[0]) >
         ns.getServerMinSecurityLevel(ns.args[0])
     ) {
-        ns.print("Server security before executing hack is too high")
+        ns.tprint("Server security before executing hack is too high")
         return
     }
 
     await ns.hack(ns.args[0])
-    if (!(await ns.hack(ns.args[0]))) {
-        ns.print("Server money after executing hack was zero")
-    }
 }
