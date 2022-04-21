@@ -2,7 +2,7 @@
 export async function main(ns) {
     let knownServers = new Array
     crawl(ns, knownServers)
-    knownServers.sort();
+    knownServers.sort()
     let paddingServers = 0
     let paddingLevels = 0
     for (const key of knownServers) {
@@ -34,11 +34,11 @@ export async function main(ns) {
         }
     }
     items.sort(function (first, second) {
-        return first[1] - second[1];
-    });
-    let i = 0;
+        return first[1] - second[1]
+    })
+    let i = 0
     for (const [target, level] of items) {
-        let node = "node" + String(i).padStart(2, '0')
+        let node = "node" + String(i).padStart(2, "0")
         i++
         
         if (node == "node25"){
@@ -49,9 +49,9 @@ export async function main(ns) {
 
         ns.tprint(
             "server: " +
-            target.padEnd(paddingServers, ' ') +
+            target.padEnd(paddingServers, " ") +
             "    level: " +
-            String(level).padStart(paddingLevels, ' ') + "  " + node
+            String(level).padStart(paddingLevels, " ") + "  " + node
         )
         ns.killall(node)
         await ns.scp([
@@ -75,7 +75,7 @@ export function crawl(ns, knownServers, hostname, depth = 0) {
     let servers = ns.scan(hostname)
     for (const element of servers) {
         if (!knownServers.includes(element)) {
-            knownServers.push(element);
+            knownServers.push(element)
             crawl(ns, knownServers, element, depth + 1)
         }
     }

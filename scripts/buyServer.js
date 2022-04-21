@@ -1,7 +1,7 @@
 /** @param {import("..").NS } ns */
 export async function main(ns) {
     ns.tprint("running")
-    let money = ns.getPlayer().money;
+    let money = ns.getPlayer().money
     let target = "node00"
     for (let i = 1; i <= ns.getPurchasedServerMaxRam(); i = i * 2) {
         let cost = ns.getPurchasedServerCost(i)

@@ -8,19 +8,22 @@ export function main(ns) {
         ns.tprintf(JSON.stringify(knownServers, null, 2))
         ns.tprint("servers: " + Object.keys(knownServers).length)
     } else {
-        var keys = Object.keys(knownServers);
-        keys.sort();
+        var keys = Object.keys(knownServers)
+        keys.sort()
         for (const key of keys) {
             for (const arg of ns.args) {
                 if (key.toLowerCase().includes(arg.toLowerCase())) {
-                    var connectString = "home; "
+                    var connectString = "home;"
                     for (const hop of knownServers[key]) {
-                        connectString += "connect " + hop + "; "
+                        connectString += "connect " + hop + ";"
                     }
-                    navigator.clipboard.writeText(connectString)
-                    ns.tprint("")
-                    ns.tprint(key + ":")
-                    ns.tprint(connectString)
+                    
+                    const terminalInput = document.getElementById("terminal-input")
+                    terminalInput.value=connectString
+                    const handler = Object.keys(terminalInput)[1]
+                    terminalInput[handler].onChange({target:terminalInput})
+                    terminalInput[handler].onKeyDown({key:"Enter",preventDefault:()=>null})
+                    
                 }
             }
         }

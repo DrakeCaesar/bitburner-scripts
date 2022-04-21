@@ -1,25 +1,25 @@
 /** @param {import("..").NS } ns */
 export async function main(ns) {
     ns.disableLog("ALL")
-    let target = ns.args[0];
-    let mF = 0.75;
+    let target = ns.args[0]
+    let mF = 0.75
 
     let moneyMax = ns.getServerMaxMoney(target)
     let securityMin = ns.getServerMinSecurityLevel(target)
-    let securityT = 5;
+    let securityT = 5
 
     let pid = 0
     let pidW = 0
     let weaken = 0
 
-    while (true) {
+    for(;;) {
         await ns.sleep(100)
         let moneyCur = ns.getServerMoneyAvailable(target)
         let securityCur = (ns.getServerSecurityLevel(target) - securityMin).toFixed(2)
-        let moneyP = String(Math.floor(moneyCur / moneyMax * 100) + '%').padStart(4)
+        let moneyP = String(Math.floor(moneyCur / moneyMax * 100) + "%").padStart(4)
         let ramT = 1
-        let current = ns.getHostname();
-        let ramC = ns.getServerUsedRam(current) / ns.getServerMaxRam(current);
+        let current = ns.getHostname()
+        let ramC = ns.getServerUsedRam(current) / ns.getServerMaxRam(current)
 
         if (ns.getRunningScript(pid) == null && ramC <= ramT) {
             let action
@@ -27,7 +27,7 @@ export async function main(ns) {
             let runtime
 
             if (ns.getRunningScript(pidW) == null && securityCur > securityT) {
-                for (threads = 1; securityCur > ns.weakenAnalyze(threads); threads++) {}
+                for (threads = 1; securityCur > ns.weakenAnalyze(threads); threads++);
                 action = "weak"
                 runtime = ns.getWeakenTime(target)
                 pidW = ns.run("weaken.js", threads, target)
@@ -66,7 +66,7 @@ export async function main(ns) {
 
                 //ns.tprint(message)
                 ns.print(message)
-                weaken = 0;
+                weaken = 0
 
             } else {
                 //ns.print("failed")

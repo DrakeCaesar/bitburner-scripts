@@ -4,9 +4,8 @@
 	}],
 	"settings": {
 		"bitburner.fileWatcher.enable": true,
-		"bitburner.authToken": "4aJ8Z6SV6aqa06yhYl0iV3v6Cuo7Tz7q1gc7hdNCZRqIICNd5ru+5OV33b3i9Wj9",
-		"bitburner.showPushSuccessNotification": false,
-		"bitburner.showFileWatcherEnabledNotification": false,
+		"bitburner.showPushSuccessNotification": true,
+		"bitburner.showFileWatcherEnabledNotification": true,
 		"bitburner.scriptRoot": "./scripts/",
 		"cSpell.words": [
 			"avmnite-02h",
@@ -17,6 +16,7 @@
 			"ftpcrack",
 			"httpworm",
 			"killall",
+			"linebreak",
 			"Mult",
 			"n00dles",
 			"paddinglevels",
@@ -28,6 +28,7 @@
 		],
 		"gitlens.currentLine.enabled": false,
 		"gitlens.codeLens.authors.enabled": false,
-		"gitlens.codeLens.recentChange.enabled": false
+		"gitlens.codeLens.recentChange.enabled": false,
+		"eslint.lintTask.enable": true
 	}
 }

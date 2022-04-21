@@ -2,7 +2,7 @@
 export function main(ns) {
     let knownServers = new Array
     crawl(ns, knownServers)
-    knownServers.sort();
+    knownServers.sort()
     let paddingServers = 0
     let paddinglevels = 0
     for (const key of knownServers) {
@@ -16,21 +16,20 @@ export function main(ns) {
     var items = []
     for (const key of knownServers) {
         if ( key != "home" && !(key.includes("node"))) {
-                items.push([key, ns.getServerRequiredHackingLevel(key)])
+            items.push([key, ns.getServerRequiredHackingLevel(key)])
         }
     }
     items.sort(function (first, second) {
-        return first[1] - second[1];
-    });
+        return first[1] - second[1]
+    })
 
     for (const [server, level] of items) {
-        let player = ns.getPlayer();
-        let numPortsOpen = 0
+        let player = ns.getPlayer()
         ns.tprint(
             "server: " +
-            server.padEnd(paddingServers, ' ') +
+            server.padEnd(paddingServers, " ") +
             "    level: " +
-            String(level).padStart(paddinglevels, ' ') +
+            String(level).padStart(paddinglevels, " ") +
             ((level <= player.hacking) ? " <== " : "  >  ") +
             player.hacking +
             "    weaken: " + ns.tFormat(ns.getWeakenTime(server)).padEnd(30) +
@@ -43,10 +42,6 @@ export function main(ns) {
     }
 
 
-    for (const [server, level] of items) {
-        //ns.tprint( server.padEnd(paddingServers,' ') + " " + String(level).padStart(paddinglevels,' '))
-    }
-
     //ns.tprint(items);
 }
 
@@ -55,7 +50,7 @@ export function crawl(ns, knownServers, hostname, depth = 0) {
     let servers = ns.scan(hostname)
     for (const element of servers) {
         if (!knownServers.includes(element)) {
-            knownServers.push(element);
+            knownServers.push(element)
             crawl(ns, knownServers, element, depth + 1)
         }
     }

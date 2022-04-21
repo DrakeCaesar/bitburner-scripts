@@ -5,7 +5,7 @@ export async function main(ns) {
     let hackProc = 0.7
     let growProc = 0.9
 
-    let monT = 0.15
+    let monT = 0.30
 
     let hackThreads
     let hackTime
@@ -20,12 +20,11 @@ export async function main(ns) {
     let growWeakTime
 
     let moneyMax = ns.getServerMaxMoney(target)
-    let securityMin = ns.getServerMinSecurityLevel(target);
+    let securityMin = ns.getServerMinSecurityLevel(target)
 
     let moneyCur = ns.getServerMoneyAvailable(target)
-    let securityCur = ns.getServerSecurityLevel(target);
+    let securityCur = ns.getServerSecurityLevel(target)
 
-    let hostname = ns.getHostname()
 
 
     ns.print("start")
@@ -47,11 +46,11 @@ export async function main(ns) {
     while (needSetGrow || needSetHack) {
 
         moneyCur = ns.getServerMoneyAvailable(target)
-        securityCur = ns.getServerSecurityLevel(target);
+        securityCur = ns.getServerSecurityLevel(target)
 
         if (moneyMax == moneyCur && securityMin == securityCur) {
 
-            hackThreads = Math.floor(ns.hackAnalyzeThreads(target, moneyMax * hackProc));
+            hackThreads = Math.floor(ns.hackAnalyzeThreads(target, moneyMax * hackProc))
             hackTime = ns.getHackTime(target)
             hackSecurity = ns.hackAnalyzeSecurity(hackThreads, target)
 
@@ -79,10 +78,10 @@ export async function main(ns) {
                 ns.print("RUN WEAK")
                 let pid2 = hackWeakThreads ? ns.run("/hacking/weaken.js", hackWeakThreads, target) : pid1
                 if (ns.getRunningScript(pid1) == null || ns.getRunningScript(pid2) == null) {
-                    ns.kill(pid1);
-                    ns.kill(pid2);
+                    ns.kill(pid1)
+                    ns.kill(pid2)
                     ns.print("out of Memory")
-                    continue;
+                    continue
                 }
                 await ns.sleep(Math.max(hackTime, hackWeakThreads ? hackWeakTime : 0))
                 while (ns.getRunningScript(pid1) != null || ns.getRunningScript(pid2) != null) {
@@ -90,7 +89,7 @@ export async function main(ns) {
                     await ns.sleep(100)
                 }
                 moneyCur = ns.getServerMoneyAvailable(target)
-                securityCur = ns.getServerSecurityLevel(target);
+                securityCur = ns.getServerSecurityLevel(target)
                 ns.print(
                     "\nmoney         " + ((moneyCur / moneyMax) * 100).toFixed(2) + "%" +
                     "\nsecurity      " + (securityMin).toFixed(2) + " + " + (securityCur - securityMin).toFixed(2) + " = " + securityCur.toFixed(2) +
@@ -130,10 +129,10 @@ export async function main(ns) {
                 ns.print("RUN WEAK")
                 let pid2 = growWeakThreads ? ns.run("/hacking/weaken.js", growWeakThreads, target) : pid1
                 if (ns.getRunningScript(pid1) == null || ns.getRunningScript(pid2) == null) {
-                    ns.kill(pid1);
-                    ns.kill(pid2);
+                    ns.kill(pid1)
+                    ns.kill(pid2)
                     ns.print("out of Memory")
-                    continue;
+                    continue
                 }
                 await ns.sleep(Math.max(growTime, growWeakThreads ? growWeakTime : 0))
                 while (ns.getRunningScript(pid1) != null || ns.getRunningScript(pid2) != null) {
@@ -141,7 +140,7 @@ export async function main(ns) {
                     await ns.sleep(100)
                 }
                 moneyCur = ns.getServerMoneyAvailable(target)
-                securityCur = ns.getServerSecurityLevel(target);
+                securityCur = ns.getServerSecurityLevel(target)
                 ns.print(
                     "\nmoney         " + ((moneyCur / moneyMax) * 100).toFixed(2) + "%" +
                     "\nsecurity      " + (securityMin).toFixed(2) + " + " + (securityCur - securityMin).toFixed(2) + " = " + securityCur.toFixed(2) +
@@ -152,10 +151,10 @@ export async function main(ns) {
         } else {
             ns.print("undesirable state")
             let tempGrowThreads
-            if (moneyCur == 0){
+            if (moneyCur == 0) {
                 tempGrowThreads = 1000
-            } else{
-                tempGrowThreads = Math.min(Math.ceil(ns.growthAnalyze(target, moneyMax / moneyCur)),10000)
+            } else {
+                tempGrowThreads = Math.min(Math.ceil(ns.growthAnalyze(target, moneyMax / moneyCur)), 10000)
             }
             let tempGrowTime = ns.getGrowTime(target)
             let tempGrowSecurity = ns.growthAnalyzeSecurity(tempGrowThreads, target, 1) + securityCur - securityMin
@@ -168,10 +167,10 @@ export async function main(ns) {
             ns.print("RUN WEAK AFTER BUG")
             let pid2 = tempGrowWeakThreads ? ns.run("/hacking/weaken.js", tempGrowWeakThreads, target) : pid1
             if (ns.getRunningScript(pid1) == null || ns.getRunningScript(pid2) == null) {
-                ns.kill(pid1);
-                ns.kill(pid2);
+                ns.kill(pid1)
+                ns.kill(pid2)
                 ns.print("out of Memory")
-                continue;
+                continue
             }
             await ns.sleep(Math.max(tempGrowTime, tempGrowWeakThreads ? tempGrowWeakTime : 0))
             while (ns.getRunningScript(pid1) != null || ns.getRunningScript(pid2) != null) {
@@ -208,14 +207,14 @@ export async function main(ns) {
     let instanceMemory = (2.6 * (2 * hackWeakTime - hackTime - growTime) + 1.7 * (hackTime * hackThreads) + 1.75 * (growTime * growThreads)) / hackWeakTime +
         1.75 * (hackWeakThreads + growWeakThreads)
 
-    let availableMemory = ns.getServerMaxRam(ns.getHostname()) - ns.getServerUsedRam(ns.getHostname()) * 0.8;
+    let availableMemory = ns.getServerMaxRam(ns.getHostname()) - ns.getServerUsedRam(ns.getHostname()) * 0.8
     let instances = Math.floor(availableMemory / instanceMemory)
 
     let delay
 
     let temp = growWeakTime / instances
     for (let i = 1; growWeakTime / i > Math.max(temp, 8000); i++) {
-        delay = growWeakTime / i / 4;
+        delay = growWeakTime / i / 4
     }
     ns.print("instance memory: " + instanceMemory)
     ns.print("instances:       " + instances)
@@ -223,7 +222,7 @@ export async function main(ns) {
     ns.print("delay:           " + ns.tFormat(delay, true))
 
 
-    let loop = 0;
+    let loop = 0
     let oldSkill = ns.getPlayer().hacking
     needSetGrow = true
     needSetGrow = true
@@ -236,10 +235,8 @@ export async function main(ns) {
         await debugPrint(ns, delay, target)
     }
 
-    let hackPid = 1;
-    let growPid = 3;
 
-    while (true) {
+    for(;;) {
         let newSkill = ns.getPlayer().hacking
         if (newSkill > oldSkill) {
             needSetGrow = true
@@ -263,7 +260,7 @@ export async function main(ns) {
                 instances = Math.floor(availableMemory / instanceMemory)
                 let temp = growWeakTime / instances
                 for (let i = 1; growWeakTime / i > Math.max(temp, 8000); i++) {
-                    delay = growWeakTime / i / 4;
+                    delay = growWeakTime / i / 4
                 }
             }
         }
@@ -271,7 +268,7 @@ export async function main(ns) {
             moneyCur = ns.getServerMoneyAvailable(target)
             securityCur = ns.getServerSecurityLevel(target)
             if (moneyMax == moneyCur && securityMin == securityCur) {
-                hackThreads = Math.floor(ns.hackAnalyzeThreads(target, moneyMax * hackProc));
+                hackThreads = Math.floor(ns.hackAnalyzeThreads(target, moneyMax * hackProc))
                 hackTime = ns.getHackTime(target)
                 hackSecurity = ns.hackAnalyzeSecurity(hackThreads, target)
 
@@ -284,7 +281,7 @@ export async function main(ns) {
                 instances = Math.floor(availableMemory / instanceMemory)
                 let temp = growWeakTime / instances
                 for (let i = 1; growWeakTime / i > Math.max(temp, 8000); i++) {
-                    delay = growWeakTime / i / 4;
+                    delay = growWeakTime / i / 4
                 }
             }
         }
@@ -328,9 +325,9 @@ export async function main(ns) {
 export async function debugPrint(ns, sleepOffset, target) {
     await ns.sleep(sleepOffset * .5)
     let moneyMax = ns.getServerMaxMoney(target)
-    let securityMin = ns.getServerMinSecurityLevel(target);
+    let securityMin = ns.getServerMinSecurityLevel(target)
     let moneyCur = ns.getServerMoneyAvailable(target)
-    let securityCur = ns.getServerSecurityLevel(target);
+    let securityCur = ns.getServerSecurityLevel(target)
     let message = (moneyCur / moneyMax * 100).toFixed(0).padStart(3) + " " + (securityCur - securityMin).toFixed(2) + "|"
     await ns.sleep(sleepOffset * .5)
     return message

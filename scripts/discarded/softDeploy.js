@@ -1,6 +1,6 @@
 /** @param {import("../..").NS } ns */
 export async function main(ns) {
-    while (true) {
+    for(;;) {
         ns.run("autoNuke.js")
         let target = ns.args[0]
         await ns.scp("hack.js", target)
