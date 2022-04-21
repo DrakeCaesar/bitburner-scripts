@@ -56,14 +56,12 @@ export function getGrow(ns, target, proc) {
 
 /** @param {import("../..").NS } ns */
 export async function getLoopParams(ns, target, proc) {
-    let grow
-    let hack
+    let grow = getGrow(ns, target, proc)
+    let hack = getHack(ns, target, proc)
     let actionPid
     let weakenPid
-    do {
+    while (grow == null || hack == null) {
         serverStats(ns, target)
-        grow ??= getGrow(ns, target, proc)
-        hack ??= getHack(ns, target, proc)
         if (grow != null && hack == null) {
             actionPid = ns.run("/hacking/grow.js", grow.threads, target)
             weakenPid = ns.run("/hacking/weaken.js", grow.weakenThreads, target)
@@ -93,7 +91,9 @@ export async function getLoopParams(ns, target, proc) {
         ) {
             await ns.sleep(100)
         }
-    } while (grow == null || hack == null)
+        grow ??= getGrow(ns, target, proc)
+        hack ??= getHack(ns, target, proc)
+    }
     ns.tprint("finished")
 
     return { grow: grow, hack: hack }
