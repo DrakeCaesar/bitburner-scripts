@@ -1,6 +1,6 @@
 /** @param {import("..").NS } ns */
 export function main(ns) {
-    let knownServers = new Array
+    let knownServers = new Array()
     crawl(ns, knownServers)
     ns.tprint("servers: " + knownServers.length)
     ns.tprint(knownServers)

@@ -9,8 +9,16 @@ export async function main(ns) {
         ns.tprint("cost:  " + cost)
         ns.tprint("money: " + money)
 
-        if ((cost < money && cost > money / 2) || i == ns.getPurchasedServerMaxRam()) {
-            ns.tprint("RAM: " + i + " cost: " + cost.toString().replace(/\B(?=(\d{3})+(?!\d))/g, " "))
+        if (
+            (cost < money && cost > money / 2) ||
+            i == ns.getPurchasedServerMaxRam()
+        ) {
+            ns.tprint(
+                "RAM: " +
+                    i +
+                    " cost: " +
+                    cost.toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ")
+            )
             let current = ns.getServerMaxRam(target)
             let future = i
             ns.tprint("c: " + current)
@@ -24,7 +32,5 @@ export async function main(ns) {
             }
         }
         //ns.tprint("issue")
-
     }
-
 }

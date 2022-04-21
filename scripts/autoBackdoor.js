@@ -1,11 +1,9 @@
 /** @param {import("..").NS } ns */
 export function main(ns) {
     let knownServers = {
-        "home": []
+        home: [],
     }
     crawl(ns, knownServers)
-
-
 
     var sortedItems = []
     for (const key of Object.keys(knownServers)) {
@@ -14,7 +12,6 @@ export function main(ns) {
         if (serverLevel <= playerLevel) {
             sortedItems.push([key, ns.getServerRequiredHackingLevel(key)])
         }
-
     }
     sortedItems.sort(function (first, second) {
         return first[1] - second[1]
@@ -34,14 +31,18 @@ export function main(ns) {
     }
     ns.tprint(bigConnectString)
     navigator.clipboard.writeText(bigConnectString)
-
 }
 
 /** @param {import("..").NS } ns */
-export function crawl(ns, knownServers, hostname, depth = 0, path = new Array) {
+export function crawl(
+    ns,
+    knownServers,
+    hostname,
+    depth = 0,
+    path = new Array()
+) {
     let servers = ns.scan(hostname)
     for (const element of servers) {
-
         if (!(element in knownServers)) {
             knownServers[element] = path.concat([element])
             crawl(ns, knownServers, element, depth + 1, path.concat([element]))

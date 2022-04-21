@@ -6,12 +6,28 @@ export async function main(ns) {
     var moneyT = moneyMax * 0.75
     var securityT = securityMin + 5
 
-    for(;;) {
+    for (;;) {
         let security = ns.getServerSecurityLevel(target)
         let money = ns.getServerMoneyAvailable(target)
-        let offset = String(Math.round(Math.max(money / moneyMax, security / securityT))).length
-        ns.print("money:    " + String(Math.round(money / moneyMax * 100)).padStart(offset, " ") + "%")
-        ns.print("security: " + String(Math.round(security / securityT * 100)).padStart(offset, " ") + "%")
+        let offset = String(
+            Math.round(Math.max(money / moneyMax, security / securityT))
+        ).length
+        ns.print(
+            "money:    " +
+                String(Math.round((money / moneyMax) * 100)).padStart(
+                    offset,
+                    " "
+                ) +
+                "%"
+        )
+        ns.print(
+            "security: " +
+                String(Math.round((security / securityT) * 100)).padStart(
+                    offset,
+                    " "
+                ) +
+                "%"
+        )
         if (security > securityT) {
             ns.print("action:   weaken")
             await ns.weaken(target)

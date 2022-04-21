@@ -12,11 +12,15 @@ export async function main(ns) {
     let pidW = 0
     let weaken = 0
 
-    for(;;) {
+    for (;;) {
         await ns.sleep(100)
         let moneyCur = ns.getServerMoneyAvailable(target)
-        let securityCur = (ns.getServerSecurityLevel(target) - securityMin).toFixed(2)
-        let moneyP = String(Math.floor(moneyCur / moneyMax * 100) + "%").padStart(4)
+        let securityCur = (
+            ns.getServerSecurityLevel(target) - securityMin
+        ).toFixed(2)
+        let moneyP = String(
+            Math.floor((moneyCur / moneyMax) * 100) + "%"
+        ).padStart(4)
         let ramT = 1
         let current = ns.getHostname()
         let ramC = ns.getServerUsedRam(current) / ns.getServerMaxRam(current)
@@ -27,24 +31,30 @@ export async function main(ns) {
             let runtime
 
             if (ns.getRunningScript(pidW) == null && securityCur > securityT) {
-                for (threads = 1; securityCur > ns.weakenAnalyze(threads); threads++);
+                for (
+                    threads = 1;
+                    securityCur > ns.weakenAnalyze(threads);
+                    threads++
+                );
                 action = "weak"
                 runtime = ns.getWeakenTime(target)
                 pidW = ns.run("weaken.js", threads, target)
                 weaken = 1
-
             } else if (moneyCur == moneyMax && securityCur < securityT * 2) {
-                threads = Math.ceil(ns.hackAnalyzeThreads(target, moneyMax * mF))
+                threads = Math.ceil(
+                    ns.hackAnalyzeThreads(target, moneyMax * mF)
+                )
                 action = "hack"
                 runtime = ns.getHackTime(target)
                 pid = ns.run("hack.js", threads, target)
-
             } else if (moneyCur < moneyMax && securityCur < securityT * 2) {
                 //threads = Math.ceil(ns.growthAnalyze(target,1.0/(1.0-mF)))
                 if (moneyCur < moneyMax * 0.01) {
                     threads = 1000
                 } else {
-                    threads = Math.ceil(ns.growthAnalyze(target, moneyMax / moneyCur))
+                    threads = Math.ceil(
+                        ns.growthAnalyze(target, moneyMax / moneyCur)
+                    )
                 }
 
                 action = "grow"
@@ -52,22 +62,29 @@ export async function main(ns) {
                 pid = ns.run("grow.js", threads, target)
             }
 
-
-
             if (ns.getRunningScript(pid) != null || weaken == 1) {
-
                 var message =
-                    target.padEnd(18) + " | " +
-                    action + " | " +
-                    "t " + String(threads).padStart(4) + " | " +
-                    "S " + String(securityMin).padStart(3) + " + " + (securityCur).padStart(6) + " | " +
-                    "$ " + moneyP + " | " +
-                    "T " + ns.tFormat(runtime).padStart(30)
+                    target.padEnd(18) +
+                    " | " +
+                    action +
+                    " | " +
+                    "t " +
+                    String(threads).padStart(4) +
+                    " | " +
+                    "S " +
+                    String(securityMin).padStart(3) +
+                    " + " +
+                    securityCur.padStart(6) +
+                    " | " +
+                    "$ " +
+                    moneyP +
+                    " | " +
+                    "T " +
+                    ns.tFormat(runtime).padStart(30)
 
                 //ns.tprint(message)
                 ns.print(message)
                 weaken = 0
-
             } else {
                 //ns.print("failed")
             }

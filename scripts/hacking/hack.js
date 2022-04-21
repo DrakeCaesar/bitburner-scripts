@@ -1,4 +1,4 @@
-/** @param {import("../..").NS } ns 
+/** @param {import("../..").NS } ns
  * Execute hack after a timeout. */
 export async function main(ns) {
     //args[0: target, 1: timeout]
@@ -8,13 +8,16 @@ export async function main(ns) {
         await ns.sleep(ns.args[1])
     }
 
-    if (ns.getServerSecurityLevel(ns.args[0]) > ns.getServerMinSecurityLevel(ns.args[0])) {
+    if (
+        ns.getServerSecurityLevel(ns.args[0]) >
+        ns.getServerMinSecurityLevel(ns.args[0])
+    ) {
         ns.print("Server security before executing hack is too high")
         return
     }
 
     await ns.hack(ns.args[0])
-    if (!await ns.hack(ns.args[0])) {
+    if (!(await ns.hack(ns.args[0]))) {
         ns.print("Server money after executing hack was zero")
     }
 }

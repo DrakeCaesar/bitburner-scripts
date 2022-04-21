@@ -9,7 +9,10 @@ export async function main(ns) {
         await ns.sleep(ns.args[1])
     }
 
-    if (ns.getServerSecurityLevel(ns.args[0]) > ns.getServerMinSecurityLevel(ns.args[0])) {
+    if (
+        ns.getServerSecurityLevel(ns.args[0]) >
+        ns.getServerMinSecurityLevel(ns.args[0])
+    ) {
         ns.print("Server security before executing grow is too high")
         return
     }

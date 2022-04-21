@@ -3,7 +3,7 @@ export async function main(ns) {
     let array = []
 
     let servers = ns.scan()
-    for(;;) {
+    for (;;) {
         var hostname = servers[Math.floor(Math.random() * servers.length)]
         if (!array.includes(hostname)) {
             array.push(hostname)
@@ -13,6 +13,5 @@ export async function main(ns) {
 
         ns.tprint(array)
         ns.tprint(array.length)
-
     }
 }

@@ -1,6 +1,6 @@
 /** @param {import("..").NS } ns */
 export function main(ns) {
-    let knownServers = new Array
+    let knownServers = new Array()
     crawl(ns, knownServers)
     knownServers.sort()
     let paddingServers = 0
@@ -11,9 +11,11 @@ export function main(ns) {
         if (serverLevel <= playerLevel) {
             paddingServers = Math.max(key.length, paddingServers)
 
-            paddingLevels = Math.max(String(ns.getServerRequiredHackingLevel(key)).length, paddingLevels)
+            paddingLevels = Math.max(
+                String(ns.getServerRequiredHackingLevel(key)).length,
+                paddingLevels
+            )
         }
-
     }
 
     var items = []
@@ -51,7 +53,11 @@ export function main(ns) {
             ns.sqlinject(server)
             ++numPortsOpen
         }
-        if (ns.fileExists("NUKE.exe", "home") && level <= player.hacking && ns.getServerNumPortsRequired(server) <= numPortsOpen) {
+        if (
+            ns.fileExists("NUKE.exe", "home") &&
+            level <= player.hacking &&
+            ns.getServerNumPortsRequired(server) <= numPortsOpen
+        ) {
             /*
             ns.tprint(
                 "server: " + 
@@ -69,9 +75,7 @@ export function main(ns) {
             //ns.tprint(server +"\t level" + level + " is lower than player hacking level of " + player.hacking + ", executing nuke")
             ns.nuke(server)
         }
-
     }
-
 
     //ns.tprint(items);
 }

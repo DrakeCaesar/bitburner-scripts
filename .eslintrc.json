@@ -7,24 +7,12 @@
     "parserOptions": {
         "ecmaVersion": "latest",
         "sourceType": "module",
-        "no-constant-condition" : false
+        "no-constant-condition": false
     },
     "rules": {
-        "indent": [
-            "error",
-            4
-        ],
-        "linebreak-style": [
-            "error",
-            "windows"
-        ],
-        "quotes": [
-            "error",
-            "double"
-        ],
-        "semi": [
-            "error",
-            "never"
-        ]
+        "indent": ["error", 4],
+        "linebreak-style": ["error", "windows"],
+        "quotes": ["error", "double"],
+        "semi": ["error", "never"]
     }
 }

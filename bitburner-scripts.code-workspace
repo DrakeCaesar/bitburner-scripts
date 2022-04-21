@@ -1,34 +1,37 @@
 {
-	"folders": [{
-		"path": "./"
-	}],
-	"settings": {
-		"bitburner.fileWatcher.enable": true,
-		"bitburner.showPushSuccessNotification": true,
-		"bitburner.showFileWatcherEnabledNotification": true,
-		"bitburner.scriptRoot": "./scripts/",
-		"cSpell.words": [
-			"avmnite-02h",
-			"bitburner",
-			"brutessh",
-			"CSEC",
-			"darkweb",
-			"ftpcrack",
-			"httpworm",
-			"killall",
-			"linebreak",
-			"Mult",
-			"n00dles",
-			"paddinglevels",
-			"relaysmtp",
-			"run4theh111z",
-			"sqlinject",
-			"tprint",
-			"tprintf"
-		],
-		"gitlens.currentLine.enabled": false,
-		"gitlens.codeLens.authors.enabled": false,
-		"gitlens.codeLens.recentChange.enabled": false,
-		"eslint.lintTask.enable": true
-	}
+    "folders": [
+        {
+            "path": "./"
+        }
+    ],
+    "settings": {
+        "bitburner.fileWatcher.enable": true,
+        "bitburner.showPushSuccessNotification": true,
+        "bitburner.showFileWatcherEnabledNotification": true,
+        "bitburner.scriptRoot": "./scripts/",
+        "cSpell.words": [
+            "avmnite-02h",
+            "bitburner",
+            "brutessh",
+            "CSEC",
+            "darkweb",
+            "ftpcrack",
+            "httpworm",
+            "killall",
+            "linebreak",
+            "Mult",
+            "n00dles",
+            "paddinglevels",
+            "relaysmtp",
+            "run4theh111z",
+            "sqlinject",
+            "tprint",
+            "tprintf"
+        ],
+        "cSpell.ignorePaths": ["index.d.ts"],
+        "gitlens.currentLine.enabled": false,
+        "gitlens.codeLens.authors.enabled": false,
+        "gitlens.codeLens.recentChange.enabled": false,
+        "eslint.lintTask.enable": true
+    }
 }

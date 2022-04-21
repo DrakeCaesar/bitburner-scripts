@@ -1,8 +1,12 @@
 /** @param {import("../..").NS } ns */
 export async function main(ns) {
-    for(;;) {
+    for (;;) {
         let p = ns.getPlayer()
-        if (p.strength < p.defense && p.strength < p.dexterity && p.strength < p.agility) {
+        if (
+            p.strength < p.defense &&
+            p.strength < p.dexterity &&
+            p.strength < p.agility
+        ) {
             ns.gymWorkout("powerhouse gym", "Strength")
         } else if (p.defense < p.dexterity && p.defense < p.agility) {
             ns.gymWorkout("powerhouse gym", "Defense")
