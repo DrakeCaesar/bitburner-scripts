@@ -10,9 +10,9 @@
         "no-constant-condition": false
     },
     "rules": {
-        "indent": ["error", 4],
-        "linebreak-style": ["error", "windows"],
-        "quotes": ["error", "double"],
-        "semi": ["error", "never"]
+        "indent": [4],
+        "linebreak-style": ["linux"],
+        "quotes": ["double"],
+        "semi": ["never"]
     }
 }
