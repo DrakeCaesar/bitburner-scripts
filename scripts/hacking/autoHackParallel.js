@@ -24,7 +24,6 @@ export async function main(ns) {
 
     let moneyCur = ns.getServerMoneyAvailable(target)
     let securityCur = ns.getServerSecurityLevel(target)
-
     ns.print("start")
     ns.print(
         "\nmoney         " +

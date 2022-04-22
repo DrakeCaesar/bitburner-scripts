@@ -32,6 +32,7 @@
         "gitlens.currentLine.enabled": false,
         "gitlens.codeLens.authors.enabled": false,
         "gitlens.codeLens.recentChange.enabled": false,
-        "eslint.lintTask.enable": true
+        "eslint.lintTask.enable": true,
+        "editor.formatOnSave": true
     }
 }
