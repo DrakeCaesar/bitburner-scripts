@@ -36,7 +36,7 @@ export async function main(ns) {
     items.sort(function (first, second) {
         return first[1] - second[1]
     })
-    let i = 0
+    let i = 1
     for (const [target, level] of items) {
         let node = "node" + String(i).padStart(2, "0")
         i++

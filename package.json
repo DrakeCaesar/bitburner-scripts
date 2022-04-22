@@ -1,0 +1,29 @@
+{
+    "name": "bitburner-scripts",
+    "version": "1.0.0",
+    "description": "My own scripts for playing Bitburner",
+    "main": "index.js",
+    "scripts": {},
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/DrakeCaesar/bitburner-scripts.git"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "types": "./index.d.ts",
+    "bugs": {
+        "url": "https://github.com/DrakeCaesar/bitburner-scripts/issues"
+    },
+    "homepage": "https://github.com/DrakeCaesar/bitburner-scripts#readme",
+    "devDependencies": {
+        "eslint": "^8.13.0",
+        "prettier": "^2.6.2"
+    },
+    "prettier": {
+        "trailingComma": "es5",
+        "tabWidth": 4,
+        "semi": false,
+        "singleQuote": false
+    }
+}

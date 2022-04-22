@@ -1,7 +1,7 @@
 /** @param {import("../..").NS } ns
  * Execute grow after a timeout. */
 export async function main(ns) {
-    //args[0: target, 1: time before start, 2: ignore security]
+    //args[0: target, 1: time before start, 2: consider security]
     ns.disableLog("ALL")
 
     if (ns.args[1]) {
@@ -9,7 +9,7 @@ export async function main(ns) {
     }
 
     if (
-        ns.args[2] &&
+        ns.args[3] &&
         ns.getServerSecurityLevel(ns.args[0]) >
             ns.getServerMinSecurityLevel(ns.args[0])
     ) {

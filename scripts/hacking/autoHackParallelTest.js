@@ -3,7 +3,9 @@ export async function main(ns) {
     let target = ns.args[0]
     let proc = 0.9
     let params = await getLoopParams(ns, target, proc)
-    ns.tprint(params)
+    ns.tprint(JSON.stringify(params))
+
+    //for (;;) {}
 }
 
 /** @param {import("../..").NS } ns */
@@ -55,13 +57,24 @@ export function getGrow(ns, target, proc) {
 }
 
 /** @param {import("../..").NS } ns */
+export function getMargin(ns, hack, grow) {
+    const baseRam = ns.getScriptRam("/hacking/autoHackParallelTest.js")
+    const loopRam =
+        hack.weakenTime * ns.getScriptRam("/hacking/weaken.js") * 2 +
+        hack.threads * ns.getScriptRam("/hacking/hack.js") +
+        grow.threads * ns.getScriptRam("/hacking/grow.js")
+    return (
+        (((ns.getServerMaxRam(ns.getHostname()) - baseRam) / loopRam) * 0.8) / 4
+    )
+}
+
+/** @param {import("../..").NS } ns */
 export async function getLoopParams(ns, target, proc) {
     let grow = getGrow(ns, target, proc)
     let hack = getHack(ns, target, proc)
     let actionPid
     let weakenPid
     while (grow == null || hack == null) {
-        serverStats(ns, target)
         if (grow != null && hack == null) {
             actionPid = ns.run("/hacking/grow.js", grow.threads, target)
             weakenPid = ns.run("/hacking/weaken.js", grow.weakenThreads, target)
@@ -81,7 +94,7 @@ export async function getLoopParams(ns, target, proc) {
                 ns.getServerMinSecurityLevel(target)
             let weakenThreads = Math.ceil(security / 0.05) * 1.25
             let weakenTime = ns.getWeakenTime(target)
-            actionPid = ns.run("/hacking/grow.js", threads, target, 0, true)
+            actionPid = ns.run("/hacking/grow.js", threads, target)
             weakenPid = ns.run("/hacking/weaken.js", weakenThreads, target)
             await ns.sleep(weakenTime)
         }
@@ -96,7 +109,11 @@ export async function getLoopParams(ns, target, proc) {
     }
     ns.tprint("finished")
 
-    return { grow: grow, hack: hack }
+    return {
+        grow: grow,
+        hack: hack,
+        margin: getMargin(ns, hack, grow),
+    }
 }
 
 /** @param {import("../..").NS } ns */
