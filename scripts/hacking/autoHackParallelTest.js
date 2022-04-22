@@ -74,16 +74,8 @@ export async function getLoopParams(ns, target, proc) {
     let hack = getHack(ns, target, proc)
     let actionPid
     let weakenPid
-    while (grow == null || hack == null) {
-        if (grow != null && hack == null) {
-            actionPid = ns.run("/hacking/grow.js", grow.threads, target)
-            weakenPid = ns.run("/hacking/weaken.js", grow.weakenThreads, target)
-            await ns.sleep(grow.weakenTime)
-        } else if (hack != null && grow == null) {
-            actionPid = ns.run("/hacking/hack.js", hack.threads, target)
-            weakenPid = ns.run("/hacking/weaken.js", hack.weakenThreads, target)
-            await ns.sleep(hack.weakenTime)
-        } else if (hack == null && grow == null) {
+    while (!grow || !hack) {
+        if (!hack && !grow) {
             let threads = Math.ceil(ns.growthAnalyze(target, 1 / (1 - proc)))
             if (threads == Infinity) {
                 threads = ns.getServerMaxRam(ns.getHostname()) / 4
@@ -97,17 +89,24 @@ export async function getLoopParams(ns, target, proc) {
             actionPid = ns.run("/hacking/grow.js", threads, target)
             weakenPid = ns.run("/hacking/weaken.js", weakenThreads, target)
             await ns.sleep(weakenTime)
+        } else if (grow) {
+            actionPid = ns.run("/hacking/grow.js", grow.threads, target)
+            weakenPid = ns.run("/hacking/weaken.js", grow.weakenThreads, target)
+            await ns.sleep(grow.weakenTime)
+        } else if (hack) {
+            actionPid = ns.run("/hacking/hack.js", hack.threads, target)
+            weakenPid = ns.run("/hacking/weaken.js", hack.weakenThreads, target)
+            await ns.sleep(hack.weakenTime)
         }
         while (
-            ns.getRunningScript(actionPid) != null ||
-            ns.getRunningScript(weakenPid) != null
+            ns.getRunningScript(actionPid) ||
+            ns.getRunningScript(weakenPid)
         ) {
             await ns.sleep(100)
         }
         grow ??= getGrow(ns, target, proc)
         hack ??= getHack(ns, target, proc)
     }
-    ns.tprint("finished")
 
     return {
         grow: grow,
