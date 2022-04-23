@@ -1,5 +1,6 @@
 /** @param {import("../..").NS } ns */
 export async function main(ns) {
+    ns.disableLog("ALL")
     let target = ns.args[0]
     let proc = 0.9
     let playerLevel = ns.getPlayer().hacking
@@ -8,7 +9,7 @@ export async function main(ns) {
     let updateGrow = false
     let updateInterval = false
     let params = await getLoopParams(ns, target, proc)
-    ns.tprint(JSON.stringify(params, null, 4))
+    //ns.tprint(JSON.stringify(params, null, 4))
     for (let id = 0; ; id++) {
         playerLevel = ns.getPlayer().hacking
         if (playerLevel > oldPlayerLevel) {
@@ -28,14 +29,15 @@ export async function main(ns) {
         } else if (updateGrow) {
             let temp = getGrow(ns, target, proc)
             if (temp) {
-                params.interval.hack = temp
+                params.interval.grow = temp
                 updateGrow = false
                 if (!updateHack) {
                     updateInterval = true
                 }
             }
         } else if (updateInterval) {
-            params.interval = getInterval(ns, params.hack, ns.params.grow)
+            params.interval = getInterval(ns, params.interval.hack, ns.interval.params.grow)
+            updateInterval = false
         }
 
         if (id % 4 == 1) {
@@ -134,19 +136,15 @@ export function getGrow(ns, target, proc) {
 
 /** @param {import("../..").NS } ns */
 export function getInterval(ns, hack, grow) {
-    const baseRam = ns.getScriptRam("/hacking/autoHackParallelTest.js")
+    //const baseRam = ns.getScriptRam("/hacking/autoHackParallelTest.js")
     const maxRam = ns.getServerMaxRam(ns.getHostname())
     const loopRam =
-        hack.weakenTime *
-        (ns.getScriptRam("/hacking/weaken.js") * 2 +
-            hack.threads * ns.getScriptRam("/hacking/hack.js") +
-            grow.threads * ns.getScriptRam("/hacking/grow.js"))
-    const margin =
-        hack.weakenTime /
-        Math.floor(
-            hack.weakenTime / ((((maxRam - baseRam) / loopRam) * 0.8) / 4)
-        )
-    const safeMargin = hack.weakenTime / Math.floor(hack.weakenTime / 25)
+        hack.weakenThreads * ns.getScriptRam("/hacking/weaken.js") * 2 +
+        hack.threads * ns.getScriptRam("/hacking/hack.js") +
+        grow.threads * ns.getScriptRam("/hacking/grow.js")
+    const instances = (maxRam / loopRam) * 4 * 0.5
+    const margin = hack.weakenTime / instances
+    const safeMargin = 25
     const adjustedMargin = Math.max(margin, safeMargin)
     //const adjustedMargin = margin
     return {
