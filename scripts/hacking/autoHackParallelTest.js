@@ -2,10 +2,86 @@
 export async function main(ns) {
     let target = ns.args[0]
     let proc = 0.9
+    let playerLevel = ns.getPlayer().hacking
+    let oldPlayerLevel = playerLevel
+    let updateHack = false
+    let updateGrow = false
+    let updateInterval = false
     let params = await getLoopParams(ns, target, proc)
-    ns.tprint(JSON.stringify(params))
+    ns.tprint(JSON.stringify(params, null, 4))
+    for (let id = 0; ; id++) {
+        playerLevel = ns.getPlayer().hacking
+        if (playerLevel > oldPlayerLevel) {
+            updateHack = true
+            updateGrow = true
+            oldPlayerLevel = playerLevel
+        }
+        if (updateHack) {
+            let temp = getHack(ns, target, proc)
+            if (temp) {
+                params.hack = temp
+                updateHack = false
+                if (!updateGrow) {
+                    updateInterval = true
+                }
+            }
+        } else if (updateGrow) {
+            let temp = getGrow(ns, target, proc)
+            if (temp) {
+                params.grow = temp
+                updateGrow = false
+                if (!updateHack) {
+                    updateInterval = true
+                }
+            }
+        } else if (updateInterval) {
+            params.interval = getInterval(ns, params.hack, ns.params.grow)
+        }
 
-    //for (;;) {}
+        if (id % 4 == 1) {
+            await hack(ns, target, params, id)
+        } else if (id % 4 == 3) {
+            await grow(ns, target, params, id)
+        } else {
+            await weaken(ns, target, params, id)
+        }
+    }
+}
+
+/** @param {import("../..").NS } ns */
+export async function hack(ns, target, params, id) {
+    ns.run(
+        "/hacking/hack.js",
+        params.hack.threads,
+        target,
+        params.hack.time,
+        id,
+        true
+    )
+    await ns.sleep(params.interval.adjustedMargin)
+}
+/** @param {import("../..").NS } ns */
+export async function grow(ns, target, params, id) {
+    ns.run(
+        "/hacking/grow.js",
+        params.grow.threads,
+        target,
+        params.grow.time,
+        id,
+        true
+    )
+    await ns.sleep(params.interval.adjustedMargin)
+}
+/** @param {import("../..").NS } ns */
+export async function weaken(ns, target, params, id) {
+    while (
+        ns.getServerSecurityLevel(target) !=
+        ns.getServerMinSecurityLevel(target)
+    ) {
+        await ns.sleep(params.interval.adjustedMargin / 10)
+    }
+    ns.run("/hacking/weaken.js", params.grow.threads, target, id)
+    await ns.sleep(params.interval.adjustedMargin)
 }
 
 /** @param {import("../..").NS } ns */
@@ -25,7 +101,7 @@ export function getHack(ns, target, proc) {
     const weakenThreads = Math.ceil(security / 0.05)
     return {
         threads: threads,
-        time: ns.getHackTime(target),
+        time: ns.getWeakenTime(target) - ns.getHackTime(target),
         security: security,
         weakenThreads,
         weakenTime: ns.getWeakenTime(target),
@@ -49,7 +125,7 @@ export function getGrow(ns, target, proc) {
 
     return {
         threads: threads,
-        time: ns.getGrowTime(target),
+        time: ns.getWeakenTime(target) - ns.getGrowTime(target),
         security: security,
         weakenThreads: weakenThreads,
         weakenTime: ns.getWeakenTime(target),
@@ -57,15 +133,26 @@ export function getGrow(ns, target, proc) {
 }
 
 /** @param {import("../..").NS } ns */
-export function getMargin(ns, hack, grow) {
+export function getInterval(ns, hack, grow) {
     const baseRam = ns.getScriptRam("/hacking/autoHackParallelTest.js")
+    const maxRam = ns.getServerMaxRam(ns.getHostname())
     const loopRam =
         hack.weakenTime * ns.getScriptRam("/hacking/weaken.js") * 2 +
         hack.threads * ns.getScriptRam("/hacking/hack.js") +
         grow.threads * ns.getScriptRam("/hacking/grow.js")
-    return (
-        (((ns.getServerMaxRam(ns.getHostname()) - baseRam) / loopRam) * 0.8) / 4
-    )
+    const margin =
+        hack.weakenTime /
+        Math.floor(
+            hack.weakenTime / ((((maxRam - baseRam) / loopRam) * 0.8) / 4)
+        )
+    const safeMargin = hack.weakenTime / Math.floor(hack.weakenTime / 250)
+    //const adjustedMargin = Math.max(margin, safeMargin)
+    const adjustedMargin = margin
+    return {
+        margin: margin,
+        safeMargin: safeMargin,
+        adjustedMargin: adjustedMargin,
+    }
 }
 
 /** @param {import("../..").NS } ns */
@@ -111,7 +198,7 @@ export async function getLoopParams(ns, target, proc) {
     return {
         grow: grow,
         hack: hack,
-        margin: getMargin(ns, hack, grow),
+        interval: getInterval(ns, hack, grow),
     }
 }
 
