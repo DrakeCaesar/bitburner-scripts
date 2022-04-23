@@ -142,21 +142,23 @@ export function getGrow(ns, target, proc) {
 export function getInterval(ns, hack, grow) {
     //const baseRam = ns.getScriptRam("/hacking/autoHackParallelTest.js")
     const maxRam =
-        ns.getServerMaxRam(ns.getHostname()) -
+        ns.getServerMaxRam(ns.getHostname()) * 0.67 -
         ns.getScriptRam("/hacking/autoHackParallel.js")
     const loopRam =
         hack.weakenThreads * ns.getScriptRam("/hacking/weaken.js") * 2 +
         hack.threads * ns.getScriptRam("/hacking/hack.js") +
         grow.threads * ns.getScriptRam("/hacking/grow.js")
-    const instances = (maxRam / loopRam) * 2 * 0.75
-    const margin = hack.weakenTime / instances
+    const instances = maxRam / loopRam
+    const margin = hack.weakenTime / instances / 2
     const safeMargin = 25
     const adjustedMargin = Math.max(margin, safeMargin)
+    const level = ns.getPlayer().hacking
     //const adjustedMargin = margin
     return {
         margin: margin,
         safeMargin: safeMargin,
         adjustedMargin: adjustedMargin,
+        level: level,
     }
 }
 
