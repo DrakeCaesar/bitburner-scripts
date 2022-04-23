@@ -146,7 +146,7 @@ export function getInterval(ns, hack, grow) {
         hack.weakenThreads * ns.getScriptRam("/hacking/weaken.js") * 2 +
         hack.threads * ns.getScriptRam("/hacking/hack.js") +
         grow.threads * ns.getScriptRam("/hacking/grow.js")
-    const instances = (maxRam / loopRam) * 8 * 0.8
+    const instances = (maxRam / loopRam) * 2 * 0.8
     const margin = hack.weakenTime / instances
     const safeMargin = 25
     const adjustedMargin = Math.max(margin, safeMargin)
