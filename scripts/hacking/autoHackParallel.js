@@ -141,7 +141,9 @@ export function getGrow(ns, target, proc) {
 /** @param {import("../..").NS } ns */
 export function getInterval(ns, hack, grow) {
     //const baseRam = ns.getScriptRam("/hacking/autoHackParallelTest.js")
-    const maxRam = ns.getServerMaxRam(ns.getHostname())
+    const maxRam =
+        ns.getServerMaxRam(ns.getHostname()) -
+        ns.getScriptRam("/hacking/autoHackParallel.js")
     const loopRam =
         hack.weakenThreads * ns.getScriptRam("/hacking/weaken.js") * 2 +
         hack.threads * ns.getScriptRam("/hacking/hack.js") +
