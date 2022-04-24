@@ -30,6 +30,7 @@ export async function main(ns) {
             key != "run4theh111z" &&
             key != "The-Cave" &&
             key != "n00dles" &&
+            key != "fulcrumassets" &&
             !key.includes("node")
         ) {
             items.push([key, level])
@@ -38,6 +39,10 @@ export async function main(ns) {
     items.sort(function (first, second) {
         return second[1] - first[1]
     })
+
+    ns.kill("/hacking/autoHackParallel.js", "home", "fulcrumassets")
+    ns.exec("/hacking/autoHackParallel.js", "home", 1, "fulcrumassets")
+
     let i = 0
     for (const [target, level] of items) {
         let node = "node" + String(i).padStart(2, "0")
@@ -56,7 +61,8 @@ export async function main(ns) {
                 node
         )
         //ns.killall(node)
-        ns.kill("/hacking/autoHackParallel.js", node, 1, target)
+        ns.kill("/hacking/autoHackParallel.js", node, target)
+
         await ns.scp(
             [
                 "/hacking/hack.js",
