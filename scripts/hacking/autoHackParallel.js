@@ -7,7 +7,7 @@ export async function main(ns) {
     let oldPlayerLevel = playerLevel
     let updateHack = false
     let updateGrow = false
-    let paramsString = ns.read(target + ".txt")
+    let paramsString = ns.read("/data/" + target + ".txt")
     let params
     if (paramsString) {
         //ns.tprint("test: " + paramsString)
@@ -136,7 +136,7 @@ export function getGrow(ns, target, proc) {
 /** @param {import("../..").NS } ns */
 export async function getParams(ns, target, params) {
     const maxRam =
-        ns.getServerMaxRam(ns.getHostname()) * 0.67 -
+        ns.getServerMaxRam(ns.getHostname()) * 0.75 -
         ns.getScriptRam("/hacking/autoHackParallel.js")
     const loopRam =
         params.hack.weakenThreads * ns.getScriptRam("/hacking/weaken.js") * 2 +
@@ -155,7 +155,12 @@ export async function getParams(ns, target, params) {
         safeMargin: safeMargin,
         adjustedMargin: adjustedMargin,
     }
-    await ns.write(params.target + ".txt", JSON.stringify(params))
+    await ns.write(
+        "/data/" + params.interval.target + ".txt",
+        JSON.stringify(params),
+        "w"
+    )
+    await ns.scp("/data/" + params.interval.target + ".txt", "home")
 
     return params
 }

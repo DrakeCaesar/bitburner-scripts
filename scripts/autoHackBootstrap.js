@@ -21,13 +21,14 @@ export async function main(ns) {
         let playerLevel = ns.getPlayer().hacking
         if (
             level <= playerLevel &&
-            key != "I.I.I.I" &&
+            key != "." &&
             key != "avmnite-02h" &&
             key != "CSEC" &&
             key != "darkweb" &&
             key != "home" &&
+            key != "I.I.I.I" &&
             key != "run4theh111z" &&
-            key != "." &&
+            key != "The-Cave" &&
             key != "n00dles" &&
             !key.includes("node")
         ) {
@@ -35,18 +36,17 @@ export async function main(ns) {
         }
     }
     items.sort(function (first, second) {
-        return first[1] - second[1]
+        return second[1] - first[1]
     })
     let i = 0
     for (const [target, level] of items) {
+
         let node = "node" + String(i).padStart(2, "0")
         i++
 
         if (node == "node25") {
-            return
+            break
         }
-
-        //ns.run("autoHack.js", 1, target)
 
         ns.tprint(
             "server: " +
@@ -63,10 +63,10 @@ export async function main(ns) {
                 "/hacking/grow.js",
                 "/hacking/weaken.js",
                 "/hacking/autoHackParallel.js",
+                "/data/" + target + ".txt",
             ],
             node
         )
-        //ns.killall(node)
         ns.exec("/hacking/autoHackParallel.js", node, 1, target)
     }
     ns.tprint("total hackable servers: " + items.length)
