@@ -17,7 +17,7 @@ export async function main(ns) {
         params = await getLoopParams(ns, target, proc)
     }
     //ns.tprint(JSON.stringify(params, null, 4))
-    for (let id = 0; ; id++) {
+    for (let id = Math.floor(Math.random() * 1000000000) * 4 + 1; ; id++) {
         playerLevel = ns.getPlayer().hacking
         if (playerLevel > oldPlayerLevel) {
             updateHack = true
@@ -81,7 +81,12 @@ export async function weaken(ns, target, params, id) {
     ) {
         await ns.sleep(params.interval.adjustedMargin / 10)
     }
-    ns.run("/hacking/weaken.js", params.grow.threads, target, id)
+    ns.run(
+        "/hacking/weaken.js",
+        id % 4 == 2 ? params.hack.threads : params.grow.threads,
+        target,
+        id
+    )
     await ns.sleep(params.interval.adjustedMargin)
 }
 
@@ -136,7 +141,7 @@ export function getGrow(ns, target, proc) {
 /** @param {import("../..").NS } ns */
 export async function getParams(ns, target, params) {
     const maxRam =
-        ns.getServerMaxRam(ns.getHostname()) * 1.25 -
+        ns.getServerMaxRam(ns.getHostname()) * 1 -
         ns.getScriptRam("/hacking/autoHackParallel.js")
     const loopRam =
         params.hack.weakenThreads * ns.getScriptRam("/hacking/weaken.js") +
