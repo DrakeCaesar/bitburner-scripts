@@ -40,7 +40,6 @@ export async function main(ns) {
     })
     let i = 0
     for (const [target, level] of items) {
-
         let node = "node" + String(i).padStart(2, "0")
         i++
 
@@ -56,7 +55,7 @@ export async function main(ns) {
                 "  " +
                 node
         )
-        ns.killall(node)
+        //ns.killall(node)
         await ns.scp(
             [
                 "/hacking/hack.js",
@@ -67,7 +66,7 @@ export async function main(ns) {
             ],
             node
         )
-        ns.exec("/hacking/autoHackParallel.js", node, 1, target)
+        //ns.exec("/hacking/autoHackParallel.js", node, 1, target)
     }
     ns.tprint("total hackable servers: " + items.length)
 }
