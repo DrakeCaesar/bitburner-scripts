@@ -1,0 +1,22 @@
+buy BruteSSH.exe ;
+buy FTPCrack.exe ;
+buy relaySMTP.exe ;
+buy HTTPWorm.exe ;
+buy SQLInject.exe ;
+buy ServerProfiler.exe;
+buy DeepscanV1.exe ;
+buy DeepscanV2.exe ;
+buy AutoLink.exe;
+buy Formulas.exe ;
+
+home ; run find.js CSEC ; backdoor 
+home ; run find.js avmnite-02h ; backdoor  
+home ; run find.js run4theh111z ; backdoor  
+
+home ; run find.js .  ; backdoor 
+home ; run find.js I.I.I.I ; backdoor ;
+home ; run find.js The-Cave ; backdoor ;
+
+  
+
+

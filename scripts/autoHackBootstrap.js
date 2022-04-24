@@ -56,6 +56,7 @@ export async function main(ns) {
                 node
         )
         //ns.killall(node)
+        ns.kill("/hacking/autoHackParallel.js", node, 1, target)
         await ns.scp(
             [
                 "/hacking/hack.js",
@@ -66,7 +67,7 @@ export async function main(ns) {
             ],
             node
         )
-        //ns.exec("/hacking/autoHackParallel.js", node, 1, target)
+        ns.exec("/hacking/autoHackParallel.js", node, 1, target)
     }
     ns.tprint("total hackable servers: " + items.length)
 }
