@@ -5,7 +5,7 @@ export function main(ns) {
     }
     crawl(ns, knownServers)
     if (ns.args.length == 0) {
-        ns.tprintf(JSON.stringify(knownServers, null, 2))
+        ns.tprintf(JSON.stringify(knownServers, null, 4))
         ns.tprint("servers: " + Object.keys(knownServers).length)
     } else {
         var keys = Object.keys(knownServers)

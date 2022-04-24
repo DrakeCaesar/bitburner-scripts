@@ -163,7 +163,7 @@ export async function getParams(ns, target, params) {
     }
     await ns.write(
         "/data/" + params.interval.target + ".txt",
-        JSON.stringify(params),
+        JSON.stringify(params, null, 4),
         "w"
     )
     await ns.scp("/data/" + params.interval.target + ".txt", "home")
