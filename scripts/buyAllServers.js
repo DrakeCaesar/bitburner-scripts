@@ -6,6 +6,7 @@ export async function main(ns) {
     ns.tprint("cost: " + cost)
     ns.tprint("# to buy: " + count)
     let future = ns.getPurchasedServerMaxRam()
+    ns.tprint("cost: " + ns.nFormat(cost, "($ 0.000 a)"))
     for (let i = 0; i < 25; ++i) {
         // eslint-disable-next-line quotes
         let target = "node" + String(i).padStart(2, "0")
@@ -23,13 +24,13 @@ export async function main(ns) {
                     future
             )
             count--
-            //ns.killall(target)
-            //ns.deleteServer(target)
-            //ns.purchaseServer(target, future)
+            ns.killall(target)
+            ns.deleteServer(target)
+            ns.purchaseServer(target, future)
         } else if (!ns.serverExists(target) && count > 0) {
             ns.tprint(target + ": to buy")
             count--
-            //ns.purchaseServer(target, future)
+            ns.purchaseServer(target, future)
         }
     }
 }

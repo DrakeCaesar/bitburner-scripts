@@ -1,5 +1,6 @@
 /** @param {import("..").NS } ns */
 export async function main(ns) {
+    ns.disableLog("ALL")
     let knownServers = new Array()
     crawl(ns, knownServers)
     knownServers.sort()

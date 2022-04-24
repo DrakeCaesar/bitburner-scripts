@@ -27,7 +27,7 @@ export async function main(ns) {
                 //ns.killall(target)
                 //ns.deleteServer(target)
                 //ns.purchaseServer(target, future)
-                //ns.tprint("purchased " + future)
+                //ns.tprint("purchased " + ns.nFormat(future, "0.0000b"))
                 return
             }
         }

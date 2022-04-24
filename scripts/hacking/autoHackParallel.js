@@ -7,8 +7,15 @@ export async function main(ns) {
     let oldPlayerLevel = playerLevel
     let updateHack = false
     let updateGrow = false
-    let updateInterval = false
-    let params = await getLoopParams(ns, target, proc)
+    let paramsString = ns.read(target + ".txt")
+    let params
+    if (paramsString) {
+        //ns.tprint("test: " + paramsString)
+        params = JSON.parse(paramsString)
+        oldPlayerLevel = params.oldPlayerLevel
+    } else {
+        params = await getLoopParams(ns, target, proc)
+    }
     //ns.tprint(JSON.stringify(params, null, 4))
     for (let id = 0; ; id++) {
         playerLevel = ns.getPlayer().hacking
@@ -17,31 +24,19 @@ export async function main(ns) {
             updateGrow = true
             oldPlayerLevel = playerLevel
         }
-        if (updateHack) {
-            let temp = getHack(ns, target, proc)
-            if (temp) {
-                params.interval.hack = temp
+        if (updateHack || updateGrow) {
+            let tempHack = getHack(ns, target, proc)
+            let tempGrow = getGrow(ns, target, proc)
+            if (tempHack) {
+                params.hack = tempHack
+                params = await getParams(ns, target, params)
                 updateHack = false
-                if (!updateGrow) {
-                    updateInterval = true
-                }
             }
-        } else if (updateGrow) {
-            let temp = getGrow(ns, target, proc)
-            if (temp) {
-                params.interval.grow = temp
+            if (tempGrow) {
+                params.grow = tempGrow
+                params = await getParams(ns, target, params)
                 updateGrow = false
-                if (!updateHack) {
-                    updateInterval = true
-                }
             }
-        } else if (updateInterval) {
-            params.interval = getInterval(
-                ns,
-                params.interval.hack,
-                ns.interval.params.grow
-            )
-            updateInterval = false
         }
 
         if (id % 4 == 1) {
@@ -139,27 +134,30 @@ export function getGrow(ns, target, proc) {
 }
 
 /** @param {import("../..").NS } ns */
-export function getInterval(ns, hack, grow) {
-    //const baseRam = ns.getScriptRam("/hacking/autoHackParallelTest.js")
+export async function getParams(ns, target, params) {
     const maxRam =
         ns.getServerMaxRam(ns.getHostname()) * 0.67 -
         ns.getScriptRam("/hacking/autoHackParallel.js")
     const loopRam =
-        hack.weakenThreads * ns.getScriptRam("/hacking/weaken.js") * 2 +
-        hack.threads * ns.getScriptRam("/hacking/hack.js") +
-        grow.threads * ns.getScriptRam("/hacking/grow.js")
+        params.hack.weakenThreads * ns.getScriptRam("/hacking/weaken.js") * 2 +
+        params.hack.threads * ns.getScriptRam("/hacking/hack.js") +
+        params.grow.threads * ns.getScriptRam("/hacking/grow.js")
     const instances = maxRam / loopRam
-    const margin = hack.weakenTime / instances / 2
+    const margin = params.hack.weakenTime / instances / 2
     const safeMargin = 25
     const adjustedMargin = Math.max(margin, safeMargin)
     const level = ns.getPlayer().hacking
     //const adjustedMargin = margin
-    return {
+    params.interval = {
+        target: target,
+        level: level,
         margin: margin,
         safeMargin: safeMargin,
         adjustedMargin: adjustedMargin,
-        level: level,
     }
+    await ns.write(params.target + ".txt", JSON.stringify(params))
+
+    return params
 }
 
 /** @param {import("../..").NS } ns */
@@ -202,11 +200,7 @@ export async function getLoopParams(ns, target, proc) {
         hack ??= getHack(ns, target, proc)
     }
 
-    return {
-        grow: grow,
-        hack: hack,
-        interval: getInterval(ns, hack, grow),
-    }
+    return await getParams(ns, target, { hack: hack, grow: grow })
 }
 
 /** @param {import("../..").NS } ns */
