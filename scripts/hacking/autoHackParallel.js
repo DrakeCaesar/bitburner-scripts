@@ -1,6 +1,6 @@
 /** @param {import("../..").NS } ns */
 export async function main(ns) {
-    ns.disableLog("ALL")
+    //ns.disableLog("ALL")
     let target = ns.args[0]
     let proc = 0.6
     let playerLevel = ns.getPlayer().hacking
@@ -93,6 +93,10 @@ export async function weaken(ns, target, params, id) {
 
 /** @param {import("../..").NS } ns */
 export function getHack(ns, target, proc) {
+    const maxRam =
+        (ns.getServerMaxRam(ns.getHostname()) -
+            ns.getScriptRam("/hacking/autoHackParallel.js")) *
+        1
     let server = ns.getServer(target)
 
     if (
@@ -101,11 +105,16 @@ export function getHack(ns, target, proc) {
     ) {
         return null
     }
-    const threads = Math.floor(
-        ns.hackAnalyzeThreads(target, server.moneyMax * proc)
+    const threads = Math.min(
+        Math.floor(ns.hackAnalyzeThreads(target, server.moneyMax * proc)),
+        Math.floor(maxRam / 4)
     )
+
     const security = threads * 0.002
-    const weakenThreads = Math.ceil(security / 0.05)
+    const weakenThreads = Math.min(
+        Math.ceil(security / 0.05),
+        Math.floor(maxRam / 4)
+    )
     return {
         threads: threads,
         time: ns.getWeakenTime(target) - ns.getHackTime(target),
@@ -117,6 +126,11 @@ export function getHack(ns, target, proc) {
 
 /** @param {import("../..").NS } ns */
 export function getGrow(ns, target, proc) {
+    const maxRam =
+        (ns.getServerMaxRam(ns.getHostname()) -
+            ns.getScriptRam("/hacking/autoHackParallel.js")) *
+        1
+
     let server = ns.getServer(target)
 
     if (
@@ -126,9 +140,15 @@ export function getGrow(ns, target, proc) {
     ) {
         return null
     }
-    const threads = Math.ceil(ns.growthAnalyze(target, 1 / (1 - proc)))
+    const threads = Math.min(
+        Math.ceil(ns.growthAnalyze(target, 1 / (1 - proc))),
+        Math.ceil(maxRam / 4)
+    )
     const security = threads * 0.004
-    const weakenThreads = Math.ceil(security / 0.05)
+    const weakenThreads = Math.min(
+        Math.ceil(security / 0.05),
+        Math.ceil(maxRam / 4)
+    )
 
     return {
         threads: threads,
@@ -142,8 +162,9 @@ export function getGrow(ns, target, proc) {
 /** @param {import("../..").NS } ns */
 export async function getParams(ns, target, params) {
     const maxRam =
-        ns.getServerMaxRam(ns.getHostname()) * 1 -
-        ns.getScriptRam("/hacking/autoHackParallel.js")
+        (ns.getServerMaxRam(ns.getHostname()) -
+            ns.getScriptRam("/hacking/autoHackParallel.js")) *
+        1
     const loopRam =
         params.hack.weakenThreads * ns.getScriptRam("/hacking/weaken.js") +
         params.grow.weakenThreads * ns.getScriptRam("/hacking/weaken.js") +
@@ -174,6 +195,10 @@ export async function getParams(ns, target, params) {
 
 /** @param {import("../..").NS } ns */
 export async function getLoopParams(ns, target, proc) {
+    const maxRam =
+        (ns.getServerMaxRam(ns.getHostname()) -
+            ns.getScriptRam("/hacking/autoHackParallel.js")) *
+        1
     let grow = getGrow(ns, target, proc)
     let hack = getHack(ns, target, proc)
     let actionPid
@@ -182,7 +207,7 @@ export async function getLoopParams(ns, target, proc) {
         if (!hack && !grow) {
             let threads = Math.min(
                 Math.ceil(ns.growthAnalyze(target, 1 / (1 - proc))),
-                Math.ceil(ns.getServerMaxRam(ns.getHostname()) / 2)
+                Math.floor(maxRam / 4)
             )
             /*
             let security =
@@ -194,9 +219,7 @@ export async function getLoopParams(ns, target, proc) {
                 Math.ceil(ns.getServerMaxRam(ns.getHostname()) / 4)
             )
             */
-            let weakenThreads = Math.ceil(
-                ns.getServerMaxRam(ns.getHostname()) / 2
-            )
+            let weakenThreads = Math.floor(maxRam / 4)
             let weakenTime = ns.getWeakenTime(target)
             actionPid = ns.run("/hacking/grow.js", threads, target)
             weakenPid = ns.run("/hacking/weaken.js", weakenThreads, target)
