@@ -1,6 +1,6 @@
 /** @param {import("..").NS } ns */
 export async function main(ns) {
-    ns.disableLog("ALL")
+    //ns.disableLog("ALL")
     let knownServers = new Array()
     crawl(ns, knownServers)
     knownServers.sort()
@@ -39,9 +39,9 @@ export async function main(ns) {
     items.sort(function (first, second) {
         return second[1] - first[1]
     })
-
+    //await ns.killall()
     ns.kill("/hacking/autoHackParallel.js", "home", "fulcrumassets")
-    ns.exec("/hacking/autoHackParallel.js", "home", 1, "fulcrumassets")
+    ns.run("/hacking/autoHackParallel.js", 1, "fulcrumassets")
 
     let i = 0
     for (const [target, level] of items) {
@@ -62,6 +62,11 @@ export async function main(ns) {
         )
         //ns.killall(node)
         ns.kill("/hacking/autoHackParallel.js", node, target)
+
+        const list = ns.ls(node, "/data/")
+        for (const file of list) {
+            ns.rm(file, node)
+        }
 
         await ns.scp(
             [

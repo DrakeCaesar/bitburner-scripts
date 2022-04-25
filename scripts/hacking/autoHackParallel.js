@@ -17,7 +17,8 @@ export async function main(ns) {
         params = await getLoopParams(ns, target, proc)
     }
     //ns.tprint(JSON.stringify(params, null, 4))
-    for (let id = Math.floor(Math.random() * 1000000000) * 4 + 1; ; id++) {
+    //for (let id = Math.floor(Math.random() * 1000000000) * 4 + 1; ; id++) {
+    for (let id = 1; ; id++) {
         playerLevel = ns.getPlayer().hacking
         if (playerLevel > oldPlayerLevel) {
             updateHack = true
@@ -181,7 +182,7 @@ export async function getLoopParams(ns, target, proc) {
         if (!hack && !grow) {
             let threads = Math.min(
                 Math.ceil(ns.growthAnalyze(target, 1 / (1 - proc))),
-                Math.ceil(ns.getServerMaxRam(ns.getHostname()) / 4)
+                Math.ceil(ns.getServerMaxRam(ns.getHostname()) / 2)
             )
             /*
             let security =
@@ -194,7 +195,7 @@ export async function getLoopParams(ns, target, proc) {
             )
             */
             let weakenThreads = Math.ceil(
-                ns.getServerMaxRam(ns.getHostname()) / 4
+                ns.getServerMaxRam(ns.getHostname()) / 2
             )
             let weakenTime = ns.getWeakenTime(target)
             actionPid = ns.run("/hacking/grow.js", threads, target)
