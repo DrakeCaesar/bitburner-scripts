@@ -14,7 +14,7 @@ export async function main(ns) {
             ns.getServerMinSecurityLevel(ns.args[0])
     ) {
         //ns.tprint("Server security before executing grow is too high")
-        return
+        //return
     }
 
     await ns.grow(ns.args[0])

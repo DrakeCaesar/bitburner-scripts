@@ -29,7 +29,7 @@ export async function main(ns) {
             key != "I.I.I.I" &&
             key != "run4theh111z" &&
             key != "The-Cave" &&
-            key != "n00dles" &&
+            //key != "n00dles" &&
             key != "fulcrumassets" &&
             !key.includes("node")
         ) {
@@ -40,8 +40,8 @@ export async function main(ns) {
         return second[1] - first[1]
     })
     //await ns.killall()
-    ns.kill("/hacking/autoHackParallel.js", "home", "fulcrumassets")
-    ns.run("/hacking/autoHackParallel.js", 1, "fulcrumassets")
+    //ns.kill("/hacking/autoHackParallel.js", "home", "fulcrumassets")
+    //ns.run("/hacking/autoHackParallel.js", 1, "fulcrumassets")
 
     let i = 0
     for (const [target, level] of items) {
@@ -67,7 +67,7 @@ export async function main(ns) {
         for (const file of list) {
             ns.rm(file, node)
         }
-
+        ns.nuke(target)
         await ns.scp(
             [
                 "/hacking/hack.js",

@@ -1,33 +1,52 @@
 /** @param {import("..").NS } ns */
 export async function main(ns) {
     ns.tprint("running")
-    let money = ns.getPlayer().money
+    let money = Math.floor(ns.getPlayer().money)
     let target = "node00"
     for (let i = 1; i <= ns.getPurchasedServerMaxRam(); i = i * 2) {
         let cost = ns.getPurchasedServerCost(i)
-
-        ns.tprint("cost:  " + cost)
-        ns.tprint("money: " + money)
-
+        let maxCost = ns.getPurchasedServerCost(ns.getPurchasedServerMaxRam())
         if (
-            (cost < money && cost > money / 2) ||
-            i == ns.getPurchasedServerMaxRam()
+            (cost < money && cost * 2 > money) ||
+            (i == ns.getPurchasedServerMaxRam() && cost < money)
         ) {
             ns.tprint(
-                "RAM: " +
-                    i +
-                    " cost: " +
+                "cost:     " +
                     cost.toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ")
             )
-            let current = ns.getServerMaxRam(target)
+            ns.tprint(
+                "money:    " +
+                    money.toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ")
+            )
+            ns.tprint(
+                "max:      " +
+                    maxCost.toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ")
+            )
+            let current
+            if (ns.serverExists(target)) {
+                current = ns.getServerMaxRam(target)
+            } else {
+                current = 0
+            }
             let future = i
-            ns.tprint("c: " + current)
-            ns.tprint("f: " + future)
+
+            ns.tprint("c:        " + current)
+            ns.tprint("f:        " + future)
             if (future > current) {
-                //ns.killall(target)
-                //ns.deleteServer(target)
-                //ns.purchaseServer(target, future)
-                //ns.tprint("purchased " + ns.nFormat(future, "0.0000b"))
+                if (ns.serverExists(target)) {
+                    ns.killall(target)
+                    ns.deleteServer(target)
+                }
+
+                ns.purchaseServer(target, future)
+                ns.tprint("purchased " + target)
+                ns.tprint(
+                    "for       " +
+                        ns
+                            .getPurchasedServerCost(future)
+                            .toString()
+                            .replace(/\B(?=(\d{3})+(?!\d))/g, " ")
+                )
                 return
             }
         }

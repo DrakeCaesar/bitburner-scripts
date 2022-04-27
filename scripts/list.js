@@ -40,8 +40,38 @@ export function main(ns) {
                 "    hack:   " +
                 ns.tFormat(ns.getHackTime(server)).padEnd(30)
         )
-        //ns.tprint(server +"\t level" + level + " is lower than player hacking level of " + player.hacking + ", executing nuke")
-        ns.nuke(server)
+        let numPortsOpen = 0
+        if (ns.fileExists("BruteSSH.exe", "home")) {
+            ns.brutessh(server)
+            ++numPortsOpen
+        }
+        if (ns.fileExists("FTPCrack.exe", "home")) {
+            ns.ftpcrack(server)
+            ++numPortsOpen
+        }
+        if (ns.fileExists("relaySMTP.exe", "home")) {
+            ns.relaysmtp(server)
+            ++numPortsOpen
+        }
+        if (ns.fileExists("relaySMTP.exe", "home")) {
+            ns.relaysmtp(server)
+            ++numPortsOpen
+        }
+        if (ns.fileExists("HTTPWorm.exe", "home")) {
+            ns.httpworm(server)
+            ++numPortsOpen
+        }
+        if (ns.fileExists("SQLInject.exe", "home")) {
+            ns.sqlinject(server)
+            ++numPortsOpen
+        }
+        if (
+            ns.fileExists("NUKE.exe", "home") &&
+            level <= player.hacking &&
+            ns.getServerNumPortsRequired(server) <= numPortsOpen
+        ) {
+            ns.nuke(server)
+        }
     }
 
     //ns.tprint(items);
