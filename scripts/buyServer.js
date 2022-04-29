@@ -39,6 +39,19 @@ export async function main(ns) {
                 }
 
                 ns.purchaseServer(target, future)
+
+                await ns.scp(
+                    [
+                        "/hacking/hack.js",
+                        "/hacking/grow.js",
+                        "/hacking/weaken.js",
+                        "/hacking/autoHackParallel.js",
+                        "/data/foodnstuff.txt",
+                    ],
+                    target
+                )
+                ns.exec("/hacking/autoHackParallel.js", target, 1, "foodnstuff")
+
                 ns.tprint("purchased " + target)
                 ns.tprint(
                     "for       " +

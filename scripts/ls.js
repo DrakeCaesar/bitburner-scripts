@@ -44,7 +44,7 @@ export async function main(ns, copy = false) {
             }
             ns.tprint("")
         }
-
+        /*
         if (listStrange.length) {
             ns.tprint("STRANGE: " + hostname + ":")
             for (const file of listStrange) {
@@ -52,6 +52,7 @@ export async function main(ns, copy = false) {
             }
             ns.tprint("")
         }
+        */
     }
 }
 

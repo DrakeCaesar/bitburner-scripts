@@ -16,7 +16,7 @@ export function main(ns) {
 
     var items = []
     for (const key of knownServers) {
-        if (key != "home" && !key.includes("node")) {
+        if (!key.includes("node")) {
             items.push([key, ns.getServerRequiredHackingLevel(key)])
         }
     }
@@ -31,8 +31,10 @@ export function main(ns) {
                 server.padEnd(paddingServers, " ") +
                 "    level: " +
                 String(level).padStart(paddinglevels, " ") +
-                (level <= player.hacking ? " <== " : "  >  ") +
+                (level <= player.hacking ? " <= " : " >> ") +
                 player.hacking +
+                "    ram: " +
+                String(ns.getServerMaxRam(server)).padEnd(6) +
                 "    weaken: " +
                 ns.tFormat(ns.getWeakenTime(server)).padEnd(30) +
                 "    grow:   " +

@@ -253,8 +253,10 @@ export async function getLoopParams(ns, target, proc) {
         ) {
             await ns.sleep(100)
         }
-        grow ??= getGrow(ns, target, proc)
-        hack ??= getHack(ns, target, proc)
+        let tempGrow = getGrow(ns, target, proc)
+        let tempHack = getHack(ns, target, proc)
+        if (tempGrow) grow = tempGrow
+        if (tempHack) hack = tempHack
     }
 
     return await getParams(ns, target, { hack: hack, grow: grow })

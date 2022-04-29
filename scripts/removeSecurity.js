@@ -54,7 +54,7 @@ export async function main(ns) {
             )
             //ns.tprint(target)
             if (
-                weakenThreads &&
+                weakenThreads > 0 &&
                 !ns.getRunningScript("/hacking/weaken.js", "home", target) &&
                 ns.exec("/hacking/weaken.js", "home", weakenThreads, target)
             ) {

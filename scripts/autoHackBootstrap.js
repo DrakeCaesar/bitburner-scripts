@@ -30,6 +30,7 @@ export async function main(ns) {
             key != "run4theh111z" &&
             key != "The-Cave" &&
             //key != "n00dles" &&
+            key != "w0r1d_d43m0n" &&
             key != "fulcrumassets" &&
             !key.includes("node")
         ) {
@@ -60,7 +61,7 @@ export async function main(ns) {
                 "  " +
                 node
         )
-        //ns.killall(node)
+        ns.killall(node)
         ns.kill("/hacking/autoHackParallel.js", node, target)
 
         const list = ns.ls(node, "/data/")
