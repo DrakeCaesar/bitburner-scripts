@@ -1,7 +1,8 @@
 /** @param {import("..").NS } ns */
 export async function main(ns) {
     //ns.disableLog("ALL")
-    await ns.scp("/hacking/weaken.js", "home")
+    let node = "node01"
+    await ns.scp("/hacking/weaken.js", node)
     let knownServers = new Array()
     crawl(ns, knownServers)
     knownServers.sort()
@@ -50,13 +51,13 @@ export async function main(ns) {
                 ns.getServerMinSecurityLevel(target)
             let weakenThreads = Math.min(
                 Math.ceil(security / 0.05),
-                Math.floor(ns.getServerMaxRam("home") / 2)
+                Math.floor(ns.getServerMaxRam(node) / 2)
             )
             //ns.tprint(target)
             if (
                 weakenThreads > 0 &&
-                !ns.getRunningScript("/hacking/weaken.js", "home", target) &&
-                ns.exec("/hacking/weaken.js", "home", weakenThreads, target)
+                !ns.getRunningScript("/hacking/weaken.js", node, target) &&
+                ns.exec("/hacking/weaken.js", node, weakenThreads, target)
             ) {
                 ns.tprint(
                     target.padEnd(18) +

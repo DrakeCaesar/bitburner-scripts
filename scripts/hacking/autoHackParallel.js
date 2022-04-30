@@ -78,9 +78,11 @@ export async function grow(ns, target, params, id) {
 }
 /** @param {import("../..").NS } ns */
 export async function weaken(ns, target, params, id) {
+    let iteration = 0
     while (
         ns.getServerSecurityLevel(target) !=
-        ns.getServerMinSecurityLevel(target)
+            ns.getServerMinSecurityLevel(target) &&
+        iteration++ < 10
     ) {
         await ns.sleep(params.interval.adjustedMargin / 10)
     }

@@ -58,16 +58,9 @@ export async function main(ns) {
             contractTypes += item + "\n"
             if (grep) {
                 for (const element of dict[item.trim()]) {
-                    if (
-                        element[1]
-                            .toLowerCase()
-                            .includes(grep.toLowerCase())
-                    ) {
+                    if (element[1].toLowerCase().includes(grep.toLowerCase())) {
                         contractTypes +=
-                            "   " +
-                            element[0].padEnd(20) +
-                            element[1] +
-                            "\n"
+                            "   " + element[0].padEnd(20) + element[1] + "\n"
                     }
                 }
             }
@@ -110,6 +103,17 @@ function getAnswer(ns, contract, hostname) {
         case "Unique Paths in a Grid II":
             answer = Unique_Paths_in_a_Grid_II(data, contract, hostname)
             break
+        case "Find Largest Prime Factor":
+            answer = Find_Largest_Prime_Factor(data, contract, hostname)
+            break
+        case "Sanitize Parentheses in Expression":
+            answer = Sanitize_Parentheses_in_Expression(
+                data,
+                contract,
+                hostname
+            )
+            break
+
         default:
             break
     }
@@ -172,7 +176,7 @@ function Unique_Paths_in_a_Grid_II(data) {
 }
 
 /** @param {import("..").NS } ns */
-export function Subarray_with_Maximum_Sum(data) {
+function Subarray_with_Maximum_Sum(data) {
     let answer = Number.MIN_SAFE_INTEGER
     let cur = 0
     for (let i = 0; i < data.length; i++) {
@@ -186,4 +190,43 @@ export function Subarray_with_Maximum_Sum(data) {
     }
 
     return answer
+}
+
+/** @param {import("..").NS } ns */
+function Find_Largest_Prime_Factor(data) {
+    let factors = []
+    let d = 2
+    while (data > 1) {
+        while (data % d == 0) {
+            factors.push(d)
+            data /= d
+        }
+        d = d + 1
+        if (d * d > data) {
+            if (data > 1) factors.push(data)
+            break
+        }
+    }
+    const answer = Math.max(...factors)
+    return answer
+}
+
+/** @param {import("..").NS } ns */
+function Sanitize_Parentheses_in_Expression(data) {
+    /*
+    ((aa))(a()())))(()
+
+    remove the minimum number of invalid parentheses in order to validate the string. If there are multiple minimal ways to validate the string, provide all of the possible results. The answer should be provided as an array of strings. If it is impossible to validate the string the result should be an array with only an empty string.
+
+    IMPORTANT: The string may contain letters, not just parentheses. Examples:
+    "()())()" -> [()()(), (())()]
+    "(a)())()" -> [(a)()(), (a())()]
+    ")(" -> [""]
+    */
+    data = "(a())()"
+}
+
+function isSanitized(string) {
+    let depth = 0
+    string.forEach((element) => {})
 }
