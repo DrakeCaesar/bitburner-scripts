@@ -1,7 +1,7 @@
 /** @param {import("..").NS } ns */
 export async function main(ns) {
     //ns.disableLog("ALL")
-    let node = "node01"
+    let node = ns.args[0]
     await ns.scp("/hacking/weaken.js", node)
     let knownServers = new Array()
     crawl(ns, knownServers)
