@@ -273,7 +273,10 @@ function MergeOverlappingIntervals(ns, data) {
     for (const [first, second] of data) {
         start = Math.min(start, first)
         for (let i = first; i <= second; i++) {
-            map[i] = i
+            map[i * 2] = i
+            if (i != second) {
+                map[i * 2 + 1] = true
+            }
         }
     }
     map.push(null)
@@ -281,14 +284,21 @@ function MergeOverlappingIntervals(ns, data) {
     let last = false
     let temp = []
     for (let i = start; i < map.length; i++) {
-        if (map[i] && last == false) {
-            temp[0] = map[i]
+        if (map[i * 2] && last == false) {
+            temp[0] = map[i * 2]
             last = true
-        } else if (map[i] == null && last == true) {
-            temp[1] = map[i - 1]
+        } else if (
+            (map[i * 2] == null || map[i * 2 - 1] == null) &&
+            last == true
+        ) {
+            temp[1] = map[(i - 1) * 2]
 
             last = false
             answer.push([temp[0], temp[1]])
+
+            if (map[i * 2 - 1] == null && map[i * 2]) {
+                i--
+            }
         }
     }
     ns.tprint("")
