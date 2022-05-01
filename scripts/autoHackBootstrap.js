@@ -61,8 +61,8 @@ export async function main(ns) {
                 "  " +
                 node
         )
-        ns.killall(node)
-        ns.kill("/hacking/autoHackParallel.js", node, target)
+        //ns.killall(node)
+        //ns.kill("/hacking/autoHackParallel.js", node, target)
 
         const list = ns.ls(node, "/data/")
         for (const file of list) {

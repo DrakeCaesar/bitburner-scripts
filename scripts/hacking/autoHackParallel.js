@@ -1,8 +1,9 @@
 /** @param {import("../..").NS } ns */
 export async function main(ns) {
     //ns.disableLog("ALL")
+
     let target = ns.args[0]
-    let proc = 0.8
+    let proc = 0.1
     let playerLevel = ns.getPlayer().hacking
     let oldPlayerLevel
     let updateHack = false

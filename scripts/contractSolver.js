@@ -103,31 +103,39 @@ function getAnswer(ns, contract, hostname) {
     let answer
     switch (type) {
         case "Subarray with Maximum Sum":
-            answer = SubarrayWithMaximumSum(ns, data)
+            answer = subarrayWithMaximumSum(ns, data)
             break
         case "Unique Paths in a Grid I":
-            answer = UniquePathsInAGridI(ns, data)
+            answer = uniquePathsInAGridI(ns, data)
             break
         case "Unique Paths in a Grid II":
-            answer = UniquePathsInAGridII(ns, data)
+            answer = uniquePathsInAGridII(ns, data)
             break
         case "Find Largest Prime Factor":
-            answer = FindLargestPrimeFactor(ns, data)
+            answer = findLargestPrimeFactor(ns, data)
             break
         case "Sanitize Parentheses in Expression":
-            answer = SanitizeParenthesesInExpression(ns, data)
+            answer = sanitizeParenthesesInExpression(ns, data)
             break
         case "Merge Overlapping Intervals":
-            answer = MergeOverlappingIntervals(ns, data)
+            answer = mergeOverlappingIntervals(ns, data)
             break
-
+        case "Algorithmic Stock Trader I":
+            //answer = stockTrader(data)
+            break
+        case "Algorithmic Stock Trader II":
+            //answer = stockTrader(ns, data)
+            break
+        case "Total Ways to Sum II":
+            //answer = totalWaysToSumII(ns, data)
+            break
         default:
             break
     }
     return answer
 }
 
-function UniquePathsInAGridI(ns, data) {
+function uniquePathsInAGridI(ns, data) {
     const w = data[0]
     const h = data[1]
 
@@ -148,7 +156,7 @@ function UniquePathsInAGridI(ns, data) {
     return answer
 }
 
-function UniquePathsInAGridII(ns, data) {
+function uniquePathsInAGridII(ns, data) {
     const w = data.length
     const h = data[0].length
 
@@ -174,7 +182,7 @@ function UniquePathsInAGridII(ns, data) {
     return answer
 }
 
-function SubarrayWithMaximumSum(ns, data) {
+function subarrayWithMaximumSum(ns, data) {
     let answer = Number.MIN_SAFE_INTEGER
     let cur = 0
     for (let i = 0; i < data.length; i++) {
@@ -190,7 +198,7 @@ function SubarrayWithMaximumSum(ns, data) {
     return answer
 }
 
-function FindLargestPrimeFactor(ns, data) {
+function findLargestPrimeFactor(ns, data) {
     let factors = []
     let d = 2
     while (data > 1) {
@@ -208,7 +216,7 @@ function FindLargestPrimeFactor(ns, data) {
     return answer
 }
 
-function SanitizeParenthesesInExpression(ns, data) {
+function sanitizeParenthesesInExpression(ns, data) {
     if (isSanitized(ns, data)) {
         return [data]
     }
@@ -267,7 +275,7 @@ function Merge_Overlapping_Intervals(ns, data) {
 }
 */
 
-function MergeOverlappingIntervals(ns, data) {
+function mergeOverlappingIntervals(ns, data) {
     let map = []
     let start = Number.MAX_SAFE_INTEGER
     for (const [first, second] of data) {
@@ -301,11 +309,41 @@ function MergeOverlappingIntervals(ns, data) {
             }
         }
     }
-    ns.tprint("")
-    ns.tprint(data)
-    ns.tprint(map)
-    ns.tprint(answer)
-    ns.tprint("")
 
     return answer
+}
+
+function stockTrader(data, index = 0, holding = false, profit = 0) {
+    if (index < data.length - 1) {
+        return holding
+            ? Math.max(
+                  stockTrader(data, index + 1, true, profit),
+                  stockTrader(data, index + 1, false, profit + data[index])
+              )
+            : Math.max(
+                  stockTrader(data, index + 1, true, profit - data[index]),
+                  stockTrader(data, index + 1, false, profit)
+              )
+    } else {
+        if (holding) {
+            return profit + data[index]
+        } else {
+            return profit
+        }
+    }
+}
+
+function totalWaysToSumII(ns, data) {
+    const N = 63 //data[0]
+    const arr = [1, 4, 7, 9, 10, 11, 12, 13, 16, 18] // data[1]
+    ns.tprint(N)
+    ns.tprint(arr)
+
+    let count = new Array(N + 1)
+    count.fill(0)
+    count[0] = 1
+    for (let i = 1; i <= N; i++)
+        for (let j = 0; j < arr.length; j++)
+            if (i >= arr[j]) count[i] += count[i - arr[j]]
+    return count[N]
 }

@@ -1,25 +1,13 @@
 /** @param {import("..").NS } ns */
 export async function main(ns) {
     let node = "node00"
-    let target = "phantasy"
+    let target = "n00dles"
     let maxRam = ns.getPurchasedServerMaxRam()
     let maxCost = ns.getPurchasedServerCost(maxRam)
     let firstIteration = true
     for (;;) {
-        await ns.scp(
-            [
-                "/hacking/hack.js",
-                "/hacking/grow.js",
-                "/hacking/weaken.js",
-                "/hacking/autoHackParallel.js",
-                "/data/" + target + ".txt",
-            ],
-            node
-        )
-        ns.exec("/hacking/autoHackParallel.js", node, 1, target)
-
         let money = Math.floor(ns.getPlayer().money)
-        let current = ns.getServerMaxRam(node)
+        let current
         let future = 1
         let cost = ns.getPurchasedServerCost(future)
         while (future < ns.getPurchasedServerMaxRam() && cost * 2 < money) {
@@ -27,6 +15,17 @@ export async function main(ns) {
             cost = ns.getPurchasedServerCost(future)
         }
         if (ns.serverExists(node)) {
+            await ns.scp(
+                [
+                    "/hacking/hack.js",
+                    "/hacking/grow.js",
+                    "/hacking/weaken.js",
+                    "/hacking/autoHackParallel.js",
+                    "/data/" + target + ".txt",
+                ],
+                node
+            )
+            ns.exec("/hacking/autoHackParallel.js", node, 1, target)
             current = ns.getServerMaxRam(node)
         } else {
             current = 0

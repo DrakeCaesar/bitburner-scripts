@@ -24,55 +24,56 @@ export function main(ns) {
         return first[1] - second[1]
     })
 
-    for (const [server, level] of items) {
+    for (const [target, level] of items) {
         let player = ns.getPlayer()
+        let server = ns.getServer(target)
         ns.tprint(
-            "server: " +
-                server.padEnd(paddingServers, " ") +
-                "    level: " +
+            target.padEnd(paddingServers, " ") +
+                "    LVL: " +
                 String(level).padStart(paddinglevels, " ") +
                 (level <= player.hacking ? " <= " : " >> ") +
                 player.hacking +
-                "    ram: " +
-                String(ns.getServerMaxRam(server)).padEnd(6) +
-                "    weaken: " +
-                ns.tFormat(ns.getWeakenTime(server)).padEnd(30) +
-                "    grow:   " +
-                ns.tFormat(ns.getGrowTime(server)).padEnd(30) +
-                "    hack:   " +
-                ns.tFormat(ns.getHackTime(server)).padEnd(30)
+                (server.hasAdminRights ? "  ROOT" : "      ") +
+                "  SEC: " +
+                (server.hackDifficulty - server.minDifficulty)
+                    .toFixed(2)
+                    .padStart(8) +
+                "  MEM: " +
+                String(server.maxRam).padEnd(8) +
+                "    TIM: " +
+                ns.tFormat(ns.getWeakenTime(target)).padEnd(30)
         )
         let numPortsOpen = 0
         if (ns.fileExists("BruteSSH.exe", "home")) {
-            ns.brutessh(server)
+            ns.brutessh(target)
             ++numPortsOpen
         }
         if (ns.fileExists("FTPCrack.exe", "home")) {
-            ns.ftpcrack(server)
+            ns.ftpcrack(target)
             ++numPortsOpen
         }
         if (ns.fileExists("relaySMTP.exe", "home")) {
-            ns.relaysmtp(server)
+            ns.relaysmtp(target)
             ++numPortsOpen
         }
         if (ns.fileExists("relaySMTP.exe", "home")) {
-            ns.relaysmtp(server)
+            ns.relaysmtp(target)
             ++numPortsOpen
         }
         if (ns.fileExists("HTTPWorm.exe", "home")) {
-            ns.httpworm(server)
+            ns.httpworm(target)
             ++numPortsOpen
         }
         if (ns.fileExists("SQLInject.exe", "home")) {
-            ns.sqlinject(server)
+            ns.sqlinject(target)
             ++numPortsOpen
         }
         if (
             ns.fileExists("NUKE.exe", "home") &&
             level <= player.hacking &&
-            ns.getServerNumPortsRequired(server) <= numPortsOpen
+            ns.getServerNumPortsRequired(target) <= numPortsOpen
         ) {
-            ns.nuke(server)
+            ns.nuke(target)
         }
     }
 
