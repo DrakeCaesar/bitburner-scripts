@@ -388,41 +388,45 @@ function waysToSum(data) {
 }
 
 function spiralize(data) {
-    let w = Math.ceil(data.length / 2)
-    let h
-    while (!(data.length % w == 0 && (w % 2 || h % 2))) {
-        w--
-        h = data.length / w
-    }
-    var matrix = []
-    for (var i = 0; i < h; i++) {
-        matrix[i] = new Array(w)
-    }
+    let matrix = data
+    let h = matrix.length
+    let w = matrix[0].length
     let x = 0
     let y = 0
+    let dataCount = h * w
     let count = 0
-    while (count < data.length) {
-        while (x < w - 1 && !matrix[y][x + 1]) {
-            matrix[y][x++] = data[count]
-            if (count++ == data.length) return [].concat(...matrix)
+    let answer = []
+    while (count < dataCount) {
+        while (x < w - 1 && matrix[y][x + 1]) {
+            answer.push(matrix[y][x])
+            matrix[y][x] = null
+            x++
+            if (count++ == dataCount) return answer
         }
 
-        while (y < h - 1 && !matrix[y + 1][x]) {
-            matrix[y++][x] = data[count]
-            if (count++ == data.length) return [].concat(...matrix)
+        while (y < h - 1 && matrix[y + 1][x]) {
+            answer.push(matrix[y][x])
+            matrix[y][x] = null
+            y++
+            if (count++ == dataCount) return answer
+        }
+        while (x > 0 && matrix[y][x - 1]) {
+            answer.push(matrix[y][x])
+            matrix[y][x] = null
+            x--
+            if (count++ == dataCount) return answer
+        }
+        while (y > 0 && matrix[y - 1][x]) {
+            answer.push(matrix[y][x])
+            matrix[y][x] = null
+            y--
+            if (count++ == dataCount) return answer
         }
 
-        while (x > 0 && !matrix[y][x - 1]) {
-            matrix[y][x--] = data[count]
-            if (count++ == data.length) return [].concat(...matrix)
-        }
-        while (y > 0 && !matrix[y - 1][x]) {
-            matrix[y--][x] = data[count]
-            if (count++ == data.length) return [].concat(...matrix)
-        }
-        if (count == data.length - 1) {
-            matrix[y][x] = data[count]
-            return [].concat(...matrix)
+        if (count == dataCount - 1) {
+            answer.push(matrix[y][x])
+            matrix[y][x] = null
+            return answer
         }
     }
 }
