@@ -404,25 +404,25 @@ function spiralize(data) {
     while (count < data.length) {
         while (x < w - 1 && !matrix[y][x + 1]) {
             matrix[y][x++] = data[count]
-            if (count++ == data.length) return matrix
+            if (count++ == data.length) return [].concat(...matrix)
         }
 
         while (y < h - 1 && !matrix[y + 1][x]) {
             matrix[y++][x] = data[count]
-            if (count++ == data.length) return matrix
+            if (count++ == data.length) return [].concat(...matrix)
         }
 
         while (x > 0 && !matrix[y][x - 1]) {
             matrix[y][x--] = data[count]
-            if (count++ == data.length) return matrix
+            if (count++ == data.length) return [].concat(...matrix)
         }
         while (y > 0 && !matrix[y - 1][x]) {
             matrix[y--][x] = data[count]
-            if (count++ == data.length) return matrix
+            if (count++ == data.length) return [].concat(...matrix)
         }
         if (count == data.length - 1) {
             matrix[y][x] = data[count]
-            return matrix
+            return [].concat(...matrix)
         }
     }
 }
