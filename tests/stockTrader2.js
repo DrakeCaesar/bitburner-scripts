@@ -30,9 +30,9 @@ const testCases = [
     },
 ]
 
-for (const testcase of testCases) {
-    const actual = findMax(testcase.input, 0, false, 0)
-    console.log(testcase.output)
+for (const testCase of testCases) {
+    const actual = findMax(testCase.input, 0, false, 0)
+    console.log(testCase.output)
     console.log(actual)
 }
 

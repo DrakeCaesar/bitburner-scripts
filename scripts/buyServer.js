@@ -1,7 +1,7 @@
 /** @param {import("..").NS } ns */
 export async function main(ns) {
     let node = "node00"
-    let target = "n00dles"
+    let target = "omega-net"
     let maxRam = ns.getPurchasedServerMaxRam()
     let maxCost = ns.getPurchasedServerCost(maxRam)
     let firstIteration = true
@@ -21,11 +21,14 @@ export async function main(ns) {
                     "/hacking/grow.js",
                     "/hacking/weaken.js",
                     "/hacking/autoHackParallel.js",
+                    "autoHack.js",
                     "/data/" + target + ".txt",
                 ],
                 node
             )
-            ns.exec("/hacking/autoHackParallel.js", node, 1, target)
+            ns.killall(target)
+            ns.exec("/hacking/autoHackParallel.js", "home", 1, node, target)
+            ///ns.exec("autoHack.js", node, 1, target)
             current = ns.getServerMaxRam(node)
         } else {
             current = 0
@@ -66,11 +69,15 @@ export async function main(ns) {
                     "/hacking/grow.js",
                     "/hacking/weaken.js",
                     "/hacking/autoHackParallel.js",
+                    "autoHack.js",
                     "/data/" + target + ".txt",
                 ],
                 node
             )
-            ns.exec("/hacking/autoHackParallel.js", node, 1, target)
+            ns.killall(target)
+
+            ns.exec("/hacking/autoHackParallel.js", "home", 1, node, target)
+            //ns.exec("autoHack.js", node, 1, target)
 
             ns.tprint("current ram: " + format(current))
             ns.tprint("bought ram:  " + format(future))
@@ -80,7 +87,14 @@ export async function main(ns) {
             ns.tprint("money:       " + format(money))
             ns.tprint("cost:        " + format(cost))
             ns.tprint(
-                "next cost:   " + (cost < maxCost ? format(cost * 2) : "none")
+                "next cost:   " +
+                    (cost < maxCost
+                        ? format(
+                              ns.getPurchasedServerCost(
+                                  Math.min(future, maxRam)
+                              )
+                          )
+                        : "none")
             )
             ns.tprint("max cost:    " + format(maxCost))
 
@@ -94,8 +108,8 @@ export async function main(ns) {
 }
 
 function format(string) {
-    return string
+    return Math.floor(string)
         .toString()
         .replace(/\B(?=(\d{3})+(?!\d))/g, " ")
-        .padStart(14)
+        .padStart(16)
 }

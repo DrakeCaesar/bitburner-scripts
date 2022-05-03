@@ -41,8 +41,8 @@ export async function main(ns) {
         return second[1] - first[1]
     })
     //await ns.killall()
-    //ns.kill("/hacking/autoHackParallel.js", "home", "fulcrumassets")
-    //ns.run("/hacking/autoHackParallel.js", 1, "fulcrumassets")
+    //ns.kill("/hacking/autoHackParallel.js", "home","home","fulcrumassets")
+    //ns.run("/hacking/autoHackParallel.js", "home", 1, "home", "fulcrumassets")
 
     let i = 0
     for (const [target, level] of items) {
@@ -62,7 +62,7 @@ export async function main(ns) {
                 node
         )
         //ns.killall(node)
-        //ns.kill("/hacking/autoHackParallel.js", node, target)
+        //ns.kill("/hacking/autoHackParallel.js","home", node, target)
 
         const list = ns.ls(node, "/data/")
         for (const file of list) {
@@ -79,7 +79,7 @@ export async function main(ns) {
             ],
             node
         )
-        ns.exec("/hacking/autoHackParallel.js", node, 1, target)
+        ns.exec("/hacking/autoHackParallel.js", "home", 1, node, target)
     }
     ns.tprint("total hackable servers: " + items.length)
 }

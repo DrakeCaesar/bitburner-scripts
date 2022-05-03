@@ -1,21 +1,22 @@
 /** @param {import("../..").NS } ns */
 export async function main(ns) {
     //ns.disableLog("ALL")
-
-    let target = ns.args[0]
-    let proc = 0.1
+    let node = ns.args[0]
+    let target = ns.args[1]
+    let proc = 0.5
     let playerLevel = ns.getPlayer().hacking
     let oldPlayerLevel
     let updateHack = false
     let updateGrow = false
-    let paramsString = ns.read("/data/" + target + ".txt")
+    //let paramsString = ns.read("/data/" + target + ".txt")
+    let paramsString
     let params
     if (paramsString) {
         params = JSON.parse(paramsString)
         oldPlayerLevel = params.oldPlayerLevel - playerLevel
     }
     if (!params || !oldPlayerLevel <= playerLevel - 5) {
-        params = await getLoopParams(ns, target, proc)
+        params = await getLoopParams(ns, node, target, proc)
         oldPlayerLevel = playerLevel
     }
     //ns.tprint(JSON.stringify(params, null, 4))
@@ -28,35 +29,36 @@ export async function main(ns) {
             oldPlayerLevel = playerLevel
         }
         if (updateHack || updateGrow) {
-            let tempHack = getHack(ns, target, proc)
-            let tempGrow = getGrow(ns, target, proc)
+            let tempHack = getHack(ns, node, target, proc)
+            let tempGrow = getGrow(ns, node, target, proc)
             if (tempHack) {
                 params.hack = tempHack
-                params = await getParams(ns, target, params)
+                params = await getParams(ns, node, target, params)
                 updateHack = false
             }
             if (tempGrow) {
                 params.grow = tempGrow
-                params = await getParams(ns, target, params)
+                params = await getParams(ns, node, target, params)
                 updateGrow = false
             }
         }
         serverStats(ns, target)
 
         if (id % 4 == 1) {
-            await hack(ns, target, params, id)
+            await hack(ns, node, target, params, id)
         } else if (id % 4 == 3) {
-            await grow(ns, target, params, id)
+            await grow(ns, node, target, params, id)
         } else {
-            await weaken(ns, target, params, id)
+            await weaken(ns, node, target, params, id)
         }
     }
 }
 
 /** @param {import("../..").NS } ns */
-export async function hack(ns, target, params, id) {
-    ns.run(
+export async function hack(ns, node, target, params, id) {
+    ns.exec(
         "/hacking/hack.js",
+        node,
         params.hack.threads,
         target,
         params.hack.time,
@@ -66,9 +68,10 @@ export async function hack(ns, target, params, id) {
     await ns.sleep(params.interval.adjustedMargin)
 }
 /** @param {import("../..").NS } ns */
-export async function grow(ns, target, params, id) {
-    ns.run(
+export async function grow(ns, node, target, params, id) {
+    ns.exec(
         "/hacking/grow.js",
+        node,
         params.grow.threads,
         target,
         params.grow.time,
@@ -78,7 +81,7 @@ export async function grow(ns, target, params, id) {
     await ns.sleep(params.interval.adjustedMargin)
 }
 /** @param {import("../..").NS } ns */
-export async function weaken(ns, target, params, id) {
+export async function weaken(ns, node, target, params, id) {
     let iteration = 0
     while (
         ns.getServerSecurityLevel(target) !=
@@ -87,8 +90,9 @@ export async function weaken(ns, target, params, id) {
     ) {
         await ns.sleep(params.interval.adjustedMargin / 10)
     }
-    ns.run(
+    ns.exec(
         "/hacking/weaken.js",
+        node,
         id % 4 == 2 ? params.hack.threads : params.grow.threads,
         target,
         id
@@ -97,9 +101,9 @@ export async function weaken(ns, target, params, id) {
 }
 
 /** @param {import("../..").NS } ns */
-export function getHack(ns, target, proc) {
+export function getHack(ns, node, target, proc) {
     const maxRam =
-        (ns.getServerMaxRam(ns.getHostname()) -
+        (ns.getServerMaxRam(node) -
             ns.getScriptRam("/hacking/autoHackParallel.js")) *
         0.9
     let server = ns.getServer(target)
@@ -129,9 +133,9 @@ export function getHack(ns, target, proc) {
 }
 
 /** @param {import("../..").NS } ns */
-export function getGrow(ns, target, proc) {
+export function getGrow(ns, node, target, proc) {
     const maxRam =
-        (ns.getServerMaxRam(ns.getHostname()) -
+        (ns.getServerMaxRam(node) -
             ns.getScriptRam("/hacking/autoHackParallel.js")) *
         0.9
 
@@ -164,9 +168,9 @@ export function getGrow(ns, target, proc) {
 }
 
 /** @param {import("../..").NS } ns */
-export async function getParams(ns, target, params) {
+export async function getParams(ns, node, target, params) {
     const maxRam =
-        (ns.getServerMaxRam(ns.getHostname()) -
+        (ns.getServerMaxRam(node) -
             ns.getScriptRam("/hacking/autoHackParallel.js")) *
         0.9
     const loopRam =
@@ -198,15 +202,15 @@ export async function getParams(ns, target, params) {
 }
 
 /** @param {import("../..").NS } ns */
-export async function getLoopParams(ns, target, proc) {
+export async function getLoopParams(ns, node, target, proc) {
     const maxRam =
-        (ns.getServerMaxRam(ns.getHostname()) -
+        (ns.getServerMaxRam(node) -
             ns.getScriptRam("/hacking/autoHackParallel.js")) *
         0.9
-    let grow = getGrow(ns, target, proc)
-    let hack = getHack(ns, target, proc)
-    let actionPid
-    let weakenPid
+    let grow = getGrow(ns, node, target, proc)
+    let hack = getHack(ns, node, target, proc)
+    let actionPid = null
+    let weakenPid = null
     while (!grow || !hack) {
         serverStats(ns, target)
 
@@ -233,36 +237,51 @@ export async function getLoopParams(ns, target, proc) {
             let weakenTime = ns.getWeakenTime(target)
             let growthTime = ns.getWeakenTime(target)
             if (threads) {
-                actionPid = ns.run("/hacking/grow.js", threads, target)
+                actionPid = ns.exec("/hacking/grow.js", node, threads, target)
             }
             if (weakenThreads) {
-                weakenPid = ns.run("/hacking/weaken.js", weakenThreads, target)
+                weakenPid = ns.exec(
+                    "/hacking/weaken.js",
+                    node,
+                    weakenThreads,
+                    target
+                )
                 await ns.sleep(weakenTime)
             } else {
                 await ns.sleep(growthTime)
             }
         } else if (grow) {
-            actionPid = ns.run("/hacking/grow.js", grow.threads, target)
-            weakenPid = ns.run("/hacking/weaken.js", grow.weakenThreads, target)
+            actionPid = ns.exec("/hacking/grow.js", node, grow.threads, target)
+            weakenPid = ns.exec(
+                "/hacking/weaken.js",
+                node,
+                grow.weakenThreads,
+                target
+            )
             await ns.sleep(grow.weakenTime)
         } else if (hack) {
-            actionPid = ns.run("/hacking/hack.js", hack.threads, target)
-            weakenPid = ns.run("/hacking/weaken.js", hack.weakenThreads, target)
+            actionPid = ns.exec("/hacking/hack.js", node, hack.threads, target)
+            weakenPid = ns.exec(
+                "/hacking/weaken.js",
+                node,
+                hack.weakenThreads,
+                target
+            )
             await ns.sleep(hack.weakenTime)
         }
         while (
-            ns.getRunningScript(actionPid) ||
-            ns.getRunningScript(weakenPid)
+            (actionPid && ns.getRunningScript(actionPid)) ||
+            (weakenPid && ns.getRunningScript(weakenPid))
         ) {
             await ns.sleep(100)
         }
-        let tempGrow = getGrow(ns, target, proc)
-        let tempHack = getHack(ns, target, proc)
+        let tempGrow = getGrow(ns, node, target, proc)
+        let tempHack = getHack(ns, node, target, proc)
         if (tempGrow) grow = tempGrow
         if (tempHack) hack = tempHack
     }
 
-    return await getParams(ns, target, { hack: hack, grow: grow })
+    return await getParams(ns, node, target, { hack: hack, grow: grow })
 }
 
 /** @param {import("../..").NS } ns */

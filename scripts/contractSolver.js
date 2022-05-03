@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars */
 /** @param {import("..").NS } ns */
 export async function main(ns) {
     let knownServers = new Array()
@@ -128,6 +129,12 @@ function getAnswer(ns, contract, hostname) {
             break
         case "Total Ways to Sum II":
             //answer = totalWaysToSumII(ns, data)
+            break
+        case "Generate IP Addresses":
+            answer = findIPs(data)
+            break
+        case "Total Ways to Sum":
+            answer = waysToSum(data)
             break
         default:
             break
@@ -334,7 +341,7 @@ function stockTrader(data, index = 0, holding = false, profit = 0) {
 }
 
 function totalWaysToSumII(ns, data) {
-    const N = 63 //data[0]
+    const N = 7 //data[0]
     const arr = [1, 4, 7, 9, 10, 11, 12, 13, 16, 18] // data[1]
     ns.tprint(N)
     ns.tprint(arr)
@@ -346,4 +353,33 @@ function totalWaysToSumII(ns, data) {
         for (let j = 0; j < arr.length; j++)
             if (i >= arr[j]) count[i] += count[i - arr[j]]
     return count[N]
+}
+
+function findIPs(data) {
+    let input = String(data)
+    let answer = []
+    for (let i = 0; i < 256; i++) {
+        if (!input.startsWith(i.toString())) continue
+        for (let j = 0; j < 256; j++) {
+            if (!input.startsWith(i.toString() + j)) continue
+            for (let k = 0; k < 256; k++) {
+                if (!input.startsWith(i.toString() + j + k)) continue
+                for (let l = 0; l < 256; l++) {
+                    if (input != i.toString() + j + k + l) continue
+                    answer.push(i + "." + j + "." + k + "." + l)
+                }
+            }
+        }
+    }
+    return answer
+}
+
+function waysToSum(data) {
+    let arr = new Array(data + 1).fill(0)
+    arr[0] = 1
+    for (let i = 1; i < data + 1; i++)
+        for (let j = 1; j < data + 1; j++)
+            if (j >= i) arr[j] = arr[j] + arr[j - i]
+
+    return arr[data] - 1
 }

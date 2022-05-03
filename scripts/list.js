@@ -40,6 +40,8 @@ export function main(ns) {
                     .padStart(8) +
                 "  MEM: " +
                 String(server.maxRam).padEnd(8) +
+                "    MON: " +
+                String(Math.floor(server.moneyMax)).padStart(20) +
                 "    TIM: " +
                 ns.tFormat(ns.getWeakenTime(target)).padEnd(30)
         )

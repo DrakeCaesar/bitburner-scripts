@@ -1,8 +1,8 @@
 /** @param {import("..").NS } ns */
 export async function main(ns) {
-    ns.disableLog("ALL")
+    //ns.disableLog("ALL")
     let target = ns.args[0]
-    let mF = 0.75
+    let mF = 0.66
 
     let moneyMax = ns.getServerMaxMoney(target)
     let securityMin = ns.getServerMinSecurityLevel(target)
@@ -23,6 +23,10 @@ export async function main(ns) {
         ).padStart(4)
         let ramT = 1
         let current = ns.getHostname()
+        let ram = ns.getServerMaxRam(current) - ns.getServerUsedRam(current)
+        //ns.tprint(ram)
+        //ns.tprint(ram / ns.getScriptRam("/hacking/hack.js"))
+
         let ramC = ns.getServerUsedRam(current) / ns.getServerMaxRam(current)
 
         if (ns.getRunningScript(pid) == null && ramC <= ramT) {
@@ -36,17 +40,25 @@ export async function main(ns) {
                     securityCur > ns.weakenAnalyze(threads);
                     threads++
                 );
+                threads = Math.min(
+                    threads,
+                    Math.floor(ram / ns.getScriptRam("/hacking/weaken.js"))
+                )
                 action = "weak"
                 runtime = ns.getWeakenTime(target)
-                pidW = ns.run("weaken.js", threads, target)
+                pidW = ns.run("/hacking/weaken.js", threads, target)
                 weaken = 1
             } else if (moneyCur == moneyMax && securityCur < securityT * 2) {
                 threads = Math.ceil(
                     ns.hackAnalyzeThreads(target, moneyMax * mF)
                 )
+                threads = Math.min(
+                    threads,
+                    Math.floor(ram / ns.getScriptRam("/hacking/hack.js"))
+                )
                 action = "hack"
                 runtime = ns.getHackTime(target)
-                pid = ns.run("hack.js", threads, target)
+                pid = ns.run("/hacking/hack.js", threads, target)
             } else if (moneyCur < moneyMax && securityCur < securityT * 2) {
                 //threads = Math.ceil(ns.growthAnalyze(target,1.0/(1.0-mF)))
                 if (moneyCur < moneyMax * 0.01) {
@@ -56,10 +68,13 @@ export async function main(ns) {
                         ns.growthAnalyze(target, moneyMax / moneyCur)
                     )
                 }
-
+                threads = Math.min(
+                    threads,
+                    Math.floor(ram / ns.getScriptRam("/hacking/grow.js"))
+                )
                 action = "grow"
                 runtime = ns.getGrowTime(target)
-                pid = ns.run("grow.js", threads, target)
+                pid = ns.run("/hacking/grow.js", threads, target)
             }
 
             if (ns.getRunningScript(pid) != null || weaken == 1) {
@@ -82,11 +97,11 @@ export async function main(ns) {
                     "T " +
                     ns.tFormat(runtime).padStart(30)
 
-                //ns.tprint(message)
+                ns.tprint(message)
                 ns.print(message)
                 weaken = 0
             } else {
-                //ns.print("failed")
+                ns.print("failed")
             }
         }
     }
