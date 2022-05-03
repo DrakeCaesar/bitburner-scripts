@@ -7,6 +7,7 @@ const testCases = [
             [7, 8, 9],
         ],
     },
+
     {
         input: [1, 2, 3, 4, 8, 12, 11, 10, 9, 5, 6, 7],
         output: [
@@ -18,10 +19,10 @@ const testCases = [
 ]
 
 for (const testCase of testCases) {
-    console.log(testCase.input)
-    //console.log(testCase.output)
+    //console.log(testCase.input)
+    console.log(testCase.output)
     const actual = spiralize(testCase.input)
-    //console.log(actual)
+    console.log(actual)
 }
 
 function spiralize(data) {
@@ -31,47 +32,35 @@ function spiralize(data) {
         w--
         h = data.length / w
     }
-
-    console.log("h: " + h)
-    console.log("w: " + w)
-
     var matrix = []
-    for (var i = 0; i < w; i++) {
-        matrix[i] = new Array(h)
+    for (var i = 0; i < h; i++) {
+        matrix[i] = new Array(w)
     }
     let x = 0
     let y = 0
-    let count = 1
-    matrix[x][y] = data[0]
-    console.log(JSON.stringify(matrix))
+    let count = 0
     while (count < data.length) {
-        while (x < w && matrix[y][x] == null) {
-            matrix[y][x] = data[count]
+        while (x < w - 1 && !matrix[y][x + 1]) {
+            matrix[y][x++] = data[count]
             if (count++ == data.length) return matrix
-            console.log(JSON.stringify(matrix))
-            ++x
         }
-        --x
-        while (y < h && matrix[y][x] == null) {
-            matrix[y][x] = data[count]
+
+        while (y < h - 1 && !matrix[y + 1][x]) {
+            matrix[y++][x] = data[count]
             if (count++ == data.length) return matrix
-            console.log(JSON.stringify(matrix))
-            ++y
         }
-        --y
-        while (x > -1 && matrix[y][x] == null) {
-            matrix[y][x] = data[count]
+
+        while (x > 0 && !matrix[y][x - 1]) {
+            matrix[y][x--] = data[count]
             if (count++ == data.length) return matrix
-            console.log(JSON.stringify(matrix))
-            --x
         }
-        ++x
-        while (y > -1 && matrix[y][x] == null) {
-            matrix[y][x] = data[count]
+        while (y > 0 && !matrix[y - 1][x]) {
+            matrix[y--][x] = data[count]
             if (count++ == data.length) return matrix
-            console.log(JSON.stringify(matrix))
-            --y
         }
-        ++y
+        if (count == data.length - 1) {
+            matrix[y][x] = data[count]
+            return matrix
+        }
     }
 }

@@ -136,6 +136,9 @@ function getAnswer(ns, contract, hostname) {
         case "Total Ways to Sum":
             answer = waysToSum(data)
             break
+        case "Spiralize Matrix":
+            answer = spiralize(data)
+            break
         default:
             break
     }
@@ -382,4 +385,44 @@ function waysToSum(data) {
             if (j >= i) arr[j] = arr[j] + arr[j - i]
 
     return arr[data] - 1
+}
+
+function spiralize(data) {
+    let w = Math.ceil(data.length / 2)
+    let h
+    while (!(data.length % w == 0 && (w % 2 || h % 2))) {
+        w--
+        h = data.length / w
+    }
+    var matrix = []
+    for (var i = 0; i < h; i++) {
+        matrix[i] = new Array(w)
+    }
+    let x = 0
+    let y = 0
+    let count = 0
+    while (count < data.length) {
+        while (x < w - 1 && !matrix[y][x + 1]) {
+            matrix[y][x++] = data[count]
+            if (count++ == data.length) return matrix
+        }
+
+        while (y < h - 1 && !matrix[y + 1][x]) {
+            matrix[y++][x] = data[count]
+            if (count++ == data.length) return matrix
+        }
+
+        while (x > 0 && !matrix[y][x - 1]) {
+            matrix[y][x--] = data[count]
+            if (count++ == data.length) return matrix
+        }
+        while (y > 0 && !matrix[y - 1][x]) {
+            matrix[y--][x] = data[count]
+            if (count++ == data.length) return matrix
+        }
+        if (count == data.length - 1) {
+            matrix[y][x] = data[count]
+            return matrix
+        }
+    }
 }
