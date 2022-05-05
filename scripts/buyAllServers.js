@@ -1,12 +1,14 @@
 /** @param {import("..").NS } ns */
 export async function main(ns) {
     while (!ns.serverExists("node24")) {
-        let cost = ns.getPurchasedServerCost(ns.getPurchasedServerMaxRam())
+        let future = ns.getPurchasedServerMaxRam()
+        //future = 131072
+
+        let cost = ns.getPurchasedServerCost(future)
         let money = ns.getPlayer().money
         let count = Math.floor(money / cost)
         //ns.tprint("cost: " + cost)
         //ns.tprint("# to buy: " + count)
-        let future = ns.getPurchasedServerMaxRam()
         //ns.tprint("cost: " + ns.nFormat(cost, "($ 0.000 a)"))
         for (let i = 0; i < 25; ++i) {
             // eslint-disable-next-line quotes
@@ -34,6 +36,6 @@ export async function main(ns) {
                 ns.purchaseServer(target, future)
             }
         }
-        await ns.sleep(1000)
+        await ns.sleep(10000)
     }
 }

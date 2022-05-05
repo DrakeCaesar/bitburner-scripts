@@ -26,11 +26,12 @@ export async function main(ns) {
                 key != "." &&
                 key != "avmnite-02h" &&
                 key != "CSEC" &&
-                //key != "darkweb" &&
+                key != "darkweb" &&
                 key != "home" &&
                 key != "I.I.I.I" &&
                 key != "run4theh111z" &&
-                //key != "The-Cave" &&
+                key != "w0r1d_d43m0n" &&
+                key != "The-Cave" &&
                 !key.includes("node") &&
                 ns.getServerMinSecurityLevel(key) !=
                     ns.getServerSecurityLevel(key)
@@ -45,7 +46,6 @@ export async function main(ns) {
         // eslint-disable-next-line no-unused-vars
         for (const [target, level] of items) {
             ns.run("autoNuke.js")
-
             let security =
                 ns.getServerSecurityLevel(target) -
                 ns.getServerMinSecurityLevel(target)
@@ -55,7 +55,9 @@ export async function main(ns) {
             )
             //ns.tprint(target)
             if (
+                ns.hasRootAccess(target) &&
                 weakenThreads > 0 &&
+                security >= 5 &&
                 !ns.getRunningScript("/hacking/weaken.js", node, target) &&
                 ns.exec("/hacking/weaken.js", node, weakenThreads, target)
             ) {

@@ -31,27 +31,41 @@ const testCases = [
 ]
 
 for (const testCase of testCases) {
-    const actual = findMax(testCase.input, 0, false, 0)
-    console.log(testCase.output)
-    console.log(actual)
+    const actual = maxProfit(
+        testCase.input,
+        Math.floor(testCase.input.length / 2)
+    )
+    console.log("expected: " + testCase.output)
+    console.log("actual:   " + actual + "\n")
 }
 
-function findMax(data, index = 0, holding = false, profit = 0) {
-    if (index < data.length - 1) {
-        return holding
-            ? Math.max(
-                  findMax(data, index + 1, true, profit),
-                  findMax(data, index + 1, false, profit + data[index])
-              )
-            : Math.max(
-                  findMax(data, index + 1, true, profit - data[index]),
-                  findMax(data, index + 1, false, profit)
-              )
-    } else {
-        if (holding) {
-            return profit + data[index]
-        } else {
-            return profit
+function maxProfit(price, k) {
+    const n = price.length
+    // table to store results of sub-problems
+    // profit[t][i] stores maximum profit
+    // using at most t transactions up to day
+    // i (including day i)
+    var profit = Array(k + 1).fill(0)
+    for (var j = 0; j < k + 1; j++) {
+        profit[j] = Array(n + 1).fill(0)
+    }
+    // For day 0, you can't earn money
+    // irrespective of how many times you trade
+    for (j = 0; j <= k; j++) {
+        profit[j][0] = 0
+    }
+    // profit is 0 if we don't do any
+    // transaction (i.e. k =0)
+    for (j = 0; j <= n; j++) profit[0][j] = 0
+
+    // fill the table in bottom-up fashion
+    for (var i = 1; i <= k; i++) {
+        var prevDiff = -Number.MAX_VALUE
+        for (j = 1; j < n; j++) {
+            prevDiff = Math.max(prevDiff, profit[i - 1][j - 1] - price[j - 1])
+            profit[i][j] = Math.max(profit[i][j - 1], price[j] + prevDiff)
         }
     }
+
+    return profit[k][n - 1]
 }

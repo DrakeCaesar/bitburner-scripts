@@ -32,6 +32,7 @@ export async function main(ns) {
             //key != "n00dles" &&
             key != "w0r1d_d43m0n" &&
             key != "fulcrumassets" &&
+            key != "megacorp" &&
             !key.includes("node")
         ) {
             items.push([key, level])
@@ -49,7 +50,7 @@ export async function main(ns) {
         let node = "node" + String(i).padStart(2, "0")
         i++
 
-        if (node == "node25") {
+        if (!ns.serverExists(node)) {
             break
         }
 

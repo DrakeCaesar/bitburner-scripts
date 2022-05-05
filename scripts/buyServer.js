@@ -1,7 +1,7 @@
 /** @param {import("..").NS } ns */
 export async function main(ns) {
     let node = "node00"
-    let target = "omega-net"
+    let target = ns.args[0]
     let maxRam = ns.getPurchasedServerMaxRam()
     let maxCost = ns.getPurchasedServerCost(maxRam)
     let firstIteration = true
@@ -26,9 +26,11 @@ export async function main(ns) {
                 ],
                 node
             )
-            ns.killall(target)
+            //ns.killall(node)
+            //ns.kill("/hacking/autoHackParallel.js", "home", node, target)
             ns.exec("/hacking/autoHackParallel.js", "home", 1, node, target)
-            ///ns.exec("autoHack.js", node, 1, target)
+            //ns.exec("/hacking/autoHackParallel.js", "home", 1, node, target)
+            //ns.exec("autoHack.js", node, 1, target)
             current = ns.getServerMaxRam(node)
         } else {
             current = 0
@@ -74,8 +76,7 @@ export async function main(ns) {
                 ],
                 node
             )
-            ns.killall(target)
-
+            //ns.kill("/hacking/autoHackParallel.js", "home", node, target)
             ns.exec("/hacking/autoHackParallel.js", "home", 1, node, target)
             //ns.exec("autoHack.js", node, 1, target)
 
@@ -91,7 +92,7 @@ export async function main(ns) {
                     (cost < maxCost
                         ? format(
                               ns.getPurchasedServerCost(
-                                  Math.min(future, maxRam)
+                                  Math.min(future * 2, maxRam)
                               )
                           )
                         : "none")

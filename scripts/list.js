@@ -58,10 +58,6 @@ export function main(ns) {
             ns.relaysmtp(target)
             ++numPortsOpen
         }
-        if (ns.fileExists("relaySMTP.exe", "home")) {
-            ns.relaysmtp(target)
-            ++numPortsOpen
-        }
         if (ns.fileExists("HTTPWorm.exe", "home")) {
             ns.httpworm(target)
             ++numPortsOpen
