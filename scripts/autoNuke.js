@@ -70,6 +70,7 @@ export function main(ns) {
             */
             //ns.tprint(server +"\t level" + level + " is lower than player hacking level of " + player.hacking + ", executing nuke")
             ns.nuke(server)
+            ns.singularity
         }
     }
 

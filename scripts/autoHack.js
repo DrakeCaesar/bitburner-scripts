@@ -2,11 +2,11 @@
 export async function main(ns) {
     //ns.disableLog("ALL")
     let target = ns.args[0]
-    let mF = 0.66
+    let mF = 0.08
 
     let moneyMax = ns.getServerMaxMoney(target)
     let securityMin = ns.getServerMinSecurityLevel(target)
-    let securityT = 5
+    let securityT = 3
 
     let pid = 0
     let pidW = 0
@@ -46,7 +46,8 @@ export async function main(ns) {
                 )
                 action = "weak"
                 runtime = ns.getWeakenTime(target)
-                pidW = ns.run("/hacking/weaken.js", threads, target)
+                if (threads)
+                    pidW = ns.run("/hacking/weaken.js", threads, target)
                 weaken = 1
             } else if (moneyCur == moneyMax && securityCur < securityT * 2) {
                 threads = Math.ceil(
@@ -58,7 +59,8 @@ export async function main(ns) {
                 )
                 action = "hack"
                 runtime = ns.getHackTime(target)
-                pid = ns.run("/hacking/hack.js", threads, target)
+
+                if (threads) pid = ns.run("/hacking/hack.js", threads, target)
             } else if (moneyCur < moneyMax && securityCur < securityT * 2) {
                 //threads = Math.ceil(ns.growthAnalyze(target,1.0/(1.0-mF)))
                 if (moneyCur < moneyMax * 0.01) {
@@ -74,10 +76,14 @@ export async function main(ns) {
                 )
                 action = "grow"
                 runtime = ns.getGrowTime(target)
-                pid = ns.run("/hacking/grow.js", threads, target)
+                if (threads) pid = ns.run("/hacking/grow.js", threads, target)
             }
 
-            if (ns.getRunningScript(pid) != null || weaken == 1) {
+            if (
+                ns.getRunningScript(pid != null || weaken == 1) &&
+                threads &&
+                !isNaN(runtime)
+            ) {
                 var message =
                     target.padEnd(18) +
                     " | " +

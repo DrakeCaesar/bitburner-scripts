@@ -1,7 +1,7 @@
 /** @param {import("..").NS } ns */
 export async function main(ns) {
-    let node = "node00"
-    let target = ns.args[0]
+    let node = ns.args[0]
+    let target = ns.args[1]
     let maxRam = ns.getPurchasedServerMaxRam()
     let maxCost = ns.getPurchasedServerCost(maxRam)
     let firstIteration = true
@@ -29,7 +29,6 @@ export async function main(ns) {
             //ns.killall(node)
             //ns.kill("/hacking/autoHackParallel.js", "home", node, target)
             ns.exec("/hacking/autoHackParallel.js", "home", 1, node, target)
-            //ns.exec("/hacking/autoHackParallel.js", "home", 1, node, target)
             //ns.exec("autoHack.js", node, 1, target)
             current = ns.getServerMaxRam(node)
         } else {
