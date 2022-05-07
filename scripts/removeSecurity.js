@@ -57,7 +57,7 @@ export async function main(ns) {
             if (
                 ns.hasRootAccess(target) &&
                 weakenThreads > 0 &&
-                security >= 5 &&
+                security >= 50 &&
                 !ns.getRunningScript("/hacking/weaken.js", node, target) &&
                 ns.exec("/hacking/weaken.js", node, weakenThreads, target)
             ) {

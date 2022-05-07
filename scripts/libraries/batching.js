@@ -1,7 +1,7 @@
 let hack_time = 5000
-let grow_time = (16 / 5) * hack_time
+let grow_time = 3.2 * hack_time
 let weak_time = 4 * hack_time
-let t0 = 100
+let t0 = 250
 
 let period, depth
 const kW_max = Math.floor(1 + (weak_time - 4 * t0) / (8 * t0))
@@ -49,10 +49,13 @@ console.log("T:  " + tFormat(period))
 console.log("k:  " + String(depth).padStart(6))
 console.log("dh: " + tFormat(hack_delay))
 console.log("dw1:" + tFormat(weak_delay_1))
-console.log("dh: " + tFormat(grow_delay))
+console.log("dg: " + tFormat(grow_delay))
 console.log("dw2:" + tFormat(weak_delay_2))
 console.log("")
 
 function tFormat(duration) {
     return (duration / 1000).toFixed(3).padStart(10) + " s"
 }
+
+
+

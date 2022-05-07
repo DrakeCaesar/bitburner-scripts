@@ -14,13 +14,17 @@ export async function main(ns) {
             paddingLevels
         )
     }
-
+    let hackingLevelUpperBound = Infinity
+    if (ns.args.length > 0) {
+        hackingLevelUpperBound = ns.args[0]
+    }
     var items = []
     for (const key of knownServers) {
         let level = ns.getServerRequiredHackingLevel(key)
         let playerLevel = ns.getPlayer().hacking
         if (
             level <= playerLevel &&
+            level <= hackingLevelUpperBound &&
             key != "." &&
             key != "avmnite-02h" &&
             key != "CSEC" &&

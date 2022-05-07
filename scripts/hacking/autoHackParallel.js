@@ -3,13 +3,13 @@ export async function main(ns) {
     //ns.disableLog("ALL")
     let node = ns.args[0]
     let target = ns.args[1]
-    let proc = 0.1
+    let proc = 0.67
     let playerLevel = ns.getPlayer().hacking
     let oldPlayerLevel
     let updateHack = false
     let updateGrow = false
     let paramsString
-    //paramsString = ns.read("/data/" + target + ".txt")
+    paramsString = ns.read("/data/" + target + ".txt")
     let params
     if (paramsString) {
         params = JSON.parse(paramsString)
