@@ -120,6 +120,7 @@
          "darkweb",
          "Deepscan",
          "dles",
+         "DRRURRD",
          "filesync",
          "ftpcrack",
          "fulcrumassets",
@@ -136,12 +137,16 @@
          "paddinglevels",
          "relaysmtp",
          "run4theh111z",
+         "rvest",
+         "savegame",
          "sonarjs",
          "spiralize",
          "sqlinject",
          "tprint",
          "tprintf",
-         "xmodar"
+         "unclickable",
+         "xmodar",
+         "yourusername"
       ],
       "ignorePaths": [
          "package-lock.json",
