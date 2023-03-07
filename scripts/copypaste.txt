@@ -12,12 +12,16 @@ buy Formulas.exe ;
 
 home ; run find.js CSEC ; backdoor 
 home ; run find.js avmnite-02h ; backdoor  
+home ; run find.js I.I.I.I ; backdoor ;
 home ; run find.js run4theh111z ; backdoor  
 
+
 home ; run find.js .  ; backdoor 
-home ; run find.js I.I.I.I ; backdoor ;
 home ; run find.js The-Cave ; backdoor ;
 
   
 
-
+run hacking/autoHackParallel.js home silver-helix ;
+run hacking/autoHackParallel.js home omega-net ;
+run hacking/autoHackParallel.js home iron-gym ;
+run hacking/autoHackParallel.js home crush-fitness ;

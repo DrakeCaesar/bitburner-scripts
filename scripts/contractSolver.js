@@ -8,11 +8,15 @@ export async function main(ns) {
     let solve = ns.args[0]
     let grep = ns.args[1]
 
+    let totalC = 0
+    let solvableC = 0
+
     // eslint-disable-next-line no-unused-vars
     for (const hostname of knownServers) {
         let listCCT = ns.ls(hostname, ".cct")
 
         if (listCCT.length) {
+            totalC += listCCT.length
             //ns.tprint(hostname + ":")
             for (const contract of listCCT) {
                 const type = ns.codingcontract.getContractType(
@@ -28,6 +32,9 @@ export async function main(ns) {
                     solutions += "type:     " + type + "\n"
                     solutions += "data:     " + data + "\n"
                     solutions += "answer:   " + String(answer) + "\n"
+
+                    solvableC++
+
                     let reward
                     if (solve) {
                         reward = ns.codingcontract.attempt(
@@ -82,6 +89,9 @@ export async function main(ns) {
     if (contractTypes) {
         ns.tprintf(contractTypes)
     }
+
+    ns.tprintf("Total:    " + totalC)
+    ns.tprintf("Solvable: " + solvableC)
 }
 
 /** @param {import("..").NS } ns */

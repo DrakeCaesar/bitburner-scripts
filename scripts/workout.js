@@ -1,21 +1,21 @@
 /** @param {import("..").NS } ns */
 export async function main(ns) {
     for (;;) {
-        let p = ns.getPlayer()
+        const focus = ns.singularity.isFocused()
+        const p = ns.getPlayer()
         if (
-            p.strength < p.defense &&
-            p.strength < p.dexterity &&
-            p.strength < p.agility
+            p.agility < p.dexterity &&
+            p.agility < p.defense &&
+            p.agility < p.strength
         ) {
-            ns.gymWorkout("powerhouse gym", "Strength")
-        } else if (p.defense < p.dexterity && p.defense < p.agility) {
-            ns.gymWorkout("powerhouse gym", "Defense")
-        } else if (p.dexterity < p.agility) {
-            ns.gymWorkout("powerhouse gym", "Dexterity")
+            ns.singularity.gymWorkout("powerhouse gym", "Agility", focus)
+        } else if (p.dexterity < p.defense && p.dexterity < p.strength) {
+            ns.singularity.gymWorkout("powerhouse gym", "Dexterity", focus)
+        } else if (p.defense < p.strength) {
+            ns.singularity.gymWorkout("powerhouse gym", "Defense", focus)
         } else {
-            ns.gymWorkout("powerhouse gym", "Agility")
+            ns.singularity.gymWorkout("powerhouse gym", "Strength", focus)
         }
-        await ns.sleep(100)
-        ns.stopAction()
+        await ns.sleep(1000)
     }
 }

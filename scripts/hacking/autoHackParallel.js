@@ -3,7 +3,7 @@ export async function main(ns) {
     //ns.disableLog("ALL")
     let node = ns.args[0]
     let target = ns.args[1]
-    let proc = 0.67
+    let proc = 0.95
     let playerLevel = ns.getPlayer().hacking
     let oldPlayerLevel
     let updateHack = false
