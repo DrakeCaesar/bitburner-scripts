@@ -2,5 +2,3 @@ node_modules/
 dist/
 NetscriptDefinitions.d.ts
 package-lock.json
-.vscode/
-.vscode/settings.json
