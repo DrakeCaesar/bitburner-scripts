@@ -15,7 +15,7 @@
    "license": "ISC",
    "author": "",
    "main": "index.js",
-   "types": "./index.d.ts",
+   "types": "./NetscriptDefinitions.d.ts",
    "scripts": {
       "lint": "prettier --write . && eslint . --fix && sort-package-json",
       "start": "webpack",
