@@ -17,5 +17,6 @@
          "/*": ["*"],
          "@ns": ["../NetscriptDefinitions.d.ts"]
       }
-   }
+   },
+   "exclude": ["node_modules"]
 }
