@@ -1,30 +1,28 @@
-/* eslint-disable no-unused-vars */
-/** @param {import("..").NS } ns */
-export async function main(ns) {
-   let knownServers = []
+import { NS } from ".."
+
+export async function main(ns: NS): Promise<void> {
+   const knownServers: string[] = []
    crawl(ns, knownServers)
    let solutions = ""
-   let dict = {}
-   let timeDict = {}
-   let solve = ns.args[0]
-   let grep = ns.args[1]
+   const dict: Record<string, [string, string][]> = {}
+   const timeDict: Record<string, number[]> = {}
+   const solve = ns.args[0]
+   const grep = ns.args[1]
 
    let totalC = 0
    let solvableC = 0
 
-   // eslint-disable-next-line no-unused-vars
    for (const hostname of knownServers) {
-      let listCCT = ns.ls(hostname, ".cct")
+      const listCCT = ns.ls(hostname, ".cct")
 
       if (listCCT.length) {
          totalC += listCCT.length
-         //ns.tprint(hostname + ":")
          for (const contract of listCCT) {
             const type = ns.codingcontract.getContractType(contract, hostname)
             const data = ns.codingcontract.getData(contract, hostname)
 
             const start = performance.now()
-            let answer = getAnswer(ns, contract, hostname)
+            const answer = getAnswer(ns, contract, hostname)
             const end = performance.now()
 
             if (answer != null && answer != undefined) {
@@ -38,14 +36,7 @@ export async function main(ns) {
 
                let reward
                if (solve) {
-                  reward = ns.codingcontract.attempt(
-                     answer,
-                     contract,
-                     hostname,
-                     {
-                        returnReward: true,
-                     }
-                  )
+                  reward = ns.codingcontract.attempt(answer, contract, hostname)
                   solutions += "reward:   " + reward + "\n"
                }
                solutions += "\n"
@@ -62,23 +53,21 @@ export async function main(ns) {
          }
       }
    }
-   //ns.tprint(JSON.stringify(dict, null, 4))
 
    let contractTypes
-   let keys = []
-   for (const [key] of Object.entries(dict)) {
-      keys.push(key + " ")
-   }
+   const keys = Object.keys(dict).sort()
 
-   keys.sort()
-
-   if (keys) {
+   if (keys.length) {
       contractTypes = "\nUnknown Types:\n\n"
-      for (let item of keys) {
+      for (const item of keys) {
          contractTypes += item + "\n"
          if (grep) {
             for (const element of dict[item.trim()]) {
-               if (element[1].toLowerCase().includes(grep.toLowerCase())) {
+               if (
+                  element[1]
+                     .toLowerCase()
+                     .includes(grep.toString().toLowerCase())
+               ) {
                   contractTypes +=
                      "   " + element[0].padEnd(20) + element[1] + "\n"
                }
@@ -98,22 +87,20 @@ export async function main(ns) {
    ns.tprintf("Total:    " + totalC)
    ns.tprintf("Solvable: " + solvableC)
 
-   var totalTime = 0
+   let totalTime = 0
 
-   for (const [key] of Object.entries(timeDict)) {
-      totalTime += sum(timeDict[key])
-      timeDict[key] = avg(timeDict[key])
-   }
-
-   timeDict = Object.fromEntries(
-      Object.entries(timeDict).sort(function (a, b) {
-         return b[1] - a[1] || a[0].localeCompare(b[0])
+   const sortedRecord = Object.fromEntries(
+      Object.entries(timeDict).sort((a, b) => {
+         const avgA = a[1].reduce((acc, curr) => acc + curr, 0) / a[1].length
+         const avgB = b[1].reduce((acc, curr) => acc + curr, 0) / b[1].length
+         return avgB - avgA
       })
    )
 
    contractTypes = "\nAverage execution time:\n\n"
-   for (const [key, value] of Object.entries(timeDict)) {
-      contractTypes += key.padEnd(40) + value + "\n"
+   for (const [key, value] of Object.entries(sortedRecord)) {
+      contractTypes += key.padEnd(40) + avg(value) + "\n"
+      totalTime += sum(value)
    }
    contractTypes += "\n"
 
@@ -124,73 +111,75 @@ export async function main(ns) {
    ns.tprintf("Total execution time:".padEnd(40) + totalTime)
 }
 
-/** @param {import("..").NS } ns */
-function crawl(ns, knownServers, hostname, depth = 0) {
-   let servers = ns.scan(hostname)
-   for (const element of servers) {
-      if (!knownServers.includes(element)) {
-         knownServers.push(element)
-         crawl(ns, knownServers, element, depth + 1)
+function crawl(ns: NS, servers: string[]) {
+   const scanned = new Set()
+   const queue = ["home"]
+   while (queue.length > 0) {
+      const curr = queue.shift()!
+      if (scanned.has(curr)) {
+         continue
+      }
+      scanned.add(curr)
+      if (curr !== "home") {
+         servers.push(curr)
+      }
+      const neighbors = ns.scan(curr)
+      for (const neighbor of neighbors) {
+         queue.push(neighbor)
       }
    }
 }
 
-function avg(arr) {
-   return sum(arr) / arr.length
+function sum(numbers: number[]) {
+   return numbers.reduce((a, b) => a + b, 0)
 }
 
-function sum(arr) {
-   var sum = 0
-
-   // Iterate the elements of the array
-   arr.forEach(function (item, idx) {
-      sum += item
-   })
-
-   // Returning the average of the numbers
-   return sum
+function avg(numbers: number[]): number {
+   if (numbers.length === 0) {
+      return 0
+   }
+   const total = numbers.reduce((a, b) => a + b)
+   return total / numbers.length
 }
 
-/** @param {import("..").NS } ns */
-function getAnswer(ns, contract, hostname) {
+function getAnswer(ns: NS, contract: string, hostname: string) {
    const type = ns.codingcontract.getContractType(contract, hostname)
    const data = ns.codingcontract.getData(contract, hostname)
-   //ns.tprint(ns, data)
 
    let answer
    switch (type) {
       case "Subarray with Maximum Sum":
-         answer = subarrayWithMaximumSum(ns, data)
+         answer = subarrayWithMaximumSum(data)
          break
       case "Unique Paths in a Grid I":
-         answer = uniquePathsInAGridI(ns, data)
+         answer = uniquePathsInAGridI(data)
          break
       case "Unique Paths in a Grid II":
-         answer = uniquePathsInAGridII(ns, data)
+         answer = uniquePathsInAGridII(data)
          break
       case "Find Largest Prime Factor":
-         answer = findLargestPrimeFactor(ns, data)
+         answer = findLargestPrimeFactor(data)
          break
       case "Sanitize Parentheses in Expression":
-         answer = sanitizeParenthesesInExpression(ns, data)
+         answer = sanitizeParenthesesInExpression(data)
          break
       case "Merge Overlapping Intervals":
-         answer = mergeOverlappingIntervals(ns, data)
+         answer = mergeOverlappingIntervals(data)
          break
       case "Algorithmic Stock Trader I":
-         answer = stockTrader(ns, 1, data)
+         answer = stockTrader(1, data)
          break
       case "Algorithmic Stock Trader II":
-         answer = stockTrader(ns, data.length, data)
+         answer = stockTrader(data.length, data)
          break
       case "Algorithmic Stock Trader III":
-         answer = stockTrader(ns, 2, data)
+         answer = stockTrader(2, data)
          break
       case "Algorithmic Stock Trader IV":
-         answer = stockTrader(ns, data[0], data[1])
+         answer = stockTrader(data[0], data[1])
          break
       case "Total Ways to Sum II":
-         //answer = totalWaysToSumII(ns, data)
+         //answer = totalWaysToSumII(data);
          break
       case "Generate IP Addresses":
          answer = findIPs(data)
@@ -208,13 +197,13 @@ function getAnswer(ns, contract, hostname) {
          answer = trianglePath(data)
          break
       case "Array Jumping Game I":
-         //answer = jumpingGame(ns, data)
+         //answer = jumpingGame(data);
          break
       case "Array Jumping Game II":
-         //answer = jumpingGame(ns, data)
+         //answer = jumpingGame(data);
          break
       case "Find All Valid Math Expressions":
-         answer = findAllValidMathExpressions(ns, data)
+         //answer = findAllValidMathExpressions(data)
          break
       default:
          break
@@ -223,15 +212,15 @@ function getAnswer(ns, contract, hostname) {
    return answer
 }
 
-function findAllValidMathExpressions(ns, data) {
+function findAllValidMathExpressions(data: any) {
    return 0
 }
 
-function uniquePathsInAGridI(ns, data) {
+function uniquePathsInAGridI(data: number[]): number {
    const w = data[0]
    const h = data[1]
 
-   var arr = []
+   const arr: number[][] = []
    for (let i = 0; i < w; i++) {
       arr[i] = []
       for (let j = 0; j < h; j++) {
@@ -244,21 +233,21 @@ function uniquePathsInAGridI(ns, data) {
       }
    }
 
-   const answer = arr[w - 1][h - 1]
+   const answer: number = arr[w - 1][h - 1]
    return answer
 }
 
-function uniquePathsInAGridII(ns, data) {
+function uniquePathsInAGridII(data: string[][]): number {
    const w = data.length
    const h = data[0].length
 
-   var arr = []
+   const arr: number[][] = []
    for (let i = 0; i < w; i++) {
       arr[i] = []
       for (let j = 0; j < h; j++) {
          if (i == 0 && j == 0) {
             arr[i][j] = 1
-         } else if (data[i][j] == 1) {
+         } else if (data[i][j] == "1") {
             arr[i][j] = 0
          } else if (i == 0) {
             arr[i][j] = arr[i][j - 1]
@@ -270,11 +259,11 @@ function uniquePathsInAGridII(ns, data) {
       }
    }
 
-   const answer = arr[w - 1][h - 1]
+   const answer: number = arr[w - 1][h - 1]
    return answer
 }
 
-function subarrayWithMaximumSum(ns, data) {
+function subarrayWithMaximumSum(data: string | any[]) {
    let answer = Number.MIN_SAFE_INTEGER
    let cur = 0
    for (let i = 0; i < data.length; i++) {
@@ -290,8 +279,8 @@ function subarrayWithMaximumSum(ns, data) {
    return answer
 }
 
-function findLargestPrimeFactor(ns, data) {
-   let factors = []
+function findLargestPrimeFactor(data: number) {
+   const factors = []
    let d = 2
    while (data > 1) {
       while (data % d == 0) {
@@ -307,9 +296,8 @@ function findLargestPrimeFactor(ns, data) {
    const answer = Math.max(...factors)
    return answer
 }
-
-function sanitizeParenthesesInExpression(ns, str) {
-   const isValid = (str) => {
+function sanitizeParenthesesInExpression(str: string): string[] {
+   const isValid = (str: string): boolean => {
       let count = 0
       for (let i = 0; i < str.length; i++) {
          if (str[i] === "(") count++
@@ -319,8 +307,8 @@ function sanitizeParenthesesInExpression(ns, str) {
       return count === 0
    }
 
-   const result = []
-   let minRemoved = Infinity
+   const result: string[] = []
+   const minRemoved = Infinity
    let leftToRemove = 0
    let rightToRemove = 0
 
@@ -336,7 +324,12 @@ function sanitizeParenthesesInExpression(ns, str) {
       }
    }
 
-   const removeParentheses = (str, index, leftRemoved, rightRemoved) => {
+   const removeParentheses = (
+      str: string,
+      index: number,
+      leftRemoved: number,
+      rightRemoved: number
+   ): void => {
       if (leftRemoved === leftToRemove && rightRemoved === rightToRemove) {
          if (isValid(str)) {
             result.push(str)
@@ -370,12 +363,12 @@ function sanitizeParenthesesInExpression(ns, str) {
 }
 
 /*
-function Merge_Overlapping_Intervals(ns, data) {
-    ns.tprint(ns, data)
+function Merge_Overlapping_Intervals(data) {
+    ns.tprint(data)
     data.sort(function (first, second) {
         return first[1] - second[1] || first[0] - second[0]
     })
-    ns.tprint(ns, data)
+    ns.tprint(data)
 
     let length = data.length - 1
     for (let i = 0; i < length; i++) {
@@ -391,8 +384,8 @@ function Merge_Overlapping_Intervals(ns, data) {
 }
 */
 
-function mergeOverlappingIntervals(ns, data) {
-   let map = []
+function mergeOverlappingIntervals(data: any) {
+   const map = []
    let start = Number.MAX_SAFE_INTEGER
    for (const [first, second] of data) {
       start = Math.min(start, first)
@@ -404,9 +397,9 @@ function mergeOverlappingIntervals(ns, data) {
       }
    }
    map.push(null)
-   let answer = []
+   const answer = []
    let last = false
-   let temp = []
+   const temp = []
    for (let i = start; i < map.length; i++) {
       if (map[i * 2] && last == false) {
          temp[0] = map[i * 2]
@@ -429,7 +422,7 @@ function mergeOverlappingIntervals(ns, data) {
    return answer
 }
 
-function stockTrader(ns, k, prices) {
+function stockTrader(k: number, prices: string | any[]) {
    if (prices.length < 2 || k === 0) {
       return 0
    }
@@ -459,13 +452,11 @@ function stockTrader(ns, k, prices) {
    return dp[k][prices.length - 1]
 }
 
-function totalWaysToSumII(ns, data) {
+function totalWaysToSumII(data: any) {
    const N = 7 //data[0]
    const arr = [1, 4, 7, 9, 10, 11, 12, 13, 16, 18] // data[1]
-   ns.tprint(N)
-   ns.tprint(arr)
 
-   let count = new Array(N + 1)
+   const count = new Array(N + 1)
    count.fill(0)
    count[0] = 1
    for (let i = 1; i <= N; i++)
@@ -474,10 +465,10 @@ function totalWaysToSumII(ns, data) {
    return count[N]
 }
 
-function findIPs(str) {
-   const result = []
+function findIPs(str: string) {
+   const result: string[] = []
 
-   const backtrack = (startIndex, parts) => {
+   const backtrack = (startIndex: number, parts: string[]) => {
       if (parts.length === 4 && startIndex === str.length) {
          result.push(parts.join("."))
          return
@@ -513,8 +504,8 @@ function findIPs(str) {
    return result
 }
 
-function waysToSum(data) {
-   let arr = new Array(data + 1).fill(0)
+function waysToSum(data: number) {
+   const arr = new Array(data + 1).fill(0)
    arr[0] = 1
    for (let i = 1; i < data + 1; i++)
       for (let j = 1; j < data + 1; j++)
@@ -523,15 +514,15 @@ function waysToSum(data) {
    return arr[data] - 1
 }
 
-function spiralize(data) {
-   let matrix = data
-   let h = matrix.length
-   let w = matrix[0].length
+function spiralize(data: any) {
+   const matrix = data
+   const h = matrix.length
+   const w = matrix[0].length
    let x = 0
    let y = 0
-   let dataCount = h * w
+   const dataCount = h * w
    let count = 0
-   let answer = []
+   const answer = []
    while (count < dataCount) {
       while (x < w - 1 && matrix[y][x + 1]) {
          answer.push(matrix[y][x])
@@ -567,17 +558,18 @@ function spiralize(data) {
    }
 }
 
-function shortestPath(grid) {
+function shortestPath(grid: number[][]) {
    const m = grid.length
    const n = grid[0].length
    const queue = [[0, 0]]
-   const visited = new Set()
+   const visited = new Set<string>()
    visited.add("0,0")
-   const parent = { "0,0": null }
+   const parent: { [key: string]: number[] | null } = { "0,0": null }
 
-   const isInsideGrid = (i, j) => i >= 0 && i < m && j >= 0 && j < n
+   const isInsideGrid = (i: number, j: number) =>
+      i >= 0 && i < m && j >= 0 && j < n
 
-   const getNeighbors = (i, j) => {
+   const getNeighbors = (i: number, j: number) => {
       const neighbors = []
       if (isInsideGrid(i - 1, j) && grid[i - 1][j] === 0)
          neighbors.push([i - 1, j])
@@ -591,11 +583,11 @@ function shortestPath(grid) {
    }
 
    while (queue.length > 0) {
-      const [i, j] = queue.shift()
+      const [i, j] = queue.shift()!
       if (i === m - 1 && j === n - 1) {
          // Target reached, construct path
          const path = []
-         let curr = [m - 1, n - 1]
+         let curr: number[] | null = [m - 1, n - 1]
          while (curr !== null) {
             const [i, j] = curr
             const parentKey = i + "," + j
@@ -625,7 +617,7 @@ function shortestPath(grid) {
    return ""
 }
 
-function trianglePath(data) {
+function trianglePath(data: string | any[]) {
    for (let j = 1; j < data.length; j++) {
       for (let i = 0; i < data[j].length; i++) {
          if (i == data[j].length - 1) {
