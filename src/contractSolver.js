@@ -552,76 +552,62 @@ function spiralize(data) {
    }
 }
 
-function shortestPath(data) {
-   var matrix = []
-   let cols = data[0].length
-   let rows = data.length
+function shortestPath(grid) {
+   const m = grid.length
+   const n = grid[0].length
+   const queue = [[0, 0]]
+   const visited = new Set()
+   visited.add("0,0")
+   const parent = { "0,0": null }
 
-   for (var i = 0; i < rows; i++) {
-      matrix[i] = Array(cols).fill(Infinity)
+   const isInsideGrid = (i, j) => i >= 0 && i < m && j >= 0 && j < n
+
+   const getNeighbors = (i, j) => {
+      const neighbors = []
+      if (isInsideGrid(i - 1, j) && grid[i - 1][j] === 0)
+         neighbors.push([i - 1, j])
+      if (isInsideGrid(i + 1, j) && grid[i + 1][j] === 0)
+         neighbors.push([i + 1, j])
+      if (isInsideGrid(i, j - 1) && grid[i][j - 1] === 0)
+         neighbors.push([i, j - 1])
+      if (isInsideGrid(i, j + 1) && grid[i][j + 1] === 0)
+         neighbors.push([i, j + 1])
+      return neighbors
    }
-   //console.log(matrix)
-   let fifo = [[rows - 1, cols - 1]]
-   matrix[rows - 1][cols - 1] = 0
 
-   while (fifo.length) {
-      let temp = fifo.shift()
-      let y = temp[0]
-      let x = temp[1]
-      //console.log(y + " " + x)
-      matrix[y][x] = Math.min(
-         matrix[y][x],
-
-         matrix[Math.max(0, y - 1)][x] + 1,
-         matrix[y][Math.max(0, x - 1)] + 1,
-
-         matrix[Math.min(data.length - 1, y + 1)][x] + 1,
-         matrix[y][Math.min(x + 1, data[0].length - 1)] + 1
-      )
-      if (y - 1 >= 0 && matrix[y - 1][x] == Infinity && data[y - 1][x] == 0)
-         fifo.push([y - 1, x])
-      if (y + 1 < rows && matrix[y + 1][x] == Infinity && data[y + 1][x] == 0)
-         fifo.push([y + 1, x])
-
-      if (x - 1 >= 0 && matrix[y][x - 1] == Infinity && data[y][x - 1] == 0)
-         fifo.push([y, x - 1])
-      if (x + 1 < cols && matrix[y][x + 1] == Infinity && data[y][x + 1] == 0)
-         fifo.push([y, x + 1])
-   }
-   /*
-    for (let j = 0; j < rows; j++) {
-        let string = ""
-        for (let i = 0; i < cols; i++) {
-            if (matrix[j][i] != Infinity) {
-                string += String(matrix[j][i]).padStart(3) + " "
-            } else {
-                string += "_".padStart(3) + " "
+   while (queue.length > 0) {
+      const [i, j] = queue.shift()
+      if (i === m - 1 && j === n - 1) {
+         // Target reached, construct path
+         const path = []
+         let curr = [m - 1, n - 1]
+         while (curr !== null) {
+            const [i, j] = curr
+            const parentKey = i + "," + j
+            const parentVal = parent[parentKey]
+            if (parentVal !== null) {
+               const [pi, pj] = parentVal
+               if (pi < i) path.unshift("D")
+               else if (pi > i) path.unshift("U")
+               else if (pj < j) path.unshift("R")
+               else if (pj > j) path.unshift("L")
             }
-        }
-        console.log(string)
-    }
-    */
-   if (matrix[0][0] == Infinity) return ""
-   let y = 0
-   let x = 0
-   let path = ""
-
-   while (y != rows - 1 || x != cols - 1) {
-      if (y - 1 >= 0 && matrix[y - 1][x] < matrix[y][x]) {
-         y--
-         path += "U"
-      } else if (y + 1 < rows && matrix[y + 1][x] < matrix[y][x]) {
-         y++
-         path += "D"
-      } else if (x - 1 >= 0 && matrix[y][x - 1] < matrix[y][x]) {
-         x--
-         path += "L"
-      } else if (x + 1 < cols && matrix[y][x + 1] < matrix[y][x]) {
-         x++
-         path += "R"
+            curr = parentVal
+         }
+         return path.join("")
+      }
+      for (const neighbor of getNeighbors(i, j)) {
+         const key = neighbor[0] + "," + neighbor[1]
+         if (!visited.has(key)) {
+            queue.push(neighbor)
+            visited.add(key)
+            parent[key] = [i, j]
+         }
       }
    }
-   return path
+
+   // No path found
+   return ""
 }
 
 function trianglePath(data) {
