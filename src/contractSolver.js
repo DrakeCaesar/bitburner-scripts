@@ -5,6 +5,7 @@ export async function main(ns) {
    crawl(ns, knownServers)
    let solutions = ""
    let dict = {}
+   let timeDict = {}
    let solve = ns.args[0]
    let grep = ns.args[1]
 
@@ -22,7 +23,10 @@ export async function main(ns) {
             const type = ns.codingcontract.getContractType(contract, hostname)
             const data = ns.codingcontract.getData(contract, hostname)
 
+            const start = performance.now()
             let answer = getAnswer(ns, contract, hostname)
+            const end = performance.now()
+
             if (answer != null && answer != undefined) {
                solutions += "hostname: " + hostname + "\n"
                solutions += "contract: " + contract + "\n"
@@ -45,6 +49,10 @@ export async function main(ns) {
                   solutions += "reward:   " + reward + "\n"
                }
                solutions += "\n"
+               if (!(type in timeDict)) {
+                  timeDict[type] = []
+               }
+               timeDict[type].push(end - start)
             } else {
                if (!(type in dict)) {
                   dict[type] = []
@@ -89,6 +97,29 @@ export async function main(ns) {
 
    ns.tprintf("Total:    " + totalC)
    ns.tprintf("Solvable: " + solvableC)
+
+   keys = []
+   for (const [key] of Object.entries(timeDict)) {
+      keys.push(key)
+   }
+   keys.sort()
+   contractTypes = "\nAverage execution time:\n\n"
+   for (const item of keys) {
+      contractTypes += item.padEnd(40) + avg(timeDict[item]) + "\n"
+      if (grep) {
+         for (const element of timeDict[item.trim()]) {
+            if (element[1].toLowerCase().includes(grep.toLowerCase())) {
+               contractTypes +=
+                  "   " + element[0].padEnd(20) + element[1] + "\n"
+            }
+         }
+      }
+   }
+   contractTypes += "\n"
+
+   if (contractTypes) {
+      ns.tprintf(contractTypes)
+   }
 }
 
 /** @param {import("..").NS } ns */
@@ -100,6 +131,18 @@ function crawl(ns, knownServers, hostname, depth = 0) {
          crawl(ns, knownServers, element, depth + 1)
       }
    }
+}
+
+function avg(arr) {
+   var sum = 0
+
+   // Iterate the elements of the array
+   arr.forEach(function (item, idx) {
+      sum += item
+   })
+
+   // Returning the average of the numbers
+   return sum / arr.length
 }
 
 /** @param {import("..").NS } ns */
@@ -129,10 +172,16 @@ function getAnswer(ns, contract, hostname) {
          answer = mergeOverlappingIntervals(ns, data)
          break
       case "Algorithmic Stock Trader I":
-         //answer = stockTrader(data)
+         answer = stockTrader(ns, 1, data)
          break
       case "Algorithmic Stock Trader II":
-         //answer = stockTrader(ns, data)
+         answer = stockTrader(ns, data.length, data)
+         break
+      case "Algorithmic Stock Trader III":
+         answer = stockTrader(ns, 2, data)
+         break
+      case "Algorithmic Stock Trader IV":
+         answer = stockTrader(ns, data[0], data[1])
          break
       case "Total Ways to Sum II":
          //answer = totalWaysToSumII(ns, data)
@@ -162,6 +211,7 @@ function getAnswer(ns, contract, hostname) {
       default:
          break
    }
+
    return answer
 }
 
@@ -343,24 +393,34 @@ function mergeOverlappingIntervals(ns, data) {
    return answer
 }
 
-function stockTrader(data, index = 0, holding = false, profit = 0) {
-   if (index < data.length - 1) {
-      return holding
-         ? Math.max(
-              stockTrader(data, index + 1, true, profit),
-              stockTrader(data, index + 1, false, profit + data[index])
-           )
-         : Math.max(
-              stockTrader(data, index + 1, true, profit - data[index]),
-              stockTrader(data, index + 1, false, profit)
-           )
-   } else {
-      if (holding) {
-         return profit + data[index]
-      } else {
-         return profit
+function stockTrader(ns, k, prices) {
+   if (prices.length < 2 || k === 0) {
+      return 0
+   }
+
+   if (k >= prices.length / 2) {
+      let maxProfit = 0
+      for (let i = 1; i < prices.length; i++) {
+         if (prices[i] > prices[i - 1]) {
+            maxProfit += prices[i] - prices[i - 1]
+         }
+      }
+      return maxProfit
+   }
+
+   const dp = Array.from({ length: k + 1 }, () =>
+      Array.from({ length: prices.length }, () => 0)
+   )
+
+   for (let i = 1; i <= k; i++) {
+      let maxDiff = -prices[0]
+      for (let j = 1; j < prices.length; j++) {
+         dp[i][j] = Math.max(dp[i][j - 1], prices[j] + maxDiff)
+         maxDiff = Math.max(maxDiff, dp[i - 1][j - 1] - prices[j])
       }
    }
+
+   return dp[k][prices.length - 1]
 }
 
 function totalWaysToSumII(ns, data) {
