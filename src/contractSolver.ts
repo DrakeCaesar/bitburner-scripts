@@ -1,4 +1,4 @@
-import { NS } from ".."
+import { NS } from "@ns"
 
 export async function main(ns: NS): Promise<void> {
    const knownServers: string[] = []
@@ -112,11 +112,11 @@ export async function main(ns: NS): Promise<void> {
 }
 
 function crawl(ns: NS, servers: string[]) {
-   const scanned = new Set()
+   const scanned = new Set<string>()
    const queue = ["home"]
    while (queue.length > 0) {
-      const curr = queue.shift()!
-      if (scanned.has(curr)) {
+      const curr = queue.shift()
+      if (!curr || scanned.has(curr)) {
          continue
       }
       scanned.add(curr)
@@ -179,7 +179,8 @@ function getAnswer(ns: NS, contract: string, hostname: string) {
          answer = stockTrader(data[0], data[1])
          break
       case "Total Ways to Sum II":
-         //answer = totalWaysToSumII(data);
+         answer = totalWaysToSumII(data[0], data[1])
+         answer = null
          break
       case "Generate IP Addresses":
          answer = findIPs(data)
@@ -210,10 +211,6 @@ function getAnswer(ns: NS, contract: string, hostname: string) {
    }
 
    return answer
-}
-
-function findAllValidMathExpressions(data: any) {
-   return 0
 }
 
 function uniquePathsInAGridI(data: number[]): number {
@@ -263,7 +260,7 @@ function uniquePathsInAGridII(data: string[][]): number {
    return answer
 }
 
-function subarrayWithMaximumSum(data: string | any[]) {
+function subarrayWithMaximumSum(data: number[]) {
    let answer = Number.MIN_SAFE_INTEGER
    let cur = 0
    for (let i = 0; i < data.length; i++) {
@@ -308,7 +305,6 @@ function sanitizeParenthesesInExpression(str: string): string[] {
    }
 
    const result: string[] = []
-   const minRemoved = Infinity
    let leftToRemove = 0
    let rightToRemove = 0
 
@@ -384,7 +380,7 @@ function Merge_Overlapping_Intervals(data) {
 }
 */
 
-function mergeOverlappingIntervals(data: any) {
+function mergeOverlappingIntervals(data: number[][]) {
    const map = []
    let start = Number.MAX_SAFE_INTEGER
    for (const [first, second] of data) {
@@ -422,7 +418,7 @@ function mergeOverlappingIntervals(data: any) {
    return answer
 }
 
-function stockTrader(k: number, prices: string | any[]) {
+function stockTrader(k: number, prices: number[]) {
    if (prices.length < 2 || k === 0) {
       return 0
    }
@@ -452,17 +448,20 @@ function stockTrader(k: number, prices: string | any[]) {
    return dp[k][prices.length - 1]
 }
 
-function totalWaysToSumII(data: any) {
-   const N = 7 //data[0]
-   const arr = [1, 4, 7, 9, 10, 11, 12, 13, 16, 18] // data[1]
+function totalWaysToSumII(n: number, numbers: number[]): number {
+   const dp = Array(2).fill(0)
+   dp[0] = 1
 
-   const count = new Array(N + 1)
-   count.fill(0)
-   count[0] = 1
-   for (let i = 1; i <= N; i++)
-      for (let j = 0; j < arr.length; j++)
-         if (i >= arr[j]) count[i] += count[i - arr[j]]
-   return count[N]
+   for (let i = 1; i <= n; i++) {
+      dp[i % 2] = 0
+      for (const num of numbers) {
+         if (i - num >= 0) {
+            dp[i % 2] += dp[(i - num) % 2]
+         }
+      }
+   }
+
+   return dp[n % 2]
 }
 
 function findIPs(str: string) {
@@ -514,7 +513,7 @@ function waysToSum(data: number) {
    return arr[data] - 1
 }
 
-function spiralize(data: any) {
+function spiralize(data: (number | null)[][]) {
    const matrix = data
    const h = matrix.length
    const w = matrix[0].length
@@ -556,6 +555,7 @@ function spiralize(data: any) {
          return answer
       }
    }
+   return null
 }
 
 function shortestPath(grid: number[][]) {
@@ -583,32 +583,35 @@ function shortestPath(grid: number[][]) {
    }
 
    while (queue.length > 0) {
-      const [i, j] = queue.shift()!
-      if (i === m - 1 && j === n - 1) {
-         // Target reached, construct path
-         const path = []
-         let curr: number[] | null = [m - 1, n - 1]
-         while (curr !== null) {
-            const [i, j] = curr
-            const parentKey = i + "," + j
-            const parentVal = parent[parentKey]
-            if (parentVal !== null) {
-               const [pi, pj] = parentVal
-               if (pi < i) path.unshift("D")
-               else if (pi > i) path.unshift("U")
-               else if (pj < j) path.unshift("R")
-               else if (pj > j) path.unshift("L")
+      const next = queue.shift()
+      if (next) {
+         const [i, j] = next
+         if (i === m - 1 && j === n - 1) {
+            // Target reached, construct path
+            const path = []
+            let curr: number[] | null = [m - 1, n - 1]
+            while (curr !== null) {
+               const [i, j]: number[] = curr
+               const parentKey: string = i + "," + j
+               const parentVal: number[] | null = parent[parentKey]
+               if (parentVal !== null) {
+                  const [pi, pj] = parentVal
+                  if (pi < i) path.unshift("D")
+                  else if (pi > i) path.unshift("U")
+                  else if (pj < j) path.unshift("R")
+                  else if (pj > j) path.unshift("L")
+               }
+               curr = parentVal
             }
-            curr = parentVal
+            return path.join("")
          }
-         return path.join("")
-      }
-      for (const neighbor of getNeighbors(i, j)) {
-         const key = neighbor[0] + "," + neighbor[1]
-         if (!visited.has(key)) {
-            queue.push(neighbor)
-            visited.add(key)
-            parent[key] = [i, j]
+         for (const neighbor of getNeighbors(i, j)) {
+            const key = neighbor[0] + "," + neighbor[1]
+            if (!visited.has(key)) {
+               queue.push(neighbor)
+               visited.add(key)
+               parent[key] = [i, j]
+            }
          }
       }
    }
@@ -617,7 +620,7 @@ function shortestPath(grid: number[][]) {
    return ""
 }
 
-function trianglePath(data: string | any[]) {
+function trianglePath(data: number[][]) {
    for (let j = 1; j < data.length; j++) {
       for (let i = 0; i < data[j].length; i++) {
          if (i == data[j].length - 1) {
@@ -629,7 +632,5 @@ function trianglePath(data: string | any[]) {
          }
       }
    }
-   //console.log(data)
-
    return Math.min(...data[data.length - 1])
 }
