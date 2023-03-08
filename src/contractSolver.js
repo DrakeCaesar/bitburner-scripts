@@ -88,7 +88,7 @@ export async function main(ns) {
       contractTypes += "\n"
    }
    if (solutions) {
-      //ns.tprintf("Solutions:\n\n" + solutions)
+      ns.tprintf("Solutions:\n\n" + solutions)
    }
 
    if (contractTypes) {
@@ -111,14 +111,6 @@ export async function main(ns) {
    contractTypes = "\nAverage execution time:\n\n"
    for (const [key, value] of Object.entries(timeDict)) {
       contractTypes += key.padEnd(40) + value + "\n"
-      if (grep) {
-         for (const element of value) {
-            if (element[1].toLowerCase().includes(grep.toLowerCase())) {
-               contractTypes +=
-                  "   " + element[0].padEnd(20) + element[1] + "\n"
-            }
-         }
-      }
    }
    contractTypes += "\n"
 
@@ -467,23 +459,36 @@ function totalWaysToSumII(ns, data) {
    return count[N]
 }
 
-function findIPs(data) {
-   let input = String(data)
-   let answer = []
-   for (let i = 0; i < 256; i++) {
-      if (!input.startsWith(i.toString())) continue
-      for (let j = 0; j < 256; j++) {
-         if (!input.startsWith(i.toString() + j)) continue
-         for (let k = 0; k < 256; k++) {
-            if (!input.startsWith(i.toString() + j + k)) continue
-            for (let l = 0; l < 256; l++) {
-               if (input != i.toString() + j + k + l) continue
-               answer.push(i + "." + j + "." + k + "." + l)
-            }
+function findIPs(str) {
+   const result = []
+
+   const backtrack = (startIndex, parts) => {
+      if (parts.length === 4 && startIndex === str.length) {
+         result.push(parts.join("."))
+         return
+      }
+
+      if (parts.length === 4 || startIndex === str.length) {
+         return
+      }
+
+      for (let i = startIndex; i < str.length; i++) {
+         const part = str.substring(startIndex, i + 1)
+         if (
+            (part.length > 1 && part.startsWith("0")) ||
+            parseInt(part) > 255
+         ) {
+            break
          }
+
+         parts.push(part)
+         backtrack(i + 1, parts)
+         parts.pop()
       }
    }
-   return answer
+
+   backtrack(0, [])
+   return result
 }
 
 function waysToSum(data) {
