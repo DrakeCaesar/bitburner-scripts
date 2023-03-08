@@ -98,16 +98,21 @@ export async function main(ns) {
    ns.tprintf("Total:    " + totalC)
    ns.tprintf("Solvable: " + solvableC)
 
-   keys = []
    for (const [key] of Object.entries(timeDict)) {
-      keys.push(key)
+      timeDict[key] = avg(timeDict[key])
    }
-   keys.sort()
+
+   timeDict = Object.fromEntries(
+      Object.entries(timeDict).sort(function (a, b) {
+         return b[1] - a[1] || a[0].localeCompare(b[0])
+      })
+   )
+
    contractTypes = "\nAverage execution time:\n\n"
-   for (const item of keys) {
-      contractTypes += item.padEnd(40) + avg(timeDict[item]) + "\n"
+   for (const [key, value] of Object.entries(timeDict)) {
+      contractTypes += key.padEnd(40) + value + "\n"
       if (grep) {
-         for (const element of timeDict[item.trim()]) {
+         for (const element of value) {
             if (element[1].toLowerCase().includes(grep.toLowerCase())) {
                contractTypes +=
                   "   " + element[0].padEnd(20) + element[1] + "\n"
