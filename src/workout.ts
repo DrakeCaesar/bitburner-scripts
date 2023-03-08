@@ -1,17 +1,21 @@
-/** @param {import("..").NS } ns */
-export async function main(ns) {
+import { NS } from ".."
+
+export async function main(ns: NS): Promise<void> {
    for (;;) {
       const focus = ns.singularity.isFocused()
-      const p = ns.getPlayer()
+      const skills = ns.getPlayer().skills
       if (
-         p.agility < p.dexterity &&
-         p.agility < p.defense &&
-         p.agility < p.strength
+         skills.agility < skills.dexterity &&
+         skills.agility < skills.defense &&
+         skills.agility < skills.strength
       ) {
          ns.singularity.gymWorkout("powerhouse gym", "Agility", focus)
-      } else if (p.dexterity < p.defense && p.dexterity < p.strength) {
+      } else if (
+         skills.dexterity < skills.defense &&
+         skills.dexterity < skills.strength
+      ) {
          ns.singularity.gymWorkout("powerhouse gym", "Dexterity", focus)
-      } else if (p.defense < p.strength) {
+      } else if (skills.defense < skills.strength) {
          ns.singularity.gymWorkout("powerhouse gym", "Defense", focus)
       } else {
          ns.singularity.gymWorkout("powerhouse gym", "Strength", focus)

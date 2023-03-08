@@ -88,7 +88,7 @@ export async function main(ns) {
       contractTypes += "\n"
    }
    if (solutions) {
-      ns.tprintf("Solutions:\n\n" + solutions)
+      //ns.tprintf("Solutions:\n\n" + solutions)
    }
 
    if (contractTypes) {
@@ -98,7 +98,10 @@ export async function main(ns) {
    ns.tprintf("Total:    " + totalC)
    ns.tprintf("Solvable: " + solvableC)
 
+   var totalTime = 0
+
    for (const [key] of Object.entries(timeDict)) {
+      totalTime += sum(timeDict[key])
       timeDict[key] = avg(timeDict[key])
    }
 
@@ -117,6 +120,8 @@ export async function main(ns) {
    if (contractTypes) {
       ns.tprintf(contractTypes)
    }
+
+   ns.tprintf("Total execution time:".padEnd(40) + totalTime)
 }
 
 /** @param {import("..").NS } ns */
@@ -131,6 +136,10 @@ function crawl(ns, knownServers, hostname, depth = 0) {
 }
 
 function avg(arr) {
+   return sum(arr) / arr.length
+}
+
+function sum(arr) {
    var sum = 0
 
    // Iterate the elements of the array
@@ -139,7 +148,7 @@ function avg(arr) {
    })
 
    // Returning the average of the numbers
-   return sum / arr.length
+   return sum
 }
 
 /** @param {import("..").NS } ns */
@@ -204,12 +213,18 @@ function getAnswer(ns, contract, hostname) {
       case "Array Jumping Game II":
          //answer = jumpingGame(ns, data)
          break
-
+      case "Find All Valid Math Expressions":
+         answer = findAllValidMathExpressions(ns, data)
+         break
       default:
          break
    }
 
    return answer
+}
+
+function findAllValidMathExpressions(ns, data) {
+   return 0
 }
 
 function uniquePathsInAGridI(ns, data) {
