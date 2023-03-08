@@ -472,6 +472,13 @@ function findIPs(str) {
          return
       }
 
+      // Optimization: check remaining length against maximum part length
+      const maxRemainingLength = (4 - parts.length) * 3
+      const remainingLength = str.length - startIndex
+      if (remainingLength > maxRemainingLength) {
+         return
+      }
+
       for (let i = startIndex; i < str.length; i++) {
          const part = str.substring(startIndex, i + 1)
          if (
