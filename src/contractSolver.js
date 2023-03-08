@@ -88,7 +88,7 @@ export async function main(ns) {
       contractTypes += "\n"
    }
    if (solutions) {
-      ns.tprintf("Solutions:\n\n" + solutions)
+      //ns.tprintf("Solutions:\n\n" + solutions)
    }
 
    if (contractTypes) {
@@ -296,43 +296,67 @@ function findLargestPrimeFactor(ns, data) {
    return answer
 }
 
-function sanitizeParenthesesInExpression(ns, data) {
-   if (isSanitized(ns, data)) {
-      return [data]
+function sanitizeParenthesesInExpression(ns, str) {
+   const isValid = (str) => {
+      let count = 0
+      for (let i = 0; i < str.length; i++) {
+         if (str[i] === "(") count++
+         if (str[i] === ")") count--
+         if (count < 0) return false
+      }
+      return count === 0
    }
 
-   let answer = []
-   let list = [[data]]
-   for (let i = 0; i < data.length && answer.length == 0; i++) {
-      list.push([])
-      for (let word of list[i]) {
-         for (let j = 0; j < word.length; j++) {
-            if (word[j] == ")" || word[j] == "(") {
-               let temp = word.slice(0, j) + word.slice(j + 1)
-               if (isSanitized(ns, temp)) {
-                  if (answer.indexOf(temp) === -1) answer.push(temp)
-               }
-               if (list[i + 1].indexOf(temp) === -1) list[i + 1].push(temp)
-            }
+   const result = []
+   let minRemoved = Infinity
+   let leftToRemove = 0
+   let rightToRemove = 0
+
+   for (let i = 0; i < str.length; i++) {
+      if (str[i] === "(") {
+         leftToRemove++
+      } else if (str[i] === ")") {
+         if (leftToRemove > 0) {
+            leftToRemove--
+         } else {
+            rightToRemove++
          }
       }
    }
-   if (answer.length) return answer
-   return [""]
+
+   const removeParentheses = (str, index, leftRemoved, rightRemoved) => {
+      if (leftRemoved === leftToRemove && rightRemoved === rightToRemove) {
+         if (isValid(str)) {
+            result.push(str)
+         }
+         return
+      }
+      for (let i = index; i < str.length; i++) {
+         if (i > index && str[i] === str[i - 1]) continue
+         if (str[i] === "(" && leftRemoved < leftToRemove) {
+            removeParentheses(
+               str.slice(0, i) + str.slice(i + 1),
+               i,
+               leftRemoved + 1,
+               rightRemoved
+            )
+         }
+         if (str[i] === ")" && rightRemoved < rightToRemove) {
+            removeParentheses(
+               str.slice(0, i) + str.slice(i + 1),
+               i,
+               leftRemoved,
+               rightRemoved + 1
+            )
+         }
+      }
+   }
+
+   removeParentheses(str, 0, 0, 0)
+
+   return result
 }
 
-function isSanitized(ns, data) {
-   let depth = 0
-   for (let i = 0; i < data.length; i++) {
-      if (data[i] == "(") {
-         ++depth
-      } else if (data[i] == ")") {
-         --depth
-      }
-      if (depth < 0) return false
-   }
-   return depth == 0
-}
 /*
 function Merge_Overlapping_Intervals(ns, data) {
     ns.tprint(ns, data)
