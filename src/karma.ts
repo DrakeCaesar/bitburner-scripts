@@ -1,13 +1,18 @@
+import { NS } from "@ns"
 import { formatNumber } from "./libraries/format"
 
-/** @param {import("..").NS } ns */
-export async function main(ns) {
+export async function main(ns: NS): Promise<void> {
    const doc = eval("document")
    const hook0 = doc.getElementById("overview-extra-hook-0")
    const hook1 = doc.getElementById("overview-extra-hook-1")
+   let karma = 0.23
    for (;;) {
       try {
-         const karma = ns.heart.break()
+         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+         // @ts-ignore
+         //const karma = ns.heart.break()
+         karma *= 12.3
+
          const headers = []
          const values = []
 
@@ -15,10 +20,10 @@ export async function main(ns) {
          values.push(formatNumber(karma))
 
          headers.push("Exp")
-         values.push(formatNumber(ns.getScriptExpGain()))
+         values.push(formatNumber(ns.getTotalScriptExpGain()))
 
          headers.push("Mon")
-         values.push(formatNumber(ns.getScriptIncome()[0]))
+         values.push(formatNumber(ns.getTotalScriptIncome()[0]))
 
          hook0.innerText = headers.join(" \n")
          hook1.innerText = values.join("\n")
