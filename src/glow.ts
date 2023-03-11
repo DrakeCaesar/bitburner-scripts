@@ -6,27 +6,12 @@ export async function main(ns: NS): Promise<void> {
 
    // Define the styles for the glow effect
    const glowStyles = `
-    text-shadow: 0 0 10px currentColor;
-    animation: glow 1s ease-in-out infinite alternate;
-    
-    @keyframes glow {
-        from {
-            text-shadow: 0 0 10px currentColor;
-        }
-        to {
-            text-shadow: 0 0 20px currentColor;
-        }
-    }
+    text-shadow: 0 0 5px rgba(255, 255, 255, 0.5);
 `
 
    // Function to apply the glow effect to a given text element
    function applyGlowEffectToElement(element: HTMLElement) {
-      const color = getComputedStyle(element).color
       element.classList.add(glowClass)
-      element.style.color = "transparent"
-      element.style.webkitTextFillColor = color
-      element.style.webkitTextStrokeWidth = "1px"
-      element.style.webkitTextStrokeColor = color
       element.style.cssText += glowStyles
    }
 
