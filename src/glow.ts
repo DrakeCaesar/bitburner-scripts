@@ -27,10 +27,10 @@ export async function main(ns: NS): Promise<void> {
       element.style.cssText += glowStyles
    }
 
-   // Function to apply the glow effect to all text elements on the page
-   function applyGlowEffectToAllElements() {
+   // Function to apply the glow effect to all text elements in a given element
+   function applyGlowEffectToElementsInContainer(container: HTMLElement) {
       const textNodes = document.createTreeWalker(
-         document.body,
+         container,
          NodeFilter.SHOW_TEXT,
          {
             acceptNode: (node: Node) => {
@@ -57,7 +57,7 @@ export async function main(ns: NS): Promise<void> {
    }
 
    // Apply the glow effect to all text elements on page load
-   applyGlowEffectToAllElements()
+   applyGlowEffectToElementsInContainer(document.body)
 
    // Set up a mutation observer to apply the effect to new text elements
    const observer = new MutationObserver((mutationsList) => {
@@ -66,33 +66,7 @@ export async function main(ns: NS): Promise<void> {
             const addedElements = mutation.addedNodes
             addedElements.forEach((element) => {
                if (element instanceof HTMLElement) {
-                  const textNodes = document.createTreeWalker(
-                     element,
-                     NodeFilter.SHOW_TEXT,
-                     {
-                        acceptNode: (node: Node) => {
-                           const parent = node.parentElement
-                           if (
-                              parent &&
-                              parent.nodeName !== "SCRIPT" &&
-                              parent.nodeName !== "STYLE" &&
-                              parent.nodeName !== "IFRAME" &&
-                              !parent.classList.contains(glowClass) &&
-                              !/^\s*$/.test(node.textContent || "")
-                           ) {
-                              return NodeFilter.FILTER_ACCEPT
-                           }
-                           return NodeFilter.FILTER_SKIP
-                        },
-                     }
-                  )
-
-                  let currentNode: Node | null
-                  while ((currentNode = textNodes.nextNode())) {
-                     applyGlowEffectToElement(
-                        currentNode.parentElement as HTMLElement
-                     )
-                  }
+                  applyGlowEffectToElementsInContainer(element)
                }
             })
          }
