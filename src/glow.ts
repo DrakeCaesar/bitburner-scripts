@@ -19,7 +19,9 @@ export async function main(ns: NS): Promise<void> {
       const luminance = calculateLuminance(color)
       const intensity = 0.1 + luminance * 0.9
       const glowStyles = `
-        text-shadow: 0 0 ${intensity * 10}px rgba(255, 255, 255, ${intensity});
+        text-shadow: 0 0 ${
+           intensity * 10
+        }px rgba(255, 255, 255, ${intensity}) !important;
     `
       element.classList.add(glowClass)
       element.style.cssText += glowStyles
@@ -27,12 +29,31 @@ export async function main(ns: NS): Promise<void> {
 
    // Function to apply the glow effect to all text elements on the page
    function applyGlowEffectToAllElements() {
-      const textElements = document.querySelectorAll(
-         ":not(iframe):not(script):not(style):not([class*=glow]) :not(:empty):not(:has(*))"
+      const textNodes = document.createTreeWalker(
+         document.body,
+         NodeFilter.SHOW_TEXT,
+         {
+            acceptNode: (node: Node) => {
+               const parent = node.parentElement
+               if (
+                  parent &&
+                  parent.nodeName !== "SCRIPT" &&
+                  parent.nodeName !== "STYLE" &&
+                  parent.nodeName !== "IFRAME" &&
+                  !parent.classList.contains(glowClass) &&
+                  !/^\s*$/.test(node.textContent || "")
+               ) {
+                  return NodeFilter.FILTER_ACCEPT
+               }
+               return NodeFilter.FILTER_SKIP
+            },
+         }
       )
-      textElements.forEach((element) => {
-         applyGlowEffectToElement(element as HTMLElement)
-      })
+
+      let currentNode: Node | null
+      while ((currentNode = textNodes.nextNode())) {
+         applyGlowEffectToElement(currentNode.parentElement as HTMLElement)
+      }
    }
 
    // Apply the glow effect to all text elements on page load
@@ -45,12 +66,33 @@ export async function main(ns: NS): Promise<void> {
             const addedElements = mutation.addedNodes
             addedElements.forEach((element) => {
                if (element instanceof HTMLElement) {
-                  const textElements = element.querySelectorAll(
-                     ":not(iframe):not(script):not(style):not([class*=glow]) :not(:empty):not(:has(*))"
+                  const textNodes = document.createTreeWalker(
+                     element,
+                     NodeFilter.SHOW_TEXT,
+                     {
+                        acceptNode: (node: Node) => {
+                           const parent = node.parentElement
+                           if (
+                              parent &&
+                              parent.nodeName !== "SCRIPT" &&
+                              parent.nodeName !== "STYLE" &&
+                              parent.nodeName !== "IFRAME" &&
+                              !parent.classList.contains(glowClass) &&
+                              !/^\s*$/.test(node.textContent || "")
+                           ) {
+                              return NodeFilter.FILTER_ACCEPT
+                           }
+                           return NodeFilter.FILTER_SKIP
+                        },
+                     }
                   )
-                  textElements.forEach((textElement) => {
-                     applyGlowEffectToElement(textElement as HTMLElement)
-                  })
+
+                  let currentNode: Node | null
+                  while ((currentNode = textNodes.nextNode())) {
+                     applyGlowEffectToElement(
+                        currentNode.parentElement as HTMLElement
+                     )
+                  }
                }
             })
          }
