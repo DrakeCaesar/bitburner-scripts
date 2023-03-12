@@ -72,34 +72,29 @@ export async function main(ns: NS): Promise<void> {
       element.style.cssText += glowStyles
    }
 
-   function applyGlowEffectToProgressBar() {
-      const selector = ".MuiLinearProgress-bar"
-      const elements: NodeListOf<HTMLSpanElement> =
-         document.querySelectorAll(selector)
-      elements.forEach((element: HTMLSpanElement) => {
-         const color = getComputedStyle(element).backgroundColor
-         const intensity = calculateGlowIntensity(color)
-         const boxShadowStyle = `0 0 ${
-            intensity * 10
-         }px rgba(255, 255, 255, ${intensity}`
+   function applyGlowEffectToProgressBar(element: HTMLSpanElement) {
+      const color = getComputedStyle(element).backgroundColor
+      const intensity = calculateGlowIntensity(color)
+      const boxShadowStyle = `0 0 ${
+         intensity * 10
+      }px rgba(255, 255, 255, ${intensity}`
 
-         element.style.boxShadow = boxShadowStyle
-         const parent = element.parentElement
-         if (parent != null) {
-            parent.style.overflow = "visible"
-            const transform = element.style.transform
-            const translateXRegex = /([-0-9]+.[0-9]+)/
-            const translateX: number = parseFloat(
-               transform.match(translateXRegex)?.[1] ?? ""
-            )
-            if (translateX < -1 && translateX > -100) {
-               const width = (parent.offsetWidth / 100) * (100 + translateX)
-               element.style.width = `${width}px`
-               element.style.transform = "translateX(0%)"
-               element.style.transition = "none"
-            }
+      element.style.boxShadow = boxShadowStyle
+      const parent = element.parentElement
+      if (parent != null) {
+         parent.style.overflow = "visible"
+         const transform = element.style.transform
+         const translateXRegex = /([-0-9]+.[0-9]+)/
+         const translateX: number = parseFloat(
+            transform.match(translateXRegex)?.[1] ?? ""
+         )
+         if (translateX < -1 && translateX > -100) {
+            const width = (parent.offsetWidth / 100) * (100 + translateX)
+            element.style.width = `${width}px`
+            element.style.transform = "translateX(0%)"
+            element.style.transition = "none"
          }
-      })
+      }
    }
    // Function to apply the glow effect to all elements in a given container
    function applyGlowEffectToElementsInContainer(container: HTMLElement) {
@@ -142,8 +137,14 @@ export async function main(ns: NS): Promise<void> {
             applyGlowEffectToSvgElement(svgElement)
          }
       }
-      applyGlowEffectToProgressBar()
    }
+
+   const progressBarElements = document.querySelectorAll(
+      ".MuiLinearProgress-bar"
+   )
+   progressBarElements.forEach((element) => {
+      applyGlowEffectToProgressBar(element as HTMLSpanElement)
+   })
 
    // Apply the glow effect to all input elements on page load
    applyGlowEffectToElementsInContainer(doc.body)
@@ -162,7 +163,16 @@ export async function main(ns: NS): Promise<void> {
             mutation.type === "attributes" &&
             mutation.attributeName === "style"
          ) {
-            applyGlowEffectToProgressBar() // call the function when style attribute changes
+            const addedElements = mutation.addedNodes
+            addedElements.forEach((element) => {
+               ns.tprint(element)
+               if (
+                  element instanceof HTMLSpanElement &&
+                  element.classList.contains("MuiLinearProgress-bar")
+               ) {
+                  applyGlowEffectToProgressBar(element as HTMLSpanElement)
+               }
+            })
          }
       }
    })

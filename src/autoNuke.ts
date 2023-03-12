@@ -1,13 +1,15 @@
-/** @param {import("..").NS } ns */
-export function main(ns) {
-   let knownServers = []
+import { NS } from ".."
+
+export function main(ns: NS): void {
+   const knownServers: string[] = []
    crawl(ns, knownServers)
    knownServers.sort()
+
    let paddingServers = 0
    let paddingLevels = 0
    for (const key of knownServers) {
-      let playerLevel = ns.getPlayer().hacking
-      let serverLevel = ns.getServerRequiredHackingLevel(key)
+      const playerLevel = ns.getPlayer().skills.hacking
+      const serverLevel = ns.getServerRequiredHackingLevel(key)
       if (serverLevel <= playerLevel) {
          paddingServers = Math.max(key.length, paddingServers)
 
@@ -18,16 +20,17 @@ export function main(ns) {
       }
    }
 
-   var items = []
+   const items: [string, number][] = []
    for (const key of knownServers) {
       items.push([key, ns.getServerRequiredHackingLevel(key)])
    }
+
    items.sort(function (first, second) {
       return first[1] - second[1]
    })
 
    for (const [server, level] of items) {
-      let player = ns.getPlayer()
+      const player = ns.getPlayer()
       let numPortsOpen = 0
       if (ns.fileExists("BruteSSH.exe", "home")) {
          ns.brutessh(server)
@@ -51,7 +54,7 @@ export function main(ns) {
       }
       if (
          ns.fileExists("NUKE.exe", "home") &&
-         level <= player.hacking &&
+         level <= player.skills.hacking &&
          ns.getServerNumPortsRequired(server) <= numPortsOpen
       ) {
          /*
@@ -77,9 +80,13 @@ export function main(ns) {
    //ns.tprint(items);
 }
 
-/** @param {import("..").NS } ns */
-export function crawl(ns, knownServers, hostname, depth = 0) {
-   let servers = ns.scan(hostname)
+export function crawl(
+   ns: NS,
+   knownServers: string[],
+   hostname?: string,
+   depth = 0
+): void {
+   const servers: string[] = ns.scan(hostname)
    for (const element of servers) {
       if (!knownServers.includes(element)) {
          knownServers.push(element)

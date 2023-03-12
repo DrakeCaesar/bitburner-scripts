@@ -197,11 +197,11 @@ function getAnswer(ns: NS, contract: string, hostname: string) {
       case "Minimum Path Sum in a Triangle":
          answer = trianglePath(data)
          break
-      case "Array Jumping Game I":
-         //answer = jumpingGame(data);
+      case "Array Jumping Game":
+         answer = jumpingGame(data)
          break
       case "Array Jumping Game II":
-         //answer = jumpingGame(data);
+         answer = jumpingGame(data)
          break
       case "Find All Valid Math Expressions":
          //answer = findAllValidMathExpressions(data)
@@ -633,4 +633,18 @@ function trianglePath(data: number[][]) {
       }
    }
    return Math.min(...data[data.length - 1])
+}
+
+function jumpingGame(numbers: number[]): number {
+   const n = numbers.length
+   const dp = Array(n).fill(Number.MAX_SAFE_INTEGER)
+   dp[0] = 0
+
+   for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j <= i + numbers[i] && j < n; j++) {
+         dp[j] = Math.min(dp[j], dp[i] + 1)
+      }
+   }
+
+   return dp[n - 1] === Number.MAX_SAFE_INTEGER ? 0 : dp[n - 1]
 }
