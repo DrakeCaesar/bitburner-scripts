@@ -133,22 +133,4 @@ export async function main(ns: NS): Promise<void> {
       childList: true,
       subtree: true,
    })
-
-   // Listen for input events and apply the effect to the input element's value
-   doc.addEventListener("input", (event) => {
-      const target = event.target
-      if (
-         target instanceof HTMLInputElement &&
-         target.type === "text" &&
-         target.classList.contains(glowClass)
-      ) {
-         target.style.cssText += `
-             text-shadow: 0 0 ${
-                calculateLuminance(getComputedStyle(target).color) * 10
-             }px rgba(255, 255, 255, ${calculateLuminance(
-            getComputedStyle(target).color
-         )}) !important;
-         `
-      }
-   })
 }
