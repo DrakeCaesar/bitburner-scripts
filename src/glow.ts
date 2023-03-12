@@ -5,6 +5,11 @@ export async function main(ns: NS): Promise<void> {
    const glowClass = "glow"
    const doc: Document = eval("document")
 
+   const inputRoot = doc.querySelector<HTMLElement>(".MuiInputBase-root")
+   if (inputRoot) {
+      inputRoot.style.backgroundColor = "transparent"
+   }
+
    // Function to calculate the luminance value of a given color
    function calculateLuminance(color: string): number {
       const rgb = color.substring(4, color.length - 1).split(",")
