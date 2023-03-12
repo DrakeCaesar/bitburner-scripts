@@ -3,6 +3,7 @@ import { NS } from "@ns"
 export async function main(ns: NS): Promise<void> {
    // Define the CSS class for the glow effect
    const glowClass = "glow"
+   const doc: Document = eval("document")
 
    // Function to calculate the luminance value of a given color
    function calculateLuminance(color: string): number {
@@ -22,7 +23,7 @@ export async function main(ns: NS): Promise<void> {
             text-shadow: 0 0 ${
                intensity * 10
             }px rgba(255, 255, 255, ${intensity}) !important;
-        `
+      `
       element.classList.add(glowClass)
       element.style.cssText += glowStyles
    }
@@ -32,12 +33,9 @@ export async function main(ns: NS): Promise<void> {
       const color = getComputedStyle(element).fill
       const luminance = calculateLuminance(color)
       const opacity = luminance * 0.6
-      const filter = document.createElementNS(
-         "http://www.w3.org/2000/svg",
-         "filter"
-      )
+      const filter = doc.createElementNS("http://www.w3.org/2000/svg", "filter")
       filter.setAttribute("id", "glow-filter")
-      const feDropShadow = document.createElementNS(
+      const feDropShadow = doc.createElementNS(
          "http://www.w3.org/2000/svg",
          "feDropShadow"
       )
@@ -70,26 +68,22 @@ export async function main(ns: NS): Promise<void> {
 
    // Function to apply the glow effect to all elements in a given container
    function applyGlowEffectToElementsInContainer(container: HTMLElement) {
-      const textNodes = document.createTreeWalker(
-         container,
-         NodeFilter.SHOW_TEXT,
-         {
-            acceptNode: (node: Node) => {
-               const parent = node.parentElement
-               if (
-                  parent &&
-                  parent.nodeName !== "SCRIPT" &&
-                  parent.nodeName !== "STYLE" &&
-                  parent.nodeName !== "IFRAME" &&
-                  !parent.classList.contains(glowClass) &&
-                  !/^\s*$/.test(node.textContent || "")
-               ) {
-                  return NodeFilter.FILTER_ACCEPT
-               }
-               return NodeFilter.FILTER_SKIP
-            },
-         }
-      )
+      const textNodes = doc.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+         acceptNode: (node: Node) => {
+            const parent = node.parentElement
+            if (
+               parent &&
+               parent.nodeName !== "SCRIPT" &&
+               parent.nodeName !== "STYLE" &&
+               parent.nodeName !== "IFRAME" &&
+               !parent.classList.contains(glowClass) &&
+               !/^\s*$/.test(node.textContent || "")
+            ) {
+               return NodeFilter.FILTER_ACCEPT
+            }
+            return NodeFilter.FILTER_SKIP
+         },
+      })
 
       let currentNode: Node | null
       while ((currentNode = textNodes.nextNode())) {
@@ -116,7 +110,7 @@ export async function main(ns: NS): Promise<void> {
    }
 
    // Apply the glow effect to all input elements on page load
-   applyGlowEffectToElementsInContainer(document.body)
+   applyGlowEffectToElementsInContainer(doc.body)
 
    // Set up a mutation observer to apply the effect to new input elements
    const observer = new MutationObserver((mutationsList) => {
@@ -135,13 +129,13 @@ export async function main(ns: NS): Promise<void> {
    })
 
    // Start observing mutations to the page
-   observer.observe(document.body, {
+   observer.observe(doc.body, {
       childList: true,
       subtree: true,
    })
 
    // Listen for input events and apply the effect to the input element's value
-   document.addEventListener("input", (event) => {
+   doc.addEventListener("input", (event) => {
       const target = event.target
       if (
          target instanceof HTMLInputElement &&
