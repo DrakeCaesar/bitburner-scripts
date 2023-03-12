@@ -61,7 +61,9 @@ export async function main(ns: NS): Promise<void> {
          text-shadow: 0 0 ${
             luminance * 10
          }px rgba(255, 255, 255, ${luminance}) !important;
-     `
+         margin-left: -5px;
+         text-indent: 5px;
+      `
       element.classList.add(glowClass)
       element.style.cssText += glowStyles
    }
