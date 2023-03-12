@@ -73,9 +73,9 @@ export async function main(ns: NS): Promise<void> {
 
    function applyGlowEffectToProgressBar() {
       const selector = ".MuiLinearProgress-bar"
-      const elements: NodeListOf<HTMLElement> =
+      const elements: NodeListOf<HTMLSpanElement> =
          document.querySelectorAll(selector)
-      elements.forEach((element: HTMLElement) => {
+      elements.forEach((element: HTMLSpanElement) => {
          const color = getComputedStyle(element).backgroundColor
          const luminance = calculateLuminance(color)
          const intensity = 0.1 + luminance * 0.9
@@ -87,27 +87,40 @@ export async function main(ns: NS): Promise<void> {
          const parent = element.parentElement
          if (parent != null) {
             parent.style.overflow = "visible"
-            const transform = getComputedStyle(element).transform
+            const transform = element.style.transform
             const translateXRegex = /([-0-9]+.[0-9]+)/
             const translateX: number = parseFloat(
                transform.match(translateXRegex)?.[1] ?? ""
             )
-            if (translateX && translateX > -100) {
+            if (translateX < -1 && translateX > -100) {
                // Update the width with the same amount as the translateX value
-               console.log(parent.offsetWidth)
-               console.log(translateX)
-               console.log(100 + translateX)
-               console.log((100 + translateX) / 100)
-               console.log(parent.offsetWidth * ((100 + translateX) / 100))
-               const widthValue =
-                  parent.offsetWidth * ((100 + translateX) / 100)
-               //element.style.width = `${widthValue}px`
-               element.style.width = `${(100 + translateX) / 100}%`
-
+               //console.log("parent offset:    " + parent.offsetWidth)
+               console.log("offset %:         " + translateX)
+               //console.log("offset % flipped: " + (100 + translateX) / 100)
+               //console.log(
+               //   "offset comp px:   " +
+               //      parent.offsetWidth * ((100 + translateX) / 100)
+               //)
+               //console.log(`${(100 + translateX) / 100}%`)
+               const offset = (-parent.offsetWidth / 100) * translateX
+               const width = (parent.offsetWidth / 100) * (100 + translateX)
+               element.style.left = `${offset}px`
+               element.setAttribute("offsetWidth", `${width}`)
+               //element.style = `${width}px`
+               //element.setAttribute("offsetWidth", `${widthValue}px`)
                //element.style.width = `${(100 + translateX) / 100}%`
 
-               element.style.transform = ""
+               //element.style.width = `${100 + translateX}%`
+               //element.style.transform = "translateX(0%)"
+
+               //console.log(`${widthValue}px`)
+               //console.log(`${-widthValue}px`)
+               //console.log()
+
                element.style.transition = "none"
+               //element.style.right = `${-widthValue}px`
+
+               //element.style.width = `${widthValue}px`
             }
          }
       })
