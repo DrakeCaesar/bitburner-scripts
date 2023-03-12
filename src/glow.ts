@@ -11,19 +11,20 @@ export async function main(ns: NS): Promise<void> {
    }
 
    // Function to calculate the luminance value of a given color
-   function calculateLuminance(color: string): number {
+   function calculateGlowIntensity(color: string): number {
       const rgb = color.substring(4, color.length - 1).split(",")
       const r = parseInt(rgb[0].trim(), 10) / 255
       const g = parseInt(rgb[1].trim(), 10) / 255
       const b = parseInt(rgb[2].trim(), 10) / 255
-      return 0.2126 * r + 0.7152 * g + 0.0722 * b
+      const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+      const intensity = 0.1 + luminance * 0.9
+      return intensity
    }
 
    // Function to apply the glow effect to a given text element
    function applyGlowEffectToTextElement(element: HTMLElement) {
       const color = getComputedStyle(element).color
-      const luminance = calculateLuminance(color)
-      const intensity = 0.1 + luminance * 0.9
+      const intensity = calculateGlowIntensity(color)
       const glowStyles = `
             text-shadow: 0 0 ${
                intensity * 10
@@ -36,8 +37,8 @@ export async function main(ns: NS): Promise<void> {
    // Function to apply the glow effect to an SVG element
    function applyGlowEffectToSvgElement(element: SVGElement) {
       const color = getComputedStyle(element).fill
-      const luminance = calculateLuminance(color)
-      const opacity = luminance * 0.6
+      const intensity = calculateGlowIntensity(color)
+      const opacity = intensity
       const filter = doc.createElementNS("http://www.w3.org/2000/svg", "filter")
       filter.setAttribute("id", "glow-filter")
       const feDropShadow = doc.createElementNS(
@@ -59,13 +60,13 @@ export async function main(ns: NS): Promise<void> {
    // Function to apply the glow effect to an input element
    function applyGlowEffectToInputElement(element: HTMLInputElement) {
       const color = getComputedStyle(element).color
-      const luminance = calculateLuminance(color)
+      const intensity = calculateGlowIntensity(color)
       const glowStyles = `
          text-shadow: 0 0 ${
-            luminance * 10
-         }px rgba(255, 255, 255, ${luminance}) !important;
-         margin-left: -5px;
-         text-indent: 5px;
+            intensity * 10
+         }px rgba(255, 255, 255, ${intensity}) !important;
+         margin-left: -10px;
+         text-indent: 10px;
       `
       element.classList.add(glowClass)
       element.style.cssText += glowStyles
@@ -77,8 +78,7 @@ export async function main(ns: NS): Promise<void> {
          document.querySelectorAll(selector)
       elements.forEach((element: HTMLSpanElement) => {
          const color = getComputedStyle(element).backgroundColor
-         const luminance = calculateLuminance(color)
-         const intensity = 0.1 + luminance * 0.9
+         const intensity = calculateGlowIntensity(color)
          const boxShadowStyle = `0 0 ${
             intensity * 10
          }px rgba(255, 255, 255, ${intensity}`
@@ -101,17 +101,6 @@ export async function main(ns: NS): Promise<void> {
          }
       })
    }
-   /*
--72.1796
-glow.ts:99 27.820400000000006
-glow.ts:100 0.27820400000000006
-glow.ts:101 55.64080000000001
-glow.ts:97 200
-glow.ts:98 -71.8282
-glow.ts:99 28.171800000000005
-glow.ts:100 0.281718
-glow.ts:101 56.3436
-*/
    // Function to apply the glow effect to all elements in a given container
    function applyGlowEffectToElementsInContainer(container: HTMLElement) {
       const textNodes = doc.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
@@ -159,7 +148,7 @@ glow.ts:101 56.3436
    // Apply the glow effect to all input elements on page load
    applyGlowEffectToElementsInContainer(doc.body)
 
-   // Set up a mutation observer to apply the effect to new input elements
+   // Set up a mutation observer to apply the effect to new input elements and progress bars
    const observer = new MutationObserver((mutationsList) => {
       for (const mutation of mutationsList) {
          if (mutation.type === "childList") {
@@ -167,8 +156,6 @@ glow.ts:101 56.3436
             addedElements.forEach((element) => {
                if (element instanceof HTMLElement) {
                   applyGlowEffectToElementsInContainer(element)
-               } else if (element instanceof SVGSVGElement) {
-                  applyGlowEffectToSvgElement(element)
                }
             })
          } else if (
@@ -183,6 +170,7 @@ glow.ts:101 56.3436
    // Start observing mutations to the page
    observer.observe(doc.body, {
       attributes: true,
+      attributeFilter: ["style"],
       childList: true,
       subtree: true,
    })
