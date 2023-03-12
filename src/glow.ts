@@ -53,7 +53,20 @@ export async function main(ns: NS): Promise<void> {
       element.style.padding = "10px"
    }
 
-   // Function to apply the glow effect to all text and SVG elements in a given element
+   // Function to apply the glow effect to an input element
+   function applyGlowEffectToInputElement(element: HTMLInputElement) {
+      const color = getComputedStyle(element).color
+      const luminance = calculateLuminance(color)
+      const glowStyles = `
+         text-shadow: 0 0 ${
+            luminance * 10
+         }px rgba(255, 255, 255, ${luminance}) !important;
+     `
+      element.classList.add(glowClass)
+      element.style.cssText += glowStyles
+   }
+
+   // Function to apply the glow effect to all elements in a given container
    function applyGlowEffectToElementsInContainer(container: HTMLElement) {
       const textNodes = document.createTreeWalker(
          container,
@@ -80,23 +93,30 @@ export async function main(ns: NS): Promise<void> {
       while ((currentNode = textNodes.nextNode())) {
          if (currentNode.parentElement instanceof SVGElement) {
             applyGlowEffectToSvgElement(currentNode.parentElement)
-         } else {
-            applyGlowEffectToTextElement(
-               currentNode.parentElement as HTMLElement
-            )
+         } else if (currentNode.parentElement instanceof HTMLElement) {
+            applyGlowEffectToTextElement(currentNode.parentElement)
+         }
+      }
+
+      const inputElements = container.querySelectorAll("input[type='text']")
+      for (const inputElement of inputElements) {
+         if (inputElement instanceof HTMLInputElement) {
+            applyGlowEffectToInputElement(inputElement)
          }
       }
 
       const svgElements = container.getElementsByTagName("svg")
       for (const svgElement of svgElements) {
-         applyGlowEffectToSvgElement(svgElement)
+         if (svgElement instanceof SVGElement) {
+            applyGlowEffectToSvgElement(svgElement)
+         }
       }
    }
 
-   // Apply the glow effect to all text and SVG elements on page load
+   // Apply the glow effect to all input elements on page load
    applyGlowEffectToElementsInContainer(document.body)
 
-   // Set up a mutation observer to apply the effect to new text and SVG elements
+   // Set up a mutation observer to apply the effect to new input elements
    const observer = new MutationObserver((mutationsList) => {
       for (const mutation of mutationsList) {
          if (mutation.type === "childList") {
@@ -116,5 +136,23 @@ export async function main(ns: NS): Promise<void> {
    observer.observe(document.body, {
       childList: true,
       subtree: true,
+   })
+
+   // Listen for input events and apply the effect to the input element's value
+   document.addEventListener("input", (event) => {
+      const target = event.target
+      if (
+         target instanceof HTMLInputElement &&
+         target.type === "text" &&
+         target.classList.contains(glowClass)
+      ) {
+         target.style.cssText += `
+             text-shadow: 0 0 ${
+                calculateLuminance(getComputedStyle(target).color) * 10
+             }px rgba(255, 255, 255, ${calculateLuminance(
+            getComputedStyle(target).color
+         )}) !important;
+         `
+      }
    })
 }
