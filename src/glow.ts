@@ -71,6 +71,58 @@ export async function main(ns: NS): Promise<void> {
       element.style.cssText += glowStyles
    }
 
+   function applyGlowEffectToProgressBar() {
+      const selector = ".MuiLinearProgress-bar"
+      const elements: NodeListOf<HTMLElement> =
+         document.querySelectorAll(selector)
+      elements.forEach((element: HTMLElement) => {
+         const color = getComputedStyle(element).backgroundColor
+         const luminance = calculateLuminance(color)
+         const intensity = 0.1 + luminance * 0.9
+         const boxShadowStyle = `0 0 ${
+            intensity * 10
+         }px rgba(255, 255, 255, ${intensity}`
+
+         element.style.boxShadow = boxShadowStyle
+         const parent = element.parentElement
+         if (parent != null) {
+            parent.style.overflow = "visible"
+            const transform = getComputedStyle(element).transform
+            const translateXRegex = /([-0-9]+.[0-9]+)/
+            const translateX: number = parseFloat(
+               transform.match(translateXRegex)?.[1] ?? ""
+            )
+            if (translateX && translateX > -100) {
+               // Update the width with the same amount as the translateX value
+               console.log(parent.offsetWidth)
+               console.log(translateX)
+               console.log(100 + translateX)
+               console.log((100 + translateX) / 100)
+               console.log(parent.offsetWidth * ((100 + translateX) / 100))
+               const widthValue =
+                  parent.offsetWidth * ((100 + translateX) / 100)
+               //element.style.width = `${widthValue}px`
+               element.style.width = `${(100 + translateX) / 100}%`
+
+               //element.style.width = `${(100 + translateX) / 100}%`
+
+               element.style.transform = ""
+               element.style.transition = "none"
+            }
+         }
+      })
+   }
+   /*
+-72.1796
+glow.ts:99 27.820400000000006
+glow.ts:100 0.27820400000000006
+glow.ts:101 55.64080000000001
+glow.ts:97 200
+glow.ts:98 -71.8282
+glow.ts:99 28.171800000000005
+glow.ts:100 0.281718
+glow.ts:101 56.3436
+*/
    // Function to apply the glow effect to all elements in a given container
    function applyGlowEffectToElementsInContainer(container: HTMLElement) {
       const textNodes = doc.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
@@ -112,6 +164,7 @@ export async function main(ns: NS): Promise<void> {
             applyGlowEffectToSvgElement(svgElement)
          }
       }
+      applyGlowEffectToProgressBar()
    }
 
    // Apply the glow effect to all input elements on page load
@@ -129,12 +182,18 @@ export async function main(ns: NS): Promise<void> {
                   applyGlowEffectToSvgElement(element)
                }
             })
+         } else if (
+            mutation.type === "attributes" &&
+            mutation.attributeName === "style"
+         ) {
+            applyGlowEffectToProgressBar() // call the function when style attribute changes
          }
       }
    })
 
    // Start observing mutations to the page
    observer.observe(doc.body, {
+      attributes: true,
       childList: true,
       subtree: true,
    })
