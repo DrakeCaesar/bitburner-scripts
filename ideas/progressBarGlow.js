@@ -1,6 +1,6 @@
 function applyGlowEffectToProgressBar() {
    const selector = ".MuiLinearProgress-bar"
-   const boxShadowStyle = "0 0 10px 2px white"
+   const boxShadowStyle = "0 0 10px white"
    const elements = document.querySelectorAll(selector)
    elements.forEach((element) => {
       element.style.boxShadow = boxShadowStyle
