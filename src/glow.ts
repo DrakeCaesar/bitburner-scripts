@@ -93,34 +93,10 @@ export async function main(ns: NS): Promise<void> {
                transform.match(translateXRegex)?.[1] ?? ""
             )
             if (translateX < -1 && translateX > -100) {
-               // Update the width with the same amount as the translateX value
-               //console.log("parent offset:    " + parent.offsetWidth)
-               console.log("offset %:         " + translateX)
-               //console.log("offset % flipped: " + (100 + translateX) / 100)
-               //console.log(
-               //   "offset comp px:   " +
-               //      parent.offsetWidth * ((100 + translateX) / 100)
-               //)
-               //console.log(`${(100 + translateX) / 100}%`)
-               const offset = (-parent.offsetWidth / 100) * translateX
                const width = (parent.offsetWidth / 100) * (100 + translateX)
-               element.style.left = `${offset}px`
-               element.setAttribute("offsetWidth", `${width}`)
-               //element.style = `${width}px`
-               //element.setAttribute("offsetWidth", `${widthValue}px`)
-               //element.style.width = `${(100 + translateX) / 100}%`
-
-               //element.style.width = `${100 + translateX}%`
-               //element.style.transform = "translateX(0%)"
-
-               //console.log(`${widthValue}px`)
-               //console.log(`${-widthValue}px`)
-               //console.log()
-
+               element.style.width = `${width}px`
+               element.style.transform = "translateX(0%)"
                element.style.transition = "none"
-               //element.style.right = `${-widthValue}px`
-
-               //element.style.width = `${widthValue}px`
             }
          }
       })
