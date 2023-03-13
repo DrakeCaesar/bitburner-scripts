@@ -4,11 +4,7 @@ export async function main(ns: NS): Promise<void> {
    // Define the CSS class for the glow effect
    const glowClass = "glow"
    const doc: Document = eval("document")
-
-   const inputRoot = doc.querySelector<HTMLElement>(".MuiInputBase-root")
-   if (inputRoot) {
-      inputRoot.style.backgroundColor = "transparent"
-   }
+   const glowSize = 20
 
    // Function to calculate the luminance value of a given color
    function calculateGlowIntensity(color: string): number {
@@ -27,8 +23,9 @@ export async function main(ns: NS): Promise<void> {
       const intensity = calculateGlowIntensity(color)
       const glowStyles = `
             text-shadow: 0 0 ${
-               intensity * 10
+               intensity * glowSize
             }px rgba(255, 255, 255, ${intensity}) !important;
+            overflow: visible;
       `
       element.classList.add(glowClass)
       element.style.cssText += glowStyles
@@ -47,14 +44,14 @@ export async function main(ns: NS): Promise<void> {
       )
       feDropShadow.setAttribute("dx", "0")
       feDropShadow.setAttribute("dy", "0")
-      feDropShadow.setAttribute("stdDeviation", "5")
+      feDropShadow.setAttribute("stdDeviation", `${glowSize / 2}`)
       feDropShadow.setAttribute("flood-color", "white")
       feDropShadow.setAttribute("flood-opacity", String(opacity))
       filter.appendChild(feDropShadow)
       element.insertBefore(filter, element.firstChild)
       element.style.filter = "url(#glow-filter)"
-      element.style.margin = "-10px"
-      element.style.padding = "10px"
+      element.style.margin = `-${glowSize}px`
+      element.style.padding = `${glowSize}px`
    }
 
    // Function to apply the glow effect to an input element
@@ -63,20 +60,25 @@ export async function main(ns: NS): Promise<void> {
       const intensity = calculateGlowIntensity(color)
       const glowStyles = `
          text-shadow: 0 0 ${
-            intensity * 10
+            intensity * glowSize
          }px rgba(255, 255, 255, ${intensity}) !important;
-         margin-left: -10px;
-         text-indent: 10px;
+         margin-left: -120px;
+         text-indent: 120px;
+         line-height: 2;
       `
       element.classList.add(glowClass)
       element.style.cssText += glowStyles
+      const parent = element.parentNode as HTMLElement
+      if (parent && parent.classList.contains("MuiInputBase-root")) {
+         parent.style.backgroundColor = "transparent"
+      }
    }
 
    function applyGlowEffectToProgressBar(element: HTMLSpanElement) {
       const color = getComputedStyle(element).backgroundColor
       const intensity = calculateGlowIntensity(color)
       const boxShadowStyle = `0 0 ${
-         intensity * 10
+         intensity * glowSize
       }px rgba(255, 255, 255, ${intensity}`
 
       element.style.boxShadow = boxShadowStyle
@@ -163,16 +165,13 @@ export async function main(ns: NS): Promise<void> {
             mutation.type === "attributes" &&
             mutation.attributeName === "style"
          ) {
-            const addedElements = mutation.addedNodes
-            addedElements.forEach((element) => {
-               ns.tprint(element)
-               if (
-                  element instanceof HTMLSpanElement &&
-                  element.classList.contains("MuiLinearProgress-bar")
-               ) {
-                  applyGlowEffectToProgressBar(element as HTMLSpanElement)
-               }
-            })
+            const element = mutation.target as HTMLElement
+            if (
+               element instanceof HTMLSpanElement &&
+               element.classList.contains("MuiLinearProgress-bar")
+            ) {
+               applyGlowEffectToProgressBar(element)
+            }
          }
       }
    })
