@@ -32,7 +32,9 @@ export async function main(ns: NS): Promise<void> {
    }
 
    // Function to apply the glow effect to an SVG element
-   function applyGlowEffectToSvgElement(element: SVGElement) {
+   function applyGlowEffectToSvgElement(
+      element: SVGElement | HTMLImageElement
+   ) {
       const color = getComputedStyle(element).fill
       const intensity = calculateGlowIntensity(color)
       const opacity = intensity
@@ -49,7 +51,14 @@ export async function main(ns: NS): Promise<void> {
       feDropShadow.setAttribute("flood-opacity", String(opacity))
       filter.appendChild(feDropShadow)
       element.insertBefore(filter, element.firstChild)
-      element.style.filter = "url(#glow-filter)"
+
+      const filterText = element.style.filter
+      console.log(filterText)
+      if (filterText == "") {
+         element.style.filter = "url(#glow-filter)"
+      } else if (!filterText.includes("url(#glow-filter)")) {
+         element.style.filter = `${filterText} url(#glow-filter)`
+      }
       element.style.margin = `-${glowSize}px`
       element.style.padding = `${glowSize}px`
    }
@@ -121,6 +130,8 @@ export async function main(ns: NS): Promise<void> {
       while ((currentNode = textNodes.nextNode())) {
          if (currentNode.parentElement instanceof SVGElement) {
             applyGlowEffectToSvgElement(currentNode.parentElement)
+         } else if (currentNode.parentElement instanceof HTMLImageElement) {
+            applyGlowEffectToSvgElement(currentNode.parentElement)
          } else if (currentNode.parentElement instanceof HTMLElement) {
             applyGlowEffectToTextElement(currentNode.parentElement)
          }
@@ -137,6 +148,13 @@ export async function main(ns: NS): Promise<void> {
       for (const svgElement of svgElements) {
          if (svgElement instanceof SVGElement) {
             applyGlowEffectToSvgElement(svgElement)
+         }
+      }
+
+      const imgElements = container.getElementsByTagName("img")
+      for (const imgElement of imgElements) {
+         if (imgElement instanceof HTMLImageElement) {
+            applyGlowEffectToSvgElement(imgElement)
          }
       }
    }
