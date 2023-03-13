@@ -7,10 +7,12 @@ function generateNewProgressBar(bars: number, dashes: number): string | null {
    const filledSegments = Math.round(totalSegments * percentage)
    const emptySegments = totalSegments - filledSegments
    return (
-      (filledSegments ? "" : "") +
-      "".repeat(filledSegments - 1) +
-      "".repeat(emptySegments - 1) +
-      (emptySegments ? "" : "")
+      (filledSegments
+         ? "" + "".repeat(Math.min(filledSegments - 1, totalSegments - 2))
+         : "") +
+      (emptySegments
+         ? "".repeat(Math.min(emptySegments - 1, totalSegments - 2)) + ""
+         : "")
    )
 }
 
@@ -48,6 +50,13 @@ function replaceOldProgressBars(node: Node) {
    }
 }
 export async function main(ns: NS): Promise<void> {
+   const size = 30
+   for (let bars = 0; bars <= size; bars++) {
+      ns.tprint(generateOldProgressBar(bars, size - bars))
+      ns.tprint(generateNewProgressBar(bars, size - bars))
+   }
+   return
+
    const doc = eval("document")
 
    // Replace any legacy progress bars on the page
@@ -66,10 +75,4 @@ export async function main(ns: NS): Promise<void> {
    })
 
    observer.observe(doc.body, { childList: true, subtree: true })
-
-   // const size = 30
-   // for (let bars = 0; bars <= size; bars++) {
-   //    ns.tprint(generateOldProgressBar(bars, size - bars))
-   //    ns.tprint(generateNewProgressBar(bars, size - bars))
-   // }
 }
