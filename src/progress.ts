@@ -6,8 +6,8 @@ function generateNewProgressBar(bars: number, dashes: number): string | null {
    const bar =
       (bars ? "" + "".repeat(Math.min(bars - 1, size - 2)) : "") +
       (dashes ? "".repeat(Math.min(dashes - 1, size - 2)) + "" : "")
-   const expansion = ((size + 2) / size) * 100
-   return `<span class="expanded" style="display: inline-block; width: ${expansion}%;">${bar}</span>`
+   const expansion = (size + 2) / size
+   return `<span class="expanded" style="display: inline-block; transform: scaleX(${expansion}); transform-origin: 0% 0%;">${bar}</span>`
 }
 
 function generateOldProgressBar(bars: number, dashes: number): string {
@@ -22,8 +22,11 @@ function generateOldProgressBar(bars: number, dashes: number): string {
 function replaceOldProgressBars(node: Node) {
    if (node instanceof HTMLParagraphElement) {
       // If the node is a text node, replace any legacy progress bars in the text content
-      if (node.textContent) {
-         const content = node.textContent
+
+      const newNode = node.cloneNode(true)
+
+      if (newNode.textContent && newNode instanceof HTMLParagraphElement) {
+         const content = newNode.textContent
          //ns.tprint("content: " + content)
          const matches = content.matchAll(/\[([|]*)([-]*)\]/g)
          if (matches) {
@@ -33,18 +36,13 @@ function replaceOldProgressBars(node: Node) {
                const dashes = oldBar[2].length ?? 0
                const newBar = generateNewProgressBar(bars, dashes)
                if (newBar) {
-                  //node.textContent = node.textContent.replace(oldBar[0], newBar)
-                  const newContent = node.textContent.replace(oldBar[0], newBar)
-                  //const newSpan = document.createElement("span")
-                  node.innerHTML = newContent
-                  node.style.whiteSpace = "pre"
-
-                  // Replace the original text node with the new span element
-                  // if (node.parentNode?.firstChild instanceof Element)
-                  //    node.parentNode?.replaceChild(
-                  //       newSpan,
-                  //       node.parentNode.firstChild
-                  //    )
+                  const newContent = newNode.textContent.replace(
+                     oldBar[0],
+                     newBar
+                  )
+                  newNode.innerHTML = newContent
+                  newNode.style.whiteSpace = "pre"
+                  node.insertAdjacentElement("afterend", newNode)
                }
             }
          }
