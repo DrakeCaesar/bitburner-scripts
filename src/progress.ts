@@ -55,11 +55,11 @@ function replaceOldProgressBars(node: Node) {
    }
 }
 export async function main(ns: NS): Promise<void> {
-   const size = 30
-   for (let bars = 0; bars <= size; bars++) {
-      ns.tprint(generateOldProgressBar(bars, size - bars))
-      ns.tprint(generateNewProgressBar(bars, size - bars))
-   }
+   // const size = 30
+   // for (let bars = 0; bars <= size; bars++) {
+   //    ns.tprint(generateOldProgressBar(bars, size - bars))
+   //    ns.tprint(generateNewProgressBar(bars, size - bars))
+   // }
    //return
 
    const doc = eval("document")
