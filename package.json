@@ -18,7 +18,7 @@
    "types": "./NetscriptDefinitions.d.ts",
    "scripts": {
       "lint": "prettier --write . && eslint . --fix && sort-package-json",
-      "up": "yarn install && yarn-check-updates -u && yarn upgrade && sort-package-json",
+      "up": "yarn install && npm-check-updates -u && yarn upgrade && sort-package-json",
       "watch": "yarn run watch:init && yarn run watch:all",
       "watch:all": "concurrently yarn:watch:transpile yarn:watch:local yarn:watch:remote",
       "watch:init": "node build/init.js",
@@ -36,8 +36,8 @@
    "eslintConfig": {
       "env": {
          "es2022": true,
-         "node": true,
-         "es6": true
+         "es6": true,
+         "node": true
       },
       "parserOptions": {
          "ecmaFeatures": {
@@ -87,21 +87,21 @@
       "node_modules"
    ],
    "devDependencies": {
-      "@typescript-eslint/eslint-plugin": "^5.54.1",
-      "@typescript-eslint/parser": "^5.54.1",
+      "@typescript-eslint/eslint-plugin": "^5.55.0",
+      "@typescript-eslint/parser": "^5.55.0",
       "bitburner-filesync": "^1.1.5",
       "chokidar": "^3.5.3",
       "concurrently": "^7.6.0",
-      "cspell": "^6.28.0",
-      "eslint": "^8.35.0",
+      "cspell": "^6.29.3",
+      "eslint": "^8.36.0",
       "eslint-config-prettier": "^8.7.0",
-      "eslint-config-standard-with-typescript": "^34.0.0",
+      "eslint-config-standard-with-typescript": "^34.0.1",
       "eslint-plugin-import": "^2.27.5",
       "eslint-plugin-n": "^15.6.1",
       "eslint-plugin-promise": "^6.1.1",
       "eslint-plugin-sonarjs": "^0.18.0",
       "fast-glob": "^3.2.12",
-      "yarn-check-updates": "^16.7.10",
+      "npm-check-updates": "^16.7.12",
       "prettier": "^2.8.4",
       "sort-package-json": "^2.4.1",
       "sync-directory": "^6.0.3",

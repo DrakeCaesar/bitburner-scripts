@@ -2,3 +2,4 @@ node_modules/
 dist/
 NetscriptDefinitions.d.ts
 package-lock.json
+yarn-error.log
