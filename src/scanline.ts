@@ -1,6 +1,4 @@
-import { NS } from "@ns"
-
-export async function main(ns: NS): Promise<void> {
+export async function main(): Promise<void> {
    const doc: Document = document
 
    // Create a new div element to hold the scanlines

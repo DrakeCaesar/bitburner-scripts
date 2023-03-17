@@ -1,5 +1,3 @@
-import { NS } from "@ns"
-
 function generateNewProgressBar(bars: number, dashes: number): string | null {
    const size = bars + dashes
    if (size == 0) return null
@@ -10,6 +8,7 @@ function generateNewProgressBar(bars: number, dashes: number): string | null {
    return `<span class="expanded" style="display: inline-block; transform: scaleX(${expansion}); transform-origin: 0% 0%;">${bar}</span>`
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function generateOldProgressBar(bars: number, dashes: number): string {
    return "[" + "|".repeat(bars) + "-".repeat(dashes) + "]"
 }
@@ -49,12 +48,12 @@ function replaceOldProgressBars(node: Node) {
       }
    } else {
       // If the node is an element, recurse through its children
-      for (const childNode of node.childNodes) {
+      node.childNodes.forEach(function (childNode) {
          replaceOldProgressBars(childNode)
-      }
+      })
    }
 }
-export async function main(ns: NS): Promise<void> {
+export async function main(): Promise<void> {
    // const size = 30
    // for (let bars = 0; bars <= size; bars++) {
    //    ns.tprint(generateOldProgressBar(bars, size - bars))
@@ -72,9 +71,9 @@ export async function main(ns: NS): Promise<void> {
       for (const mutation of mutationsList) {
          if (mutation.type === "childList") {
             const addedNodes = mutation.addedNodes
-            for (const addedNode of addedNodes) {
+            addedNodes.forEach(function (addedNode) {
                replaceOldProgressBars(addedNode)
-            }
+            })
          }
       }
    })

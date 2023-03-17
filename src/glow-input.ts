@@ -1,6 +1,4 @@
-import { NS } from "@ns"
-
-export async function main(ns: NS): Promise<void> {
+export async function main(): Promise<void> {
    // Define the CSS class for the glow effect
    const glowClass = "glow"
 
@@ -22,7 +20,7 @@ export async function main(ns: NS): Promise<void> {
             text-shadow: 0 0 ${
                intensity * 10
             }px rgba(255, 255, 255, ${intensity}) !important;
-        `
+      `
       element.classList.add(glowClass)
       element.style.cssText += glowStyles
    }
@@ -30,12 +28,9 @@ export async function main(ns: NS): Promise<void> {
    // Function to apply the glow effect to all input elements in a given element
    function applyGlowEffectToElementsInContainer(container: HTMLElement) {
       const inputElements = container.querySelectorAll("input[type=text]")
-      for (const inputElement of inputElements) {
-         if (inputElement instanceof HTMLInputElement) {
-            // type-checking
-            applyGlowEffectToInputElement(inputElement)
-         }
-      }
+      inputElements.forEach(function (inputElement) {
+         applyGlowEffectToInputElement(inputElement as HTMLInputElement)
+      })
    }
 
    // Apply the glow effect to all input elements on page load

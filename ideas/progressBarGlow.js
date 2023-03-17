@@ -24,7 +24,7 @@ function applyGlowEffectToProgressBar() {
 
 applyGlowEffectToProgressBar() // call the function on page load
 
-const observer = new MutationObserver(function (mutationsList, observer) {
+const observer = new MutationObserver(function (mutationsList) {
    for (let mutation of mutationsList) {
       if (
          mutation.type === "attributes" &&

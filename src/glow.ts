@@ -1,6 +1,4 @@
-import { NS } from "@ns"
-
-export async function main(ns: NS): Promise<void> {
+export async function main(): Promise<void> {
    // Define the CSS class for the glow effect
    const glowClass = "glow"
    const doc: Document = eval("document")
@@ -138,25 +136,29 @@ export async function main(ns: NS): Promise<void> {
       }
 
       const inputElements = container.querySelectorAll("input[type='text']")
-      for (const inputElement of inputElements) {
-         if (inputElement instanceof HTMLInputElement) {
-            applyGlowEffectToInputElement(inputElement)
-         }
-      }
+      inputElements.forEach(function (inputElement) {
+         applyGlowEffectToInputElement(inputElement as HTMLInputElement)
+      })
 
-      const svgElements = container.getElementsByTagName("svg")
-      for (const svgElement of svgElements) {
+      const svgElements = container.querySelectorAll("svg")
+      svgElements.forEach(function (svgElement) {
          if (svgElement instanceof SVGElement) {
             applyGlowEffectToSvgElement(svgElement)
          }
-      }
+      })
 
-      const imgElements = container.getElementsByTagName("img")
-      for (const imgElement of imgElements) {
+      svgElements.forEach(function (svgElement) {
+         if (svgElement instanceof SVGElement) {
+            applyGlowEffectToSvgElement(svgElement)
+         }
+      })
+
+      const imgElements = container.querySelectorAll("img")
+      imgElements.forEach(function (imgElement) {
          if (imgElement instanceof HTMLImageElement) {
             applyGlowEffectToSvgElement(imgElement)
          }
-      }
+      })
    }
 
    const progressBarElements = document.querySelectorAll(

@@ -1,6 +1,4 @@
-import { NS } from "@ns"
-
-export async function main(ns: NS): Promise<void> {
+export async function main(): Promise<void> {
    // Function to calculate the luminance value of a given color
    function calculateLuminance(color: string): number {
       const rgb = color.substring(4, color.length - 1).split(",")
@@ -37,8 +35,8 @@ export async function main(ns: NS): Promise<void> {
    }
 
    // Apply the glow effect to all SVG elements on page load
-   const svgElements = document.getElementsByTagName("svg")
-   for (const svgElement of svgElements) {
+   const svgElements = document.querySelectorAll("svg")
+   svgElements.forEach(function (svgElement) {
       applyGlowEffectToSvgElement(svgElement)
-   }
+   })
 }

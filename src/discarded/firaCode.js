@@ -2,7 +2,7 @@
  * Replace progress bars. */
 export async function main(ns) {
    for (;;) {
-      waitForElm(".MuiList-root.MuiList-padding.MuiList-dense").then((elm) => {
+      waitForElm(".MuiList-root.MuiList-padding.MuiList-dense").then(() => {
          var targetList = document.querySelectorAll(
             "ul > div > .MuiListItemButton-root p"
          )
@@ -42,7 +42,7 @@ export function waitForElm(selector) {
          return resolve(document.querySelector(selector))
       }
 
-      const observer = new MutationObserver((mutations) => {
+      const observer = new MutationObserver(() => {
          if (document.querySelector(selector)) {
             resolve(document.querySelector(selector))
             observer.disconnect()

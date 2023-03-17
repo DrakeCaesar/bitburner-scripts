@@ -14,7 +14,7 @@ export async function main(ns, copy = false) {
       return first[1] - second[1]
    })
 
-   // eslint-disable-next-line no-unused-vars
+   // eslint-disable-next-line @typescript-eslint/no-unused-vars
    for (const [hostname, level] of assortedServers) {
       let list = ns.ls(hostname)
       let listCCT = ns.ls(hostname, ".cct")
