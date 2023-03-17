@@ -30,9 +30,7 @@ export async function main(): Promise<void> {
    }
 
    // Function to apply the glow effect to an SVG element
-   function applyGlowEffectToSvgElement(
-      element: SVGElement | HTMLImageElement
-   ) {
+   function applyGlowEffectToSvgElement(element: HTMLElement) {
       const color = getComputedStyle(element).fill
       const intensity = calculateGlowIntensity(color)
       const opacity = intensity
@@ -140,24 +138,9 @@ export async function main(): Promise<void> {
          applyGlowEffectToInputElement(inputElement as HTMLInputElement)
       })
 
-      const svgElements = container.querySelectorAll("svg")
+      const svgElements = container.querySelectorAll("svg ; img")
       svgElements.forEach(function (svgElement) {
-         if (svgElement instanceof SVGElement) {
-            applyGlowEffectToSvgElement(svgElement)
-         }
-      })
-
-      svgElements.forEach(function (svgElement) {
-         if (svgElement instanceof SVGElement) {
-            applyGlowEffectToSvgElement(svgElement)
-         }
-      })
-
-      const imgElements = container.querySelectorAll("img")
-      imgElements.forEach(function (imgElement) {
-         if (imgElement instanceof HTMLImageElement) {
-            applyGlowEffectToSvgElement(imgElement)
-         }
+         applyGlowEffectToSvgElement(svgElement as HTMLElement)
       })
    }
 
