@@ -27,6 +27,59 @@ export async function main(): Promise<void> {
       `
       element.classList.add(glowClass)
       element.style.cssText += glowStyles
+
+      if (element instanceof HTMLParagraphElement) {
+         replaceOldProgressBars(element)
+      }
+   }
+
+   function generateNewProgressBar(
+      bars: number,
+      dashes: number
+   ): string | null {
+      const size = bars + dashes
+      if (size == 0) return null
+      const bar =
+         (bars ? "" + "".repeat(Math.min(bars - 1, size - 2)) : "") +
+         (dashes ? "".repeat(Math.min(dashes - 1, size - 2)) + "" : "")
+      const expansion = (size + 2) / size
+      return `<span class="expanded" style="display: inline-block; transform: scaleX(${expansion}); transform-origin: 0% 0%;">${bar}</span>`
+   }
+
+   // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   function generateOldProgressBar(bars: number, dashes: number): string {
+      return "[" + "|".repeat(bars) + "-".repeat(dashes) + "]"
+   }
+
+   function replaceOldProgressBars(node: HTMLParagraphElement) {
+      // If the node is a text node, replace any legacy progress bars in the text content
+      const debug = false
+      const newNode = debug ? node.cloneNode(true) : node
+
+      if (newNode.textContent && newNode instanceof HTMLParagraphElement) {
+         const content = newNode.textContent
+         //ns.tprint("content: " + content)
+         const matches = content.matchAll(/\[([|]*)([-]*)\]/g)
+         if (matches) {
+            for (const oldBar of matches) {
+               if (oldBar.length != 3) return
+               const bars = oldBar[1].length ?? 0
+               const dashes = oldBar[2].length ?? 0
+               const newBar = generateNewProgressBar(bars, dashes)
+               if (newBar) {
+                  const newContent = newNode.textContent.replace(
+                     oldBar[0],
+                     newBar
+                  )
+                  newNode.innerHTML = newContent
+                  newNode.style.whiteSpace = "pre"
+                  if (debug) {
+                     node.insertAdjacentElement("afterend", newNode)
+                  }
+               }
+            }
+         }
+      }
    }
 
    // Function to apply the glow effect to an SVG element
@@ -79,7 +132,7 @@ export async function main(): Promise<void> {
       }
    }
 
-   function applyGlowEffectToProgressBar(element: HTMLSpanElement) {
+   function applyGlowEffectToSkillBar(element: HTMLSpanElement) {
       const color = getComputedStyle(element).backgroundColor
       const intensity = calculateGlowIntensity(color)
       const boxShadowStyle = `0 0 ${
@@ -138,17 +191,15 @@ export async function main(): Promise<void> {
          applyGlowEffectToInputElement(inputElement as HTMLInputElement)
       })
 
-      const svgElements = container.querySelectorAll("svg ; img")
+      const svgElements = container.querySelectorAll("svg, img")
       svgElements.forEach(function (svgElement) {
          applyGlowEffectToSvgElement(svgElement as HTMLElement)
       })
    }
 
-   const progressBarElements = document.querySelectorAll(
-      ".MuiLinearProgress-bar"
-   )
-   progressBarElements.forEach((element) => {
-      applyGlowEffectToProgressBar(element as HTMLSpanElement)
+   const skillBarElements = document.querySelectorAll(".MuiLinearProgress-bar")
+   skillBarElements.forEach((element) => {
+      applyGlowEffectToSkillBar(element as HTMLSpanElement)
    })
 
    // Apply the glow effect to all input elements on page load
@@ -173,7 +224,7 @@ export async function main(): Promise<void> {
                element instanceof HTMLSpanElement &&
                element.classList.contains("MuiLinearProgress-bar")
             ) {
-               applyGlowEffectToProgressBar(element)
+               applyGlowEffectToSkillBar(element)
             }
          }
       }
