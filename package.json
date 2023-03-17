@@ -17,6 +17,7 @@
    "main": "index.js",
    "types": "./NetscriptDefinitions.d.ts",
    "scripts": {
+      "dev": "viteburner",
       "lint": "prettier --write . && eslint . --fix && sort-package-json",
       "up": "yarn install && npm-check-updates -u && yarn upgrade && sort-package-json",
       "watch": "yarn run watch:init && yarn run watch:all",
@@ -87,17 +88,19 @@
       "node_modules"
    ],
    "devDependencies": {
+      "@types/node": "^18.15.3",
       "@typescript-eslint/eslint-plugin": "^5.55.0",
       "@typescript-eslint/parser": "^5.55.0",
       "bitburner-filesync": "^1.1.5",
       "chokidar": "^3.5.3",
       "concurrently": "^7.6.0",
-      "cspell": "^6.29.3",
+      "cspell": "^6.30.0",
       "eslint": "^8.36.0",
       "eslint-config-prettier": "^8.7.0",
       "eslint-config-standard-with-typescript": "^34.0.1",
       "eslint-plugin-import": "^2.27.5",
       "eslint-plugin-n": "^15.6.1",
+      "eslint-plugin-prettier": "^4.2.1",
       "eslint-plugin-promise": "^6.1.1",
       "eslint-plugin-sonarjs": "^0.18.0",
       "fast-glob": "^3.2.12",
@@ -105,8 +108,10 @@
       "prettier": "^2.8.4",
       "sort-package-json": "^2.4.1",
       "sync-directory": "^6.0.3",
-      "typescript": "^4.9.5",
-      "typescript-eslint": "^0.0.1-alpha.0"
+      "typescript": "^5.0.2",
+      "typescript-eslint": "^0.0.1-alpha.0",
+      "vite": "^4.2.0",
+      "viteburner": "^0.5.3"
    },
    "cspell": {
       "version": "0.2",
@@ -145,6 +150,7 @@
          "tprint",
          "tprintf",
          "unclickable",
+         "viteburner",
          "xmodar",
          "yourusername"
       ],

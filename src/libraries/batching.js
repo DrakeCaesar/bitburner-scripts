@@ -1,4 +1,4 @@
-import { tFormat } from "./libraries/format"
+import { tFormat } from "./format"
 
 export function batchingTime(params) {
    const hack_time = params.hack_time
