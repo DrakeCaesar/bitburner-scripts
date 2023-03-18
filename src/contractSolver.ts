@@ -1,5 +1,6 @@
 import { NS } from "@ns"
 import { crawl } from "./libraries/crawl"
+import { stringify } from "querystring"
 
 export async function main(ns: NS): Promise<void> {
    const startScript = performance.now()
@@ -10,7 +11,7 @@ export async function main(ns: NS): Promise<void> {
    const timeDict: Map<string, number[]> = new Map()
    //const solve = ns.args[0] as boolean
    const solve = false
-   const grep = (ns.args[1] as string)?.toLowerCase()
+   const grep: string = (ns.args[1] as string)?.toLowerCase() ?? ""
 
    let totalC = 0
    let solvableC = 0
@@ -42,9 +43,22 @@ export async function main(ns: NS): Promise<void> {
                contract,
                hostname
             )
+
+            if (!type.toLowerCase().includes(grep)) {
+               continue
+            }
             const data = ns.codingcontract.getData(contract, hostname)
 
+            // const answerPromise = sendMessageToWorker({
+            //    type: type,
+            //    data: data,
+            // })
+            // ns.tprint(`data:     ${data}\n`)
+
             const start = performance.now()
+
+            // const answer: string | number | unknown[] | null =
+            //    await answerPromise
 
             const answer: string | number | unknown[] | null =
                await sendMessageToWorker({
@@ -58,11 +72,11 @@ export async function main(ns: NS): Promise<void> {
                answer != null &&
                (grep == null || type.toLowerCase().includes(grep))
             ) {
-               //solutions += `hostname: ${hostname}\n`
-               //solutions += `contract: ${contract}\n`
-               //solutions += `type:     ${type}\n`
-               solutions += `data:     ${data}\n`
-               //solutions += `answer:   ${String(answer)}\n`
+               solutions += `hostname: ${hostname}\n`
+               solutions += `contract: ${contract}\n`
+               solutions += `type:     ${type}\n`
+               solutions += `data:     ${JSON.stringify(data)}\n`
+               solutions += `answer:   ${JSON.stringify(answer)}\n`
 
                solvableC++
 
@@ -90,7 +104,7 @@ export async function main(ns: NS): Promise<void> {
    let contractTypes
    const sortedTypes = Array.from(dict.keys()).sort()
 
-   if (sortedTypes.length && grep == null) {
+   if (sortedTypes.length && grep == "") {
       contractTypes = "\nUnknown Types:\n\n"
       for (const key of sortedTypes) {
          contractTypes += key + "\n"
@@ -99,7 +113,7 @@ export async function main(ns: NS): Promise<void> {
                if (
                   element[1]
                      .toLowerCase()
-                     .includes(grep.toString().toLowerCase())
+                     .includes((grep as string).toString().toLowerCase())
                ) {
                   contractTypes +=
                      "   " + element[0].padEnd(20) + element[1] + "\n"

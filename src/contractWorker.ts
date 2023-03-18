@@ -61,6 +61,9 @@ onmessage = (event) => {
       case "Find All Valid Math Expressions":
          answer = findAllValidMathExpressions(data)
          break
+      case "Proper 2-Coloring of a Graph":
+         answer = proper2Coloring(data)
+         break
       default:
          answer = null
          break
@@ -550,4 +553,41 @@ function findAllValidMathExpressions(data: [string, number]): string[] {
 
    dfs("", 0, 0, 0)
    return result
+}
+
+function proper2Coloring(data: [number, number[][]]): number[] {
+   const numVertices: number = data[0]
+   const edges: number[][] = data[1]
+   const colors: number[] = new Array(numVertices).fill(-1)
+
+   let isPossible = true
+
+   for (let i = 0; i < numVertices && isPossible; i++) {
+      if (colors[i] === -1) {
+         const queue: number[] = [i]
+         colors[i] = 0
+
+         while (queue.length > 0 && isPossible) {
+            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+            const currentVertex: number = queue.shift()!
+
+            for (let j = 0; j < edges.length; j++) {
+               const currentEdge: number[] = edges[j]
+               if (currentEdge[0] === currentVertex) {
+                  const adjacentVertex: number = currentEdge[1]
+
+                  if (colors[adjacentVertex] === -1) {
+                     colors[adjacentVertex] = colors[currentVertex] ^ 1
+                     queue.push(adjacentVertex)
+                  } else if (colors[adjacentVertex] === colors[currentVertex]) {
+                     isPossible = false
+                     break
+                  }
+               }
+            }
+         }
+      }
+   }
+
+   return isPossible ? colors : []
 }
