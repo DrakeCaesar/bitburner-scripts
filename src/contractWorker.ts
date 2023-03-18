@@ -64,6 +64,12 @@ onmessage = (event) => {
       case "Proper 2-Coloring of a Graph":
          answer = proper2Coloring(data)
          break
+      case "HammingCodes: Encoded Binary to Integer":
+         answer = hammingDecode(data)
+         break
+      case "HammingCodes: Integer to Encoded Binary":
+         answer = hammingEncode(data)
+         break
       default:
          answer = null
          break
@@ -591,3 +597,84 @@ function proper2Coloring(data: [number, number[][]]): number[] {
 
    return isPossible ? colors : []
 }
+
+// Hamming code encoding function
+function hammingEncode(decimalValue: number): string {
+   const binary = (8).toString(2)
+   const encoded = encode(binary)
+   const extendedHamming = addOverallParityBit(encoded)
+   return extendedHamming
+}
+
+function encode(binary: string): string {
+   let encoded = ""
+   let dataBitIndex = 0
+   let parityBitIndex = 0
+
+   for (let i = 1; dataBitIndex < binary.length; i *= 2) {
+      parityBitIndex = i
+      while (parityBitIndex < i * 2 && dataBitIndex < binary.length) {
+         encoded +=
+            parityBitIndex === i
+               ? "p"
+               : binary[binary.length - 1 - dataBitIndex++]
+         parityBitIndex++
+      }
+   }
+
+   const encodedArray = encoded.split("")
+   encodedArray.forEach((_, index) => {
+      if (encoded[index] === "p") {
+         const parity = calculateParity(encodedArray, index + 1)
+         encodedArray[index] = parity.toString()
+      }
+   })
+
+   return encodedArray.join("")
+}
+
+function calculateParity(encodedArray: string[], index: number): number {
+   let parity = 0
+   for (let i = index - 1; i < encodedArray.length; i += index * 2) {
+      for (let j = i; j < i + index && j < encodedArray.length; j++) {
+         if (encodedArray[j] === "1") {
+            parity = 1 - parity
+         }
+      }
+   }
+   return parity
+}
+
+function addOverallParityBit(encoded: string): string {
+   const overallParity = encoded
+      .split("")
+      .reduce((acc, bit) => acc ^ Number(bit), 0)
+   return overallParity.toString() + encoded
+}
+
+// Hamming code decoding function
+function hammingDecode(encodedBinary: string): number {
+   const decoded = decode(encodedBinary.slice(1))
+   return parseInt(decoded, 2)
+}
+
+function decode(encodedBinary: string): string {
+   let decoded = ""
+   for (let i = 0; i < encodedBinary.length; i++) {
+      if (!isPowerOfTwo(i + 1)) {
+         decoded = encodedBinary[i] + decoded
+      }
+   }
+   return decoded
+}
+
+function isPowerOfTwo(value: number): boolean {
+   return (value & (value - 1)) === 0
+}
+
+// Example usage
+const encoded = hammingEncode(885)
+console.log(`Encoded: ${encoded}`)
+
+const decoded = hammingDecode(encoded)
+console.log(`Decoded: ${decoded}`)

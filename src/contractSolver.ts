@@ -1,6 +1,5 @@
 import { NS } from "@ns"
 import { crawl } from "./libraries/crawl"
-import { stringify } from "querystring"
 
 export async function main(ns: NS): Promise<void> {
    const startScript = performance.now()
@@ -85,7 +84,7 @@ export async function main(ns: NS): Promise<void> {
                   reward = ns.codingcontract.attempt(answer, contract, hostname)
                   solutions += `reward:   ${reward}\n`
                }
-               //solutions += "\n"
+               solutions += "\n"
 
                if (!timeDict.has(type)) {
                   timeDict.set(type, [])
