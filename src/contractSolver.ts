@@ -8,8 +8,9 @@ export async function main(ns: NS): Promise<void> {
    let solutions = ""
    const dict: Map<string, [string, string][]> = new Map()
    const timeDict: Map<string, number[]> = new Map()
-   const solve = ns.args[0]
-   const grep = ns.args[1]
+   //const solve = ns.args[0] as boolean
+   const solve = false
+   const grep = (ns.args[1] as string)?.toLowerCase()
 
    let totalC = 0
    let solvableC = 0
@@ -53,12 +54,15 @@ export async function main(ns: NS): Promise<void> {
 
             const end = performance.now()
 
-            if (answer != null) {
-               solutions += `hostname: ${hostname}\n`
-               solutions += `contract: ${contract}\n`
-               solutions += `type:     ${type}\n`
+            if (
+               answer != null &&
+               (grep == null || type.toLowerCase().includes(grep))
+            ) {
+               //solutions += `hostname: ${hostname}\n`
+               //solutions += `contract: ${contract}\n`
+               //solutions += `type:     ${type}\n`
                solutions += `data:     ${data}\n`
-               solutions += `answer:   ${String(answer)}\n`
+               //solutions += `answer:   ${String(answer)}\n`
 
                solvableC++
 
@@ -67,7 +71,7 @@ export async function main(ns: NS): Promise<void> {
                   reward = ns.codingcontract.attempt(answer, contract, hostname)
                   solutions += `reward:   ${reward}\n`
                }
-               solutions += "\n"
+               //solutions += "\n"
 
                if (!timeDict.has(type)) {
                   timeDict.set(type, [])
@@ -86,7 +90,7 @@ export async function main(ns: NS): Promise<void> {
    let contractTypes
    const sortedTypes = Array.from(dict.keys()).sort()
 
-   if (sortedTypes.length) {
+   if (sortedTypes.length && grep == null) {
       contractTypes = "\nUnknown Types:\n\n"
       for (const key of sortedTypes) {
          contractTypes += key + "\n"
@@ -106,7 +110,7 @@ export async function main(ns: NS): Promise<void> {
       contractTypes += "\n"
    }
    if (solutions) {
-      //ns.tprintf("Solutions:\n\n" + solutions)
+      ns.tprintf("Solutions:\n\n" + solutions)
    }
 
    if (contractTypes) {

@@ -59,8 +59,7 @@ onmessage = (event) => {
          answer = jumpingGame(data)
          break
       case "Find All Valid Math Expressions":
-         //answer = findAllValidMathExpressions(data)
-         answer = null
+         answer = findAllValidMathExpressions(data)
          break
       default:
          answer = null
@@ -505,4 +504,45 @@ function jumpingGame(numbers: number[]): number {
    }
 
    return dp[n - 1] === Number.MAX_SAFE_INTEGER ? 0 : dp[n - 1]
+}
+
+function findAllValidMathExpressions(data: [string, number]): string[] {
+   const [digits, target] = data
+   const results: string[] = []
+
+   function dfs(
+      idx: number,
+      expression: string,
+      value: number,
+      last: number
+   ): void {
+      if (idx === digits.length) {
+         if (value === target) {
+            results.push(expression)
+         }
+         return
+      }
+
+      for (let i = idx + 1; i <= digits.length; i++) {
+         const num = digits.slice(idx, i)
+         if (num.length > 1 && num.startsWith("0")) return
+
+         const current = Number(num)
+         if (idx === 0) {
+            dfs(i, num, current, current)
+         } else {
+            dfs(i, expression + "+" + num, value + current, current)
+            dfs(i, expression + "-" + num, value - current, -current)
+            dfs(
+               i,
+               expression + "*" + num,
+               value - last + last * current,
+               last * current
+            )
+         }
+      }
+   }
+
+   dfs(0, "", 0, 0)
+   return results
 }
