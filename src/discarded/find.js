@@ -1,4 +1,4 @@
-/** @param {import("..").NS } ns */
+/** @param {import("../NetscriptDefinitions").NS } ns */
 export function main(ns) {
    let knownServers = {
       home: [],
@@ -32,7 +32,7 @@ export function main(ns) {
    }
 }
 
-/** @param {import("..").NS } ns */
+/** @param {import("../NetscriptDefinitions").NS } ns */
 export function crawl(ns, knownServers, hostname, depth = 0, path = []) {
    let servers = ns.scan(hostname)
    for (const element of servers) {
