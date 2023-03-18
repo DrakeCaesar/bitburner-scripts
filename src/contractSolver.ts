@@ -8,8 +8,8 @@ export async function main(ns: NS): Promise<void> {
    let solutions = ""
    const dict: Map<string, [string, string][]> = new Map()
    const timeDict: Map<string, number[]> = new Map()
-   //const solve = ns.args[0] as boolean
-   const solve = false
+   const solve = ns.args[0] as boolean
+   //const solve = false
    const grep: string = (ns.args[1] as string)?.toLowerCase() ?? ""
 
    let totalC = 0

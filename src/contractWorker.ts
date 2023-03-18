@@ -597,10 +597,9 @@ function proper2Coloring(data: [number, number[][]]): number[] {
 
    return isPossible ? colors : []
 }
-
 // Hamming code encoding function
 function hammingEncode(decimalValue: number): string {
-   const binary = (8).toString(2)
+   const binary = decimalValue.toString(2)
    const encoded = encode(binary)
    const extendedHamming = addOverallParityBit(encoded)
    return extendedHamming
@@ -609,17 +608,16 @@ function hammingEncode(decimalValue: number): string {
 function encode(binary: string): string {
    let encoded = ""
    let dataBitIndex = 0
-   let parityBitIndex = 0
+   let position = 1
 
-   for (let i = 1; dataBitIndex < binary.length; i *= 2) {
-      parityBitIndex = i
-      while (parityBitIndex < i * 2 && dataBitIndex < binary.length) {
-         encoded +=
-            parityBitIndex === i
-               ? "p"
-               : binary[binary.length - 1 - dataBitIndex++]
-         parityBitIndex++
+   while (dataBitIndex < binary.length || isPowerOfTwo(position)) {
+      if (isPowerOfTwo(position)) {
+         encoded = "p" + encoded
+      } else {
+         encoded = binary[binary.length - 1 - dataBitIndex] + encoded
+         dataBitIndex++
       }
+      position++
    }
 
    const encodedArray = encoded.split("")
