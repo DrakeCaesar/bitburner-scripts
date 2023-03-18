@@ -508,41 +508,46 @@ function jumpingGame(numbers: number[]): number {
 
 function findAllValidMathExpressions(data: [string, number]): string[] {
    const [digits, target] = data
-   const results: string[] = []
+   const result: string[] = []
 
    function dfs(
+      current: string,
       idx: number,
-      expression: string,
-      value: number,
-      last: number
+      evalResult: number,
+      prevOperand: number
    ): void {
       if (idx === digits.length) {
-         if (value === target) {
-            results.push(expression)
+         if (evalResult === target) {
+            result.push(current)
          }
          return
       }
 
-      for (let i = idx + 1; i <= digits.length; i++) {
-         const num = digits.slice(idx, i)
-         if (num.length > 1 && num.startsWith("0")) return
+      const numStr = digits.substring(idx, digits.length)
+      for (let i = 1; i <= numStr.length; i++) {
+         const num = parseInt(numStr.substring(0, i))
+         if (i > 1 && numStr[0] === "0") {
+            // skip numbers with leading zeros
+            continue
+         }
 
-         const current = Number(num)
-         if (idx === 0) {
-            dfs(i, num, current, current)
+         const nextIdx = idx + i
+
+         if (current === "") {
+            dfs(`${num}`, nextIdx, num, num)
          } else {
-            dfs(i, expression + "+" + num, value + current, current)
-            dfs(i, expression + "-" + num, value - current, -current)
+            dfs(`${current}+${num}`, nextIdx, evalResult + num, num)
+            dfs(`${current}-${num}`, nextIdx, evalResult - num, -num)
             dfs(
-               i,
-               expression + "*" + num,
-               value - last + last * current,
-               last * current
+               `${current}*${num}`,
+               nextIdx,
+               evalResult - prevOperand + prevOperand * num,
+               prevOperand * num
             )
          }
       }
    }
 
-   dfs(0, "", 0, 0)
-   return results
+   dfs("", 0, 0, 0)
+   return result
 }
