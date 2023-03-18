@@ -2,6 +2,8 @@ import { NS } from "@ns"
 import { crawl } from "./libraries/crawl"
 
 export async function main(ns: NS): Promise<void> {
+   const startScript = performance.now()
+
    const knownServers = crawl(ns)
    let solutions = ""
    const dict: Record<string, [string, string][]> = {}
@@ -137,7 +139,9 @@ export async function main(ns: NS): Promise<void> {
       ns.tprintf(contractTypes)
    }
 
-   ns.tprintf("Total execution time:".padEnd(40) + totalTime)
+   ns.tprintf("Solver execution time:".padEnd(40) + totalTime)
+   const endScript = performance.now()
+   ns.tprintf("Script execution time:".padEnd(40) + (endScript - startScript))
 }
 
 function sum(numbers: number[]) {
