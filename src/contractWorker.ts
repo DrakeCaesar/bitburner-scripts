@@ -1,9 +1,7 @@
-// This function receives a message from the main thread with the calculation to be performed
-// and sends a response message with the result
 onmessage = (event) => {
    const { type, data } = event.data
 
-   let answer
+   let answer: string | number | unknown[] | null
    switch (type) {
       case "Subarray with Maximum Sum":
          answer = subarrayWithMaximumSum(data)
@@ -37,7 +35,7 @@ onmessage = (event) => {
          break
       case "Total Ways to Sum II":
          answer = totalWaysToSumII(data[0], data[1])
-         answer = null
+         answer = ""
          break
       case "Generate IP Addresses":
          answer = findIPs(data)
@@ -62,8 +60,10 @@ onmessage = (event) => {
          break
       case "Find All Valid Math Expressions":
          //answer = findAllValidMathExpressions(data)
+         answer = null
          break
       default:
+         answer = null
          break
    }
 
@@ -413,7 +413,7 @@ function spiralize(data: (number | null)[][]) {
          return answer
       }
    }
-   return null
+   return ""
 }
 
 function shortestPath(grid: number[][]) {

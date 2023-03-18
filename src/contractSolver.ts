@@ -12,8 +12,23 @@ export async function main(ns: NS): Promise<void> {
    let totalC = 0
    let solvableC = 0
 
+   const workerUrl = URL.createObjectURL(
+      new Blob([`${ns.read("contractWorker.js")}`], { type: "text/javascript" })
+   )
+
    // Create a new web worker
-   const worker = new Worker("./contractWorker.js")
+   const worker = new Worker(workerUrl)
+
+   function sendMessageToWorker(
+      message: unknown
+   ): Promise<string | number | unknown[]> {
+      return new Promise((resolve) => {
+         worker.onmessage = (event) => {
+            resolve(event.data as string | number | unknown[])
+         }
+         worker.postMessage(message)
+      })
+   }
 
    for (const hostname of knownServers) {
       const listCCT = ns.ls(hostname, ".cct")
@@ -21,51 +36,48 @@ export async function main(ns: NS): Promise<void> {
       if (listCCT.length) {
          totalC += listCCT.length
          for (const contract of listCCT) {
-            const type = ns.codingcontract.getContractType(contract, hostname)
+            const type: string = ns.codingcontract.getContractType(
+               contract,
+               hostname
+            )
             const data = ns.codingcontract.getData(contract, hostname)
 
             const start = performance.now()
 
-            worker.postMessage({
-               type: type,
-               data: data,
-            })
+            const answer: string | number | unknown[] | null =
+               await sendMessageToWorker({
+                  type: type,
+                  data: data,
+               })
 
             // Listen for messages from the worker
-            worker.onmessage = (event) => {
-               const answer = event.data
-               //console.log(`Answer: ${answer}`)
-               const end = performance.now()
+            //console.log(`Answer: ${answer}`)
+            const end = performance.now()
 
-               if (answer != null && answer != undefined) {
-                  solutions += "hostname: " + hostname + "\n"
-                  solutions += "contract: " + contract + "\n"
-                  solutions += "type:     " + type + "\n"
-                  solutions += "data:     " + data + "\n"
-                  solutions += "answer:   " + String(answer) + "\n"
+            if (answer != null && answer != undefined) {
+               solutions += "hostname: " + hostname + "\n"
+               solutions += "contract: " + contract + "\n"
+               solutions += "type:     " + type + "\n"
+               solutions += "data:     " + data + "\n"
+               solutions += "answer:   " + String(answer) + "\n"
 
-                  solvableC++
+               solvableC++
 
-                  let reward
-                  if (solve) {
-                     reward = ns.codingcontract.attempt(
-                        answer,
-                        contract,
-                        hostname
-                     )
-                     solutions += "reward:   " + reward + "\n"
-                  }
-                  solutions += "\n"
-                  if (!(type in timeDict)) {
-                     timeDict[type] = []
-                  }
-                  timeDict[type].push(end - start)
-               } else {
-                  if (!(type in dict)) {
-                     dict[type] = []
-                  }
-                  dict[type].push([hostname, contract])
+               let reward
+               if (solve) {
+                  reward = ns.codingcontract.attempt(answer, contract, hostname)
+                  solutions += "reward:   " + reward + "\n"
                }
+               solutions += "\n"
+               if (!(type in timeDict)) {
+                  timeDict[type] = []
+               }
+               timeDict[type].push(end - start)
+            } else {
+               if (!(type in dict)) {
+                  dict[type] = []
+               }
+               dict[type].push([hostname, contract])
             }
          }
       }
