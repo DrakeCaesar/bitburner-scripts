@@ -20,11 +20,22 @@ export async function main(): Promise<void> {
       const color = getComputedStyle(element).color
       const intensity = calculateGlowIntensity(color)
       const glowStyles = `
-            text-shadow: 0 0 ${
-               intensity * glowSize
-            }px rgba(255, 255, 255, ${intensity}) !important;
-            overflow: visible;
-      `
+         text-shadow: 0 0 ${
+            intensity * glowSize
+         }px rgba(255, 255, 255, ${intensity}) !important;
+         overflow: visible;
+         `
+      if (element.parentElement) {
+         element.parentElement.style.overflow = "visible"
+         if (
+            element.parentElement.parentElement instanceof HTMLDivElement &&
+            getComputedStyle(
+               element.parentElement.parentElement
+            ).border.includes("1px solid")
+         )
+            element.parentElement.parentElement.style.overflow = "hidden"
+      }
+
       element.classList.add(glowClass)
       element.style.cssText += glowStyles
 
@@ -102,7 +113,6 @@ export async function main(): Promise<void> {
       element.insertBefore(filter, element.firstChild)
 
       const filterText = element.style.filter
-      console.log(filterText)
       if (filterText == "") {
          element.style.filter = "url(#glow-filter)"
       } else if (!filterText.includes("url(#glow-filter)")) {
