@@ -6,8 +6,8 @@ export async function main(ns: NS): Promise<void> {
 
    const knownServers = crawl(ns)
    let solutions = ""
-   const dict: Record<string, [string, string][]> = {}
-   const timeDict: Record<string, number[]> = {}
+   const dict: Map<string, [string, string][]> = new Map()
+   const timeDict: Map<string, number[]> = new Map()
    const solve = ns.args[0]
    const grep = ns.args[1]
 
@@ -18,7 +18,6 @@ export async function main(ns: NS): Promise<void> {
       new Blob([`${ns.read("contractWorker.js")}`], { type: "text/javascript" })
    )
 
-   // Create a new web worker
    const worker = new Worker(workerUrl)
 
    function sendMessageToWorker(
@@ -26,7 +25,7 @@ export async function main(ns: NS): Promise<void> {
    ): Promise<string | number | unknown[]> {
       return new Promise((resolve) => {
          worker.onmessage = (event) => {
-            resolve(event.data as string | number | unknown[])
+            resolve(event.data)
          }
          worker.postMessage(message)
       })
@@ -52,48 +51,47 @@ export async function main(ns: NS): Promise<void> {
                   data: data,
                })
 
-            // Listen for messages from the worker
-            //console.log(`Answer: ${answer}`)
             const end = performance.now()
 
-            if (answer != null && answer != undefined) {
-               solutions += "hostname: " + hostname + "\n"
-               solutions += "contract: " + contract + "\n"
-               solutions += "type:     " + type + "\n"
-               solutions += "data:     " + data + "\n"
-               solutions += "answer:   " + String(answer) + "\n"
+            if (answer != null) {
+               solutions += `hostname: ${hostname}\n`
+               solutions += `contract: ${contract}\n`
+               solutions += `type:     ${type}\n`
+               solutions += `data:     ${data}\n`
+               solutions += `answer:   ${String(answer)}\n`
 
                solvableC++
 
                let reward
                if (solve) {
                   reward = ns.codingcontract.attempt(answer, contract, hostname)
-                  solutions += "reward:   " + reward + "\n"
+                  solutions += `reward:   ${reward}\n`
                }
                solutions += "\n"
-               if (!(type in timeDict)) {
-                  timeDict[type] = []
+
+               if (!timeDict.has(type)) {
+                  timeDict.set(type, [])
                }
-               timeDict[type].push(end - start)
+               timeDict.get(type)?.push(end - start)
             } else {
-               if (!(type in dict)) {
-                  dict[type] = []
+               if (!dict.has(type)) {
+                  dict.set(type, [])
                }
-               dict[type].push([hostname, contract])
+               dict.get(type)?.push([hostname, contract])
             }
          }
       }
    }
 
    let contractTypes
-   const keys = Object.keys(dict).sort()
+   const sortedTypes = Array.from(dict.keys()).sort()
 
-   if (keys.length) {
+   if (sortedTypes.length) {
       contractTypes = "\nUnknown Types:\n\n"
-      for (const item of keys) {
-         contractTypes += item + "\n"
+      for (const key of sortedTypes) {
+         contractTypes += key + "\n"
          if (grep) {
-            for (const element of dict[item.trim()]) {
+            for (const element of dict.get(key) ?? []) {
                if (
                   element[1]
                      .toLowerCase()
@@ -120,16 +118,14 @@ export async function main(ns: NS): Promise<void> {
 
    let totalTime = 0
 
-   const sortedRecord = Object.fromEntries(
-      Object.entries(timeDict).sort((a, b) => {
-         const avgA = a[1].reduce((acc, curr) => acc + curr, 0) / a[1].length
-         const avgB = b[1].reduce((acc, curr) => acc + curr, 0) / b[1].length
-         return avgB - avgA
-      })
-   )
+   const sortedTimeRecords = Array.from(timeDict.entries()).sort((a, b) => {
+      const avgA = avg(a[1])
+      const avgB = avg(b[1])
+      return avgB - avgA
+   })
 
    contractTypes = "\nAverage execution time:\n\n"
-   for (const [key, value] of Object.entries(sortedRecord)) {
+   for (const [key, value] of sortedTimeRecords) {
       contractTypes += key.padEnd(40) + avg(value) + "\n"
       totalTime += sum(value)
    }
