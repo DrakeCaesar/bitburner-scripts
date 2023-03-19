@@ -830,19 +830,18 @@ function LZCompression(data: string): string {
    let position = 0
    let completed = data + data + data + data
    const dataLength = data.length
-   const bufferLength = 9
-   const maxBufferStart = dataLength - bufferLength
+   const maxBufferStart = dataLength - 9
 
    while (position < dataLength) {
       let best: [string, number] = ["", 0]
 
-      for (let i = 0; i < bufferLength + 1; i++) {
-         const bufferStart = Math.max(position - bufferLength + i, 0)
+      for (let i = 0; i < 10; i++) {
+         const bufferStart = Math.max(position - 9 + i, 0)
 
          if (bufferStart > maxBufferStart) break
 
          const search = data.slice(bufferStart, position + i)
-         const lookahead = data.slice(position + i, position + i + bufferLength)
+         const lookahead = data.slice(position + i, position + i + 9)
          let bestRef: [number, number] = [0, 0]
 
          for (let backStart = 0; backStart < search.length; backStart++) {
@@ -869,8 +868,7 @@ function LZCompression(data: string): string {
          }`
 
          if (bestRef[1] !== 0) {
-            compressed +=
-               bufferLength - bestRef[0] - (bufferLength - search.length)
+            compressed += 9 - bestRef[0] - (9 - search.length)
          }
 
          if (ratio >= best[1]) best = [compressed, ratio]
