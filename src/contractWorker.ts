@@ -560,41 +560,66 @@ function findAllValidMathExpressions(data: [string, number]): string[] {
    return result
 }
 
-function proper2Coloring(data: [number, number[][]]): number[] {
-   const numVertices: number = data[0]
-   const edges: number[][] = data[1]
-   const colors: number[] = new Array(numVertices).fill(-1)
+type Graph = [number, number[][]]
 
-   let isPossible = true
+function proper2Coloring(data: Graph): number[] {
+   const [vertices, edges] = data
+   const adjacencyList = buildAdjacencyList(vertices, edges)
+   const colors = new Array<number>(vertices).fill(-1)
 
-   for (let i = 0; i < numVertices && isPossible; i++) {
+   if (isBipartite(adjacencyList, colors)) {
+      return colors
+   } else {
+      return []
+   }
+}
+
+function buildAdjacencyList(vertices: number, edges: number[][]): number[][] {
+   const adjacencyList: number[][] = new Array(vertices)
+      .fill(null)
+      .map(() => [])
+
+   for (const [u, v] of edges) {
+      adjacencyList[u].push(v)
+      adjacencyList[v].push(u)
+   }
+
+   return adjacencyList
+}
+
+function isBipartite(adjacencyList: number[][], colors: number[]): boolean {
+   const vertices = adjacencyList.length
+
+   for (let i = 0; i < vertices; i++) {
       if (colors[i] === -1) {
-         const queue: number[] = [i]
-         colors[i] = 0
-
-         while (queue.length > 0 && isPossible) {
-            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-            const currentVertex: number = queue.shift()!
-
-            for (let j = 0; j < edges.length; j++) {
-               const currentEdge: number[] = edges[j]
-               if (currentEdge[0] === currentVertex) {
-                  const adjacentVertex: number = currentEdge[1]
-
-                  if (colors[adjacentVertex] === -1) {
-                     colors[adjacentVertex] = colors[currentVertex] ^ 1
-                     queue.push(adjacentVertex)
-                  } else if (colors[adjacentVertex] === colors[currentVertex]) {
-                     isPossible = false
-                     break
-                  }
-               }
-            }
+         if (!dfsColoring(i, 0, adjacencyList, colors)) {
+            return false
          }
       }
    }
 
-   return isPossible ? colors : []
+   return true
+}
+
+function dfsColoring(
+   vertex: number,
+   color: number,
+   adjacencyList: number[][],
+   colors: number[]
+): boolean {
+   colors[vertex] = color
+
+   for (const neighbor of adjacencyList[vertex]) {
+      if (colors[neighbor] === -1) {
+         if (!dfsColoring(neighbor, 1 - color, adjacencyList, colors)) {
+            return false
+         }
+      } else if (colors[neighbor] === color) {
+         return false
+      }
+   }
+
+   return true
 }
 
 /*
