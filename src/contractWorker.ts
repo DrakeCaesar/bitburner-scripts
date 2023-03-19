@@ -1,87 +1,84 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 /* eslint-disable @typescript-eslint/no-unused-vars */
-// onmessage = (event) => {
-//    const { type, data } = event.data
+onmessage = (event) => {
+   const { type, data } = event.data
 
-//import { parse } from "path"
-//
-//    let answer: string | number | unknown[] | null
-//    switch (type) {
-//       case "Subarray with Maximum Sum":
-//          answer = subarrayWithMaximumSum(data)
-//          break
-//       case "Unique Paths in a Grid I":
-//          answer = uniquePathsInAGridI(data)
-//          break
-//       case "Unique Paths in a Grid II":
-//          answer = uniquePathsInAGridII(data)
-//          break
-//       case "Find Largest Prime Factor":
-//          answer = findLargestPrimeFactor(data)
-//          break
-//       case "Sanitize Parentheses in Expression":
-//          answer = sanitizeParenthesesInExpression(data)
-//          break
-//       case "Merge Overlapping Intervals":
-//          answer = mergeOverlappingIntervals(data)
-//          break
-//       case "Algorithmic Stock Trader I":
-//          answer = stockTrader(1, data)
-//          break
-//       case "Algorithmic Stock Trader II":
-//          answer = stockTrader(data.length, data)
-//          break
-//       case "Algorithmic Stock Trader III":
-//          answer = stockTrader(2, data)
-//          break
-//       case "Algorithmic Stock Trader IV":
-//          answer = stockTrader(data[0], data[1])
-//          break
-//       case "Total Ways to Sum II":
-//          answer = totalWaysToSumII(data[0], data[1])
-//          answer = ""
-//          break
-//       case "Generate IP Addresses":
-//          answer = findIPs(data)
-//          break
-//       case "Total Ways to Sum":
-//          answer = waysToSum(data)
-//          break
-//       case "Spiralize Matrix":
-//          answer = spiralize(data)
-//          break
-//       case "Shortest Path in a Grid":
-//          answer = shortestPath(data)
-//          break
-//       case "Minimum Path Sum in a Triangle":
-//          answer = trianglePath(data)
-//          break
-//       case "Array Jumping Game":
-//          answer = jumpingGame(data)
-//          break
-//       case "Array Jumping Game II":
-//          answer = jumpingGame(data)
-//          break
-//       case "Find All Valid Math Expressions":
-//          answer = findAllValidMathExpressions(data)
-//          break
-//       case "Proper 2-Coloring of a Graph":
-//          answer = proper2Coloring(data)
-//          break
-//       case "HammingCodes: Encoded Binary to Integer":
-//          answer = hammingDecode(data)
-//          break
-//       case "HammingCodes: Integer to Encoded Binary":
-//          answer = hammingEncode(data)
-//          break
-//       default:
-//          answer = null
-//          break
-//    }
+   let answer: string | number | unknown[] | null
+   switch (type) {
+      case "Subarray with Maximum Sum":
+         answer = subarrayWithMaximumSum(data)
+         break
+      case "Unique Paths in a Grid I":
+         answer = uniquePathsInAGridI(data)
+         break
+      case "Unique Paths in a Grid II":
+         answer = uniquePathsInAGridII(data)
+         break
+      case "Find Largest Prime Factor":
+         answer = findLargestPrimeFactor(data)
+         break
+      case "Sanitize Parentheses in Expression":
+         answer = sanitizeParenthesesInExpression(data)
+         break
+      case "Merge Overlapping Intervals":
+         answer = mergeOverlappingIntervals(data)
+         break
+      case "Algorithmic Stock Trader I":
+         answer = stockTrader(1, data)
+         break
+      case "Algorithmic Stock Trader II":
+         answer = stockTrader(data.length, data)
+         break
+      case "Algorithmic Stock Trader III":
+         answer = stockTrader(2, data)
+         break
+      case "Algorithmic Stock Trader IV":
+         answer = stockTrader(data[0], data[1])
+         break
+      case "Total Ways to Sum II":
+         answer = totalWaysToSumII(data)
+         break
+      case "Generate IP Addresses":
+         answer = findIPs(data)
+         break
+      case "Total Ways to Sum":
+         answer = waysToSum(data)
+         break
+      case "Spiralize Matrix":
+         answer = spiralize(data)
+         break
+      case "Shortest Path in a Grid":
+         answer = shortestPath(data)
+         break
+      case "Minimum Path Sum in a Triangle":
+         answer = trianglePath(data)
+         break
+      case "Array Jumping Game":
+         answer = jumpingGame(data)
+         break
+      case "Array Jumping Game II":
+         answer = jumpingGame(data)
+         break
+      case "Find All Valid Math Expressions":
+         answer = findAllValidMathExpressions(data)
+         break
+      case "Proper 2-Coloring of a Graph":
+         answer = proper2Coloring(data)
+         break
+      case "HammingCodes: Encoded Binary to Integer":
+         answer = hammingDecode(data)
+         break
+      case "HammingCodes: Integer to Encoded Binary":
+         answer = hammingEncode(data)
+         break
+      default:
+         answer = null
+         break
+   }
 
-//    // Send the response message back to the main thread with the result
-//    postMessage(answer)
-// }
+   // Send the response message back to the main thread with the result
+   postMessage(answer)
+}
 
 function uniquePathsInAGridI(data: number[]): number {
    const w = data[0]
@@ -318,20 +315,17 @@ function stockTrader(k: number, prices: number[]) {
    return dp[k][prices.length - 1]
 }
 
-function totalWaysToSumII(n: number, numbers: number[]): number {
-   const dp = Array(2).fill(0)
-   dp[0] = 1
+function totalWaysToSumII([targetSum, numbers]: [number, number[]]): number {
+   const ways: number[] = new Array(targetSum + 1).fill(0)
+   ways[0] = 1
 
-   for (let i = 1; i <= n; i++) {
-      dp[i % 2] = 0
-      for (const num of numbers) {
-         if (i - num >= 0) {
-            dp[i % 2] += dp[(i - num) % 2]
-         }
+   for (const num of numbers) {
+      for (let i = num; i <= targetSum; i++) {
+         ways[i] += ways[i - num]
       }
    }
 
-   return dp[n % 2]
+   return ways[targetSum]
 }
 
 function findIPs(str: string) {
@@ -373,14 +367,15 @@ function findIPs(str: string) {
    return result
 }
 
-function waysToSum(data: number) {
-   const arr = new Array(data + 1).fill(0)
+function waysToSum(data: number): number {
+   const arr: number[] = new Array(data + 1).fill(0)
    arr[0] = 1
-   for (let i = 1; i < data + 1; i++)
-      for (let j = 1; j < data + 1; j++)
-         if (j >= i) arr[j] = arr[j] + arr[j - i]
-
-   return arr[data] - 1
+   for (let i = 1; i < data; i++) {
+      for (let j = i; j <= data; j++) {
+         arr[j] += arr[j - i]
+      }
+   }
+   return arr[data]
 }
 
 function spiralize(data: (number | null)[][]) {
@@ -602,6 +597,8 @@ function proper2Coloring(data: [number, number[][]]): number[] {
    return isPossible ? colors : []
 }
 
+/*
+
 // Test cases
 const testCases = [
    ["0", "0000"],
@@ -632,6 +629,7 @@ const badTestCases = [
    ["5951", "10101000000000000001011100111111"],
 ]
 
+
 testCases.forEach(([number, encoded]) => {
    const enc = hammingEncode(parseInt(number))
    if (enc !== encoded) {
@@ -658,6 +656,7 @@ badTestCases.forEach(([number, encoded]) => {
       console.log()
    }
 })
+*/
 
 function hammingEncode(input: number): string {
    const data = input
