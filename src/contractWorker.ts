@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-non-null-assertion */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 // onmessage = (event) => {
 //    const { type, data } = event.data
@@ -615,79 +616,55 @@ const testCases = [
 
 testCases.forEach(([number, encoded]) => {
    const result = hammingEncode(number as number)
-   console.log(`Encoded for ${number}: ${result}`)
    if (result !== encoded) {
-      // console.log(`should be   ${number}: ${encoded}`)
+      console.log(`Encoded for ${number}: ${result}`)
+      console.log(`should be   ${number}: ${encoded}`)
    }
 })
-
-function hammingEncode(decimalValue: number) {
-   const binary = decimalValue.toString(2).split("").reverse().join("")
-   const dataBitPositions = binary.length
-   let parityBitPositions = 0
-
-   while (
-      Math.pow(2, parityBitPositions) <=
-      dataBitPositions + parityBitPositions
-   ) {
-      parityBitPositions++
-   }
-
-   const encodedLength = dataBitPositions + parityBitPositions
-   let encoded = Array(encodedLength).fill("0")
-
-   for (let i = 0, j = 0; i < encodedLength; i++) {
-      if ((i & (i + 1)) !== 0) {
-         encoded[i] = binary[j]
-         j++
-      }
-   }
-
-   for (let i = 0; i < encodedLength; i++) {
-      if ((i & (i + 1)) === 0) {
-         const parityBitPosition = i + 1
-         let parity = 0
-
-         for (let j = i; j < encodedLength; j += 2 * parityBitPosition) {
-            for (
-               let k = j;
-               k < j + parityBitPosition && k < encodedLength;
-               k++
-            ) {
-               parity ^= Number(encoded[k])
-            }
-         }
-
-         encoded[i] = String(parity)
-      }
-   }
-
-   const overallParity = encoded.reduce((acc, bit) => acc ^ Number(bit), 0)
-   encoded = encoded.reverse()
-   encoded.unshift(String(overallParity))
-
-   return encoded.join("")
-}
-
-function calculateParity(encodedArray: string[], position: number): number {
-   let parity = 0
-   for (let i = position - 1; i < encodedArray.length; i += position * 2) {
-      for (let j = i; j < i + position && j < encodedArray.length; j++) {
-         if (encodedArray[j] === "1") {
-            parity ^= 1
-         }
-      }
-   }
-   return parity
-}
-
-function addOverallParityBit(encoded: string): string {
-   const overallParity = encoded
+function hammingEncode(input: number): string {
+   const data = input
+      .toString(2)
       .split("")
-      .reduce((acc, bit) => acc ^ Number(bit), 0)
-   return overallParity.toString() + encoded
-}
+      .map((b) => Number.parseInt(b))
 
-function isPowerOfTwo(value: number): boolean {
-   return (value & (value - 1)) === 0
+   let numParityBits = 0
+   const dataLength = data.length
+
+   while (dataLength + numParityBits + 1 > 1 << numParityBits) {
+      numParityBits++
+   }
+
+   const encoding = new Array(numParityBits + dataLength + 1)
+   const parityBits = []
+
+   for (let i = 1, j = 0; i < encoding.length; i++) {
+      if ((i & (i - 1)) === 0) {
+         parityBits.push(i)
+         encoding[i] = 0
+      } else {
+         encoding[i] = data[j++]
+      }
+   }
+
+   for (let i = 0; i < parityBits.length; i++) {
+      let parityValue = 0
+      for (let j = parityBits[i]; j < encoding.length; j += parityBits[i] * 2) {
+         for (let k = j; k < j + parityBits[i] && k < encoding.length; k++) {
+            parityValue ^= encoding[k]
+         }
+      }
+      encoding[parityBits[i]] = parityValue
+   }
+
+   let count = 0
+   for (let i = 0; i < encoding.length; i++) {
+      if (encoding[i] === 1) {
+         count++
+      }
+   }
+
+   const globalParity = count % 2 === 0 ? 0 : 1
+   encoding[0] = globalParity
+
+   return encoding.join("")
 }
