@@ -64,14 +64,15 @@ export async function main(ns: NS): Promise<void> {
    }
 
    // Await all promises together and print the updated map with execution times
-   await Promise.allSettled(promises)
    for (const [type, contracts] of contractMap) {
       let totalTime = 0
       let numContracts = 0
       for (const contract of contracts) {
          // Get the answer from the promise and update the contract object with the execution time
-         const answer = await contract.answer
+         await ns.sleep(1)
+         const answer = contract.answer
          if (answer !== null) {
+            ns.tprint(answer)
             const time = performance.now() - (contract.time ?? 0)
             contract.time = time
             contract.answer = answer
