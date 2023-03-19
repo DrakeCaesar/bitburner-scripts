@@ -74,10 +74,10 @@ onmessage = (event) => {
          answer = RLECompression(data)
          break
       case "Compression II: LZ Decompression":
-         answer = ""
+         answer = LZDecompression(data)
          break
       case "Compression III: LZ Compression":
-         answer = ""
+         answer = LZCompression(data)
          break
       case "Encryption I: Caesar Cipher":
          answer = CaesarCipher(data)
@@ -823,6 +823,115 @@ function RLECompression(input: string): string {
    }
 
    return result
+}
+
+function LZCompression(data) {
+   let answer = ""
+   let position = 0
+   let completed = data + data + data + data
+   const dataLength = data.length
+   const maxBufferStart = dataLength - 9
+
+   while (position < dataLength) {
+      let best = ["", 0]
+
+      for (let i = 0; i < 10; i++) {
+         const bufferStart = Math.max(position - 9 + i, 0)
+
+         if (bufferStart > maxBufferStart) break
+
+         const search = data.slice(bufferStart, position + i)
+         const lookahead = data.slice(position + i, position + i + 9)
+         let bestRef = [0, 0]
+
+         for (let backStart = 0; backStart < search.length; backStart++) {
+            let searchPos = backStart
+
+            for (let lookPos = 0; lookPos < lookahead.length; lookPos++) {
+               if (search[searchPos] !== lookahead[lookPos]) break
+
+               searchPos++
+
+               if (searchPos >= search.length) searchPos = backStart
+               if (lookPos >= bestRef[1]) bestRef = [backStart, lookPos + 1]
+            }
+         }
+
+         let cost = i + 3 - (bestRef[1] === 0)
+         const distance = Math.min(i, dataLength - position) + bestRef[1]
+
+         if (distance + position === dataLength && bestRef[1] === 0) cost -= 1
+
+         const ratio = distance / cost
+         let compressed = `${i}${data.slice(position, position + i)}${
+            bestRef[1]
+         }`
+
+         if (bestRef[1] !== 0) {
+            compressed += 9 - bestRef[0] - (9 - search.length)
+         }
+
+         if (ratio >= best[1]) best = [compressed, ratio]
+
+         if (
+            distance + position === dataLength &&
+            answer.length + compressed.length < completed.length
+         ) {
+            completed = answer + compressed
+         }
+      }
+
+      answer += best[0]
+      const move =
+         parseInt(best[0][0], 10) +
+         parseInt(best[0][parseInt(best[0][0], 10) + 1], 10)
+      position += move
+
+      if (position === dataLength && answer[answer.length - 1] === "0") {
+         answer = answer.slice(0, -1)
+      }
+   }
+
+   if (completed.length < answer.length) {
+      answer = completed
+   }
+
+   return answer
+}
+
+function LZDecompression(data: string) {
+   let decoded = ""
+   let position = 0
+   let chunkType = 1
+
+   while (position < data.length) {
+      const length = parseInt(data[position], 10)
+      position += 1
+
+      if (chunkType === 1) {
+         for (let i = 0; i < length; i++) {
+            decoded += data[position]
+            position += 1
+         }
+      } else {
+         const reference = parseInt(data[position], 10)
+         position += 1
+
+         for (let i = 0; i < length; i++) {
+            const refPosition = decoded.length - reference
+            decoded += decoded[refPosition]
+         }
+
+         // Special case when length is 0
+         if (length === 0) {
+            position -= 1
+         }
+      }
+
+      chunkType = 3 - chunkType // Toggle between chunk types 1 and 2
+   }
+
+   return decoded
 }
 
 function CaesarCipher(data: [string, number]): string {
