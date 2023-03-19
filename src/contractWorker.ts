@@ -3,6 +3,8 @@
 // onmessage = (event) => {
 //    const { type, data } = event.data
 
+//import { parse } from "path"
+//
 //    let answer: string | number | unknown[] | null
 //    switch (type) {
 //       case "Subarray with Maximum Sum":
@@ -602,36 +604,36 @@ function proper2Coloring(data: [number, number[][]]): number[] {
 
 // Test cases
 const testCases = [
-   [0, "0000"],
-   [1, "1111"],
-   [2, "111100"],
-   [3, "001111"],
-   [4, "1111000"],
-   [5, "0101101"],
-   [6, "0011110"],
-   [7, "1001011"],
-   [8, "11110000"],
-   [9876012345, "00111001100110011010011111111101000111001"],
+   ["0", "0000"],
+   ["1", "1111"],
+   ["2", "111100"],
+   ["3", "001111"],
+   ["4", "1111000"],
+   ["5", "0101101"],
+   ["6", "0011110"],
+   ["7", "1001011"],
+   ["8", "11110000"],
+   ["9876012345", "00111001100110011010011111111101000111001"],
 ]
 
 const badTestCases = [
-   [0, "0100"],
-   [1, "1101"],
-   [2, "101100"],
-   [3, "001011"],
-   [4, "1111010"],
-   [5, "0101100"],
-   [6, "0010110"],
-   [7, "1011011"],
-   [8, "11110100"],
-   [9876012345, "00111001100110011010011111111101000111001"],
-   [9876012345, "00111101100110011010011111111101000111001"],
-   [5951, "10101000000000000001011100111111"],
-   [5951, "10101000000000000001011100111111"],
+   ["0", "0100"],
+   ["1", "1101"],
+   ["2", "101100"],
+   ["3", "001011"],
+   ["4", "1111010"],
+   ["5", "0101100"],
+   ["6", "0010110"],
+   ["7", "1011011"],
+   ["8", "11110100"],
+   ["9876012345", "00111001100110011010011111111101000111001"],
+   ["9876012345", "00111101100110011010011111111101000111001"],
+   ["5951", "10101000000000000001011100111111"],
+   ["5951", "10101000000000000001011100111111"],
 ]
 
 testCases.forEach(([number, encoded]) => {
-   const enc = hammingEncode(number as number)
+   const enc = hammingEncode(parseInt(number))
    if (enc !== encoded) {
       console.log(`Encoded for ${number}: ${enc}`)
       console.log(`should be   ${number}: ${encoded}`)
@@ -705,13 +707,11 @@ function hammingEncode(input: number): string {
    return encoding.join("")
 }
 
-function hammingDecode(encoded: string): number {
+function hammingDecode(encoded: string): string {
    const encoding = encoded.split("").map((b) => Number.parseInt(b))
 
    const globalParity = encoding[0]
    encoding[0] = 0
-
-   const numParityBits = Math.floor(Math.log2(encoding.length)) + 1
 
    const parityBits = []
 
@@ -755,6 +755,5 @@ function hammingDecode(encoded: string): number {
       }
    }
 
-   const decodedNumber = parseInt(decodedData.join(""), 2)
-   return decodedNumber
+   return parseInt(decodedData.join(""), 2).toString()
 }
