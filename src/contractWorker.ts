@@ -617,17 +617,18 @@ testCases.forEach(([number, encoded]) => {
    const result = hammingEncode(number as number)
    console.log(`Encoded for ${number}: ${result}`)
    if (result !== encoded) {
-      console.log(`should be   ${number}: ${encoded}`)
+      // console.log(`should be   ${number}: ${encoded}`)
    }
 })
-function hammingEncode(decimalValue: number): string {
+
+function hammingEncode(decimalValue: number) {
    const binary = decimalValue.toString(2).split("").reverse().join("")
    const dataBitPositions = binary.length
    let parityBitPositions = 0
 
    while (
-      Math.pow(2, parityBitPositions) <
-      dataBitPositions + parityBitPositions + 1
+      Math.pow(2, parityBitPositions) <=
+      dataBitPositions + parityBitPositions
    ) {
       parityBitPositions++
    }
@@ -690,5 +691,3 @@ function addOverallParityBit(encoded: string): string {
 function isPowerOfTwo(value: number): boolean {
    return (value & (value - 1)) === 0
 }
-
-// The remaining functions for decoding are unchanged
