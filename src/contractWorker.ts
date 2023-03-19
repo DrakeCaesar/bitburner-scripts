@@ -825,7 +825,7 @@ function RLECompression(input: string): string {
    return result
 }
 
-function LZCompression(data) {
+function LZCompression(data: string): string {
    let answer = ""
    let position = 0
    let completed = data + data + data + data
@@ -833,7 +833,7 @@ function LZCompression(data) {
    const maxBufferStart = dataLength - 9
 
    while (position < dataLength) {
-      let best = ["", 0]
+      let best: [string, number] = ["", 0]
 
       for (let i = 0; i < 10; i++) {
          const bufferStart = Math.max(position - 9 + i, 0)
@@ -842,7 +842,7 @@ function LZCompression(data) {
 
          const search = data.slice(bufferStart, position + i)
          const lookahead = data.slice(position + i, position + i + 9)
-         let bestRef = [0, 0]
+         let bestRef: [number, number] = [0, 0]
 
          for (let backStart = 0; backStart < search.length; backStart++) {
             let searchPos = backStart
@@ -857,7 +857,7 @@ function LZCompression(data) {
             }
          }
 
-         let cost = i + 3 - (bestRef[1] === 0)
+         let cost = i + 3 - Number(bestRef[1] === 0)
          const distance = Math.min(i, dataLength - position) + bestRef[1]
 
          if (distance + position === dataLength && bestRef[1] === 0) cost -= 1
