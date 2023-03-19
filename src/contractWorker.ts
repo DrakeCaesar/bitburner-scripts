@@ -825,80 +825,82 @@ function RLECompression(input: string): string {
    return result
 }
 
-function LZCompression(data: string): string {
-   let answer = ""
-   let position = 0
-   let completed = data + data + data + data
-   const dataLength = data.length
-   const bufferLength = 9
-   const maxBufferStart = dataLength - bufferLength
+function set(state: any[][], i: number, j: number, str: string | any[]) {
+   if (state[i][j] === undefined || str.length < state[i][j].length)
+      state[i][j] = str
+}
 
-   while (position < dataLength) {
-      let best: [string, number] = ["", 0]
-
-      for (let i = 0; i < bufferLength + 1; i++) {
-         const bufferStart = Math.max(position - bufferLength + i, 0)
-
-         if (bufferStart > maxBufferStart) break
-
-         const search = data.slice(bufferStart, position + i)
-         const lookahead = data.slice(position + i, position + i + bufferLength)
-         let bestRef: [number, number] = [0, 0]
-
-         for (let backStart = 0; backStart < search.length; backStart++) {
-            let searchPos = backStart
-
-            for (let lookPos = 0; lookPos < lookahead.length; lookPos++) {
-               if (search[searchPos] !== lookahead[lookPos]) break
-
-               searchPos++
-
-               if (searchPos >= search.length) searchPos = backStart
-               if (lookPos >= bestRef[1]) bestRef = [backStart, lookPos + 1]
+function LZCompression(str: string): string {
+   // state [i][j] contains a backreference of offset i and length j
+   let cur_state = Array.from(Array(10), (_) => Array(10)),
+      new_state,
+      tmp_state,
+      result
+   cur_state[0][1] = "" // initial state is a literal of length 1
+   for (let i = 1; i < str.length; i++) {
+      new_state = Array.from(Array(10), (_) => Array(10))
+      const c = str[i]
+      // handle literals
+      for (let len = 1; len <= 9; len++) {
+         const input = cur_state[0][len]
+         if (input === undefined) continue
+         if (len < 9)
+            set(new_state, 0, len + 1, input) // extend current literal
+         else set(new_state, 0, 1, input + "9" + str.substring(i - 9, i) + "0") // start new literal
+         for (let offset = 1; offset <= Math.min(9, i); offset++) {
+            // start new backreference
+            if (str[i - offset] === c)
+               set(
+                  new_state,
+                  offset,
+                  1,
+                  input + len + str.substring(i - len, i)
+               )
+         }
+      }
+      // handle backreferences
+      for (let offset = 1; offset <= 9; offset++) {
+         for (let len = 1; len <= 9; len++) {
+            const input = cur_state[offset][len]
+            if (input === undefined) continue
+            if (str[i - offset] === c) {
+               if (len < 9) set(new_state, offset, len + 1, input)
+               // extend current backreference
+               else set(new_state, offset, 1, input + "9" + offset + "0") // start new backreference
+            }
+            set(new_state, 0, 1, input + len + offset) // start new literal
+            // end current backreference and start new backreference
+            for (
+               let new_offset = 1;
+               new_offset <= Math.min(9, i);
+               new_offset++
+            ) {
+               if (str[i - new_offset] === c)
+                  set(new_state, new_offset, 1, input + len + offset + "0")
             }
          }
-
-         let cost = i + 3 - Number(bestRef[1] === 0)
-         const distance = Math.min(i, dataLength - position) + bestRef[1]
-
-         if (distance + position === dataLength && bestRef[1] === 0) cost -= 1
-
-         const ratio = distance / cost
-         let compressed = `${i}${data.slice(position, position + i)}${
-            bestRef[1]
-         }`
-
-         if (bestRef[1] !== 0) {
-            compressed +=
-               bufferLength - bestRef[0] - (bufferLength - search.length)
-         }
-
-         if (ratio >= best[1]) best = [compressed, ratio]
-
-         if (
-            distance + position === dataLength &&
-            answer.length + compressed.length < completed.length
-         ) {
-            completed = answer + compressed
-         }
       }
-
-      answer += best[0]
-      const move =
-         parseInt(best[0][0], 10) +
-         parseInt(best[0][parseInt(best[0][0], 10) + 1], 10)
-      position += move
-
-      if (position === dataLength && answer[answer.length - 1] === "0") {
-         answer = answer.slice(0, -1)
+      tmp_state = new_state
+      new_state = cur_state
+      cur_state = tmp_state
+   }
+   for (let len = 1; len <= 9; len++) {
+      let input = cur_state[0][len]
+      if (input === undefined) continue
+      input += len + str.substring(str.length - len, str.length)
+      // noinspection JSUnusedAssignment
+      if (result === undefined || input.length < result.length) result = input
+   }
+   for (let offset = 1; offset <= 9; offset++) {
+      for (let len = 1; len <= 9; len++) {
+         let input = cur_state[offset][len]
+         if (input === undefined) continue
+         input += len + "" + offset
+         if (result === undefined || input.length < result.length)
+            result = input
       }
    }
-
-   if (completed.length < answer.length) {
-      answer = completed
-   }
-
-   return answer
+   return result ?? ""
 }
 
 function LZDecompression(data: string) {
