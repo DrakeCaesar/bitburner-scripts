@@ -615,10 +615,19 @@ const testCases = [
 ]
 
 testCases.forEach(([number, encoded]) => {
-   const result = hammingEncode(number as number)
-   if (result !== encoded) {
-      console.log(`Encoded for ${number}: ${result}`)
+   const enc = hammingEncode(number as number)
+   if (enc !== encoded) {
+      console.log(`Encoded for ${number}: ${enc}`)
       console.log(`should be   ${number}: ${encoded}`)
+   }
+   console.log(`Encoded for ${number}: ${enc}`)
+
+   const dec = decode(encoded as string)
+   console.log(`Decoded     ${number}: ${dec}`)
+
+   if (dec !== number) {
+      console.log(`Decoded     ${encoded}: ${dec}`)
+      console.log(`should be   ${encoded}: ${number}`)
    }
 })
 function hammingEncode(input: number): string {
@@ -667,4 +676,71 @@ function hammingEncode(input: number): string {
    encoding[0] = globalParity
 
    return encoding.join("")
+}
+
+function decode(encoded: string): number {
+   const encoding = encoded.split("").map((b) => Number.parseInt(b))
+
+   const numParityBits = Math.ceil(Math.log2(encoding.length))
+
+   const parityBits = []
+   for (let i = 1; i < encoding.length; i++) {
+      if ((i & (i - 1)) === 0) {
+         parityBits.push(i)
+      }
+   }
+
+   let count = 0
+   for (let i = 0; i < encoding.length; i++) {
+      if (encoding[i] === 1) {
+         count++
+      }
+   }
+
+   const globalParity = count % 2 === 0 ? 0 : 1
+
+   if (encoding[0] !== globalParity) {
+      // Global parity check failed, return null or throw an error
+      return -1
+   }
+
+   const correctedEncoding = encoding.slice()
+   let errorPosition = 0
+
+   for (let i = 0; i < parityBits.length; i++) {
+      let parityValue = 0
+      for (
+         let j = parityBits[i];
+         j < correctedEncoding.length;
+         j += parityBits[i] * 2
+      ) {
+         for (
+            let k = j;
+            k < j + parityBits[i] && k < correctedEncoding.length;
+            k++
+         ) {
+            parityValue ^= correctedEncoding[k]
+         }
+      }
+      if (parityValue !== 0) {
+         // Parity check failed, correct error
+         errorPosition += parityBits[i]
+      }
+   }
+
+   if (errorPosition > 0) {
+      correctedEncoding[errorPosition] ^= 1
+   }
+
+   const data = []
+   for (let i = 1, j = 0; i < correctedEncoding.length; i++) {
+      if (!parityBits.includes(i)) {
+         data.push(correctedEncoding[i])
+      }
+   }
+
+   const binaryString = data.join("")
+   const decimalNumber = parseInt(binaryString, 2)
+
+   return decimalNumber
 }
