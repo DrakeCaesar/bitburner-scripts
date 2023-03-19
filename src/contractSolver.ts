@@ -13,6 +13,7 @@ type ContractTypeMap = Map<
 >
 
 export async function main(ns: NS): Promise<void> {
+   const solve: boolean = ns.args.length > 0 && ns.args[0] === "solve"
    const knownServers = crawl(ns)
    const contractMap: ContractTypeMap = new Map()
 
@@ -35,12 +36,20 @@ export async function main(ns: NS): Promise<void> {
    const workerUrl = URL.createObjectURL(
       new Blob([`${ns.read("contractWorker.js")}`], { type: "text/javascript" })
    )
-   const worker = new Worker(workerUrl)
+
+   const numWorkers = 8
+   const workers: Worker[] = []
+   for (let index = 0; index < numWorkers; index++) {
+      workers[index] = new Worker(workerUrl)
+   }
 
    // Send all contracts to the worker and update the map with the answers and execution times
-   const promises = []
    for (const [type, contracts] of contractMap) {
-      for (const contract of contracts) {
+      let promises = []
+      for (let index = 0; index < contracts.length; index++) {
+         const contract = contracts[index]
+         const worker = workers[index % numWorkers]
+
          const { server, name, data } = contract
 
          // Send the contract data to the worker
@@ -54,12 +63,23 @@ export async function main(ns: NS): Promise<void> {
                resolve(result)
             }
          })
-
-         // Add the promise to the list of promises to await
          promises.push(promise)
 
-         // Update the contract object with the promise
-         contract.answer = await promise
+         if (promises.length == numWorkers || index == contracts.length - 1) {
+            for (let i = 0; i < promises.length; i++) {
+               const current = contracts[index - i]
+               current.answer = await promises[promises.length - i - 1]
+               current.time = performance.now() - (current.time ?? 0)
+               if (solve) {
+                  ns.codingcontract.attempt(
+                     current.answer,
+                     current.name,
+                     current.server
+                  )
+               }
+            }
+            promises = []
+         }
       }
    }
 
@@ -69,14 +89,11 @@ export async function main(ns: NS): Promise<void> {
       let numContracts = 0
       for (const contract of contracts) {
          // Get the answer from the promise and update the contract object with the execution time
-         await ns.sleep(1)
+         //await ns.sleep(1)
          const answer = contract.answer
          if (answer !== null) {
-            ns.tprint(answer)
-            const time = performance.now() - (contract.time ?? 0)
-            contract.time = time
-            contract.answer = answer
-            totalTime += time
+            //ns.tprint(answer)
+            totalTime += contract.time ?? 0
             numContracts += 1
          }
       }
@@ -89,7 +106,7 @@ export async function main(ns: NS): Promise<void> {
          )
       }
    }
-
-   // Cleanup the worker
-   worker.terminate()
+   for (const worker of workers) {
+      worker.terminate()
+   }
 }
