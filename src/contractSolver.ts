@@ -1,170 +1,94 @@
 import { NS } from "@ns"
 import { crawl } from "./libraries/crawl"
 
+type ContractTypeMap = Map<
+   string,
+   Array<{
+      server: string
+      name: string
+      data: any
+      answer?: any
+      time?: number
+   }>
+>
+
 export async function main(ns: NS): Promise<void> {
-   const startScript = performance.now()
-
    const knownServers = crawl(ns)
-   let solutions = ""
-   const dict: Map<string, [string, string][]> = new Map()
-   const timeDict: Map<string, number[]> = new Map()
-   const solve = ns.args[0] as boolean
-   //const solve = false
-   const grep: string = (ns.args[1] as string)?.toLowerCase() ?? ""
+   const contractMap: ContractTypeMap = new Map()
 
-   let totalC = 0
-   let solvableC = 0
+   // Loop through all known servers and their contracts
+   for (const server of knownServers) {
+      const contracts = ns.ls(server, ".cct")
+      for (const contract of contracts) {
+         const type = ns.codingcontract.getContractType(contract, server)
+         const data = ns.codingcontract.getData(contract, server)
 
+         // Add the contract to the map based on its type
+         if (!contractMap.has(type)) {
+            contractMap.set(type, [])
+         }
+         contractMap.get(type)?.push({ server, name: contract, data })
+      }
+   }
+
+   // Create a worker to process contracts
    const workerUrl = URL.createObjectURL(
       new Blob([`${ns.read("contractWorker.js")}`], { type: "text/javascript" })
    )
-
    const worker = new Worker(workerUrl)
 
-   function sendMessageToWorker(
-      message: unknown
-   ): Promise<string | number | unknown[]> {
-      return new Promise((resolve) => {
-         worker.onmessage = (event) => {
-            resolve(event.data)
-         }
-         worker.postMessage(message)
-      })
-   }
+   // Send all contracts to the worker and update the map with the answers and execution times
+   const promises = []
+   for (const [type, contracts] of contractMap) {
+      for (const contract of contracts) {
+         const { server, name, data } = contract
 
-   for (const hostname of knownServers) {
-      const listCCT = ns.ls(hostname, ".cct")
+         // Send the contract data to the worker
+         contract.time = performance.now()
+         worker.postMessage({ type, data })
 
-      if (listCCT.length) {
-         totalC += listCCT.length
-         for (const contract of listCCT) {
-            const type: string = ns.codingcontract.getContractType(
-               contract,
-               hostname
-            )
-
-            if (!type.toLowerCase().includes(grep)) {
-               continue
+         // Wait for the worker to finish processing the contract and send the answer back
+         const promise = new Promise<string | null>((resolve) => {
+            worker.onmessage = (event) => {
+               const result = event.data as string | null
+               resolve(result)
             }
-            const data = ns.codingcontract.getData(contract, hostname)
+         })
 
-            // const answerPromise = sendMessageToWorker({
-            //    type: type,
-            //    data: data,
-            // })
-            // ns.tprint(`data:     ${data}\n`)
+         // Add the promise to the list of promises to await
+         promises.push(promise)
 
-            const start = performance.now()
-
-            // const answer: string | number | unknown[] | null =
-            //    await answerPromise
-
-            const answer: string | number | unknown[] | null =
-               await sendMessageToWorker({
-                  type: type,
-                  data: data,
-               })
-
-            const end = performance.now()
-
-            if (
-               answer != null &&
-               (grep == null || type.toLowerCase().includes(grep))
-            ) {
-               solutions += `hostname: ${hostname}\n`
-               solutions += `contract: ${contract}\n`
-               solutions += `type:     ${type}\n`
-               solutions += `data:     ${JSON.stringify(data)}\n`
-               solutions += `answer:   ${JSON.stringify(answer)}\n`
-
-               solvableC++
-
-               let reward
-               if (solve) {
-                  reward = ns.codingcontract.attempt(answer, contract, hostname)
-                  solutions += `reward:   ${reward}\n`
-               }
-               solutions += "\n"
-
-               if (!timeDict.has(type)) {
-                  timeDict.set(type, [])
-               }
-               timeDict.get(type)?.push(end - start)
-            } else {
-               if (!dict.has(type)) {
-                  dict.set(type, [])
-               }
-               dict.get(type)?.push([hostname, contract])
-            }
-         }
+         // Update the contract object with the promise
+         contract.answer = await promise
       }
    }
 
-   let contractTypes
-   const sortedTypes = Array.from(dict.keys()).sort()
-
-   if (sortedTypes.length && grep == "") {
-      contractTypes = "\nUnknown Types:\n\n"
-      for (const key of sortedTypes) {
-         contractTypes += key + "\n"
-         if (grep) {
-            for (const element of dict.get(key) ?? []) {
-               if (
-                  element[1]
-                     .toLowerCase()
-                     .includes((grep as string).toString().toLowerCase())
-               ) {
-                  contractTypes +=
-                     "   " + element[0].padEnd(20) + element[1] + "\n"
-               }
-            }
+   // Await all promises together and print the updated map with execution times
+   await Promise.allSettled(promises)
+   for (const [type, contracts] of contractMap) {
+      let totalTime = 0
+      let numContracts = 0
+      for (const contract of contracts) {
+         // Get the answer from the promise and update the contract object with the execution time
+         const answer = await contract.answer
+         if (answer !== null) {
+            const time = performance.now() - (contract.time ?? 0)
+            contract.time = time
+            contract.answer = answer
+            totalTime += time
+            numContracts += 1
          }
       }
-      contractTypes += "\n"
-   }
-   if (solutions) {
-      ns.tprintf("Solutions:\n\n" + solutions)
-   }
-
-   if (contractTypes) {
-      ns.tprintf(contractTypes)
-   }
-
-   ns.tprintf("Total:    " + totalC)
-   ns.tprintf("Solvable: " + solvableC)
-
-   let totalTime = 0
-
-   const sortedTimeRecords = Array.from(timeDict.entries()).sort((a, b) => {
-      const avgA = avg(a[1])
-      const avgB = avg(b[1])
-      return avgB - avgA
-   })
-
-   contractTypes = "\nAverage execution time:\n\n"
-   for (const [key, value] of sortedTimeRecords) {
-      contractTypes += key.padEnd(40) + avg(value) + "\n"
-      totalTime += sum(value)
-   }
-   contractTypes += "\n"
-
-   if (contractTypes) {
-      ns.tprintf(contractTypes)
+      if (numContracts > 0) {
+         const averageTime = totalTime / numContracts
+         ns.tprint(
+            ` ${type.padEnd(40)}| ${numContracts
+               .toString()
+               .padEnd(5)} | ${averageTime.toFixed(2).padStart(8)}`
+         )
+      }
    }
 
-   ns.tprintf("Solver execution time:".padEnd(40) + totalTime)
-   const endScript = performance.now()
-   ns.tprintf("Script execution time:".padEnd(40) + (endScript - startScript))
-}
-
-function sum(numbers: number[]) {
-   return numbers.reduce((a, b) => a + b, 0)
-}
-
-function avg(numbers: number[]): number {
-   if (numbers.length === 0) {
-      return 0
-   }
-   const total = numbers.reduce((a, b) => a + b)
-   return total / numbers.length
+   // Cleanup the worker
+   worker.terminate()
 }
