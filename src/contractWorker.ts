@@ -614,22 +614,47 @@ const testCases = [
    [9876012345, "00111001100110011010011111111101000111001"],
 ]
 
+const badTestCases = [
+   [0, "0100"],
+   [1, "1101"],
+   [2, "101100"],
+   [3, "001011"],
+   [4, "1111010"],
+   [5, "0101100"],
+   [6, "0010110"],
+   [7, "1011011"],
+   [8, "11110100"],
+   [9876012345, "00111001100110011010011111111101000111001"],
+   [9876012345, "00111101100110011010011111111101000111001"],
+]
+
 testCases.forEach(([number, encoded]) => {
    const enc = hammingEncode(number as number)
    if (enc !== encoded) {
       console.log(`Encoded for ${number}: ${enc}`)
       console.log(`should be   ${number}: ${encoded}`)
    }
-   console.log(`Encoded for ${number}: ${enc}`)
+   //console.log(`Encoded for ${number}: ${enc}`)
 
-   const dec = decode(encoded as string)
-   console.log(`Decoded     ${number}: ${dec}`)
+   const dec = hammingDecode(encoded as string)
 
    if (dec !== number) {
-      console.log(`Decoded     ${encoded}: ${dec}`)
-      console.log(`should be   ${encoded}: ${number}`)
+      console.log(`Expected ${encoded}: ${number}`)
+      console.log(`Actual   ${encoded}: ${dec}`)
+      console.log()
    }
 })
+
+badTestCases.forEach(([number, encoded]) => {
+   const dec = hammingDecode(encoded as string)
+
+   if (dec !== number) {
+      console.log(`Expected ${encoded}: ${number}`)
+      console.log(`Actual   ${encoded}: ${dec}`)
+      console.log()
+   }
+})
+
 function hammingEncode(input: number): string {
    const data = input
       .toString(2)
@@ -678,16 +703,35 @@ function hammingEncode(input: number): string {
    return encoding.join("")
 }
 
-function decode(encoded: string): number {
+function hammingDecode(encoded: string): number {
    const encoding = encoded.split("").map((b) => Number.parseInt(b))
 
-   const numParityBits = Math.ceil(Math.log2(encoding.length))
+   const globalParity = encoding[0]
+   encoding[0] = 0
+
+   const numParityBits = Math.floor(Math.log2(encoding.length)) + 1
 
    const parityBits = []
-   for (let i = 1; i < encoding.length; i++) {
-      if ((i & (i - 1)) === 0) {
-         parityBits.push(i)
+
+   for (let i = 1; i <= encoding.length; i *= 2) {
+      parityBits.push(i)
+   }
+
+   let errorPosition = 0
+   for (let i = 0; i < parityBits.length; i++) {
+      let parityValue = 0
+      for (let j = parityBits[i]; j < encoding.length; j += parityBits[i] * 2) {
+         for (let k = j; k < j + parityBits[i] && k < encoding.length; k++) {
+            parityValue ^= encoding[k]
+         }
       }
+      if (parityValue !== 0) {
+         errorPosition += parityBits[i]
+      }
+   }
+
+   if (errorPosition > 0) {
+      encoding[errorPosition] ^= 1
    }
 
    let count = 0
@@ -697,50 +741,18 @@ function decode(encoded: string): number {
       }
    }
 
-   const globalParity = count % 2 === 0 ? 0 : 1
-
-   if (encoding[0] !== globalParity) {
-      // Global parity check failed, return null or throw an error
+   const newGlobalParity = count % 2 === 0 ? 0 : 1
+   if (globalParity !== newGlobalParity) {
       return -1
    }
 
-   const correctedEncoding = encoding.slice()
-   let errorPosition = 0
-
-   for (let i = 0; i < parityBits.length; i++) {
-      let parityValue = 0
-      for (
-         let j = parityBits[i];
-         j < correctedEncoding.length;
-         j += parityBits[i] * 2
-      ) {
-         for (
-            let k = j;
-            k < j + parityBits[i] && k < correctedEncoding.length;
-            k++
-         ) {
-            parityValue ^= correctedEncoding[k]
-         }
-      }
-      if (parityValue !== 0) {
-         // Parity check failed, correct error
-         errorPosition += parityBits[i]
+   const decodedData = []
+   for (let i = 1, j = 0; i < encoding.length; i++) {
+      if ((i & (i - 1)) !== 0) {
+         decodedData[j++] = encoding[i]
       }
    }
 
-   if (errorPosition > 0) {
-      correctedEncoding[errorPosition] ^= 1
-   }
-
-   const data = []
-   for (let i = 1, j = 0; i < correctedEncoding.length; i++) {
-      if (!parityBits.includes(i)) {
-         data.push(correctedEncoding[i])
-      }
-   }
-
-   const binaryString = data.join("")
-   const decimalNumber = parseInt(binaryString, 2)
-
-   return decimalNumber
+   const decodedNumber = parseInt(decodedData.join(""), 2)
+   return decodedNumber
 }
