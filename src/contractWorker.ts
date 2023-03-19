@@ -71,6 +71,21 @@ onmessage = (event) => {
       case "HammingCodes: Integer to Encoded Binary":
          answer = hammingEncode(data)
          break
+      case "Compression I: RLE Compression":
+         answer = RLECompression(data)
+         break
+      case "Compression II: LZ Decompression":
+         answer = LZDecompression(data)
+         break
+      case "Compression III: LZ Compression":
+         answer = LZCompression(data)
+         break
+      case "Encryption I: Caesar Cipher":
+         answer = CaesarCipher(data)
+         break
+      case "Encryption II: Vigenère Cipher":
+         answer = VigenereCipher(data)
+         break
       default:
          answer = null
          break
@@ -780,4 +795,166 @@ function hammingDecode(encoded: string): string {
    }
 
    return parseInt(decodedData.join(""), 2).toString()
+}
+
+function RLECompression(inputString: string): string {
+   const n = inputString.length
+   let outputString = ""
+   let count = 1
+
+   for (let i = 1; i <= n; i++) {
+      if (i === n || inputString.charAt(i) !== inputString.charAt(i - 1)) {
+         if (count === 1) {
+            outputString += inputString.charAt(i - 1)
+         } else if (count < 10) {
+            outputString += count.toString() + inputString.charAt(i - 1)
+         } else {
+            const numRuns = Math.ceil(count / 9)
+            let remainder = count
+            for (let j = 0; j < numRuns; j++) {
+               const runLength = Math.min(remainder, 9)
+               outputString += runLength.toString() + inputString.charAt(i - 1)
+               remainder -= runLength
+            }
+         }
+         count = 1
+      } else {
+         count++
+      }
+   }
+
+   return outputString
+}
+
+function LZDecompression(inputString: string): string {
+   let outputString = ""
+   let i = 0
+
+   while (i < inputString.length) {
+      const chunkLength = parseInt(inputString.charAt(i), 10)
+      i++
+
+      if (chunkLength === 0) {
+         continue
+      }
+
+      if (i + chunkLength <= inputString.length) {
+         const chunkData = inputString.substr(i, chunkLength)
+         outputString += chunkData
+         i += chunkLength
+      } else {
+         const numCharsToCopy = inputString.length - i
+         const chunkData = inputString.substr(i, numCharsToCopy)
+         const numCharsToRepeat = chunkLength - numCharsToCopy
+         outputString += chunkData.repeat(numCharsToRepeat)
+         break
+      }
+
+      if (i >= inputString.length) {
+         break
+      }
+
+      const numCharsToCopy = parseInt(inputString.charAt(i), 10)
+      i++
+
+      const charToRepeat = outputString.charAt(
+         outputString.length - numCharsToCopy
+      )
+      outputString += charToRepeat.repeat(chunkLength)
+   }
+
+   return outputString
+}
+
+function LZCompression(inputString: string): string {
+   const n = inputString.length
+   let outputString = ""
+   const dictionary: { [key: string]: number } = {}
+
+   for (let i = 0; i < n; i++) {
+      let j = i + 1
+      let longestMatch = inputString.charAt(i)
+
+      while (
+         j < n &&
+         inputString.charAt(j) === inputString.charAt(i) &&
+         j - i < 9
+      ) {
+         longestMatch += inputString.charAt(j)
+         j++
+      }
+
+      if (Object.prototype.hasOwnProperty.call(dictionary, longestMatch)) {
+         let referenceLength = 1
+         while (
+            j < n &&
+            Object.prototype.hasOwnProperty.call(
+               dictionary,
+               longestMatch.substr(0, referenceLength)
+            ) &&
+            referenceLength < 9
+         ) {
+            referenceLength++
+         }
+
+         outputString +=
+            referenceLength.toString() +
+            dictionary[longestMatch.substr(0, referenceLength)]
+         i += longestMatch.length - referenceLength
+      } else {
+         outputString += longestMatch.length.toString() + longestMatch
+         dictionary[longestMatch] = i
+         i += longestMatch.length - 1
+      }
+   }
+
+   return outputString
+}
+
+function CaesarCipher(data: [string, number]): string {
+   const plaintext = data[0]
+   const shift = data[1]
+   const n = plaintext.length
+   let cipherText = ""
+
+   for (let i = 0; i < n; i++) {
+      const char = plaintext.charAt(i)
+      if (char === " ") {
+         cipherText += " "
+         continue
+      }
+      const charCode = char.charCodeAt(0)
+      let shiftedCharCode = charCode - shift
+      if (shiftedCharCode < 65) {
+         shiftedCharCode += 26
+      }
+      const cipherTextChar = String.fromCharCode(shiftedCharCode)
+      cipherText += cipherTextChar
+   }
+
+   return cipherText
+}
+
+function VigenereCipher(data: [string, string]) {
+   const plaintext = data[0]
+   const keyword = data[1]
+   const n = plaintext.length
+   let cipherText = ""
+
+   for (let i = 0; i < n; i++) {
+      const plaintextChar = plaintext.charAt(i)
+      if (plaintextChar === " ") {
+         cipherText += " "
+         continue
+      }
+      const keywordIndex = i % keyword.length
+      const keywordChar = keyword.charAt(keywordIndex)
+      const row = plaintextChar.charCodeAt(0) - 65
+      const col = keywordChar.charCodeAt(0) - 65
+      const shiftedCharCode = ((row + col) % 26) + 65
+      const cipherTextChar = String.fromCharCode(shiftedCharCode)
+      cipherText += cipherTextChar
+   }
+
+   return cipherText
 }
