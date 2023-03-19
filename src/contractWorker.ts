@@ -626,6 +626,8 @@ const badTestCases = [
    [8, "11110100"],
    [9876012345, "00111001100110011010011111111101000111001"],
    [9876012345, "00111101100110011010011111111101000111001"],
+   [5951, "10101000000000000001011100111111"],
+   [5951, "10101000000000000001011100111111"],
 ]
 
 testCases.forEach(([number, encoded]) => {
@@ -743,7 +745,7 @@ function hammingDecode(encoded: string): number {
 
    const newGlobalParity = count % 2 === 0 ? 0 : 1
    if (globalParity !== newGlobalParity) {
-      return -1
+      encoding[0] = globalParity
    }
 
    const decodedData = []
