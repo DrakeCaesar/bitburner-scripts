@@ -31,6 +31,11 @@ export async function main(ns: NS): Promise<void> {
          contractMap.get(type)?.push({ server, name: contract, data })
       }
    }
+   const url = URL.createObjectURL(
+      new Blob([`${ns.read("contractWorker.js")}`], {
+         type: "text/javascript",
+      })
+   )
 
    // Create a function to spawn a new worker URL
    function createWorkerUrl() {
@@ -43,16 +48,19 @@ export async function main(ns: NS): Promise<void> {
 
    const numWorkers = 8
    const contractEntries = Array.from(contractMap.entries())
+   const workers: Worker[] = []
+
+   for (let i = 0; i < numWorkers; i++) {
+      workers.push(new Worker(url))
+
+      //workers.push(new Worker(createWorkerUrl()))
+   }
 
    // Send all contracts to the worker and update the map with the answers and execution times
    for (const [type, contracts] of contractEntries) {
-      const workers: Worker[] = []
       const promises: Promise<string | null>[] = []
 
       // Spawn new workers for each contract type to avoid contention
-      for (let i = 0; i < numWorkers; i++) {
-         workers.push(new Worker(createWorkerUrl()))
-      }
 
       for (let i = 0; i < contracts.length; i++) {
          const current = contracts[i]
@@ -80,7 +88,7 @@ export async function main(ns: NS): Promise<void> {
                current.answer = results[promises.length - j - 1] ?? null
                current.time = performance.now() - (current.time ?? startTime)
 
-               if (type === "Array Jumping Game") {
+               if (type === "Algorithmic Stock Trader III") {
                   ns.tprint(current.answer)
                }
 
@@ -96,11 +104,10 @@ export async function main(ns: NS): Promise<void> {
             promises.length = 0
          }
       }
-
-      // Terminate all workers for this contract type
-      for (const worker of workers) {
-         worker.terminate()
-      }
+   }
+   // Terminate all workers for this contract type
+   for (const worker of workers) {
+      worker.terminate()
    }
 
    // Await all promises together and print the updated map with execution times
