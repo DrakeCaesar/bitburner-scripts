@@ -528,72 +528,54 @@ function jumpingGame(numbers: number[]): number {
    return dp[n - 1] === Number.MAX_SAFE_INTEGER ? 0 : dp[n - 1]
 }
 
-function findAllValidMathExpressionsTest(data: [string, number]): string[] {
+function findAllValidMathExpressionsNew(data: [string, number]): string[] {
    const [digits, target] = data
-   const memo: Map<string, string[]> = new Map() // stores results
+   const result: string[] = []
 
    function dfs(
       current: string,
       idx: number,
       evalResult: number,
-      prevOperand: number
+      prevOperand: number,
+      isMult: boolean
    ): void {
       if (idx === digits.length) {
          if (evalResult === target) {
-            const expressions = memo.get(`${idx}-${evalResult}`)
-            if (expressions) {
-               expressions.push(current)
-            } else {
-               memo.set(`${idx}-${evalResult}`, [current])
-            }
+            result.push(current)
          }
          return
       }
 
-      if (evalResult > target) {
-         return // early exit: prune branches
-      }
-
       const numStr = digits.substring(idx, digits.length)
-      for (let i = 0; i < numStr.length; i++) {
-         const num = parseInt(numStr.substring(0, +i + 1))
-         if (+i > 0 && numStr[0] === "0") {
+      for (let i = 1; i <= numStr.length; i++) {
+         const num = parseInt(numStr.substring(0, i))
+         if (i > 1 && numStr[0] === "0") {
+            // skip numbers with leading zeros
             continue
          }
 
-         const nextIdx = idx + (+i + 1)
+         const nextIdx = idx + i
 
-         let expressions = memo.get(`${nextIdx}-${evalResult + num}`)
-         if (expressions) {
-            expressions.push(`${current}+${num}`)
+         if (current === "") {
+            dfs(`${num}`, nextIdx, num, num, false)
          } else {
-            memo.set(`${nextIdx}-${evalResult + num}`, [`${current}+${num}`])
+            dfs(`${current}+${num}`, nextIdx, evalResult + num, num, false)
+            dfs(`${current}-${num}`, nextIdx, evalResult - num, -num, false)
+            if (!isMult) {
+               dfs(
+                  `${current}*${num}`,
+                  nextIdx,
+                  evalResult - prevOperand + prevOperand * num,
+                  prevOperand * num,
+                  true
+               )
          }
-
-         expressions = memo.get(`${nextIdx}-${evalResult - num}`)
-         if (expressions) {
-            expressions.push(`${current}-${num}`)
-         } else {
-            memo.set(`${nextIdx}-${evalResult - num}`, [`${current}-${num}`])
-         }
-
-         const multiplyEvalResult = evalResult - prevOperand + prevOperand * num
-         expressions = memo.get(`${nextIdx}-${multiplyEvalResult}`)
-         if (isNaN(multiplyEvalResult)) {
-            throw Error("NaN multiplication!")
-         }
-
-         if (expressions) {
-            expressions.push(`${current}*${num}`)
-         } else {
-            memo.set(`${nextIdx}-${multiplyEvalResult}`, [`${current}*${num}`])
          }
       }
    }
 
-   dfs("", 0, 0, 0)
-
-   return memo.get(`${digits.length}-${target}`) ?? []
+   dfs("", 0, 0, 0, false)
+   return result
 }
 
 function findAllValidMathExpressions(data: [string, number]): string[] {
