@@ -32,44 +32,58 @@ export async function main(ns: NS): Promise<void> {
       }
    }
 
-   // Create a worker to process contracts
-   const workerUrl = URL.createObjectURL(
-      new Blob([`${ns.read("contractWorker.js")}`], { type: "text/javascript" })
-   )
-
-   const numWorkers = 8
-   const workers: Worker[] = []
-   for (let index = 0; index < numWorkers; index++) {
-      workers[index] = new Worker(workerUrl)
+   // Create a function to spawn a new worker URL
+   function createWorkerUrl() {
+      return URL.createObjectURL(
+         new Blob([`${ns.read("contractWorker.js")}`], {
+            type: "text/javascript",
+         })
+      )
    }
 
-   // Send all contracts to the worker and update the map with the answers and execution times
-   for (const [type, contracts] of contractMap) {
-      let promises = []
-      for (let index = 0; index < contracts.length; index++) {
-         const contract = contracts[index]
-         const worker = workers[index % numWorkers]
+   const numWorkers = 8
+   const contractEntries = Array.from(contractMap.entries())
 
-         const { server, name, data } = contract
+   // Send all contracts to the worker and update the map with the answers and execution times
+   for (const [type, contracts] of contractEntries) {
+      const workers: Worker[] = []
+      const promises: Promise<string | null>[] = []
+
+      // Spawn new workers for each contract type to avoid contention
+      for (let i = 0; i < numWorkers; i++) {
+         workers.push(new Worker(createWorkerUrl()))
+      }
+
+      for (let i = 0; i < contracts.length; i++) {
+         const current = contracts[i]
+         const worker = workers[i % numWorkers]
+         const { server, name, data } = current
 
          // Send the contract data to the worker
-         contract.time = performance.now()
-         worker.postMessage({ type, data })
-
-         // Wait for the worker to finish processing the contract and send the answer back
+         const startTime = performance.now()
          const promise = new Promise<string | null>((resolve) => {
             worker.onmessage = (event) => {
                const result = event.data as string | null
                resolve(result)
             }
+            worker.postMessage({ type, data })
          })
          promises.push(promise)
 
-         if (promises.length == numWorkers || index == contracts.length - 1) {
-            for (let i = 0; i < promises.length; i++) {
-               const current = contracts[index - i]
-               current.answer = await promises[promises.length - i - 1]
-               current.time = performance.now() - (current.time ?? 0)
+         if (promises.length === numWorkers || i === contracts.length - 1) {
+            const results = await Promise.all(promises)
+
+            for (let j = 0; j < promises.length; j++) {
+               const index = i - j
+               const current = contracts[index]
+
+               current.answer = results[promises.length - j - 1] ?? null
+               current.time = performance.now() - (current.time ?? startTime)
+
+               if (type === "Array Jumping Game") {
+                  ns.tprint(current.answer)
+               }
+
                if (solve) {
                   ns.codingcontract.attempt(
                      current.answer,
@@ -78,8 +92,14 @@ export async function main(ns: NS): Promise<void> {
                   )
                }
             }
-            promises = []
+
+            promises.length = 0
          }
+      }
+
+      // Terminate all workers for this contract type
+      for (const worker of workers) {
+         worker.terminate()
       }
    }
 
@@ -105,8 +125,5 @@ export async function main(ns: NS): Promise<void> {
                .padEnd(5)} | ${averageTime.toFixed(2).padStart(8)}`
          )
       }
-   }
-   for (const worker of workers) {
-      worker.terminate()
    }
 }
