@@ -3,13 +3,15 @@ import { crawl } from "./libraries/crawl"
 
 type ContractTypeMap = Map<
    string,
-   Array<{
-      server: string
-      name: string
-      data: any
-      answer?: any
-      time?: number
-   }>
+   {
+      contracts: Array<{
+         server: string
+         name: string
+         data: any
+         answer?: any
+      }>
+      totalTime: number
+   }
 >
 
 export async function main(ns: NS): Promise<void> {
@@ -26,9 +28,11 @@ export async function main(ns: NS): Promise<void> {
 
          // Add the contract to the map based on its type
          if (!contractMap.has(type)) {
-            contractMap.set(type, [])
+            contractMap.set(type, { contracts: [], totalTime: 0 })
          }
-         contractMap.get(type)?.push({ server, name: contract, data })
+         contractMap
+            .get(type)
+            ?.contracts?.push({ server, name: contract, data })
       }
    }
    const url = URL.createObjectURL(
@@ -36,15 +40,6 @@ export async function main(ns: NS): Promise<void> {
          type: "text/javascript",
       })
    )
-
-   // Create a function to spawn a new worker URL
-   function createWorkerUrl() {
-      return URL.createObjectURL(
-         new Blob([`${ns.read("contractWorker.js")}`], {
-            type: "text/javascript",
-         })
-      )
-   }
 
    const numWorkers = 8
    const contractEntries = Array.from(contractMap.entries())
@@ -57,18 +52,18 @@ export async function main(ns: NS): Promise<void> {
    }
 
    // Send all contracts to the worker and update the map with the answers and execution times
-   for (const [type, contracts] of contractEntries) {
+   for (const [type, list] of contractEntries) {
       const promises: Promise<string | null>[] = []
+      const start = performance.now()
 
       // Spawn new workers for each contract type to avoid contention
 
-      for (let i = 0; i < contracts.length; i++) {
-         const current = contracts[i]
+      for (let i = 0; i < list.contracts.length; i++) {
+         const current = list.contracts[i]
          const worker = workers[i % numWorkers]
          const { server, name, data } = current
 
          // Send the contract data to the worker
-         const startTime = performance.now()
          const promise = new Promise<string | null>((resolve) => {
             worker.onmessage = (event) => {
                const result = event.data as string | null
@@ -78,19 +73,21 @@ export async function main(ns: NS): Promise<void> {
          })
          promises.push(promise)
 
-         if (promises.length === numWorkers || i === contracts.length - 1) {
+         if (
+            promises.length === numWorkers ||
+            i === list.contracts.length - 1
+         ) {
             const results = await Promise.all(promises)
 
             for (let j = 0; j < promises.length; j++) {
                const index = i - j
-               const current = contracts[index]
+               const current = list.contracts[index]
 
                current.answer = results[promises.length - j - 1] ?? null
-               current.time = performance.now() - (current.time ?? startTime)
 
-               if (type === "Algorithmic Stock Trader III") {
-                  ns.tprint(current.answer)
-               }
+               // if (type === "Algorithmic Stock Trader III") {
+               //    ns.tprint(current.answer)
+               // }
 
                if (solve) {
                   ns.codingcontract.attempt(
@@ -104,33 +101,57 @@ export async function main(ns: NS): Promise<void> {
             promises.length = 0
          }
       }
+      const end = performance.now()
+      list.totalTime = end - start
    }
    // Terminate all workers for this contract type
    for (const worker of workers) {
       worker.terminate()
    }
 
-   // Await all promises together and print the updated map with execution times
-   for (const [type, contracts] of contractMap) {
-      let totalTime = 0
-      let numContracts = 0
-      for (const contract of contracts) {
-         // Get the answer from the promise and update the contract object with the execution time
-         //await ns.sleep(1)
-         const answer = contract.answer
-         if (answer !== null) {
-            //ns.tprint(answer)
-            totalTime += contract.time ?? 0
-            numContracts += 1
-         }
-      }
-      if (numContracts > 0) {
-         const averageTime = totalTime / numContracts
-         ns.tprint(
-            ` ${type.padEnd(40)}| ${numContracts
-               .toString()
-               .padEnd(5)} | ${averageTime.toFixed(2).padStart(8)}`
-         )
-      }
+   const nT = "Contract Type"
+   const cT = "Count"
+   const tT = "Avg. Time"
+
+   let nL = 0
+   let cL = cT.length
+   let tL = tT.length
+
+   // Get longest length for count and time columns
+   for (const [type, list] of contractMap) {
+      nL = Math.max(nL, type.length)
+      cL = Math.max(cL, list.contracts.length.toString().length)
+      tL = Math.max(tL, list.totalTime.toFixed(2).toString().length)
    }
+
+   // Create table rows
+   let tableRows = ""
+   // Convert map to array of objects
+   const contractArr = Array.from(contractMap, ([type, list]) => ({
+      type,
+      list,
+   }))
+   // Sort array by averageTime in descending order
+   contractArr.sort(
+      (a, b) =>
+         b.list.totalTime / b.list.contracts.length -
+         a.list.totalTime / a.list.contracts.length
+   )
+
+   for (const { type, list } of contractArr) {
+      const count = list.contracts.length.toString().padStart(cL)
+      const averageTime = (list.totalTime / list.contracts.length)
+         .toFixed(2)
+         .padStart(tL)
+      tableRows += `┃ ${type.padEnd(nL)} ┃ ${count} ┃ ${averageTime} ┃\n`
+   }
+   const output =
+      `\n` +
+      `┏━${"━".repeat(nL)}━┳━${"━".repeat(cL)}━┳━${"━".repeat(tL)}━┓\n` +
+      `┃ ${nT.padEnd(nL)} ┃ ${cT.padStart(cL)} ┃ ${tT.padStart(tL)} ┃\n` +
+      `┣━${"━".repeat(nL)}━╋━${"━".repeat(cL)}━╋━${"━".repeat(tL)}━┫\n` +
+      `${tableRows}` +
+      `┗━${"━".repeat(nL)}━┻━${"━".repeat(cL)}━┻━${"━".repeat(tL)}━┛\n`
+
+   ns.tprint(output)
 }
