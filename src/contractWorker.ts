@@ -528,6 +528,74 @@ function jumpingGame(numbers: number[]): number {
    return dp[n - 1] === Number.MAX_SAFE_INTEGER ? 0 : dp[n - 1]
 }
 
+function findAllValidMathExpressionsTest(data: [string, number]): string[] {
+   const [digits, target] = data
+   const memo: Map<string, string[]> = new Map() // stores results
+
+   function dfs(
+      current: string,
+      idx: number,
+      evalResult: number,
+      prevOperand: number
+   ): void {
+      if (idx === digits.length) {
+         if (evalResult === target) {
+            const expressions = memo.get(`${idx}-${evalResult}`)
+            if (expressions) {
+               expressions.push(current)
+            } else {
+               memo.set(`${idx}-${evalResult}`, [current])
+            }
+         }
+         return
+      }
+
+      if (evalResult > target) {
+         return // early exit: prune branches
+      }
+
+      const numStr = digits.substring(idx, digits.length)
+      for (let i = 0; i < numStr.length; i++) {
+         const num = parseInt(numStr.substring(0, +i + 1))
+         if (+i > 0 && numStr[0] === "0") {
+            continue
+         }
+
+         const nextIdx = idx + (+i + 1)
+
+         let expressions = memo.get(`${nextIdx}-${evalResult + num}`)
+         if (expressions) {
+            expressions.push(`${current}+${num}`)
+         } else {
+            memo.set(`${nextIdx}-${evalResult + num}`, [`${current}+${num}`])
+         }
+
+         expressions = memo.get(`${nextIdx}-${evalResult - num}`)
+         if (expressions) {
+            expressions.push(`${current}-${num}`)
+         } else {
+            memo.set(`${nextIdx}-${evalResult - num}`, [`${current}-${num}`])
+         }
+
+         const multiplyEvalResult = evalResult - prevOperand + prevOperand * num
+         expressions = memo.get(`${nextIdx}-${multiplyEvalResult}`)
+         if (isNaN(multiplyEvalResult)) {
+            throw Error("NaN multiplication!")
+         }
+
+         if (expressions) {
+            expressions.push(`${current}*${num}`)
+         } else {
+            memo.set(`${nextIdx}-${multiplyEvalResult}`, [`${current}*${num}`])
+         }
+      }
+   }
+
+   dfs("", 0, 0, 0)
+
+   return memo.get(`${digits.length}-${target}`) ?? []
+}
+
 function findAllValidMathExpressions(data: [string, number]): string[] {
    const [digits, target] = data
    const result: string[] = []
@@ -825,6 +893,7 @@ function RLECompression(input: string): string {
    return result
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function set(state: any[][], i: number, j: number, str: string | any[]) {
    if (state[i][j] === undefined || str.length < state[i][j].length)
       state[i][j] = str
@@ -832,12 +901,14 @@ function set(state: any[][], i: number, j: number, str: string | any[]) {
 
 function LZCompression(str: string): string {
    // state [i][j] contains a backreference of offset i and length j
+   // eslint-disable-next-line @typescript-eslint/no-unused-vars
    let cur_state = Array.from(Array(10), (_) => Array(10)),
       new_state,
       tmp_state,
       result
    cur_state[0][1] = "" // initial state is a literal of length 1
    for (let i = 1; i < str.length; i++) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       new_state = Array.from(Array(10), (_) => Array(10))
       const c = str[i]
       // handle literals

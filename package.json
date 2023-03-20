@@ -118,6 +118,8 @@
       "useGitignore": true,
       "words": [
          "avmnite-02h",
+         "backreference",
+         "backreferences",
          "bitburner",
          "brutessh",
          "codingcontract",

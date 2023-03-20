@@ -113,7 +113,7 @@ export async function main(ns: NS): Promise<void> {
    const cT = "Count"
    const tT = "Avg. Time"
 
-   let nL = 0
+   let nL = nT.length
    let cL = cT.length
    let tL = tT.length
 
