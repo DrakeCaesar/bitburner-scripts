@@ -528,6 +528,72 @@ function jumpingGame(numbers: number[]): number {
    return dp[n - 1] === Number.MAX_SAFE_INTEGER ? 0 : dp[n - 1]
 }
 
+function findAllValidMathExpressionsNew(data: [string, number]): string[] {
+   const [digits, target] = data
+   const result: string[] = []
+
+   function dfs(
+      current: (string | number)[],
+      idx: number,
+      evalResult: number,
+      prevOperand: number,
+      currentNum: number,
+      isMult: boolean
+   ): void {
+      if (idx === digits.length) {
+         if (evalResult === target) {
+            result.push(current.join(""))
+         }
+         return
+      }
+
+      const digit = parseInt(digits[idx])
+      currentNum = currentNum * 10 + digit
+
+      if (currentNum.toString().length > 1 && digits[idx - 1] === "0") {
+         // skip numbers with leading zeros
+         return
+      }
+
+      const nextIdx = idx + 1
+
+      if (current.length === 0) {
+         dfs([currentNum], nextIdx, currentNum, currentNum, 0, false)
+      } else {
+         dfs(
+            [...current, "+", currentNum],
+            nextIdx,
+            evalResult + currentNum,
+            currentNum,
+            0,
+            false
+         )
+         dfs(
+            [...current, "-", currentNum],
+            nextIdx,
+            evalResult - currentNum,
+            -currentNum,
+            0,
+            false
+         )
+         if (!isMult) {
+            const multResult = prevOperand * currentNum
+            dfs(
+               [...current, "*", currentNum],
+               nextIdx,
+               evalResult - prevOperand + multResult,
+               multResult,
+               0,
+               true
+            )
+         }
+      }
+   }
+
+   dfs([], 0, 0, 0, 0, false)
+   return result
+}
+
 function findAllValidMathExpressions(data: [string, number]): string[] {
    const [digits, target] = data
    const result: string[] = []
@@ -536,8 +602,7 @@ function findAllValidMathExpressions(data: [string, number]): string[] {
       current: string,
       idx: number,
       evalResult: number,
-      prevOperand: number,
-      isMult: boolean
+      prevOperand: number
    ): void {
       if (idx === digits.length) {
          if (evalResult === target) {
@@ -557,77 +622,23 @@ function findAllValidMathExpressions(data: [string, number]): string[] {
          const nextIdx = idx + i
 
          if (current === "") {
-            dfs(`${num}`, nextIdx, num, num, false)
+            dfs(`${num}`, nextIdx, num, num)
          } else {
-            dfs(`${current}+${num}`, nextIdx, evalResult + num, num, false)
-            dfs(`${current}-${num}`, nextIdx, evalResult - num, -num, false)
-            if (!isMult) {
-               dfs(
-                  `${current}*${num}`,
-                  nextIdx,
-                  evalResult - prevOperand + prevOperand * num,
-                  prevOperand * num,
-                  true
-               )
-            }
+            dfs(`${current}+${num}`, nextIdx, evalResult + num, num)
+            dfs(`${current}-${num}`, nextIdx, evalResult - num, -num)
+            dfs(
+               `${current}*${num}`,
+               nextIdx,
+               evalResult - prevOperand + prevOperand * num,
+               prevOperand * num
+            )
          }
       }
    }
 
-   dfs("", 0, 0, 0, false)
+   dfs("", 0, 0, 0)
    return result
 }
-
-function findAllValidMathExpressionsOld(data: [string, number]): string[] {
-   const [digits, target] = data
-   const result: string[] = []
-
-   function dfs(
-      current: string,
-      idx: number,
-      evalResult: number,
-      prevOperand: number,
-      isMult: boolean
-   ): void {
-      if (idx === digits.length) {
-         if (evalResult === target) {
-            result.push(current)
-         }
-         return
-      }
-
-      const numStr = digits.substring(idx, digits.length)
-      for (let i = 1; i <= numStr.length; i++) {
-         const num = parseInt(numStr.substring(0, i))
-         if (i > 1 && numStr[0] === "0") {
-            // skip numbers with leading zeros
-            continue
-         }
-
-         const nextIdx = idx + i
-
-         if (current === "") {
-            dfs(`${num}`, nextIdx, num, num, false)
-         } else {
-            dfs(`${current}+${num}`, nextIdx, evalResult + num, num, false)
-            dfs(`${current}-${num}`, nextIdx, evalResult - num, -num, false)
-            if (!isMult) {
-               dfs(
-                  `${current}*${num}`,
-                  nextIdx,
-                  evalResult - prevOperand + prevOperand * num,
-                  prevOperand * num,
-                  true
-               )
-            }
-         }
-      }
-   }
-
-   dfs("", 0, 0, 0, false)
-   return result
-}
-
 type Graph = [number, number[][]]
 
 function proper2Coloring(data: Graph): number[] {

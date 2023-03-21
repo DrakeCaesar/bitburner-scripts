@@ -85,9 +85,9 @@ export async function main(ns: NS): Promise<void> {
 
                current.answer = results[promises.length - j - 1] ?? null
 
-               // if (type === "Algorithmic Stock Trader III") {
-               //    ns.tprint(current.answer)
-               // }
+               if (type === "Find All Valid Math Expressions") {
+                  //ns.tprint(current.answer)
+               }
 
                if (solve) {
                   ns.codingcontract.attempt(
