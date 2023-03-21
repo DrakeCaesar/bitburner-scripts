@@ -36,9 +36,9 @@
    },
    "eslintConfig": {
       "env": {
-         "es2022": true,
+         "es2021": true,
          "es6": true,
-         "node": true
+         "browser": true
       },
       "parserOptions": {
          "ecmaFeatures": {
@@ -52,8 +52,8 @@
       ],
       "extends": [
          "eslint:recommended",
-         "plugin:sonarjs/recommended",
-         "prettier"
+         "plugin:@typescript-eslint/recommended",
+         "plugin:prettier/recommended"
       ],
       "rules": {},
       "overrides": [
@@ -64,28 +64,32 @@
             ],
             "parser": "@typescript-eslint/parser",
             "parserOptions": {
-               "project": [
-                  "./tsconfig.json"
-               ]
+               "project": "./tsconfig.json",
+               "ecmaVersion": "latest",
+               "sourceType": "module"
             },
             "plugins": [
                "@typescript-eslint"
             ],
+            "rules": {
+               "no-constant-condition": [
+                  "off"
+               ],
+               "@typescript-eslint/no-floating-promises": "error"
+            },
             "extends": [
                "eslint:recommended",
-               "plugin:@typescript-eslint/eslint-recommended",
                "plugin:@typescript-eslint/recommended",
-               "plugin:@typescript-eslint/strict",
-               "standard-with-typescript",
-               "prettier"
+               "plugin:prettier/recommended"
             ]
          }
       ],
       "root": true
    },
    "eslintIgnore": [
-      "dist",
-      "node_modules"
+      "node_modules/**",
+      "dist/**",
+      "NetscriptDefinitions.d.ts"
    ],
    "devDependencies": {
       "@types/node": "^18.15.3",

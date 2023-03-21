@@ -1,4 +1,5 @@
 /** @param {import("../..").NS } ns */
+import { tFormat } from "./format"
 
 export function batchingThreads(ns, node, params) {
    const hackP = 0.9
@@ -74,10 +75,6 @@ export function batchingParameters(ns, node) {
    console.log("dg: " + tFormat(grow_delay))
    console.log("dw2:" + tFormat(weak_delay_2))
    console.log("")
-}
-
-function tFormat(duration) {
-   return (duration / 1000).toFixed(3).padStart(10) + " s"
 }
 
 /** 
