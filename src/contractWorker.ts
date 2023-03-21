@@ -528,19 +528,9 @@ function jumpingGame(numbers: number[]): number {
    return dp[n - 1] === Number.MAX_SAFE_INTEGER ? 0 : dp[n - 1]
 }
 
-function findAllValidMathExpressionsNew(data: [string, number]): string[] {
+function findAllValidMathExpressions(data: [string, number]): string[] {
    const [digits, target] = data
    const result: string[] = []
-   const numCache: { [key: string]: number } = {}
-
-   function parseNum(str: string): number {
-      if (numCache[str] !== undefined) {
-         return numCache[str]
-      }
-      const num = parseInt(str)
-      numCache[str] = num
-      return num
-   }
 
    function dfs(
       current: string,
@@ -558,13 +548,12 @@ function findAllValidMathExpressionsNew(data: [string, number]): string[] {
 
       const numStr = digits.substring(idx, digits.length)
       for (let i = 1; i <= numStr.length; i++) {
-         const subStr = numStr.substring(0, i)
+         const num = parseInt(numStr.substring(0, i))
          if (i > 1 && numStr[0] === "0") {
             // skip numbers with leading zeros
             continue
          }
 
-         const num = parseNum(subStr)
          const nextIdx = idx + i
 
          if (current === "") {
@@ -589,7 +578,7 @@ function findAllValidMathExpressionsNew(data: [string, number]): string[] {
    return result
 }
 
-function findAllValidMathExpressions(data: [string, number]): string[] {
+function findAllValidMathExpressionsOld(data: [string, number]): string[] {
    const [digits, target] = data
    const result: string[] = []
 
