@@ -1,4 +1,5 @@
 import { NS } from "@ns"
+
 export function crawl(
    ns: NS,
    knownServers = new Set<string>(),

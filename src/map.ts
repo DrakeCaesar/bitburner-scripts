@@ -39,11 +39,12 @@ function passToFunction(paragraphs: NodeListOf<HTMLParagraphElement>) {
             // Check if part is outside of brackets
             return part!
                .replaceAll("/", "╱")
+               .replaceAll("<╱", "</")
                .replaceAll("\\", "╲")
                .replaceAll("-", "─")
                .replaceAll("|", "│")
                .replaceAll("+", "┼")
-               .replaceAll("o", "◯")
+            //.replaceAll("o", "◯")
          }
          return "[" + part + "]" // If part is inside brackets, just return it as-is
       })

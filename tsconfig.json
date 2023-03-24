@@ -6,7 +6,6 @@
       "types": ["vite/client"],
       "strict": true,
       "allowJs": true,
-      "noEmit": true,
       "isolatedModules": true,
       "esModuleInterop": true,
       "baseUrl": ".",
@@ -14,6 +13,7 @@
       "moduleResolution": "Node",
       "resolveJsonModule": true,
       "skipLibCheck": true,
+      "outDir": "dist",
       "paths": {
          "@/*": ["./src/*"],
          "/src/*": ["./src/*"],
