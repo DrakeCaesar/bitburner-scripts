@@ -4297,8 +4297,10 @@ vite@^4.2.0:
   optionalDependencies:
     fsevents "~2.3.2"
 
-"viteburner@file:../viteburner":
+viteburner@^0.5.3:
   version "0.5.3"
+  resolved "https://registry.yarnpkg.com/viteburner/-/viteburner-0.5.3.tgz#cc5a8e860861b02e30a938d38d558928eb152aed"
+  integrity sha512-93eSxQK3XyFF9t3JixEs0a2N6nbZkaOA1YAB7I86S1xm7qyFqcwv3oCLdNI5XzsPc/+Aue/26sHP3epbP5IEzA==
   dependencies:
     acorn "^8.8.2"
     cac "^6.7.14"
