@@ -20,6 +20,15 @@ export async function main(): Promise<void> {
     removeGlowFromAllElements()
   }
 
+  // Get the element with id "unclickable"
+  const unclickableElement = document.getElementById("unclickable")
+
+  // Check if the element exists before modifying it
+  if (unclickableElement) {
+    // Set the inner text to an empty string
+    unclickableElement.textContent = ""
+  }
+
   function createObserver() {
     // Set up a mutation observer to apply the effect to new input elements and progress bars
     const observer = new MutationObserver((mutationsList) => {
@@ -167,8 +176,15 @@ export async function main(): Promise<void> {
     } else if (!filterText.includes("url(#glow-filter)")) {
       element.style.filter = `${filterText} url(#glow-filter)`
     }
-    element.style.margin = `-${glowSize}px`
-    element.style.padding = `${glowSize}px`
+    const originalMargin = parseInt(
+      getComputedStyle(element).margin.replace("px", "")
+    )
+    const originalPadding = parseInt(
+      getComputedStyle(element).padding.replace("px", "")
+    )
+    //console.log("originalPadding: " + originalPadding)
+    element.style.margin = `-${glowSize + originalMargin}px`
+    element.style.padding = `${glowSize + originalPadding}px`
   }
 
   // Function to apply the glow effect to an input element
