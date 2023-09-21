@@ -20,11 +20,12 @@ export async function main(): Promise<void> {
     const color = getComputedStyle(element).color
     const intensity = calculateGlowIntensity(color)
     const glowStyles = `
-         text-shadow: 0 0 ${
-           intensity * glowSize
-         }px rgba(255, 255, 255, ${intensity}) !important;
-         overflow: visible;
-         `
+    text-shadow: 0 0 ${
+      intensity * glowSize
+    }% rgba(100%, 100%, 100%, ${intensity}) !important;
+    overflow: visible;
+  `
+
     if (element.parentElement) {
       element.parentElement.style.overflow = "visible"
       if (
