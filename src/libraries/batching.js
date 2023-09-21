@@ -1,5 +1,4 @@
 /** @param {import("../..").NS } ns */
-import { tFormat } from "./format"
 
 export function batchingThreads(ns, node, params) {
   const hackP = 0.9
@@ -132,3 +131,7 @@ function lambertWLog(logX) {
   return isNaN(w) ? (logXE < 0 ? 0 : Infinity) : w
 }
 const log1Exp = (x) => (x <= 0 ? Math.log(1 + Math.exp(x)) : x + log1Exp(-x))
+
+function tFormat(duration) {
+  return (duration / 1000).toFixed(3).padStart(10) + " s"
+}

@@ -1,5 +1,5 @@
 import { NS } from "@ns"
-import { crawl } from "./libraries/crawl"
+import { crawl } from "/src/libraries/crawl"
 
 type ContractTypeMap = Map<
   string,
