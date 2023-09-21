@@ -4,6 +4,60 @@ export async function main(): Promise<void> {
   const doc: Document = eval("document")
   const glowSize = 20
 
+  // Check if the observer reference already exists
+  if (!(document.body as any).mutationObserver) {
+    const skillBarElements = document.querySelectorAll(".MuiLinearProgress-bar")
+    skillBarElements.forEach((element) => {
+      applyGlowEffectToSkillBar(element as HTMLSpanElement)
+    })
+
+    // Apply the glow effect to all input elements on page load
+    applyGlowEffectToElementsInContainer(doc.body)
+    createObserver()
+  } else {
+    // If the observer reference already exists, stop observing mutations and remove the glow effect
+    stopObservingMutations()
+    removeGlowFromAllElements()
+  }
+
+  function createObserver() {
+    // Set up a mutation observer to apply the effect to new input elements and progress bars
+    const observer = new MutationObserver((mutationsList) => {
+      for (const mutation of mutationsList) {
+        if (mutation.type === "childList") {
+          const addedElements = mutation.addedNodes
+          addedElements.forEach((element) => {
+            if (element instanceof HTMLElement) {
+              applyGlowEffectToElementsInContainer(element)
+            }
+          })
+        } else if (
+          mutation.type === "attributes" &&
+          mutation.attributeName === "style"
+        ) {
+          const element = mutation.target as HTMLElement
+          if (
+            element instanceof HTMLSpanElement &&
+            element.classList.contains("MuiLinearProgress-bar")
+          ) {
+            applyGlowEffectToSkillBar(element)
+          }
+        }
+      }
+    })
+
+    // Start observing mutations to the page
+    observer.observe(document.body, {
+      attributes: true,
+      attributeFilter: ["style"],
+      childList: true,
+      subtree: true,
+    })
+
+    // Store the observer reference on the DOM
+    ;(document.body as any).mutationObserver = observer
+  }
+
   // Function to calculate the luminance value of a given color
   function calculateGlowIntensity(color: string): number {
     const rgb = color.substring(4, color.length - 1).split(",")
@@ -20,11 +74,11 @@ export async function main(): Promise<void> {
     const color = getComputedStyle(element).color
     const intensity = calculateGlowIntensity(color)
     const glowStyles = `
-      text-shadow: 0 0 ${
-        intensity * glowSize
-      }px rgba(255, 255, 255, ${intensity}) !important;
-      overflow: visible;
-      `
+        text-shadow: 0 0 ${
+          intensity * glowSize
+        }px rgba(255, 255, 255, ${intensity}) !important;
+        overflow: visible;
+        `
 
     if (element.parentElement) {
       element.parentElement.style.overflow = "visible"
@@ -122,13 +176,13 @@ export async function main(): Promise<void> {
     const color = getComputedStyle(element).color
     const intensity = calculateGlowIntensity(color)
     const glowStyles = `
-         text-shadow: 0 0 ${
-           intensity * glowSize
-         }px rgba(255, 255, 255, ${intensity}) !important;
-         margin-left: -120px;
-         text-indent: 120px;
-         line-height: 2;
-      `
+           text-shadow: 0 0 ${
+             intensity * glowSize
+           }px rgba(255, 255, 255, ${intensity}) !important;
+           margin-left: -120px;
+           text-indent: 120px;
+           line-height: 2;
+        `
     element.classList.add(glowClass)
     element.style.cssText += glowStyles
     const parent = element.parentNode as HTMLElement
@@ -202,50 +256,81 @@ export async function main(): Promise<void> {
     })
   }
 
-  const skillBarElements = document.querySelectorAll(".MuiLinearProgress-bar")
-  skillBarElements.forEach((element) => {
-    applyGlowEffectToSkillBar(element as HTMLSpanElement)
-  })
+  // Function to remove glow effect from an SVG element
+  function removeGlowFromSvgElement(element: HTMLElement) {
+    const filterValue = element.style.filter
 
-  // Check if the observer reference already exists
-  if (!(document.body as any).mutationObserver) {
-    // Apply the glow effect to all input elements on page load
-    applyGlowEffectToElementsInContainer(doc.body)
+    // Check if the element has the glow filter applied
+    if (filterValue && filterValue.includes('url("#glow-filter")')) {
+      // Remove the glow filter from the filter list
+      const newFilterValue = filterValue
+        .replaceAll('url("#glow-filter")', "")
+        .trim()
+      element.style.filter = newFilterValue
 
-    // Set up a mutation observer to apply the effect to new input elements and progress bars
-    const observer = new MutationObserver((mutationsList) => {
-      for (const mutation of mutationsList) {
-        if (mutation.type === "childList") {
-          const addedElements = mutation.addedNodes
-          addedElements.forEach((element) => {
-            if (element instanceof HTMLElement) {
-              applyGlowEffectToElementsInContainer(element)
-            }
-          })
-        } else if (
-          mutation.type === "attributes" &&
-          mutation.attributeName === "style"
-        ) {
-          const element = mutation.target as HTMLElement
-          if (
-            element instanceof HTMLSpanElement &&
-            element.classList.contains("MuiLinearProgress-bar")
-          ) {
-            applyGlowEffectToSkillBar(element)
-          }
-        }
-      }
+      // If there's a direct child filter element with the id "glow-filter", remove it
+      const filterElement = element.querySelector("#glow-filter")
+      if (filterElement) filterElement.remove()
+
+      // Reset styles applied in `applyGlowEffectToSvgElement`
+      element.style.margin = ""
+      element.style.padding = ""
+    }
+  }
+
+  // Function to remove glow effect from an element
+  function removeGlowFromElement(element: HTMLElement) {
+    if (element instanceof SVGElement || element instanceof HTMLImageElement) {
+      removeGlowFromSvgElement(element)
+    } else {
+      element.classList.remove(glowClass)
+      element.style.cssText = ""
+    }
+  }
+
+  // Function to reset styles applied to elements affected by the glow effect
+  function resetStylesForGlowEffect(element: HTMLElement) {
+    const parent = element.parentElement
+    if (parent != null) {
+      parent.style.overflow = "" // Reset overflow to its original value
+      element.style.width = "" // Reset the width property
+      element.style.transform = "" // Reset the transform property
+      element.style.transition = "" // Reset the transition property
+    }
+  }
+
+  // Remove glow effect from all elements
+  function removeGlowFromAllElements() {
+    const elementsWithGlow = doc.querySelectorAll(`.${glowClass}`)
+    elementsWithGlow.forEach((element) =>
+      removeGlowFromElement(element as HTMLElement)
+    )
+
+    // Additionally, look for any SVG or image elements with the filter applied directly
+    const svgElementsWithFilter = doc.querySelectorAll(
+      `svg[style*='url("#glow-filter")'], img[style*='url("#glow-filter")']`
+    )
+    svgElementsWithFilter.forEach((element) =>
+      removeGlowFromSvgElement(element as HTMLElement)
+    )
+
+    // Remove glow effect from skill bars with class .MuiLinearProgress-bar
+    const skillBarElements = doc.querySelectorAll(".MuiLinearProgress-bar")
+    skillBarElements.forEach((element) => {
+      removeGlowFromElement(element as HTMLElement)
+      resetStylesForGlowEffect(element as HTMLElement)
     })
+  }
 
-    // Start observing mutations to the page
-    observer.observe(document.body, {
-      attributes: true,
-      attributeFilter: ["style"],
-      childList: true,
-      subtree: true,
-    })
+  // Stop observing mutations
+  function stopObservingMutations() {
+    // Access the observer reference from a different module
+    const observer = (document.body as any).mutationObserver
 
-    // Store the observer reference on the DOM
-    ;(document.body as any).mutationObserver = observer
+    if (observer) {
+      // Disconnect and destroy the observer
+      observer.disconnect()
+      ;(document.body as any).mutationObserver = null
+    }
   }
 }
