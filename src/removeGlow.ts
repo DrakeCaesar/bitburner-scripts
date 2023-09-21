@@ -34,6 +34,17 @@ export async function main(): Promise<void> {
     }
   }
 
+  // Function to reset styles applied to elements affected by the glow effect
+  function resetStylesForGlowEffect(element: HTMLElement) {
+    const parent = element.parentElement
+    if (parent != null) {
+      parent.style.overflow = "" // Reset overflow to its original value
+      element.style.width = "" // Reset the width property
+      element.style.transform = "" // Reset the transform property
+      element.style.transition = "" // Reset the transition property
+    }
+  }
+
   // Remove glow effect from all elements
   function removeGlowFromAllElements() {
     const elementsWithGlow = doc.querySelectorAll(`.${glowClass}`)
@@ -48,6 +59,13 @@ export async function main(): Promise<void> {
     svgElementsWithFilter.forEach((element) =>
       removeGlowFromSvgElement(element as HTMLElement)
     )
+
+    // Remove glow effect from skill bars with class .MuiLinearProgress-bar
+    const skillBarElements = doc.querySelectorAll(".MuiLinearProgress-bar")
+    skillBarElements.forEach((element) => {
+      removeGlowFromElement(element as HTMLElement)
+      resetStylesForGlowEffect(element as HTMLElement)
+    })
   }
 
   // Stop observing mutations

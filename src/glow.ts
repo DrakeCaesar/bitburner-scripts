@@ -142,7 +142,7 @@ export async function main(): Promise<void> {
     const intensity = calculateGlowIntensity(color)
     const boxShadowStyle = `0 0 ${
       intensity * glowSize
-    }px rgba(255, 255, 255, ${intensity}`
+    }px rgba(255, 255, 255, a${intensity}`
 
     element.style.boxShadow = boxShadowStyle
     const parent = element.parentElement
