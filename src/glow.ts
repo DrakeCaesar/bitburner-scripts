@@ -20,11 +20,11 @@ export async function main(): Promise<void> {
     const color = getComputedStyle(element).color
     const intensity = calculateGlowIntensity(color)
     const glowStyles = `
-    text-shadow: 0 0 ${
-      intensity * glowSize
-    }% rgba(100%, 100%, 100%, ${intensity}) !important;
-    overflow: visible;
-  `
+      text-shadow: 0 0 ${
+        intensity * glowSize
+      }px rgba(255, 255, 255, ${intensity}) !important;
+      overflow: visible;
+      `
 
     if (element.parentElement) {
       element.parentElement.style.overflow = "visible"
@@ -207,39 +207,45 @@ export async function main(): Promise<void> {
     applyGlowEffectToSkillBar(element as HTMLSpanElement)
   })
 
-  // Apply the glow effect to all input elements on page load
-  applyGlowEffectToElementsInContainer(doc.body)
+  // Check if the observer reference already exists
+  if (!(document.body as any).mutationObserver) {
+    // Apply the glow effect to all input elements on page load
+    applyGlowEffectToElementsInContainer(doc.body)
 
-  // Set up a mutation observer to apply the effect to new input elements and progress bars
-  const observer = new MutationObserver((mutationsList) => {
-    for (const mutation of mutationsList) {
-      if (mutation.type === "childList") {
-        const addedElements = mutation.addedNodes
-        addedElements.forEach((element) => {
-          if (element instanceof HTMLElement) {
-            applyGlowEffectToElementsInContainer(element)
-          }
-        })
-      } else if (
-        mutation.type === "attributes" &&
-        mutation.attributeName === "style"
-      ) {
-        const element = mutation.target as HTMLElement
-        if (
-          element instanceof HTMLSpanElement &&
-          element.classList.contains("MuiLinearProgress-bar")
+    // Set up a mutation observer to apply the effect to new input elements and progress bars
+    const observer = new MutationObserver((mutationsList) => {
+      for (const mutation of mutationsList) {
+        if (mutation.type === "childList") {
+          const addedElements = mutation.addedNodes
+          addedElements.forEach((element) => {
+            if (element instanceof HTMLElement) {
+              applyGlowEffectToElementsInContainer(element)
+            }
+          })
+        } else if (
+          mutation.type === "attributes" &&
+          mutation.attributeName === "style"
         ) {
-          applyGlowEffectToSkillBar(element)
+          const element = mutation.target as HTMLElement
+          if (
+            element instanceof HTMLSpanElement &&
+            element.classList.contains("MuiLinearProgress-bar")
+          ) {
+            applyGlowEffectToSkillBar(element)
+          }
         }
       }
-    }
-  })
+    })
 
-  // Start observing mutations to the page
-  observer.observe(doc.body, {
-    attributes: true,
-    attributeFilter: ["style"],
-    childList: true,
-    subtree: true,
-  })
+    // Start observing mutations to the page
+    observer.observe(document.body, {
+      attributes: true,
+      attributeFilter: ["style"],
+      childList: true,
+      subtree: true,
+    })
+
+    // Store the observer reference on the DOM
+    ;(document.body as any).mutationObserver = observer
+  }
 }

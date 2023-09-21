@@ -52,11 +52,14 @@ export async function main(): Promise<void> {
 
   // Stop observing mutations
   function stopObservingMutations() {
-    // We do not have direct access to the original observer.
-    // If you maintain a reference to the original observer,
-    // then you can simply call observer.disconnect().
-    // However, in the given context, there's no direct way
-    // to stop the observer. Hence, we provide a placeholder.
+    // Access the observer reference from a different module
+    const observer = (document.body as any).mutationObserver
+
+    if (observer) {
+      // Disconnect and destroy the observer
+      observer.disconnect()
+      ;(document.body as any).mutationObserver = null
+    }
   }
 
   removeGlowFromAllElements()
