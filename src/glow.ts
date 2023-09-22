@@ -4,29 +4,36 @@ export async function main(): Promise<void> {
   const doc: Document = eval("document")
   const glowSize = 20
 
-  // Check if the observer reference already exists
-  if (!(document.body as any).mutationObserver) {
-    const skillBarElements = document.querySelectorAll(".MuiLinearProgress-bar")
-    skillBarElements.forEach((element) => {
-      applyGlowEffectToSkillBar(element as HTMLSpanElement)
-    })
+  setInterval(toggleGlow, 500)
+  // toggleGlow()
 
-    // Apply the glow effect to all input elements on page load
-    applyGlowEffectToElementsInContainer(doc.body)
-    createObserver()
-  } else {
-    // If the observer reference already exists, stop observing mutations and remove the glow effect
-    stopObservingMutations()
-    removeGlowFromAllElements()
-  }
+  function toggleGlow() {
+    // Check if the observer reference already exists
+    if (!(document.body as any).mutationObserver) {
+      const skillBarElements = document.querySelectorAll(
+        ".MuiLinearProgress-bar"
+      )
+      skillBarElements.forEach((element) => {
+        applyGlowEffectToSkillBar(element as HTMLSpanElement)
+      })
 
-  // Get the element with id "unclickable"
-  const unclickableElement = document.getElementById("unclickable")
+      // Apply the glow effect to all input elements on page load
+      applyGlowEffectToElementsInContainer(doc.body)
+      createObserver()
+    } else {
+      // If the observer reference already exists, stop observing mutations and remove the glow effect
+      stopObservingMutations()
+      removeGlowFromAllElements()
+    }
 
-  // Check if the element exists before modifying it
-  if (unclickableElement) {
-    // Set the inner text to an empty string
-    unclickableElement.textContent = ""
+    // Get the element with id "unclickable"
+    const unclickableElement = document.getElementById("unclickable")
+
+    // Check if the element exists before modifying it
+    if (unclickableElement) {
+      // Set the inner text to an empty string
+      unclickableElement.textContent = ""
+    }
   }
 
   function createObserver() {
@@ -85,7 +92,7 @@ export async function main(): Promise<void> {
     const glowStyles = `
         text-shadow: 0 0 ${
           intensity * glowSize
-        }px rgba(255, 255, 255, ${intensity}) !important;
+        }px rgba(70%, 70%, 70%, ${intensity}) !important;
         overflow: visible;
         `
 
@@ -176,34 +183,79 @@ export async function main(): Promise<void> {
     } else if (!filterText.includes("url(#glow-filter)")) {
       element.style.filter = `${filterText} url(#glow-filter)`
     }
-    const originalMargin = parseInt(
-      getComputedStyle(element).margin.replace("px", "")
+
+    const computedStyle = getComputedStyle(element)
+
+    const originalMarginTop = parseInt(
+      computedStyle.marginTop.replace("px", "")
     )
-    const originalPadding = parseInt(
-      getComputedStyle(element).padding.replace("px", "")
+    const originalMarginRight = parseInt(
+      computedStyle.marginRight.replace("px", "")
     )
-    //console.log("originalPadding: " + originalPadding)
-    element.style.margin = `-${glowSize + originalMargin}px`
-    element.style.padding = `${glowSize + originalPadding}px`
+    const originalMarginBottom = parseInt(
+      computedStyle.marginBottom.replace("px", "")
+    )
+    const originalMarginLeft = parseInt(
+      computedStyle.marginLeft.replace("px", "")
+    )
+
+    const originalPaddingTop = parseInt(
+      computedStyle.paddingTop.replace("px", "")
+    )
+    const originalPaddingRight = parseInt(
+      computedStyle.paddingRight.replace("px", "")
+    )
+    const originalPaddingBottom = parseInt(
+      computedStyle.paddingBottom.replace("px", "")
+    )
+    const originalPaddingLeft = parseInt(
+      computedStyle.paddingLeft.replace("px", "")
+    )
+
+    element.style.marginTop = `${originalMarginTop - glowSize}px`
+    element.style.marginRight = `${originalMarginRight - glowSize}px`
+    element.style.marginBottom = `${originalMarginBottom - glowSize}px`
+    element.style.marginLeft = `${originalMarginLeft - glowSize}px`
+
+    element.style.paddingTop = `${glowSize + originalPaddingTop}px`
+    element.style.paddingRight = `${glowSize + originalPaddingRight}px`
+    element.style.paddingBottom = `${glowSize + originalPaddingBottom}px`
+    element.style.paddingLeft = `${glowSize + originalPaddingLeft}px`
   }
 
   // Function to apply the glow effect to an input element
   function applyGlowEffectToInputElement(element: HTMLInputElement) {
     const color = getComputedStyle(element).color
     const intensity = calculateGlowIntensity(color)
-    const glowStyles = `
+    const originalMarginLeft = parseInt(
+      getComputedStyle(element).marginLeft.replace("px", "")
+    )
+    const originalTextIndent = parseInt(
+      getComputedStyle(element).textIndent.replace("px", "")
+    )
+
+    element.classList.add(glowClass)
+    if (element.id == "terminal-input") {
+      const glowStyles = `
            text-shadow: 0 0 ${
              intensity * glowSize
-           }px rgba(255, 255, 255, ${intensity}) !important;
+           }px rgba(70%, 70%, 70%, ${intensity}) !important;
            margin-left: -120px;
            text-indent: 120px;
            line-height: 2;
+          `
+      element.style.cssText += glowStyles
+      const parent = element.parentNode as HTMLElement
+      if (parent && parent.classList.contains("MuiInputBase-root")) {
+        parent.style.backgroundColor = "transparent"
+      }
+    } else {
+      const glowStyles = `
+         text-shadow: 0 0 ${
+           intensity * glowSize
+         }px rgba(70%, 70%, 70%, ${intensity}) !important;
         `
-    element.classList.add(glowClass)
-    element.style.cssText += glowStyles
-    const parent = element.parentNode as HTMLElement
-    if (parent && parent.classList.contains("MuiInputBase-root")) {
-      parent.style.backgroundColor = "transparent"
+      element.style.cssText += glowStyles
     }
   }
 
@@ -212,7 +264,7 @@ export async function main(): Promise<void> {
     const intensity = calculateGlowIntensity(color)
     const boxShadowStyle = `0 0 ${
       intensity * glowSize
-    }px rgba(255, 255, 255, a${intensity}`
+    }px rgba(70%, 70%, 70%, a${intensity}`
 
     element.style.boxShadow = boxShadowStyle
     const parent = element.parentElement
@@ -300,7 +352,11 @@ export async function main(): Promise<void> {
       removeGlowFromSvgElement(element)
     } else {
       element.classList.remove(glowClass)
-      element.style.cssText = ""
+      element.style.removeProperty("margin")
+      element.style.removeProperty("padding")
+      element.style.removeProperty("filter")
+      element.style.removeProperty("text-shadow")
+      element.style.removeProperty("text-indent")
     }
   }
 
