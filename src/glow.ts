@@ -47,17 +47,17 @@ export async function main(): Promise<void> {
               applyGlowEffectToElementsInContainer(element)
             }
           })
-          // } else if (
-          //   mutation.type === "attributes" &&
-          //   mutation.attributeName === "style"
-          // ) {
-          //   const element = mutation.target as HTMLElement
-          //   if (
-          //     element instanceof HTMLSpanElement &&
-          //     element.classList.contains("MuiLinearProgress-bar")
-          //   ) {
-          //     applyGlowEffectToSkillBar(element)
-          //   }
+        } else if (
+          mutation.type === "attributes" &&
+          mutation.attributeName === "style"
+        ) {
+          const element = mutation.target as HTMLElement
+          if (
+            element instanceof HTMLSpanElement &&
+            element.classList.contains("MuiLinearProgress-bar")
+          ) {
+            applyGlowEffectToSkillBar(element)
+          }
         }
       }
     })
@@ -115,37 +115,47 @@ export async function main(): Promise<void> {
   }
 
   function addStyle(element: HTMLElement, style: string) {
+    const uniqueStyleSheetId = "unique-style-sheet" // Unique ID for the stylesheet
+
+    // Try to get the unique stylesheet by ID
+    let styleSheet = document.getElementById(
+      uniqueStyleSheetId
+    ) as HTMLStyleElement | null
+
+    if (!styleSheet) {
+      // If the unique stylesheet does not exist, create it.
+      styleSheet = document.createElement("style")
+      styleSheet.id = uniqueStyleSheetId
+      document.head.appendChild(styleSheet)
+    }
+
     // Generate a unique hash based on the style
     const hash = generateHash(style)
 
     // Create a new class name
     const newClassName = `glow${hash}`
 
-    // Create a style rule for the new class
-    const styleSheet = document.styleSheets[0]
+    // Check if a rule with the same selector already exists in the unique stylesheet
+    const sheet = styleSheet.sheet as CSSStyleSheet
     let ruleIndex = -1
-
-    if (styleSheet) {
-      // Check if a rule with the same selector already exists
-      for (let i = 0; i < styleSheet.cssRules.length; i++) {
-        const rule = styleSheet.cssRules[i]
-        if (isCSSStyleRule(rule) && rule.selectorText === `.${newClassName}`) {
-          ruleIndex = i
-          break
-        }
-      }
-
-      // If a rule with the same selector do nothing; otherwise, insert a new rule
-      if (ruleIndex === -1) {
-        styleSheet.insertRule(
-          `.${newClassName} { ${style} }`,
-          styleSheet.cssRules.length
-        )
+    for (let i = 0; i < sheet.cssRules.length; i++) {
+      const rule = sheet.cssRules[i]
+      if (
+        rule instanceof CSSStyleRule &&
+        rule.selectorText === `.${newClassName}`
+      ) {
+        ruleIndex = i
+        break
       }
     }
 
-    // Add the old class name and the new class name to the element's class list
-    element.classList.add(glowClass, newClassName)
+    // If a rule with the same selector doesn't exist; insert a new rule in the unique stylesheet
+    if (ruleIndex === -1) {
+      sheet.insertRule(`.${newClassName} { ${style} }`, sheet.cssRules.length)
+    }
+
+    // Add the new class name to the element's class list
+    element.classList.add(newClassName)
   }
 
   // Helper function to check if a CSSRule is a CSSStyleRule
@@ -209,11 +219,15 @@ export async function main(): Promise<void> {
 
   // Function to apply the glow effect to an SVG element
   function applyGlowEffectToSvgElement(element: HTMLElement) {
-    const color = getComputedStyle(element).fill
+    let color = getComputedStyle(element).fill
+    if (color === "rgb(0, 0, 0)") {
+      const heading = element.parentElement?.nextSibling
+        ?.firstChild as HTMLElement
+      color = getComputedStyle(heading).color
+    }
     const intensity = calculateGlowIntensity(color)
     const opacity = intensity
     const filter = doc.createElementNS("http://www.w3.org/2000/svg", "filter")
-    filter.setAttribute("id", "glow-filter")
     const feDropShadow = doc.createElementNS(
       "http://www.w3.org/2000/svg",
       "feDropShadow"
@@ -223,14 +237,24 @@ export async function main(): Promise<void> {
     feDropShadow.setAttribute("stdDeviation", `${glowSize / 2}`)
     feDropShadow.setAttribute("flood-color", "white")
     feDropShadow.setAttribute("flood-opacity", String(opacity))
+    const hash = generateHash(feDropShadow.outerHTML)
+    filter.setAttribute("id", `glow-filter${hash}`)
     filter.appendChild(feDropShadow)
-    element.insertBefore(filter, element.firstChild)
+    const filterElement = doc.body.querySelector(`#glow-filter${hash}`)
+    if (!filterElement) {
+      const body = document.body
+      let svg = body.querySelector("body > svg")
 
-    const filterText = element.style.filter
-    if (filterText == "") {
-      element.style.filter = "url(#glow-filter)"
-    } else if (!filterText.includes("url(#glow-filter)")) {
-      element.style.filter = `${filterText} url(#glow-filter)`
+      if (!svg) {
+        svg = document.createElementNS("http://www.w3.org/2000/svg", "svg")
+        if (body.firstChild) {
+          body.insertBefore(svg, body.firstChild) // Insert the SVG as the first child of the body
+        } else {
+          body.appendChild(svg) // This is just a fallback in case there are no elements inside the body
+        }
+      }
+
+      svg.appendChild(filter)
     }
 
     const computedStyle = getComputedStyle(element)
@@ -262,7 +286,7 @@ export async function main(): Promise<void> {
     )
 
     const glowStyles = `
-      filter: url(#glow-filter);
+      filter: ${element.style.filter ?? ""} url(#glow-filter${hash}) !important;
       margin-top: ${originalMarginTop - glowSize}px !important;
       margin-right: ${originalMarginRight - glowSize}px !important;
       margin-bottom: ${originalMarginBottom - glowSize}px !important;
@@ -450,31 +474,6 @@ export async function main(): Promise<void> {
     }
   }
 
-  // Function to remove glow effect from an element
-  function removeGlowFromElement(element: HTMLElement) {
-    if (element instanceof SVGElement || element instanceof HTMLImageElement) {
-      removeGlowFromSvgElement(element)
-    } else {
-      element.classList.remove(glowClass)
-      element.style.removeProperty("margin")
-      element.style.removeProperty("padding")
-      element.style.removeProperty("filter")
-      element.style.removeProperty("text-shadow")
-      element.style.removeProperty("text-indent")
-    }
-  }
-
-  // Function to reset styles applied to elements affected by the glow effect
-  function resetStylesForGlowEffect(element: HTMLElement) {
-    const parent = element.parentElement
-    if (parent != null) {
-      parent.style.overflow = "" // Reset overflow to its original value
-      element.style.width = "" // Reset the width property
-      element.style.transform = "" // Reset the transform property
-      element.style.transition = "" // Reset the transition property
-    }
-  }
-
   // Remove glow effect from all elements
   function removeGlowFromAllElements() {
     // Remove glow effect from elements with glowClass and matching glow-hash classes
@@ -485,21 +484,6 @@ export async function main(): Promise<void> {
         className.startsWith("glow")
       )
       classNamesToRemove.forEach((className) => classList.remove(className))
-    })
-
-    // Additionally, look for any SVG or image elements with the filter applied directly
-    const svgElementsWithFilter = doc.querySelectorAll(
-      `svg[style*='url("#glow-filter")'], img[style*='url("#glow-filter")']`
-    )
-    svgElementsWithFilter.forEach((element) =>
-      removeGlowFromSvgElement(element as HTMLElement)
-    )
-
-    // Remove glow effect from skill bars with class .MuiLinearProgress-bar
-    const skillBarElements = doc.querySelectorAll(".MuiLinearProgress-bar")
-    skillBarElements.forEach((element) => {
-      removeGlowFromElement(element as HTMLElement)
-      resetStylesForGlowEffect(element as HTMLElement)
     })
   }
 
