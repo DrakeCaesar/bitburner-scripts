@@ -135,15 +135,13 @@ export async function main(): Promise<void> {
         }
       }
 
-      // If a rule with the same selector exists, update it; otherwise, insert a new rule
-      if (ruleIndex !== -1) {
-        styleSheet.deleteRule(ruleIndex) // Remove the existing rule
+      // If a rule with the same selector do nothing; otherwise, insert a new rule
+      if (ruleIndex === -1) {
+        styleSheet.insertRule(
+          `.${newClassName} { ${style} }`,
+          styleSheet.cssRules.length
+        )
       }
-
-      styleSheet.insertRule(
-        `.${newClassName} { ${style} }`,
-        styleSheet.cssRules.length
-      )
     }
 
     // Add the old class name and the new class name to the element's class list
@@ -152,7 +150,8 @@ export async function main(): Promise<void> {
 
   // Helper function to check if a CSSRule is a CSSStyleRule
   function isCSSStyleRule(rule: CSSRule): rule is CSSStyleRule {
-    return rule.type === CSSRule.STYLE_RULE
+    // Use constructor.name to check the type
+    return rule.constructor.name === "CSSStyleRule"
   }
 
   // Function to generate a hash based on a string
