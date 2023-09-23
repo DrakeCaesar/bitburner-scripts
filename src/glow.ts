@@ -4,8 +4,8 @@ export async function main(): Promise<void> {
   const doc: Document = eval("document")
   const glowSize = 20
 
-  setInterval(toggleGlow, 500)
-  // toggleGlow()
+  // setInterval(toggleGlow, 500)
+  toggleGlow()
 
   function toggleGlow() {
     // Check if the observer reference already exists
@@ -47,17 +47,17 @@ export async function main(): Promise<void> {
               applyGlowEffectToElementsInContainer(element)
             }
           })
-        } else if (
-          mutation.type === "attributes" &&
-          mutation.attributeName === "style"
-        ) {
-          const element = mutation.target as HTMLElement
-          if (
-            element instanceof HTMLSpanElement &&
-            element.classList.contains("MuiLinearProgress-bar")
-          ) {
-            applyGlowEffectToSkillBar(element)
-          }
+          // } else if (
+          //   mutation.type === "attributes" &&
+          //   mutation.attributeName === "style"
+          // ) {
+          //   const element = mutation.target as HTMLElement
+          //   if (
+          //     element instanceof HTMLSpanElement &&
+          //     element.classList.contains("MuiLinearProgress-bar")
+          //   ) {
+          //     applyGlowEffectToSkillBar(element)
+          //   }
         }
       }
     })
@@ -90,11 +90,12 @@ export async function main(): Promise<void> {
     const color = getComputedStyle(element).color
     const intensity = calculateGlowIntensity(color)
     const glowStyles = `
-        text-shadow: 0 0 ${
-          intensity * glowSize
-        }px rgba(70%, 70%, 70%, ${intensity}) !important;
-        overflow: visible;
-        `
+    text-shadow: 0 0 ${
+      intensity * glowSize
+    }px rgba(70%, 70%, 70%, ${intensity}) !important;
+    overflow: visible;
+  `
+    addStyle(element, glowStyles)
 
     if (element.parentElement) {
       element.parentElement.style.overflow = "visible"
@@ -103,16 +104,65 @@ export async function main(): Promise<void> {
         getComputedStyle(element.parentElement.parentElement).border.includes(
           "1px solid"
         )
-      )
+      ) {
         element.parentElement.parentElement.style.overflow = "hidden"
+      }
     }
-
-    element.classList.add(glowClass)
-    element.style.cssText += glowStyles
 
     if (element instanceof HTMLParagraphElement) {
       replaceOldProgressBars(element)
     }
+  }
+
+  function addStyle(element: HTMLElement, style: string) {
+    // Generate a unique hash based on the style
+    const hash = generateHash(style)
+
+    // Create a new class name
+    const newClassName = `glow${hash}`
+
+    // Create a style rule for the new class
+    const styleSheet = document.styleSheets[0]
+    let ruleIndex = -1
+
+    if (styleSheet) {
+      // Check if a rule with the same selector already exists
+      for (let i = 0; i < styleSheet.cssRules.length; i++) {
+        const rule = styleSheet.cssRules[i]
+        if (isCSSStyleRule(rule) && rule.selectorText === `.${newClassName}`) {
+          ruleIndex = i
+          break
+        }
+      }
+
+      // If a rule with the same selector exists, update it; otherwise, insert a new rule
+      if (ruleIndex !== -1) {
+        styleSheet.deleteRule(ruleIndex) // Remove the existing rule
+      }
+
+      styleSheet.insertRule(
+        `.${newClassName} { ${style} }`,
+        styleSheet.cssRules.length
+      )
+    }
+
+    // Add the old class name and the new class name to the element's class list
+    element.classList.add(glowClass, newClassName)
+  }
+
+  // Helper function to check if a CSSRule is a CSSStyleRule
+  function isCSSStyleRule(rule: CSSRule): rule is CSSStyleRule {
+    return rule.type === CSSRule.STYLE_RULE
+  }
+
+  // Function to generate a hash based on a string
+  function generateHash(str: string): string {
+    let hash = 0
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i)
+      hash = (hash << 5) - hash + char
+    }
+    return hash.toString(16)
   }
 
   function generateNewProgressBar(bars: number, dashes: number): string | null {
@@ -212,15 +262,19 @@ export async function main(): Promise<void> {
       computedStyle.paddingLeft.replace("px", "")
     )
 
-    element.style.marginTop = `${originalMarginTop - glowSize}px`
-    element.style.marginRight = `${originalMarginRight - glowSize}px`
-    element.style.marginBottom = `${originalMarginBottom - glowSize}px`
-    element.style.marginLeft = `${originalMarginLeft - glowSize}px`
+    const glowStyles = `
+      filter: url(#glow-filter);
+      margin-top: ${originalMarginTop - glowSize}px !important;
+      margin-right: ${originalMarginRight - glowSize}px !important;
+      margin-bottom: ${originalMarginBottom - glowSize}px !important;
+      margin-left: ${originalMarginLeft - glowSize}px !important;
+      padding-top: ${glowSize + originalPaddingTop}px !important;
+      padding-right: ${glowSize + originalPaddingRight}px !important;
+      padding-bottom: ${glowSize + originalPaddingBottom}px !important;
+      padding-left: ${glowSize + originalPaddingLeft}px !important;
+    `
 
-    element.style.paddingTop = `${glowSize + originalPaddingTop}px`
-    element.style.paddingRight = `${glowSize + originalPaddingRight}px`
-    element.style.paddingBottom = `${glowSize + originalPaddingBottom}px`
-    element.style.paddingLeft = `${glowSize + originalPaddingLeft}px`
+    addStyle(element, glowStyles)
   }
 
   // Function to apply the glow effect to an input element
@@ -234,39 +288,36 @@ export async function main(): Promise<void> {
       getComputedStyle(element).textIndent.replace("px", "")
     )
 
-    element.classList.add(glowClass)
-    if (element.id == "terminal-input") {
-      const glowStyles = `
-           text-shadow: 0 0 ${
-             intensity * glowSize
-           }px rgba(70%, 70%, 70%, ${intensity}) !important;
-           margin-left: -120px;
-           text-indent: 120px;
-           line-height: 2;
+    // Generate a unique hash based on the glowStyles
+    const glowStyles =
+      element.id == "terminal-input"
+        ? `
+          text-shadow: 0 0 ${
+            intensity * glowSize
+          }px rgba(70%, 70%, 70%, ${intensity}) !important;
+          margin-left: ${originalMarginLeft - glowSize}px;
+          text-indent: ${originalTextIndent + glowSize}px;
           `
-      element.style.cssText += glowStyles
-      const parent = element.parentNode as HTMLElement
-      if (parent && parent.classList.contains("MuiInputBase-root")) {
-        parent.style.backgroundColor = "transparent"
-      }
-    } else {
-      const glowStyles = `
-         text-shadow: 0 0 ${
-           intensity * glowSize
-         }px rgba(70%, 70%, 70%, ${intensity}) !important;
-        `
-      element.style.cssText += glowStyles
-    }
+        : `
+          text-shadow: 0 0 ${
+            intensity * glowSize
+          }px rgba(70%, 70%, 70%, ${intensity}) !important;
+          `
+    addStyle(element, glowStyles)
   }
 
+  // Function to apply the glow effect to a skill bar element
   function applyGlowEffectToSkillBar(element: HTMLSpanElement) {
     const color = getComputedStyle(element).backgroundColor
     const intensity = calculateGlowIntensity(color)
+
+    // Generate a unique hash based on the boxShadowStyle
     const boxShadowStyle = `0 0 ${
       intensity * glowSize
-    }px rgba(70%, 70%, 70%, a${intensity}`
+    }px rgba(70%, 70%, 70%, ${intensity})`
 
-    element.style.boxShadow = boxShadowStyle
+    addStyle(element, boxShadowStyle)
+
     const parent = element.parentElement
     if (parent != null) {
       parent.style.overflow = "visible"
@@ -283,6 +334,7 @@ export async function main(): Promise<void> {
       }
     }
   }
+
   // Function to apply the glow effect to all elements in a given container
   function applyGlowEffectToElementsInContainer(container: HTMLElement) {
     const textNodes = doc.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
@@ -304,6 +356,59 @@ export async function main(): Promise<void> {
 
     let currentNode: Node | null
     while ((currentNode = textNodes.nextNode())) {
+      const testing = false
+      if (testing) {
+        const styleAttributeValue =
+          currentNode.parentElement?.getAttribute("style")
+
+        const exclusionCriteria: ((style: any) => any)[] = [
+          // Easter egg element
+          (style) => style.includes("display: none; visibility: hidden;"),
+          // Stats page stats
+          (style) => style.includes("color: rgb(207, 207, 207);"),
+          (style) => style.includes("color: rgb(135, 136, 189);"),
+          (style) => style.includes("color: rgb(251, 121, 219);"),
+          (style) => style.includes("color: rgb(249, 227, 95);"),
+          (style) => style.includes("color: rgb(124, 243, 184);"),
+          (style) => style.includes("color: rgb(250, 255, 223);"),
+          (style) => style.includes("opacity: 0.5;"),
+          // Console folders
+          (style) => style.includes("color: cyan;"),
+          // Stock market stocks
+          (style) => style.includes("white-space: pre;"),
+          // Job modal
+          (style) => style.includes("white-space: pre-wrap;"),
+
+          // Factions page elements - faction names
+          (style) =>
+            style.includes(
+              "overflow: hidden; white-space: nowrap; text-overflow: ellipsis;"
+            ),
+          //Hacknet Nodes
+          (style) => style.includes("overflow: visible;"),
+
+          // Tooltips
+          (style) =>
+            style.includes(
+              "opacity: 1; transform: scale(1, 1); transition: opacity 200ms cubic-bezier(0.4, 0, 0.2, 1) 0ms, transform 133ms cubic-bezier(0.4, 0, 0.2, 1) 0ms;"
+            ),
+        ]
+
+        if (
+          styleAttributeValue !== null &&
+          styleAttributeValue !== undefined &&
+          styleAttributeValue.trim() !== ""
+        ) {
+          // Check if the style attribute matches any exclusion criteria
+          const containsExcludedStyle = exclusionCriteria.some((criterion) =>
+            criterion(styleAttributeValue)
+          )
+          if (!containsExcludedStyle) {
+            console.log(`Style Attribute: ${styleAttributeValue}`)
+            continue
+          }
+        }
+      }
       if (currentNode.parentElement instanceof SVGElement) {
         applyGlowEffectToSvgElement(currentNode.parentElement)
       } else if (currentNode.parentElement instanceof HTMLImageElement) {
@@ -373,10 +478,15 @@ export async function main(): Promise<void> {
 
   // Remove glow effect from all elements
   function removeGlowFromAllElements() {
+    // Remove glow effect from elements with glowClass and matching glow-hash classes
     const elementsWithGlow = doc.querySelectorAll(`.${glowClass}`)
-    elementsWithGlow.forEach((element) =>
-      removeGlowFromElement(element as HTMLElement)
-    )
+    elementsWithGlow.forEach((element) => {
+      const classList = element.classList
+      const classNamesToRemove = Array.from(classList).filter((className) =>
+        className.startsWith("glow")
+      )
+      classNamesToRemove.forEach((className) => classList.remove(className))
+    })
 
     // Additionally, look for any SVG or image elements with the filter applied directly
     const svgElementsWithFilter = doc.querySelectorAll(
