@@ -312,6 +312,17 @@ export async function main(): Promise<void> {
 
       if (!svg) {
         svg = document.createElementNS("http://www.w3.org/2000/svg", "svg")
+        // Apply CSS styles to the <svg> element
+        addStyle(
+          svg as HTMLElement,
+          `
+          position: absolute;
+          width: 0;
+          height: 0;
+          overflow: hidden;
+          pointer-events: none;
+          `
+        )
         body.insertBefore(svg, body.firstChild)
       }
       svg.appendChild(filter)
