@@ -232,14 +232,32 @@ function applyGlowEffectToOverview(container: HTMLElement) {
   )
   addStyle(container, `background-color: ${color}`)
 
-  const buttons = document.querySelectorAll("button.MuiButton-textSizeMedium")
-
+  const buttons = container.querySelectorAll("button.MuiButton-textSizeMedium")
   buttons.forEach((element) => {
     const color = createColorWithTransparency(
       getComputedStyle(element).backgroundColor,
       0.5
     )
     addStyle(element as HTMLElement, `background-color: ${color}`)
+  })
+
+  const bars = container.querySelectorAll(".MuiLinearProgress-determinate")
+  bars.forEach((element) => {
+    const color = createColorWithTransparency(
+      getComputedStyle(element).backgroundColor,
+      0.5
+    )
+    addStyle(element as HTMLElement, `background-color: ${color}`)
+  })
+
+  const table = container.querySelectorAll(
+    `
+    table tr:nth-child(n+3):nth-child(-n+16) td,
+    table tr:nth-child(n+3):nth-child(-n+16) th
+    `
+  )
+  table.forEach((element) => {
+    addStyle(element as HTMLElement, `border-bottom-color: transparent`)
   })
 }
 
