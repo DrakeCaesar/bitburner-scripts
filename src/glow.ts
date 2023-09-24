@@ -58,6 +58,7 @@ export async function main(): Promise<void> {
           ) {
             applyGlowEffectToSkillBar(element)
           }
+          // applyGlowEffectToElementsInContainer(doc.body)
         }
       }
     })
@@ -154,6 +155,9 @@ export async function main(): Promise<void> {
       sheet.insertRule(`.${newClassName} { ${style} }`, sheet.cssRules.length)
     }
 
+    // Add the generic glow class to the element's class list
+    element.classList.add(glowClass)
+
     // Add the new class name to the element's class list
     element.classList.add(newClassName)
   }
@@ -220,7 +224,8 @@ export async function main(): Promise<void> {
   // Function to apply the glow effect to an SVG element
   function applyGlowEffectToSvgElement(element: HTMLElement) {
     let color = getComputedStyle(element).fill
-    if (color === "rgb(0, 0, 0)") {
+    const isAchievement = element.style.filter.includes("hue-rotate(281deg)")
+    if (isAchievement) {
       const heading = element.parentElement?.nextSibling
         ?.firstChild as HTMLElement
       color = getComputedStyle(heading).color
@@ -247,13 +252,8 @@ export async function main(): Promise<void> {
 
       if (!svg) {
         svg = document.createElementNS("http://www.w3.org/2000/svg", "svg")
-        if (body.firstChild) {
-          body.insertBefore(svg, body.firstChild) // Insert the SVG as the first child of the body
-        } else {
-          body.appendChild(svg) // This is just a fallback in case there are no elements inside the body
-        }
+        body.insertBefore(svg, body.firstChild)
       }
-
       svg.appendChild(filter)
     }
 
@@ -433,9 +433,9 @@ export async function main(): Promise<void> {
         }
       }
       if (currentNode.parentElement instanceof SVGElement) {
-        applyGlowEffectToSvgElement(currentNode.parentElement)
+        // applyGlowEffectToSvgElement(currentNode.parentElement)
       } else if (currentNode.parentElement instanceof HTMLImageElement) {
-        applyGlowEffectToSvgElement(currentNode.parentElement)
+        // applyGlowEffectToSvgElement(currentNode.parentElement)
       } else if (currentNode.parentElement instanceof HTMLElement) {
         applyGlowEffectToTextElement(currentNode.parentElement)
       }
@@ -477,6 +477,7 @@ export async function main(): Promise<void> {
   // Remove glow effect from all elements
   function removeGlowFromAllElements() {
     // Remove glow effect from elements with glowClass and matching glow-hash classes
+    //const elementsWithGlow = doc.querySelectorAll(`.${glowClass}`)
     const elementsWithGlow = doc.querySelectorAll(`.${glowClass}`)
     elementsWithGlow.forEach((element) => {
       const classList = element.classList

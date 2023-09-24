@@ -19,6 +19,6 @@ export default defineConfig({
       { pattern: "src/**/*.{js,ts}", transform: true },
       { pattern: "src/**/*.{script,txt}" },
     ],
-    sourcemap: "hidden",
+    sourcemap: "inline",
   },
 })
