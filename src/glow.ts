@@ -225,7 +225,6 @@ export async function main(): Promise<void> {
     }
     const intensity = calculateGlowIntensity(color)
     const opacity = intensity
-    const filter = doc.createElementNS("http://www.w3.org/2000/svg", "filter")
     const feDropShadow = doc.createElementNS(
       "http://www.w3.org/2000/svg",
       "feDropShadow"
@@ -236,10 +235,13 @@ export async function main(): Promise<void> {
     feDropShadow.setAttribute("flood-color", "white")
     feDropShadow.setAttribute("flood-opacity", String(opacity))
     const hash = generateHash(feDropShadow.outerHTML)
-    filter.setAttribute("id", `glow-filter${hash}`)
-    filter.appendChild(feDropShadow)
-    const filterElement = doc.body.querySelector(`#glow-filter${hash}`)
+    const filterElement = doc.body.querySelector(
+      `body > svg > #glow-filter${hash}`
+    )
     if (!filterElement) {
+      const filter = doc.createElementNS("http://www.w3.org/2000/svg", "filter")
+      filter.setAttribute("id", `glow-filter${hash}`)
+      filter.appendChild(feDropShadow)
       const body = document.body
       let svg = body.querySelector("body > svg")
 
@@ -295,13 +297,14 @@ export async function main(): Promise<void> {
 
   // Function to apply the glow effect to an input element
   function applyGlowEffectToInputElement(element: HTMLInputElement) {
-    const color = getComputedStyle(element).color
+    const computedStyle = getComputedStyle(element)
+    const color = computedStyle.color
     const intensity = calculateGlowIntensity(color)
     const originalMarginLeft = parseInt(
-      getComputedStyle(element).marginLeft.replace("px", "")
+      computedStyle.marginLeft.replace("px", "")
     )
     const originalTextIndent = parseInt(
-      getComputedStyle(element).textIndent.replace("px", "")
+      computedStyle.textIndent.replace("px", "")
     )
 
     // Generate a unique hash based on the glowStyles
