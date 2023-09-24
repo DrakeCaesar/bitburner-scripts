@@ -49,16 +49,12 @@ export async function main(): Promise<void> {
           })
         } else if (
           mutation.type === "attributes" &&
-          mutation.attributeName === "style"
+          mutation.attributeName === "class"
         ) {
           const element = mutation.target as HTMLElement
-          if (
-            element instanceof HTMLSpanElement &&
-            element.classList.contains("MuiLinearProgress-bar")
-          ) {
-            applyGlowEffectToSkillBar(element)
+          if (element instanceof HTMLElement) {
+            applyGlowEffectToElementsInContainer(element)
           }
-          // applyGlowEffectToElementsInContainer(doc.body)
         }
       }
     })
@@ -66,7 +62,7 @@ export async function main(): Promise<void> {
     // Start observing mutations to the page
     observer.observe(document.body, {
       attributes: true,
-      attributeFilter: ["style"],
+      attributeFilter: ["class"],
       childList: true,
       subtree: true,
     })
@@ -77,6 +73,7 @@ export async function main(): Promise<void> {
 
   // Function to calculate the luminance value of a given color
   function calculateGlowIntensity(color: string): number {
+    return 1.0
     const rgb = color.substring(4, color.length - 1).split(",")
     const r = parseInt(rgb[0].trim(), 10) / 255
     const g = parseInt(rgb[1].trim(), 10) / 255
@@ -163,10 +160,6 @@ export async function main(): Promise<void> {
   }
 
   // Helper function to check if a CSSRule is a CSSStyleRule
-  function isCSSStyleRule(rule: CSSRule): rule is CSSStyleRule {
-    // Use constructor.name to check the type
-    return rule.constructor.name === "CSSStyleRule"
-  }
 
   // Function to generate a hash based on a string
   function generateHash(str: string): string {
@@ -224,7 +217,7 @@ export async function main(): Promise<void> {
   // Function to apply the glow effect to an SVG element
   function applyGlowEffectToSvgElement(element: HTMLElement) {
     let color = getComputedStyle(element).fill
-    const isAchievement = element.style.filter.includes("hue-rotate(281deg)")
+    const isAchievement = element.style.filter.includes("hue-rotate")
     if (isAchievement) {
       const heading = element.parentElement?.nextSibling
         ?.firstChild as HTMLElement
@@ -379,63 +372,12 @@ export async function main(): Promise<void> {
 
     let currentNode: Node | null
     while ((currentNode = textNodes.nextNode())) {
-      const testing = false
-      if (testing) {
-        const styleAttributeValue =
-          currentNode.parentElement?.getAttribute("style")
-
-        const exclusionCriteria: ((style: any) => any)[] = [
-          // Easter egg element
-          (style) => style.includes("display: none; visibility: hidden;"),
-          // Stats page stats
-          (style) => style.includes("color: rgb(207, 207, 207);"),
-          (style) => style.includes("color: rgb(135, 136, 189);"),
-          (style) => style.includes("color: rgb(251, 121, 219);"),
-          (style) => style.includes("color: rgb(249, 227, 95);"),
-          (style) => style.includes("color: rgb(124, 243, 184);"),
-          (style) => style.includes("color: rgb(250, 255, 223);"),
-          (style) => style.includes("opacity: 0.5;"),
-          // Console folders
-          (style) => style.includes("color: cyan;"),
-          // Stock market stocks
-          (style) => style.includes("white-space: pre;"),
-          // Job modal
-          (style) => style.includes("white-space: pre-wrap;"),
-
-          // Factions page elements - faction names
-          (style) =>
-            style.includes(
-              "overflow: hidden; white-space: nowrap; text-overflow: ellipsis;"
-            ),
-          //Hacknet Nodes
-          (style) => style.includes("overflow: visible;"),
-
-          // Tooltips
-          (style) =>
-            style.includes(
-              "opacity: 1; transform: scale(1, 1); transition: opacity 200ms cubic-bezier(0.4, 0, 0.2, 1) 0ms, transform 133ms cubic-bezier(0.4, 0, 0.2, 1) 0ms;"
-            ),
-        ]
-
-        if (
-          styleAttributeValue !== null &&
-          styleAttributeValue !== undefined &&
-          styleAttributeValue.trim() !== ""
-        ) {
-          // Check if the style attribute matches any exclusion criteria
-          const containsExcludedStyle = exclusionCriteria.some((criterion) =>
-            criterion(styleAttributeValue)
-          )
-          if (!containsExcludedStyle) {
-            console.log(`Style Attribute: ${styleAttributeValue}`)
-            continue
-          }
-        }
-      }
+      // Continue if the current node already has the glow effect applied
+      if (currentNode.parentElement?.classList.contains(glowClass)) continue
       if (currentNode.parentElement instanceof SVGElement) {
-        // applyGlowEffectToSvgElement(currentNode.parentElement)
+        applyGlowEffectToSvgElement(currentNode.parentElement)
       } else if (currentNode.parentElement instanceof HTMLImageElement) {
-        // applyGlowEffectToSvgElement(currentNode.parentElement)
+        applyGlowEffectToSvgElement(currentNode.parentElement)
       } else if (currentNode.parentElement instanceof HTMLElement) {
         applyGlowEffectToTextElement(currentNode.parentElement)
       }
@@ -443,41 +385,21 @@ export async function main(): Promise<void> {
 
     const inputElements = container.querySelectorAll("input[type='text']")
     inputElements.forEach(function (inputElement) {
-      applyGlowEffectToInputElement(inputElement as HTMLInputElement)
+      if (!inputElement.classList.contains(glowClass))
+        applyGlowEffectToInputElement(inputElement as HTMLInputElement)
     })
 
     const svgElements = container.querySelectorAll("svg, img")
     svgElements.forEach(function (svgElement) {
-      applyGlowEffectToSvgElement(svgElement as HTMLElement)
+      if (!svgElement.classList.contains(glowClass))
+        applyGlowEffectToSvgElement(svgElement as HTMLElement)
     })
   }
 
   // Function to remove glow effect from an SVG element
-  function removeGlowFromSvgElement(element: HTMLElement) {
-    const filterValue = element.style.filter
-
-    // Check if the element has the glow filter applied
-    if (filterValue && filterValue.includes('url("#glow-filter")')) {
-      // Remove the glow filter from the filter list
-      const newFilterValue = filterValue
-        .replaceAll('url("#glow-filter")', "")
-        .trim()
-      element.style.filter = newFilterValue
-
-      // If there's a direct child filter element with the id "glow-filter", remove it
-      const filterElement = element.querySelector("#glow-filter")
-      if (filterElement) filterElement.remove()
-
-      // Reset styles applied in `applyGlowEffectToSvgElement`
-      element.style.margin = ""
-      element.style.padding = ""
-    }
-  }
 
   // Remove glow effect from all elements
   function removeGlowFromAllElements() {
-    // Remove glow effect from elements with glowClass and matching glow-hash classes
-    //const elementsWithGlow = doc.querySelectorAll(`.${glowClass}`)
     const elementsWithGlow = doc.querySelectorAll(`.${glowClass}`)
     elementsWithGlow.forEach((element) => {
       const classList = element.classList
@@ -486,6 +408,12 @@ export async function main(): Promise<void> {
       )
       classNamesToRemove.forEach((className) => classList.remove(className))
     })
+    // Remove the unique stylesheet
+    const styleSheet = document.getElementById("unique-style-sheet")
+    if (styleSheet) styleSheet.remove()
+    // Remove the glow filters
+    const filterElement = document.querySelector("body > svg")
+    if (filterElement) filterElement.remove()
   }
 
   // Stop observing mutations
