@@ -4,6 +4,7 @@ import {
   calculateInputStyle,
   calculateSvgStyle,
   removeGlowFromAllElements,
+  replaceOldProgressBars,
   stopObservingMutations,
 } from "./libraries/glowHelpFunction"
 
@@ -13,22 +14,24 @@ export async function main(): Promise<void> {
   const doc: Document = eval("document")
   const glowSize = 20
 
-  // setInterval(toggleGlow, 500)
   toggleGlow()
+  // setInterval(toggleGlow, 5000)
+  // setTimeout(() => {
+  //   // toggleGlow()
+  //   setInterval(toggleGlow, 500)
+  // }, 3000)
 
   function toggleGlow() {
     // Check if the observer reference already exists
     if (!(document.body as any).mutationObserver) {
-      // TODO: Fix progress bar glow
-      // const skillBarElements = document.querySelectorAll(
-      //   ".MuiLinearProgress-bar"
-      // )
-      // skillBarElements.forEach((element) => {
-      //   applyGlowEffectToSkillBar(element as HTMLSpanElement)
-      // })
+      applyGlowEffectToSkillBars()
 
       // Apply the glow effect to all input elements on page load
       applyGlowEffectToElementsInContainer(doc.body)
+      const terminalDiv = document.querySelector(".MuiInputBase-adornedStart")
+      if (terminalDiv instanceof HTMLDivElement) {
+        addStyle(terminalDiv, `background-color: transparent`)
+      }
       createObserver()
     } else {
       // If the observer reference already exists, stop observing mutations and remove the glow effect
@@ -112,49 +115,6 @@ export async function main(): Promise<void> {
     }
   }
 
-  function generateNewProgressBar(bars: number, dashes: number): string | null {
-    const size = bars + dashes
-    if (size == 0) return null
-    const bar =
-      (bars ? "" + "".repeat(Math.min(bars - 1, size - 2)) : "") +
-      (dashes ? "".repeat(Math.min(dashes - 1, size - 2)) + "" : "")
-    const expansion = (size + 2) / size
-    return `<span class="expanded" style="display: inline-block; transform: scaleX(${expansion}); transform-origin: 0% 0%;">${bar}</span>`
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  function generateOldProgressBar(bars: number, dashes: number): string {
-    return "[" + "|".repeat(bars) + "-".repeat(dashes) + "]"
-  }
-
-  function replaceOldProgressBars(node: HTMLParagraphElement) {
-    // If the node is a text node, replace any legacy progress bars in the text content
-    const debug = false
-    const newNode = debug ? node.cloneNode(true) : node
-
-    if (newNode.textContent && newNode instanceof HTMLParagraphElement) {
-      const content = newNode.textContent
-      //ns.tprint("content: " + content)
-      const matches = content.matchAll(/\[([|]*)([-]*)\]/g)
-      if (matches) {
-        for (const oldBar of matches) {
-          if (oldBar.length != 3) return
-          const bars = oldBar[1].length ?? 0
-          const dashes = oldBar[2].length ?? 0
-          const newBar = generateNewProgressBar(bars, dashes)
-          if (newBar) {
-            const newContent = newNode.textContent.replace(oldBar[0], newBar)
-            newNode.innerHTML = newContent
-            newNode.style.whiteSpace = "pre"
-            if (debug) {
-              node.insertAdjacentElement("afterend", newNode)
-            }
-          }
-        }
-      }
-    }
-  }
-
   function applyGlowEffectToSvgElement(element: HTMLElement) {
     addStyle(element, calculateSvgStyle(element))
   }
@@ -165,38 +125,48 @@ export async function main(): Promise<void> {
   }
 
   // Function to apply the glow effect to a skill bar element
-  function applyGlowEffectToSkillBar(element: HTMLSpanElement) {
-    const color = getComputedStyle(element).backgroundColor
-    const intensity = calculateGlowIntensity(color)
+  function applyGlowEffectToSkillBars() {
+    const skillBarElements = document.querySelectorAll(
+      ".MuiLinearProgress-bar"
+    ) as NodeListOf<HTMLElement>
+    skillBarElements.forEach((element) => {
+      const color = getComputedStyle(element).backgroundColor
+      const intensity = calculateGlowIntensity(color)
 
-    // Generate a unique hash based on the boxShadowStyle
-    const boxShadowStyle = `0 0 ${
-      intensity * glowSize
-    }px rgba(70%, 70%, 70%, ${intensity})`
+      // Generate a unique hash based on the boxShadowStyle
+      const boxShadowStyle = `box-shadow: 0 0 ${
+        intensity * glowSize
+      }px rgba(70%, 70%, 70%, ${intensity});`
 
-    addStyle(element, boxShadowStyle)
-
-    const parent = element.parentElement
-    if (parent != null) {
-      const barParentStyle = "overflow: visible"
-      // TODO: Fix progress bar glow
-      // addStyle(parent, barParentStyle)
-      const transform = getComputedStyle(element).transform
-      const translateXRegex = /([-0-9]+.[0-9]+)/
-      const translateX: number = parseFloat(
-        transform.match(translateXRegex)?.[1] ?? ""
-      )
-      if (translateX < -1 && translateX > -100) {
-        const width = (parent.offsetWidth / 100) * (100 + translateX)
-        const barStyle = `width: ${width}px; transform: translateX(0%); transition: none;`
+      const parent = element.parentElement
+      if (parent != null) {
+        const barParentStyle = "overflow: visible"
         // TODO: Fix progress bar glow
-        addStyle(element, barStyle)
+        addStyle(parent, barParentStyle)
+        const transform = element.style.transform
+        const translateXRegex = /([-0-9]+.[0-9]+)/
+        const translateX: number = parseFloat(
+          transform.match(translateXRegex)?.[1] ?? ""
+        )
+        if (translateX < -1 && translateX > -100) {
+          const width = (parent.offsetWidth / 100) * (100 + translateX)
+          const barStyle = `transform: translateX(0%) !important;`
+          addStyle(element, `${boxShadowStyle} ${barStyle}`)
+          element.style.width = `${width}px`
+          element.style.transition = "none"
+        } else {
+          addStyle(element, `${boxShadowStyle}`)
+        }
+      } else {
+        addStyle(element, `${boxShadowStyle}`)
       }
-    }
+    })
   }
 
   // Function to apply the glow effect to all elements in a given container
   function applyGlowEffectToElementsInContainer(container: HTMLElement) {
+    //console.log("Applying glow effect to element:", container)
+
     const textNodes = doc.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
       acceptNode: (node: Node) => {
         const parent = node.parentElement
@@ -238,7 +208,10 @@ export async function main(): Promise<void> {
       if (!svgElement.classList.contains(glowClass))
         applyGlowEffectToSvgElement(svgElement as HTMLElement)
     })
-  }
 
-  // Function to remove glow effect from an SVG element
+    // Special case for the terminal
+    if (container.classList.contains("MuiInputBase-adornedStart")) {
+      addStyle(container, `background-color: transparent`)
+    }
+  }
 }

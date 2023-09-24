@@ -279,6 +279,96 @@ export function removeGlowFromAllElements() {
   // Remove the glow filters
   const filterElement = document.querySelector("body > svg")
   if (filterElement) filterElement.remove()
+
+  // Remove glow from skill bars
+  const skillBarElements = document.querySelectorAll(
+    ".MuiLinearProgress-bar"
+  ) as NodeListOf<HTMLElement>
+  skillBarElements.forEach((element) => {
+    element.style.width = ""
+    window.requestAnimationFrame(() => {
+      element.style.transition = ""
+    })
+  })
+
+  // Restore old progress bars
+  {
+    /* Your CSS styles for the parent element here */
+  }
+
+  document.querySelectorAll("p:has(.new-progress-bar)").forEach((element) => {
+    console.log("restoring old progress bars")
+    const span = element.querySelector("span.new-progress-bar")
+    if (span) {
+      const bars = span.getAttribute("bars")
+      const dashes = span.getAttribute("dashes")
+      if (bars && dashes) {
+        console.log("bars: " + bars)
+        console.log("dashes: " + dashes)
+
+        // Create a text node with the old content
+        const oldBar = generateOldProgressBar(parseInt(bars), parseInt(dashes))
+        const textNode = document.createTextNode(oldBar)
+
+        // Replace the existing span with the text node
+        element.replaceChild(textNode, span)
+      }
+    }
+  })
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function generateOldProgressBar(bars: number, dashes: number): string {
+  return "[" + "|".repeat(bars) + "-".repeat(dashes) + "]"
+}
+
+function generateNewProgressBar(bars: number, dashes: number): string | null {
+  const size = bars + dashes
+  if (size == 0) return null
+  const bar =
+    (bars ? "" + "".repeat(Math.min(bars - 1, size - 2)) : "") +
+    (dashes ? "".repeat(Math.min(dashes - 1, size - 2)) + "" : "")
+  return `<span class="expanded new-progress-bar" bars=${bars} dashes=${dashes} >${bar}</span>`
+}
+function generateNewProgressBarStyle(bars: number, dashes: number): string {
+  const size = bars + dashes
+  const expansion = (size + 2) / size
+  return `display: inline-block; transform: scaleX(${expansion}); transform-origin: 0% 0%;`
+}
+
+export function replaceOldProgressBars(node: HTMLParagraphElement) {
+  // If the node is a text node, replace any legacy progress bars in the text content
+  const debug = false
+  const newNode = debug ? node.cloneNode(true) : node
+
+  if (newNode.textContent && newNode instanceof HTMLParagraphElement) {
+    const content = newNode.textContent
+    //ns.tprint("content: " + content)
+    const matches = content.matchAll(/\[([|]*)([-]*)\]/g)
+    if (matches) {
+      for (const oldBar of matches) {
+        if (oldBar.length != 3) return
+        const bars = oldBar[1].length ?? 0
+        const dashes = oldBar[2].length ?? 0
+        const newBar = generateNewProgressBar(bars, dashes)
+        if (newBar) {
+          const newContent = newNode.textContent.replace(oldBar[0], newBar)
+          newNode.innerHTML = newContent
+          // newNode.style.whiteSpace = "pre"
+          if (debug) {
+            node.insertAdjacentElement("afterend", newNode)
+          }
+          const span = newNode.querySelector("span.expanded")
+          if (span) {
+            addStyle(
+              span as HTMLElement,
+              generateNewProgressBarStyle(bars, dashes)
+            )
+          }
+        }
+      }
+    }
+  }
 }
 
 // Stop observing mutations
