@@ -10,12 +10,13 @@ export async function main(): Promise<void> {
   function toggleGlow() {
     // Check if the observer reference already exists
     if (!(document.body as any).mutationObserver) {
-      const skillBarElements = document.querySelectorAll(
-        ".MuiLinearProgress-bar"
-      )
-      skillBarElements.forEach((element) => {
-        applyGlowEffectToSkillBar(element as HTMLSpanElement)
-      })
+      // TODO: Fix progress bar glow
+      // const skillBarElements = document.querySelectorAll(
+      //   ".MuiLinearProgress-bar"
+      // )
+      // skillBarElements.forEach((element) => {
+      //   applyGlowEffectToSkillBar(element as HTMLSpanElement)
+      // })
 
       // Apply the glow effect to all input elements on page load
       applyGlowEffectToElementsInContainer(doc.body)
@@ -96,14 +97,16 @@ export async function main(): Promise<void> {
     addStyle(element, glowStyles)
 
     if (element.parentElement) {
-      element.parentElement.style.overflow = "visible"
+      // TODO: Figure out if I need this
+      //addStyle(element.parentElement, "overflow: visible")
       if (
         element.parentElement.parentElement instanceof HTMLDivElement &&
         getComputedStyle(element.parentElement.parentElement).border.includes(
           "1px solid"
         )
       ) {
-        element.parentElement.parentElement.style.overflow = "hidden"
+        // TODO: Figure out if I need this
+        //addStyle(element.parentElement.parentElement, "overflow: hidden")
       }
     }
 
@@ -113,7 +116,7 @@ export async function main(): Promise<void> {
   }
 
   function addStyle(element: HTMLElement, style: string) {
-    const uniqueStyleSheetId = "unique-style-sheet" // Unique ID for the stylesheet
+    const uniqueStyleSheetId = "glow-style-sheet"
 
     // Try to get the unique stylesheet by ID
     let styleSheet = document.getElementById(
@@ -128,11 +131,44 @@ export async function main(): Promise<void> {
     }
 
     // Generate a unique hash based on the style
-    const hash = generateHash(style)
+    const newHash = generateHash(style)
+    const oldHash = getHash(element)
+    if (oldHash === newHash) return
+    if (oldHash !== "") {
+      // console.log("old hash: " + oldHash)
+      // console.log("new hash: " + newHash)
+      const oldGlowClass = `glow${oldHash}`
+      const newGlowClass = `glow${newHash}`
+      //print style from stylesheet for both classes
+
+      const sheet = styleSheet.sheet as CSSStyleSheet
+      for (let i = 0; i < sheet.cssRules.length; i++) {
+        const rule = sheet.cssRules[i]
+        if (
+          rule instanceof CSSStyleRule &&
+          rule.selectorText === `.${oldGlowClass}`
+        ) {
+          console.log("glow class conflict:")
+          printStyleRules(rule as CSSStyleRule)
+        }
+      }
+      for (let i = 0; i < sheet.cssRules.length; i++) {
+        const rule = sheet.cssRules[i]
+        if (
+          rule instanceof CSSStyleRule &&
+          rule.selectorText === `.${newGlowClass}`
+        ) {
+          console.log("new glow class style:")
+          printStyleRules(rule as CSSStyleRule)
+        }
+      }
+
+      //element.classList.remove(glowClass)
+      //console.log("glow class conflict")
+    }
 
     // Create a new class name
-    const newClassName = `glow${hash}`
-
+    const newClassName = `glow${newHash}`
     // Check if a rule with the same selector already exists in the unique stylesheet
     const sheet = styleSheet.sheet as CSSStyleSheet
     let ruleIndex = -1
@@ -146,15 +182,12 @@ export async function main(): Promise<void> {
         break
       }
     }
-
     // If a rule with the same selector doesn't exist; insert a new rule in the unique stylesheet
     if (ruleIndex === -1) {
       sheet.insertRule(`.${newClassName} { ${style} }`, sheet.cssRules.length)
     }
-
     // Add the generic glow class to the element's class list
     element.classList.add(glowClass)
-
     // Add the new class name to the element's class list
     element.classList.add(newClassName)
   }
@@ -169,6 +202,38 @@ export async function main(): Promise<void> {
       hash = (hash << 5) - hash + char
     }
     return hash.toString(16)
+  }
+
+  function getHash(element: HTMLElement): string {
+    const classlist = element.classList
+    const classNames = Array.from(classlist)
+    const glowClassNames = classNames.filter(
+      (className) => className !== "glow" && className.startsWith("glow")
+    )
+    if (glowClassNames.length > 0) {
+      if (glowClassNames.length > 1)
+        console.log("Multiple glow classes found on element")
+      return glowClassNames[0].substring(4)
+    }
+    return ""
+  }
+
+  function printStyleRules(rule: CSSStyleRule) {
+    // css text and non empty values from style
+    const cssText = rule.style.cssText
+    const style = rule.style
+    const styleKeys = Object.keys(style)
+    const nonEmptyStyleKeys = styleKeys.filter(
+      (key) => style[key as keyof CSSStyleDeclaration] !== ""
+    )
+    const nonEmptyStyle = nonEmptyStyleKeys.map(
+      (key) => `${key}: ${style[key as keyof CSSStyleDeclaration]}`
+    )
+    // const nonEmptyStyleText = nonEmptyStyle.join("; ")
+    console.log(
+      `${rule.selectorText}\n{ ${cssText} }`
+      //`${rule.selectorText} { ${nonEmptyStyleText} }`
+    )
   }
 
   function generateNewProgressBar(bars: number, dashes: number): string | null {
@@ -339,17 +404,19 @@ export async function main(): Promise<void> {
 
     const parent = element.parentElement
     if (parent != null) {
-      parent.style.overflow = "visible"
-      const transform = element.style.transform
+      const barParentStyle = "overflow: visible"
+      // TODO: Fix progress bar glow
+      // addStyle(parent, barParentStyle)
+      const transform = getComputedStyle(element).transform
       const translateXRegex = /([-0-9]+.[0-9]+)/
       const translateX: number = parseFloat(
         transform.match(translateXRegex)?.[1] ?? ""
       )
       if (translateX < -1 && translateX > -100) {
         const width = (parent.offsetWidth / 100) * (100 + translateX)
-        element.style.width = `${width}px`
-        element.style.transform = "translateX(0%)"
-        element.style.transition = "none"
+        const barStyle = `width: ${width}px; transform: translateX(0%); transition: none;`
+        // TODO: Fix progress bar glow
+        addStyle(element, barStyle)
       }
     }
   }
@@ -412,7 +479,7 @@ export async function main(): Promise<void> {
       classNamesToRemove.forEach((className) => classList.remove(className))
     })
     // Remove the unique stylesheet
-    const styleSheet = document.getElementById("unique-style-sheet")
+    const styleSheet = document.getElementById("glow-style-sheet")
     if (styleSheet) styleSheet.remove()
     // Remove the glow filters
     const filterElement = document.querySelector("body > svg")
