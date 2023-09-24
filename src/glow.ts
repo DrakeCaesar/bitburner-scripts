@@ -30,8 +30,13 @@ export async function main(): Promise<void> {
       applyGlowEffectToElementsInContainer(doc.body)
       const terminalDiv = document.querySelector(".MuiInputBase-adornedStart")
       if (terminalDiv instanceof HTMLDivElement) {
-        addStyle(terminalDiv, `background-color: transparent`)
+        applyGlowEffectToTerminal(terminalDiv)
       }
+      const overviewDiv = document.querySelector(".react-draggable")
+      if (overviewDiv instanceof HTMLDivElement) {
+        applyGlowEffectToOverview(overviewDiv)
+      }
+
       createObserver()
     } else {
       // If the observer reference already exists, stop observing mutations and remove the glow effect
@@ -211,7 +216,46 @@ export async function main(): Promise<void> {
 
     // Special case for the terminal
     if (container.classList.contains("MuiInputBase-adornedStart")) {
-      addStyle(container, `background-color: transparent`)
+      applyGlowEffectToTerminal(container)
+    }
+
+    // Special case for the overview
+    if (container.classList.contains("react-draggable")) {
+      applyGlowEffectToOverview(container)
     }
   }
+}
+function applyGlowEffectToOverview(container: HTMLElement) {
+  const color = createColorWithTransparency(
+    getComputedStyle(container).backgroundColor,
+    0.8
+  )
+  addStyle(container, `background-color: ${color}`)
+
+  const buttons = document.querySelectorAll("button.MuiButton-textSizeMedium")
+
+  buttons.forEach((element) => {
+    const color = createColorWithTransparency(
+      getComputedStyle(element).backgroundColor,
+      0.5
+    )
+    addStyle(element as HTMLElement, `background-color: ${color}`)
+  })
+}
+
+function applyGlowEffectToTerminal(container: HTMLElement) {
+  const color = getComputedStyle(container).backgroundColor
+  const semiTransparentColor = createColorWithTransparency(color, 0.8)
+  addStyle(container, `background-color: ${semiTransparentColor}`)
+}
+
+function createColorWithTransparency(color: string, transparency: number) {
+  const rgbValues = color.match(/\d+/g)
+  if (rgbValues) {
+    const red = rgbValues[0]
+    const green = rgbValues[1]
+    const blue = rgbValues[2]
+    return `rgba(${red}, ${green}, ${blue}, ${transparency})`
+  }
+  return color
 }
