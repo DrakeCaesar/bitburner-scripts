@@ -146,8 +146,7 @@ export async function main(): Promise<void> {
       const parent = element.parentElement
       if (parent != null) {
         const barParentStyle = "overflow: visible"
-        // TODO: Fix progress bar glow
-        addStyle(parent, barParentStyle)
+        // addStyle(parent, barParentStyle)
         const transform = element.style.transform
         const translateXRegex = /([-0-9]+.[0-9]+)/
         const translateX: number = parseFloat(
@@ -155,10 +154,9 @@ export async function main(): Promise<void> {
         )
         if (translateX < -1 && translateX > -100) {
           const width = (parent.offsetWidth / 100) * (100 + translateX)
-          const barStyle = `transform: translateX(0%) !important;`
+          const barStyle = `transform: translateX(0%) !important; transition: none`
           addStyle(element, `${boxShadowStyle} ${barStyle}`)
           element.style.width = `${width}px`
-          element.style.transition = "none"
         } else {
           addStyle(element, `${boxShadowStyle}`)
         }
@@ -223,6 +221,11 @@ export async function main(): Promise<void> {
     if (container.classList.contains("react-draggable")) {
       applyGlowEffectToOverview(container)
     }
+
+    // Special case for the skill bars
+    if (container.classList.contains("MuiLinearProgress-bar")) {
+      applyGlowEffectToSkillBars()
+    }
   }
 }
 function applyGlowEffectToOverview(container: HTMLElement) {
@@ -232,14 +235,14 @@ function applyGlowEffectToOverview(container: HTMLElement) {
   )
   addStyle(container, `background-color: ${color}`)
 
-  const buttons = container.querySelectorAll("button.MuiButton-textSizeMedium")
-  buttons.forEach((element) => {
-    const color = createColorWithTransparency(
-      getComputedStyle(element).backgroundColor,
-      0.5
-    )
-    addStyle(element as HTMLElement, `background-color: ${color}`)
-  })
+  // const buttons = container.querySelectorAll("button.MuiButton-textSizeMedium")
+  // buttons.forEach((element) => {
+  //   const color = createColorWithTransparency(
+  //     getComputedStyle(element).backgroundColor,
+  //     0.5
+  //   )
+  //   addStyle(element as HTMLElement, `background-color: ${color}`)
+  // })
 
   const bars = container.querySelectorAll(".MuiLinearProgress-determinate")
   bars.forEach((element) => {
@@ -247,13 +250,16 @@ function applyGlowEffectToOverview(container: HTMLElement) {
       getComputedStyle(element).backgroundColor,
       0.5
     )
-    addStyle(element as HTMLElement, `background-color: ${color}`)
+    addStyle(
+      element as HTMLElement,
+      `background-color: ${color}; overflow: visible;`
+    )
   })
 
   const table = container.querySelectorAll(
     `
-    table tr:nth-child(n+3):nth-child(-n+16) td,
-    table tr:nth-child(n+3):nth-child(-n+16) th
+    table tr:nth-child(n+3):nth-child(-n+15) td,
+    table tr:nth-child(n+3):nth-child(-n+15) th
     `
   )
   table.forEach((element) => {

@@ -134,7 +134,7 @@ export function calculateInputStyle(element: HTMLElement): string {
 
 // Function to calculate the luminance value of a given color
 export function calculateGlowIntensity(color: string): number {
-  return 1.0
+  // return 1.0
   const rgb = color.substring(4, color.length - 1).split(",")
   const r = parseInt(rgb[0].trim(), 10) / 255
   const g = parseInt(rgb[1].trim(), 10) / 255
@@ -285,6 +285,7 @@ export function removeGlowFromAllElements() {
     ".MuiLinearProgress-bar"
   ) as NodeListOf<HTMLElement>
   skillBarElements.forEach((element) => {
+    element.style.transition = "none"
     element.style.width = ""
     window.requestAnimationFrame(() => {
       element.style.transition = ""
