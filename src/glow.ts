@@ -229,21 +229,53 @@ export async function main(): Promise<void> {
   }
 }
 function applyGlowEffectToOverview(container: HTMLElement) {
+  // Existing logic
   const color = createColorWithTransparency(
     getComputedStyle(container).backgroundColor,
     0.8
   )
-  addStyle(container, `background-color: ${color}`)
 
-  // const buttons = container.querySelectorAll("button.MuiButton-textSizeMedium")
-  // buttons.forEach((element) => {
-  //   const color = createColorWithTransparency(
-  //     getComputedStyle(element).backgroundColor,
-  //     0.5
-  //   )
-  //   addStyle(element as HTMLElement, `background-color: ${color}`)
-  // })
+  // Additional styles for the panel
+  addStyle(
+    container,
+    `
+    background-color: transparent;
+    border-radius: 5px;
+    backdrop-filter: blur(7.5px);
+    box-shadow: 0 1.6px 3.6px 0 rgb(0 0 0 / 13%), 0 0.3px 0.9px 0 rgb(0 0 0 / 11%);
+    position: fixed;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+  `
+  )
 
+  // Define a unique id for the afterElement
+  const uniqueId = "glow-after-element"
+
+  // Check if the afterElement already exists
+  const existingElement = container.querySelector(`#${uniqueId}`)
+  if (existingElement) {
+    // Remove the existing afterElement
+    existingElement.remove()
+  }
+
+  // Adding the ::after pseudo-element style
+  const afterElement = document.createElement("div")
+  afterElement.id = uniqueId // Assign the unique id to the afterElement
+  afterElement.style.content = ""
+  afterElement.style.position = "absolute"
+  afterElement.style.left = "0"
+  afterElement.style.top = "0"
+  afterElement.style.right = "0"
+  afterElement.style.bottom = "0"
+  afterElement.style.zIndex = "-1"
+  afterElement.style.opacity = ".4"
+  afterElement.style.backgroundColor = "transparent"
+  afterElement.style.borderRadius = "5px"
+  afterElement.style.backgroundImage =
+    'url("https://s3-us-west-2.amazonaws.com/s.cdpn.io/59615/bg--acrylic-light.png")'
+  container.appendChild(afterElement)
+
+  // Existing logic for bars and table
   const bars = container.querySelectorAll(".MuiLinearProgress-determinate")
   bars.forEach((element) => {
     const color = createColorWithTransparency(
