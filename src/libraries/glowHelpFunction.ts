@@ -192,7 +192,13 @@ export function addStyle(
 
   // Generate a unique hash based on the style
   const newHash = generateHash(style)
+  if (newHash === "4b73e779e") {
+    console.log("test")
+  }
   const oldHash = getHash(element)
+  console.log("old hash: " + oldHash)
+  console.log("new hash: " + newHash)
+
   if (oldHash === newHash) return `glow${newHash}`
   if (oldHash !== "") {
     hasConflictingStyles(sheet, `.glow${oldHash}`)
@@ -214,15 +220,16 @@ export function addStyleAfter(
   style: string,
   className: string
 ) {
+  if (element.classList.contains("glow-after")) {
+    return
+  }
   const selector = `.${className}::after`
 
   const sheet = getOrCreateStyleSheet()
   if (!hasConflictingStyles(sheet, selector)) {
     sheet.insertRule(`${selector} { ${style} }`, sheet.cssRules.length)
   }
-  if (element.classList.contains("glow-after")) {
-    return
-  }
+
   element.classList.add("glow-after")
   console.log("adding style after")
   console.log(element.classList)
@@ -252,7 +259,7 @@ function hasConflictingStyles(sheet: CSSStyleSheet, selector: string): boolean {
   let ruleIndex = false
   for (let i = 0; i < sheet.cssRules.length; i++) {
     const rule = sheet.cssRules[i]
-    if (rule instanceof CSSStyleRule && rule.selectorText === `.${selector}`) {
+    if (rule instanceof CSSStyleRule && rule.selectorText === `${selector}`) {
       console.log("glow class conflict:")
       printStyleRules(rule as CSSStyleRule)
       ruleIndex = true
