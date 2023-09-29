@@ -236,7 +236,7 @@ function applyGlowEffectToOverview(container: HTMLElement) {
   )
 
   // Additional styles for the panel
-  addStyle(
+  const className = addStyle(
     container,
     `
     background-color: transparent;
@@ -247,35 +247,25 @@ function applyGlowEffectToOverview(container: HTMLElement) {
     border: 1px solid rgba(255, 255, 255, 0.35);
   `
   )
-
-  // Define a unique class for the afterElement
-  const uniqueClass = "glow-after-element"
-
-  // Check if the afterElement already exists
-  const existingAfterElement = container.querySelector(`.${uniqueClass}`)
-  if (existingAfterElement != null) {
-    container.removeChild(existingAfterElement)
+  if (className != undefined) {
+    const afterElementStyle = `
+      .${className}::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        z-index: -1;
+        opacity: 0.4;
+        background-color: transparent;
+        border-radius: 5px;
+        background-image: url("https://s3-us-west-2.amazonaws.com/s.cdpn.io/59615/bg--acrylic-light.png");
+      }
+    `
+    // Add the style to the target element
+    addStyle(container, afterElementStyle)
   }
-
-  // Adding the ::after pseudo-element style
-  const afterElement = document.createElement("div")
-  afterElement.className = uniqueClass // Assign the unique class to the afterElement
-  afterElement.style.content = ""
-  afterElement.style.position = "absolute"
-  afterElement.style.left = "0"
-  afterElement.style.top = "0"
-  afterElement.style.right = "0"
-  afterElement.style.bottom = "0"
-  afterElement.style.zIndex = "-1"
-  afterElement.style.opacity = ".4"
-  afterElement.style.backgroundColor = "transparent"
-  afterElement.style.borderRadius = "5px"
-  afterElement.style.backgroundImage =
-    'url("https://s3-us-west-2.amazonaws.com/s.cdpn.io/59615/bg--acrylic-light.png")'
-
-  // Add the afterElement to the container
-  container.appendChild(afterElement)
-
   // Existing logic for bars and table
   const bars = container.querySelectorAll(".MuiLinearProgress-determinate")
   bars.forEach((element) => {

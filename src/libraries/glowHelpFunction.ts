@@ -186,8 +186,17 @@ export function printStyleRules(rule: CSSStyleRule) {
   )
 }
 
-export function addStyle(element: HTMLElement, style: string) {
+export function addStyle(
+  element: HTMLElement,
+  style: string
+): string | undefined {
   const uniqueStyleSheetId = "glow-style-sheet"
+
+  // Check if the element has a ::after pseudo-element
+  const computedStyles = window.getComputedStyle(element, "::after")
+  if (computedStyles.getPropertyValue("content") !== "none") {
+    return
+  }
 
   // Try to get the unique stylesheet by ID
   let styleSheet = document.getElementById(
@@ -204,7 +213,7 @@ export function addStyle(element: HTMLElement, style: string) {
   // Generate a unique hash based on the style
   const newHash = generateHash(style)
   const oldHash = getHash(element)
-  if (oldHash === newHash) return
+  if (oldHash === newHash) return `glow${newHash}`
   if (oldHash !== "") {
     // console.log("old hash: " + oldHash)
     // console.log("new hash: " + newHash)
@@ -233,7 +242,6 @@ export function addStyle(element: HTMLElement, style: string) {
         printStyleRules(rule as CSSStyleRule)
       }
     }
-
     //element.classList.remove(glowClass)
     //console.log("glow class conflict")
   }
@@ -261,6 +269,8 @@ export function addStyle(element: HTMLElement, style: string) {
   element.classList.add(glowClass)
   // Add the new class name to the element's class list
   element.classList.add(newClassName)
+
+  return newClassName
 }
 
 // Remove glow effect from all elements
@@ -291,9 +301,6 @@ export function removeGlowFromAllElements() {
       element.style.transition = ""
     })
   })
-  //Remove all pseudo elements
-  const pseudoElements = document.querySelectorAll(".glow-after-element")
-  pseudoElements.forEach((element) => element.remove())
 
   // Restore old progress bars
   {
