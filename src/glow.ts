@@ -251,9 +251,15 @@ function applyGlowEffectToOverview(container: HTMLElement) {
   // Define a unique class for the afterElement
   const uniqueClass = "glow-after-element"
 
+  // Check if the afterElement already exists
+  const existingAfterElement = container.querySelector(`.${uniqueClass}`)
+  if (existingAfterElement != null) {
+    container.removeChild(existingAfterElement)
+  }
+
   // Adding the ::after pseudo-element style
   const afterElement = document.createElement("div")
-  afterElement.className = uniqueClass // Assign the unique id to the afterElement
+  afterElement.className = uniqueClass // Assign the unique class to the afterElement
   afterElement.style.content = ""
   afterElement.style.position = "absolute"
   afterElement.style.left = "0"
@@ -266,6 +272,8 @@ function applyGlowEffectToOverview(container: HTMLElement) {
   afterElement.style.borderRadius = "5px"
   afterElement.style.backgroundImage =
     'url("https://s3-us-west-2.amazonaws.com/s.cdpn.io/59615/bg--acrylic-light.png")'
+
+  // Add the afterElement to the container
   container.appendChild(afterElement)
 
   // Existing logic for bars and table
