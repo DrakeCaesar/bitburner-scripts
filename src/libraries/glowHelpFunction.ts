@@ -195,59 +195,17 @@ export function addStyle(
   const oldHash = getHash(element)
   if (oldHash === newHash) return `glow${newHash}`
   if (oldHash !== "") {
-    // console.log("old hash: " + oldHash)
-    // console.log("new hash: " + newHash)
-    const oldGlowClass = `glow${oldHash}`
-    const newGlowClass = `glow${newHash}`
-    //print style from stylesheet for both classes
-
-    for (let i = 0; i < sheet.cssRules.length; i++) {
-      const rule = sheet.cssRules[i]
-      if (
-        rule instanceof CSSStyleRule &&
-        rule.selectorText === `.${oldGlowClass}`
-      ) {
-        console.log("glow class conflict:")
-        printStyleRules(rule as CSSStyleRule)
-      }
-    }
-    for (let i = 0; i < sheet.cssRules.length; i++) {
-      const rule = sheet.cssRules[i]
-      if (
-        rule instanceof CSSStyleRule &&
-        rule.selectorText === `.${newGlowClass}`
-      ) {
-        console.log("new glow class style:")
-        printStyleRules(rule as CSSStyleRule)
-      }
-    }
-    //element.classList.remove(glowClass)
-    //console.log("glow class conflict")
+    hasConflictingStyles(sheet, `.glow${oldHash}`)
+    hasConflictingStyles(sheet, `.glow${newHash}`)
   }
-
   // Create a new class name
   const newClassName = `glow${newHash}`
-  // Check if a rule with the same selector already exists in the unique stylesheet
-  let ruleIndex = -1
-  for (let i = 0; i < sheet.cssRules.length; i++) {
-    const rule = sheet.cssRules[i]
-    if (
-      rule instanceof CSSStyleRule &&
-      rule.selectorText === `.${newClassName}`
-    ) {
-      ruleIndex = i
-      break
-    }
-  }
-  // If a rule with the same selector doesn't exist; insert a new rule in the unique stylesheet
-  if (ruleIndex === -1) {
+
+  if (!hasConflictingStyles(sheet, `.${newClassName}`)) {
     sheet.insertRule(`.${newClassName} { ${style} }`, sheet.cssRules.length)
   }
-  // Add the generic glow class to the element's class list
   element.classList.add(glowClass)
-  // Add the new class name to the element's class list
   element.classList.add(newClassName)
-
   return newClassName
 }
 
@@ -259,16 +217,7 @@ export function addStyleAfter(
   const selector = `.${className}::after`
 
   const sheet = getOrCreateStyleSheet()
-  let ruleIndex = -1
-  for (let i = 0; i < sheet.cssRules.length; i++) {
-    const rule = sheet.cssRules[i]
-    if (rule instanceof CSSStyleRule && rule.selectorText === `${selector}`) {
-      ruleIndex = i
-      break
-    }
-  }
-  // If a rule with the same selector doesn't exist; insert a new rule in the unique stylesheet
-  if (ruleIndex === -1) {
+  if (!hasConflictingStyles(sheet, selector)) {
     sheet.insertRule(`${selector} { ${style} }`, sheet.cssRules.length)
   }
   if (element.classList.contains("glow-after")) {
@@ -297,6 +246,19 @@ function getOrCreateStyleSheet() {
 
   const sheet = styleSheet.sheet as CSSStyleSheet
   return sheet
+}
+
+function hasConflictingStyles(sheet: CSSStyleSheet, selector: string): boolean {
+  let ruleIndex = false
+  for (let i = 0; i < sheet.cssRules.length; i++) {
+    const rule = sheet.cssRules[i]
+    if (rule instanceof CSSStyleRule && rule.selectorText === `.${selector}`) {
+      console.log("glow class conflict:")
+      printStyleRules(rule as CSSStyleRule)
+      ruleIndex = true
+    }
+  }
+  return ruleIndex
 }
 
 // Remove glow effect from all elements
