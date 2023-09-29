@@ -1,5 +1,6 @@
 import {
   addStyle,
+  addStyleAfter,
   calculateGlowIntensity,
   calculateInputStyle,
   calculateSvgStyle,
@@ -249,7 +250,6 @@ function applyGlowEffectToOverview(container: HTMLElement) {
   )
   if (className != undefined) {
     const afterElementStyle = `
-      .${className}::after {
         content: "";
         position: absolute;
         left: 0;
@@ -261,10 +261,10 @@ function applyGlowEffectToOverview(container: HTMLElement) {
         background-color: transparent;
         border-radius: 5px;
         background-image: url("https://s3-us-west-2.amazonaws.com/s.cdpn.io/59615/bg--acrylic-light.png");
-      }
     `
     // Add the style to the target element
-    addStyle(container, afterElementStyle)
+    console.log(afterElementStyle)
+    addStyleAfter(container, afterElementStyle, className)
   }
   // Existing logic for bars and table
   const bars = container.querySelectorAll(".MuiLinearProgress-determinate")

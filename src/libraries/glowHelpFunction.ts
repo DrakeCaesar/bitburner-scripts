@@ -192,12 +192,6 @@ export function addStyle(
 ): string | undefined {
   const uniqueStyleSheetId = "glow-style-sheet"
 
-  // Check if the element has a ::after pseudo-element
-  const computedStyles = window.getComputedStyle(element, "::after")
-  if (computedStyles.getPropertyValue("content") !== "none") {
-    return
-  }
-
   // Try to get the unique stylesheet by ID
   let styleSheet = document.getElementById(
     uniqueStyleSheetId
@@ -271,6 +265,48 @@ export function addStyle(
   element.classList.add(newClassName)
 
   return newClassName
+}
+
+export function addStyleAfter(
+  element: HTMLElement,
+  style: string,
+  className: string
+) {
+  const selector = `.${className}::after`
+  const uniqueStyleSheetId = "glow-style-sheet"
+
+  // Try to get the unique stylesheet by ID
+  let styleSheet = document.getElementById(
+    uniqueStyleSheetId
+  ) as HTMLStyleElement | null
+
+  if (!styleSheet) {
+    // If the unique stylesheet does not exist, create it.
+    styleSheet = document.createElement("style")
+    styleSheet.id = uniqueStyleSheetId
+    document.head.appendChild(styleSheet)
+  }
+
+  const sheet = styleSheet.sheet as CSSStyleSheet
+  let ruleIndex = -1
+  for (let i = 0; i < sheet.cssRules.length; i++) {
+    const rule = sheet.cssRules[i]
+    if (rule instanceof CSSStyleRule && rule.selectorText === `${selector}`) {
+      ruleIndex = i
+      break
+    }
+  }
+  // If a rule with the same selector doesn't exist; insert a new rule in the unique stylesheet
+  if (ruleIndex === -1) {
+    sheet.insertRule(`${selector} { ${style} }`, sheet.cssRules.length)
+  }
+  if (element.classList.contains("glow-after")) {
+    return
+  }
+  element.classList.add("glow-after")
+  console.log("adding style after")
+  console.log(element.classList)
+  console.log(glowClass)
 }
 
 // Remove glow effect from all elements
