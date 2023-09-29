@@ -248,19 +248,12 @@ function applyGlowEffectToOverview(container: HTMLElement) {
   `
   )
 
-  // Define a unique id for the afterElement
-  const uniqueId = "glow-after-element"
-
-  // Check if the afterElement already exists
-  const existingElement = container.querySelector(`#${uniqueId}`)
-  if (existingElement) {
-    // Remove the existing afterElement
-    existingElement.remove()
-  }
+  // Define a unique class for the afterElement
+  const uniqueClass = "glow-after-element"
 
   // Adding the ::after pseudo-element style
   const afterElement = document.createElement("div")
-  afterElement.id = uniqueId // Assign the unique id to the afterElement
+  afterElement.className = uniqueClass // Assign the unique id to the afterElement
   afterElement.style.content = ""
   afterElement.style.position = "absolute"
   afterElement.style.left = "0"

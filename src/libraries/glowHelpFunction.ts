@@ -291,6 +291,9 @@ export function removeGlowFromAllElements() {
       element.style.transition = ""
     })
   })
+  //Remove all pseudo elements
+  const pseudoElements = document.querySelectorAll(".glow-after-element")
+  pseudoElements.forEach((element) => element.remove())
 
   // Restore old progress bars
   {

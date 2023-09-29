@@ -38,11 +38,13 @@ export function main(ns: NS) {
         player.skills.hacking +
         (server.hasAdminRights ? "  ROOT" : "      ") +
         "  SEC: " +
-        (server.hackDifficulty - server.minDifficulty).toFixed(2).padStart(8) +
+        ((server.hackDifficulty ?? 0) - (server.minDifficulty ?? 0))
+          .toFixed(2)
+          .padStart(8) +
         "  MEM: " +
         String(server.maxRam).padEnd(8) +
         "    MON: " +
-        String(Math.floor(server.moneyMax)).padStart(20) +
+        String(Math.floor(server.moneyMax ?? 0)).padStart(20) +
         "    TIM: " +
         ns.tFormat(ns.getWeakenTime(target)).padEnd(30)
     )
