@@ -99,6 +99,7 @@ export function calculateSvgStyle(element: HTMLElement): string {
   padding-right: ${glowSize + originalPaddingRight}px !important;
   padding-bottom: ${glowSize + originalPaddingBottom}px !important;
   padding-left: ${glowSize + originalPaddingLeft}px !important;
+  border-color: transparent !important;
 `
   return style
 }
@@ -134,7 +135,7 @@ export function calculateInputStyle(element: HTMLElement): string {
 
 // Function to calculate the luminance value of a given color
 export function calculateGlowIntensity(color: string): number {
-  // return 1.0
+  return 1.0
   const rgb = color.substring(4, color.length - 1).split(",")
   const r = parseInt(rgb[0].trim(), 10) / 255
   const g = parseInt(rgb[1].trim(), 10) / 255

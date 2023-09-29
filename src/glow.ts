@@ -16,7 +16,7 @@ export async function main(): Promise<void> {
   const glowSize = 20
 
   toggleGlow()
-  // setInterval(toggleGlow, 5000)
+  // setInterval(toggleGlow, 500)
   // setTimeout(() => {
   //   // toggleGlow()
   //   setInterval(toggleGlow, 500)
@@ -98,7 +98,7 @@ export async function main(): Promise<void> {
     text-shadow: 0 0 ${
       intensity * glowSize
     }px rgba(70%, 70%, 70%, ${intensity}) !important;
-    overflow: visible;
+    overflow: visible !important;
   `
     addStyle(element, glowStyles)
 
@@ -227,6 +227,11 @@ export async function main(): Promise<void> {
     if (container.classList.contains("MuiLinearProgress-bar")) {
       applyGlowEffectToSkillBars()
     }
+
+    //Special case for overflow
+    if (container.classList.contains("MuiBox-root")) {
+      addStyle(container, "overflow: visible !important")
+    }
   }
 }
 function applyGlowEffectToOverview(container: HTMLElement) {
@@ -275,7 +280,10 @@ function applyGlowEffectToOverview(container: HTMLElement) {
     )
     addStyle(
       element as HTMLElement,
-      `background-color: ${color}; overflow: visible;`
+      `
+      background-color: ${color}; 
+      overflow: visible;
+      `
     )
   })
 
