@@ -176,9 +176,6 @@ export function printStyleRules(rule: CSSStyleRule) {
   const nonEmptyStyleKeys = styleKeys.filter(
     (key) => style[key as keyof CSSStyleDeclaration] !== ""
   )
-  const nonEmptyStyle = nonEmptyStyleKeys.map(
-    (key) => `${key}: ${style[key as keyof CSSStyleDeclaration]}`
-  )
   // const nonEmptyStyleText = nonEmptyStyle.join("; ")
   console.log(
     `${rule.selectorText}\n{ ${cssText} }`
@@ -190,19 +187,8 @@ export function addStyle(
   element: HTMLElement,
   style: string
 ): string | undefined {
-  const uniqueStyleSheetId = "glow-style-sheet"
-
   // Try to get the unique stylesheet by ID
-  let styleSheet = document.getElementById(
-    uniqueStyleSheetId
-  ) as HTMLStyleElement | null
-
-  if (!styleSheet) {
-    // If the unique stylesheet does not exist, create it.
-    styleSheet = document.createElement("style")
-    styleSheet.id = uniqueStyleSheetId
-    document.head.appendChild(styleSheet)
-  }
+  const sheet = getOrCreateStyleSheet()
 
   // Generate a unique hash based on the style
   const newHash = generateHash(style)
@@ -215,7 +201,6 @@ export function addStyle(
     const newGlowClass = `glow${newHash}`
     //print style from stylesheet for both classes
 
-    const sheet = styleSheet.sheet as CSSStyleSheet
     for (let i = 0; i < sheet.cssRules.length; i++) {
       const rule = sheet.cssRules[i]
       if (
@@ -243,7 +228,6 @@ export function addStyle(
   // Create a new class name
   const newClassName = `glow${newHash}`
   // Check if a rule with the same selector already exists in the unique stylesheet
-  const sheet = styleSheet.sheet as CSSStyleSheet
   let ruleIndex = -1
   for (let i = 0; i < sheet.cssRules.length; i++) {
     const rule = sheet.cssRules[i]
@@ -273,21 +257,8 @@ export function addStyleAfter(
   className: string
 ) {
   const selector = `.${className}::after`
-  const uniqueStyleSheetId = "glow-style-sheet"
 
-  // Try to get the unique stylesheet by ID
-  let styleSheet = document.getElementById(
-    uniqueStyleSheetId
-  ) as HTMLStyleElement | null
-
-  if (!styleSheet) {
-    // If the unique stylesheet does not exist, create it.
-    styleSheet = document.createElement("style")
-    styleSheet.id = uniqueStyleSheetId
-    document.head.appendChild(styleSheet)
-  }
-
-  const sheet = styleSheet.sheet as CSSStyleSheet
+  const sheet = getOrCreateStyleSheet()
   let ruleIndex = -1
   for (let i = 0; i < sheet.cssRules.length; i++) {
     const rule = sheet.cssRules[i]
@@ -307,6 +278,25 @@ export function addStyleAfter(
   console.log("adding style after")
   console.log(element.classList)
   console.log(glowClass)
+}
+
+function getOrCreateStyleSheet() {
+  const uniqueStyleSheetId = "glow-style-sheet"
+
+  // Try to get the unique stylesheet by ID
+  let styleSheet = document.getElementById(
+    uniqueStyleSheetId
+  ) as HTMLStyleElement | null
+
+  if (!styleSheet) {
+    // If the unique stylesheet does not exist, create it.
+    styleSheet = document.createElement("style")
+    styleSheet.id = uniqueStyleSheetId
+    document.head.appendChild(styleSheet)
+  }
+
+  const sheet = styleSheet.sheet as CSSStyleSheet
+  return sheet
 }
 
 // Remove glow effect from all elements
