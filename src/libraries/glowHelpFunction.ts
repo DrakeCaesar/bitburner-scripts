@@ -135,7 +135,7 @@ export function calculateInputStyle(element: HTMLElement): string {
 
 // Function to calculate the luminance value of a given color
 export function calculateGlowIntensity(color: string): number {
-  return 1.0
+  // return 1.0
   const rgb = color.substring(4, color.length - 1).split(",")
   const r = parseInt(rgb[0].trim(), 10) / 255
   const g = parseInt(rgb[1].trim(), 10) / 255
@@ -197,18 +197,15 @@ export function addStyle(
     console.log("test")
   }
   const oldHash = getHash(element)
-  console.log("old hash: " + oldHash)
-  console.log("new hash: " + newHash)
 
   if (oldHash === newHash) return `glow${newHash}`
   if (oldHash !== "") {
-    hasConflictingStyles(sheet, `.glow${oldHash}`)
-    hasConflictingStyles(sheet, `.glow${newHash}`)
+    console.log(`old hash: ${oldHash}\nnew hash: ${newHash}`)
   }
   // Create a new class name
   const newClassName = `glow${newHash}`
 
-  if (!hasConflictingStyles(sheet, `.${newClassName}`)) {
+  if (!styleInStyleSheet(sheet, `.${newClassName}`)) {
     sheet.insertRule(`.${newClassName} { ${style} }`, sheet.cssRules.length)
   }
   element.classList.add(glowClass)
@@ -227,14 +224,14 @@ export function addStyleAfter(
   const selector = `.${className}::after`
 
   const sheet = getOrCreateStyleSheet()
-  if (!hasConflictingStyles(sheet, selector)) {
+  if (!styleInStyleSheet(sheet, selector)) {
     sheet.insertRule(`${selector} { ${style} }`, sheet.cssRules.length)
   }
 
   element.classList.add("glow-after")
-  console.log("adding style after")
-  console.log(element.classList)
-  console.log(glowClass)
+  // console.log("adding style after")
+  // console.log(element.classList)
+  // console.log(glowClass)
 }
 
 function getOrCreateStyleSheet() {
@@ -256,13 +253,13 @@ function getOrCreateStyleSheet() {
   return sheet
 }
 
-function hasConflictingStyles(sheet: CSSStyleSheet, selector: string): boolean {
+function styleInStyleSheet(sheet: CSSStyleSheet, selector: string): boolean {
   let ruleIndex = false
   for (let i = 0; i < sheet.cssRules.length; i++) {
     const rule = sheet.cssRules[i]
     if (rule instanceof CSSStyleRule && rule.selectorText === `${selector}`) {
-      console.log("glow class conflict:")
-      printStyleRules(rule as CSSStyleRule)
+      //console.log("glow class conflict:")
+      //printStyleRules(rule as CSSStyleRule)
       ruleIndex = true
     }
   }

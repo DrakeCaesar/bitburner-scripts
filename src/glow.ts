@@ -95,11 +95,11 @@ export async function main(): Promise<void> {
     const color = getComputedStyle(element).color
     const intensity = calculateGlowIntensity(color)
     const glowStyles = `
-    text-shadow: 0 0 ${
-      intensity * glowSize
-    }px rgba(70%, 70%, 70%, ${intensity}) !important;
-    overflow: visible !important;
-  `
+      text-shadow:
+        0 0 ${intensity * glowSize * 1}px rgba(70%, 70%, 70%, ${intensity});
+      overflow: visible !important;
+    `
+
     addStyle(element, glowStyles)
 
     if (element.parentElement) {
@@ -169,8 +169,10 @@ export async function main(): Promise<void> {
 
   // Function to apply the glow effect to all elements in a given container
   function applyGlowEffectToElementsInContainer(container: HTMLElement) {
-    //console.log("Applying glow effect to element:", container)
-
+    // const observer = (document.body as any).mutationObserver
+    // if (observer) {
+    //   observer.disconnect()
+    // }
     const textNodes = doc.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
       acceptNode: (node: Node) => {
         const parent = node.parentElement
@@ -223,6 +225,18 @@ export async function main(): Promise<void> {
       applyGlowEffectToOverview(container)
     }
 
+    // const boxElements = container.querySelectorAll(
+    //   ".MuiContainer-root > .MuiBox-root, .MuiDrawer-root > .MuiPaper-root,"
+    // )
+    // boxElements.forEach(function (boxElement) {
+    //   if (!boxElement.classList.contains(glowClass))
+    //     applyGlowEffectToOverview(boxElement as HTMLElement)
+    // })
+
+    // if (container.classList.contains("MuiPaper-root")) {
+    //   applyGlowEffectToOverview(container)
+    // }
+
     // Special case for the skill bars
     if (container.classList.contains("MuiLinearProgress-bar")) {
       applyGlowEffectToSkillBars()
@@ -232,6 +246,15 @@ export async function main(): Promise<void> {
     if (container.classList.contains("MuiBox-root")) {
       addStyle(container, "overflow: visible !important")
     }
+
+    // if (observer) {
+    //   observer.observe(document.body, {
+    //     attributes: true,
+    //     attributeFilter: ["class"],
+    //     childList: true,
+    //     subtree: true,
+    //   })
+    // }
   }
 }
 function applyGlowEffectToOverview(container: HTMLElement) {
@@ -268,7 +291,7 @@ function applyGlowEffectToOverview(container: HTMLElement) {
         background-image: url("https://s3-us-west-2.amazonaws.com/s.cdpn.io/59615/bg--acrylic-light.png");
     `
     // Add the style to the target element
-    console.log(afterElementStyle)
+    // console.log(afterElementStyle)
     addStyleAfter(container, afterElementStyle, className)
   }
   // Existing logic for bars and table
