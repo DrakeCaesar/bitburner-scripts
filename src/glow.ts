@@ -24,16 +24,16 @@ export async function main(): Promise<void> {
 
   function toggleGlow() {
     // Check if the observer reference already exists
-    if (!(document.body as any).mutationObserver) {
+    if (!(doc.body as any).mutationObserver) {
       applyGlowEffectToSkillBars()
 
       // Apply the glow effect to all input elements on page load
       applyGlowEffectToElementsInContainer(doc.body)
-      const terminalDiv = document.querySelector(".MuiInputBase-adornedStart")
+      const terminalDiv = doc.querySelector(".MuiInputBase-adornedStart")
       if (terminalDiv instanceof HTMLDivElement) {
         applyGlowEffectToTerminal(terminalDiv)
       }
-      const overviewDiv = document.querySelector(".react-draggable")
+      const overviewDiv = doc.querySelector(".react-draggable")
       if (overviewDiv instanceof HTMLDivElement) {
         applyGlowEffectToOverview(overviewDiv)
       }
@@ -46,7 +46,7 @@ export async function main(): Promise<void> {
     }
 
     // Get the element with id "unclickable"
-    const unclickableElement = document.getElementById("unclickable")
+    const unclickableElement = doc.getElementById("unclickable")
 
     // Check if the element exists before modifying it
     if (unclickableElement) {
@@ -79,7 +79,7 @@ export async function main(): Promise<void> {
     })
 
     // Start observing mutations to the page
-    observer.observe(document.body, {
+    observer.observe(doc.body, {
       attributes: true,
       attributeFilter: ["class"],
       childList: true,
@@ -87,7 +87,7 @@ export async function main(): Promise<void> {
     })
 
     // Store the observer reference on the DOM
-    ;(document.body as any).mutationObserver = observer
+    ;(doc.body as any).mutationObserver = observer
   }
 
   // Function to apply the glow effect to a given text element
@@ -132,7 +132,7 @@ export async function main(): Promise<void> {
 
   // Function to apply the glow effect to a skill bar element
   function applyGlowEffectToSkillBars() {
-    const skillBarElements = document.querySelectorAll(
+    const skillBarElements = doc.querySelectorAll(
       ".MuiLinearProgress-bar"
     ) as NodeListOf<HTMLElement>
     skillBarElements.forEach((element) => {
@@ -169,7 +169,7 @@ export async function main(): Promise<void> {
 
   // Function to apply the glow effect to all elements in a given container
   function applyGlowEffectToElementsInContainer(container: HTMLElement) {
-    // const observer = (document.body as any).mutationObserver
+    // const observer = (doc.body as any).mutationObserver
     // if (observer) {
     //   observer.disconnect()
     // }
@@ -248,7 +248,7 @@ export async function main(): Promise<void> {
     }
 
     // if (observer) {
-    //   observer.observe(document.body, {
+    //   observer.observe(doc.body, {
     //     attributes: true,
     //     attributeFilter: ["class"],
     //     childList: true,

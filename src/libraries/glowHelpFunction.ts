@@ -1,5 +1,6 @@
 const glowClass = "glow"
 const doc: Document = eval("document")
+const win: Window = eval("window")
 const glowSize = 20
 
 export function makeDropShadow(element: HTMLElement): SVGFEDropShadowElement {
@@ -36,11 +37,11 @@ export function addDropShadowFilter(element: HTMLElement): string {
     const filter = doc.createElementNS("http://www.w3.org/2000/svg", "filter")
     filter.setAttribute("id", `glow-filter${shadowHash}`)
     filter.appendChild(shadow)
-    const body = document.body
+    const body = doc.body
     let svg = body.querySelector("body > svg")
 
     if (!svg) {
-      svg = document.createElementNS("http://www.w3.org/2000/svg", "svg")
+      svg = doc.createElementNS("http://www.w3.org/2000/svg", "svg")
       // Apply CSS styles to the <svg> element
       addStyle(
         svg as HTMLElement,
@@ -238,15 +239,15 @@ function getOrCreateStyleSheet() {
   const uniqueStyleSheetId = "glow-style-sheet"
 
   // Try to get the unique stylesheet by ID
-  let styleSheet = document.getElementById(
+  let styleSheet = doc.getElementById(
     uniqueStyleSheetId
   ) as HTMLStyleElement | null
 
   if (!styleSheet) {
     // If the unique stylesheet does not exist, create it.
-    styleSheet = document.createElement("style")
+    styleSheet = doc.createElement("style")
     styleSheet.id = uniqueStyleSheetId
-    document.head.appendChild(styleSheet)
+    doc.head.appendChild(styleSheet)
   }
 
   const sheet = styleSheet.sheet as CSSStyleSheet
@@ -277,20 +278,20 @@ export function removeGlowFromAllElements() {
     classNamesToRemove.forEach((className) => classList.remove(className))
   })
   // Remove the unique stylesheet
-  const styleSheet = document.getElementById("glow-style-sheet")
+  const styleSheet = doc.getElementById("glow-style-sheet")
   if (styleSheet) styleSheet.remove()
   // Remove the glow filters
-  const filterElement = document.querySelector("body > svg")
+  const filterElement = doc.querySelector("body > svg")
   if (filterElement) filterElement.remove()
 
   // Remove glow from skill bars
-  const skillBarElements = document.querySelectorAll(
+  const skillBarElements = doc.querySelectorAll(
     ".MuiLinearProgress-bar"
   ) as NodeListOf<HTMLElement>
   skillBarElements.forEach((element) => {
     element.style.transition = "none"
     element.style.width = ""
-    window.requestAnimationFrame(() => {
+    win.requestAnimationFrame(() => {
       element.style.transition = ""
     })
   })
@@ -300,7 +301,7 @@ export function removeGlowFromAllElements() {
     /* Your CSS styles for the parent element here */
   }
 
-  document.querySelectorAll("p:has(.new-progress-bar)").forEach((element) => {
+  doc.querySelectorAll("p:has(.new-progress-bar)").forEach((element) => {
     console.log("restoring old progress bars")
     const span = element.querySelector("span.new-progress-bar")
     if (span) {
@@ -312,7 +313,7 @@ export function removeGlowFromAllElements() {
 
         // Create a text node with the old content
         const oldBar = generateOldProgressBar(parseInt(bars), parseInt(dashes))
-        const textNode = document.createTextNode(oldBar)
+        const textNode = doc.createTextNode(oldBar)
 
         // Replace the existing span with the text node
         element.replaceChild(textNode, span)
@@ -378,11 +379,11 @@ export function replaceOldProgressBars(node: HTMLParagraphElement) {
 // Stop observing mutations
 export function stopObservingMutations() {
   // Access the observer reference from a different module
-  const observer = (document.body as any).mutationObserver
+  const observer = (doc.body as any).mutationObserver
 
   if (observer) {
     // Disconnect and destroy the observer
     observer.disconnect()
-    ;(document.body as any).mutationObserver = null
+    ;(doc.body as any).mutationObserver = null
   }
 }
