@@ -72,7 +72,19 @@ export async function main(): Promise<void> {
         ) {
           const element = mutation.target as HTMLElement
           if (element instanceof HTMLElement) {
+            console.log(element.className)
             applyGlowEffectToElementsInContainer(element)
+            // applyGlowEffectToSkillBars()
+            // updateSkillBars()
+          }
+        } else if (
+          mutation.type === "attributes" &&
+          mutation.attributeName === "style"
+        ) {
+          const element = mutation.target as HTMLElement
+          if (element.classList.contains("MuiLinearProgress-bar")) {
+            // applyGlowEffectToSkillBars()
+            updateSkillBars()
           }
         }
       }
@@ -81,7 +93,7 @@ export async function main(): Promise<void> {
     // Start observing mutations to the page
     observer.observe(doc.body, {
       attributes: true,
-      attributeFilter: ["class"],
+      attributeFilter: ["class", "style"],
       childList: true,
       subtree: true,
     })
@@ -131,7 +143,30 @@ export async function main(): Promise<void> {
   }
 
   // Function to apply the glow effect to a skill bar element
+  function updateSkillBars() {
+    const skillBarElements = doc.querySelectorAll(
+      ".MuiLinearProgress-bar"
+    ) as NodeListOf<HTMLElement>
+    if (skillBarElements.length == 0) return
+    const parent = skillBarElements.item(0).parentElement
+    if (parent == null) return
+    skillBarElements.forEach((element) => {
+      const transform = element.style.transform
+      const translateXRegex = /([-0-9]+.[0-9]+)/
+      const translateX: number = parseFloat(
+        transform.match(translateXRegex)?.[1] ?? ""
+      )
+      if (translateX < -1 && translateX > -100) {
+        const width = (parent.offsetWidth / 100) * (100 + translateX)
+        element.style.width = `${width}px`
+        element.style.transform = "translateX(0%)"
+      }
+    })
+  }
+
   function applyGlowEffectToSkillBars() {
+    // return
+    // console.log("updating skill bars")
     const skillBarElements = doc.querySelectorAll(
       ".MuiLinearProgress-bar"
     ) as NodeListOf<HTMLElement>
@@ -223,6 +258,7 @@ export async function main(): Promise<void> {
     // Special case for the overview
     if (container.classList.contains("react-draggable")) {
       applyGlowEffectToOverview(container)
+      // applyGlowEffectToSkillBars()
     }
 
     // const boxElements = container.querySelectorAll(
@@ -238,9 +274,9 @@ export async function main(): Promise<void> {
     // }
 
     // Special case for the skill bars
-    if (container.classList.contains("MuiLinearProgress-bar")) {
-      applyGlowEffectToSkillBars()
-    }
+    // if (container.classList.contains("MuiLinearProgress-bar")) {
+    //   applyGlowEffectToSkillBars()
+    // }
 
     //Special case for overflow
     if (container.classList.contains("MuiBox-root")) {
