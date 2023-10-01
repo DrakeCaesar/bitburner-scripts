@@ -74,7 +74,7 @@ export async function main(): Promise<void> {
           if (element instanceof HTMLElement) {
             console.log(element.className)
             applyGlowEffectToElementsInContainer(element)
-            // applyGlowEffectToSkillBars()
+            applyGlowEffectToSkillBars()
             // updateSkillBars()
           }
         } else if (
@@ -84,7 +84,9 @@ export async function main(): Promise<void> {
           const element = mutation.target as HTMLElement
           if (element.classList.contains("MuiLinearProgress-bar")) {
             // applyGlowEffectToSkillBars()
-            updateSkillBars()
+            applyGlowEffectToSkillBars()
+          } else if (element.classList.contains("MuiTableCell-root")) {
+            applyGlowEffectToSkillBars()
           }
         }
       }
@@ -173,31 +175,20 @@ export async function main(): Promise<void> {
     skillBarElements.forEach((element) => {
       const color = getComputedStyle(element).backgroundColor
       const intensity = calculateGlowIntensity(color)
-
-      // Generate a unique hash based on the boxShadowStyle
       const boxShadowStyle = `box-shadow: 0 0 ${
         intensity * glowSize
       }px rgba(70%, 70%, 70%, ${intensity});`
-
       const parent = element.parentElement
       if (parent != null) {
-        const barParentStyle = "overflow: visible"
-        // addStyle(parent, barParentStyle)
         const transform = element.style.transform
         const translateXRegex = /([-0-9]+.[0-9]+)/
         const translateX: number = parseFloat(
           transform.match(translateXRegex)?.[1] ?? ""
         )
-        if (translateX < -1 && translateX > -100) {
-          const width = (parent.offsetWidth / 100) * (100 + translateX)
-          const barStyle = `transform: translateX(0%) !important; transition: none`
-          addStyle(element, `${boxShadowStyle} ${barStyle}`)
-          element.style.width = `${width}px`
-        } else {
-          addStyle(element, `${boxShadowStyle}`)
-        }
-      } else {
-        addStyle(element, `${boxShadowStyle}`)
+        const width = (parent.offsetWidth / 100) * (100 + translateX)
+        const barStyle = `transform: translateX(0%) !important; transition: none;`
+        addStyle(element, `${boxShadowStyle} ${barStyle}`)
+        element.style.width = `${width}px`
       }
     })
   }
