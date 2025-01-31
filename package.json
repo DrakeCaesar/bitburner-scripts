@@ -19,9 +19,9 @@
   "scripts": {
     "dev": "viteburner",
     "lint": "prettier --write . && eslint . --fix && sort-package-json",
-    "up": "yarn upgrade && sort-package-json",
-    "watch": "yarn run watch:init && yarn run watch:all",
-    "watch:all": "concurrently yarn:watch:transpile yarn:watch:local yarn:watch:remote",
+    "up": "pnpm upgrade && sort-package-json",
+    "watch": "pnpm run watch:init && pnpm run watch:all",
+    "watch:all": "concurrently pnpm:watch:transpile pnpm:watch:local pnpm:watch:remote",
     "watch:init": "node build/init.js",
     "watch:local": "node build/watch.js",
     "watch:remote": "bitburner-filesync",
@@ -175,7 +175,7 @@
     ],
     "ignorePaths": [
       "package-lock.json",
-      "yarn.lock",
+      "pnpm.lock",
       "node_modules",
       "vscode-extension",
       ".git/objects",
