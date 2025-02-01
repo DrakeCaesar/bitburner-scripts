@@ -1,105 +1,186 @@
-/** @param {import("..").NS } ns */
+/** @param {import("..").NS} ns */
 export async function main(ns) {
-  //ns.disableLog("ALL")
-  let target = ns.args[0]
-  let mF = 0.08
+  const target = ns.args[0]
+  const moneyMax = ns.getServerMaxMoney(target)
+  const securityMin = ns.getServerMinSecurityLevel(target)
+  const current = ns.getHostname()
 
-  let moneyMax = ns.getServerMaxMoney(target)
-  let securityMin = ns.getServerMinSecurityLevel(target)
-  let securityT = 3
+  // A small tolerance so we don’t get stuck due to floating point issues.
+  const secTolerance = 0.01
 
-  let pid = 0
-  let pidW = 0
-  let weaken = 0
-
-  for (;;) {
-    await ns.sleep(100)
-    let moneyCur = ns.getServerMoneyAvailable(target)
-    let securityCur = (ns.getServerSecurityLevel(target) - securityMin).toFixed(
-      2
-    )
-    let moneyP = String(Math.floor((moneyCur / moneyMax) * 100) + "%").padStart(
-      4
-    )
-    let ramT = 1
-    let current = ns.getHostname()
-    let ram = ns.getServerMaxRam(current) - ns.getServerUsedRam(current)
-    //ns.tprint(ram)
-    //ns.tprint(ram / ns.getScriptRam("/hacking/hack.js"))
-
-    let ramC = ns.getServerUsedRam(current) / ns.getServerMaxRam(current)
-
-    if (ns.getRunningScript(pid) == null && ramC <= ramT) {
-      let action
-      let threads
-      let runtime
-
-      if (ns.getRunningScript(pidW) == null && securityCur > securityT) {
-        for (threads = 1; securityCur > ns.weakenAnalyze(threads); threads++);
-        threads = Math.min(
-          threads,
-          Math.floor(ram / ns.getScriptRam("/hacking/weaken.js"))
-        )
-        action = "weak"
-        runtime = ns.getWeakenTime(target)
-        if (threads) pidW = ns.run("/hacking/weaken.js", threads, target)
-        weaken = 1
-      } else if (moneyCur == moneyMax && securityCur < securityT * 2) {
-        threads = Math.ceil(ns.hackAnalyzeThreads(target, moneyMax * mF))
-        threads = Math.min(
-          threads,
-          Math.floor(ram / ns.getScriptRam("/hacking/hack.js"))
-        )
-        action = "hack"
-        runtime = ns.getHackTime(target)
-
-        if (threads) pid = ns.run("/hacking/hack.js", threads, target)
-      } else if (moneyCur < moneyMax && securityCur < securityT * 2) {
-        //threads = Math.ceil(ns.growthAnalyze(target,1.0/(1.0-mF)))
-        if (moneyCur < moneyMax * 0.01) {
-          threads = 1000
-        } else {
-          threads = Math.ceil(ns.growthAnalyze(target, moneyMax / moneyCur))
-        }
-        threads = Math.min(
-          threads,
-          Math.floor(ram / ns.getScriptRam("/hacking/grow.js"))
-        )
-        action = "grow"
-        runtime = ns.getGrowTime(target)
-        if (threads) pid = ns.run("/hacking/grow.js", threads, target)
+  while (true) {
+    // -------------------------
+    // PHASE 1: WEAKEN until security is at minimum
+    // -------------------------
+    while (ns.getServerSecurityLevel(target) > securityMin + secTolerance) {
+      let secCur = ns.getServerSecurityLevel(target)
+      let excessSec = secCur - securityMin
+      // Calculate minimum threads needed so that weakenAnalyze(threads) >= excessSec
+      let threads = 1
+      while (ns.weakenAnalyze(threads) < excessSec) {
+        threads++
       }
-
-      if (
-        ns.getRunningScript(pid != null || weaken == 1) &&
-        threads &&
-        !isNaN(runtime)
-      ) {
-        var message =
-          target.padEnd(18) +
-          " | " +
-          action +
-          " | " +
-          "t " +
-          String(threads).padStart(4) +
-          " | " +
-          "S " +
-          String(securityMin).padStart(3) +
-          " + " +
-          securityCur.padStart(6) +
-          " | " +
-          "$ " +
-          moneyP +
-          " | " +
-          "T " +
-          ns.tFormat(runtime).padStart(30)
-
-        ns.tprint(message)
-        ns.print(message)
-        weaken = 0
-      } else {
-        ns.print("failed")
+      // Cap threads based on available RAM
+      let availableRam =
+        ns.getServerMaxRam(current) - ns.getServerUsedRam(current)
+      let weakenRam = ns.getScriptRam("/hacking/weaken.js")
+      let maxThreads = Math.floor(availableRam / weakenRam)
+      threads = Math.min(threads, maxThreads)
+      if (threads <= 0) {
+        ns.print("Not enough RAM for weaken. Sleeping 1 sec.")
+        await ns.sleep(1000)
+        continue
       }
+      let runtime = ns.getWeakenTime(target)
+      ns.run("/hacking/weaken.js", threads, target)
+      let moneyPct = String(
+        Math.floor((ns.getServerMoneyAvailable(target) / moneyMax) * 100) + "%"
+      ).padStart(4)
+      let secDisplay = (secCur - securityMin).toFixed(2).padStart(6)
+      let msg =
+        target.padEnd(18) +
+        " | weaken | t " +
+        String(threads).padStart(4) +
+        " | S " +
+        String(securityMin.toFixed(2)).padStart(3) +
+        " + " +
+        secDisplay +
+        " | $ " +
+        moneyPct +
+        " | T " +
+        ns.tFormat(runtime).padStart(30)
+      ns.tprint(msg)
+      ns.print(msg)
+      await ns.sleep(runtime + 100)
+    }
+
+    // -------------------------
+    // PHASE 2: GROW until money is at least 90% of max
+    // -------------------------
+    while (ns.getServerMoneyAvailable(target) < moneyMax * 0.9) {
+      let moneyCur = ns.getServerMoneyAvailable(target)
+      // Determine growth factor and threads needed to reach max money
+      let growthFactor = moneyMax / moneyCur
+      let threads = Math.ceil(ns.growthAnalyze(target, growthFactor))
+      let availableRam =
+        ns.getServerMaxRam(current) - ns.getServerUsedRam(current)
+      let growRam = ns.getScriptRam("/hacking/grow.js")
+      let maxThreads = Math.floor(availableRam / growRam)
+      threads = Math.min(threads, maxThreads)
+      if (threads <= 0) {
+        ns.print("Not enough RAM for grow. Sleeping 1 sec.")
+        await ns.sleep(1000)
+        continue
+      }
+      let runtime = ns.getGrowTime(target)
+      ns.run("/hacking/grow.js", threads, target)
+      let moneyPct = String(
+        Math.floor((ns.getServerMoneyAvailable(target) / moneyMax) * 100) + "%"
+      ).padStart(4)
+      let secDisplay = (ns.getServerSecurityLevel(target) - securityMin)
+        .toFixed(2)
+        .padStart(6)
+      let msg =
+        target.padEnd(18) +
+        " | grow   | t " +
+        String(threads).padStart(4) +
+        " | S " +
+        String(securityMin.toFixed(2)).padStart(3) +
+        " + " +
+        secDisplay +
+        " | $ " +
+        moneyPct +
+        " | T " +
+        ns.tFormat(runtime).padStart(30)
+      ns.tprint(msg)
+      ns.print(msg)
+      await ns.sleep(runtime + 100)
+    }
+
+    // -------------------------
+    // PHASE 3: WEAKEN again to bring security down (growth raises security)
+    // -------------------------
+    while (ns.getServerSecurityLevel(target) > securityMin + secTolerance) {
+      let secCur = ns.getServerSecurityLevel(target)
+      let excessSec = secCur - securityMin
+      let threads = 1
+      while (ns.weakenAnalyze(threads) < excessSec) {
+        threads++
+      }
+      let availableRam =
+        ns.getServerMaxRam(current) - ns.getServerUsedRam(current)
+      let weakenRam = ns.getScriptRam("/hacking/weaken.js")
+      let maxThreads = Math.floor(availableRam / weakenRam)
+      threads = Math.min(threads, maxThreads)
+      if (threads <= 0) {
+        ns.print("Not enough RAM for weaken. Sleeping 1 sec.")
+        await ns.sleep(1000)
+        continue
+      }
+      let runtime = ns.getWeakenTime(target)
+      ns.run("/hacking/weaken.js", threads, target)
+      let moneyPct = String(
+        Math.floor((ns.getServerMoneyAvailable(target) / moneyMax) * 100) + "%"
+      ).padStart(4)
+      let secDisplay = (secCur - securityMin).toFixed(2).padStart(6)
+      let msg =
+        target.padEnd(18) +
+        " | weaken | t " +
+        String(threads).padStart(4) +
+        " | S " +
+        String(securityMin.toFixed(2)).padStart(3) +
+        " + " +
+        secDisplay +
+        " | $ " +
+        moneyPct +
+        " | T " +
+        ns.tFormat(runtime).padStart(30)
+      ns.tprint(msg)
+      ns.print(msg)
+      await ns.sleep(runtime + 100)
+    }
+
+    // -------------------------
+    // PHASE 4: HACK until money is reduced to 25% of max
+    // -------------------------
+    while (ns.getServerMoneyAvailable(target) > moneyMax * 0.25) {
+      let moneyCur = ns.getServerMoneyAvailable(target)
+      // Calculate the amount we want to remove so that the remaining money is 25% of max.
+      let hackAmount = moneyCur - moneyMax * 0.25
+      let threads = Math.ceil(ns.hackAnalyzeThreads(target, hackAmount))
+      let availableRam =
+        ns.getServerMaxRam(current) - ns.getServerUsedRam(current)
+      let hackRam = ns.getScriptRam("/hacking/hack.js")
+      let maxThreads = Math.floor(availableRam / hackRam)
+      threads = Math.min(threads, maxThreads)
+      if (threads <= 0) {
+        ns.print("Not enough RAM for hack. Sleeping 1 sec.")
+        await ns.sleep(1000)
+        continue
+      }
+      let runtime = ns.getHackTime(target)
+      ns.run("/hacking/hack.js", threads, target)
+      let moneyPct = String(
+        Math.floor((ns.getServerMoneyAvailable(target) / moneyMax) * 100) + "%"
+      ).padStart(4)
+      let secDisplay = (ns.getServerSecurityLevel(target) - securityMin)
+        .toFixed(2)
+        .padStart(6)
+      let msg =
+        target.padEnd(18) +
+        " | hack   | t " +
+        String(threads).padStart(4) +
+        " | S " +
+        String(securityMin.toFixed(2)).padStart(3) +
+        " + " +
+        secDisplay +
+        " | $ " +
+        moneyPct +
+        " | T " +
+        ns.tFormat(runtime).padStart(30)
+      ns.tprint(msg)
+      ns.print(msg)
+      await ns.sleep(runtime + 100)
     }
   }
 }
