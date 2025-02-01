@@ -1,6 +1,7 @@
 import { NS } from ".."
+import { connect } from "./libraries/connect"
 
-export function main(ns: NS): void {
+export async function main(ns: NS): Promise<void> {
   const knownServers: string[] = []
   crawl(ns, knownServers)
   knownServers.sort()
@@ -29,55 +30,74 @@ export function main(ns: NS): void {
     return first[1] - second[1]
   })
 
-  for (const [server, level] of items) {
+  for (const [serverName, serverLevel] of items) {
     const player = ns.getPlayer()
     let numPortsOpen = 0
     if (ns.fileExists("BruteSSH.exe", "home")) {
-      ns.brutessh(server)
+      ns.brutessh(serverName)
       ++numPortsOpen
     }
     if (ns.fileExists("FTPCrack.exe", "home")) {
-      ns.ftpcrack(server)
+      ns.ftpcrack(serverName)
       ++numPortsOpen
     }
     if (ns.fileExists("relaySMTP.exe", "home")) {
-      ns.relaysmtp(server)
+      ns.relaysmtp(serverName)
       ++numPortsOpen
     }
     if (ns.fileExists("HTTPWorm.exe", "home")) {
-      ns.httpworm(server)
+      ns.httpworm(serverName)
       ++numPortsOpen
     }
     if (ns.fileExists("SQLInject.exe", "home")) {
-      ns.sqlinject(server)
+      ns.sqlinject(serverName)
       ++numPortsOpen
     }
     if (
       ns.fileExists("NUKE.exe", "home") &&
-      level <= player.skills.hacking &&
-      ns.getServerNumPortsRequired(server) <= numPortsOpen
+      serverLevel <= player.skills.hacking &&
+      ns.getServerNumPortsRequired(serverName) <= numPortsOpen
     ) {
-      /*
-            ns.tprint(
-                "server: " + 
-                server.padEnd(paddingServers,' ') + 
-                "    level: " + 
-                String(level).padStart(paddingLevels,' ') +
-                " <= " + 
-                player.hacking +
-                "    ports: " +
-                ns.getServerNumPortsRequired(server) +
-                " <= " + 
-                numPortsOpen
-                )
-            */
-      //ns.tprint(server +"\t level" + level + " is lower than player hacking level of " + player.hacking + ", executing nuke")
-      ns.nuke(server)
-      ns.singularity
+      // ns.tprint(
+      //   "server: " +
+      //     server.padEnd(paddingServers, " ") +
+      //     "    level: " +
+      //     String(level).padStart(paddingLevels, " ") +
+      //     " <= " +
+      //     player.skills.hacking +
+      //     "    ports: " +
+      //     ns.getServerNumPortsRequired(server) +
+      //     " <= " +
+      //     numPortsOpen
+      // )
+      // ns.tprint(
+      //   server +
+      //     "\t level " +
+      //     level +
+      //     " is lower than player hacking level of " +
+      //     player.skills.hacking +
+      //     ", executing nuke"
+      // )
+      const server = ns.getServer(serverName)
+      if (!server.hasAdminRights) {
+        ns.nuke(serverName)
+        ns.tprint(`Nuked ${serverName}`)
+      }
+      // and servername does not start with "node"
+      if (
+        !server.backdoorInstalled &&
+        !serverName.match("home") &&
+        !serverName.startsWith("node")
+      ) {
+        connect(ns, serverName)
+        await ns.singularity.installBackdoor()
+        ns.tprint(`Installed backdoor on ${serverName}`)
+      }
     }
   }
 
-  //ns.tprint(items);
+  // ns.tprint(items)
+  connect(ns, "home")
 }
 
 export function crawl(
