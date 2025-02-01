@@ -6,7 +6,7 @@ export async function main(ns) {
   const host = ns.getHostname()
 
   // Thresholds and tolerances.
-  const growThreshold = 0.8
+  const growThreshold = 1
   const hackThreshold = 0.25
   const secTolerance = 0.01
   // Tolerance (in percentage points) for checking if prediction matches output.
