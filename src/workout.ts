@@ -1,20 +1,45 @@
-import { NS } from "@ns"
+import { GymType, NS } from "@ns"
 
 export async function main(ns: NS): Promise<void> {
-  for (;;) {
+  // Define the preferred order for tie-breakers
+  const orderPreference: Record<string, number> = {
+    str: 0,
+    def: 1,
+    dex: 2,
+    agi: 3,
+  }
+
+  while (true) {
     const focus = ns.singularity.isFocused()
-    const exp = ns.getPlayer().exp
-    const skillOrder = [
-      { name: "Agility", value: exp.agility },
-      { name: "Dexterity", value: exp.dexterity },
-      { name: "Defense", value: exp.defense },
-      { name: "Strength", value: exp.strength },
+    const player = ns.getPlayer()
+
+    // Build an array of skills with their levels
+    const skills = [
+      { name: "agi", value: player.skills.agility },
+      { name: "dex", value: player.skills.dexterity },
+      { name: "def", value: player.skills.defense },
+      { name: "str", value: player.skills.strength },
     ]
-    ns.getPlayer().skills
-    const minSkill = skillOrder.reduce((prev, curr) =>
-      prev.value < curr.value ? prev : curr
+
+    // Use reduce to find the skill with the lowest level,
+    // and if equal, use the preferred order.
+    const lowestSkill = skills.reduce((min, skill) => {
+      if (skill.value < min.value) {
+        return skill
+      } else if (
+        skill.value === min.value &&
+        orderPreference[skill.name] < orderPreference[min.name]
+      ) {
+        return skill
+      }
+      return min
+    })
+
+    ns.singularity.gymWorkout(
+      "Powerhouse Gym",
+      lowestSkill.name as GymType,
+      focus
     )
-    ns.singularity.gymWorkout("powerhouse gym", minSkill.name, focus)
     await ns.sleep(250)
   }
 }
