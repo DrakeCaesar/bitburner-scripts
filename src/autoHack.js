@@ -7,7 +7,7 @@ export async function main(ns) {
 
   // Thresholds and tolerances.
   const secTolerance = 0.01 // Allowable margin above the minimum security.
-  const growThreshold = 0.9 // Grow until the server reaches 90% of max money.
+  const growThreshold = 0.8 // Grow until the server reaches 90% of max money.
   const hackThreshold = 0.25 // Hack until the server falls to 25% of max money.
 
   /**
@@ -67,9 +67,22 @@ export async function main(ns) {
   async function growPhase() {
     while (ns.getServerMoneyAvailable(target) < moneyMax * growThreshold) {
       const currentMoney = ns.getServerMoneyAvailable(target)
-      // Determine the growth factor needed.
-      const growthFactor = moneyMax / currentMoney
-      let threads = Math.ceil(ns.growthAnalyze(target, growthFactor))
+      const desiredMoney = moneyMax * growThreshold
+
+      // Get server and player objects and core count.
+      const serverObj = ns.getServer(target)
+      const player = ns.getPlayer()
+      const myCores = ns.getServer(host).cpuCores
+
+      // Calculate the threads needed using the Formulas API.
+      let threads = Math.ceil(
+        ns.formulas.hacking.growThreads(
+          serverObj,
+          player,
+          desiredMoney,
+          myCores
+        )
+      )
 
       // Limit threads based on available RAM.
       const availableRam = ns.getServerMaxRam(host) - ns.getServerUsedRam(host)
@@ -82,6 +95,37 @@ export async function main(ns) {
         await ns.sleep(1000)
         continue
       }
+
+      // --- DEBUG INFORMATION ---
+      // Calculate predicted final money using the calculated threads.
+      const predictedMoneyAfter = ns.formulas.hacking.growAmount(
+        serverObj,
+        player,
+        threads,
+        myCores
+      )
+      const predictedPct = Math.min(predictedMoneyAfter / moneyMax, 1) * 100
+
+      // Also calculate if we used one thread fewer.
+      const predictedMoneyAfterLess =
+        threads > 1
+          ? ns.formulas.hacking.growAmount(
+              serverObj,
+              player,
+              threads - 1,
+              myCores
+            )
+          : predictedMoneyAfter
+      const predictedPctLess =
+        Math.min(predictedMoneyAfterLess / moneyMax, 1) * 100
+
+      ns.tprint(
+        `DEBUG (grow): Using ${threads} threads -> predicted money: ${predictedPct.toFixed(2)}% of max.`
+      )
+      ns.tprint(
+        `DEBUG (grow): Using ${threads - 1} threads -> predicted money: ${predictedPctLess.toFixed(2)}% of max.`
+      )
+      // --- END DEBUG INFORMATION ---
 
       const runtime = ns.getGrowTime(target)
       await runOperation("/hacking/grow.js", threads, runtime, "grow")
