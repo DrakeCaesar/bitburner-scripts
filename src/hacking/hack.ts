@@ -1,8 +1,7 @@
 import { NS } from "@ns"
 export async function main(ns: NS) {
-  // First argument: delay (ms), Second argument: target.
-  const delay = Number(ns.args[0])
-  const target = ns.args[1]
+  const target = ns.args[0]
+  const delay = ns.args[1] ? Number(ns.args[1]) : 0
   await ns.sleep(delay)
   await ns.hack(target as string)
 }
