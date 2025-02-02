@@ -1,23 +1,68 @@
 /** @param {import("..").NS} ns */
 export async function main(ns) {
   const target = ns.args[0]
-  const moneyMax = ns.getServerMaxMoney(target)
-  const securityMin = ns.getServerMinSecurityLevel(target)
   const host = ns.getHostname()
 
-  // Thresholds and tolerances.
+  // Basic server parameters.
+  const moneyMax = ns.getServerMaxMoney(target)
+  const securityMin = ns.getServerMinSecurityLevel(target)
+
+  // Thresholds.
   const growThreshold = 1
   const hackThreshold = 0.25
   const secTolerance = 0.01
 
   /**
-   * Runs a script on the target and, after waiting for it to complete,
-   * prints the updated status.
+   * Returns the current server and player objects.
+   */
+  function getServerAndPlayer() {
+    return { server: ns.getServer(target), player: ns.getPlayer() }
+  }
+
+  /**
+   * Calculate the number of threads required to reduce security to near its minimum.
+   */
+  function calculateWeakenThreads() {
+    const excess = ns.getServerSecurityLevel(target) - securityMin
+    let threads = 1
+    while (ns.weakenAnalyze(threads) < excess) {
+      threads++
+    }
+    return threads
+  }
+
+  /**
+   * Calculate the number of threads required to grow the server's money to the desired level.
+   */
+  function calculateGrowThreads() {
+    const myCores = ns.getServer(host).cpuCores
+    const desiredMoney = moneyMax * growThreshold
+    const { server, player } = getServerAndPlayer()
+    return Math.ceil(
+      ns.formulas.hacking.growThreads(server, player, desiredMoney, myCores)
+    )
+  }
+
+  /**
+   * Calculate the number of threads required to hack the server down to the target threshold.
+   */
+  function calculateHackThreads() {
+    const currentMoney = ns.getServerMoneyAvailable(target)
+    const { server, player } = getServerAndPlayer()
+    const hackPct = ns.formulas.hacking.hackPercent(server, player)
+    return Math.ceil(
+      (currentMoney - moneyMax * hackThreshold) / (hackPct * currentMoney)
+    )
+  }
+
+  /**
+   * Executes an operation by running the given script with the provided number of threads,
+   * waiting for it to complete, and printing the resulting status.
    *
-   * @param {string} script - The script to run (e.g. "/hacking/hack.js")
-   * @param {number} threads - Number of threads for the operation.
-   * @param {number} runtime - Expected runtime (in ms) for the op.
-   * @param {string} action - A label for the op (e.g. "hack", "grow", "weaken").
+   * @param {string} script - The script to run (e.g. "/hacking/hack.js").
+   * @param {number} threads - Number of threads to use.
+   * @param {number} runtime - Expected runtime of the operation (in ms).
+   * @param {string} action - Label for the operation ("hack", "grow", "weaken").
    */
   async function runOp(script, threads, runtime, action) {
     ns.run(script, threads, target)
@@ -26,65 +71,73 @@ export async function main(ns) {
     const actualMoneyPct = (ns.getServerMoneyAvailable(target) / moneyMax) * 100
     const secDiff = ns.getServerSecurityLevel(target) - securityMin
     ns.tprint(
-      `${target.padEnd(18)} | ${action.padEnd(6)} | t ${String(threads).padStart(4)} | S ${securityMin.toFixed(2)} + ${secDiff.toFixed(2).padStart(6)} | $ ${actualMoneyPct.toFixed(2).padEnd(8)}% | T ${ns.tFormat(runtime)}`
+      `${target.padEnd(18)} | ${action.padEnd(6)} | t ${String(threads).padStart(4)} | S ${securityMin.toFixed(
+        2
+      )} + ${secDiff.toFixed(2).padStart(6)} | $ ${actualMoneyPct.toFixed(2).padEnd(8)}% | T ${ns.tFormat(runtime)}`
     )
   }
 
-  // Run weaken until the server's security level is near its minimum.
-  async function weakenPhase() {
-    const serverObj = ns.getServer(target)
-    const player = ns.getPlayer()
-    while (ns.getServerSecurityLevel(target) > securityMin + secTolerance) {
-      const excess = ns.getServerSecurityLevel(target) - securityMin
-      let threads = 1
-      while (ns.weakenAnalyze(threads) < excess) {
-        threads++
-      }
-      const weakenTime = ns.formulas.hacking.weakenTime(serverObj, player)
-      await runOp("/hacking/weaken.js", threads, weakenTime, "weaken")
+  /**
+   * A generic helper to process a phase.
+   *
+   * @param {string} phaseName - Name of the phase ("weaken", "grow", or "hack").
+   * @param {() => boolean} conditionFn - Returns true if the phase should continue.
+   * @param {() => number} threadCalcFn - Calculates the number of threads needed.
+   * @param {(server: NS.Server, player: NS.Player) => number} runtimeCalcFn - Calculates the operation runtime.
+   * @param {string} script - The script to run for this phase.
+   */
+  async function processPhase(
+    phaseName,
+    conditionFn,
+    threadCalcFn,
+    runtimeCalcFn,
+    script
+  ) {
+    while (conditionFn()) {
+      const threads = threadCalcFn()
+      const { server, player } = getServerAndPlayer()
+      const runtime = runtimeCalcFn(server, player)
+      await runOp(script, threads, runtime, phaseName)
     }
   }
 
-  // Grow the server's money until it reaches the desired threshold.
-  async function growPhase() {
-    const serverObj = ns.getServer(target)
-    const player = ns.getPlayer()
-    const myCores = ns.getServer(host).cpuCores
-    while (ns.getServerMoneyAvailable(target) < moneyMax * growThreshold) {
-      const desiredMoney = moneyMax * growThreshold
-      let threads = Math.ceil(
-        ns.formulas.hacking.growThreads(
-          serverObj,
-          player,
-          desiredMoney,
-          myCores
-        )
-      )
-      const growTime = ns.formulas.hacking.growTime(serverObj, player)
-      await runOp("/hacking/grow.js", threads, growTime, "grow")
-    }
-  }
-
-  // Hack the server until its money is reduced to the target threshold.
-  async function hackPhase() {
-    const serverObj = ns.getServer(target)
-    const player = ns.getPlayer()
-    while (ns.getServerMoneyAvailable(target) > moneyMax * hackThreshold) {
-      const currentMoney = ns.getServerMoneyAvailable(target)
-      const hackPct = ns.formulas.hacking.hackPercent(serverObj, player)
-      let threads = Math.ceil(
-        (currentMoney - moneyMax * hackThreshold) / (hackPct * currentMoney)
-      )
-      const hackTime = ns.formulas.hacking.hackTime(serverObj, player)
-      await runOp("/hacking/hack.js", threads, hackTime, "hack")
-    }
-  }
+  // Condition functions for each phase.
+  const weakenCondition = () =>
+    ns.getServerSecurityLevel(target) > securityMin + secTolerance
+  const growCondition = () =>
+    ns.getServerMoneyAvailable(target) < moneyMax * growThreshold
+  const hackCondition = () =>
+    ns.getServerMoneyAvailable(target) > moneyMax * hackThreshold
 
   // Main loop: repeatedly run the phases in sequence.
   while (true) {
-    await weakenPhase()
-    await growPhase()
-    await weakenPhase()
-    await hackPhase()
+    await processPhase(
+      "weaken",
+      weakenCondition,
+      calculateWeakenThreads,
+      (server, player) => ns.formulas.hacking.weakenTime(server, player),
+      "/hacking/weaken.js"
+    )
+    await processPhase(
+      "grow",
+      growCondition,
+      calculateGrowThreads,
+      (server, player) => ns.formulas.hacking.growTime(server, player),
+      "/hacking/grow.js"
+    )
+    await processPhase(
+      "weaken",
+      weakenCondition,
+      calculateWeakenThreads,
+      (server, player) => ns.formulas.hacking.weakenTime(server, player),
+      "/hacking/weaken.js"
+    )
+    await processPhase(
+      "hack",
+      hackCondition,
+      calculateHackThreads,
+      (server, player) => ns.formulas.hacking.hackTime(server, player),
+      "/hacking/hack.js"
+    )
   }
 }
