@@ -9,14 +9,6 @@ export async function main(ns) {
   const growThreshold = 1
   const hackThreshold = 0.25
   const secTolerance = 0.01
-  // Tolerance (in percentage points) for checking if prediction matches output.
-  const TOLERANCE = 0.01
-
-  // Helper: returns the maximum threads available for a given script.
-  function getMaxThreads(script) {
-    const availableRam = ns.getServerMaxRam(host) - ns.getServerUsedRam(host)
-    return Math.floor(availableRam / ns.getScriptRam(script))
-  }
 
   /**
    * Runs a script on the target and, after waiting for it to complete,
@@ -48,12 +40,6 @@ export async function main(ns) {
       while (ns.weakenAnalyze(threads) < excess) {
         threads++
       }
-      threads = Math.min(threads, getMaxThreads("/hacking/weaken.js"))
-      if (threads <= 0) {
-        ns.print("Not enough RAM for weaken.")
-        await ns.sleep(1000)
-        continue
-      }
       const weakenTime = ns.formulas.hacking.weakenTime(serverObj, player)
       await runOp("/hacking/weaken.js", threads, weakenTime, "weaken")
     }
@@ -74,12 +60,6 @@ export async function main(ns) {
           myCores
         )
       )
-      threads = Math.min(threads, getMaxThreads("/hacking/grow.js"))
-      if (threads <= 0) {
-        ns.print("Not enough RAM for grow.")
-        await ns.sleep(1000)
-        continue
-      }
       const growTime = ns.formulas.hacking.growTime(serverObj, player)
       await runOp("/hacking/grow.js", threads, growTime, "grow")
     }
@@ -95,12 +75,6 @@ export async function main(ns) {
       let threads = Math.ceil(
         (currentMoney - moneyMax * hackThreshold) / (hackPct * currentMoney)
       )
-      threads = Math.min(threads, getMaxThreads("/hacking/hack.js"))
-      if (threads <= 0) {
-        ns.print("Not enough RAM for hack.")
-        await ns.sleep(1000)
-        continue
-      }
       const hackTime = ns.formulas.hacking.hackTime(serverObj, player)
       await runOp("/hacking/hack.js", threads, hackTime, "hack")
     }
