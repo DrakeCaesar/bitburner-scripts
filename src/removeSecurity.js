@@ -20,7 +20,7 @@ export async function main(ns) {
     var items = []
     for (const key of knownServers) {
       let level = ns.getServerRequiredHackingLevel(key)
-      let playerLevel = ns.getPlayer().hacking
+      let playerLevel = ns.getPlayer().skills.hacking
       if (
         level <= playerLevel &&
         key != "." &&

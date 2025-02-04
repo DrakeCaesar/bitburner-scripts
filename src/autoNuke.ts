@@ -84,10 +84,23 @@ export async function main(ns: NS): Promise<void> {
         ns.tprint(`Nuked ${serverName}`)
       }
       // and servername does not start with "node"
+
+      const BACKDOOR_SERVERS = [
+        "CSEC",
+        "avmnite-02h",
+        "I.I.I.I",
+        "run4theh111z",
+        "The-Cave",
+        "w0r1d_d43m0n",
+        "fulcrumassets",
+        "megacorp",
+      ]
+
       if (
         !server.backdoorInstalled &&
         !serverName.match("home") &&
-        !serverName.startsWith("node")
+        !serverName.startsWith("node") &&
+        BACKDOOR_SERVERS.includes(serverName)
       ) {
         connect(ns, serverName)
         await ns.singularity.installBackdoor()

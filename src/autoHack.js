@@ -139,5 +139,6 @@ export async function main(ns) {
       (server, player) => ns.formulas.hacking.hackTime(server, player),
       "/hacking/hack.js"
     )
+    ns.tprint(JSON.stringify(ns.getServer(target), null, 2))
   }
 }

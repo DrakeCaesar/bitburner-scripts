@@ -21,7 +21,7 @@ export async function main(ns) {
   var items = []
   for (const key of knownServers) {
     let level = ns.getServerRequiredHackingLevel(key)
-    let playerLevel = ns.getPlayer().hacking
+    let playerLevel = ns.getPlayer().skills.hacking
     if (
       level <= playerLevel &&
       level <= hackingLevelUpperBound &&
@@ -55,7 +55,11 @@ export async function main(ns) {
     i++
 
     if (!ns.serverExists(node)) {
-      break
+      if (node == "node00") {
+        node = "home"
+      } else {
+        break
+      }
     }
 
     ns.tprint(

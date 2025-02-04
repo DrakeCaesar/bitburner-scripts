@@ -7,7 +7,7 @@ export async function main(ns) {
 
   var sortedItems = []
   for (const key of Object.keys(knownServers)) {
-    let playerLevel = ns.getPlayer().hacking
+    let playerLevel = ns.getPlayer().skills.hacking
     let serverLevel = ns.getServerRequiredHackingLevel(key)
     if (serverLevel <= playerLevel) {
       sortedItems.push([key, ns.getServerRequiredHackingLevel(key)])
