@@ -106,20 +106,12 @@ export async function main(ns) {
   /******************************************************************
    * MAIN BATCH LOOP (Assumes Server is Prepped)
    *
-   * Since the server is now at 100% money and base security, we assume
-   * that the batching scripts below do not need a thread count check.
+   * Since the server is now at 100% money and base security, we simply
+   * use the live values for calculations.
    ******************************************************************/
 
   const batchDelay = 200
   let batchCounter = 0
-
-  // Helper: Returns an idealized server for formula calculations.
-  function getServerAndPlayer() {
-    const server = ns.getServer(target)
-    server.moneyAvailable = moneyMax
-    server.hackDifficulty = baseSecurity
-    return { server, player: ns.getPlayer() }
-  }
 
   // Helper: Calculate weaken threads based on current (real) security.
   function calculateWeakenThreads() {
@@ -133,7 +125,7 @@ export async function main(ns) {
 
   // Helper: Calculate grow threads to bring money to 100%.
   function calculateGrowThreads() {
-    const { server, player } = getServerAndPlayer()
+    const server = ns.getServer(target)
     return Math.ceil(
       ns.formulas.hacking.growThreads(server, player, moneyMax, myCores)
     )
@@ -142,7 +134,7 @@ export async function main(ns) {
   // Helper: Calculate hack threads to hack money above a threshold.
   const hackThreshold = 0.25 // leave 25% behind
   function calculateHackThreads() {
-    const { server, player } = getServerAndPlayer()
+    const server = ns.getServer(target)
     const hackPct = ns.formulas.hacking.hackPercent(server, player)
     return Math.ceil(
       (moneyMax - moneyMax * hackThreshold) / (hackPct * moneyMax)
@@ -151,7 +143,7 @@ export async function main(ns) {
 
   ns.tprint("Entering main batching loop.")
   while (true) {
-    const { server, player } = getServerAndPlayer()
+    const server = ns.getServer(target)
 
     const hackThreads = calculateHackThreads()
     const weakenThreads1 = calculateWeakenThreads()
