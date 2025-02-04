@@ -11,7 +11,26 @@ export async function main(ns) {
   const growThreshold = 1
   const hackThreshold = 0.25
   const secTolerance = 0.01
-  const batchDelay = 100 // 100ms gap between batch steps
+
+  function getDeltaInterval(hackTime, index) {
+    if (index === 0) {
+      return [hackTime, Infinity]
+    } else {
+      const lowerBound = hackTime / (2 * index + 1)
+      const upperBound = hackTime / (2 * index)
+      return [lowerBound, upperBound]
+    }
+  }
+
+  function getDelta(hackTime, index) {
+    if (index === 0) {
+      // For index 0, the interval is [hackTime, Infinity), so we'll just return hackTime.
+      return hackTime
+    } else {
+      const [lower, upper] = getDeltaInterval(hackTime, index)
+      return (lower + upper) / 2
+    }
+  }
 
   function getServerAndPlayer() {
     return { server: ns.getServer(target), player: ns.getPlayer() }
@@ -43,6 +62,8 @@ export async function main(ns) {
     )
   }
 
+  let batchCounter = 0
+
   while (true) {
     const { server, player } = getServerAndPlayer()
 
@@ -57,9 +78,10 @@ export async function main(ns) {
 
     // Calculate sleep offsets to align execution
     const sleepHack = weakenTime - hackTime - 3 * batchDelay
-    const sleepWeaken1 = 0
-    const sleepGrow = weakenTime - growTime - batchDelay
-    const sleepWeaken2 = batchDelay
+    const sleepWeaken1 = batchCounter * batchDelay * 4
+    const sleepGrow =
+      weakenTime - growTime - batchDelay + batchCounter * batchDelay * 4
+    const sleepWeaken2 = batchDelay + batchCounter * batchDelay * 4
 
     // Execute HWGW batch in order
     ns.exec("/hacking/hack.js", host, hackThreads, target, sleepHack)
@@ -67,7 +89,7 @@ export async function main(ns) {
     ns.exec("/hacking/grow.js", host, growThreads, target, sleepGrow)
     ns.exec("/hacking/weaken.js", host, weakenThreads2, target, sleepWeaken2)
 
-    // Wait for the batch to complete before launching the next batch
-    await ns.sleep(batchDelay * 4 + weakenTime)
+    batchCounter++
+    await ns.sleep(batchDelay)
   }
 }
