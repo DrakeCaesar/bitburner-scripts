@@ -160,6 +160,7 @@ export async function main(ns) {
   ns.tprint("Entering main batching loop.")
   while (true) {
     // Get live server/player.
+    const player = ns.getPlayer()
     const server = ns.getServer(target)
     // For each op, run the corresponding prep function.
     const { server: hackServer, player: hackPlayer } = prepForHack(
@@ -210,34 +211,67 @@ export async function main(ns) {
     }
 
     // Calculate operation times.
+    // Calculate operation times.
     const hackTime = ns.formulas.hacking.hackTime(server, player)
     const weakenTime = ns.formulas.hacking.weakenTime(server, player)
     const growTime = ns.formulas.hacking.growTime(server, player)
+
+    // Compute the batch delay. (Customize this formula as needed.)
     const batchDelay = getDelta(hackTime, 1)
-    // ns.tprint(`
-    //   Hack time: ${hackTime}
-    //   Weaken time: ${weakenTime}
-    //   Grow time: ${growTime}
-    //   Batch delay: ${batchDelay}
-    // `)
 
-    // Calculate sleep offsets so that the operations land in the desired order.
-    const sleepHack = weakenTime - hackTime - 3 * batchDelay
-    const sleepWeaken1 = batchCounter * batchDelay * 4
-    const sleepGrow =
-      weakenTime - growTime - batchDelay + batchCounter * batchDelay * 4
-    const sleepWeaken2 = batchDelay + batchCounter * batchDelay * 4
+    // We'll use weakenTime as our baseline finish time.
+    const baseline = weakenTime
 
+    // For each batch, compute an offset so that batches don’t overlap.
+    const offset = batchCounter * 4 * batchDelay
+
+    // Desired finish times:
+    //   Hack:    baseline + offset - batchDelay
+    //   Weaken1: baseline + offset
+    //   Grow:    baseline + offset + batchDelay
+    //   Weaken2: baseline + offset + 2 * batchDelay
+    const finishHack = baseline + offset - batchDelay
+    const finishWeaken1 = baseline + offset
+    const finishGrow = baseline + offset + batchDelay
+    const finishWeaken2 = baseline + offset + 2 * batchDelay
+
+    // Calculate sleep offsets (i.e. delay before starting each operation).
+    const sleepHack = finishHack - hackTime
+    const sleepWeaken1 = finishWeaken1 - weakenTime // equals offset.
+    const sleepGrow = finishGrow - growTime
+    const sleepWeaken2 = finishWeaken2 - weakenTime // equals offset + 2*batchDelay.
+
+    // // Debug printing: show sleep times, finish times, and the differences between finish times.
+    // ns.tprint(`Batch ${batchCounter} Debug Info:`)
+    // ns.tprint(`  hackTime: ${hackTime}`)
+    // ns.tprint(`  weakenTime: ${weakenTime}`)
+    // ns.tprint(`  growTime: ${growTime}`)
+    // ns.tprint(`  batchDelay: ${batchDelay}`)
+    // ns.tprint(`  offset: ${offset}`)
+    // ns.tprint("")
+    // ns.tprint(`  Sleep Hack:    ${sleepHack}  -> Finish Hack:    ${finishHack}`)
     // ns.tprint(
-    //   `Batch ${batchCounter}: hack ${hackThreads}, weaken1 ${weakenThreads1}, grow ${growThreads}, weaken2 ${weakenThreads2}`
+    //   `  Sleep Weaken1: ${sleepWeaken1}  -> Finish Weaken1: ${finishWeaken1}`
     // )
+    // ns.tprint(`  Sleep Grow:    ${sleepGrow}  -> Finish Grow:    ${finishGrow}`)
+    // ns.tprint(
+    //   `  Sleep Weaken2: ${sleepWeaken2}  -> Finish Weaken2: ${finishWeaken2}`
+    // )
+    // ns.tprint("")
+    // ns.tprint(
+    //   `  Finish Diffs: Hack->Weaken1: ${(finishWeaken1 - finishHack).toFixed(2)}, ` +
+    //     `Weaken1->Grow: ${(finishGrow - finishWeaken1).toFixed(2)}, ` +
+    //     `Grow->Weaken2: ${(finishWeaken2 - finishGrow).toFixed(2)}`
+    // )
+    // ns.tprint("--------------------------------------------------")
 
+    // Execute the scripts with the calculated sleep delays.
     ns.exec("/hacking/hack.js", host, hackThreads, target, sleepHack)
     ns.exec("/hacking/weaken.js", host, weakenThreads1, target, sleepWeaken1)
     ns.exec("/hacking/grow.js", host, growThreads, target, sleepGrow)
     ns.exec("/hacking/weaken.js", host, weakenThreads2, target, sleepWeaken2)
 
     batchCounter++
-    await ns.sleep(batchDelay * 4)
+    await ns.sleep(4 * batchDelay)
   }
 }
