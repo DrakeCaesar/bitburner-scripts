@@ -8,7 +8,6 @@ export async function main(ns) {
   const secTolerance = 0.01 // acceptable security deviation
   const moneyTolerance = 0.99 // we want at least 99% of max money
   const prepWeakenDelay = 100 // Delay (in ms) after launching grow before weakening
-  const batchDelay = 200 // Delay between batches
   const hackThreshold = 0.25 // leave 25% behind
 
   // Get basic player and host stats.
@@ -98,19 +97,28 @@ export async function main(ns) {
 
   // Prep functions: adjust server/player objects as needed.
   function prepForHack(server, player) {
-    // Insert modifications for hack calculations here if needed.
+    server.money = server.moneyMax
+    server.addedSecurity = 0
+    server.security = server.baseSecurity
     return { server, player }
   }
-  function prepForWeaken(server, player) {
-    // Insert modifications for weaken calculations here if needed.
+  function prepForWeaken(server, player, hackThreads) {
+    server.addedSecurity = ns.hackAnalyzeSecurity(hackThreads)
+    server.security = server.baseSecurity + server.addedSecurity
+
     return { server, player }
   }
   function prepForGrow(server, player) {
-    // Insert modifications for grow calculations here if needed.
+    server.moneyAvailable = server.moneyMax * hackThreshold
+    server.addedSecurity = 0
+    server.security = server.baseSecurity
+
     return { server, player }
   }
-  function prepForWeaken2(server, player) {
-    // Insert modifications for second weaken calculations here if needed.
+  function prepForWeaken2(server, player, growThreads) {
+    server.addedSecurity = ns.growthAnalyzeSecurity(growThreads)
+    server.security = server.baseSecurity + server.addedSecurity
+
     return { server, player }
   }
 
@@ -123,10 +131,8 @@ export async function main(ns) {
     )
   }
   function calculateWeakenThreads(server, player) {
-    // Calculate the number of threads needed to reduce security back to base.
-    const excess = ns.getServerSecurityLevel(target) - baseSecurity
     let threads = 1
-    while (ns.weakenAnalyze(threads, myCores) < excess) {
+    while (ns.weakenAnalyze(threads) < server.addedSecurity) {
       threads++
     }
     return threads
@@ -160,29 +166,60 @@ export async function main(ns) {
       server,
       player
     )
+    const hackThreads = calculateHackThreads(hackServer, hackPlayer)
+
     const { server: weakenServer, player: weakenPlayer } = prepForWeaken(
       server,
-      player
+      player,
+      hackThreads
     )
+    const weakenThreads1 = calculateWeakenThreads(weakenServer, weakenPlayer)
+
     const { server: growServer, player: growPlayer } = prepForGrow(
       server,
       player
     )
+    const growThreads = calculateGrowThreads(growServer, growPlayer)
+    // ns.tprint(`Batch ${batchCounter}: grow ${growThreads}`)
+
     const { server: weaken2Server, player: weaken2Player } = prepForWeaken2(
       server,
-      player
+      player,
+      growThreads
     )
-
-    // Calculate thread counts for each operation.
-    const hackThreads = calculateHackThreads(hackServer, hackPlayer)
-    const weakenThreads1 = calculateWeakenThreads(weakenServer, weakenPlayer)
-    const growThreads = calculateGrowThreads(growServer, growPlayer)
     const weakenThreads2 = calculateWeakenThreads2(weaken2Server, weaken2Player)
+
+    function getDeltaInterval(hackTime, index) {
+      if (index === 0) {
+        return [hackTime, Infinity]
+      } else {
+        const lowerBound = hackTime / (2 * index + 1)
+        const upperBound = hackTime / (2 * index)
+        return [lowerBound, upperBound]
+      }
+    }
+
+    function getDelta(hackTime, index) {
+      if (index === 0) {
+        // For index 0, the interval is [hackTime, Infinity), so we'll just return hackTime.
+        return hackTime
+      } else {
+        const [lower, upper] = getDeltaInterval(hackTime, index)
+        return (lower + upper) / 2
+      }
+    }
 
     // Calculate operation times.
     const hackTime = ns.formulas.hacking.hackTime(server, player)
     const weakenTime = ns.formulas.hacking.weakenTime(server, player)
     const growTime = ns.formulas.hacking.growTime(server, player)
+    const batchDelay = getDelta(hackTime, 1)
+    // ns.tprint(`
+    //   Hack time: ${hackTime}
+    //   Weaken time: ${weakenTime}
+    //   Grow time: ${growTime}
+    //   Batch delay: ${batchDelay}
+    // `)
 
     // Calculate sleep offsets so that the operations land in the desired order.
     const sleepHack = weakenTime - hackTime - 3 * batchDelay
@@ -191,13 +228,16 @@ export async function main(ns) {
       weakenTime - growTime - batchDelay + batchCounter * batchDelay * 4
     const sleepWeaken2 = batchDelay + batchCounter * batchDelay * 4
 
-    // Launch the batch: hack, weaken, grow, weaken.
+    // ns.tprint(
+    //   `Batch ${batchCounter}: hack ${hackThreads}, weaken1 ${weakenThreads1}, grow ${growThreads}, weaken2 ${weakenThreads2}`
+    // )
+
     ns.exec("/hacking/hack.js", host, hackThreads, target, sleepHack)
     ns.exec("/hacking/weaken.js", host, weakenThreads1, target, sleepWeaken1)
     ns.exec("/hacking/grow.js", host, growThreads, target, sleepGrow)
     ns.exec("/hacking/weaken.js", host, weakenThreads2, target, sleepWeaken2)
 
     batchCounter++
-    await ns.sleep(batchDelay)
+    await ns.sleep(batchDelay * 4)
   }
 }
