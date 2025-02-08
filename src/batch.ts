@@ -30,8 +30,9 @@ export async function main(ns: NS) {
   const currentSec = ns.getServerSecurityLevel(target)
   const expectedSecAfterGrow = currentSec + addedSecurity
   const secToReduce = expectedSecAfterGrow - baseSecurity
-  const weakenThreadsPre = Math.ceil(
-    secToReduce / (0.05 * (1 + (myCores - 1) / 16))
+  const weakenThreadsPre = Math.min(
+    1,
+    Math.ceil(secToReduce / (0.05 * (1 + (myCores - 1) / 16)))
   )
 
   if (weakenThreadsPre > 0) {
@@ -98,7 +99,10 @@ export async function main(ns: NS) {
     )
   }
   function calculateWeakenThreads(server: Server, player: Player) {
-    return Math.ceil(server.addedSecurity / (0.05 * (1 + (myCores - 1) / 16)))
+    return Math.min(
+      1,
+      Math.ceil(server.addedSecurity / (0.05 * (1 + (myCores - 1) / 16)))
+    )
   }
   function calculateGrowThreads(server: Server, player: Person) {
     return Math.ceil(
@@ -155,7 +159,7 @@ export async function main(ns: NS) {
         return hackTime
       }
       const [lower, upper] = getDeltaInterval(hackTime, index)
-      return (lower + upper) / 2;
+      return (lower + upper) / 2
     }
 
     const hackTime = ns.formulas.hacking.hackTime(server, player)
