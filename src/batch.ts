@@ -144,20 +144,18 @@ export async function main(ns: NS) {
     function getDeltaInterval(hackTime: number, index: number) {
       if (index === 0) {
         return [hackTime, Infinity]
-      } else {
-        const lowerBound = hackTime / (2 * index + 1)
-        const upperBound = hackTime / (2 * index)
-        return [lowerBound, upperBound]
       }
+      const lowerBound = hackTime / (2 * index + 1)
+      const upperBound = hackTime / (2 * index)
+      return [lowerBound, upperBound]
     }
 
     function getDelta(hackTime: number, index: number) {
       if (index === 0) {
         return hackTime
-      } else {
-        const [lower, upper] = getDeltaInterval(hackTime, index)
-        return (lower + upper) / 2
       }
+      const [lower, upper] = getDeltaInterval(hackTime, index)
+      return (lower + upper) / 2;
     }
 
     const hackTime = ns.formulas.hacking.hackTime(server, player)
