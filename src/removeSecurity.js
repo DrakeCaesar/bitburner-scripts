@@ -44,7 +44,7 @@ export async function main(ns) {
 
     // eslint-disable-next-line no-unused-vars
     for (const [target, level] of items) {
-      ns.run("autoNuke.js")
+      // ns.run("autoNuke.js")
       let security =
         ns.getServerSecurityLevel(target) - ns.getServerMinSecurityLevel(target)
       let weakenThreads = Math.min(

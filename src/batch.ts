@@ -1,8 +1,8 @@
-/** @param {import("..").NS} ns */
-export async function main(ns) {
+import { NS, Person, Player, Server } from "@ns"
+export async function main(ns: NS) {
   // Basic parameters.
-  const target = ns.args[0]
-  const host = ns.getHostname()
+  const target = ns.args[0] as string
+  const host = ns.getHostname() as string
   const moneyMax = ns.getServerMaxMoney(target)
   const baseSecurity = ns.getServerMinSecurityLevel(target)
   const secTolerance = 0.01 // acceptable security deviation
@@ -96,26 +96,26 @@ export async function main(ns) {
    ******************************************************************/
 
   // Prep functions: adjust server/player objects as needed.
-  function prepForHack(server, player) {
-    server.money = server.moneyMax
+  function prepForHack(server: Server, player: Player) {
+    server.money = server.moneyMax!
     server.addedSecurity = 0
     server.security = server.baseSecurity
     return { server, player }
   }
-  function prepForWeaken(server, player, hackThreads) {
+  function prepForWeaken(server: Server, player: Player, hackThreads: number) {
     server.addedSecurity = ns.hackAnalyzeSecurity(hackThreads)
     server.security = server.baseSecurity + server.addedSecurity
 
     return { server, player }
   }
-  function prepForGrow(server, player) {
-    server.moneyAvailable = server.moneyMax * hackThreshold
+  function prepForGrow(server: Server, player: Player) {
+    server.moneyAvailable = server.moneyMax! * hackThreshold
     server.addedSecurity = 0
     server.security = server.baseSecurity
 
     return { server, player }
   }
-  function prepForWeaken2(server, player, growThreads) {
+  function prepForWeaken2(server: Server, player: Player, growThreads: number) {
     server.addedSecurity = ns.growthAnalyzeSecurity(growThreads)
     server.security = server.baseSecurity + server.addedSecurity
 
@@ -123,28 +123,28 @@ export async function main(ns) {
   }
 
   // Thread calculation functions.
-  function calculateHackThreads(server, player) {
+  function calculateHackThreads(server: Server, player: Person) {
     // Use the formulas to calculate hack threads.
     const hackPct = ns.formulas.hacking.hackPercent(server, player)
     return Math.ceil(
       (moneyMax - moneyMax * hackThreshold) / (hackPct * moneyMax)
     )
   }
-  function calculateWeakenThreads(server, player) {
+  function calculateWeakenThreads(server: Server, player: Player) {
     let threads = 1
     while (ns.weakenAnalyze(threads) < server.addedSecurity) {
       threads++
     }
     return threads
   }
-  function calculateGrowThreads(server, player) {
+  function calculateGrowThreads(server: Server, player: Person) {
     // Calculate threads needed to grow money to 100%.
     return Math.ceil(
       ns.formulas.hacking.growThreads(server, player, moneyMax, myCores)
     )
   }
   // For the second weaken, we'll use the same calculation as for the first.
-  function calculateWeakenThreads2(server, player) {
+  function calculateWeakenThreads2(server: Server, player: Player) {
     return calculateWeakenThreads(server, player)
   }
 
@@ -190,7 +190,7 @@ export async function main(ns) {
     )
     const weakenThreads2 = calculateWeakenThreads2(weaken2Server, weaken2Player)
 
-    function getDeltaInterval(hackTime, index) {
+    function getDeltaInterval(hackTime: number, index: number) {
       if (index === 0) {
         return [hackTime, Infinity]
       } else {
@@ -200,7 +200,7 @@ export async function main(ns) {
       }
     }
 
-    function getDelta(hackTime, index) {
+    function getDelta(hackTime: number, index: number) {
       if (index === 0) {
         // For index 0, the interval is [hackTime, Infinity), so we'll just return hackTime.
         return hackTime

@@ -1,4 +1,4 @@
-import { NS } from ".."
+import { NS } from "@ns"
 import { connect } from "./libraries/connect"
 
 export async function main(ns: NS): Promise<void> {

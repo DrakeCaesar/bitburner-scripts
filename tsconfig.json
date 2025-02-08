@@ -24,6 +24,7 @@
     "src/**/*.ts",
     "src/**/*.js",
     "NetscriptDefinitions.d.ts",
+    "global.d.ts",
     "vite.config.ts",
     "vite.config.js"
   ]
