@@ -5,8 +5,9 @@ export async function main(ns: NS) {
   await ns.sleep(delay)
   const lowestSec = ns.getServerMinSecurityLevel(target as string)
   const currentSec = ns.getServerSecurityLevel(target as string)
-  if (currentSec - lowestSec != 0) {
-    ns.tprint(`Error: Target has security level at ${currentSec}`)
+  const difference = currentSec - lowestSec
+  if (difference != 0) {
+    ns.tprint(`Error: Target has security increased by ${difference}`)
   }
   await ns.hack(target as string)
 }

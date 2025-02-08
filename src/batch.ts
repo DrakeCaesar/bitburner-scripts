@@ -84,7 +84,7 @@ export async function main(ns: NS) {
   function prepForWeaken2(server: Server, player: Player, growThreads: number) {
     server.addedSecurity = ns.growthAnalyzeSecurity(
       growThreads,
-      target,
+      undefined,
       myCores
     )
     server.security = server.baseSecurity + server.addedSecurity
@@ -168,14 +168,12 @@ export async function main(ns: NS) {
 
     const batchDelay = getDelta(hackTime, 1)
 
-    const baseline = weakenTime
-
     const offset = batchCounter * 4 * batchDelay
 
-    const finishHack = baseline + offset - batchDelay
-    const finishWeaken1 = baseline + offset
-    const finishGrow = baseline + offset + batchDelay
-    const finishWeaken2 = baseline + offset + 2 * batchDelay
+    const finishHack = weakenTime + offset - batchDelay
+    const finishWeaken1 = weakenTime + offset
+    const finishGrow = weakenTime + offset + batchDelay
+    const finishWeaken2 = weakenTime + offset + 2 * batchDelay
 
     const sleepHack = finishHack - hackTime
     const sleepWeaken1 = finishWeaken1 - weakenTime
