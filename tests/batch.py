@@ -47,7 +47,6 @@ def white_interval(hack_time, index):
         upper_bound = hack_time / (2 * index)
         return (lower_bound, upper_bound)
 
-
 def get_bg_color_at(t, delta):
     """
     Given a time t and δ, return the background color at that time
@@ -142,10 +141,10 @@ def draw_batches(ax, delta):
             y_labels[overall_index] = f"B{batch} {op}"
             ax.text(start_time, overall_index, f" B{batch}", va='center', ha='left', fontsize=8, color='black')
     
-    # Display both hack and grow counts.
+    # Display both hack and grow counters.
     ax.text(0.98, 0.12, f"Grows in red: {grows_in_red}",
             transform=ax.transAxes, fontsize=12, color='blue', ha='right', va='bottom',
-            bbox=dict(facecolor='white', edgecolor='cyan', alpha=0.8))
+            bbox=dict(facecolor='white', edgecolor='blue', alpha=0.8))
     ax.text(0.98, 0.02, f"Hacks in red: {hacks_in_red}",
             transform=ax.transAxes, fontsize=12, color='magenta', ha='right', va='bottom',
             bbox=dict(facecolor='white', edgecolor='magenta', alpha=0.8))
@@ -169,11 +168,10 @@ def compute_hack_red_intervals():
     For each candidate δ, evaluate the state of the hack start (for batch 0).
     
     For batch 0, hack finish = δ and hack start = δ - hack_time.
-    Using get_bg_color_at, determine if that start falls in red.
-    Group contiguous δ values with the same state, and then print the intervals where the state is red.
+    Using get_bg_color_at, determine if that start falls in red or white.
+    Group contiguous δ values with the same state, and then print the intervals.
     """
     H = hack_time
-    # We'll sweep integer δ values from 1 to int(H).
     state = None
     intervals = []
     start_val = None
@@ -190,26 +188,55 @@ def compute_hack_red_intervals():
             start_val = delta_val
     intervals.append((state, start_val, float(int(H))))
     
-    print("Intervals (δ in ms) where batch 0 hack start is red:")
-    for st, start, end in intervals:
-        if st == "red":
-            print(f"  Red: [{start:.1f} ms, {end:.1f} ms]")
+    # print("Intervals (δ in ms) where batch 0 hack start is red:")
+    # for st, start, end in intervals:
+    #     if st == "red":
+    #         print(f"  Red: [{start:.1f} ms, {end:.1f} ms]")
     print("\nIntervals where batch 0 hack start is white:")
     for st, start, end in intervals:
         if st == "white":
             print(f"  White: [{start:.1f} ms, {end:.1f} ms]")
 
-if __name__ == "__main__":
-    # First, print the intervals.
-    compute_hack_red_intervals()
+def compute_grow_white_intervals():
+    """
+    Sweep candidate δ values (in ms) from 1 up to grow_time.
+    For each candidate δ, evaluate the state of the grow start (for batch 0).
     
-    # Uncomment the following lines to print white intervals.
-    # for i in range(7):
-    #     interval = white_interval(hack_time, i)
-    #     if i == 0:
-    #         print(f"Index {i}: [{interval[0]:.2f} ms, ∞)")
-    #     else:
-    #         print(f"Index {i}: [{interval[0]:.2f} ms, {interval[1]:.2f} ms]")
+    For batch 0, grow finish = 3·δ and grow start = 3·δ - grow_time.
+    Using get_bg_color_at, determine if that start falls in white (or red).
+    Group contiguous δ values with the same state, and then print the intervals.
+    """
+    G = grow_time
+    state = None
+    intervals = []
+    start_val = None
+    for d in range(1, int(G) + 1):
+        delta_val = float(d)
+        # For batch 0 grow: finish = 3δ, start = 3δ - grow_time.
+        bg = get_bg_color_at(3*delta_val - G, delta_val)
+        if state is None:
+            state = bg
+            start_val = delta_val
+        elif bg != state:
+            intervals.append((state, start_val, delta_val - 1))
+            state = bg
+            start_val = delta_val
+    intervals.append((state, start_val, float(int(G))))
+    
+    print("Intervals (δ in ms) where batch 0 grow start is white:")
+    for st, start, end in intervals:
+        if st == "white":
+            print(f"  White: [{start:.1f} ms, {end:.1f} ms]")
+    # print("\nIntervals where batch 0 grow start is red:")
+    # for st, start, end in intervals:
+    #     if st == "red":
+    #         print(f"  Red: [{start:.1f} ms, {end:.1f} ms]")
+
+if __name__ == "__main__":
+    # First, print the intervals for batch 0 hack and grow operations.
+    compute_hack_red_intervals()
+    print("\n" + "="*60 + "\n")
+    compute_grow_white_intervals()
     
     # Then set up the interactive visualization.
     fig, ax = plt.subplots(figsize=(12, 6))

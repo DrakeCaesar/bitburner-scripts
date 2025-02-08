@@ -123,62 +123,67 @@ function getFinalIntersections(n: number, hackTime: number): Interval[] {
   return merged
 }
 
+// Finds the biggest interval from an array of intervals.
+function findBiggestInterval(finalIntervals: Interval[]): Interval {
+  let biggestInterval: Interval = [0, 0]
+  finalIntervals.forEach((interval) => {
+    if (interval[1] - interval[0] > biggestInterval[1] - biggestInterval[0]) {
+      biggestInterval = interval
+    }
+  })
+  return biggestInterval
+}
+
 // --- Example Usage ---
+// Process hack intervals for n = 1 and n = 2 using a single loop.
 
-const hackTime: number = 1270.5873382302843 // example hackTime value
+const hackTime: number = 1000 // example hackTime value
+const hackIndices = [1, 2]
 
-// Example 1: For hack interval n=3.
-const n1 = 3
-const H1 = getHackInterval(n1, hackTime)
-console.log(
-  `Hack interval for n=${n1}: [${H1[0].toFixed(1)} ms, ${H1[1].toFixed(1)} ms]`
-)
-
-const cropped1 = getCroppedIntervals(n1, hackTime)
-console.log(
-  `\nFor hack interval n=${n1}, the raw grow intervals that overlap (and their intersections) are:`
-)
-cropped1.forEach((ci) => {
-  const G = getGrowInterval(ci.m, hackTime)
-  console.log(`For m=${ci.m}:`)
-  console.log(`  Grow interval: [${G[0].toFixed(1)} ms, ${G[1].toFixed(1)} ms]`)
+for (const n of hackIndices) {
   console.log(
-    `  Intersection:  [${ci.intersection[0].toFixed(1)} ms, ${ci.intersection[1].toFixed(1)} ms]`
+    `\n---------------------------------------------------------------`
   )
-})
 
-const final1 = getFinalIntersections(n1, hackTime)
-console.log(`\nFinal union of intersections for hack interval n=${n1}:`)
-final1.forEach((intv, i) => {
+  // Compute and display the hack interval H(n)
+  const hackInterval = getHackInterval(n, hackTime)
   console.log(
-    `  Interval ${i + 1}: [${intv[0].toFixed(1)} ms, ${intv[1].toFixed(1)} ms]`
+    `Hack interval for hackTime=${hackTime} and n=${n}: [${hackInterval[0].toFixed(
+      1
+    )} ms, ${hackInterval[1].toFixed(1)} ms]`
   )
-})
 
-// Example 2: For hack interval n=2.
-const n2 = 2
-const H2 = getHackInterval(n2, hackTime)
-console.log(
-  `\nHack interval for n=${n2}: [${H2[0].toFixed(1)} ms, ${H2[1].toFixed(1)} ms]`
-)
-
-const cropped2 = getCroppedIntervals(n2, hackTime)
-console.log(
-  `\nFor hack interval n=${n2}, the raw grow intervals that overlap (and their intersections) are:`
-)
-cropped2.forEach((ci) => {
-  const G = getGrowInterval(ci.m, hackTime)
-  console.log(`For m=${ci.m}:`)
-  console.log(`  Grow interval: [${G[0].toFixed(1)} ms, ${G[1].toFixed(1)} ms]`)
+  // Get and display all overlapping grow intervals and their intersections with H(n)
+  const croppedIntervals = getCroppedIntervals(n, hackTime)
   console.log(
-    `  Intersection:  [${ci.intersection[0].toFixed(1)} ms, ${ci.intersection[1].toFixed(1)} ms]`
+    `\nFor hack interval n=${n}, the raw grow intervals that overlap (and their intersections) are:`
   )
-})
+  croppedIntervals.forEach((ci) => {
+    const growInterval = getGrowInterval(ci.m, hackTime)
+    console.log(`For m=${ci.m}:`)
+    console.log(
+      `  Grow interval: [${growInterval[0].toFixed(1)} ms, ${growInterval[1].toFixed(1)} ms]`
+    )
+    console.log(
+      `  Intersection:  [${ci.intersection[0].toFixed(1)} ms, ${ci.intersection[1].toFixed(1)} ms]`
+    )
+  })
 
-const final2 = getFinalIntersections(n2, hackTime)
-console.log(`\nFinal union of intersections for hack interval n=${n2}:`)
-final2.forEach((intv, i) => {
+  // Compute and display the final union of intersections for H(n)
+  const finalIntersections = getFinalIntersections(n, hackTime)
+  console.log(`\nFinal union of intersections for hack interval n=${n}:`)
+  finalIntersections.forEach((interval, i) => {
+    console.log(
+      `  Interval ${i + 1}: [${interval[0].toFixed(1)} ms, ${interval[1].toFixed(1)} ms]`
+    )
+  })
+
+  // Find and display the biggest interval and its center from the final union
+  const biggestInterval = findBiggestInterval(finalIntersections)
+  const intervalCenter = (biggestInterval[0] + biggestInterval[1]) / 2
+  console.log(`\nThe biggest interval for hack interval n=${n} is:`)
   console.log(
-    `  Interval ${i + 1}: [${intv[0].toFixed(1)} ms, ${intv[1].toFixed(1)} ms]`
+    `  Interval: [${biggestInterval[0].toFixed(1)} ms, ${biggestInterval[1].toFixed(1)} ms]`
   )
-})
+  console.log(`  Center: ${intervalCenter.toFixed(1)} ms`)
+}
