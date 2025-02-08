@@ -4,9 +4,9 @@ from matplotlib.widgets import Slider
 import numpy as np
 
 # Execution times (in ms)
-hack_time    = 1270.5873382302843
+hack_time    = 5082.349352921137
 weaken_time  = 5082.349352921137
-grow_time    = 4065.87948233691
+grow_time    = 5082.349352921137
 weaken2_time = 5082.349352921137
 
 # Order and durations for operations

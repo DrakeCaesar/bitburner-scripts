@@ -115,9 +115,10 @@ export async function main(ns: NS) {
 
   let batchCounter = 0
   ns.tprint("Entering main batching loop.")
+  const server = ns.getServer(target)
   while (true) {
     const player = ns.getPlayer()
-    const server = ns.getServer(target)
+
     const { server: hackServer, player: hackPlayer } = prepForHack(
       server,
       player
@@ -145,20 +146,20 @@ export async function main(ns: NS) {
     )
     const weakenThreads2 = calculateWeakenThreads2(weaken2Server, weaken2Player)
 
-    function getDeltaInterval(hackTime: number, index: number) {
+    function getDeltaInterval(opTime: number, index: number) {
       if (index === 0) {
-        return [hackTime, Infinity]
+        return [opTime, Infinity]
       }
-      const lowerBound = hackTime / (2 * index + 1)
-      const upperBound = hackTime / (2 * index)
+      const lowerBound = opTime / (2 * index + 1)
+      const upperBound = opTime / (2 * index)
       return [lowerBound, upperBound]
     }
 
-    function getDelta(hackTime: number, index: number) {
+    function getDelta(opTime: number, index: number) {
       if (index === 0) {
-        return hackTime
+        return opTime
       }
-      const [lower, upper] = getDeltaInterval(hackTime, index)
+      const [lower, upper] = getDeltaInterval(opTime, index)
       return (lower + upper) / 2
     }
 
@@ -166,19 +167,12 @@ export async function main(ns: NS) {
     const weakenTime = ns.formulas.hacking.weakenTime(server, player)
     const growTime = ns.formulas.hacking.growTime(server, player)
 
-    const batchDelay = getDelta(hackTime, 1)
+    const batchDelay = getDelta(weakenTime, 1)
 
-    const offset = batchCounter * 4 * batchDelay
-
-    const finishHack = weakenTime + offset - batchDelay
-    const finishWeaken1 = weakenTime + offset
-    const finishGrow = weakenTime + offset + batchDelay
-    const finishWeaken2 = weakenTime + offset + 2 * batchDelay
-
-    const sleepHack = finishHack - hackTime
-    const sleepWeaken1 = finishWeaken1 - weakenTime
-    const sleepGrow = finishGrow - growTime
-    const sleepWeaken2 = finishWeaken2 - weakenTime
+    const sleepHack = weakenTime - hackTime
+    const sleepWeaken1 = 0
+    const sleepGrow = weakenTime - growTime
+    const sleepWeaken2 = 0
 
     // // Debug printing: show sleep times, finish times, and the differences between finish times.
     // ns.tprint(`Batch ${batchCounter} Debug Info:`)
@@ -205,16 +199,19 @@ export async function main(ns: NS) {
     // ns.tprint("--------------------------------------------------")
 
     //print threads
-    ns.tprint(
-      `Batch ${batchCounter}: hack ${hackThreads}, weaken1 ${weakenThreads1}, grow ${growThreads}, weaken2 ${weakenThreads2}`
-    )
+    // ns.tprint(
+    //   `Batch ${batchCounter}: hack ${hackThreads}, weaken1 ${weakenThreads1}, grow ${growThreads}, weaken2 ${weakenThreads2}`
+    // )
 
     ns.exec("/hacking/hack.js", host, hackThreads, target, sleepHack)
+    await ns.sleep(batchDelay)
     ns.exec("/hacking/weaken.js", host, weakenThreads1, target, sleepWeaken1)
+    await ns.sleep(batchDelay)
     ns.exec("/hacking/grow.js", host, growThreads, target, sleepGrow)
+    await ns.sleep(batchDelay)
     ns.exec("/hacking/weaken.js", host, weakenThreads2, target, sleepWeaken2)
+    await ns.sleep(batchDelay)
 
     batchCounter++
-    await ns.sleep(4 * batchDelay)
   }
 }
