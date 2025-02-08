@@ -30,12 +30,10 @@ export async function main(ns: NS) {
   const currentSec = ns.getServerSecurityLevel(target)
   const expectedSecAfterGrow = currentSec + addedSecurity
   const secToReduce = expectedSecAfterGrow - baseSecurity
-  let weakenThreadsPre = 0
-  while (ns.weakenAnalyze(++weakenThreadsPre, myCores) < secToReduce) {}
+  const weakenThreadsPre = Math.ceil(
+    secToReduce / (0.05 * (1 + (myCores - 1) / 16))
+  )
 
-  const wt = addedSecurity / 0.05
-
-  ns.tprint(`Weaken threads needed: ${weakenThreadsPre} (actual: ${wt})`)
   if (weakenThreadsPre > 0) {
     ns.tprint(
       `Prep: Executing weaken with ${weakenThreadsPre} threads on ${target}.`
@@ -100,14 +98,7 @@ export async function main(ns: NS) {
     )
   }
   function calculateWeakenThreads(server: Server, player: Player) {
-    let threads = 1
-    while (ns.weakenAnalyze(threads, myCores) < server.addedSecurity) {
-      threads++
-    }
-    const wt = Math.ceil(server.addedSecurity / 0.05)
-
-    ns.tprint(`Weaken threads needed: ${threads} (actual: ${wt})`)
-    return threads
+    return Math.ceil(server.addedSecurity / (0.05 * (1 + (myCores - 1) / 16)))
   }
   function calculateGrowThreads(server: Server, player: Person) {
     return Math.ceil(
