@@ -18,14 +18,10 @@ export async function main(ns: NS) {
     ns.formulas.hacking.growThreads(serverActual, player, moneyMax, myCores)
   )
   if (growThreads > 0) {
-    ns.tprint(
-      `Pre-Batch: Executing grow with ${growThreads} thread(s) on ${target}.`
-    )
+    ns.tprint(`Prep: Executing grow with ${growThreads} threads on ${target}.`)
     ns.exec("/hacking/grow.js", host, growThreads, target, 0)
   } else {
-    ns.tprint(
-      `Pre-Batch: Grow not needed on ${target} (already at 100% money).`
-    )
+    ns.tprint(`Prep: Grow not needed on ${target}.`)
   }
 
   await ns.sleep(prepWeakenDelay)
@@ -42,19 +38,17 @@ export async function main(ns: NS) {
   ns.tprint(`Weaken threads needed: ${weakenThreadsPre} (actual: ${wt})`)
   if (weakenThreadsPre > 0) {
     ns.tprint(
-      `Pre-Batch: Executing weaken with ${weakenThreadsPre} thread(s) on ${target}.`
+      `Prep: Executing weaken with ${weakenThreadsPre} threads on ${target}.`
     )
     ns.exec("/hacking/weaken.js", host, weakenThreadsPre, target, 0)
   } else {
-    ns.tprint(
-      `Pre-Batch: Weaken not needed on ${target} (security is at base).`
-    )
+    ns.tprint(`Prep: Weaken not needed on ${target} (security is at base).`)
   }
 
   const growTime = ns.formulas.hacking.growTime(serverActual, player)
   const weakenTime = ns.formulas.hacking.weakenTime(serverActual, player)
   const waitTime = Math.max(growTime, weakenTime) + 200
-  ns.tprint(`Pre-Batch: Waiting ${waitTime} ms for grow/weaken to complete...`)
+  ns.tprint(`Prep: Waiting ${waitTime} ms for grow/weaken to complete...`)
   await ns.sleep(waitTime)
 
   const postMoney = ns.getServerMoneyAvailable(target)
@@ -66,7 +60,7 @@ export async function main(ns: NS) {
     ns.tprint(`WARNING: Security is ${postSec} (target ${baseSecurity}).`)
   }
   ns.tprint(
-    `Pre-Batch complete on ${target}: ${postMoney} money, ${postSec} security.`
+    `Prep complete on ${target}: ${postMoney} money, ${postSec} security.`
   )
 
   function prepForHack(server: Server, player: Player) {
