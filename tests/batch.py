@@ -48,11 +48,6 @@ def white_interval(hack_time, index):
         return (lower_bound, upper_bound)
 
 
-# Example usage:
-
-
-
-
 def get_bg_color_at(t, delta):
     """
     Given a time t and δ, return the background color at that time
@@ -116,7 +111,8 @@ def draw_batches(ax, delta):
     # Draw the periodic background.
     draw_background(ax, overall_min_time, overall_max_time + delta/2, delta)
     
-    hacks_in_red = 0  # counter for hacks with start in red
+    hacks_in_red = 0   # counter for hack operations with start in red
+    grows_in_red = 0   # counter for grow operations with start in red
     
     for batch in range(num_batches):
         for op_index, op in enumerate(op_order):
@@ -127,20 +123,29 @@ def draw_batches(ax, delta):
             edge_color = 'black'
             line_width = 1
             
-            # For hack operations, check the background at its start.
+            # Check for hack and grow operations.
             if op == "hack":
                 bg = get_bg_color_at(start_time, delta)
                 if bg == "red":
                     edge_color = 'magenta'
                     line_width = 3
                     hacks_in_red += 1
+            elif op == "grow":
+                bg = get_bg_color_at(start_time, delta)
+                if bg == "red":
+                    edge_color = 'cyan'
+                    line_width = 3
+                    grows_in_red += 1
             
             ax.barh(overall_index, finish_time - start_time, left=start_time,
                     height=0.8, color=op_colors[op], edgecolor=edge_color, linewidth=line_width)
             y_labels[overall_index] = f"B{batch} {op}"
             ax.text(start_time, overall_index, f" B{batch}", va='center', ha='left', fontsize=8, color='black')
     
-    # Display hack count.
+    # Display both hack and grow counts.
+    ax.text(0.98, 0.12, f"Grows in red: {grows_in_red}",
+            transform=ax.transAxes, fontsize=12, color='blue', ha='right', va='bottom',
+            bbox=dict(facecolor='white', edgecolor='cyan', alpha=0.8))
     ax.text(0.98, 0.02, f"Hacks in red: {hacks_in_red}",
             transform=ax.transAxes, fontsize=12, color='magenta', ha='right', va='bottom',
             bbox=dict(facecolor='white', edgecolor='magenta', alpha=0.8))
@@ -198,6 +203,7 @@ if __name__ == "__main__":
     # First, print the intervals.
     compute_hack_red_intervals()
     
+    # Uncomment the following lines to print white intervals.
     # for i in range(7):
     #     interval = white_interval(hack_time, i)
     #     if i == 0:
@@ -213,10 +219,7 @@ if __name__ == "__main__":
     draw_batches(ax, init_delta)
     
     ax_slider = plt.axes([0.15, 0.1, 0.7, 0.03])
-    slider = Slider(ax_slider, 'δ (ms)', 0, hack_time* 2, valinit=init_delta, valstep=1)
+    slider = Slider(ax_slider, 'δ (ms)', 0, hack_time * 2, valinit=init_delta, valstep=1)
     slider.on_changed(update)
     
     plt.show()
-    
-
-
