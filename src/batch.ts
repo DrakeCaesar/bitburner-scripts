@@ -30,7 +30,7 @@ export async function main(ns: NS) {
   const currentSec = ns.getServerSecurityLevel(target)
   const expectedSecAfterGrow = currentSec + addedSecurity
   const secToReduce = expectedSecAfterGrow - baseSecurity
-  const weakenThreadsPre = Math.min(
+  const weakenThreadsPre = Math.max(
     1,
     Math.ceil(secToReduce / (0.05 * (1 + (myCores - 1) / 16)))
   )
@@ -99,7 +99,7 @@ export async function main(ns: NS) {
     )
   }
   function calculateWeakenThreads(server: Server, player: Player) {
-    return Math.min(
+    return Math.max(
       1,
       Math.ceil(server.addedSecurity / (0.05 * (1 + (myCores - 1) / 16)))
     )
@@ -205,6 +205,11 @@ export async function main(ns: NS) {
     //     `Grow->Weaken2: ${(finishWeaken2 - finishGrow).toFixed(2)}`
     // )
     // ns.tprint("--------------------------------------------------")
+
+    //print threads
+    ns.tprint(
+      `Batch ${batchCounter}: hack ${hackThreads}, weaken1 ${weakenThreads1}, grow ${growThreads}, weaken2 ${weakenThreads2}`
+    )
 
     ns.exec("/hacking/hack.js", host, hackThreads, target, sleepHack)
     ns.exec("/hacking/weaken.js", host, weakenThreads1, target, sleepWeaken1)
