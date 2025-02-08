@@ -123,67 +123,24 @@ function getFinalIntersections(n: number, hackTime: number): Interval[] {
   return merged
 }
 
-// Finds the biggest interval from an array of intervals.
-function findBiggestInterval(finalIntervals: Interval[]): Interval {
-  let biggestInterval: Interval = [0, 0]
-  finalIntervals.forEach((interval) => {
-    if (interval[1] - interval[0] > biggestInterval[1] - biggestInterval[0]) {
-      biggestInterval = interval
-    }
-  })
-  return biggestInterval
-}
+// --- New Example ---
+// For each hack interval n from 1 to 10, compute the final union of intersections.
+// If the union contains 2 or 3 intervals (groups), then print just their sizes (in order).
 
-// --- Example Usage ---
-// Process hack intervals for n = 1 and n = 2 using a single loop.
+const hackTime: number = 1270.5873382302843 // example hackTime value
 
-const hackTime: number = 1000 // example hackTime value
-const hackIndices = [1, 2]
-
-for (const n of hackIndices) {
-  console.log(
-    `\n---------------------------------------------------------------`
-  )
-
-  // Compute and display the hack interval H(n)
-  const hackInterval = getHackInterval(n, hackTime)
-  console.log(
-    `Hack interval for hackTime=${hackTime} and n=${n}: [${hackInterval[0].toFixed(
-      1
-    )} ms, ${hackInterval[1].toFixed(1)} ms]`
-  )
-
-  // Get and display all overlapping grow intervals and their intersections with H(n)
-  const croppedIntervals = getCroppedIntervals(n, hackTime)
-  console.log(
-    `\nFor hack interval n=${n}, the raw grow intervals that overlap (and their intersections) are:`
-  )
-  croppedIntervals.forEach((ci) => {
-    const growInterval = getGrowInterval(ci.m, hackTime)
-    console.log(`For m=${ci.m}:`)
-    console.log(
-      `  Grow interval: [${growInterval[0].toFixed(1)} ms, ${growInterval[1].toFixed(1)} ms]`
-    )
-    console.log(
-      `  Intersection:  [${ci.intersection[0].toFixed(1)} ms, ${ci.intersection[1].toFixed(1)} ms]`
-    )
-  })
-
-  // Compute and display the final union of intersections for H(n)
+for (let n = 1; n <= 100; n++) {
   const finalIntersections = getFinalIntersections(n, hackTime)
-  console.log(`\nFinal union of intersections for hack interval n=${n}:`)
-  finalIntersections.forEach((interval, i) => {
-    console.log(
-      `  Interval ${i + 1}: [${interval[0].toFixed(1)} ms, ${interval[1].toFixed(1)} ms]`
-    )
-  })
 
-  // Find and display the biggest interval and its center from the final union
-  const biggestInterval = findBiggestInterval(finalIntersections)
-  const intervalCenter = (biggestInterval[0] + biggestInterval[1]) / 2
-  console.log(`\nThe biggest interval for hack interval n=${n} is:`)
-  console.log(
-    `  Interval: [${biggestInterval[0].toFixed(1)} ms, ${biggestInterval[1].toFixed(1)} ms]`
-  )
-  console.log(`  Center: ${intervalCenter.toFixed(1)} ms`)
+  // Check if the final union has 2 or 3 intervals.
+  if (finalIntersections.length === 2 || finalIntersections.length === 3) {
+    // Compute the size (width) of each interval.
+    const sizes = finalIntersections.map(
+      (interval) => interval[1] - interval[0]
+    )
+    // Print the sizes in order.
+    console.log(
+      `n = ${n}: Interval sizes = ${sizes.map((s) => s.toFixed(2)).join(", ")} ms`
+    )
+  }
 }
