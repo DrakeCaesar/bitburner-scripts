@@ -159,6 +159,10 @@ export async function main(ns: NS) {
       return (lower + upper) / 2
     }
 
+    function getDeltaShotgun(opTime: number, index: number) {
+      return opTime / (2.5 + 2 * index)
+    }
+
     const hackTime = ns.formulas.hacking.hackTime(hackServer, hackPlayer)
     const weakenTime = ns.formulas.hacking.weakenTime(
       weakenServer,
@@ -174,7 +178,7 @@ export async function main(ns: NS) {
       ns.tprint(`Weaken times do not match: ${weakenTime} vs ${weaken2Time}`)
     }
 
-    const batchDelay = getDelta(weakenTime, 1)
+    const batchDelay = getDeltaShotgun(weakenTime, 2)
 
     const sleepHack = weakenTime - hackTime
     const sleepWeaken1 = 0

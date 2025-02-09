@@ -4,10 +4,10 @@ from matplotlib.widgets import Slider
 import numpy as np
 
 # Execution times (in ms)
-hack_time    = 5082.349352921137
-weaken_time  = 5082.349352921137
-grow_time    = 5082.349352921137
-weaken2_time = 5082.349352921137
+hack_time    = 10000
+weaken_time  = 10000
+grow_time    = 10000
+weaken2_time = 10000
 
 # Order and durations for operations
 op_order = ["hack", "weaken", "grow", "weaken2"]
