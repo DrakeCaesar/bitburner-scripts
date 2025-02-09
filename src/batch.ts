@@ -63,31 +63,26 @@ export async function main(ns: NS) {
   )
 
   function prepForHack(server: Server, player: Player) {
-    server.money = server.moneyMax!
-    server.addedSecurity = 0
-    server.security = server.baseSecurity
+    server.moneyAvailable = server.moneyMax!
+    server.hackDifficulty = server.minDifficulty
     return { server, player }
   }
   function prepForWeaken(server: Server, player: Player, hackThreads: number) {
-    server.addedSecurity = ns.hackAnalyzeSecurity(hackThreads)
-    server.security = server.baseSecurity + server.addedSecurity
+    server.hackDifficulty =
+      server.minDifficulty! + ns.hackAnalyzeSecurity(hackThreads, undefined)
 
     return { server, player }
   }
   function prepForGrow(server: Server, player: Player) {
     server.moneyAvailable = server.moneyMax! * hackThreshold
-    server.addedSecurity = 0
-    server.security = server.baseSecurity
+    server.hackDifficulty = server.minDifficulty
 
     return { server, player }
   }
   function prepForWeaken2(server: Server, player: Player, growThreads: number) {
-    server.addedSecurity = ns.growthAnalyzeSecurity(
-      growThreads,
-      undefined,
-      myCores
-    )
-    server.security = server.baseSecurity + server.addedSecurity
+    server.hackDifficulty =
+      server.minDifficulty! +
+      ns.growthAnalyzeSecurity(growThreads, undefined, myCores)
 
     return { server, player }
   }
@@ -99,9 +94,10 @@ export async function main(ns: NS) {
     )
   }
   function calculateWeakenThreads(server: Server, player: Player) {
+    const addedSecurity = server.hackDifficulty! - server.minDifficulty!
     return Math.max(
       1,
-      Math.ceil(server.addedSecurity / (0.05 * (1 + (myCores - 1) / 16)))
+      Math.ceil(addedSecurity / (0.05 * (1 + (myCores - 1) / 16)))
     )
   }
   function calculateGrowThreads(server: Server, player: Person) {
@@ -163,9 +159,20 @@ export async function main(ns: NS) {
       return (lower + upper) / 2
     }
 
-    const hackTime = ns.formulas.hacking.hackTime(server, player)
-    const weakenTime = ns.formulas.hacking.weakenTime(server, player)
-    const growTime = ns.formulas.hacking.growTime(server, player)
+    const hackTime = ns.formulas.hacking.hackTime(hackServer, hackPlayer)
+    const weakenTime = ns.formulas.hacking.weakenTime(
+      weakenServer,
+      weakenPlayer
+    )
+    const growTime = ns.formulas.hacking.growTime(growServer, growPlayer)
+    const weaken2Time = ns.formulas.hacking.weakenTime(
+      weaken2Server,
+      weaken2Player
+    )
+
+    if (weakenTime !== weaken2Time) {
+      ns.tprint(`Weaken times do not match: ${weakenTime} vs ${weaken2Time}`)
+    }
 
     const batchDelay = getDelta(weakenTime, 1)
 
