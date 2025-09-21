@@ -155,13 +155,30 @@ export async function main(ns: NS): Promise<void> {
       tableRows += `┃ ${type.padEnd(nL)} ┃ ${count} ┃ ${emptyTime} ┃\n`
     }
   }
-  // Bottom border
-  const output =
+  // Bottom border and initial output table
+  let fullOutput =
     `\n` +
     `┏━${"━".repeat(nL)}━┳━${"━".repeat(cL)}━┳━${"━".repeat(tL)}━┓\n` +
     `┃ ${nT.padEnd(nL)} ┃ ${cT.padStart(cL)} ┃ ${tT.padStart(tL)} ┃\n` +
     `┣━${"━".repeat(nL)}━╋━${"━".repeat(cL)}━╋━${"━".repeat(tL)}━┫\n` +
     `${tableRows}` +
     `┗━${"━".repeat(nL)}━┻━${"━".repeat(cL)}━┻━${"━".repeat(tL)}━┛\n`
-  ns.tprint(output)
+  // Combine with details of first unimplemented contracts
+  if (unsolvedTypes.size > 0) {
+    for (const type of unsolvedTypes.keys()) {
+      const list = contractMap.get(type)
+      const c = list?.contracts.find((c) => c.answer == null)
+      if (c) {
+        const description = ns.codingcontract.getDescription(c.name, c.server)
+        const attempts = ns.codingcontract.getNumTriesRemaining(
+          c.name,
+          c.server
+        )
+        fullOutput += `${type}\n\n`
+        fullOutput += `${description}\n\n`
+        fullOutput += `Attempts Remaining:\n${attempts}\n\n`
+      }
+    }
+  }
+  ns.tprint(fullOutput)
 }
