@@ -278,7 +278,7 @@ export class FloatingWindow {
       const matrix = new DOMMatrix(style.transform)
       const currentX = matrix.m41 || 0
       const currentY = matrix.m42 || 0
-      
+
       // Calculate offset from mouse position to current window position
       this.dragOffset.x = e.clientX - currentX
       this.dragOffset.y = e.clientY - currentY
