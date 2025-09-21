@@ -273,9 +273,15 @@ export class FloatingWindow {
 
     dragHandle.addEventListener("mousedown", (e) => {
       this.isDragging = true
-      const rect = this.element!.getBoundingClientRect()
-      this.dragOffset.x = e.clientX - rect.left
-      this.dragOffset.y = e.clientY - rect.top
+      // Get the current transform values to maintain position
+      const style = window.getComputedStyle(this.element!)
+      const matrix = new DOMMatrix(style.transform)
+      const currentX = matrix.m41 || 0
+      const currentY = matrix.m42 || 0
+      
+      // Calculate offset from mouse position to current window position
+      this.dragOffset.x = e.clientX - currentX
+      this.dragOffset.y = e.clientY - currentY
       e.preventDefault()
     })
 
