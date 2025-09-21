@@ -85,6 +85,9 @@ onmessage = (event) => {
     case "Encryption II: Vigenère Cipher":
       answer = VigenereCipher(data)
       break
+    case "Square Root":
+      answer = squareRoot(data)
+      break
     default:
       answer = null
       break
@@ -1039,4 +1042,30 @@ function VigenereCipher(data: [string, string]) {
   }
 
   return cipherText
+}
+
+function squareRoot(data: string): string {
+  const n = BigInt(data)
+
+  let low = 0n
+  let high = n
+  let result = 0n
+
+  while (low <= high) {
+    const mid = (low + high) / 2n
+    if (mid * mid <= n) {
+      result = mid
+      low = mid + 1n
+    } else {
+      high = mid - 1n
+    }
+  }
+
+  // Round to the nearest integer
+  const r = result
+  if ((r + 1n) * (r + 1n) - n < n - r * r) {
+    result = r + 1n
+  }
+
+  return result.toString()
 }

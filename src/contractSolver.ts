@@ -80,11 +80,21 @@ export async function main(ns: NS): Promise<void> {
 
           current.answer = results[promises.length - j - 1] ?? null
 
-          if (type === "Find All Valid Math Expressions") {
-            //ns.tprint(current.answer)
-          }
+          // const attempt = ns.codingcontract.getNumTriesRemaining(
+          //   current.name,
+          //   current.server
+          // )
+          // const currData = ns.codingcontract.getData(
+          //   current.name,
+          //   current.server
+          // )
 
-          if (solve) {
+          // ns.tprint(`current: ${current.name} @ ${current.server}`)
+          // ns.tprint(`Data: ${currData}`)
+          // ns.tprint(`Answer: ${current.answer}`)
+          // ns.tprint(`Attempts Remaining: ${attempt}`)
+
+          if (solve && current.answer != null) {
             ns.codingcontract.attempt(
               current.answer,
               current.name,
