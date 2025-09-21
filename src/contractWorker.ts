@@ -518,8 +518,9 @@ function jumpingGame(numbers: number[]): number {
       dp[j] = Math.min(dp[j], dp[i] + 1)
     }
   }
-
-  return dp[n - 1] === Number.MAX_SAFE_INTEGER ? 0 : dp[n - 1]
+  // works for I for sure
+  // return dp[n - 1] === Number.MAX_SAFE_INTEGER ? 0 : dp[n - 1]
+  return dp[n - 1] === Number.MAX_SAFE_INTEGER ? 0 : 1
 }
 
 function findAllValidMathExpressionsNew(data: [string, number]): string[] {
@@ -904,7 +905,8 @@ function LZCompression(str: string): string {
     for (let len = 1; len <= 9; len++) {
       const input = cur_state[0][len]
       if (input === undefined) continue
-      if (len < 9) set(new_state, 0, len + 1, input) // extend current literal
+      if (len < 9)
+        set(new_state, 0, len + 1, input) // extend current literal
       else set(new_state, 0, 1, input + "9" + str.substring(i - 9, i) + "0") // start new literal
       for (let offset = 1; offset <= Math.min(9, i); offset++) {
         // start new backreference
