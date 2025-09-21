@@ -119,27 +119,43 @@ export async function main(ns: NS): Promise<void> {
     tL = Math.max(tL, list.totalTime.toFixed(2).toString().length)
   }
 
-  // Create table rows
+  // Create table rows for implemented contracts
   let tableRows = ""
-  // Convert map to array of objects
-  const contractArr = Array.from(contractMap, ([type, list]) => ({
+  // Identify unimplemented contract types and counts
+  const unsolvedTypes = new Map<string, number>()
+  for (const [type, list] of contractMap) {
+    const missing = list.contracts.filter((c) => c.answer == null).length
+    if (missing > 0) unsolvedTypes.set(type, missing)
+  }
+  // Prepare array of implemented contract types
+  const implArr = Array.from(contractMap, ([type, list]) => ({
     type,
     list,
-  }))
-  // Sort array by averageTime in descending order
-  contractArr.sort(
+  })).filter((item) => !unsolvedTypes.has(item.type))
+  // Sort by average execution time descending
+  implArr.sort(
     (a, b) =>
       b.list.totalTime / b.list.contracts.length -
       a.list.totalTime / a.list.contracts.length
   )
-
-  for (const { type, list } of contractArr) {
+  // Build rows for implemented contracts
+  for (const { type, list } of implArr) {
     const count = list.contracts.length.toString().padStart(cL)
     const averageTime = (list.totalTime / list.contracts.length)
       .toFixed(2)
       .padStart(tL)
     tableRows += `┃ ${type.padEnd(nL)} ┃ ${count} ┃ ${averageTime} ┃\n`
   }
+  // Separator before unimplemented contract summary
+  if (unsolvedTypes.size > 0) {
+    tableRows += `┣━${"━".repeat(nL)}━╋━${"━".repeat(cL)}━╋━${"━".repeat(tL)}━┫\n`
+    for (const [type, countNum] of unsolvedTypes) {
+      const count = countNum.toString().padStart(cL)
+      const emptyTime = "".padStart(tL)
+      tableRows += `┃ ${type.padEnd(nL)} ┃ ${count} ┃ ${emptyTime} ┃\n`
+    }
+  }
+  // Bottom border
   const output =
     `\n` +
     `┏━${"━".repeat(nL)}━┳━${"━".repeat(cL)}━┳━${"━".repeat(tL)}━┓\n` +
@@ -147,6 +163,5 @@ export async function main(ns: NS): Promise<void> {
     `┣━${"━".repeat(nL)}━╋━${"━".repeat(cL)}━╋━${"━".repeat(tL)}━┫\n` +
     `${tableRows}` +
     `┗━${"━".repeat(nL)}━┻━${"━".repeat(cL)}━┻━${"━".repeat(tL)}━┛\n`
-
   ns.tprint(output)
 }
