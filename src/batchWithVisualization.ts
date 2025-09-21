@@ -1,5 +1,14 @@
 import { NS, Person, Player, Server } from "@ns"
+import {
+  initBatchVisualizer,
+  logBatchOperation,
+  nextBatch,
+} from "./batchVisualizer"
+
 export async function main(ns: NS) {
+  // Initialize the real-time visualizer
+  const visualizer = initBatchVisualizer()
+
   const host = (ns.args[0] as string) ?? ns.getHostname()
   const target = ns.args[1] as string
   const moneyMax = ns.getServerMaxMoney(target)
@@ -133,7 +142,6 @@ export async function main(ns: NS) {
       player
     )
     const growThreads = calculateGrowThreads(growServer, growPlayer)
-    // ns.tprint(`Batch ${batchCounter}: grow ${growThreads}`)
 
     const { server: weaken2Server, player: weaken2Player } = prepForWeaken2(
       server,
@@ -141,23 +149,6 @@ export async function main(ns: NS) {
       growThreads
     )
     const weakenThreads2 = calculateWeakenThreads2(weaken2Server, weaken2Player)
-
-    function getDeltaInterval(opTime: number, index: number) {
-      if (index === 0) {
-        return [opTime, Infinity]
-      }
-      const lowerBound = opTime / (2 * index + 1)
-      const upperBound = opTime / (2 * index)
-      return [lowerBound, upperBound]
-    }
-
-    function getDelta(opTime: number, index: number) {
-      if (index === 0) {
-        return opTime
-      }
-      const [lower, upper] = getDeltaInterval(opTime, index)
-      return (lower + upper) / 2
-    }
 
     function getDeltaShotgun(opTime: number, index: number) {
       return opTime / (2.5 + 2 * index)
@@ -185,34 +176,22 @@ export async function main(ns: NS) {
     const sleepGrow = weakenTime - growTime
     const sleepWeaken2 = 0
 
-    // // Debug printing: show sleep times, finish times, and the differences between finish times.
-    // ns.tprint(`Batch ${batchCounter} Debug Info:`)
-    // ns.tprint(`  hackTime: ${hackTime}`)
-    // ns.tprint(`  weakenTime: ${weakenTime}`)
-    // ns.tprint(`  growTime: ${growTime}`)
-    // ns.tprint(`  batchDelay: ${batchDelay}`)
-    // ns.tprint(`  offset: ${offset}`)
-    // ns.tprint("")
-    // ns.tprint(`  Sleep Hack:    ${sleepHack}  -> Finish Hack:    ${finishHack}`)
-    // ns.tprint(
-    //   `  Sleep Weaken1: ${sleepWeaken1}  -> Finish Weaken1: ${finishWeaken1}`
-    // )
-    // ns.tprint(`  Sleep Grow:    ${sleepGrow}  -> Finish Grow:    ${finishGrow}`)
-    // ns.tprint(
-    //   `  Sleep Weaken2: ${sleepWeaken2}  -> Finish Weaken2: ${finishWeaken2}`
-    // )
-    // ns.tprint("")
-    // ns.tprint(
-    //   `  Finish Diffs: Hack->Weaken1: ${(finishWeaken1 - finishHack).toFixed(2)}, ` +
-    //     `Weaken1->Grow: ${(finishGrow - finishWeaken1).toFixed(2)}, ` +
-    //     `Grow->Weaken2: ${(finishWeaken2 - finishGrow).toFixed(2)}`
-    // )
-    // ns.tprint("--------------------------------------------------")
+    // Calculate expected completion times for visualization
+    const currentTime = Date.now()
+    const hackStart = currentTime
+    const hackEnd = hackStart + hackTime + sleepHack
+    const weaken1Start = currentTime + batchDelay
+    const weaken1End = weaken1Start + weakenTime + sleepWeaken1
+    const growStart = currentTime + 2 * batchDelay
+    const growEnd = growStart + growTime + sleepGrow
+    const weaken2Start = currentTime + 3 * batchDelay
+    const weaken2End = weaken2Start + weakenTime + sleepWeaken2
 
-    //print threads
-    // ns.tprint(
-    //   `Batch ${batchCounter}: hack ${hackThreads}, weaken1 ${weakenThreads1}, grow ${growThreads}, weaken2 ${weakenThreads2}`
-    // )
+    // Log operations to visualizer (predicting when they'll complete)
+    logBatchOperation("H", hackStart, hackEnd, batchCounter)
+    logBatchOperation("W", weaken1Start, weaken1End, batchCounter)
+    logBatchOperation("G", growStart, growEnd, batchCounter)
+    logBatchOperation("W", weaken2Start, weaken2End, batchCounter)
 
     ns.exec("/hacking/hack.js", host, hackThreads, target, sleepHack)
     await ns.sleep(batchDelay)
@@ -224,5 +203,6 @@ export async function main(ns: NS) {
     await ns.sleep(batchDelay)
 
     batchCounter++
+    nextBatch() // Advance to next batch in visualizer
   }
 }

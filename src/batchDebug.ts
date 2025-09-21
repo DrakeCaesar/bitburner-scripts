@@ -1,5 +1,24 @@
 import { NS, Person, Player, Server } from "@ns"
+import {
+  clearVisualization,
+  initBatchVisualizer,
+  logBatchOperation,
+  nextBatch,
+} from "./batchVisualizer"
+
+// Store for tracking operation timings from the individual scripts
+interface PendingOperation {
+  type: "H" | "W" | "G"
+  batchId: number
+  expectedStart: number
+  expectedEnd: number
+}
+
 export async function main(ns: NS) {
+  // Initialize the real-time visualizer
+  const visualizer = initBatchVisualizer()
+  clearVisualization() // Start fresh
+
   const host = (ns.args[0] as string) ?? ns.getHostname()
   const target = ns.args[1] as string
   const moneyMax = ns.getServerMaxMoney(target)
@@ -109,9 +128,53 @@ export async function main(ns: NS) {
     return calculateWeakenThreads(server, player)
   }
 
+  // Background task to parse tprint logs and update visualization
+  async function parseLogsForVisualization() {
+    const logFile = "/tmp/batch_timings.txt"
+
+    while (true) {
+      try {
+        if (ns.fileExists(logFile)) {
+          const logContent = ns.read(logFile)
+          const lines = logContent.split("\n").filter((line) => line.trim())
+
+          for (const line of lines) {
+            try {
+              // Parse log entries like: ("H", 1739062605984, 1739062612737),
+              const match = line.match(/\("([HWG])", (\d+), (\d+)\)/)
+              if (match) {
+                const [, type, start, end] = match
+                logBatchOperation(
+                  type as "H" | "W" | "G",
+                  parseInt(start),
+                  parseInt(end),
+                  Math.floor(parseInt(start) / 10000) // Simple batch ID based on time
+                )
+              }
+            } catch (e) {
+              // Ignore parsing errors for individual lines
+            }
+          }
+
+          // Clear the log file to avoid re-processing
+          ns.write(logFile, "", "w")
+        }
+      } catch (e) {
+        // Ignore file access errors
+      }
+
+      await ns.sleep(100) // Check every 100ms
+    }
+  }
+
+  // Start the log parsing in the background (simulated)
+  // Note: In a real implementation, you'd need a separate script for this
+  // parseLogsForVisualization() // Commented out as it would block
+
   let batchCounter = 0
   ns.tprint("Entering main batching loop.")
   const server = ns.getServer(target)
+
   while (true) {
     const player = ns.getPlayer()
 
@@ -133,7 +196,6 @@ export async function main(ns: NS) {
       player
     )
     const growThreads = calculateGrowThreads(growServer, growPlayer)
-    // ns.tprint(`Batch ${batchCounter}: grow ${growThreads}`)
 
     const { server: weaken2Server, player: weaken2Player } = prepForWeaken2(
       server,
@@ -141,23 +203,6 @@ export async function main(ns: NS) {
       growThreads
     )
     const weakenThreads2 = calculateWeakenThreads2(weaken2Server, weaken2Player)
-
-    function getDeltaInterval(opTime: number, index: number) {
-      if (index === 0) {
-        return [opTime, Infinity]
-      }
-      const lowerBound = opTime / (2 * index + 1)
-      const upperBound = opTime / (2 * index)
-      return [lowerBound, upperBound]
-    }
-
-    function getDelta(opTime: number, index: number) {
-      if (index === 0) {
-        return opTime
-      }
-      const [lower, upper] = getDeltaInterval(opTime, index)
-      return (lower + upper) / 2
-    }
 
     function getDeltaShotgun(opTime: number, index: number) {
       return opTime / (2.5 + 2 * index)
@@ -185,34 +230,27 @@ export async function main(ns: NS) {
     const sleepGrow = weakenTime - growTime
     const sleepWeaken2 = 0
 
-    // // Debug printing: show sleep times, finish times, and the differences between finish times.
-    // ns.tprint(`Batch ${batchCounter} Debug Info:`)
-    // ns.tprint(`  hackTime: ${hackTime}`)
-    // ns.tprint(`  weakenTime: ${weakenTime}`)
-    // ns.tprint(`  growTime: ${growTime}`)
-    // ns.tprint(`  batchDelay: ${batchDelay}`)
-    // ns.tprint(`  offset: ${offset}`)
-    // ns.tprint("")
-    // ns.tprint(`  Sleep Hack:    ${sleepHack}  -> Finish Hack:    ${finishHack}`)
-    // ns.tprint(
-    //   `  Sleep Weaken1: ${sleepWeaken1}  -> Finish Weaken1: ${finishWeaken1}`
-    // )
-    // ns.tprint(`  Sleep Grow:    ${sleepGrow}  -> Finish Grow:    ${finishGrow}`)
-    // ns.tprint(
-    //   `  Sleep Weaken2: ${sleepWeaken2}  -> Finish Weaken2: ${finishWeaken2}`
-    // )
-    // ns.tprint("")
-    // ns.tprint(
-    //   `  Finish Diffs: Hack->Weaken1: ${(finishWeaken1 - finishHack).toFixed(2)}, ` +
-    //     `Weaken1->Grow: ${(finishGrow - finishWeaken1).toFixed(2)}, ` +
-    //     `Grow->Weaken2: ${(finishWeaken2 - finishGrow).toFixed(2)}`
-    // )
-    // ns.tprint("--------------------------------------------------")
+    // Calculate predicted completion times for visualization
+    const currentTime = Date.now()
+    const hackStart = currentTime
+    const hackEnd = hackStart + hackTime + sleepHack
+    const weaken1Start = currentTime + batchDelay
+    const weaken1End = weaken1Start + weakenTime + sleepWeaken1
+    const growStart = currentTime + 2 * batchDelay
+    const growEnd = growStart + growTime + sleepGrow
+    const weaken2Start = currentTime + 3 * batchDelay
+    const weaken2End = weaken2Start + weakenTime + sleepWeaken2
 
-    //print threads
-    // ns.tprint(
-    //   `Batch ${batchCounter}: hack ${hackThreads}, weaken1 ${weakenThreads1}, grow ${growThreads}, weaken2 ${weakenThreads2}`
-    // )
+    // Log predicted operations to visualizer (these will show as bars)
+    logBatchOperation("H", hackStart, hackEnd, batchCounter)
+    logBatchOperation("W", weaken1Start, weaken1End, batchCounter)
+    logBatchOperation("G", growStart, growEnd, batchCounter)
+    logBatchOperation("W", weaken2Start, weaken2End, batchCounter)
+
+    // Print batch info for debugging
+    ns.tprint(
+      `Batch ${batchCounter}: hack ${hackThreads}, weaken1 ${weakenThreads1}, grow ${growThreads}, weaken2 ${weakenThreads2}`
+    )
 
     ns.exec("/hacking/hack.js", host, hackThreads, target, sleepHack)
     await ns.sleep(batchDelay)
@@ -224,5 +262,11 @@ export async function main(ns: NS) {
     await ns.sleep(batchDelay)
 
     batchCounter++
+    nextBatch() // Advance to next batch in visualizer
+
+    // Optional: slow down the loop to make visualization more readable
+    if (batchCounter > 0 && batchCounter % 5 === 0) {
+      await ns.sleep(1000) // Pause every 5 batches for 1 second
+    }
   }
 }
