@@ -56,7 +56,7 @@ onmessage = (event) => {
       answer = jumpingGame(data)
       break
     case "Array Jumping Game II":
-      answer = jumpingGame(data)
+      answer = jumpingGameII(data)
       break
     case "Find All Valid Math Expressions":
       answer = findAllValidMathExpressions(data)
@@ -509,6 +509,12 @@ function trianglePath(data: number[][]) {
 }
 
 function jumpingGame(numbers: number[]): number {
+  const jumps = jumpingGameII(numbers)
+  return jumps > 0 ? 1 : 0
+}
+
+// Version II: return minimum jumps to reach end
+function jumpingGameII(numbers: number[]): number {
   const n = numbers.length
   const dp = Array(n).fill(Number.MAX_SAFE_INTEGER)
   dp[0] = 0
@@ -518,9 +524,7 @@ function jumpingGame(numbers: number[]): number {
       dp[j] = Math.min(dp[j], dp[i] + 1)
     }
   }
-  // works for I for sure
-  // return dp[n - 1] === Number.MAX_SAFE_INTEGER ? 0 : dp[n - 1]
-  return dp[n - 1] === Number.MAX_SAFE_INTEGER ? 0 : 1
+  return dp[n - 1] === Number.MAX_SAFE_INTEGER ? 0 : dp[n - 1]
 }
 
 function findAllValidMathExpressionsNew(data: [string, number]): string[] {
