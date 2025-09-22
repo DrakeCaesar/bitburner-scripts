@@ -19,7 +19,7 @@ export async function main(ns: NS) {
 
   // Create a floating window that will automatically position itself next to the overview container
   const window = new FloatingWindow({
-    title: "title",
+    title: "Title",
     content: testContent,
     width: 400,
     height: 300,

@@ -165,10 +165,12 @@ export class FloatingWindow {
 
     // Create the MuiCollapse wrapper structure
     const collapseWrapper = document.createElement("div")
-    collapseWrapper.className = "MuiCollapse-wrapper MuiCollapse-vertical css-hboir5"
+    collapseWrapper.className =
+      "MuiCollapse-wrapper MuiCollapse-vertical css-hboir5"
 
     const wrapperInner = document.createElement("div")
-    wrapperInner.className = "MuiCollapse-wrapperInner MuiCollapse-vertical css-8atqhb"
+    wrapperInner.className =
+      "MuiCollapse-wrapperInner MuiCollapse-vertical css-8atqhb"
 
     // Create MUI table structure
     const table = document.createElement("table")
@@ -182,21 +184,25 @@ export class FloatingWindow {
     tableRow.className = "MuiTableRow-root css-egt6ug"
 
     // Add content to the table row (you can modify this based on your needs)
-    const tableCell = document.createElement("td")
-    tableCell.innerHTML = this.options.content
+    const tableCell = document.createElement("th")
+    tableCell.className =
+      "MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium css-8kiwhy-cellNone"
+    tableCell.setAttribute("scope", "row")
+
+    // Create paragraph with MUI Typography classes
+    const paragraph = document.createElement("p")
+    paragraph.className = "MuiTypography-root MuiTypography-body1 css-gy8k3f"
+    paragraph.innerHTML = this.options.content
+
+    tableCell.appendChild(paragraph)
     tableRow.appendChild(tableCell)
 
     // Assemble table structure
     tbody.appendChild(tableRow)
     table.appendChild(tbody)
 
-    // Create additional content div if needed
-    const additionalContent = document.createElement("div")
-    additionalContent.className = "MuiBox-root css-oa3chk"
-
-    // Assemble the structure: contentArea > collapseWrapper > wrapperInner > table + additionalContent
+    // Assemble the structure: contentArea > collapseWrapper > wrapperInner > table
     wrapperInner.appendChild(table)
-    wrapperInner.appendChild(additionalContent)
     collapseWrapper.appendChild(wrapperInner)
     contentArea.appendChild(collapseWrapper)
 
@@ -360,17 +366,18 @@ export class FloatingWindow {
   public updateContent(newContent: string): void {
     if (!this.element) return
 
-    // Navigate through the nested structure to find the table cell
+    // Navigate through the nested structure to find the paragraph in the table header cell
     const contentArea = this.element.children[1] // Second child is content area (MuiCollapse)
     const collapseWrapper = contentArea?.children[0] as HTMLElement // MuiCollapse-wrapper
     const wrapperInner = collapseWrapper?.children[0] as HTMLElement // MuiCollapse-wrapperInner
     const table = wrapperInner?.children[0] as HTMLElement // MuiTable-root
     const tbody = table?.children[0] as HTMLElement // MuiTableBody-root
     const tableRow = tbody?.children[0] as HTMLElement // MuiTableRow-root
-    const tableCell = tableRow?.children[0] as HTMLElement // Table cell with content
-    
-    if (tableCell) {
-      tableCell.innerHTML = newContent
+    const tableCell = tableRow?.children[0] as HTMLElement // Table header cell
+    const paragraph = tableCell?.children[0] as HTMLElement // Paragraph with content
+
+    if (paragraph) {
+      paragraph.innerHTML = newContent
     }
   }
 
