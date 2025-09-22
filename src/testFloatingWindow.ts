@@ -7,12 +7,13 @@ export async function main(ns: NS) {
   // Content for the test window
   const testContent = `
     <div>
-      <h3>Single Test Window</h3>
-      <p>This is a demonstration of the floating window system attached to #root.</p>
+      <h3>Styled Floating Window</h3>
+      <p>This window steals styling from game's overview container elements.</p>
       <ul>
         <li>Draggable: Yes</li>
         <li>Collapsible: Yes</li>
         <li>Closable: Yes</li>
+        <li>Styled: Dynamically stolen from game UI</li>
       </ul>
       <p>Current time: ${new Date().toLocaleTimeString()}</p>
       <div style="margin-top: 15px;">
@@ -39,38 +40,20 @@ export async function main(ns: NS) {
       ns.tprint("Removed existing floating window")
     }
 
-    // Get the first child of root to position the window to the right of it
-    const firstChild = rootElement.firstElementChild as HTMLElement
-    if (!firstChild) {
-      ns.tprint("ERROR: Root element has no children to position next to")
-      return
-    }
-
-    // Get the position and dimensions of the first child
-    const rect = firstChild.getBoundingClientRect()
-    const windowX = rect.right + 10 // Position 10px to the right of the first child
-    const windowY = rect.top // Align with the top of the first child
-
-    ns.tprint(
-      `Positioning window to the right of first child at (${windowX}, ${windowY})`
-    )
-
-    // Create a single floating window positioned to the right of the first child
+    // Create a floating window that will automatically position itself next to the overview container
     const window = new FloatingWindow({
-      title: "Test Window",
+      title: "Styled Window",
       content: testContent,
-      x: windowX,
-      y: windowY,
       width: 400,
       height: 300,
-      attachTo: rootElement,
       id: "floating",
     })
 
-    ns.tprint("Created floating window positioned to the right of first child")
-    ns.tprint("\\n=== Single Floating Window Test Complete ===")
-    ns.tprint("✓ Window positioned to the right of first child")
-    ns.tprint("✓ Window attached to #root element")
+    ns.tprint("Created floating window as sibling of overview container")
+    ns.tprint("\\n=== Styled Floating Window Test Complete ===")
+    ns.tprint("✓ Window positioned next to overview container")
+    ns.tprint("✓ Window placed as direct sibling element")
+    ns.tprint("✓ Window styling stolen from overview container")
     ns.tprint("✓ Window has ID 'floating' (replaces existing if present)")
     ns.tprint("✓ Draggable window")
     ns.tprint("✓ Collapsible content")

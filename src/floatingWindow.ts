@@ -50,22 +50,36 @@ export class FloatingWindow {
       this.element.id = this.options.id
     }
 
-    this.element.className = "floating-window"
-    this.element.style.cssText = `
-      position: fixed;
-      background: rgba(30, 30, 30, 0.95);
-      border: 1px solid #444;
-      border-radius: 8px;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-      font-family: 'Roboto', sans-serif;
-      font-size: 14px;
-      color: #fff;
-      z-index: 1000;
-      min-width: 200px;
-      max-width: 800px;
-    `
+    // Find an element with class ending in -overviewContainer to steal its styling
+    const overviewElement = document.querySelector(
+      '[class*="-overviewContainer"]'
+    ) as HTMLElement
+    if (!overviewElement) {
+      throw new Error(
+        "Could not find overview container element to steal styling from"
+      )
+    }
 
-    this.element.style.transform = `translate(${this.options.x}px, ${this.options.y}px)`
+    // Extract the full class name that ends with -overviewContainer
+    const classList = Array.from(overviewElement.classList)
+    const overviewClassName = classList.find((cls) =>
+      cls.endsWith("-overviewContainer")
+    )
+    if (!overviewClassName) {
+      throw new Error("Could not find -overviewContainer class name")
+    }
+
+    this.element.className = overviewClassName
+
+    // Get the position and dimensions of the overview element to position next to it
+    const rect = overviewElement.getBoundingClientRect()
+    const windowX = rect.right + 10 // Position 10px to the right
+    const windowY = rect.top // Align with the top
+
+    // Apply only essential positioning - no other CSS
+    this.element.style.position = "fixed"
+    this.element.style.zIndex = "1000"
+    this.element.style.transform = `translate(${windowX}px, ${windowY}px)`
     this.element.style.width = `${this.options.width}px`
     if (!this.isCollapsed) {
       this.element.style.height = `${this.options.height}px`
@@ -73,51 +87,19 @@ export class FloatingWindow {
 
     // Create header
     const header = document.createElement("div")
-    header.className = this.options.draggable
-      ? "drag floating-window-header"
-      : "floating-window-header"
-    header.style.cssText = `
-      padding: 12px 16px;
-      border-bottom: 1px solid #444;
-      cursor: ${this.options.draggable ? "move" : "default"};
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      background: rgba(40, 40, 40, 0.8);
-      border-radius: 8px 8px 0 0;
-    `
+    header.className = this.options.draggable ? "drag" : ""
 
     // Create header content
     const headerContent = document.createElement("div")
-    headerContent.style.cssText = `
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex: 1;
-    `
 
     // Add title
     const title = document.createElement("p")
-    title.style.cssText = `
-      margin: 0;
-      font-weight: 500;
-      color: #fff;
-    `
     title.textContent = this.options.title
     headerContent.appendChild(title)
 
     // Add collapse button if collapsible
     if (this.options.collapsible) {
       const collapseBtn = document.createElement("button")
-      collapseBtn.style.cssText = `
-        background: none;
-        border: none;
-        color: #aaa;
-        cursor: pointer;
-        padding: 4px;
-        border-radius: 4px;
-        transition: color 0.2s;
-      `
       collapseBtn.innerHTML = this.isCollapsed ? "▼" : "▲"
       collapseBtn.onclick = () => this.toggle()
       headerContent.appendChild(collapseBtn)
@@ -126,16 +108,6 @@ export class FloatingWindow {
     // Add close button if closable
     if (this.options.closable) {
       const closeBtn = document.createElement("button")
-      closeBtn.style.cssText = `
-        background: none;
-        border: none;
-        color: #f44336;
-        cursor: pointer;
-        padding: 4px;
-        border-radius: 4px;
-        font-weight: bold;
-        margin-left: 8px;
-      `
       closeBtn.innerHTML = "✕"
       closeBtn.onclick = () => this.close()
       headerContent.appendChild(closeBtn)
@@ -145,21 +117,26 @@ export class FloatingWindow {
 
     // Create content area
     const contentArea = document.createElement("div")
-    contentArea.className = "floating-window-content"
-    contentArea.style.cssText = `
-      padding: 16px;
-      overflow: auto;
-      ${this.isCollapsed ? "display: none;" : ""}
-    `
+    if (this.isCollapsed) {
+      contentArea.style.display = "none"
+    }
     contentArea.innerHTML = this.options.content
 
     // Assemble the window
     this.element.appendChild(header)
     this.element.appendChild(contentArea)
 
-    // Add to document
-    const targetElement = this.options.attachTo || document.body
-    targetElement.appendChild(this.element)
+    // Insert as sibling after the overview element
+    if (overviewElement.parentNode) {
+      overviewElement.parentNode.insertBefore(
+        this.element,
+        overviewElement.nextSibling
+      )
+    } else {
+      throw new Error(
+        "Overview element has no parent node for sibling insertion"
+      )
+    }
   }
 
   private attachEventListeners(): void {
@@ -198,9 +175,7 @@ export class FloatingWindow {
 
   public toggle(): void {
     this.isCollapsed = !this.isCollapsed
-    const contentArea = this.element?.querySelector(
-      ".floating-window-content"
-    ) as HTMLElement
+    const contentArea = this.element?.children[1] as HTMLElement // Second child is content area
     const collapseBtn = this.element?.querySelector("button") as HTMLElement
 
     if (contentArea) {
@@ -243,9 +218,7 @@ export class FloatingWindow {
   public updateContent(newContent: string): void {
     if (!this.element) return
 
-    const contentContainer = this.element.querySelector(
-      ".floating-window-content"
-    )
+    const contentContainer = this.element.children[1] // Second child is content area
     if (contentContainer) {
       contentContainer.innerHTML = newContent
     }
