@@ -3,7 +3,7 @@ import { FloatingWindow } from "./floatingWindow.js"
 
 export async function main(ns: NS) {
   // Content for the test window
-  const testContent = "window"
+  const testContent = "Content"
 
   // Find the #root element
   const rootElement = document.getElementById("root")
