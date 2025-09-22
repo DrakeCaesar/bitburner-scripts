@@ -39,32 +39,38 @@ export async function main(ns: NS) {
       ns.tprint("Removed existing floating window")
     }
 
-    // Get the first child of root to insert the window as a sibling after it
+    // Get the first child of root to position the window to the right of it
     const firstChild = rootElement.firstElementChild as HTMLElement
     if (!firstChild) {
-      ns.tprint("ERROR: Root element has no children to insert after")
+      ns.tprint("ERROR: Root element has no children to position next to")
       return
     }
 
-    ns.tprint(`Inserting window as sibling after first child element`)
+    // Get the position and dimensions of the first child
+    const rect = firstChild.getBoundingClientRect()
+    const windowX = rect.right + 10 // Position 10px to the right of the first child
+    const windowY = rect.top // Align with the top of the first child
 
-    // Create a single floating window inserted after the first child
+    ns.tprint(
+      `Positioning window to the right of first child at (${windowX}, ${windowY})`
+    )
+
+    // Create a single floating window positioned to the right of the first child
     const window = new FloatingWindow({
       title: "Test Window",
       content: testContent,
-      x: 50,
-      y: 50,
+      x: windowX,
+      y: windowY,
       width: 400,
       height: 300,
-      styleVariant: "A",
-      insertAfter: firstChild,
+      attachTo: rootElement,
       id: "floating",
     })
 
-    ns.tprint("Created floating window as sibling after first child of #root")
+    ns.tprint("Created floating window positioned to the right of first child")
     ns.tprint("\\n=== Single Floating Window Test Complete ===")
-    ns.tprint("✓ Window inserted as sibling element")
-    ns.tprint("✓ Window positioned after first child of #root")
+    ns.tprint("✓ Window positioned to the right of first child")
+    ns.tprint("✓ Window attached to #root element")
     ns.tprint("✓ Window has ID 'floating' (replaces existing if present)")
     ns.tprint("✓ Draggable window")
     ns.tprint("✓ Collapsible content")

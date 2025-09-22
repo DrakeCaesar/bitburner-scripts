@@ -198,7 +198,9 @@ export class FloatingWindow {
 
   public toggle(): void {
     this.isCollapsed = !this.isCollapsed
-    const contentArea = this.element?.querySelector(".floating-window-content") as HTMLElement
+    const contentArea = this.element?.querySelector(
+      ".floating-window-content"
+    ) as HTMLElement
     const collapseBtn = this.element?.querySelector("button") as HTMLElement
 
     if (contentArea) {
@@ -241,7 +243,9 @@ export class FloatingWindow {
   public updateContent(newContent: string): void {
     if (!this.element) return
 
-    const contentContainer = this.element.querySelector(".floating-window-content")
+    const contentContainer = this.element.querySelector(
+      ".floating-window-content"
+    )
     if (contentContainer) {
       contentContainer.innerHTML = newContent
     }
