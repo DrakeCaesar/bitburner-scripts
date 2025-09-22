@@ -339,7 +339,7 @@ export class FloatingWindow {
     const overviewRect = overviewElement.getBoundingClientRect()
 
     // Position so the left edge is 20px from the right edge of overview
-    const windowX = overviewX
+    const windowX = overviewX - overviewRect.width - 20
     const windowY = overviewY
 
     // Apply transform positioning
