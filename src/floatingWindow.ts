@@ -150,6 +150,7 @@ export class FloatingWindow {
     const contentArea = document.createElement("div")
     contentArea.style.minHeight = "0px"
     contentArea.style.transitionDuration = "300ms"
+    contentArea.style.width = "100%" // Ensure the collapse root fills horizontally
 
     // Set initial collapse state
     if (this.isCollapsed) {
