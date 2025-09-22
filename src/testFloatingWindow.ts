@@ -32,6 +32,13 @@ export async function main(ns: NS) {
       return
     }
 
+    // Remove existing floating window if it exists
+    const existingWindow = document.getElementById("floating")
+    if (existingWindow) {
+      existingWindow.remove()
+      ns.tprint("Removed existing floating window")
+    }
+
     // Create a single floating window attached to #root
     const window = new FloatingWindow({
       title: "Test Window",
@@ -42,11 +49,13 @@ export async function main(ns: NS) {
       height: 300,
       styleVariant: "A",
       attachTo: rootElement,
+      id: "floating",
     })
 
-    ns.tprint("Created floating window attached to #root")
+    ns.tprint("Created floating window with ID 'floating' attached to #root")
     ns.tprint("\\n=== Single Floating Window Test Complete ===")
     ns.tprint("✓ Window attached to #root element")
+    ns.tprint("✓ Window has ID 'floating' (replaces existing if present)")
     ns.tprint("✓ Draggable window")
     ns.tprint("✓ Collapsible content")
     ns.tprint("✓ Closable window")

@@ -66,6 +66,7 @@ interface FloatingWindowOptions {
   collapsible?: boolean
   closable?: boolean
   attachTo?: HTMLElement
+  id?: string
 }
 
 export class FloatingWindow {
@@ -73,8 +74,9 @@ export class FloatingWindow {
   private isDragging = false
   private dragOffset = { x: 0, y: 0 }
   private isCollapsed = false
-  private options: Required<Omit<FloatingWindowOptions, "attachTo">> & {
+  private options: Required<Omit<FloatingWindowOptions, "attachTo" | "id">> & {
     attachTo?: HTMLElement
+    id?: string
   }
 
   constructor(options: FloatingWindowOptions = {}) {
@@ -90,6 +92,7 @@ export class FloatingWindow {
       collapsible: options.collapsible !== false,
       closable: options.closable !== false,
       attachTo: options.attachTo,
+      id: options.id,
     }
 
     this.createElement()
@@ -115,6 +118,11 @@ export class FloatingWindow {
 
     // Create main container
     this.element = document.createElement("div")
+
+    // Set ID if provided
+    if (this.options.id) {
+      this.element.id = this.options.id
+    }
 
     if (useMuiClasses) {
       this.element.className = `${BASE_MUI_CLASSES.paper} ${styleClasses.container}`
