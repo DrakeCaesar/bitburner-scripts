@@ -83,9 +83,14 @@ export class FloatingWindow {
     header.className = "MuiBox-root css-19262ez-header"
 
     // Create icon SVG
-    const iconSvg = document.createElement("svg")
-    iconSvg.className =
+    const iconSvg = document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "svg"
+    )
+    iconSvg.setAttribute(
+      "class",
       "MuiSvgIcon-root MuiSvgIcon-colorSecondary MuiSvgIcon-fontSizeMedium css-11dx3ry-icon"
+    )
     iconSvg.setAttribute("focusable", "false")
     iconSvg.setAttribute("aria-hidden", "true")
     iconSvg.setAttribute("viewBox", "0 0 24 24")
@@ -115,9 +120,14 @@ export class FloatingWindow {
       )
 
       // Create collapse icon SVG
-      const collapseSvg = document.createElement("svg")
-      collapseSvg.className =
+      const collapseSvg = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "svg"
+      )
+      collapseSvg.setAttribute(
+        "class",
         "MuiSvgIcon-root MuiSvgIcon-colorSecondary MuiSvgIcon-fontSizeMedium css-gsuung-icon"
+      )
       collapseSvg.setAttribute("focusable", "false")
       collapseSvg.setAttribute("aria-hidden", "true")
       collapseSvg.setAttribute("viewBox", "0 0 24 24")
