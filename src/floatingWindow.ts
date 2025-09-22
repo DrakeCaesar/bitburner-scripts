@@ -57,58 +57,51 @@ function extractCSSClasses(): typeof CSS_CLASSES {
 
   // Helper function to extract css-* class from element
   const extractCssClass = (
-    element: HTMLElement | SVGElement | null,
-    fallback: string
+    element: HTMLElement | SVGElement | null
   ): string => {
-    if (!element) return fallback
+    if (!element) return ""
     const classList = Array.from(element.classList)
-    return classList.find((cls) => cls.startsWith("css-")) || fallback
+    return classList.find((cls) => cls.startsWith("css-")) || ""
   }
 
   return {
-    overviewContainer: extractCssClass(
-      overviewElement,
-      "css-6zfywf-overviewContainer"
-    ),
-    dragContainer: extractCssClass(dragContainer, "css-0"),
-    header: extractCssClass(header, "css-19262ez-header"),
-    headerIcon: extractCssClass(headerIcon, "css-11dx3ry-icon"),
-    headerTitle: extractCssClass(headerTitle, "css-1syun94"),
-    visibilityToggle: extractCssClass(
-      collapseButton,
-      "css-1v4s0p7-visibilityToggle"
-    ),
-    collapseIcon: extractCssClass(collapseIcon, "css-gsuung-icon"),
-    touchRipple: extractCssClass(touchRipple, "css-w0pj6f"),
-    collapse: extractCssClass(collapseContainer, "css-1iz2152-collapse"),
-    collapseWrapper: extractCssClass(collapseWrapper, "css-hboir5"),
-    collapseWrapperInner: extractCssClass(wrapperInner, "css-8atqhb"),
-    table: extractCssClass(table, "css-9mpdia"),
-    tableBody: extractCssClass(tbody, "css-1xnox0e"),
-    tableRow: extractCssClass(fourthRow, "css-egt6ug"),
-    tableCell: extractCssClass(tableCell, "css-8kiwhy-cellNone"),
-    typography: extractCssClass(typography, "css-gy8k3f"),
+    overviewContainer: extractCssClass(overviewElement),
+    dragContainer: extractCssClass(dragContainer),
+    header: extractCssClass(header),
+    headerIcon: extractCssClass(headerIcon),
+    headerTitle: extractCssClass(headerTitle),
+    visibilityToggle: extractCssClass(collapseButton),
+    collapseIcon: extractCssClass(collapseIcon),
+    touchRipple: extractCssClass(touchRipple),
+    collapse: extractCssClass(collapseContainer),
+    collapseWrapper: extractCssClass(collapseWrapper),
+    collapseWrapperInner: extractCssClass(wrapperInner),
+    table: extractCssClass(table),
+    tableBody: extractCssClass(tbody),
+    tableRow: extractCssClass(fourthRow),
+    tableCell: extractCssClass(tableCell),
+    typography: extractCssClass(typography),
   }
 }
 
 // CSS class constants - will be initialized when FloatingWindow is created
 let CSS_CLASSES = {
-  overviewContainer: "css-6zfywf-overviewContainer",
-  dragContainer: "css-0",
-  header: "css-19262ez-header",
-  headerIcon: "css-11dx3ry-icon",
-  headerTitle: "css-1syun94",
-  visibilityToggle: "css-1v4s0p7-visibilityToggle",
-  collapseIcon: "css-gsuung-icon",
-  touchRipple: "css-w0pj6f",
-  collapse: "css-1iz2152-collapse",
-  collapseWrapper: "css-hboir5",
-  collapseWrapperInner: "css-8atqhb",
-  table: "css-9mpdia",
-  tableBody: "css-1xnox0e",
-  tableRow: "css-egt6ug",
-  tableCell: "css-8kiwhy-cellNone",
-  typography: "css-gy8k3f",
+  overviewContainer: "",
+  dragContainer: "",
+  header: "",
+  headerIcon: "",
+  headerTitle: "",
+  visibilityToggle: "",
+  collapseIcon: "",
+  touchRipple: "",
+  collapse: "",
+  collapseWrapper: "",
+  collapseWrapperInner: "",
+  table: "",
+  tableBody: "",
+  tableRow: "",
+  tableCell: "",
+  typography: "",
 }
 
 export class FloatingWindow {
