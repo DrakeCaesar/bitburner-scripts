@@ -68,7 +68,7 @@ export class FloatingWindow {
     const overviewY = matrix.m42 || 0
 
     // Position next to the overview element
-    const windowX = overviewX + 400 // Offset by overview width
+    const windowX = overviewX + 150 // Offset by overview width
     const windowY = overviewY
 
     // Apply transform positioning
@@ -153,12 +153,26 @@ export class FloatingWindow {
     // Add header to drag container
     dragContainer.appendChild(header)
 
-    // Create content area
+    // Create content area with MuiCollapse structure
     const contentArea = document.createElement("div")
-    contentArea.innerHTML = this.options.content
+    contentArea.style.minHeight = "0px"
+    contentArea.style.transitionDuration = "300ms"
+
+    // Set initial collapse state
     if (this.isCollapsed) {
-      contentArea.style.display = "none"
+      contentArea.className =
+        "MuiCollapse-root MuiCollapse-vertical css-1iz2152-collapse"
+      contentArea.style.height = "0px"
+    } else {
+      contentArea.className =
+        "MuiCollapse-root MuiCollapse-vertical MuiCollapse-entered css-1iz2152-collapse"
+      contentArea.style.height = "auto"
     }
+
+    // Create inner content container
+    const innerContent = document.createElement("div")
+    innerContent.innerHTML = this.options.content
+    contentArea.appendChild(innerContent)
 
     // Assemble the window
     this.element.appendChild(dragContainer)
@@ -214,7 +228,19 @@ export class FloatingWindow {
     const collapseSvg = collapseBtn?.querySelector("svg") as SVGElement
 
     if (contentArea) {
-      contentArea.style.display = this.isCollapsed ? "none" : "block"
+      if (this.isCollapsed) {
+        // Collapse: set height to 0 and update classes
+        contentArea.style.height = "0px"
+        contentArea.style.minHeight = "0px"
+        contentArea.className =
+          "MuiCollapse-root MuiCollapse-vertical css-1iz2152-collapse"
+      } else {
+        // Expand: restore height and update classes
+        contentArea.style.height = "auto"
+        contentArea.style.minHeight = "0px"
+        contentArea.className =
+          "MuiCollapse-root MuiCollapse-vertical MuiCollapse-entered css-1iz2152-collapse"
+      }
     }
 
     if (collapseSvg) {
@@ -228,13 +254,9 @@ export class FloatingWindow {
         : '<path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z"></path>'
     }
 
-    // Adjust window height - let CSS handle collapsed state
+    // Let the container size adjust naturally
     if (this.element) {
-      if (this.isCollapsed) {
-        this.element.style.height = "auto"
-      } else {
-        this.element.style.height = `${this.options.height}px`
-      }
+      this.element.style.height = "auto"
     }
   }
 
@@ -260,9 +282,10 @@ export class FloatingWindow {
   public updateContent(newContent: string): void {
     if (!this.element) return
 
-    const contentContainer = this.element.children[1] // Second child is content area
-    if (contentContainer) {
-      contentContainer.innerHTML = newContent
+    const contentContainer = this.element.children[1] // Second child is content area (MuiCollapse)
+    const innerContent = contentContainer?.children[0] as HTMLElement // Inner content container
+    if (innerContent) {
+      innerContent.innerHTML = newContent
     }
   }
 
