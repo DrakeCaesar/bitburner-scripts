@@ -49,11 +49,12 @@ function extractCSSClasses(): typeof CSS_CLASSES {
   ) as HTMLElement
   const table = wrapperInner?.querySelector("table") as HTMLTableElement
   const tbody = table?.querySelector("tbody") as HTMLTableSectionElement
-  // Get the 4th table row for correct typography styling
-  const tableRows = tbody?.querySelectorAll("tr")
-  const fourthRow = tableRows?.[3] as HTMLTableRowElement // 4th row (0-indexed)
-  const tableCell = fourthRow?.querySelector("th, td") as HTMLTableCellElement
-  const typography = tableCell?.querySelector("p") as HTMLElement
+  // Get the 4th table row paragraph for correct typography styling
+  const typographyElements = tbody?.querySelectorAll("tr > th > p")
+  const typography = typographyElements?.[3] as HTMLElement // 4th element (0-indexed)
+  // Get the parent elements for other classes
+  const tableCell = typography?.parentElement as HTMLTableCellElement
+  const tableRow = tableCell?.parentElement as HTMLTableRowElement
 
   // Helper function to extract css-* class from element
   const extractCssClass = (
@@ -78,7 +79,7 @@ function extractCSSClasses(): typeof CSS_CLASSES {
     collapseWrapperInner: extractCssClass(wrapperInner),
     table: extractCssClass(table),
     tableBody: extractCssClass(tbody),
-    tableRow: extractCssClass(fourthRow),
+    tableRow: extractCssClass(tableRow),
     tableCell: extractCssClass(tableCell),
     typography: extractCssClass(typography),
   }
