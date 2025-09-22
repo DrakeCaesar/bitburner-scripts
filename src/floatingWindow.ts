@@ -293,6 +293,7 @@ export class FloatingWindow {
     // Create MUI table structure
     const table = document.createElement("table")
     table.className = `MuiTable-root ${CSS_CLASSES.table}`
+    table.style.paddingRight = "8px"
 
     const tbody = document.createElement("tbody")
     tbody.className = `MuiTableBody-root ${CSS_CLASSES.tableBody}`
@@ -341,7 +342,7 @@ export class FloatingWindow {
     const overviewRect = overviewElement.getBoundingClientRect()
 
     // Position so the left edge is 20px from the right edge of overview
-    const windowX = overviewX - overviewRect.width - 0
+    const windowX = overviewX - overviewRect.width - 20
     const windowY = overviewY
 
     // Apply transform positioning
