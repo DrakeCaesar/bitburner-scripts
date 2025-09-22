@@ -29,7 +29,7 @@ const CSS_CLASSES = {
   tableBody: "css-1xnox0e",
   tableRow: "css-egt6ug",
   tableCell: "css-8kiwhy-cellNone",
-  typography: "css-gy8k3f"
+  typography: "css-gy8k3f",
 }
 
 export class FloatingWindow {
@@ -174,23 +174,19 @@ export class FloatingWindow {
 
     // Set initial collapse state
     if (this.isCollapsed) {
-      contentArea.className =
-        `MuiCollapse-root MuiCollapse-vertical ${CSS_CLASSES.collapse}`
+      contentArea.className = `MuiCollapse-root MuiCollapse-vertical ${CSS_CLASSES.collapse}`
       contentArea.style.height = "0px"
     } else {
-      contentArea.className =
-        `MuiCollapse-root MuiCollapse-vertical MuiCollapse-entered ${CSS_CLASSES.collapse}`
+      contentArea.className = `MuiCollapse-root MuiCollapse-vertical MuiCollapse-entered ${CSS_CLASSES.collapse}`
       contentArea.style.height = "auto"
     }
 
     // Create the MuiCollapse wrapper structure
     const collapseWrapper = document.createElement("div")
-    collapseWrapper.className =
-      `MuiCollapse-wrapper MuiCollapse-vertical ${CSS_CLASSES.collapseWrapper}`
+    collapseWrapper.className = `MuiCollapse-wrapper MuiCollapse-vertical ${CSS_CLASSES.collapseWrapper}`
 
     const wrapperInner = document.createElement("div")
-    wrapperInner.className =
-      `MuiCollapse-wrapperInner MuiCollapse-vertical ${CSS_CLASSES.collapseWrapperInner}`
+    wrapperInner.className = `MuiCollapse-wrapperInner MuiCollapse-vertical ${CSS_CLASSES.collapseWrapperInner}`
 
     // Create MUI table structure
     const table = document.createElement("table")
@@ -205,8 +201,7 @@ export class FloatingWindow {
 
     // Add content to the table row (you can modify this based on your needs)
     const tableCell = document.createElement("th")
-    tableCell.className =
-      `MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium ${CSS_CLASSES.tableCell}`
+    tableCell.className = `MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium ${CSS_CLASSES.tableCell}`
     tableCell.setAttribute("scope", "row")
 
     // Create paragraph with MUI Typography classes
@@ -256,8 +251,7 @@ export class FloatingWindow {
 
     // Create main container with exact MUI classes
     this.element = document.createElement("div")
-    this.element.className =
-      `MuiPaper-root MuiPaper-elevation MuiPaper-elevation1 react-draggable react-draggable-dragged ${CSS_CLASSES.overviewContainer}`
+    this.element.className = `MuiPaper-root MuiPaper-elevation MuiPaper-elevation1 react-draggable react-draggable-dragged ${CSS_CLASSES.overviewContainer}`
 
     // Set ID if provided
     if (this.options.id) {
@@ -336,14 +330,12 @@ export class FloatingWindow {
         // Collapse: set height to 0 and update classes
         contentArea.style.height = "0px"
         contentArea.style.minHeight = "0px"
-        contentArea.className =
-          `MuiCollapse-root MuiCollapse-vertical ${CSS_CLASSES.collapse}`
+        contentArea.className = `MuiCollapse-root MuiCollapse-vertical ${CSS_CLASSES.collapse}`
       } else {
         // Expand: restore height and update classes
         contentArea.style.height = "auto"
         contentArea.style.minHeight = "0px"
-        contentArea.className =
-          `MuiCollapse-root MuiCollapse-vertical MuiCollapse-entered ${CSS_CLASSES.collapse}`
+        contentArea.className = `MuiCollapse-root MuiCollapse-vertical MuiCollapse-entered ${CSS_CLASSES.collapse}`
       }
     }
 
