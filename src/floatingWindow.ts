@@ -41,6 +41,150 @@ export class FloatingWindow {
     this.attachEventListeners()
   }
 
+  private createSvgIcon(
+    classes: string,
+    testId: string,
+    pathData: string
+  ): SVGElement {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg")
+    svg.setAttribute("class", classes)
+    svg.setAttribute("focusable", "false")
+    svg.setAttribute("aria-hidden", "true")
+    svg.setAttribute("viewBox", "0 0 24 24")
+    svg.setAttribute("data-testid", testId)
+    svg.innerHTML = pathData
+    return svg
+  }
+
+  private createButton(
+    classes: string,
+    ariaLabel: string,
+    onClick: () => void
+  ): HTMLButtonElement {
+    const button = document.createElement("button")
+    button.className = classes
+    button.setAttribute("tabindex", "0")
+    button.setAttribute("type", "button")
+    button.setAttribute("aria-label", ariaLabel)
+    button.onclick = onClick
+
+    // Add touch ripple for MUI consistency
+    const touchRipple = document.createElement("span")
+    touchRipple.className = "MuiTouchRipple-root css-w0pj6f"
+    button.appendChild(touchRipple)
+
+    return button
+  }
+
+  private createCollapseButton(): HTMLButtonElement {
+    const collapseBtn = this.createButton(
+      "MuiButtonBase-root MuiButton-root MuiButton-text MuiButton-textPrimary MuiButton-sizeSmall MuiButton-textSizeSmall MuiButton-root MuiButton-text MuiButton-textPrimary MuiButton-sizeSmall MuiButton-textSizeSmall css-1v4s0p7-visibilityToggle",
+      "expand or collapse character overview",
+      () => this.toggle()
+    )
+
+    const collapseSvg = this.createSvgIcon(
+      "MuiSvgIcon-root MuiSvgIcon-colorSecondary MuiSvgIcon-fontSizeMedium css-gsuung-icon",
+      this.isCollapsed ? "KeyboardArrowDownIcon" : "KeyboardArrowUpIcon",
+      this.isCollapsed
+        ? '<path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"></path>'
+        : '<path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z"></path>'
+    )
+
+    // Insert SVG before the touch ripple
+    collapseBtn.insertBefore(collapseSvg, collapseBtn.firstChild)
+    return collapseBtn
+  }
+
+  private createCloseButton(): HTMLButtonElement {
+    const closeBtn = this.createButton(
+      "MuiButtonBase-root MuiButton-root MuiButton-text MuiButton-textPrimary MuiButton-sizeSmall MuiButton-textSizeSmall css-1v4s0p7-visibilityToggle",
+      "close window",
+      () => this.close()
+    )
+
+    const closeSvg = this.createSvgIcon(
+      "MuiSvgIcon-root MuiSvgIcon-colorSecondary MuiSvgIcon-fontSizeMedium css-gsuung-icon",
+      "CloseIcon",
+      '<path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path>'
+    )
+
+    // Insert SVG before the touch ripple
+    closeBtn.insertBefore(closeSvg, closeBtn.firstChild)
+    return closeBtn
+  }
+
+  private createHeader(): HTMLElement {
+    const header = document.createElement("div")
+    header.className = "MuiBox-root css-19262ez-header"
+
+    // Create icon SVG
+    const iconSvg = this.createSvgIcon(
+      "MuiSvgIcon-root MuiSvgIcon-colorSecondary MuiSvgIcon-fontSizeMedium css-11dx3ry-icon",
+      "EqualizerIcon",
+      '<path d="M10 20h4V4h-4v16zm-6 0h4v-8H4v8zM16 9v11h4V9h-4z"></path>'
+    )
+
+    // Create title
+    const title = document.createElement("p")
+    title.className = "MuiTypography-root MuiTypography-body1 css-1syun94"
+    title.textContent = this.options.title
+
+    // Add icon and title to header
+    header.appendChild(iconSvg)
+    header.appendChild(title)
+
+    // Add buttons
+    if (this.options.collapsible) {
+      header.appendChild(this.createCollapseButton())
+    }
+
+    if (this.options.closable) {
+      header.appendChild(this.createCloseButton())
+    }
+
+    return header
+  }
+
+  private createContentArea(): HTMLElement {
+    const contentArea = document.createElement("div")
+    contentArea.style.minHeight = "0px"
+    contentArea.style.transitionDuration = "300ms"
+
+    // Set initial collapse state
+    if (this.isCollapsed) {
+      contentArea.className =
+        "MuiCollapse-root MuiCollapse-vertical css-1iz2152-collapse"
+      contentArea.style.height = "0px"
+    } else {
+      contentArea.className =
+        "MuiCollapse-root MuiCollapse-vertical MuiCollapse-entered css-1iz2152-collapse"
+      contentArea.style.height = "auto"
+    }
+
+    // Create inner content container
+    const innerContent = document.createElement("div")
+    innerContent.innerHTML = this.options.content
+    contentArea.appendChild(innerContent)
+
+    return contentArea
+  }
+
+  private positionWindow(overviewElement: HTMLElement): void {
+    // Get the transform values of the overview element
+    const style = window.getComputedStyle(overviewElement)
+    const matrix = new DOMMatrix(style.transform)
+    const overviewX = matrix.m41 || 0
+    const overviewY = matrix.m42 || 0
+
+    // Position next to the overview element
+    const windowX = overviewX + 150 // Offset by overview width
+    const windowY = overviewY
+
+    // Apply transform positioning
+    this.element!.style.transform = `translate(${windowX}px, ${windowY}px)`
+  }
+
   private createElement(): void {
     // Find the overview element to copy styling and position next to it
     const overviewElement = document.querySelector(
@@ -61,147 +205,19 @@ export class FloatingWindow {
       this.element.id = this.options.id
     }
 
-    // Get the transform values of the overview element
-    const style = window.getComputedStyle(overviewElement)
-    const matrix = new DOMMatrix(style.transform)
-    const overviewX = matrix.m41 || 0
-    const overviewY = matrix.m42 || 0
-
-    // Position next to the overview element
-    const windowX = overviewX + 150 // Offset by overview width
-    const windowY = overviewY
-
-    // Apply transform positioning
-    this.element.style.transform = `translate(${windowX}px, ${windowY}px)`
+    // Position the window
+    this.positionWindow(overviewElement)
 
     // Create drag container
     const dragContainer = document.createElement("div")
     dragContainer.className = "drag MuiBox-root css-0"
 
-    // Create header
-    const header = document.createElement("div")
-    header.className = "MuiBox-root css-19262ez-header"
-
-    // Create icon SVG
-    const iconSvg = document.createElementNS(
-      "http://www.w3.org/2000/svg",
-      "svg"
-    )
-    iconSvg.setAttribute(
-      "class",
-      "MuiSvgIcon-root MuiSvgIcon-colorSecondary MuiSvgIcon-fontSizeMedium css-11dx3ry-icon"
-    )
-    iconSvg.setAttribute("focusable", "false")
-    iconSvg.setAttribute("aria-hidden", "true")
-    iconSvg.setAttribute("viewBox", "0 0 24 24")
-    iconSvg.setAttribute("data-testid", "EqualizerIcon")
-    iconSvg.innerHTML =
-      '<path d="M10 20h4V4h-4v16zm-6 0h4v-8H4v8zM16 9v11h4V9h-4z"></path>'
-
-    // Create title
-    const title = document.createElement("p")
-    title.className = "MuiTypography-root MuiTypography-body1 css-1syun94"
-    title.textContent = this.options.title
-
-    // Add icon and title to header
-    header.appendChild(iconSvg)
-    header.appendChild(title)
-
-    // Add collapse button if collapsible
-    if (this.options.collapsible) {
-      const collapseBtn = document.createElement("button")
-      collapseBtn.className =
-        "MuiButtonBase-root MuiButton-root MuiButton-text MuiButton-textPrimary MuiButton-sizeSmall MuiButton-textSizeSmall MuiButton-root MuiButton-text MuiButton-textPrimary MuiButton-sizeSmall MuiButton-textSizeSmall css-1v4s0p7-visibilityToggle"
-      collapseBtn.setAttribute("tabindex", "0")
-      collapseBtn.setAttribute("type", "button")
-      collapseBtn.setAttribute(
-        "aria-label",
-        "expand or collapse character overview"
-      )
-
-      // Create collapse icon SVG
-      const collapseSvg = document.createElementNS(
-        "http://www.w3.org/2000/svg",
-        "svg"
-      )
-      collapseSvg.setAttribute(
-        "class",
-        "MuiSvgIcon-root MuiSvgIcon-colorSecondary MuiSvgIcon-fontSizeMedium css-gsuung-icon"
-      )
-      collapseSvg.setAttribute("focusable", "false")
-      collapseSvg.setAttribute("aria-hidden", "true")
-      collapseSvg.setAttribute("viewBox", "0 0 24 24")
-      collapseSvg.setAttribute(
-        "data-testid",
-        this.isCollapsed ? "KeyboardArrowDownIcon" : "KeyboardArrowUpIcon"
-      )
-      collapseSvg.innerHTML = this.isCollapsed
-        ? '<path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"></path>'
-        : '<path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z"></path>'
-
-      // Create touch ripple span
-      const touchRipple = document.createElement("span")
-      touchRipple.className = "MuiTouchRipple-root css-w0pj6f"
-
-      collapseBtn.appendChild(collapseSvg)
-      collapseBtn.appendChild(touchRipple)
-      collapseBtn.onclick = () => this.toggle()
-
-      header.appendChild(collapseBtn)
-    }
-
-    // Add close button if closable
-    if (this.options.closable) {
-      const closeBtn = document.createElement("button")
-      closeBtn.className =
-        "MuiButtonBase-root MuiButton-root MuiButton-text MuiButton-textPrimary MuiButton-sizeSmall MuiButton-textSizeSmall css-1v4s0p7-visibilityToggle"
-      closeBtn.setAttribute("tabindex", "0")
-      closeBtn.setAttribute("type", "button")
-      closeBtn.setAttribute("aria-label", "close window")
-
-      // Create close icon SVG
-      const closeSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg")
-      closeSvg.setAttribute("class", "MuiSvgIcon-root MuiSvgIcon-colorSecondary MuiSvgIcon-fontSizeMedium css-gsuung-icon")
-      closeSvg.setAttribute("focusable", "false")
-      closeSvg.setAttribute("aria-hidden", "true")
-      closeSvg.setAttribute("viewBox", "0 0 24 24")
-      closeSvg.setAttribute("data-testid", "CloseIcon")
-      closeSvg.innerHTML = 
-        '<path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path>'
-
-      // Create touch ripple span for consistency
-      const touchRipple = document.createElement("span")
-      touchRipple.className = "MuiTouchRipple-root css-w0pj6f"
-
-      closeBtn.appendChild(closeSvg)
-      closeBtn.appendChild(touchRipple)
-      closeBtn.onclick = () => this.close()
-      header.appendChild(closeBtn)
-    }
-
-    // Add header to drag container
+    // Create and add header
+    const header = this.createHeader()
     dragContainer.appendChild(header)
 
-    // Create content area with MuiCollapse structure
-    const contentArea = document.createElement("div")
-    contentArea.style.minHeight = "0px"
-    contentArea.style.transitionDuration = "300ms"
-
-    // Set initial collapse state
-    if (this.isCollapsed) {
-      contentArea.className =
-        "MuiCollapse-root MuiCollapse-vertical css-1iz2152-collapse"
-      contentArea.style.height = "0px"
-    } else {
-      contentArea.className =
-        "MuiCollapse-root MuiCollapse-vertical MuiCollapse-entered css-1iz2152-collapse"
-      contentArea.style.height = "auto"
-    }
-
-    // Create inner content container
-    const innerContent = document.createElement("div")
-    innerContent.innerHTML = this.options.content
-    contentArea.appendChild(innerContent)
+    // Create content area
+    const contentArea = this.createContentArea()
 
     // Assemble the window
     this.element.appendChild(dragContainer)
