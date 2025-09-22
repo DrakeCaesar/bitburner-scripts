@@ -1,5 +1,5 @@
 import { NS } from "@ns"
-import { connect } from "./libraries/connect"
+import { connect } from "./libraries/connect.js"
 
 export async function main(ns: NS): Promise<void> {
   const knownServers: string[] = []

@@ -1,16 +1,16 @@
 {
   "compilerOptions": {
-    "module": "esnext",
+    "module": "nodenext",
     "target": "esnext",
     "lib": ["esnext", "dom"],
-    "types": ["vite/client"],
+    "types": ["vite/client", "node"],
     "strict": true,
     "allowJs": true,
     "isolatedModules": true,
     "esModuleInterop": true,
     "baseUrl": ".",
     "inlineSourceMap": true,
-    "moduleResolution": "Node",
+    "moduleResolution": "nodenext",
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "outDir": "dist",
@@ -25,6 +25,7 @@
     "src/**/*.js",
     "NetscriptDefinitions.d.ts",
     "global.d.ts",
+    "viteburner.d.ts",
     "vite.config.ts",
     "vite.config.js"
   ]

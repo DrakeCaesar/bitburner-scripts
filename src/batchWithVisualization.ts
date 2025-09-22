@@ -3,7 +3,7 @@ import {
   initBatchVisualizer,
   logBatchOperation,
   nextBatch,
-} from "./batchVisualizer"
+} from "./batchVisualizer.js"
 
 export async function main(ns: NS) {
   // Initialize the real-time visualizer

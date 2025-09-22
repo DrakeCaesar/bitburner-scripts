@@ -1,5 +1,5 @@
 import { NS } from "@ns"
-import { crawl } from "./libraries/crawl"
+import { crawl } from "./libraries/crawl.js"
 
 export function main(ns: NS) {
   const knownServers = crawl(ns)

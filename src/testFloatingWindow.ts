@@ -4,7 +4,7 @@ import {
   createStyleAWindow,
   createStyleBWindow,
   FloatingWindow,
-} from "./floatingWindow"
+} from "./floatingWindow.js"
 
 export async function main(ns: NS) {
   ns.tprint("Starting Floating Window Test...")

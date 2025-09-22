@@ -1,5 +1,5 @@
 import { NS } from "@ns"
-import { formatNumber } from "./libraries/format"
+import { formatNumber } from "./libraries/format.js"
 
 export async function main(ns: NS): Promise<void> {
   const doc = eval("document")

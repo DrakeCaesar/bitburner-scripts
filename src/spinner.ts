@@ -1,4 +1,4 @@
-import { NS } from ".."
+import { NS } from "@ns"
 
 const SPINNER_DELAY_MS = 32
 

@@ -4,7 +4,7 @@ import {
   initBatchVisualizer,
   logBatchOperation,
   nextBatch,
-} from "./batchVisualizer"
+} from "./batchVisualizer.js"
 
 // Store for tracking operation timings from the individual scripts
 interface PendingOperation {

@@ -7,7 +7,7 @@ import {
   removeGlowFromAllElements,
   replaceOldProgressBars,
   stopObservingMutations,
-} from "./libraries/glowHelpFunction"
+} from "./libraries/glowHelpFunction.js"
 
 export async function main(): Promise<void> {
   // Define the CSS class for the glow effect
