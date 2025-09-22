@@ -12,6 +12,26 @@ interface FloatingWindowOptions {
   id?: string
 }
 
+// CSS class constants - extract these from #root > first child element
+const CSS_CLASSES = {
+  overviewContainer: "css-6zfywf-overviewContainer",
+  dragContainer: "css-0",
+  header: "css-19262ez-header",
+  headerIcon: "css-11dx3ry-icon",
+  headerTitle: "css-1syun94",
+  visibilityToggle: "css-1v4s0p7-visibilityToggle",
+  collapseIcon: "css-gsuung-icon",
+  touchRipple: "css-w0pj6f",
+  collapse: "css-1iz2152-collapse",
+  collapseWrapper: "css-hboir5",
+  collapseWrapperInner: "css-8atqhb",
+  table: "css-9mpdia",
+  tableBody: "css-1xnox0e",
+  tableRow: "css-egt6ug",
+  tableCell: "css-8kiwhy-cellNone",
+  typography: "css-gy8k3f"
+}
+
 export class FloatingWindow {
   private element: HTMLElement | null = null
   private isDragging = false
@@ -70,7 +90,7 @@ export class FloatingWindow {
 
     // Add touch ripple for MUI consistency
     const touchRipple = document.createElement("span")
-    touchRipple.className = "MuiTouchRipple-root css-w0pj6f"
+    touchRipple.className = `MuiTouchRipple-root ${CSS_CLASSES.touchRipple}`
     button.appendChild(touchRipple)
 
     return button
@@ -78,13 +98,13 @@ export class FloatingWindow {
 
   private createCollapseButton(): HTMLButtonElement {
     const collapseBtn = this.createButton(
-      "MuiButtonBase-root MuiButton-root MuiButton-text MuiButton-textPrimary MuiButton-sizeSmall MuiButton-textSizeSmall MuiButton-root MuiButton-text MuiButton-textPrimary MuiButton-sizeSmall MuiButton-textSizeSmall css-1v4s0p7-visibilityToggle",
+      `MuiButtonBase-root MuiButton-root MuiButton-text MuiButton-textPrimary MuiButton-sizeSmall MuiButton-textSizeSmall MuiButton-root MuiButton-text MuiButton-textPrimary MuiButton-sizeSmall MuiButton-textSizeSmall ${CSS_CLASSES.visibilityToggle}`,
       "expand or collapse character overview",
       () => this.toggle()
     )
 
     const collapseSvg = this.createSvgIcon(
-      "MuiSvgIcon-root MuiSvgIcon-colorSecondary MuiSvgIcon-fontSizeMedium css-gsuung-icon",
+      `MuiSvgIcon-root MuiSvgIcon-colorSecondary MuiSvgIcon-fontSizeMedium ${CSS_CLASSES.collapseIcon}`,
       this.isCollapsed ? "KeyboardArrowDownIcon" : "KeyboardArrowUpIcon",
       this.isCollapsed
         ? '<path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"></path>'
@@ -98,13 +118,13 @@ export class FloatingWindow {
 
   private createCloseButton(): HTMLButtonElement {
     const closeBtn = this.createButton(
-      "MuiButtonBase-root MuiButton-root MuiButton-text MuiButton-textPrimary MuiButton-sizeSmall MuiButton-textSizeSmall css-1v4s0p7-visibilityToggle",
+      `MuiButtonBase-root MuiButton-root MuiButton-text MuiButton-textPrimary MuiButton-sizeSmall MuiButton-textSizeSmall ${CSS_CLASSES.visibilityToggle}`,
       "close window",
       () => this.close()
     )
 
     const closeSvg = this.createSvgIcon(
-      "MuiSvgIcon-root MuiSvgIcon-colorSecondary MuiSvgIcon-fontSizeMedium css-gsuung-icon",
+      `MuiSvgIcon-root MuiSvgIcon-colorSecondary MuiSvgIcon-fontSizeMedium ${CSS_CLASSES.collapseIcon}`,
       "CloseIcon",
       '<path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path>'
     )
@@ -116,18 +136,18 @@ export class FloatingWindow {
 
   private createHeader(): HTMLElement {
     const header = document.createElement("div")
-    header.className = "MuiBox-root css-19262ez-header"
+    header.className = `MuiBox-root ${CSS_CLASSES.header}`
 
     // Create icon SVG
     const iconSvg = this.createSvgIcon(
-      "MuiSvgIcon-root MuiSvgIcon-colorSecondary MuiSvgIcon-fontSizeMedium css-11dx3ry-icon",
+      `MuiSvgIcon-root MuiSvgIcon-colorSecondary MuiSvgIcon-fontSizeMedium ${CSS_CLASSES.headerIcon}`,
       "EqualizerIcon",
       '<path d="M10 20h4V4h-4v16zm-6 0h4v-8H4v8zM16 9v11h4V9h-4z"></path>'
     )
 
     // Create title
     const title = document.createElement("p")
-    title.className = "MuiTypography-root MuiTypography-body1 css-1syun94"
+    title.className = `MuiTypography-root MuiTypography-body1 ${CSS_CLASSES.headerTitle}`
     title.textContent = this.options.title
 
     // Add icon and title to header
@@ -155,43 +175,43 @@ export class FloatingWindow {
     // Set initial collapse state
     if (this.isCollapsed) {
       contentArea.className =
-        "MuiCollapse-root MuiCollapse-vertical css-1iz2152-collapse"
+        `MuiCollapse-root MuiCollapse-vertical ${CSS_CLASSES.collapse}`
       contentArea.style.height = "0px"
     } else {
       contentArea.className =
-        "MuiCollapse-root MuiCollapse-vertical MuiCollapse-entered css-1iz2152-collapse"
+        `MuiCollapse-root MuiCollapse-vertical MuiCollapse-entered ${CSS_CLASSES.collapse}`
       contentArea.style.height = "auto"
     }
 
     // Create the MuiCollapse wrapper structure
     const collapseWrapper = document.createElement("div")
     collapseWrapper.className =
-      "MuiCollapse-wrapper MuiCollapse-vertical css-hboir5"
+      `MuiCollapse-wrapper MuiCollapse-vertical ${CSS_CLASSES.collapseWrapper}`
 
     const wrapperInner = document.createElement("div")
     wrapperInner.className =
-      "MuiCollapse-wrapperInner MuiCollapse-vertical css-8atqhb"
+      `MuiCollapse-wrapperInner MuiCollapse-vertical ${CSS_CLASSES.collapseWrapperInner}`
 
     // Create MUI table structure
     const table = document.createElement("table")
-    table.className = "MuiTable-root css-9mpdia"
+    table.className = `MuiTable-root ${CSS_CLASSES.table}`
 
     const tbody = document.createElement("tbody")
-    tbody.className = "MuiTableBody-root css-1xnox0e"
+    tbody.className = `MuiTableBody-root ${CSS_CLASSES.tableBody}`
 
     // Create a sample table row (you can customize this)
     const tableRow = document.createElement("tr")
-    tableRow.className = "MuiTableRow-root css-egt6ug"
+    tableRow.className = `MuiTableRow-root ${CSS_CLASSES.tableRow}`
 
     // Add content to the table row (you can modify this based on your needs)
     const tableCell = document.createElement("th")
     tableCell.className =
-      "MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium css-8kiwhy-cellNone"
+      `MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium ${CSS_CLASSES.tableCell}`
     tableCell.setAttribute("scope", "row")
 
     // Create paragraph with MUI Typography classes
     const paragraph = document.createElement("p")
-    paragraph.className = "MuiTypography-root MuiTypography-body1 css-gy8k3f"
+    paragraph.className = `MuiTypography-root MuiTypography-body1 ${CSS_CLASSES.typography}`
     paragraph.innerHTML = this.options.content
 
     tableCell.appendChild(paragraph)
@@ -237,7 +257,7 @@ export class FloatingWindow {
     // Create main container with exact MUI classes
     this.element = document.createElement("div")
     this.element.className =
-      "MuiPaper-root MuiPaper-elevation MuiPaper-elevation1 react-draggable react-draggable-dragged css-6zfywf-overviewContainer"
+      `MuiPaper-root MuiPaper-elevation MuiPaper-elevation1 react-draggable react-draggable-dragged ${CSS_CLASSES.overviewContainer}`
 
     // Set ID if provided
     if (this.options.id) {
@@ -249,7 +269,7 @@ export class FloatingWindow {
 
     // Create drag container
     const dragContainer = document.createElement("div")
-    dragContainer.className = "drag MuiBox-root css-0"
+    dragContainer.className = `drag MuiBox-root ${CSS_CLASSES.dragContainer}`
 
     // Create and add header
     const header = this.createHeader()
@@ -307,7 +327,7 @@ export class FloatingWindow {
     this.isCollapsed = !this.isCollapsed
     const contentArea = this.element?.children[1] as HTMLElement // Second child is content area
     const collapseBtn = this.element?.querySelector(
-      ".css-1v4s0p7-visibilityToggle"
+      `.${CSS_CLASSES.visibilityToggle}`
     ) as HTMLElement
     const collapseSvg = collapseBtn?.querySelector("svg") as SVGElement
 
@@ -317,13 +337,13 @@ export class FloatingWindow {
         contentArea.style.height = "0px"
         contentArea.style.minHeight = "0px"
         contentArea.className =
-          "MuiCollapse-root MuiCollapse-vertical css-1iz2152-collapse"
+          `MuiCollapse-root MuiCollapse-vertical ${CSS_CLASSES.collapse}`
       } else {
         // Expand: restore height and update classes
         contentArea.style.height = "auto"
         contentArea.style.minHeight = "0px"
         contentArea.className =
-          "MuiCollapse-root MuiCollapse-vertical MuiCollapse-entered css-1iz2152-collapse"
+          `MuiCollapse-root MuiCollapse-vertical MuiCollapse-entered ${CSS_CLASSES.collapse}`
       }
     }
 
