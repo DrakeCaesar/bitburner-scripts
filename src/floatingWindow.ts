@@ -458,10 +458,10 @@ export class FloatingWindow {
     // Get bounds
     const parentRect = parent.getBoundingClientRect()
     const elementRect = this.element.getBoundingClientRect()
-    
+
     // Calculate boundaries
     const maxX = 0 // Right boundary
-    const minY = 0 // Top boundary  
+    const minY = 0 // Top boundary
     const minX = -(parentRect.width - elementRect.width) // Left boundary
     const maxY = parentRect.height - elementRect.height // Bottom boundary
 
