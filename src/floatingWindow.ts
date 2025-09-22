@@ -54,27 +54,27 @@ export class FloatingWindow {
     const overviewElement = document.querySelector(
       '[class*="-overviewContainer"]'
     ) as HTMLElement
-    if (!overviewElement) {
-      throw new Error(
-        "Could not find overview container element to steal styling from"
-      )
-    }
 
     // Extract the full class name that ends with -overviewContainer
     const classList = Array.from(overviewElement.classList)
     const overviewClassName = classList.find((cls) =>
       cls.endsWith("-overviewContainer")
-    )
-    if (!overviewClassName) {
-      throw new Error("Could not find -overviewContainer class name")
-    }
+    )!
 
     this.element.className = overviewClassName
 
     // Get the position and dimensions of the overview element to position next to it
     const rect = overviewElement.getBoundingClientRect()
-    const windowX = rect.right + 10 // Position 10px to the right
-    const windowY = rect.top // Align with the top
+
+    // Get the transform values of the overview element
+    const style = window.getComputedStyle(overviewElement)
+    const matrix = new DOMMatrix(style.transform)
+    const overviewX = matrix.m41 || 0
+    const overviewY = matrix.m42 || 0
+
+    // Position at transform X + element width
+    const windowX = overviewX + overviewElement.style.width
+    const windowY = overviewY // Align with the same Y position
 
     // Apply only essential positioning - no other CSS
     this.element.style.position = "fixed"
@@ -94,7 +94,7 @@ export class FloatingWindow {
 
     // Add title
     const title = document.createElement("p")
-    title.textContent = this.options.title
+    title.textContent = "title"
     headerContent.appendChild(title)
 
     // Add collapse button if collapsible
@@ -120,23 +120,17 @@ export class FloatingWindow {
     if (this.isCollapsed) {
       contentArea.style.display = "none"
     }
-    contentArea.innerHTML = this.options.content
+    contentArea.innerHTML = "window"
 
     // Assemble the window
     this.element.appendChild(header)
     this.element.appendChild(contentArea)
 
     // Insert as sibling after the overview element
-    if (overviewElement.parentNode) {
-      overviewElement.parentNode.insertBefore(
-        this.element,
-        overviewElement.nextSibling
-      )
-    } else {
-      throw new Error(
-        "Overview element has no parent node for sibling insertion"
-      )
-    }
+    overviewElement.parentNode!.insertBefore(
+      this.element,
+      overviewElement.nextSibling
+    )
   }
 
   private attachEventListeners(): void {
