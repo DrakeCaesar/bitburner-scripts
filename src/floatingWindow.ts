@@ -65,6 +65,7 @@ interface FloatingWindowOptions {
   draggable?: boolean
   collapsible?: boolean
   closable?: boolean
+  attachTo?: HTMLElement
 }
 
 export class FloatingWindow {
@@ -72,7 +73,9 @@ export class FloatingWindow {
   private isDragging = false
   private dragOffset = { x: 0, y: 0 }
   private isCollapsed = false
-  private options: Required<FloatingWindowOptions>
+  private options: Required<Omit<FloatingWindowOptions, "attachTo">> & {
+    attachTo?: HTMLElement
+  }
 
   constructor(options: FloatingWindowOptions = {}) {
     this.options = {
@@ -86,6 +89,7 @@ export class FloatingWindow {
       draggable: options.draggable !== false,
       collapsible: options.collapsible !== false,
       closable: options.closable !== false,
+      attachTo: options.attachTo,
     }
 
     this.createElement()
@@ -261,8 +265,9 @@ export class FloatingWindow {
     this.element.appendChild(header)
     this.element.appendChild(contentArea)
 
-    // Add to document
-    document.body.appendChild(this.element)
+    // Add to document (either to specified element or document.body)
+    const targetElement = this.options.attachTo || document.body
+    targetElement.appendChild(this.element)
   }
 
   private attachEventListeners(): void {
