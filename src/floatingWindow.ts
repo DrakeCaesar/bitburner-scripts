@@ -406,8 +406,25 @@ export class FloatingWindow {
     document.addEventListener("mousemove", (e) => {
       if (!this.isDragging || !this.element) return
 
-      const x = e.clientX - this.dragOffset.x
-      const y = e.clientY - this.dragOffset.y
+      let x = e.clientX - this.dragOffset.x
+      let y = e.clientY - this.dragOffset.y
+
+      // Get parent container bounds to constrain movement
+      const parent = this.element.parentElement
+      if (parent) {
+        const parentRect = parent.getBoundingClientRect()
+        const elementRect = this.element.getBoundingClientRect()
+
+        // Calculate boundaries (negative to 0 for transform translate)
+        const maxX = 0 // Right boundary
+        const minY = 0 // Top boundary
+        const minX = -(parentRect.width - elementRect.width) // Left boundary
+        const maxY = parentRect.height - elementRect.height // Bottom boundary
+
+        // Constrain movement within parent bounds
+        x = Math.max(minX, Math.min(maxX, x))
+        y = Math.max(minY, Math.min(maxY, y))
+      }
 
       this.element.style.transform = `translate(${x}px, ${y}px)`
     })
