@@ -39,7 +39,16 @@ export async function main(ns: NS) {
       ns.tprint("Removed existing floating window")
     }
 
-    // Create a single floating window attached to #root
+    // Get the first child of root to insert the window as a sibling after it
+    const firstChild = rootElement.firstElementChild as HTMLElement
+    if (!firstChild) {
+      ns.tprint("ERROR: Root element has no children to insert after")
+      return
+    }
+
+    ns.tprint(`Inserting window as sibling after first child element`)
+
+    // Create a single floating window inserted after the first child
     const window = new FloatingWindow({
       title: "Test Window",
       content: testContent,
@@ -48,13 +57,14 @@ export async function main(ns: NS) {
       width: 400,
       height: 300,
       styleVariant: "A",
-      attachTo: rootElement,
+      insertAfter: firstChild,
       id: "floating",
     })
 
-    ns.tprint("Created floating window with ID 'floating' attached to #root")
+    ns.tprint("Created floating window as sibling after first child of #root")
     ns.tprint("\\n=== Single Floating Window Test Complete ===")
-    ns.tprint("✓ Window attached to #root element")
+    ns.tprint("✓ Window inserted as sibling element")
+    ns.tprint("✓ Window positioned after first child of #root")
     ns.tprint("✓ Window has ID 'floating' (replaces existing if present)")
     ns.tprint("✓ Draggable window")
     ns.tprint("✓ Collapsible content")
