@@ -162,10 +162,42 @@ export class FloatingWindow {
       contentArea.style.height = "auto"
     }
 
-    // Create inner content container
-    const innerContent = document.createElement("div")
-    innerContent.innerHTML = this.options.content
-    contentArea.appendChild(innerContent)
+    // Create the MuiCollapse wrapper structure
+    const collapseWrapper = document.createElement("div")
+    collapseWrapper.className = "MuiCollapse-wrapper MuiCollapse-vertical css-hboir5"
+
+    const wrapperInner = document.createElement("div")
+    wrapperInner.className = "MuiCollapse-wrapperInner MuiCollapse-vertical css-8atqhb"
+
+    // Create MUI table structure
+    const table = document.createElement("table")
+    table.className = "MuiTable-root css-9mpdia"
+
+    const tbody = document.createElement("tbody")
+    tbody.className = "MuiTableBody-root css-1xnox0e"
+
+    // Create a sample table row (you can customize this)
+    const tableRow = document.createElement("tr")
+    tableRow.className = "MuiTableRow-root css-egt6ug"
+
+    // Add content to the table row (you can modify this based on your needs)
+    const tableCell = document.createElement("td")
+    tableCell.innerHTML = this.options.content
+    tableRow.appendChild(tableCell)
+
+    // Assemble table structure
+    tbody.appendChild(tableRow)
+    table.appendChild(tbody)
+
+    // Create additional content div if needed
+    const additionalContent = document.createElement("div")
+    additionalContent.className = "MuiBox-root css-oa3chk"
+
+    // Assemble the structure: contentArea > collapseWrapper > wrapperInner > table + additionalContent
+    wrapperInner.appendChild(table)
+    wrapperInner.appendChild(additionalContent)
+    collapseWrapper.appendChild(wrapperInner)
+    contentArea.appendChild(collapseWrapper)
 
     return contentArea
   }
@@ -327,10 +359,17 @@ export class FloatingWindow {
   public updateContent(newContent: string): void {
     if (!this.element) return
 
-    const contentContainer = this.element.children[1] // Second child is content area (MuiCollapse)
-    const innerContent = contentContainer?.children[0] as HTMLElement // Inner content container
-    if (innerContent) {
-      innerContent.innerHTML = newContent
+    // Navigate through the nested structure to find the table cell
+    const contentArea = this.element.children[1] // Second child is content area (MuiCollapse)
+    const collapseWrapper = contentArea?.children[0] as HTMLElement // MuiCollapse-wrapper
+    const wrapperInner = collapseWrapper?.children[0] as HTMLElement // MuiCollapse-wrapperInner
+    const table = wrapperInner?.children[0] as HTMLElement // MuiTable-root
+    const tbody = table?.children[0] as HTMLElement // MuiTableBody-root
+    const tableRow = tbody?.children[0] as HTMLElement // MuiTableRow-root
+    const tableCell = tableRow?.children[0] as HTMLElement // Table cell with content
+    
+    if (tableCell) {
+      tableCell.innerHTML = newContent
     }
   }
 
