@@ -325,14 +325,21 @@ export class FloatingWindow {
   }
 
   private positionWindow(overviewElement: HTMLElement): void {
+    // Apply width constraint first
+    this.element!.style.width = `${this.options.width}px`
+    this.element!.style.maxWidth = `${this.options.width}px`
+
     // Get the transform values of the overview element
     const style = window.getComputedStyle(overviewElement)
     const matrix = new DOMMatrix(style.transform)
     const overviewX = matrix.m41 || 0
     const overviewY = matrix.m42 || 0
 
-    // Position next to the overview element
-    const windowX = overviewX + 150 // Offset by overview width
+    // Get overview element width for proper positioning
+    const overviewRect = overviewElement.getBoundingClientRect()
+
+    // Position so the left edge is 20px from the right edge of overview
+    const windowX = overviewX
     const windowY = overviewY
 
     // Apply transform positioning
