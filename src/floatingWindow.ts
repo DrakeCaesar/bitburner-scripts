@@ -432,6 +432,45 @@ export class FloatingWindow {
     document.addEventListener("mouseup", () => {
       this.isDragging = false
     })
+
+    // Handle parent container resize
+    const parent = this.element.parentElement
+    if (parent) {
+      const resizeObserver = new ResizeObserver(() => {
+        this.constrainToParentBounds()
+      })
+      resizeObserver.observe(parent)
+    }
+  }
+
+  private constrainToParentBounds(): void {
+    if (!this.element) return
+
+    const parent = this.element.parentElement
+    if (!parent) return
+
+    // Get current position
+    const style = window.getComputedStyle(this.element)
+    const matrix = new DOMMatrix(style.transform)
+    let currentX = matrix.m41 || 0
+    let currentY = matrix.m42 || 0
+
+    // Get bounds
+    const parentRect = parent.getBoundingClientRect()
+    const elementRect = this.element.getBoundingClientRect()
+    
+    // Calculate boundaries
+    const maxX = 0 // Right boundary
+    const minY = 0 // Top boundary  
+    const minX = -(parentRect.width - elementRect.width) // Left boundary
+    const maxY = parentRect.height - elementRect.height // Bottom boundary
+
+    // Constrain current position within bounds
+    currentX = Math.max(minX, Math.min(maxX, currentX))
+    currentY = Math.max(minY, Math.min(maxY, currentY))
+
+    // Apply corrected position
+    this.element.style.transform = `translate(${currentX}px, ${currentY}px)`
   }
 
   public toggle(): void {
