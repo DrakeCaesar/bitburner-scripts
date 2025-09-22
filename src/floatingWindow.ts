@@ -10,10 +10,89 @@ interface FloatingWindowOptions {
   closable?: boolean
   attachTo?: HTMLElement
   id?: string
+  isVisible?: boolean
+  isCollapsed?: boolean
 }
 
-// CSS class constants - extract these from #root > first child element
-const CSS_CLASSES = {
+// Function to extract CSS classes from the existing overview element
+function extractCSSClasses(): typeof CSS_CLASSES {
+  const overviewElement = document.querySelector(
+    '[class*="-overviewContainer"]'
+  ) as HTMLElement
+
+  if (!overviewElement) {
+    throw new Error(
+      "Could not find overview container element to extract CSS classes"
+    )
+  }
+
+  // Extract classes using selectors from the overview element structure
+  const dragContainer = overviewElement.querySelector(".drag") as HTMLElement
+  const header = overviewElement.querySelector(
+    '[class*="-header"]'
+  ) as HTMLElement
+  const headerIcon = header?.querySelector("svg") as SVGElement
+  const headerTitle = header?.querySelector("p") as HTMLElement
+  const collapseButton = header?.querySelector("button") as HTMLButtonElement
+  const collapseIcon = collapseButton?.querySelector("svg") as SVGElement
+  const touchRipple = collapseButton?.querySelector(
+    '[class*="MuiTouchRipple"]'
+  ) as HTMLElement
+  const collapseContainer = overviewElement.querySelector(
+    '[class*="MuiCollapse-root"]'
+  ) as HTMLElement
+  const collapseWrapper = collapseContainer?.querySelector(
+    '[class*="MuiCollapse-wrapper"]'
+  ) as HTMLElement
+  const wrapperInner = collapseWrapper?.querySelector(
+    '[class*="MuiCollapse-wrapperInner"]'
+  ) as HTMLElement
+  const table = wrapperInner?.querySelector("table") as HTMLTableElement
+  const tbody = table?.querySelector("tbody") as HTMLTableSectionElement
+  // Get the 4th table row for correct typography styling
+  const tableRows = tbody?.querySelectorAll("tr")
+  const fourthRow = tableRows?.[3] as HTMLTableRowElement // 4th row (0-indexed)
+  const tableCell = fourthRow?.querySelector("th, td") as HTMLTableCellElement
+  const typography = tableCell?.querySelector("p") as HTMLElement
+
+  // Helper function to extract css-* class from element
+  const extractCssClass = (
+    element: HTMLElement | SVGElement | null,
+    fallback: string
+  ): string => {
+    if (!element) return fallback
+    const classList = Array.from(element.classList)
+    return classList.find((cls) => cls.startsWith("css-")) || fallback
+  }
+
+  return {
+    overviewContainer: extractCssClass(
+      overviewElement,
+      "css-6zfywf-overviewContainer"
+    ),
+    dragContainer: extractCssClass(dragContainer, "css-0"),
+    header: extractCssClass(header, "css-19262ez-header"),
+    headerIcon: extractCssClass(headerIcon, "css-11dx3ry-icon"),
+    headerTitle: extractCssClass(headerTitle, "css-1syun94"),
+    visibilityToggle: extractCssClass(
+      collapseButton,
+      "css-1v4s0p7-visibilityToggle"
+    ),
+    collapseIcon: extractCssClass(collapseIcon, "css-gsuung-icon"),
+    touchRipple: extractCssClass(touchRipple, "css-w0pj6f"),
+    collapse: extractCssClass(collapseContainer, "css-1iz2152-collapse"),
+    collapseWrapper: extractCssClass(collapseWrapper, "css-hboir5"),
+    collapseWrapperInner: extractCssClass(wrapperInner, "css-8atqhb"),
+    table: extractCssClass(table, "css-9mpdia"),
+    tableBody: extractCssClass(tbody, "css-1xnox0e"),
+    tableRow: extractCssClass(fourthRow, "css-egt6ug"),
+    tableCell: extractCssClass(tableCell, "css-8kiwhy-cellNone"),
+    typography: extractCssClass(typography, "css-gy8k3f"),
+  }
+}
+
+// CSS class constants - will be initialized when FloatingWindow is created
+let CSS_CLASSES = {
   overviewContainer: "css-6zfywf-overviewContainer",
   dragContainer: "css-0",
   header: "css-19262ez-header",
@@ -37,22 +116,49 @@ export class FloatingWindow {
   private isDragging = false
   private dragOffset = { x: 0, y: 0 }
   private isCollapsed = false
+  private title: string
+  private content: string
+  private x: number
+  private y: number
+  private width: number
+  private height: number
+  private isVisible: boolean
   private options: Required<Omit<FloatingWindowOptions, "attachTo" | "id">> & {
     attachTo?: HTMLElement
     id?: string
   }
 
-  constructor(options: FloatingWindowOptions = {}) {
+  constructor(options: FloatingWindowOptions) {
+    // Initialize CSS classes from existing overview element
+    try {
+      CSS_CLASSES = extractCSSClasses()
+    } catch (error) {
+      console.warn(
+        "Could not extract CSS classes from overview element, using defaults:",
+        error
+      )
+    }
+
+    this.title = options.title || "Floating Window"
+    this.content = options.content || "Content"
+    this.x = options.x || 100
+    this.y = options.y || 100
+    this.width = options.width || 300
+    this.height = options.height || 200
+    this.isVisible = options.isVisible !== false
+    this.isCollapsed = options.isCollapsed || false
     this.options = {
-      title: options.title || "Floating Window",
-      content: options.content || "<p>Default content</p>",
-      x: options.x || 100,
-      y: options.y || 100,
-      width: options.width || 300,
-      height: options.height || 200,
+      title: this.title,
+      content: this.content,
+      x: this.x,
+      y: this.y,
+      width: this.width,
+      height: this.height,
       draggable: options.draggable !== false,
       collapsible: options.collapsible !== false,
       closable: options.closable !== false,
+      isVisible: this.isVisible,
+      isCollapsed: this.isCollapsed,
       attachTo: options.attachTo,
       id: options.id,
     }
