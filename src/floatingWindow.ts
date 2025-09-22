@@ -341,7 +341,7 @@ export class FloatingWindow {
     const overviewRect = overviewElement.getBoundingClientRect()
 
     // Position so the left edge is 20px from the right edge of overview
-    const windowX = overviewX - overviewRect.width - 20
+    const windowX = overviewX - overviewRect.width - 0
     const windowY = overviewY
 
     // Apply transform positioning
@@ -496,12 +496,16 @@ export class FloatingWindow {
         contentArea.style.height = "0px"
         contentArea.style.minHeight = "0px"
         contentArea.style.overflow = "hidden"
+        contentArea.style.borderTop = "none"
+        contentArea.style.marginBottom = "1px"
         contentArea.className = `MuiCollapse-root MuiCollapse-vertical ${CSS_CLASSES.collapse}`
       } else {
         // Expand: restore height, show content, and update classes
         contentArea.style.height = "auto"
         contentArea.style.minHeight = "0px"
         contentArea.style.overflow = "visible"
+        contentArea.style.borderTop = ""
+        contentArea.style.marginBottom = "0px"
         contentArea.className = `MuiCollapse-root MuiCollapse-vertical MuiCollapse-entered ${CSS_CLASSES.collapse}`
       }
     }
