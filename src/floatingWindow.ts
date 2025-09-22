@@ -276,9 +276,11 @@ export class FloatingWindow {
     if (this.isCollapsed) {
       contentArea.className = `MuiCollapse-root MuiCollapse-vertical ${CSS_CLASSES.collapse}`
       contentArea.style.height = "0px"
+      contentArea.style.overflow = "hidden"
     } else {
       contentArea.className = `MuiCollapse-root MuiCollapse-vertical MuiCollapse-entered ${CSS_CLASSES.collapse}`
       contentArea.style.height = "auto"
+      contentArea.style.overflow = "visible"
     }
 
     // Create the MuiCollapse wrapper structure
@@ -490,14 +492,16 @@ export class FloatingWindow {
 
     if (contentArea) {
       if (this.isCollapsed) {
-        // Collapse: set height to 0 and update classes
+        // Collapse: set height to 0, hide overflow, and update classes
         contentArea.style.height = "0px"
         contentArea.style.minHeight = "0px"
+        contentArea.style.overflow = "hidden"
         contentArea.className = `MuiCollapse-root MuiCollapse-vertical ${CSS_CLASSES.collapse}`
       } else {
-        // Expand: restore height and update classes
+        // Expand: restore height, show content, and update classes
         contentArea.style.height = "auto"
         contentArea.style.minHeight = "0px"
+        contentArea.style.overflow = "visible"
         contentArea.className = `MuiCollapse-root MuiCollapse-vertical MuiCollapse-entered ${CSS_CLASSES.collapse}`
       }
     }
