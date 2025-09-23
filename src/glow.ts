@@ -171,23 +171,25 @@ export async function main(): Promise<void> {
     const skillBarElements = doc.querySelectorAll(
       ".MuiLinearProgress-bar"
     ) as NodeListOf<HTMLElement>
+
     skillBarElements.forEach((element) => {
+      const parent = element.parentElement
+      if (parent == null) return
+
+      const transform = element.style.transform
+      const translateXRegex = /([-0-9]+.[0-9]+)/
+      const translateX: number = parseFloat(
+        transform.match(translateXRegex)?.[1] ?? ""
+      )
+      if (!isNaN(translateX)) {
+        const width = (parent.offsetWidth / 100) * (100 + translateX)
+        element.style.width = `${width}px`
+      }
+
       // Check if this element already has our transform override
       const currentTransform = getComputedStyle(element).transform
       if (currentTransform === "translateX(0px)") {
-        // Element already processed, just update the width
-        const parent = element.parentElement
-        if (parent != null) {
-          const originalTransform = element.style.transform
-          const translateXRegex = /([-0-9]+.[0-9]+)/
-          const translateX: number = parseFloat(
-            originalTransform.match(translateXRegex)?.[1] ?? ""
-          )
-          if (!isNaN(translateX)) {
-            const width = (parent.offsetWidth / 100) * (100 + translateX)
-            element.style.width = `${width}px`
-          }
-        }
+        // Element already processed, just update the width if needed
         return
       }
 
@@ -196,23 +198,13 @@ export async function main(): Promise<void> {
       const boxShadowStyle = `box-shadow: 0 0 ${
         intensity * glowSize
       }px rgba(70%, 70%, 70%, ${intensity});`
-      const parent = element.parentElement
-      if (parent != null) {
-        const transform = element.style.transform
-        const translateXRegex = /([-0-9]+.[0-9]+)/
-        const translateX: number = parseFloat(
-          transform.match(translateXRegex)?.[1] ?? ""
-        )
-        const width = (parent.offsetWidth / 100) * (100 + translateX)
 
-        // Apply glow and smooth width transition
-        const barStyle = `
-          transform: translateX(0%) !important; 
-          transition: width 0.4s linear !important;
-        `
-        addStyle(element, `${boxShadowStyle} ${barStyle}`)
-        element.style.width = `${width}px`
-      }
+      // Apply glow and smooth width transition
+      const barStyle = `
+        transform: translateX(0%) !important; 
+        transition: width 0.4s linear !important;
+      `
+      addStyle(element, `${boxShadowStyle} ${barStyle}`)
     })
   }
 
