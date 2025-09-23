@@ -83,7 +83,6 @@ export async function main(): Promise<void> {
         ) {
           const element = mutation.target as HTMLElement
           if (element.classList.contains("MuiLinearProgress-bar")) {
-            // applyGlowEffectToSkillBars()
             applyGlowEffectToSkillBars()
           } else if (element.classList.contains("MuiTableCell-root")) {
             applyGlowEffectToSkillBars()
@@ -173,6 +172,25 @@ export async function main(): Promise<void> {
       ".MuiLinearProgress-bar"
     ) as NodeListOf<HTMLElement>
     skillBarElements.forEach((element) => {
+      // Check if this element already has our transform override
+      const currentTransform = getComputedStyle(element).transform
+      if (currentTransform === "translateX(0px)") {
+        // Element already processed, just update the width
+        const parent = element.parentElement
+        if (parent != null) {
+          const originalTransform = element.style.transform
+          const translateXRegex = /([-0-9]+.[0-9]+)/
+          const translateX: number = parseFloat(
+            originalTransform.match(translateXRegex)?.[1] ?? ""
+          )
+          if (!isNaN(translateX)) {
+            const width = (parent.offsetWidth / 100) * (100 + translateX)
+            element.style.width = `${width}px`
+          }
+        }
+        return
+      }
+
       const color = getComputedStyle(element).backgroundColor
       const intensity = calculateGlowIntensity(color)
       const boxShadowStyle = `box-shadow: 0 0 ${
@@ -186,7 +204,12 @@ export async function main(): Promise<void> {
           transform.match(translateXRegex)?.[1] ?? ""
         )
         const width = (parent.offsetWidth / 100) * (100 + translateX)
-        const barStyle = `transform: translateX(0%) !important; transition: none;`
+
+        // Apply glow and smooth width transition
+        const barStyle = `
+          transform: translateX(0%) !important; 
+          transition: width 0.4s linear !important;
+        `
         addStyle(element, `${boxShadowStyle} ${barStyle}`)
         element.style.width = `${width}px`
       }
