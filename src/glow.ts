@@ -341,7 +341,7 @@ function applyGlowEffectToOverview(container: HTMLElement) {
   bars.forEach((element) => {
     const color = createColorWithTransparency(
       getComputedStyle(element).backgroundColor,
-      0.5
+      0.33
     )
     addStyle(
       element as HTMLElement,
