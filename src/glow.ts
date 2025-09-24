@@ -4,6 +4,10 @@ import {
   calculateGlowIntensity,
   calculateInputStyle,
   calculateSvgStyle,
+  createAcrylicAfterStyle,
+  createAcrylicStyle,
+  createColorWithTransparency,
+  GLOW_CONFIG,
   removeGlowFromAllElements,
   replaceOldProgressBars,
   stopObservingMutations,
@@ -16,11 +20,6 @@ export async function main(): Promise<void> {
   const glowSize = 20
 
   toggleGlow()
-  // setInterval(toggleGlow, 500)
-  // setTimeout(() => {
-  //   // toggleGlow()
-  //   setInterval(toggleGlow, 500)
-  // }, 3000)
 
   function toggleGlow() {
     // Check if the observer reference already exists
@@ -75,7 +74,6 @@ export async function main(): Promise<void> {
             console.log(element.className)
             applyGlowEffectToElementsInContainer(element)
             applyGlowEffectToSkillBars()
-            // updateSkillBars()
           }
         } else if (
           mutation.type === "attributes" &&
@@ -116,16 +114,13 @@ export async function main(): Promise<void> {
     addStyle(element, glowStyles)
 
     if (element.parentElement) {
-      // TODO: Figure out if I need this
-      //addStyle(element.parentElement, "overflow: visible")
       if (
         element.parentElement.parentElement instanceof HTMLDivElement &&
         getComputedStyle(element.parentElement.parentElement).border.includes(
           "1px solid"
         )
       ) {
-        // TODO: Figure out if I need this
-        //addStyle(element.parentElement.parentElement, "overflow: hidden")
+        // Border handling logic could go here if needed
       }
     }
 
@@ -166,8 +161,6 @@ export async function main(): Promise<void> {
   }
 
   function applyGlowEffectToSkillBars() {
-    // return
-    // console.log("updating skill bars")
     const skillBarElements = doc.querySelectorAll(
       ".MuiLinearProgress-bar"
     ) as NodeListOf<HTMLElement>
@@ -210,10 +203,6 @@ export async function main(): Promise<void> {
 
   // Function to apply the glow effect to all elements in a given container
   function applyGlowEffectToElementsInContainer(container: HTMLElement) {
-    // const observer = (doc.body as any).mutationObserver
-    // if (observer) {
-    //   observer.disconnect()
-    // }
     const textNodes = doc.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
       acceptNode: (node: Node) => {
         const parent = node.parentElement
@@ -264,84 +253,28 @@ export async function main(): Promise<void> {
     // Special case for the overview
     if (container.classList.contains("react-draggable")) {
       applyGlowEffectToOverview(container)
-      // applyGlowEffectToSkillBars()
     }
-
-    // const boxElements = container.querySelectorAll(
-    //   ".MuiContainer-root > .MuiBox-root, .MuiDrawer-root > .MuiPaper-root,"
-    // )
-    // boxElements.forEach(function (boxElement) {
-    //   if (!boxElement.classList.contains(glowClass))
-    //     applyGlowEffectToOverview(boxElement as HTMLElement)
-    // })
-
-    // if (container.classList.contains("MuiPaper-root")) {
-    //   applyGlowEffectToOverview(container)
-    // }
-
-    // Special case for the skill bars
-    // if (container.classList.contains("MuiLinearProgress-bar")) {
-    //   applyGlowEffectToSkillBars()
-    // }
 
     //Special case for overflow
     if (container.classList.contains("MuiBox-root")) {
       addStyle(container, "overflow: visible !important")
     }
-
-    // if (observer) {
-    //   observer.observe(doc.body, {
-    //     attributes: true,
-    //     attributeFilter: ["class"],
-    //     childList: true,
-    //     subtree: true,
-    //   })
-    // }
   }
 }
 function applyGlowEffectToOverview(container: HTMLElement) {
-  // Existing logic
-  const color = createColorWithTransparency(
-    getComputedStyle(container).backgroundColor,
-    0.8
-  )
-
   // Additional styles for the panel
-  const className = addStyle(
-    container,
-    `
-    background-color: transparent;
-    border-radius: 5px;
-    backdrop-filter: blur(7.5px);
-    box-shadow: 0 1.6px 3.6px 0 rgb(0 0 0 / 13%), 0 0.3px 0.9px 0 rgb(0 0 0 / 11%);
-    position: fixed;
-    border: 1px solid rgba(255, 255, 255, 0.35);
-  `
-  )
+  const className = addStyle(container, createAcrylicStyle())
+
   if (className != undefined) {
-    const afterElementStyle = `
-        content: "";
-        position: absolute;
-        left: 0;
-        top: 0;
-        right: 0;
-        bottom: 0;
-        z-index: -1;
-        opacity: 0.4;
-        background-color: transparent;
-        border-radius: 5px;
-        background-image: url("https://s3-us-west-2.amazonaws.com/s.cdpn.io/59615/bg--acrylic-light.png");
-    `
-    // Add the style to the target element
-    // console.log(afterElementStyle)
-    addStyleAfter(container, afterElementStyle, className)
+    addStyleAfter(container, createAcrylicAfterStyle(), className)
   }
+
   // Existing logic for bars and table
   const bars = container.querySelectorAll(".MuiLinearProgress-determinate")
   bars.forEach((element) => {
     const color = createColorWithTransparency(
       getComputedStyle(element).backgroundColor,
-      0.33
+      GLOW_CONFIG.progressBarTransparency
     )
     addStyle(
       element as HTMLElement,
@@ -365,17 +298,9 @@ function applyGlowEffectToOverview(container: HTMLElement) {
 
 function applyGlowEffectToTerminal(container: HTMLElement) {
   const color = getComputedStyle(container).backgroundColor
-  const semiTransparentColor = createColorWithTransparency(color, 0.8)
+  const semiTransparentColor = createColorWithTransparency(
+    color,
+    GLOW_CONFIG.terminalTransparency
+  )
   addStyle(container, `background-color: ${semiTransparentColor}`)
-}
-
-function createColorWithTransparency(color: string, transparency: number) {
-  const rgbValues = color.match(/\d+/g)
-  if (rgbValues) {
-    const red = rgbValues[0]
-    const green = rgbValues[1]
-    const blue = rgbValues[2]
-    return `rgba(${red}, ${green}, ${blue}, ${transparency})`
-  }
-  return color
 }

@@ -3,6 +3,20 @@ const doc: Document = eval("document")
 const win: Window = eval("window")
 const glowSize = 20
 
+// Configuration constants
+export const GLOW_CONFIG = {
+  acrylicOpacity: 0.4,
+  backdropBlur: 7.5,
+  borderRadius: 5,
+  borderOpacity: 0.35,
+  terminalTransparency: 0.8,
+  progressBarTransparency: 0.33,
+  boxShadow: {
+    primary: "0 1.6px 3.6px 0 rgb(0 0 0 / 13%)",
+    secondary: "0 0.3px 0.9px 0 rgb(0 0 0 / 11%)",
+  },
+} as const
+
 export function makeDropShadow(element: HTMLElement): SVGFEDropShadowElement {
   let color = getComputedStyle(element).fill
   const isAchievement = element.style.filter.includes("hue-rotate")
@@ -374,6 +388,47 @@ export function replaceOldProgressBars(node: HTMLParagraphElement) {
       }
     }
   }
+}
+
+export function createColorWithTransparency(
+  color: string,
+  transparency: number
+): string {
+  const rgbValues = color.match(/\d+/g)
+  if (rgbValues) {
+    const red = rgbValues[0]
+    const green = rgbValues[1]
+    const blue = rgbValues[2]
+    return `rgba(${red}, ${green}, ${blue}, ${transparency})`
+  }
+  return color
+}
+
+export function createAcrylicStyle(): string {
+  return `
+    background-color: transparent;
+    border-radius: ${GLOW_CONFIG.borderRadius}px;
+    backdrop-filter: blur(${GLOW_CONFIG.backdropBlur}px);
+    box-shadow: ${GLOW_CONFIG.boxShadow.primary}, ${GLOW_CONFIG.boxShadow.secondary};
+    position: fixed;
+    border: 1px solid rgba(255, 255, 255, ${GLOW_CONFIG.borderOpacity});
+  `
+}
+
+export function createAcrylicAfterStyle(): string {
+  return `
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: -1;
+    opacity: ${GLOW_CONFIG.acrylicOpacity};
+    background-color: transparent;
+    border-radius: ${GLOW_CONFIG.borderRadius}px;
+    background-image: url("https://s3-us-west-2.amazonaws.com/s.cdpn.io/59615/bg--acrylic-light.png");
+  `
 }
 
 // Stop observing mutations
