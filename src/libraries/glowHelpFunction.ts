@@ -12,6 +12,12 @@ export const GLOW_CONFIG = {
   terminalTransparency: 0.8,
   progressBarTransparency: 0.33,
   useColoredShadows: true,
+  noise: {
+    baseFrequency: 0.65,
+    numOctaves: 3,
+    contrast: 120, // Reduced for subtlety
+    brightness: 110, // Much lower for darker, subtle noise
+  },
   boxShadow: {
     primary: "0 1.6px 3.6px 0 rgb(0 0 0 / 13%)",
     secondary: "0 0.3px 0.9px 0 rgb(0 0 0 / 11%)",
@@ -171,8 +177,16 @@ export function calculateGlowIntensity(color: string): number {
   const g = parseInt(rgb[1].trim(), 10) / 255
   const b = parseInt(rgb[2].trim(), 10) / 255
   const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
-  const intensity = 0.1 + luminance * 0.9
-  return intensity
+
+  if (GLOW_CONFIG.useColoredShadows) {
+    // For colored shadows, invert the relationship: darker colors get more glow
+    const intensity = 0.3 + (1 - luminance) * 0.7 // Range from 0.3 to 1.0, inverted
+    return Math.min(intensity, 1.0)
+  } else {
+    // For white/gray shadows, use original calculation: brighter colors get more glow
+    const intensity = 0.1 + luminance * 0.9
+    return intensity
+  }
 }
 
 // Function to generate a hash based on a string
@@ -419,6 +433,25 @@ export function createColorWithTransparency(
   return color
 }
 
+export function createNoiseDataUrl(): string {
+  const svg = `
+    <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+      <filter id="noiseFilter">
+        <feTurbulence 
+          type="fractalNoise" 
+          baseFrequency="${GLOW_CONFIG.noise.baseFrequency}" 
+          numOctaves="${GLOW_CONFIG.noise.numOctaves}" 
+          stitchTiles="stitch"/>
+        <feColorMatrix type="saturate" values="0"/>
+      </filter>
+      <rect width="100%" height="100%" filter="url(#noiseFilter)" fill="#000000" opacity="0.15"/>
+    </svg>
+  `
+
+  // Encode the SVG as a data URL
+  return `data:image/svg+xml;base64,${btoa(svg)}`
+}
+
 export function createAcrylicStyle(): string {
   return `
     background-color: transparent;
@@ -442,7 +475,8 @@ export function createAcrylicAfterStyle(): string {
     opacity: ${GLOW_CONFIG.acrylicOpacity};
     background-color: transparent;
     border-radius: ${GLOW_CONFIG.borderRadius}px;
-    background-image: url("https://s3-us-west-2.amazonaws.com/s.cdpn.io/59615/bg--acrylic-light.png");
+    background-image: url("${createNoiseDataUrl()}");
+    filter: contrast(${GLOW_CONFIG.noise.contrast}%) brightness(${GLOW_CONFIG.noise.brightness}%);
   `
 }
 
