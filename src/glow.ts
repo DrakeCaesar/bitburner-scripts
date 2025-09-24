@@ -105,12 +105,12 @@ export async function main(): Promise<void> {
   function applyGlowEffectToTextElement(element: HTMLElement) {
     const color = getComputedStyle(element).color
     const intensity = calculateGlowIntensity(color)
-    
+
     // Determine shadow color based on configuration
-    const shadowColor = GLOW_CONFIG.useColoredShadows 
-      ? color.replace('rgb', 'rgba').replace(')', `, ${intensity})`)
+    const shadowColor = GLOW_CONFIG.useColoredShadows
+      ? color.replace("rgb", "rgba").replace(")", `, ${intensity})`)
       : `rgba(70%, 70%, 70%, ${intensity})`
-    
+
     const glowStyles = `
       text-shadow:
         0 0 ${intensity * glowSize * 1}px ${shadowColor};
@@ -194,12 +194,12 @@ export async function main(): Promise<void> {
 
       const color = getComputedStyle(element).backgroundColor
       const intensity = calculateGlowIntensity(color)
-      
+
       // Determine shadow color based on configuration
-      const shadowColor = GLOW_CONFIG.useColoredShadows 
-        ? color.replace('rgb', 'rgba').replace(')', `, ${intensity})`)
+      const shadowColor = GLOW_CONFIG.useColoredShadows
+        ? color.replace("rgb", "rgba").replace(")", `, ${intensity})`)
         : `rgba(70%, 70%, 70%, ${intensity})`
-      
+
       const boxShadowStyle = `box-shadow: 0 0 ${
         intensity * glowSize
       }px ${shadowColor};`
