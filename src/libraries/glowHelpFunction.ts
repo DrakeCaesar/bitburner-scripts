@@ -11,6 +11,7 @@ export const GLOW_CONFIG = {
   borderOpacity: 0.35,
   terminalTransparency: 0.8,
   progressBarTransparency: 0.33,
+  useColoredShadows: true,
   boxShadow: {
     primary: "0 1.6px 3.6px 0 rgb(0 0 0 / 13%)",
     secondary: "0 0.3px 0.9px 0 rgb(0 0 0 / 11%)",
@@ -27,6 +28,7 @@ export function makeDropShadow(element: HTMLElement): SVGFEDropShadowElement {
   }
   const intensity = calculateGlowIntensity(color)
   const opacity = intensity
+
   const feDropShadow = doc.createElementNS(
     "http://www.w3.org/2000/svg",
     "feDropShadow"
@@ -34,7 +36,20 @@ export function makeDropShadow(element: HTMLElement): SVGFEDropShadowElement {
   feDropShadow.setAttribute("dx", "0")
   feDropShadow.setAttribute("dy", "0")
   feDropShadow.setAttribute("stdDeviation", `${glowSize / 2}`)
-  feDropShadow.setAttribute("flood-color", "white")
+
+  if (GLOW_CONFIG.useColoredShadows) {
+    // Extract RGB values from the color for colored shadows
+    const rgbMatch = color.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)
+    if (rgbMatch) {
+      const [, r, g, b] = rgbMatch
+      feDropShadow.setAttribute("flood-color", `rgb(${r}, ${g}, ${b})`)
+    } else {
+      feDropShadow.setAttribute("flood-color", color || "white")
+    }
+  } else {
+    feDropShadow.setAttribute("flood-color", "white")
+  }
+
   feDropShadow.setAttribute("flood-opacity", String(opacity))
   return feDropShadow
 }
@@ -130,20 +145,20 @@ export function calculateInputStyle(element: HTMLElement): string {
     computedStyle.textIndent.replace("px", "")
   )
 
-  // Generate a unique hash based on the glowStyles
+  // Determine shadow color based on configuration
+  const shadowColor = GLOW_CONFIG.useColoredShadows
+    ? color.replace("rgb", "rgba").replace(")", `, ${intensity})`)
+    : `rgba(70%, 70%, 70%, ${intensity})`
+
   const style =
     element.id == "terminal-input"
       ? `
-          text-shadow: 0 0 ${
-            intensity * glowSize
-          }px rgba(70%, 70%, 70%, ${intensity}) !important;
+          text-shadow: 0 0 ${intensity * glowSize}px ${shadowColor} !important;
           margin-left: ${originalMarginLeft - glowSize}px;
           text-indent: ${originalTextIndent + glowSize}px;
           `
       : `
-          text-shadow: 0 0 ${
-            intensity * glowSize
-          }px rgba(70%, 70%, 70%, ${intensity}) !important;
+          text-shadow: 0 0 ${intensity * glowSize}px ${shadowColor} !important;
           `
   return style
 }
