@@ -5,6 +5,8 @@ interface Operation {
   start: number
   end?: number
   batchId: number
+  actualStart?: number
+  actualEnd?: number
 }
 
 class BatchVisualiser {
@@ -80,6 +82,7 @@ class BatchVisualiser {
     this.isInitialized = true
   }
 
+
   public startOperation(type: "H" | "W" | "G", batchId?: number): number {
     const operationId = this.operations.length
     const operation: Operation = {
@@ -113,6 +116,39 @@ class BatchVisualiser {
       start,
       end,
       batchId: batchId ?? this.currentBatchId,
+    }
+    this.operations.push(operation)
+    this.draw()
+  }
+
+  public logActualOperation(
+    type: "H" | "W" | "G",
+    actualStart: number,
+    actualEnd: number,
+    batchId?: number
+  ): void {
+    // Find the most recent predicted operation of this type in the current or recent batches
+    const targetBatchId = batchId ?? this.currentBatchId
+    for (let i = this.operations.length - 1; i >= 0; i--) {
+      const op = this.operations[i]
+      if (op.type === type &&
+          Math.abs(op.batchId - targetBatchId) <= 1 &&
+          !op.actualStart) {
+        op.actualStart = actualStart
+        op.actualEnd = actualEnd
+        this.draw()
+        return
+      }
+    }
+
+    // If no matching predicted operation found, create a new one with actual data only
+    const operation: Operation = {
+      type,
+      start: actualStart,
+      end: actualEnd,
+      batchId: targetBatchId,
+      actualStart,
+      actualEnd,
     }
     this.operations.push(operation)
     this.draw()
@@ -214,28 +250,50 @@ class BatchVisualiser {
       ops.forEach((op, opIndex) => {
         if (!op.end) return
 
+        const y = baseY + (opIndex * batchHeight) / Math.max(ops.length, 1)
+        const opHeight = (batchHeight / Math.max(ops.length, 1)) * 0.8
+        const barHeight = opHeight / 2 // Split height for two bars
+
+        // Draw predicted operation bar (top half)
         const x1 = xScale(op.start)
         const x2 = xScale(op.end!)
         const width = Math.max(x2 - x1, 2) // Minimum width of 2px
-        const y = baseY + (opIndex * batchHeight) / Math.max(ops.length, 1)
-        const height = (batchHeight / Math.max(ops.length, 1)) * 0.8
 
-        // Draw operation bar
         ctx.fillStyle = this.opColors[op.type]
-        ctx.fillRect(x1, y, width, height)
+        ctx.fillRect(x1, y, width, barHeight)
 
         // Draw operation label if bar is wide enough
         if (width > 20) {
           ctx.fillStyle = "#000000"
           ctx.font = "8px monospace"
-          ctx.fillText(op.type, x1 + 2, y + height - 2)
+          ctx.fillText(op.type, x1 + 2, y + barHeight - 2)
         }
 
-        // Draw duration text
+        // Draw predicted duration text
         const duration = op.end! - op.start
         ctx.fillStyle = "#ffffff"
         ctx.font = "8px monospace"
-        ctx.fillText(`${duration}ms`, x2 + 2, y + height / 2)
+        ctx.fillText(`P:${duration}ms`, x2 + 2, y + barHeight / 2)
+
+        // Draw actual operation bar (bottom half) if available
+        if (op.actualStart && op.actualEnd) {
+          const actualX1 = xScale(op.actualStart)
+          const actualX2 = xScale(op.actualEnd)
+          const actualWidth = Math.max(actualX2 - actualX1, 2)
+          const actualY = y + barHeight
+
+          // Slightly darker version of the same color for actual bar
+          const color = this.opColors[op.type]
+          const actualColor = color.replace('#', '#3')
+          ctx.fillStyle = actualColor
+          ctx.fillRect(actualX1, actualY, actualWidth, barHeight)
+
+          // Draw actual duration text
+          const actualDuration = op.actualEnd - op.actualStart
+          ctx.fillStyle = "#cccccc"
+          ctx.font = "8px monospace"
+          ctx.fillText(`A:${actualDuration}ms`, actualX2 + 2, actualY + barHeight / 2)
+        }
       })
 
       batchIndex++
@@ -339,6 +397,18 @@ export function logBatchOperation(
     visualiser = new BatchVisualiser()
   }
   visualiser.logOperation(type, start, end, batchId)
+}
+
+export function logActualBatchOperation(
+  type: "H" | "W" | "G",
+  actualStart: number,
+  actualEnd: number,
+  batchId?: number
+): void {
+  if (!visualiser) {
+    visualiser = new BatchVisualiser()
+  }
+  visualiser.logActualOperation(type, actualStart, actualEnd, batchId)
 }
 
 export function startBatchOperation(
