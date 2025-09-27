@@ -12,23 +12,16 @@ export async function main(ns: NS) {
     return
   }
 
-  // Remove existing floating window if it exists
-  const existingWindow = document.getElementById("floating")
-  if (existingWindow) {
-    existingWindow.remove()
-  }
+  // Remove existing floating windows if they exist
+  const existingWindows = document.querySelectorAll(".floating")
+  existingWindows.forEach((window) => window.remove())
 
   // Create a floating window that will automatically position itself next to the overview container
   const window = new FloatingWindow({
-    title: "Title",
+    title: "Test Window",
     content: testContent,
     width: 400,
     height: 300,
-    id: "floating",
+    id: "floating-test-1",
   })
-
-  // Keep the script running until the window is closed
-  while (window.getElement()?.parentNode) {
-    await ns.sleep(1000)
-  }
 }

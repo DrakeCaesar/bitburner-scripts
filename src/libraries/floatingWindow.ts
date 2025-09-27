@@ -361,7 +361,7 @@ export class FloatingWindow {
 
     // Create main container with exact MUI classes
     this.element = document.createElement("div")
-    this.element.className = `MuiPaper-root MuiPaper-elevation MuiPaper-elevation1 react-draggable react-draggable-dragged ${CSS_CLASSES.overviewContainer}`
+    this.element.className = `MuiPaper-root MuiPaper-elevation MuiPaper-elevation1 react-draggable react-draggable-dragged floating ${CSS_CLASSES.overviewContainer}`
 
     // Set ID if provided
     if (this.options.id) {
