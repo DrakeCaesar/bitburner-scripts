@@ -24,6 +24,8 @@ class BatchVisualiser {
   private timeWindow = 1000 * 60
   private currentBatchId = 0
   private nextOperationId = 0
+  private animationId: number | null = null
+  private isAnimating = false
 
   // Color mapping for operations
   private predictedColors = {
@@ -40,6 +42,7 @@ class BatchVisualiser {
 
   constructor() {
     this.initCanvas()
+    this.startAnimation()
   }
 
   private initCanvas(): void {
@@ -90,6 +93,27 @@ class BatchVisualiser {
     this.isInitialized = true
   }
 
+  private startAnimation(): void {
+    if (this.isAnimating) return
+    this.isAnimating = true
+    this.animate()
+  }
+
+  private stopAnimation(): void {
+    if (this.animationId) {
+      cancelAnimationFrame(this.animationId)
+      this.animationId = null
+    }
+    this.isAnimating = false
+  }
+
+  private animate(): void {
+    if (!this.isAnimating) return
+
+    this.draw()
+    this.animationId = requestAnimationFrame(() => this.animate())
+  }
+
   public startOperation(type: "H" | "W" | "G", batchId?: number): number {
     const operationId = this.nextOperationId++
     const operation: Operation = {
@@ -108,7 +132,6 @@ class BatchVisualiser {
     )
     if (operation) {
       operation.end = Date.now()
-      this.draw()
     }
   }
 
@@ -131,7 +154,6 @@ class BatchVisualiser {
       operationId,
     }
     this.operations.push(operation)
-    this.draw()
     return operationId
   }
 
@@ -147,7 +169,6 @@ class BatchVisualiser {
       if (op.operationId === operationId && !op.actualStart) {
         op.actualStart = actualStart
         op.actualEnd = actualEnd
-        this.draw()
         return
       }
     }
@@ -362,6 +383,7 @@ class BatchVisualiser {
   }
 
   public remove(): void {
+    this.stopAnimation()
     if (this.floatingWindow) {
       this.floatingWindow.close()
       this.floatingWindow = null
