@@ -82,7 +82,6 @@ class BatchVisualiser {
     this.isInitialized = true
   }
 
-
   public startOperation(type: "H" | "W" | "G", batchId?: number): number {
     const operationId = this.operations.length
     const operation: Operation = {
@@ -131,9 +130,11 @@ class BatchVisualiser {
     const targetBatchId = batchId ?? this.currentBatchId
     for (let i = this.operations.length - 1; i >= 0; i--) {
       const op = this.operations[i]
-      if (op.type === type &&
-          Math.abs(op.batchId - targetBatchId) <= 1 &&
-          !op.actualStart) {
+      if (
+        op.type === type &&
+        Math.abs(op.batchId - targetBatchId) <= 1 &&
+        !op.actualStart
+      ) {
         op.actualStart = actualStart
         op.actualEnd = actualEnd
         this.draw()
@@ -284,7 +285,7 @@ class BatchVisualiser {
 
           // Slightly darker version of the same color for actual bar
           const color = this.opColors[op.type]
-          const actualColor = color.replace('#', '#3')
+          const actualColor = color.replace("#", "#3")
           ctx.fillStyle = actualColor
           ctx.fillRect(actualX1, actualY, actualWidth, barHeight)
 
@@ -292,7 +293,11 @@ class BatchVisualiser {
           const actualDuration = op.actualEnd - op.actualStart
           ctx.fillStyle = "#cccccc"
           ctx.font = "8px monospace"
-          ctx.fillText(`A:${actualDuration}ms`, actualX2 + 2, actualY + barHeight / 2)
+          ctx.fillText(
+            `A:${actualDuration}ms`,
+            actualX2 + 2,
+            actualY + barHeight / 2
+          )
         }
       })
 
@@ -384,6 +389,10 @@ export function initBatchVisualiser(): BatchVisualiser {
   }
 
   visualiser = new BatchVisualiser()
+
+  // Expose visualizer globally for lightweight stub access
+  ;(globalThis as any).batchVisualiser = visualiser
+
   return visualiser
 }
 
@@ -407,6 +416,13 @@ export function logActualBatchOperation(
 ): void {
   if (!visualiser) {
     visualiser = new BatchVisualiser()
+    console.warn(
+      "Visualiser was not initialized before logging actual operation"
+    )
+  } else {
+    console.log(
+      `Logging actual operation: ${type} from ${actualStart} to ${actualEnd} (Batch ${batchId})`
+    )
   }
   visualiser.logActualOperation(type, actualStart, actualEnd, batchId)
 }

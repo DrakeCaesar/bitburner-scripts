@@ -1,5 +1,5 @@
 import { NS } from "@ns"
-import { logActualBatchOperation } from "/src/batchVisualiser.js"
+import { logActualBatchOperation } from "/src/batchVisualizerStub.js"
 
 export async function main(ns: NS) {
   const target = ns.args[0]
