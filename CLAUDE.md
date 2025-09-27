@@ -71,3 +71,9 @@ export async function main(ns: NS): Promise<void> {
 - Memory constraints affect script design
 - Real-time file syncing enables rapid development iteration
 - Visual modification scripts use extensive DOM manipulation and CSS injection
+
+## Important Instructions
+- NEVER run linter, TypeScript checks, or build commands unless explicitly requested by the User
+- Do what has been asked; nothing more, nothing less
+- NEVER create files unless they're absolutely necessary for achieving your goal
+- ALWAYS prefer editing an existing file to creating a new one

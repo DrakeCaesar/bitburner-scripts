@@ -1,3 +1,5 @@
+import { FloatingWindow } from "./libraries/floatingWindow.js"
+
 interface Operation {
   type: "H" | "W" | "G"
   start: number
@@ -8,6 +10,7 @@ interface Operation {
 class BatchVisualizer {
   private canvas: HTMLCanvasElement | null = null
   private context: CanvasRenderingContext2D | null = null
+  private floatingWindow: FloatingWindow | null = null
   private operations: Operation[] = []
   private isInitialized = false
   private width = 0
@@ -32,29 +35,23 @@ class BatchVisualizer {
   private initCanvas(): void {
     if (this.isInitialized) return
 
-    // Check if canvas already exists
-    let existingCanvas = document.getElementById(
-      "batch-visualizer"
-    ) as HTMLCanvasElement
-    if (existingCanvas) {
-      this.canvas = existingCanvas
-    } else {
-      // Create new canvas
-      this.canvas = document.createElement("canvas")
-      this.canvas.id = "batch-visualizer"
-      this.canvas.style.position = "fixed"
-      this.canvas.style.top = "0"
-      this.canvas.style.left = "0"
-      this.canvas.style.zIndex = "1000"
-      this.canvas.style.pointerEvents = "none"
-      this.canvas.style.backgroundColor = "rgba(0, 0, 0, 0.8)"
-      document.body.appendChild(this.canvas)
+    // Remove any existing floating windows with the same ID
+    const existingWindow = document.getElementById("batch-visualizer-window")
+    if (existingWindow) {
+      existingWindow.remove()
     }
 
-    this.width = Math.min(window.innerWidth * 0.8, 1200)
-    this.height = Math.min(window.innerHeight * 0.6, 600)
+    // Create canvas
+    this.canvas = document.createElement("canvas")
+    this.canvas.id = "batch-visualizer"
+
+    this.width = Math.min(window.innerWidth * 0.6, 800)
+    this.height = Math.min(window.innerHeight * 0.5, 400)
     this.canvas.width = this.width
     this.canvas.height = this.height
+    this.canvas.style.backgroundColor = "rgba(0, 0, 0, 0.9)"
+    this.canvas.style.border = "1px solid #333"
+    this.canvas.style.borderRadius = "4px"
 
     this.chartWidth = this.width - this.margin.left - this.margin.right
     this.chartHeight = this.height - this.margin.top - this.margin.bottom
@@ -63,6 +60,17 @@ class BatchVisualizer {
     if (this.context) {
       this.context.font = "12px monospace"
     }
+
+    // Create floating window with canvas
+    this.floatingWindow = new FloatingWindow({
+      title: "Batch Operations Visualizer",
+      content: this.canvas,
+      width: this.width + 40,
+      height: this.height + 80,
+      id: "batch-visualizer-window",
+      x: 50,
+      y: 50,
+    })
 
     this.isInitialized = true
   }
@@ -270,21 +278,24 @@ class BatchVisualizer {
   }
 
   public hide(): void {
-    if (this.canvas) {
-      this.canvas.style.display = "none"
+    if (this.floatingWindow) {
+      this.floatingWindow.hide()
     }
   }
 
   public show(): void {
-    if (this.canvas) {
-      this.canvas.style.display = "block"
+    if (this.floatingWindow) {
+      this.floatingWindow.show()
     }
   }
 
   public remove(): void {
-    if (this.canvas && this.canvas.parentNode) {
-      this.canvas.parentNode.removeChild(this.canvas)
+    if (this.floatingWindow) {
+      this.floatingWindow.close()
+      this.floatingWindow = null
     }
+    this.canvas = null
+    this.context = null
     this.isInitialized = false
   }
 }

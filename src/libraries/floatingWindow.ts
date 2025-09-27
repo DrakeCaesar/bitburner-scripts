@@ -1,6 +1,6 @@
 interface FloatingWindowOptions {
   title?: string
-  content?: string
+  content?: string | HTMLElement
   x?: number
   y?: number
   width?: number
@@ -111,7 +111,7 @@ export class FloatingWindow {
   private dragOffset = { x: 0, y: 0 }
   private isCollapsed = false
   private title: string
-  private content: string
+  private content: string | HTMLElement
   private x: number
   private y: number
   private width: number
@@ -307,12 +307,17 @@ export class FloatingWindow {
     tableCell.className = `MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium ${CSS_CLASSES.tableCell}`
     tableCell.setAttribute("scope", "row")
 
-    // Create paragraph with MUI Typography classes
-    const paragraph = document.createElement("p")
-    paragraph.className = `MuiTypography-root MuiTypography-body1 ${CSS_CLASSES.typography}`
-    paragraph.innerHTML = this.options.content
-
-    tableCell.appendChild(paragraph)
+    // Handle both string and HTMLElement content
+    if (typeof this.options.content === "string") {
+      // Create paragraph with MUI Typography classes for string content
+      const paragraph = document.createElement("p")
+      paragraph.className = `MuiTypography-root MuiTypography-body1 ${CSS_CLASSES.typography}`
+      paragraph.innerHTML = this.options.content
+      tableCell.appendChild(paragraph)
+    } else {
+      // For HTMLElement content, append directly
+      tableCell.appendChild(this.options.content as HTMLElement)
+    }
     tableRow.appendChild(tableCell)
 
     // Assemble table structure
@@ -547,10 +552,10 @@ export class FloatingWindow {
     }
   }
 
-  public updateContent(newContent: string): void {
+  public updateContent(newContent: string | HTMLElement): void {
     if (!this.element) return
 
-    // Navigate through the nested structure to find the paragraph in the table header cell
+    // Navigate through the nested structure to find the content in the table header cell
     const contentArea = this.element.children[1] // Second child is content area (MuiCollapse)
     const collapseWrapper = contentArea?.children[0] as HTMLElement // MuiCollapse-wrapper
     const wrapperInner = collapseWrapper?.children[0] as HTMLElement // MuiCollapse-wrapperInner
@@ -558,10 +563,21 @@ export class FloatingWindow {
     const tbody = table?.children[0] as HTMLElement // MuiTableBody-root
     const tableRow = tbody?.children[0] as HTMLElement // MuiTableRow-root
     const tableCell = tableRow?.children[0] as HTMLElement // Table header cell
-    const paragraph = tableCell?.children[0] as HTMLElement // Paragraph with content
 
-    if (paragraph) {
-      paragraph.innerHTML = newContent
+    if (tableCell) {
+      // Clear existing content
+      tableCell.innerHTML = ""
+
+      if (typeof newContent === "string") {
+        // Create paragraph with MUI Typography classes for string content
+        const paragraph = document.createElement("p")
+        paragraph.className = `MuiTypography-root MuiTypography-body1 ${CSS_CLASSES.typography}`
+        paragraph.innerHTML = newContent
+        tableCell.appendChild(paragraph)
+      } else {
+        // For HTMLElement content, append directly
+        tableCell.appendChild(newContent)
+      }
     }
   }
 
