@@ -1,10 +1,10 @@
 import { NS, Person, Player, Server } from "@ns"
 import {
   clearVisualization,
-  initBatchVisualizer,
+  initBatchVisualiser,
   logBatchOperation,
   nextBatch,
-} from "./batchVisualizer.js"
+} from "./batchVisualiser.js"
 
 // Store for tracking operation timings from the individual scripts
 interface PendingOperation {
@@ -15,8 +15,8 @@ interface PendingOperation {
 }
 
 export async function main(ns: NS) {
-  // Initialize the real-time visualizer
-  const visualizer = initBatchVisualizer()
+  // Initialize the real-time visualiser
+  const visualiser = initBatchVisualiser()
   clearVisualization() // Start fresh
 
   const host = (ns.args[0] as string) ?? ns.getHostname()
@@ -241,7 +241,7 @@ export async function main(ns: NS) {
     const weaken2Start = currentTime + 3 * batchDelay
     const weaken2End = weaken2Start + weakenTime + sleepWeaken2
 
-    // Log predicted operations to visualizer (these will show as bars)
+    // Log predicted operations to visualiser (these will show as bars)
     logBatchOperation("H", hackStart, hackEnd, batchCounter)
     logBatchOperation("W", weaken1Start, weaken1End, batchCounter)
     logBatchOperation("G", growStart, growEnd, batchCounter)
@@ -262,7 +262,7 @@ export async function main(ns: NS) {
     await ns.sleep(batchDelay)
 
     batchCounter++
-    nextBatch() // Advance to next batch in visualizer
+    nextBatch() // Advance to next batch in visualiser
 
     // Optional: slow down the loop to make visualization more readable
     if (batchCounter > 0 && batchCounter % 5 === 0) {

@@ -7,7 +7,7 @@ interface Operation {
   batchId: number
 }
 
-class BatchVisualizer {
+class BatchVisualiser {
   private canvas: HTMLCanvasElement | null = null
   private context: CanvasRenderingContext2D | null = null
   private floatingWindow: FloatingWindow | null = null
@@ -36,17 +36,17 @@ class BatchVisualizer {
     if (this.isInitialized) return
 
     // Remove any existing floating windows with the same ID
-    const existingWindow = document.getElementById("batch-visualizer-window")
+    const existingWindow = document.getElementById("batch-visualiser-window")
     if (existingWindow) {
       existingWindow.remove()
     }
 
     // Create canvas
     this.canvas = document.createElement("canvas")
-    this.canvas.id = "batch-visualizer"
+    this.canvas.id = "batch-visualiser"
 
-    this.width = Math.min(window.innerWidth * 0.6, 800)
-    this.height = Math.min(window.innerHeight * 0.5, 400)
+    this.width = Math.min(window.innerWidth * 0.6, 800) * 2
+    this.height = Math.min(window.innerHeight * 0.5, 400) * 1.5
     this.canvas.width = this.width
     this.canvas.height = this.height
     this.canvas.style.backgroundColor = "rgba(0, 0, 0, 0.9)"
@@ -63,11 +63,11 @@ class BatchVisualizer {
 
     // Create floating window with canvas
     this.floatingWindow = new FloatingWindow({
-      title: "Batch Operations Visualizer",
+      title: "Batch Operations Visualiser",
       content: this.canvas,
       width: this.width + 40,
       height: this.height + 80,
-      id: "batch-visualizer-window",
+      id: "batch-visualiser-window",
       x: 50,
       y: 50,
     })
@@ -301,14 +301,14 @@ class BatchVisualizer {
 }
 
 // Global instance
-let visualizer: BatchVisualizer | null = null
+let visualiser: BatchVisualiser | null = null
 
 // Export functions for easy use in batch.ts
-export function initBatchVisualizer(): BatchVisualizer {
-  if (!visualizer) {
-    visualizer = new BatchVisualizer()
+export function initBatchVisualiser(): BatchVisualiser {
+  if (!visualiser) {
+    visualiser = new BatchVisualiser()
   }
-  return visualizer
+  return visualiser
 }
 
 export function logBatchOperation(
@@ -317,55 +317,55 @@ export function logBatchOperation(
   end: number,
   batchId?: number
 ): void {
-  if (!visualizer) {
-    visualizer = new BatchVisualizer()
+  if (!visualiser) {
+    visualiser = new BatchVisualiser()
   }
-  visualizer.logOperation(type, start, end, batchId)
+  visualiser.logOperation(type, start, end, batchId)
 }
 
 export function startBatchOperation(
   type: "H" | "W" | "G",
   batchId?: number
 ): number {
-  if (!visualizer) {
-    visualizer = new BatchVisualizer()
+  if (!visualiser) {
+    visualiser = new BatchVisualiser()
   }
-  return visualizer.startOperation(type, batchId)
+  return visualiser.startOperation(type, batchId)
 }
 
 export function endBatchOperation(operationId: number): void {
-  if (visualizer) {
-    visualizer.endOperation(operationId)
+  if (visualiser) {
+    visualiser.endOperation(operationId)
   }
 }
 
 export function nextBatch(): void {
-  if (visualizer) {
-    visualizer.nextBatch()
+  if (visualiser) {
+    visualiser.nextBatch()
   }
 }
 
 export function clearVisualization(): void {
-  if (visualizer) {
-    visualizer.clear()
+  if (visualiser) {
+    visualiser.clear()
   }
 }
 
 export function hideVisualization(): void {
-  if (visualizer) {
-    visualizer.hide()
+  if (visualiser) {
+    visualiser.hide()
   }
 }
 
 export function showVisualization(): void {
-  if (visualizer) {
-    visualizer.show()
+  if (visualiser) {
+    visualiser.show()
   }
 }
 
 export function removeVisualization(): void {
-  if (visualizer) {
-    visualizer.remove()
-    visualizer = null
+  if (visualiser) {
+    visualiser.remove()
+    visualiser = null
   }
 }

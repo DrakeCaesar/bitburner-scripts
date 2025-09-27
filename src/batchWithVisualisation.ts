@@ -1,13 +1,13 @@
 import { NS, Person, Player, Server } from "@ns"
 import {
-  initBatchVisualizer,
+  initBatchVisualiser,
   logBatchOperation,
   nextBatch,
-} from "./batchVisualizer.js"
+} from "./batchVisualiser.js"
 
 export async function main(ns: NS) {
-  // Initialize the real-time visualizer
-  const visualizer = initBatchVisualizer()
+  // Initialize the real-time visualiser
+  const visualiser = initBatchVisualiser()
 
   const host = (ns.args[0] as string) ?? ns.getHostname()
   const target = ns.args[1] as string
@@ -187,7 +187,7 @@ export async function main(ns: NS) {
     const weaken2Start = currentTime + 3 * batchDelay
     const weaken2End = weaken2Start + weakenTime + sleepWeaken2
 
-    // Log operations to visualizer (predicting when they'll complete)
+    // Log operations to visualiser (predicting when they'll complete)
     logBatchOperation("H", hackStart, hackEnd, batchCounter)
     logBatchOperation("W", weaken1Start, weaken1End, batchCounter)
     logBatchOperation("G", growStart, growEnd, batchCounter)
@@ -203,6 +203,6 @@ export async function main(ns: NS) {
     await ns.sleep(batchDelay)
 
     batchCounter++
-    nextBatch() // Advance to next batch in visualizer
+    nextBatch() // Advance to next batch in visualiser
   }
 }
