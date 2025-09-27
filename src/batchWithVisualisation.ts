@@ -30,6 +30,12 @@ export async function main(ns: NS) {
   ns.killall(host)
   ns.tprint(`Killed all scripts on ${host}`)
 
+  // Copy required scripts to the host server
+  await ns.scp("/hacking/hack.js", host)
+  await ns.scp("/hacking/grow.js", host)
+  await ns.scp("/hacking/weaken.js", host)
+  ns.tprint(`Copied scripts to ${host}`)
+
   // Initialize the real-time visualiser
   initBatchVisualiser()
   const moneyMax = ns.getServerMaxMoney(target)
@@ -214,13 +220,13 @@ export async function main(ns: NS) {
     logBatchOperation("G", growStart, growEnd, batchCounter)
     logBatchOperation("W", weaken2Start, weaken2End, batchCounter)
 
-    ns.exec("/hacking/hack.js", host, hackThreads, target, sleepHack)
+    ns.exec("/hacking/hack.js", host, hackThreads, target, sleepHack, batchCounter)
     await ns.sleep(batchDelay)
-    ns.exec("/hacking/weaken.js", host, weakenThreads1, target, sleepWeaken1)
+    ns.exec("/hacking/weaken.js", host, weakenThreads1, target, sleepWeaken1, batchCounter)
     await ns.sleep(batchDelay)
-    ns.exec("/hacking/grow.js", host, growThreads, target, sleepGrow)
+    ns.exec("/hacking/grow.js", host, growThreads, target, sleepGrow, batchCounter)
     await ns.sleep(batchDelay)
-    ns.exec("/hacking/weaken.js", host, weakenThreads2, target, sleepWeaken2)
+    ns.exec("/hacking/weaken.js", host, weakenThreads2, target, sleepWeaken2, batchCounter)
     await ns.sleep(batchDelay)
 
     batchCounter++
