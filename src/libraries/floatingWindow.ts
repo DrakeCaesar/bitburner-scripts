@@ -1,6 +1,6 @@
 interface FloatingWindowOptions {
   title?: string
-  content?: string | HTMLElement
+  content?: string
   x?: number
   y?: number
   width?: number
@@ -56,37 +56,6 @@ function extractCSSClasses(): typeof CSS_CLASSES {
   const tableCell = typography?.parentElement as HTMLTableCellElement
   const tableRow = tableCell?.parentElement as HTMLTableRowElement
 
-  // Look for action area elements at the bottom
-  const actionArea = wrapperInner?.querySelector(
-    '[class*="css-oa3chk"]'
-  ) as HTMLElement
-  const actionContainer = actionArea?.querySelector(
-    '[class*="css-1jvleez"]'
-  ) as HTMLElement
-  const actionContainer2 = actionArea?.querySelector(
-    '[class*="css-1dskn3o"]'
-  ) as HTMLElement
-  const iconButton = actionContainer?.querySelector(
-    "button"
-  ) as HTMLButtonElement
-  const iconSvg = iconButton?.querySelector("svg") as SVGElement
-
-  // Look for progress bar elements
-  const progressBarContainer = tbody?.querySelector(
-    '[class*="MuiLinearProgress-root"]'
-  ) as HTMLElement
-  const progressBar = progressBarContainer?.querySelector(
-    '[class*="MuiLinearProgress-bar"]'
-  ) as HTMLElement
-
-  // Look for inline button in table
-  const inlineButtonCell = tbody?.querySelector(
-    '[class*="css-7buml8"]'
-  ) as HTMLElement
-  const inlineButton = inlineButtonCell?.querySelector(
-    "button"
-  ) as HTMLButtonElement
-
   // Helper function to extract css-* class from element
   const extractCssClass = (
     element: HTMLElement | SVGElement | null
@@ -113,15 +82,6 @@ function extractCSSClasses(): typeof CSS_CLASSES {
     tableRow: extractCssClass(tableRow),
     tableCell: extractCssClass(tableCell),
     typography: extractCssClass(typography),
-    actionArea: extractCssClass(actionArea),
-    actionContainer: extractCssClass(actionContainer),
-    actionContainer2: extractCssClass(actionContainer2),
-    iconButton: extractCssClass(iconButton),
-    iconSvg: extractCssClass(iconSvg),
-    progressBarContainer: extractCssClass(progressBarContainer),
-    progressBar: extractCssClass(progressBar),
-    inlineButtonCell: extractCssClass(inlineButtonCell),
-    inlineButton: extractCssClass(inlineButton),
   }
 }
 
@@ -143,15 +103,6 @@ let CSS_CLASSES = {
   tableRow: "",
   tableCell: "",
   typography: "",
-  actionArea: "",
-  actionContainer: "",
-  actionContainer2: "",
-  iconButton: "",
-  iconSvg: "",
-  progressBarContainer: "",
-  progressBar: "",
-  inlineButtonCell: "",
-  inlineButton: "",
 }
 
 export class FloatingWindow {
@@ -160,19 +111,17 @@ export class FloatingWindow {
   private dragOffset = { x: 0, y: 0 }
   private isCollapsed = false
   private title: string
-  private content: string | HTMLElement
+  private content: string
   private x: number
   private y: number
   private width: number
   private height: number
   private isVisible: boolean
-  private options: Required<
-    Omit<FloatingWindowOptions, "attachTo" | "id" | "content">
-  > & {
+  private options: Required<Omit<FloatingWindowOptions, "attachTo" | "id">> & {
     attachTo?: HTMLElement
     id?: string
-    content: string | HTMLElement
   }
+
   constructor(options: FloatingWindowOptions) {
     // Initialize CSS classes from existing overview element
     try {
@@ -341,17 +290,15 @@ export class FloatingWindow {
     const wrapperInner = document.createElement("div")
     wrapperInner.className = `MuiCollapse-wrapperInner MuiCollapse-vertical ${CSS_CLASSES.collapseWrapperInner}`
 
-    // Create main content container
-    const mainContent = document.createElement("div")
-
     // Create MUI table structure
     const table = document.createElement("table")
     table.className = `MuiTable-root ${CSS_CLASSES.table}`
+    table.style.paddingRight = "8px"
 
     const tbody = document.createElement("tbody")
     tbody.className = `MuiTableBody-root ${CSS_CLASSES.tableBody}`
 
-    // Create main content table row
+    // Create a sample table row (you can customize this)
     const tableRow = document.createElement("tr")
     tableRow.className = `MuiTableRow-root ${CSS_CLASSES.tableRow}`
 
@@ -359,34 +306,21 @@ export class FloatingWindow {
     const tableCell = document.createElement("th")
     tableCell.className = `MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium ${CSS_CLASSES.tableCell}`
     tableCell.setAttribute("scope", "row")
-    tableCell.setAttribute("colspan", "2")
 
-    // Handle both string and HTMLElement content
-    if (typeof this.options.content === "string") {
-      // Create paragraph with MUI Typography classes for string content
-      const paragraph = document.createElement("p")
-      paragraph.className = `MuiTypography-root MuiTypography-body1 ${CSS_CLASSES.typography}`
-      paragraph.innerHTML = this.options.content
-      tableCell.appendChild(paragraph)
-    } else {
-      // Directly append HTMLElement content
-      tableCell.appendChild(this.options.content)
-    }
+    // Create paragraph with MUI Typography classes
+    const paragraph = document.createElement("p")
+    paragraph.className = `MuiTypography-root MuiTypography-body1 ${CSS_CLASSES.typography}`
+    paragraph.innerHTML = this.options.content
+
+    tableCell.appendChild(paragraph)
     tableRow.appendChild(tableCell)
 
     // Assemble table structure
     tbody.appendChild(tableRow)
     table.appendChild(tbody)
-    mainContent.appendChild(table)
 
-    // Create action buttons area (like the save/kill buttons in the example)
-    const actionArea = this.createActionArea()
-    if (actionArea) {
-      mainContent.appendChild(actionArea)
-    }
-
-    // Assemble the structure: contentArea > collapseWrapper > wrapperInner > mainContent
-    wrapperInner.appendChild(mainContent)
+    // Assemble the structure: contentArea > collapseWrapper > wrapperInner > table
+    wrapperInner.appendChild(table)
     collapseWrapper.appendChild(wrapperInner)
     contentArea.appendChild(collapseWrapper)
 
@@ -613,10 +547,10 @@ export class FloatingWindow {
     }
   }
 
-  public updateContent(newContent: string | HTMLElement): void {
+  public updateContent(newContent: string): void {
     if (!this.element) return
 
-    // Navigate through the nested structure to find the content in the table header cell
+    // Navigate through the nested structure to find the paragraph in the table header cell
     const contentArea = this.element.children[1] // Second child is content area (MuiCollapse)
     const collapseWrapper = contentArea?.children[0] as HTMLElement // MuiCollapse-wrapper
     const wrapperInner = collapseWrapper?.children[0] as HTMLElement // MuiCollapse-wrapperInner
@@ -624,20 +558,10 @@ export class FloatingWindow {
     const tbody = table?.children[0] as HTMLElement // MuiTableBody-root
     const tableRow = tbody?.children[0] as HTMLElement // MuiTableRow-root
     const tableCell = tableRow?.children[0] as HTMLElement // Table header cell
+    const paragraph = tableCell?.children[0] as HTMLElement // Paragraph with content
 
-    if (tableCell) {
-      // Clear existing content
-      tableCell.innerHTML = ""
-
-      // Add new content based on type
-      if (typeof newContent === "string") {
-        const paragraph = document.createElement("p")
-        paragraph.className = `MuiTypography-root MuiTypography-body1 ${CSS_CLASSES.typography}`
-        paragraph.innerHTML = newContent
-        tableCell.appendChild(paragraph)
-      } else {
-        tableCell.appendChild(newContent)
-      }
+    if (paragraph) {
+      paragraph.innerHTML = newContent
     }
   }
 
@@ -654,216 +578,6 @@ export class FloatingWindow {
     if (this.element) {
       this.element.style.transform = `translate(${x}px, ${y}px)`
     }
-  }
-
-  private createActionArea(): HTMLElement | null {
-    // Create action area similar to the save/kill buttons in the example
-    // This is optional and can be customized per window
-    const actionBox = document.createElement("div")
-    actionBox.className = `MuiBox-root ${CSS_CLASSES.actionArea}`
-
-    // You can add custom action buttons here if needed
-    // For now, return null to keep it simple unless action buttons are added
-    return null
-  }
-
-  private createIconButton(
-    classes: string,
-    ariaLabel: string,
-    iconClasses: string,
-    iconTestId: string,
-    iconPathData: string,
-    onClick?: () => void
-  ): HTMLButtonElement {
-    const button = document.createElement("button")
-    button.className = classes
-    button.setAttribute("tabindex", "0")
-    button.setAttribute("type", "button")
-    button.setAttribute("aria-label", ariaLabel)
-    if (onClick) {
-      button.onclick = onClick
-    }
-
-    // Create icon SVG
-    const iconSvg = this.createSvgIcon(iconClasses, iconTestId, iconPathData)
-    button.appendChild(iconSvg)
-
-    // Add touch ripple for MUI consistency
-    const touchRipple = document.createElement("span")
-    touchRipple.className = `MuiTouchRipple-root ${CSS_CLASSES.touchRipple}`
-    button.appendChild(touchRipple)
-
-    return button
-  }
-
-  public addActionButton(
-    label: string,
-    iconPathData: string,
-    onClick: () => void,
-    iconTestId: string = "CustomIcon",
-    colorClass: string = "MuiSvgIcon-colorPrimary"
-  ): void {
-    if (!this.element) return
-
-    // Find or create the action area
-    let actionArea = this.element.querySelector(
-      `.${CSS_CLASSES.actionArea}`
-    ) as HTMLElement
-    if (!actionArea) {
-      actionArea = document.createElement("div")
-      actionArea.className = `MuiBox-root ${CSS_CLASSES.actionArea}`
-
-      // Find the main content area and append the action area
-      const mainContent = this.element.querySelector(
-        ".MuiCollapse-wrapperInner > div"
-      )
-      if (mainContent) {
-        mainContent.appendChild(actionArea)
-      }
-    }
-
-    // Create button container
-    const buttonContainer = document.createElement("div")
-    buttonContainer.className = `MuiBox-root ${CSS_CLASSES.actionContainer}`
-
-    // Create the action button
-    const actionButton = this.createIconButton(
-      `MuiButtonBase-root MuiIconButton-root MuiIconButton-sizeMedium ${CSS_CLASSES.iconButton}`,
-      label,
-      `MuiSvgIcon-root ${colorClass} MuiSvgIcon-fontSizeMedium ${CSS_CLASSES.iconSvg}`,
-      iconTestId,
-      iconPathData,
-      onClick
-    )
-
-    buttonContainer.appendChild(actionButton)
-    actionArea.appendChild(buttonContainer)
-  }
-
-  public addTableRow(
-    label: string,
-    value?: string,
-    extraValue?: string
-  ): HTMLTableRowElement {
-    if (!this.element) throw new Error("Window element not found")
-
-    const tbody = this.element.querySelector(".MuiTableBody-root")
-    if (!tbody) throw new Error("Table body not found")
-
-    const tableRow = document.createElement("tr")
-    tableRow.className = `MuiTableRow-root ${CSS_CLASSES.tableRow}`
-
-    // Create label cell (th)
-    const labelCell = document.createElement("th")
-    labelCell.className = `MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium ${CSS_CLASSES.tableCell}`
-    labelCell.setAttribute("scope", "row")
-
-    const labelParagraph = document.createElement("p")
-    labelParagraph.className = `MuiTypography-root MuiTypography-body1 ${CSS_CLASSES.typography}`
-    labelParagraph.innerHTML = label + "&nbsp;"
-    labelCell.appendChild(labelParagraph)
-    tableRow.appendChild(labelCell)
-
-    // Create value cell (td) if provided
-    if (value !== undefined) {
-      const valueCell = document.createElement("td")
-      valueCell.className = `MuiTableCell-root MuiTableCell-body MuiTableCell-alignRight MuiTableCell-sizeMedium ${CSS_CLASSES.tableCell}`
-
-      const valueParagraph = document.createElement("p")
-      valueParagraph.className = `MuiTypography-root MuiTypography-body1 ${CSS_CLASSES.typography}`
-      valueParagraph.textContent = value
-      valueCell.appendChild(valueParagraph)
-      tableRow.appendChild(valueCell)
-    }
-
-    // Create extra value cell (td) if provided
-    if (extraValue !== undefined) {
-      const extraCell = document.createElement("td")
-      extraCell.className = `MuiTableCell-root MuiTableCell-body MuiTableCell-alignRight MuiTableCell-sizeMedium ${CSS_CLASSES.tableCell}`
-
-      const extraParagraph = document.createElement("p")
-      extraParagraph.className = `MuiTypography-root MuiTypography-body1 ${CSS_CLASSES.typography}`
-      extraParagraph.textContent = extraValue
-      extraCell.appendChild(extraParagraph)
-      tableRow.appendChild(extraCell)
-    }
-
-    tbody.appendChild(tableRow)
-    return tableRow
-  }
-
-  public addProgressBar(value: number, max: number = 100): HTMLTableRowElement {
-    if (!this.element) throw new Error("Window element not found")
-
-    const tbody = this.element.querySelector(".MuiTableBody-root")
-    if (!tbody) throw new Error("Table body not found")
-
-    const tableRow = document.createElement("tr")
-    tableRow.className = `MuiTableRow-root ${CSS_CLASSES.tableRow}`
-
-    const progressCell = document.createElement("th")
-    progressCell.className = `MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium ${CSS_CLASSES.tableCell}`
-    progressCell.setAttribute("scope", "row")
-    progressCell.setAttribute("colspan", "2")
-    progressCell.style.paddingBottom = "2px"
-    progressCell.style.position = "relative"
-    progressCell.style.top = "-3px"
-
-    // Create progress bar container
-    const progressContainer = document.createElement("span")
-    progressContainer.className = `MuiLinearProgress-root MuiLinearProgress-colorPrimary MuiLinearProgress-determinate ${CSS_CLASSES.progressBarContainer}`
-    progressContainer.setAttribute("role", "progressbar")
-    progressContainer.setAttribute("aria-valuenow", value.toString())
-    progressContainer.setAttribute("aria-valuemin", "0")
-    progressContainer.setAttribute("aria-valuemax", max.toString())
-
-    // Create progress bar
-    const progressBar = document.createElement("span")
-    progressBar.className = `MuiLinearProgress-bar MuiLinearProgress-barColorPrimary MuiLinearProgress-bar1Determinate ${CSS_CLASSES.progressBar}`
-    const percentage = ((max - value) / max) * 100
-    progressBar.style.transform = `translateX(-${percentage.toFixed(5)}%)`
-
-    progressContainer.appendChild(progressBar)
-    progressCell.appendChild(progressContainer)
-    tableRow.appendChild(progressCell)
-
-    tbody.appendChild(tableRow)
-    return tableRow
-  }
-
-  public addInlineButton(
-    text: string,
-    onClick: () => void,
-    colspan: number = 2
-  ): HTMLTableRowElement {
-    if (!this.element) throw new Error("Window element not found")
-
-    const tbody = this.element.querySelector(".MuiTableBody-root")
-    if (!tbody) throw new Error("Table body not found")
-
-    const tableRow = document.createElement("tr")
-    tableRow.className = `MuiTableRow-root ${CSS_CLASSES.tableRow}`
-
-    const buttonCell = document.createElement("th")
-    buttonCell.className = `MuiTableCell-root MuiTableCell-body MuiTableCell-alignCenter MuiTableCell-sizeMedium ${CSS_CLASSES.inlineButtonCell}`
-    buttonCell.setAttribute("scope", "row")
-    buttonCell.setAttribute("colspan", colspan.toString())
-
-    const button = this.createButton(
-      `MuiButtonBase-root MuiButton-root MuiButton-text MuiButton-textPrimary MuiButton-sizeMedium MuiButton-textSizeMedium MuiButton-root MuiButton-text MuiButton-textPrimary MuiButton-sizeMedium MuiButton-textSizeMedium ${CSS_CLASSES.inlineButton}`,
-      text,
-      onClick
-    )
-
-    // Add button text before the touch ripple
-    const textNode = document.createTextNode(text)
-    button.insertBefore(textNode, button.firstChild)
-
-    buttonCell.appendChild(button)
-    tableRow.appendChild(buttonCell)
-
-    tbody.appendChild(tableRow)
-    return tableRow
   }
 
   public getElement(): HTMLElement | null {
