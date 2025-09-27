@@ -21,7 +21,7 @@ class BatchVisualiser {
   private margin = { top: 40, right: 20, bottom: 60, left: 80 }
   private chartWidth = 0
   private chartHeight = 0
-  private timeWindow = 1000 * 60
+  private timeWindow = 1000 * 30
   private currentBatchId = 0
   private nextOperationId = 0
 
@@ -153,7 +153,9 @@ class BatchVisualiser {
     }
 
     // If no matching predicted operation found, log warning
-    console.warn(`No predicted operation found for operationId ${operationId}, type ${type}`)
+    console.warn(
+      `No predicted operation found for operationId ${operationId}, type ${type}`
+    )
   }
 
   private draw(): void {
@@ -168,9 +170,7 @@ class BatchVisualiser {
     const startTime = now - this.timeWindow
 
     // Filter operations within time window
-    const visibleOps = this.operations.filter(
-      (op) => op.start > startTime
-    )
+    const visibleOps = this.operations.filter((op) => op.start > startTime)
 
     if (visibleOps.length === 0) return
 
