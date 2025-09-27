@@ -249,11 +249,14 @@ class BatchVisualiser {
       // Sort operations by start time
       ops.sort((a, b) => a.start - b.start)
 
-      ops.forEach((op, opIndex) => {
+      ops.forEach((op) => {
         if (!op.end) return
 
-        const y = baseY + (opIndex * batchHeight) / Math.max(ops.length, 1)
-        const opHeight = (batchHeight / Math.max(ops.length, 1)) * 0.8
+        // Use a fixed slot system - always assume 4 operations per batch for consistent spacing
+        const maxOpsPerBatch = 4
+        const slotIndex = op.operationId % maxOpsPerBatch
+        const y = baseY + (slotIndex * batchHeight) / maxOpsPerBatch
+        const opHeight = (batchHeight / maxOpsPerBatch) * 1
         const barHeight = opHeight / 2 // Split height for two bars
 
         // Draw predicted operation bar (top half)
