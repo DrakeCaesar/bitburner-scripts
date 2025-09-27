@@ -153,7 +153,7 @@ class BatchVisualiser {
     }
 
     // If no matching predicted operation found, log warning
-    console.warn(`No predicted operation found for operationId ${operationId}`)
+    console.warn(`No predicted operation found for operationId ${operationId}, type ${type}`)
   }
 
   private draw(): void {
@@ -169,7 +169,7 @@ class BatchVisualiser {
 
     // Filter operations within time window
     const visibleOps = this.operations.filter(
-      (op) => op.end && op.end > startTime
+      (op) => op.start > startTime
     )
 
     if (visibleOps.length === 0) return
@@ -290,7 +290,7 @@ class BatchVisualiser {
           ctx.fillRect(actualX1, actualY, actualWidth, barHeight)
 
           // Draw actual duration text
-          const actualDuration = op.actualEnd - op.actualStart
+          const actualDuration = Math.round(op.actualEnd - op.actualStart)
           ctx.fillStyle = "#cccccc"
           ctx.font = "8px monospace"
           ctx.fillText(
