@@ -132,28 +132,19 @@ class BatchVisualiser {
     actualEnd: number,
     batchId?: number
   ): void {
+    // Find the most recent predicted operation of this type in the current or recent batches
     const targetBatchId = batchId ?? this.currentBatchId
-
-    // Count how many operations of this type we've already matched for this batch
-    let matchedCount = 0
-    for (const op of this.operations) {
-      if (op.type === type && op.batchId === targetBatchId && op.actualStart) {
-        matchedCount++
-      }
-    }
-
-    // Find the next unmatched predicted operation of this type for this batch
-    let foundCount = 0
-    for (const op of this.operations) {
-      if (op.type === type && op.batchId === targetBatchId && !op.actualStart) {
-        if (foundCount === matchedCount) {
-          // This is the next operation to match
-          op.actualStart = actualStart
-          op.actualEnd = actualEnd
-          this.draw()
-          return
-        }
-        foundCount++
+    for (let i = this.operations.length - 1; i >= 0; i--) {
+      const op = this.operations[i]
+      if (
+        op.type === type &&
+        Math.abs(op.batchId - targetBatchId) <= 1 &&
+        !op.actualStart
+      ) {
+        op.actualStart = actualStart
+        op.actualEnd = actualEnd
+        this.draw()
+        return
       }
     }
 
