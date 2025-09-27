@@ -1,5 +1,5 @@
 import { NS } from "@ns"
-import { FloatingWindow } from "./floatingWindow.js"
+import { FloatingWindow } from "./libraries/floatingWindow.js"
 
 export async function main(ns: NS) {
   // Content for the test window
