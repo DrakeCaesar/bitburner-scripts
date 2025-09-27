@@ -63,7 +63,7 @@ class BatchVisualiser {
 
     // Create floating window with canvas
     this.floatingWindow = new FloatingWindow({
-      title: "Batch Operations Visualiser",
+      title: "Batching",
       content: this.canvas,
       width: this.width + 40,
       height: this.height + 80,
@@ -138,7 +138,7 @@ class BatchVisualiser {
     // Draw title
     ctx.fillStyle = "#ffffff"
     ctx.font = "16px monospace"
-    ctx.fillText("Bitburner Batch Operations - Real Time", 10, 25)
+    // ctx.fillText("Batching", 10, 25)
 
     // Calculate scales
     const xScale = (time: number) =>
