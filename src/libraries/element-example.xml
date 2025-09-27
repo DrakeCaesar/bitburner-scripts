@@ -1,14 +1,20 @@
+<!-- Bitburner Overview Window Structure Reference -->
 <div
   class="MuiPaper-root MuiPaper-elevation MuiPaper-elevation1 react-draggable react-draggable-dragged css-6zfywf-overviewContainer"
   style="transform: translate(-50px, 90px);">
+
+  <!-- Header with drag handle -->
   <div class="drag MuiBox-root css-0">
     <div class="MuiBox-root css-19262ez-header">
+      <!-- Header icon -->
       <svg
         class="MuiSvgIcon-root MuiSvgIcon-colorSecondary MuiSvgIcon-fontSizeMedium css-11dx3ry-icon"
         focusable="false" aria-hidden="true" viewBox="0 0 24 24" data-testid="EqualizerIcon">
         <path d="M10 20h4V4h-4v16zm-6 0h4v-8H4v8zM16 9v11h4V9h-4z"></path>
       </svg>
+      <!-- Header title -->
       <p class="MuiTypography-root MuiTypography-body1 css-1syun94">Overview</p>
+      <!-- Collapse/expand button -->
       <button
         class="MuiButtonBase-root MuiButton-root MuiButton-text MuiButton-textPrimary MuiButton-sizeSmall MuiButton-textSizeSmall MuiButton-root MuiButton-text MuiButton-textPrimary MuiButton-sizeSmall MuiButton-textSizeSmall css-1v4s0p7-visibilityToggle"
         tabindex="0" type="button" aria-label="expand or collapse character overview">
@@ -21,12 +27,18 @@
       </button>
     </div>
   </div>
+
+  <!-- Collapsible content area -->
   <div class="MuiCollapse-root MuiCollapse-vertical MuiCollapse-entered css-1iz2152-collapse"
     style="min-height: 0px; height: auto; transition-duration: 300ms;">
     <div class="MuiCollapse-wrapper MuiCollapse-vertical css-hboir5">
       <div class="MuiCollapse-wrapperInner MuiCollapse-vertical css-8atqhb">
+
+        <!-- Data table -->
         <table class="MuiTable-root css-9mpdia">
           <tbody class="MuiTableBody-root css-1xnox0e">
+
+            <!-- Example: 3-column data row (label, value, extra) -->
             <tr class="MuiTableRow-root css-egt6ug">
               <th
                 class="MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium css-8kiwhy-cellNone"
@@ -42,38 +54,8 @@
                 <p class="MuiTypography-root MuiTypography-body1 css-1ht0xg1" id="overview-hp-hook"></p>
               </td>
             </tr>
-            <tr class="MuiTableRow-root css-egt6ug">
-              <th
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium css-10gx1f4-cell"
-                scope="row">
-                <p class="MuiTypography-root MuiTypography-body1 css-62j2gy">Money&nbsp;</p>
-              </th>
-              <td
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-alignRight MuiTableCell-sizeMedium css-f2ksi5-cell">
-                <p class="MuiTypography-root MuiTypography-body1 css-62j2gy">$1.537b</p>
-              </td>
-              <td
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-alignRight MuiTableCell-sizeMedium css-f2ksi5-cell">
-                <p class="MuiTypography-root MuiTypography-body1 css-62j2gy"
-                  id="overview-money-hook"></p>
-              </td>
-            </tr>
-            <tr class="MuiTableRow-root css-egt6ug">
-              <th
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium css-10gx1f4-cell"
-                scope="row">
-                <p class="MuiTypography-root MuiTypography-body1 css-1hpth3h">Hack&nbsp;</p>
-              </th>
-              <td
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-alignRight MuiTableCell-sizeMedium css-f2ksi5-cell">
-                <p class="MuiTypography-root MuiTypography-body1 css-1hpth3h">339</p>
-              </td>
-              <td
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-alignRight MuiTableCell-sizeMedium css-f2ksi5-cell">
-                <p class="MuiTypography-root MuiTypography-body1 css-1hpth3h"
-                  id="overview-hack-hook"></p>
-              </td>
-            </tr>
+
+            <!-- Example: Progress bar row -->
             <tr class="MuiTableRow-root css-egt6ug">
               <th
                 class="MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium css-8kiwhy-cellNone"
@@ -87,210 +69,8 @@
                 </span>
               </th>
             </tr>
-            <tr class="MuiTableRow-root css-egt6ug">
-              <th
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium css-8kiwhy-cellNone"
-                scope="row">
-                <p class="MuiTypography-root MuiTypography-body1 css-gy8k3f">Str&nbsp;</p>
-              </th>
-              <td
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-alignRight MuiTableCell-sizeMedium css-rqpcu9-cellNone">
-                <p class="MuiTypography-root MuiTypography-body1 css-gy8k3f">322</p>
-              </td>
-              <td
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-alignRight MuiTableCell-sizeMedium css-rqpcu9-cellNone">
-                <p class="MuiTypography-root MuiTypography-body1 css-gy8k3f" id="overview-str-hook"></p>
-              </td>
-            </tr>
-            <tr class="MuiTableRow-root css-egt6ug">
-              <th
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium css-8kiwhy-cellNone"
-                scope="row" colspan="2" style="padding-bottom: 2px; position: relative; top: -3px;">
-                <span
-                  class="MuiLinearProgress-root MuiLinearProgress-colorPrimary MuiLinearProgress-determinate css-vi9v2o"
-                  role="progressbar" aria-valuenow="56" aria-valuemin="0" aria-valuemax="100">
-                  <span
-                    class="MuiLinearProgress-bar MuiLinearProgress-barColorPrimary MuiLinearProgress-bar1Determinate css-15bqh90"
-                    style="transform: translateX(-43.5322%);"></span>
-                </span>
-              </th>
-            </tr>
-            <tr class="MuiTableRow-root css-egt6ug">
-              <th
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium css-8kiwhy-cellNone"
-                scope="row">
-                <p class="MuiTypography-root MuiTypography-body1 css-gy8k3f">Def&nbsp;</p>
-              </th>
-              <td
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-alignRight MuiTableCell-sizeMedium css-rqpcu9-cellNone">
-                <p class="MuiTypography-root MuiTypography-body1 css-gy8k3f">357</p>
-              </td>
-              <td
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-alignRight MuiTableCell-sizeMedium css-rqpcu9-cellNone">
-                <p class="MuiTypography-root MuiTypography-body1 css-gy8k3f" id="overview-def-hook"></p>
-              </td>
-            </tr>
-            <tr class="MuiTableRow-root css-egt6ug">
-              <th
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium css-8kiwhy-cellNone"
-                scope="row" colspan="2" style="padding-bottom: 2px; position: relative; top: -3px;">
-                <span
-                  class="MuiLinearProgress-root MuiLinearProgress-colorPrimary MuiLinearProgress-determinate css-vi9v2o"
-                  role="progressbar" aria-valuenow="66" aria-valuemin="0" aria-valuemax="100">
-                  <span
-                    class="MuiLinearProgress-bar MuiLinearProgress-barColorPrimary MuiLinearProgress-bar1Determinate css-15bqh90"
-                    style="transform: translateX(-34.0942%);"></span>
-                </span>
-              </th>
-            </tr>
-            <tr class="MuiTableRow-root css-egt6ug">
-              <th
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium css-8kiwhy-cellNone"
-                scope="row">
-                <p class="MuiTypography-root MuiTypography-body1 css-gy8k3f">Dex&nbsp;</p>
-              </th>
-              <td
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-alignRight MuiTableCell-sizeMedium css-rqpcu9-cellNone">
-                <p class="MuiTypography-root MuiTypography-body1 css-gy8k3f">202</p>
-              </td>
-              <td
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-alignRight MuiTableCell-sizeMedium css-rqpcu9-cellNone">
-                <p class="MuiTypography-root MuiTypography-body1 css-gy8k3f" id="overview-dex-hook"></p>
-              </td>
-            </tr>
-            <tr class="MuiTableRow-root css-egt6ug">
-              <th
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium css-8kiwhy-cellNone"
-                scope="row" colspan="2" style="padding-bottom: 2px; position: relative; top: -3px;">
-                <span
-                  class="MuiLinearProgress-root MuiLinearProgress-colorPrimary MuiLinearProgress-determinate css-vi9v2o"
-                  role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
-                  <span
-                    class="MuiLinearProgress-bar MuiLinearProgress-barColorPrimary MuiLinearProgress-bar1Determinate css-15bqh90"
-                    style="transform: translateX(-99.9121%);"></span>
-                </span>
-              </th>
-            </tr>
-            <tr class="MuiTableRow-root css-egt6ug">
-              <th
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium css-10gx1f4-cell"
-                scope="row">
-                <p class="MuiTypography-root MuiTypography-body1 css-gy8k3f">Agi&nbsp;</p>
-              </th>
-              <td
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-alignRight MuiTableCell-sizeMedium css-f2ksi5-cell">
-                <p class="MuiTypography-root MuiTypography-body1 css-gy8k3f">201</p>
-              </td>
-              <td
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-alignRight MuiTableCell-sizeMedium css-f2ksi5-cell">
-                <p class="MuiTypography-root MuiTypography-body1 css-gy8k3f" id="overview-agi-hook"></p>
-              </td>
-            </tr>
-            <tr class="MuiTableRow-root css-egt6ug">
-              <th
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium css-8kiwhy-cellNone"
-                scope="row" colspan="2" style="padding-bottom: 2px; position: relative; top: -3px;">
-                <span
-                  class="MuiLinearProgress-root MuiLinearProgress-colorPrimary MuiLinearProgress-determinate css-vi9v2o"
-                  role="progressbar" aria-valuenow="9" aria-valuemin="0" aria-valuemax="100">
-                  <span
-                    class="MuiLinearProgress-bar MuiLinearProgress-barColorPrimary MuiLinearProgress-bar1Determinate css-15bqh90"
-                    style="transform: translateX(-90.6478%);"></span>
-                </span>
-              </th>
-            </tr>
-            <tr class="MuiTableRow-root css-egt6ug">
-              <th
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium css-10gx1f4-cell"
-                scope="row">
-                <p class="MuiTypography-root MuiTypography-body1 css-1rw96sv">Cha&nbsp;</p>
-              </th>
-              <td
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-alignRight MuiTableCell-sizeMedium css-f2ksi5-cell">
-                <p class="MuiTypography-root MuiTypography-body1 css-1rw96sv">1</p>
-              </td>
-              <td
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-alignRight MuiTableCell-sizeMedium css-f2ksi5-cell">
-                <p class="MuiTypography-root MuiTypography-body1 css-1rw96sv" id="overview-cha-hook"></p>
-              </td>
-            </tr>
-            <tr class="MuiTableRow-root css-egt6ug">
-              <th
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium css-8kiwhy-cellNone"
-                scope="row" colspan="2" style="padding-bottom: 2px; position: relative; top: -3px;">
-                <span
-                  class="MuiLinearProgress-root MuiLinearProgress-colorPrimary MuiLinearProgress-determinate css-s8zmit"
-                  role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
-                  <span
-                    class="MuiLinearProgress-bar MuiLinearProgress-barColorPrimary MuiLinearProgress-bar1Determinate css-15bqh90"
-                    style="transform: translateX(-100%);"></span>
-                </span>
-              </th>
-            </tr>
-            <tr class="MuiTableRow-root css-egt6ug">
-              <th
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium css-10gx1f4-cell"
-                scope="row">
-                <p class="MuiTypography-root MuiTypography-body1 css-1xy2bkh">Int&nbsp;</p>
-              </th>
-              <td
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-alignRight MuiTableCell-sizeMedium css-f2ksi5-cell">
-                <p class="MuiTypography-root MuiTypography-body1 css-1xy2bkh">103</p>
-              </td>
-              <td
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-alignRight MuiTableCell-sizeMedium css-f2ksi5-cell">
-                <p class="MuiTypography-root MuiTypography-body1 css-1xy2bkh" id="overview-int-hook"></p>
-              </td>
-            </tr>
-            <tr class="MuiTableRow-root css-egt6ug">
-              <th
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium css-8kiwhy-cellNone"
-                scope="row" colspan="2" style="padding-bottom: 2px; position: relative; top: -3px;">
-                <span
-                  class="MuiLinearProgress-root MuiLinearProgress-colorPrimary MuiLinearProgress-determinate css-1p124gj"
-                  role="progressbar" aria-valuenow="95" aria-valuemin="0" aria-valuemax="100">
-                  <span
-                    class="MuiLinearProgress-bar MuiLinearProgress-barColorPrimary MuiLinearProgress-bar1Determinate css-15bqh90"
-                    style="transform: translateX(-5.09854%);"></span>
-                </span>
-              </th>
-            </tr>
-            <tr class="MuiTableRow-root css-egt6ug">
-              <th
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium css-10gx1f4-cell"
-                scope="row">
-                <p class="MuiTypography-root MuiTypography-body1 css-1hpth3h"
-                  id="overview-extra-hook-0"></p>
-              </th>
-              <th
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-alignRight MuiTableCell-sizeMedium css-f2ksi5-cell"
-                scope="row">
-                <p class="MuiTypography-root MuiTypography-body1 css-1hpth3h"
-                  id="overview-extra-hook-1"></p>
-              </th>
-              <th
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-alignRight MuiTableCell-sizeMedium css-f2ksi5-cell"
-                scope="row">
-                <p class="MuiTypography-root MuiTypography-body1 css-1hpth3h"
-                  id="overview-extra-hook-2"></p>
-              </th>
-            </tr>
-            <tr class="MuiTableRow-root css-egt6ug">
-              <th
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium css-na7q85-workCell"
-                scope="row" colspan="2">
-                <p class="MuiTypography-root MuiTypography-body1 css-v5wu4i-workHeader">You are
-                  training your agility at a gym</p>
-              </th>
-            </tr>
-            <tr class="MuiTableRow-root css-egt6ug">
-              <th
-                class="MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium css-na7q85-workCell"
-                scope="row" colspan="2">
-                <p class="MuiTypography-root MuiTypography-body1 css-17nnm6d-workSubtitles">0
-                  seconds</p>
-              </th>
-            </tr>
+
+            <!-- Example: Button in table row -->
             <tr class="MuiTableRow-root css-egt6ug">
               <th
                 class="MuiTableCell-root MuiTableCell-body MuiTableCell-alignCenter MuiTableCell-sizeMedium css-7buml8-cellNone"
@@ -300,8 +80,11 @@
                   tabindex="0" type="button">Focus<span class="MuiTouchRipple-root css-w0pj6f"></span></button>
               </th>
             </tr>
+
           </tbody>
         </table>
+
+        <!-- Action buttons area -->
         <div class="MuiBox-root css-oa3chk">
           <div class="MuiBox-root css-1jvleez">
             <button
@@ -309,8 +92,7 @@
               tabindex="0" type="button" aria-label="save game">
               <svg
                 class="MuiSvgIcon-root MuiSvgIcon-colorPrimary MuiSvgIcon-fontSizeMedium css-gbsjkl"
-                focusable="false" aria-hidden="true" viewBox="0 0 24 24" data-testid="SaveIcon"
-                aria-label="Save game">
+                focusable="false" aria-hidden="true" viewBox="0 0 24 24" data-testid="SaveIcon">
                 <path
                   d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"></path>
               </svg>
@@ -323,14 +105,14 @@
               tabindex="0" type="button" aria-label="kill all scripts">
               <svg
                 class="MuiSvgIcon-root MuiSvgIcon-colorError MuiSvgIcon-fontSizeMedium css-5pfdbl"
-                focusable="false" aria-hidden="true" viewBox="0 0 24 24" data-testid="ClearAllIcon"
-                aria-label="Kill all running scripts">
+                focusable="false" aria-hidden="true" viewBox="0 0 24 24" data-testid="ClearAllIcon">
                 <path d="M5 13h14v-2H5v2zm-2 4h14v-2H3v2zM7 7v2h14V7H7z"></path>
               </svg>
               <span class="MuiTouchRipple-root css-w0pj6f"></span>
             </button>
           </div>
         </div>
+
       </div>
     </div>
   </div>
