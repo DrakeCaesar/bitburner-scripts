@@ -5,6 +5,7 @@ interface Operation {
   start: number
   end?: number
   batchId: number
+  operationId: number
   actualStart?: number
   actualEnd?: number
 }
@@ -22,6 +23,7 @@ class BatchVisualiser {
   private chartHeight = 0
   private timeWindow = 1000 * 60 * 2
   private currentBatchId = 0
+  private nextOperationId = 0
 
   // Color mapping for operations
   private predictedColors = {
@@ -89,19 +91,21 @@ class BatchVisualiser {
   }
 
   public startOperation(type: "H" | "W" | "G", batchId?: number): number {
-    const operationId = this.operations.length
+    const operationId = this.nextOperationId++
     const operation: Operation = {
       type,
       start: Date.now(),
       batchId: batchId ?? this.currentBatchId,
+      operationId,
     }
     this.operations.push(operation)
     return operationId
   }
 
   public endOperation(operationId: number): void {
-    if (this.operations[operationId]) {
-      this.operations[operationId].end = Date.now()
+    const operation = this.operations.find(op => op.operationId === operationId)
+    if (operation) {
+      operation.end = Date.now()
       this.draw()
     }
   }
@@ -115,32 +119,30 @@ class BatchVisualiser {
     start: number,
     end: number,
     batchId?: number
-  ): void {
+  ): number {
+    const operationId = this.nextOperationId++
     const operation: Operation = {
       type,
       start,
       end,
       batchId: batchId ?? this.currentBatchId,
+      operationId,
     }
     this.operations.push(operation)
     this.draw()
+    return operationId
   }
 
   public logActualOperation(
     type: "H" | "W" | "G",
     actualStart: number,
     actualEnd: number,
-    batchId?: number
+    operationId: number
   ): void {
-    // Find the most recent predicted operation of this type in the current or recent batches
-    const targetBatchId = batchId ?? this.currentBatchId
-    for (let i = this.operations.length - 1; i >= 0; i--) {
+    // Find the exact matching predicted operation by operationId
+    for (let i = 0; i < this.operations.length; i++) {
       const op = this.operations[i]
-      if (
-        op.type === type &&
-        Math.abs(op.batchId - targetBatchId) <= 1 &&
-        !op.actualStart
-      ) {
+      if (op.operationId === operationId && !op.actualStart) {
         op.actualStart = actualStart
         op.actualEnd = actualEnd
         this.draw()
@@ -148,17 +150,8 @@ class BatchVisualiser {
       }
     }
 
-    // If no matching predicted operation found, create a new one with actual data only
-    const operation: Operation = {
-      type,
-      start: actualStart,
-      end: actualEnd,
-      batchId: targetBatchId,
-      actualStart,
-      actualEnd,
-    }
-    this.operations.push(operation)
-    this.draw()
+    // If no matching predicted operation found, log warning
+    console.warn(`No predicted operation found for operationId ${operationId}`)
   }
 
   private draw(): void {
@@ -345,6 +338,7 @@ class BatchVisualiser {
   public clear(): void {
     this.operations = []
     this.currentBatchId = 0
+    this.nextOperationId = 0
     if (this.context) {
       this.context.clearRect(0, 0, this.width, this.height)
     }
@@ -406,23 +400,23 @@ export function logBatchOperation(
   start: number,
   end: number,
   batchId?: number
-): void {
+): number {
   if (!visualiser) {
     visualiser = new BatchVisualiser()
   }
-  visualiser.logOperation(type, start, end, batchId)
+  return visualiser.logOperation(type, start, end, batchId)
 }
 
 export function logActualBatchOperation(
   type: "H" | "W" | "G",
   actualStart: number,
   actualEnd: number,
-  batchId?: number
+  operationId: number
 ): void {
   if (!visualiser) {
     visualiser = new BatchVisualiser()
   }
-  visualiser.logActualOperation(type, actualStart, actualEnd, batchId)
+  visualiser.logActualOperation(type, actualStart, actualEnd, operationId)
 }
 
 export function startBatchOperation(

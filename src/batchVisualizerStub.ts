@@ -7,7 +7,7 @@ declare global {
       type: "H" | "W" | "G",
       actualStart: number,
       actualEnd: number,
-      batchId?: number
+      operationId: number
     ): void
   } | undefined
 }
@@ -16,11 +16,11 @@ export function logActualBatchOperation(
   type: "H" | "W" | "G",
   actualStart: number,
   actualEnd: number,
-  batchId?: number
+  operationId: number
 ): void {
   // Try to access the global visualizer instance
   if (typeof globalThis.batchVisualiser !== "undefined") {
-    globalThis.batchVisualiser.logActualOperation(type, actualStart, actualEnd, batchId)
+    globalThis.batchVisualiser.logActualOperation(type, actualStart, actualEnd, operationId)
   }
   // Silently fail if visualizer doesn't exist - no console pollution
 }

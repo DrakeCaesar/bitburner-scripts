@@ -4,7 +4,7 @@ import { logActualBatchOperation } from "/src/batchVisualizerStub.js"
 export async function main(ns: NS) {
   const target = ns.args[0]
   const delay = ns.args[1] ? Number(ns.args[1]) : 0
-  const batchId = ns.args[2] ? Number(ns.args[2]) : undefined
+  const operationId = ns.args[2] ? Number(ns.args[2]) : 0
   const lowestSec = ns.getServerMinSecurityLevel(target as string)
   const currentSec = ns.getServerSecurityLevel(target as string)
   const difference = currentSec - lowestSec
@@ -15,5 +15,5 @@ export async function main(ns: NS) {
   await ns.hack(target as string, { additionalMsec: delay })
   const end = Date.now()
 
-  logActualBatchOperation("H", start, end, batchId)
+  logActualBatchOperation("H", start, end, operationId)
 }
