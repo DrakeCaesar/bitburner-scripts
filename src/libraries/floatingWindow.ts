@@ -57,10 +57,35 @@ function extractCSSClasses(): typeof CSS_CLASSES {
   const tableRow = tableCell?.parentElement as HTMLTableRowElement
 
   // Look for action area elements at the bottom
-  const actionArea = wrapperInner?.querySelector('[class*="css-oa3chk"]') as HTMLElement
-  const actionContainer = actionArea?.querySelector('[class*="css-1jvleez"]') as HTMLElement
-  const iconButton = actionContainer?.querySelector('button') as HTMLButtonElement
-  const iconSvg = iconButton?.querySelector('svg') as SVGElement
+  const actionArea = wrapperInner?.querySelector(
+    '[class*="css-oa3chk"]'
+  ) as HTMLElement
+  const actionContainer = actionArea?.querySelector(
+    '[class*="css-1jvleez"]'
+  ) as HTMLElement
+  const actionContainer2 = actionArea?.querySelector(
+    '[class*="css-1dskn3o"]'
+  ) as HTMLElement
+  const iconButton = actionContainer?.querySelector(
+    "button"
+  ) as HTMLButtonElement
+  const iconSvg = iconButton?.querySelector("svg") as SVGElement
+
+  // Look for progress bar elements
+  const progressBarContainer = tbody?.querySelector(
+    '[class*="MuiLinearProgress-root"]'
+  ) as HTMLElement
+  const progressBar = progressBarContainer?.querySelector(
+    '[class*="MuiLinearProgress-bar"]'
+  ) as HTMLElement
+
+  // Look for inline button in table
+  const inlineButtonCell = tbody?.querySelector(
+    '[class*="css-7buml8"]'
+  ) as HTMLElement
+  const inlineButton = inlineButtonCell?.querySelector(
+    "button"
+  ) as HTMLButtonElement
 
   // Helper function to extract css-* class from element
   const extractCssClass = (
@@ -90,8 +115,13 @@ function extractCSSClasses(): typeof CSS_CLASSES {
     typography: extractCssClass(typography),
     actionArea: extractCssClass(actionArea),
     actionContainer: extractCssClass(actionContainer),
+    actionContainer2: extractCssClass(actionContainer2),
     iconButton: extractCssClass(iconButton),
     iconSvg: extractCssClass(iconSvg),
+    progressBarContainer: extractCssClass(progressBarContainer),
+    progressBar: extractCssClass(progressBar),
+    inlineButtonCell: extractCssClass(inlineButtonCell),
+    inlineButton: extractCssClass(inlineButton),
   }
 }
 
@@ -115,8 +145,13 @@ let CSS_CLASSES = {
   typography: "",
   actionArea: "",
   actionContainer: "",
+  actionContainer2: "",
   iconButton: "",
   iconSvg: "",
+  progressBarContainer: "",
+  progressBar: "",
+  inlineButtonCell: "",
+  inlineButton: "",
 }
 
 export class FloatingWindow {
@@ -131,13 +166,14 @@ export class FloatingWindow {
   private width: number
   private height: number
   private isVisible: boolean
-  private options: Required<Omit<FloatingWindowOptions, "attachTo" | "id" | "content">> & {
+  private options: Required<
+    Omit<FloatingWindowOptions, "attachTo" | "id" | "content">
+  > & {
     attachTo?: HTMLElement
     id?: string
     content: string | HTMLElement
   }
   constructor(options: FloatingWindowOptions) {
-
     // Initialize CSS classes from existing overview element
     try {
       CSS_CLASSES = extractCSSClasses()
@@ -210,7 +246,6 @@ export class FloatingWindow {
 
     return button
   }
-
 
   private createCollapseButton(): HTMLButtonElement {
     const collapseBtn = this.createButton(
@@ -671,13 +706,17 @@ export class FloatingWindow {
     if (!this.element) return
 
     // Find or create the action area
-    let actionArea = this.element.querySelector(`.${CSS_CLASSES.actionArea}`) as HTMLElement
+    let actionArea = this.element.querySelector(
+      `.${CSS_CLASSES.actionArea}`
+    ) as HTMLElement
     if (!actionArea) {
       actionArea = document.createElement("div")
       actionArea.className = `MuiBox-root ${CSS_CLASSES.actionArea}`
 
       // Find the main content area and append the action area
-      const mainContent = this.element.querySelector(".MuiCollapse-wrapperInner > div")
+      const mainContent = this.element.querySelector(
+        ".MuiCollapse-wrapperInner > div"
+      )
       if (mainContent) {
         mainContent.appendChild(actionArea)
       }
@@ -699,6 +738,132 @@ export class FloatingWindow {
 
     buttonContainer.appendChild(actionButton)
     actionArea.appendChild(buttonContainer)
+  }
+
+  public addTableRow(
+    label: string,
+    value?: string,
+    extraValue?: string
+  ): HTMLTableRowElement {
+    if (!this.element) throw new Error("Window element not found")
+
+    const tbody = this.element.querySelector(".MuiTableBody-root")
+    if (!tbody) throw new Error("Table body not found")
+
+    const tableRow = document.createElement("tr")
+    tableRow.className = `MuiTableRow-root ${CSS_CLASSES.tableRow}`
+
+    // Create label cell (th)
+    const labelCell = document.createElement("th")
+    labelCell.className = `MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium ${CSS_CLASSES.tableCell}`
+    labelCell.setAttribute("scope", "row")
+
+    const labelParagraph = document.createElement("p")
+    labelParagraph.className = `MuiTypography-root MuiTypography-body1 ${CSS_CLASSES.typography}`
+    labelParagraph.innerHTML = label + "&nbsp;"
+    labelCell.appendChild(labelParagraph)
+    tableRow.appendChild(labelCell)
+
+    // Create value cell (td) if provided
+    if (value !== undefined) {
+      const valueCell = document.createElement("td")
+      valueCell.className = `MuiTableCell-root MuiTableCell-body MuiTableCell-alignRight MuiTableCell-sizeMedium ${CSS_CLASSES.tableCell}`
+
+      const valueParagraph = document.createElement("p")
+      valueParagraph.className = `MuiTypography-root MuiTypography-body1 ${CSS_CLASSES.typography}`
+      valueParagraph.textContent = value
+      valueCell.appendChild(valueParagraph)
+      tableRow.appendChild(valueCell)
+    }
+
+    // Create extra value cell (td) if provided
+    if (extraValue !== undefined) {
+      const extraCell = document.createElement("td")
+      extraCell.className = `MuiTableCell-root MuiTableCell-body MuiTableCell-alignRight MuiTableCell-sizeMedium ${CSS_CLASSES.tableCell}`
+
+      const extraParagraph = document.createElement("p")
+      extraParagraph.className = `MuiTypography-root MuiTypography-body1 ${CSS_CLASSES.typography}`
+      extraParagraph.textContent = extraValue
+      extraCell.appendChild(extraParagraph)
+      tableRow.appendChild(extraCell)
+    }
+
+    tbody.appendChild(tableRow)
+    return tableRow
+  }
+
+  public addProgressBar(value: number, max: number = 100): HTMLTableRowElement {
+    if (!this.element) throw new Error("Window element not found")
+
+    const tbody = this.element.querySelector(".MuiTableBody-root")
+    if (!tbody) throw new Error("Table body not found")
+
+    const tableRow = document.createElement("tr")
+    tableRow.className = `MuiTableRow-root ${CSS_CLASSES.tableRow}`
+
+    const progressCell = document.createElement("th")
+    progressCell.className = `MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium ${CSS_CLASSES.tableCell}`
+    progressCell.setAttribute("scope", "row")
+    progressCell.setAttribute("colspan", "2")
+    progressCell.style.paddingBottom = "2px"
+    progressCell.style.position = "relative"
+    progressCell.style.top = "-3px"
+
+    // Create progress bar container
+    const progressContainer = document.createElement("span")
+    progressContainer.className = `MuiLinearProgress-root MuiLinearProgress-colorPrimary MuiLinearProgress-determinate ${CSS_CLASSES.progressBarContainer}`
+    progressContainer.setAttribute("role", "progressbar")
+    progressContainer.setAttribute("aria-valuenow", value.toString())
+    progressContainer.setAttribute("aria-valuemin", "0")
+    progressContainer.setAttribute("aria-valuemax", max.toString())
+
+    // Create progress bar
+    const progressBar = document.createElement("span")
+    progressBar.className = `MuiLinearProgress-bar MuiLinearProgress-barColorPrimary MuiLinearProgress-bar1Determinate ${CSS_CLASSES.progressBar}`
+    const percentage = ((max - value) / max) * 100
+    progressBar.style.transform = `translateX(-${percentage.toFixed(5)}%)`
+
+    progressContainer.appendChild(progressBar)
+    progressCell.appendChild(progressContainer)
+    tableRow.appendChild(progressCell)
+
+    tbody.appendChild(tableRow)
+    return tableRow
+  }
+
+  public addInlineButton(
+    text: string,
+    onClick: () => void,
+    colspan: number = 2
+  ): HTMLTableRowElement {
+    if (!this.element) throw new Error("Window element not found")
+
+    const tbody = this.element.querySelector(".MuiTableBody-root")
+    if (!tbody) throw new Error("Table body not found")
+
+    const tableRow = document.createElement("tr")
+    tableRow.className = `MuiTableRow-root ${CSS_CLASSES.tableRow}`
+
+    const buttonCell = document.createElement("th")
+    buttonCell.className = `MuiTableCell-root MuiTableCell-body MuiTableCell-alignCenter MuiTableCell-sizeMedium ${CSS_CLASSES.inlineButtonCell}`
+    buttonCell.setAttribute("scope", "row")
+    buttonCell.setAttribute("colspan", colspan.toString())
+
+    const button = this.createButton(
+      `MuiButtonBase-root MuiButton-root MuiButton-text MuiButton-textPrimary MuiButton-sizeMedium MuiButton-textSizeMedium MuiButton-root MuiButton-text MuiButton-textPrimary MuiButton-sizeMedium MuiButton-textSizeMedium ${CSS_CLASSES.inlineButton}`,
+      text,
+      onClick
+    )
+
+    // Add button text before the touch ripple
+    const textNode = document.createTextNode(text)
+    button.insertBefore(textNode, button.firstChild)
+
+    buttonCell.appendChild(button)
+    tableRow.appendChild(buttonCell)
+
+    tbody.appendChild(tableRow)
+    return tableRow
   }
 
   public getElement(): HTMLElement | null {
