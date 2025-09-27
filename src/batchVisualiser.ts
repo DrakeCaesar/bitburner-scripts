@@ -21,7 +21,7 @@ class BatchVisualiser {
   private margin = { top: 40, right: 20, bottom: 60, left: 80 }
   private chartWidth = 0
   private chartHeight = 0
-  private timeWindow = 1000 * 60 * 2
+  private timeWindow = 1000 * 60
   private currentBatchId = 0
   private nextOperationId = 0
 
@@ -103,7 +103,9 @@ class BatchVisualiser {
   }
 
   public endOperation(operationId: number): void {
-    const operation = this.operations.find(op => op.operationId === operationId)
+    const operation = this.operations.find(
+      (op) => op.operationId === operationId
+    )
     if (operation) {
       operation.end = Date.now()
       this.draw()
@@ -271,7 +273,7 @@ class BatchVisualiser {
         }
 
         // Draw predicted duration text
-        const duration = op.end! - op.start
+        const duration = Math.round(op.end! - op.start)
         ctx.fillStyle = "#ffffff"
         ctx.font = "8px monospace"
         ctx.fillText(`P:${duration}ms`, x2 + 2, y + barHeight / 2)
