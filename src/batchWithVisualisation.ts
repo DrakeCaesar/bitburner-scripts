@@ -217,18 +217,21 @@ export async function main(ns: NS) {
 
     // Log operations to visualiser (predicting when they'll complete) and get operation IDs
     const hackOpId = logBatchOperation("H", hackStart, hackEnd, batchCounter)
-    const weaken1OpId = logBatchOperation("W", weaken1Start, weaken1End, batchCounter)
-    const growOpId = logBatchOperation("G", growStart, growEnd, batchCounter)
-    const weaken2OpId = logBatchOperation("W", weaken2Start, weaken2End, batchCounter)
-
-    ns.exec(
-      "/hacking/hack.js",
-      host,
-      hackThreads,
-      target,
-      sleepHack,
-      hackOpId
+    const weaken1OpId = logBatchOperation(
+      "W",
+      weaken1Start,
+      weaken1End,
+      batchCounter
     )
+    const growOpId = logBatchOperation("G", growStart, growEnd, batchCounter)
+    const weaken2OpId = logBatchOperation(
+      "W",
+      weaken2Start,
+      weaken2End,
+      batchCounter
+    )
+
+    ns.exec("/hacking/hack.js", host, hackThreads, target, sleepHack, hackOpId)
     await ns.sleep(batchDelay)
     ns.exec(
       "/hacking/weaken.js",
@@ -239,14 +242,7 @@ export async function main(ns: NS) {
       weaken1OpId
     )
     await ns.sleep(batchDelay)
-    ns.exec(
-      "/hacking/grow.js",
-      host,
-      growThreads,
-      target,
-      sleepGrow,
-      growOpId
-    )
+    ns.exec("/hacking/grow.js", host, growThreads, target, sleepGrow, growOpId)
     await ns.sleep(batchDelay)
     ns.exec(
       "/hacking/weaken.js",

@@ -21,7 +21,7 @@ class BatchVisualiser {
   private margin = { top: 40, right: 20, bottom: 60, left: 80 }
   private chartWidth = 0
   private chartHeight = 0
-  private timeWindow = 1000 * 30
+  private timeWindow = 1000 * 60
   private currentBatchId = 0
   private nextOperationId = 0
 
@@ -239,7 +239,7 @@ class BatchVisualiser {
     for (const [batchId, ops] of batchGroups.entries()) {
       const baseY = yScale(batchIndex, batchGroups.size)
       const batchHeight =
-        (this.chartHeight / Math.max(batchGroups.size, 1)) * 0.8
+        (this.chartHeight / Math.max(batchGroups.size, 1)) * 0.9
 
       // Draw batch label
       ctx.fillStyle = "#ffffff"
