@@ -33,7 +33,12 @@ class BatchVisualiser {
   }
 
   private initCanvas(): void {
-    if (this.isInitialized && this.floatingWindow && this.floatingWindow.getElement()) return
+    if (
+      this.isInitialized &&
+      this.floatingWindow &&
+      this.floatingWindow.getElement()
+    )
+      return
 
     // Remove any existing floating windows with the same ID
     const existingWindow = document.getElementById("batch-visualiser-window")
@@ -65,8 +70,8 @@ class BatchVisualiser {
     this.floatingWindow = new FloatingWindow({
       title: "Batching",
       content: this.canvas,
-      width: this.width + 40,
-      height: this.height + 80,
+      width: this.width + 22,
+      height: this.height,
       id: "batch-visualiser-window",
       x: 50,
       y: 50,
