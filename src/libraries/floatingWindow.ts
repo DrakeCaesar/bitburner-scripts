@@ -293,7 +293,6 @@ export class FloatingWindow {
     // Create MUI table structure
     const table = document.createElement("table")
     table.className = `MuiTable-root ${CSS_CLASSES.table}`
-    table.style.paddingRight = "8px"
 
     const tbody = document.createElement("tbody")
     tbody.className = `MuiTableBody-root ${CSS_CLASSES.tableBody}`

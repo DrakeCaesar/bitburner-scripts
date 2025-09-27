@@ -33,7 +33,7 @@ class BatchVisualiser {
   }
 
   private initCanvas(): void {
-    if (this.isInitialized) return
+    if (this.isInitialized && this.floatingWindow && this.floatingWindow.getElement()) return
 
     // Remove any existing floating windows with the same ID
     const existingWindow = document.getElementById("batch-visualiser-window")
@@ -298,6 +298,10 @@ class BatchVisualiser {
     this.context = null
     this.isInitialized = false
   }
+
+  public getElement(): HTMLElement | null {
+    return this.floatingWindow?.getElement() || null
+  }
 }
 
 // Global instance
@@ -305,9 +309,18 @@ let visualiser: BatchVisualiser | null = null
 
 // Export functions for easy use in batch.ts
 export function initBatchVisualiser(): BatchVisualiser {
-  if (!visualiser) {
-    visualiser = new BatchVisualiser()
+  // Remove any existing visualiser instances
+  if (visualiser) {
+    visualiser.remove()
   }
+
+  // Kill any existing floating windows with the same ID
+  const existingWindow = document.getElementById("batch-visualiser-window")
+  if (existingWindow) {
+    existingWindow.remove()
+  }
+
+  visualiser = new BatchVisualiser()
   return visualiser
 }
 

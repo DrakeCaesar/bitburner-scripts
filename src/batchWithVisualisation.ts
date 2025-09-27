@@ -6,11 +6,30 @@ import {
 } from "./batchVisualiser.js"
 
 export async function main(ns: NS) {
-  // Initialize the real-time visualiser
-  const visualiser = initBatchVisualiser()
-
+  // Kill all scripts on the host server (except this one)
   const host = (ns.args[0] as string) ?? ns.getHostname()
   const target = ns.args[1] as string
+
+  // Kill other instances of this script running anywhere
+  const currentScript = ns.getScriptName()
+  const allServers = ns.getPurchasedServers().concat(["home"])
+
+  for (const server of allServers) {
+    const runningScripts = ns.ps(server)
+    for (const script of runningScripts) {
+      if (script.filename === currentScript && script.pid !== ns.pid) {
+        ns.kill(script.pid)
+        ns.tprint(`Killed other instance of ${currentScript} on ${server} (PID: ${script.pid})`)
+      }
+    }
+  }
+
+  // Kill all other scripts on the host server
+  ns.killall(host)
+  ns.tprint(`Killed all scripts on ${host}`)
+
+  // Initialize the real-time visualiser
+  initBatchVisualiser()
   const moneyMax = ns.getServerMaxMoney(target)
   const baseSecurity = ns.getServerMinSecurityLevel(target)
   const secTolerance = 0.01
