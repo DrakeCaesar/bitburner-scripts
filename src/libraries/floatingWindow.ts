@@ -1,6 +1,6 @@
 interface FloatingWindowOptions {
   title?: string
-  content?: string
+  content?: string | HTMLElement
   x?: number
   y?: number
   width?: number
@@ -56,6 +56,12 @@ function extractCSSClasses(): typeof CSS_CLASSES {
   const tableCell = typography?.parentElement as HTMLTableCellElement
   const tableRow = tableCell?.parentElement as HTMLTableRowElement
 
+  // Look for action area elements at the bottom
+  const actionArea = wrapperInner?.querySelector('[class*="css-oa3chk"]') as HTMLElement
+  const actionContainer = actionArea?.querySelector('[class*="css-1jvleez"]') as HTMLElement
+  const iconButton = actionContainer?.querySelector('button') as HTMLButtonElement
+  const iconSvg = iconButton?.querySelector('svg') as SVGElement
+
   // Helper function to extract css-* class from element
   const extractCssClass = (
     element: HTMLElement | SVGElement | null
@@ -82,6 +88,10 @@ function extractCSSClasses(): typeof CSS_CLASSES {
     tableRow: extractCssClass(tableRow),
     tableCell: extractCssClass(tableCell),
     typography: extractCssClass(typography),
+    actionArea: extractCssClass(actionArea),
+    actionContainer: extractCssClass(actionContainer),
+    iconButton: extractCssClass(iconButton),
+    iconSvg: extractCssClass(iconSvg),
   }
 }
 
@@ -103,6 +113,10 @@ let CSS_CLASSES = {
   tableRow: "",
   tableCell: "",
   typography: "",
+  actionArea: "",
+  actionContainer: "",
+  iconButton: "",
+  iconSvg: "",
 }
 
 export class FloatingWindow {
@@ -111,18 +125,19 @@ export class FloatingWindow {
   private dragOffset = { x: 0, y: 0 }
   private isCollapsed = false
   private title: string
-  private content: string
+  private content: string | HTMLElement
   private x: number
   private y: number
   private width: number
   private height: number
   private isVisible: boolean
-  private options: Required<Omit<FloatingWindowOptions, "attachTo" | "id">> & {
+  private options: Required<Omit<FloatingWindowOptions, "attachTo" | "id" | "content">> & {
     attachTo?: HTMLElement
     id?: string
+    content: string | HTMLElement
   }
-
   constructor(options: FloatingWindowOptions) {
+
     // Initialize CSS classes from existing overview element
     try {
       CSS_CLASSES = extractCSSClasses()
@@ -195,6 +210,7 @@ export class FloatingWindow {
 
     return button
   }
+
 
   private createCollapseButton(): HTMLButtonElement {
     const collapseBtn = this.createButton(
@@ -290,15 +306,17 @@ export class FloatingWindow {
     const wrapperInner = document.createElement("div")
     wrapperInner.className = `MuiCollapse-wrapperInner MuiCollapse-vertical ${CSS_CLASSES.collapseWrapperInner}`
 
+    // Create main content container
+    const mainContent = document.createElement("div")
+
     // Create MUI table structure
     const table = document.createElement("table")
     table.className = `MuiTable-root ${CSS_CLASSES.table}`
-    table.style.paddingRight = "8px"
 
     const tbody = document.createElement("tbody")
     tbody.className = `MuiTableBody-root ${CSS_CLASSES.tableBody}`
 
-    // Create a sample table row (you can customize this)
+    // Create main content table row
     const tableRow = document.createElement("tr")
     tableRow.className = `MuiTableRow-root ${CSS_CLASSES.tableRow}`
 
@@ -306,21 +324,34 @@ export class FloatingWindow {
     const tableCell = document.createElement("th")
     tableCell.className = `MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium ${CSS_CLASSES.tableCell}`
     tableCell.setAttribute("scope", "row")
+    tableCell.setAttribute("colspan", "2")
 
-    // Create paragraph with MUI Typography classes
-    const paragraph = document.createElement("p")
-    paragraph.className = `MuiTypography-root MuiTypography-body1 ${CSS_CLASSES.typography}`
-    paragraph.innerHTML = this.options.content
-
-    tableCell.appendChild(paragraph)
+    // Handle both string and HTMLElement content
+    if (typeof this.options.content === "string") {
+      // Create paragraph with MUI Typography classes for string content
+      const paragraph = document.createElement("p")
+      paragraph.className = `MuiTypography-root MuiTypography-body1 ${CSS_CLASSES.typography}`
+      paragraph.innerHTML = this.options.content
+      tableCell.appendChild(paragraph)
+    } else {
+      // Directly append HTMLElement content
+      tableCell.appendChild(this.options.content)
+    }
     tableRow.appendChild(tableCell)
 
     // Assemble table structure
     tbody.appendChild(tableRow)
     table.appendChild(tbody)
+    mainContent.appendChild(table)
 
-    // Assemble the structure: contentArea > collapseWrapper > wrapperInner > table
-    wrapperInner.appendChild(table)
+    // Create action buttons area (like the save/kill buttons in the example)
+    const actionArea = this.createActionArea()
+    if (actionArea) {
+      mainContent.appendChild(actionArea)
+    }
+
+    // Assemble the structure: contentArea > collapseWrapper > wrapperInner > mainContent
+    wrapperInner.appendChild(mainContent)
     collapseWrapper.appendChild(wrapperInner)
     contentArea.appendChild(collapseWrapper)
 
@@ -547,10 +578,10 @@ export class FloatingWindow {
     }
   }
 
-  public updateContent(newContent: string): void {
+  public updateContent(newContent: string | HTMLElement): void {
     if (!this.element) return
 
-    // Navigate through the nested structure to find the paragraph in the table header cell
+    // Navigate through the nested structure to find the content in the table header cell
     const contentArea = this.element.children[1] // Second child is content area (MuiCollapse)
     const collapseWrapper = contentArea?.children[0] as HTMLElement // MuiCollapse-wrapper
     const wrapperInner = collapseWrapper?.children[0] as HTMLElement // MuiCollapse-wrapperInner
@@ -558,10 +589,20 @@ export class FloatingWindow {
     const tbody = table?.children[0] as HTMLElement // MuiTableBody-root
     const tableRow = tbody?.children[0] as HTMLElement // MuiTableRow-root
     const tableCell = tableRow?.children[0] as HTMLElement // Table header cell
-    const paragraph = tableCell?.children[0] as HTMLElement // Paragraph with content
 
-    if (paragraph) {
-      paragraph.innerHTML = newContent
+    if (tableCell) {
+      // Clear existing content
+      tableCell.innerHTML = ""
+
+      // Add new content based on type
+      if (typeof newContent === "string") {
+        const paragraph = document.createElement("p")
+        paragraph.className = `MuiTypography-root MuiTypography-body1 ${CSS_CLASSES.typography}`
+        paragraph.innerHTML = newContent
+        tableCell.appendChild(paragraph)
+      } else {
+        tableCell.appendChild(newContent)
+      }
     }
   }
 
@@ -578,6 +619,86 @@ export class FloatingWindow {
     if (this.element) {
       this.element.style.transform = `translate(${x}px, ${y}px)`
     }
+  }
+
+  private createActionArea(): HTMLElement | null {
+    // Create action area similar to the save/kill buttons in the example
+    // This is optional and can be customized per window
+    const actionBox = document.createElement("div")
+    actionBox.className = `MuiBox-root ${CSS_CLASSES.actionArea}`
+
+    // You can add custom action buttons here if needed
+    // For now, return null to keep it simple unless action buttons are added
+    return null
+  }
+
+  private createIconButton(
+    classes: string,
+    ariaLabel: string,
+    iconClasses: string,
+    iconTestId: string,
+    iconPathData: string,
+    onClick?: () => void
+  ): HTMLButtonElement {
+    const button = document.createElement("button")
+    button.className = classes
+    button.setAttribute("tabindex", "0")
+    button.setAttribute("type", "button")
+    button.setAttribute("aria-label", ariaLabel)
+    if (onClick) {
+      button.onclick = onClick
+    }
+
+    // Create icon SVG
+    const iconSvg = this.createSvgIcon(iconClasses, iconTestId, iconPathData)
+    button.appendChild(iconSvg)
+
+    // Add touch ripple for MUI consistency
+    const touchRipple = document.createElement("span")
+    touchRipple.className = `MuiTouchRipple-root ${CSS_CLASSES.touchRipple}`
+    button.appendChild(touchRipple)
+
+    return button
+  }
+
+  public addActionButton(
+    label: string,
+    iconPathData: string,
+    onClick: () => void,
+    iconTestId: string = "CustomIcon",
+    colorClass: string = "MuiSvgIcon-colorPrimary"
+  ): void {
+    if (!this.element) return
+
+    // Find or create the action area
+    let actionArea = this.element.querySelector(`.${CSS_CLASSES.actionArea}`) as HTMLElement
+    if (!actionArea) {
+      actionArea = document.createElement("div")
+      actionArea.className = `MuiBox-root ${CSS_CLASSES.actionArea}`
+
+      // Find the main content area and append the action area
+      const mainContent = this.element.querySelector(".MuiCollapse-wrapperInner > div")
+      if (mainContent) {
+        mainContent.appendChild(actionArea)
+      }
+    }
+
+    // Create button container
+    const buttonContainer = document.createElement("div")
+    buttonContainer.className = `MuiBox-root ${CSS_CLASSES.actionContainer}`
+
+    // Create the action button
+    const actionButton = this.createIconButton(
+      `MuiButtonBase-root MuiIconButton-root MuiIconButton-sizeMedium ${CSS_CLASSES.iconButton}`,
+      label,
+      `MuiSvgIcon-root ${colorClass} MuiSvgIcon-fontSizeMedium ${CSS_CLASSES.iconSvg}`,
+      iconTestId,
+      iconPathData,
+      onClick
+    )
+
+    buttonContainer.appendChild(actionButton)
+    actionArea.appendChild(buttonContainer)
   }
 
   public getElement(): HTMLElement | null {

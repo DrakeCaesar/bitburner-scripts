@@ -2,26 +2,56 @@ import { NS } from "@ns"
 import { FloatingWindow } from "./libraries/floatingWindow.js"
 
 export async function main(ns: NS) {
-  // Content for the test window
-  const testContent =
-    "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."
-
-  // Find the #root element
-  const rootElement = document.getElementById("root")
-  if (!rootElement) {
-    return
-  }
-
   // Remove existing floating windows if they exist
   const existingWindows = document.querySelectorAll(".floating")
   existingWindows.forEach((window) => window.remove())
 
-  // Create a floating window that will automatically position itself next to the overview container
-  const window = new FloatingWindow({
-    title: "Test Window",
-    content: testContent,
+  // Create a canvas element for demonstration
+  const canvas = document.createElement("canvas")
+  canvas.width = 350
+  canvas.height = 200
+  canvas.style.border = "1px solid #ccc"
+  canvas.style.backgroundColor = "#000"
+
+  // Draw something on the canvas
+  const ctx = canvas.getContext("2d")
+  if (ctx) {
+    // Draw a simple animation frame
+    ctx.fillStyle = "#00ff00"
+    ctx.fillRect(10, 10, 50, 50)
+    ctx.fillStyle = "#ff0000"
+    ctx.beginPath()
+    ctx.arc(100, 50, 25, 0, 2 * Math.PI)
+    ctx.fill()
+    ctx.fillStyle = "#0000ff"
+    ctx.fillRect(150, 30, 30, 40)
+
+    // Add some text
+    ctx.fillStyle = "#ffffff"
+    ctx.font = "16px Arial"
+    ctx.fillText("Canvas Content Test", 10, 100)
+    ctx.fillText("This canvas is inside a floating window!", 10, 120)
+  }
+
+  // Test 1: Create a floating window with canvas content
+  new FloatingWindow({
+    title: "Canvas Window",
+    content: canvas,
     width: 400,
-    height: 300,
-    id: "floating-test-1",
+    height: 280,
+    id: "floating-canvas-1",
   })
+
+  // Test 2: Create another floating window with string content for comparison
+  new FloatingWindow({
+    title: "Text Window",
+    content: "Text content here",
+    width: 350,
+    height: 150,
+    id: "floating-text-1",
+    x: 150,
+    y: 150,
+  })
+
+  ns.tprintf("Created floating windows with canvas and text content")
 }
