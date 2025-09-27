@@ -19,7 +19,9 @@ export async function main(ns: NS) {
     for (const script of runningScripts) {
       if (script.filename === currentScript && script.pid !== ns.pid) {
         ns.kill(script.pid)
-        ns.tprint(`Killed other instance of ${currentScript} on ${server} (PID: ${script.pid})`)
+        ns.tprint(
+          `Killed other instance of ${currentScript} on ${server} (PID: ${script.pid})`
+        )
       }
     }
   }
