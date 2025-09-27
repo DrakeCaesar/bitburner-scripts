@@ -24,10 +24,16 @@ class BatchVisualiser {
   private currentBatchId = 0
 
   // Color mapping for operations
-  private opColors = {
-    H: "#ff4444", // Red for Hack
-    W: "#4444ff", // Blue for Weaken
-    G: "#44ff44", // Green for Grow
+  private predictedColors = {
+    H: "#994444", // Desaturated Red for Predicted Hack
+    W: "#444499", // Desaturated Blue for Predicted Weaken
+    G: "#449944", // Desaturated Green for Predicted Grow
+  }
+
+  private actualColors = {
+    H: "#ff4444", // Bright Red for Actual Hack
+    W: "#4444ff", // Bright Blue for Actual Weaken
+    G: "#44ff44", // Bright Green for Actual Grow
   }
 
   constructor() {
@@ -260,7 +266,8 @@ class BatchVisualiser {
         const x2 = xScale(op.end!)
         const width = Math.max(x2 - x1, 2) // Minimum width of 2px
 
-        ctx.fillStyle = this.opColors[op.type]
+        // Use desaturated color for predicted bars
+        ctx.fillStyle = this.predictedColors[op.type]
         ctx.fillRect(x1, y, width, barHeight)
 
         // Draw operation label if bar is wide enough
@@ -283,10 +290,8 @@ class BatchVisualiser {
           const actualWidth = Math.max(actualX2 - actualX1, 2)
           const actualY = y + barHeight
 
-          // Slightly darker version of the same color for actual bar
-          const color = this.opColors[op.type]
-          const actualColor = color.replace("#", "#3")
-          ctx.fillStyle = actualColor
+          // Use full saturated color for actual bars
+          ctx.fillStyle = this.actualColors[op.type]
           ctx.fillRect(actualX1, actualY, actualWidth, barHeight)
 
           // Draw actual duration text
@@ -315,7 +320,7 @@ class BatchVisualiser {
 
     // Draw legend
     const legendY = this.margin.top + this.chartHeight + 20
-    Object.entries(this.opColors).forEach(([type, color], index) => {
+    Object.entries(this.actualColors).forEach(([type, color], index) => {
       const x = this.margin.left + index * 80
       ctx.fillStyle = color
       ctx.fillRect(x, legendY, 15, 15)
