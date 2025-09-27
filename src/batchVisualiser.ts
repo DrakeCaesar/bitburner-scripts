@@ -20,7 +20,7 @@ class BatchVisualiser {
   private margin = { top: 40, right: 20, bottom: 60, left: 80 }
   private chartWidth = 0
   private chartHeight = 0
-  private timeWindow = 30000 // 30 seconds visible window
+  private timeWindow = 1000 * 60 * 2
   private currentBatchId = 0
 
   // Color mapping for operations
@@ -58,8 +58,8 @@ class BatchVisualiser {
     this.canvas = document.createElement("canvas")
     this.canvas.id = "batch-visualiser"
 
-    this.width = Math.min(window.innerWidth * 0.6, 800) * 2
-    this.height = Math.min(window.innerHeight * 0.5, 400) * 1.5
+    this.width = Math.min(window.innerWidth * 0.9, 2000)
+    this.height = Math.min(window.innerHeight * 0.9, 1200)
     this.canvas.width = this.width
     this.canvas.height = this.height
     this.canvas.style.backgroundColor = "rgba(0, 0, 0, 0.9)"
@@ -132,19 +132,28 @@ class BatchVisualiser {
     actualEnd: number,
     batchId?: number
   ): void {
-    // Find the most recent predicted operation of this type in the current or recent batches
     const targetBatchId = batchId ?? this.currentBatchId
-    for (let i = this.operations.length - 1; i >= 0; i--) {
-      const op = this.operations[i]
-      if (
-        op.type === type &&
-        Math.abs(op.batchId - targetBatchId) <= 1 &&
-        !op.actualStart
-      ) {
-        op.actualStart = actualStart
-        op.actualEnd = actualEnd
-        this.draw()
-        return
+
+    // Count how many operations of this type we've already matched for this batch
+    let matchedCount = 0
+    for (const op of this.operations) {
+      if (op.type === type && op.batchId === targetBatchId && op.actualStart) {
+        matchedCount++
+      }
+    }
+
+    // Find the next unmatched predicted operation of this type for this batch
+    let foundCount = 0
+    for (const op of this.operations) {
+      if (op.type === type && op.batchId === targetBatchId && !op.actualStart) {
+        if (foundCount === matchedCount) {
+          // This is the next operation to match
+          op.actualStart = actualStart
+          op.actualEnd = actualEnd
+          this.draw()
+          return
+        }
+        foundCount++
       }
     }
 
@@ -421,13 +430,6 @@ export function logActualBatchOperation(
 ): void {
   if (!visualiser) {
     visualiser = new BatchVisualiser()
-    console.warn(
-      "Visualiser was not initialized before logging actual operation"
-    )
-  } else {
-    console.log(
-      `Logging actual operation: ${type} from ${actualStart} to ${actualEnd} (Batch ${batchId})`
-    )
   }
   visualiser.logActualOperation(type, actualStart, actualEnd, batchId)
 }
