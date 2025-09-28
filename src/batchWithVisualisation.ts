@@ -1,21 +1,21 @@
-import { NS, Person, Player, Server } from "@ns"
+import { NS } from "@ns"
+import {
+  calculateGrowThreads,
+  calculateHackThreads,
+  calculateWeakenThreads,
+  calculateWeakenThreads2,
+  getDelta,
+  prepForGrow,
+  prepForHack,
+  prepForWeaken,
+  prepForWeaken2,
+} from "./batchCalculations.js"
 import {
   initBatchVisualiser,
   logBatchOperation,
   nextBatch,
   setBatchInterval,
 } from "./batchVisualiser.js"
-import {
-  prepForHack,
-  prepForWeaken,
-  prepForGrow,
-  prepForWeaken2,
-  calculateHackThreads,
-  calculateWeakenThreads,
-  calculateGrowThreads,
-  calculateWeakenThreads2,
-  getDelta,
-} from "./batchCalculations.js"
 
 export async function main(ns: NS) {
   // Kill all scripts on the host server (except this one)
@@ -31,9 +31,6 @@ export async function main(ns: NS) {
     for (const script of runningScripts) {
       if (script.filename === currentScript && script.pid !== ns.pid) {
         ns.kill(script.pid)
-        ns.tprint(
-          `Killed other instance of ${currentScript} on ${server} (PID: ${script.pid})`
-        )
       }
     }
   }
@@ -111,7 +108,6 @@ export async function main(ns: NS) {
     `Prep complete on ${target}: ${postMoney} money, ${postSec} security.`
   )
 
-
   let batchCounter = 0
   ns.tprint("Entering main batching loop.")
   const server = ns.getServer(target)
@@ -119,14 +115,24 @@ export async function main(ns: NS) {
     const player = ns.getPlayer()
 
     ns.tprint(`\n=== BATCH ${batchCounter} PREDICTIONS ===`)
-    ns.tprint(`Base server state: money=${server.moneyAvailable}, security=${server.hackDifficulty}, minSec=${server.minDifficulty}`)
+    ns.tprint(
+      `Base server state: money=${server.moneyAvailable}, security=${server.hackDifficulty}, minSec=${server.minDifficulty}`
+    )
 
     const { server: hackServer, player: hackPlayer } = prepForHack(
       server,
       player
     )
-    ns.tprint(`PrepForHack: money=${hackServer.moneyAvailable}, security=${hackServer.hackDifficulty}`)
-    const hackThreads = calculateHackThreads(hackServer, hackPlayer, moneyMax, hackThreshold, ns)
+    ns.tprint(
+      `PrepForHack: money=${hackServer.moneyAvailable}, security=${hackServer.hackDifficulty}`
+    )
+    const hackThreads = calculateHackThreads(
+      hackServer,
+      hackPlayer,
+      moneyMax,
+      hackThreshold,
+      ns
+    )
     ns.tprint(`Hack threads calculated: ${hackThreads}`)
 
     const { server: weakenServer, player: weakenPlayer } = prepForWeaken(
@@ -135,8 +141,14 @@ export async function main(ns: NS) {
       hackThreads,
       ns
     )
-    ns.tprint(`PrepForWeaken1: security=${weakenServer.hackDifficulty} (base=${server.minDifficulty} + hackSec=${ns.hackAnalyzeSecurity(hackThreads, undefined)})`)
-    const weakenThreads1 = calculateWeakenThreads(weakenServer, weakenPlayer, myCores)
+    ns.tprint(
+      `PrepForWeaken1: security=${weakenServer.hackDifficulty} (base=${server.minDifficulty} + hackSec=${ns.hackAnalyzeSecurity(hackThreads, undefined)})`
+    )
+    const weakenThreads1 = calculateWeakenThreads(
+      weakenServer,
+      weakenPlayer,
+      myCores
+    )
     ns.tprint(`Weaken1 threads calculated: ${weakenThreads1}`)
 
     const { server: growServer, player: growPlayer } = prepForGrow(
@@ -144,8 +156,16 @@ export async function main(ns: NS) {
       player,
       hackThreshold
     )
-    ns.tprint(`PrepForGrow: money=${growServer.moneyAvailable}, security=${growServer.hackDifficulty}`)
-    const growThreads = calculateGrowThreads(growServer, growPlayer, moneyMax, myCores, ns)
+    ns.tprint(
+      `PrepForGrow: money=${growServer.moneyAvailable}, security=${growServer.hackDifficulty}`
+    )
+    const growThreads = calculateGrowThreads(
+      growServer,
+      growPlayer,
+      moneyMax,
+      myCores,
+      ns
+    )
     ns.tprint(`Grow threads calculated: ${growThreads}`)
 
     const { server: weaken2Server, player: weaken2Player } = prepForWeaken2(
@@ -155,10 +175,15 @@ export async function main(ns: NS) {
       ns,
       myCores
     )
-    ns.tprint(`PrepForWeaken2: security=${weaken2Server.hackDifficulty} (base=${server.minDifficulty} + growSec=${ns.growthAnalyzeSecurity(growThreads, undefined, myCores)})`)
-    const weakenThreads2 = calculateWeakenThreads2(weaken2Server, weaken2Player, myCores)
+    ns.tprint(
+      `PrepForWeaken2: security=${weaken2Server.hackDifficulty} (base=${server.minDifficulty} + growSec=${ns.growthAnalyzeSecurity(growThreads, undefined, myCores)})`
+    )
+    const weakenThreads2 = calculateWeakenThreads2(
+      weaken2Server,
+      weaken2Player,
+      myCores
+    )
     ns.tprint(`Weaken2 threads calculated: ${weakenThreads2}`)
-
 
     const hackTime = ns.formulas.hacking.hackTime(hackServer, hackPlayer)
     const weakenTime = ns.formulas.hacking.weakenTime(
@@ -171,7 +196,9 @@ export async function main(ns: NS) {
       weaken2Player
     )
 
-    ns.tprint(`Operation times: hack=${hackTime}ms, weaken1=${weakenTime}ms, grow=${growTime}ms, weaken2=${weaken2Time}ms`)
+    ns.tprint(
+      `Operation times: hack=${hackTime}ms, weaken1=${weakenTime}ms, grow=${growTime}ms, weaken2=${weaken2Time}ms`
+    )
 
     if (weakenTime !== weaken2Time) {
       ns.tprint(`Weaken times do not match: ${weakenTime} vs ${weaken2Time}`)
@@ -190,7 +217,9 @@ export async function main(ns: NS) {
     const sleepGrow = weakenTime - growTime
     const sleepWeaken2 = 0
 
-    ns.tprint(`Sleep times: hack=${sleepHack}ms, weaken1=${sleepWeaken1}ms, grow=${sleepGrow}ms, weaken2=${sleepWeaken2}ms`)
+    ns.tprint(
+      `Sleep times: hack=${sleepHack}ms, weaken1=${sleepWeaken1}ms, grow=${sleepGrow}ms, weaken2=${sleepWeaken2}ms`
+    )
 
     // Calculate expected completion times for visualization
     const currentTime = Date.now()
@@ -203,7 +232,9 @@ export async function main(ns: NS) {
     const weaken2Start = currentTime + 3 * batchDelay
     const weaken2End = weaken2Start + weakenTime + sleepWeaken2
 
-    ns.tprint(`Expected completion order: hack=${hackEnd}, weaken1=${weaken1End}, grow=${growEnd}, weaken2=${weaken2End}`)
+    ns.tprint(
+      `Expected completion order: hack=${hackEnd}, weaken1=${weaken1End}, grow=${growEnd}, weaken2=${weaken2End}`
+    )
     ns.tprint(`=== END BATCH ${batchCounter} PREDICTIONS ===\n`)
 
     // Log operations to visualiser (predicting when they'll complete) and get operation IDs
