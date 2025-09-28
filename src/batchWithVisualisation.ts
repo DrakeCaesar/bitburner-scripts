@@ -119,7 +119,7 @@ export async function main(ns: NS) {
     const expectedHackSec = hackServer.hackDifficulty! // Should be baseSecurity
     const hackSecDifference = Math.abs(preHackSec - expectedHackSec)
     ns.tprint(
-      `SECURITY CHECK (Hack): Expected ${expectedHackSec.toFixed(3)}, Actual ${preHackSec.toFixed(3)}, Difference ${hackSecDifference.toFixed(3)}`
+      `Hack:    Exp ${expectedHackSec.toFixed(3)}, Act ${preHackSec.toFixed(3)}, Dif ${hackSecDifference.toFixed(3)}`
     )
 
     ns.exec("/hacking/hack.js", host, hackThreads, target, sleepHack, hackOpId)
@@ -130,7 +130,7 @@ export async function main(ns: NS) {
     const expectedWeaken1Sec = weakenServer.hackDifficulty!
     const weaken1SecDifference = Math.abs(preWeaken1Sec - expectedWeaken1Sec)
     ns.tprint(
-      `SECURITY CHECK (Weaken1): Expected ${expectedWeaken1Sec.toFixed(3)}, Actual ${preWeaken1Sec.toFixed(3)}, Difference ${weaken1SecDifference.toFixed(3)}`
+      `Weaken1: Exp ${expectedWeaken1Sec.toFixed(3)}, Act ${preWeaken1Sec.toFixed(3)}, Dif ${weaken1SecDifference.toFixed(3)}`
     )
 
     ns.exec("/hacking/weaken.js", host, weakenThreads1, target, sleepWeaken1, weaken1OpId)
@@ -141,7 +141,7 @@ export async function main(ns: NS) {
     const expectedGrowSec = growServer.hackDifficulty! // Should be baseSecurity
     const growSecDifference = Math.abs(preGrowSec - expectedGrowSec)
     ns.tprint(
-      `SECURITY CHECK (Grow): Expected ${expectedGrowSec.toFixed(3)}, Actual ${preGrowSec.toFixed(3)}, Difference ${growSecDifference.toFixed(3)}`
+      `Grow:    Exp ${expectedGrowSec.toFixed(3)}, Act ${preGrowSec.toFixed(3)}, Dif ${growSecDifference.toFixed(3)}`
     )
 
     ns.exec("/hacking/grow.js", host, growThreads, target, sleepGrow, growOpId)
@@ -152,7 +152,7 @@ export async function main(ns: NS) {
     const expectedWeaken2Sec = weaken2Server.hackDifficulty!
     const weaken2SecDifference = Math.abs(preWeaken2Sec - expectedWeaken2Sec)
     ns.tprint(
-      `SECURITY CHECK (Weaken2): Expected ${expectedWeaken2Sec.toFixed(3)}, Actual ${preWeaken2Sec.toFixed(3)}, Difference ${weaken2SecDifference.toFixed(3)}`
+      `Weaken2: Exp ${expectedWeaken2Sec.toFixed(3)}, Act ${preWeaken2Sec.toFixed(3)}, Dif ${weaken2SecDifference.toFixed(3)}`
     )
 
     ns.exec("/hacking/weaken.js", host, weakenThreads2, target, sleepWeaken2, weaken2OpId)
