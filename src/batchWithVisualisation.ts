@@ -29,65 +29,66 @@ export async function main(ns: NS) {
 
   // 0 means 100% of money hacked
   const hackThreshold = 0.25
+
+  const server = ns.getServer(target)
+  const player = ns.getPlayer()
+
+  const { server: hackServer, player: hackPlayer } = hackServerInstance(server, player)
+  const hackThreads = calculateHackThreads(hackServer, hackPlayer, moneyMax, hackThreshold, ns)
+
+  const { server: wkn1Server, player: wkn1Player } = wkn1ServerInstance(server, player, hackThreads, ns)
+  const wkn1Threads = calculateWeakThreads(wkn1Server, wkn1Player, myCores)
+
+  const { server: growServer, player: growPlayer } = growServerInstance(server, player, hackThreshold)
+  const growThreads = calculateGrowThreads(growServer, growPlayer, moneyMax, myCores, ns)
+
+  const { server: wkn2Server, player: wkn2Player } = wkn2ServerInstance(server, player, growThreads, ns, myCores)
+  const wkn2Threads = calculateWeakThreads(wkn2Server, wkn2Player, myCores)
+
+  const hackServerRam = ns.getScriptRam("/hacking/hack.js") * hackThreads
+  const wkn1ServerRam = ns.getScriptRam("/hacking/weaken.js") * wkn1Threads
+  const growServerRam = ns.getScriptRam("/hacking/grow.js") * growThreads
+  const wkn2ServerRam = ns.getScriptRam("/hacking/weaken.js") * wkn2Threads
+  const totalBatchRam = hackServerRam + wkn1ServerRam + growServerRam + wkn2ServerRam
+
   const serverMaxRam = ns.getServerMaxRam(host)
+  const batches = Math.floor((serverMaxRam / totalBatchRam) * 0.9)
+
+  const hackTime = ns.formulas.hacking.hackTime(hackServer, hackPlayer)
+  const wkn1Time = ns.formulas.hacking.weakenTime(wkn2Server, wkn2Player)
+  const growTime = ns.formulas.hacking.growTime(growServer, growPlayer)
+  const wkn2Time = ns.formulas.hacking.weakenTime(wkn1Server, wkn1Player)
+
+  const maxWeakenTime = Math.max(wkn1Time, wkn2Time)
+
+  // Calculate optimal delta based on concurrent batches
+  const targetDelta = calculateOptimalDelta(maxWeakenTime, batches)
+  const optimalIndex = getIndexFromDelta(maxWeakenTime, targetDelta)
+  const batchDelay = getDelta(maxWeakenTime, optimalIndex)
+
+  ns.tprint(`Using batch delay of ${batchDelay.toFixed(0)}ms (index ${optimalIndex})`)
+
+  const hackSleep = maxWeakenTime - hackTime
+  const wkn1Sleep = maxWeakenTime - wkn1Time
+  const growSleep = maxWeakenTime - growTime
+  const wkn2Sleep = maxWeakenTime - wkn2Time
+
+  ns.tprint(
+    `Batch RAM: ${totalBatchRam.toFixed(2)} GB - Threads (H:${hackThreads} W1:${wkn1Threads} G:${growThreads} W2:${wkn2Threads}) - RAM (H:${hackServerRam.toFixed(2)} W1:${wkn1ServerRam.toFixed(2)} G:${growServerRam.toFixed(2)} W2:${wkn2ServerRam.toFixed(2)})`
+  )
+  ns.tprint(`Can run ${batches} batches in parallel on ${host} (${serverMaxRam} GB RAM)`)
+  ns.tprint(`Max weaken time: ${maxWeakenTime.toFixed(0)}ms`)
+  ns.tprint(
+    `Target delta: ${targetDelta.toFixed(0)}ms, optimal index: ${optimalIndex}, actual delta: ${batchDelay.toFixed(0)}ms`
+  )
+  ns.tprint(
+    `Batch interval: ${(batchDelay * 4).toFixed(0)}ms, overlapping batches: ${Math.ceil(maxWeakenTime / (batchDelay * 4))}`
+  )
+
+  setBatchInterval(batchDelay * 4)
 
   let batchCounter = 0
   while (true) {
-    const server = ns.getServer(target)
-    const player = ns.getPlayer()
-
-    const { server: hackServer, player: hackPlayer } = hackServerInstance(server, player)
-    const hackThreads = calculateHackThreads(hackServer, hackPlayer, moneyMax, hackThreshold, ns)
-
-    const { server: wkn1Server, player: wkn1Player } = wkn1ServerInstance(server, player, hackThreads, ns)
-    const wkn1Threads = calculateWeakThreads(wkn1Server, wkn1Player, myCores)
-
-    const { server: growServer, player: growPlayer } = growServerInstance(server, player, hackThreshold)
-    const growThreads = calculateGrowThreads(growServer, growPlayer, moneyMax, myCores, ns)
-
-    const { server: wkn2Server, player: wkn2Player } = wkn2ServerInstance(server, player, growThreads, ns, myCores)
-    const wkn2Threads = calculateWeakThreads(wkn2Server, wkn2Player, myCores)
-
-    const hackServerRam = ns.getScriptRam("/hacking/hack.js") * hackThreads
-    const wkn1ServerRam = ns.getScriptRam("/hacking/weaken.js") * wkn1Threads
-    const growServerRam = ns.getScriptRam("/hacking/grow.js") * growThreads
-    const wkn2ServerRam = ns.getScriptRam("/hacking/weaken.js") * wkn2Threads
-    const totalBatchRam = hackServerRam + wkn1ServerRam + growServerRam + wkn2ServerRam
-
-    const batches = Math.floor((serverMaxRam / totalBatchRam) * 0.9)
-
-    const hackTime = ns.formulas.hacking.hackTime(hackServer, hackPlayer)
-    const wkn1Time = ns.formulas.hacking.weakenTime(wkn2Server, wkn2Player)
-    const growTime = ns.formulas.hacking.growTime(growServer, growPlayer)
-    const wkn2Time = ns.formulas.hacking.weakenTime(wkn1Server, wkn1Player)
-
-    const maxWeakenTime = Math.max(wkn1Time, wkn2Time)
-
-    // Calculate optimal delta based on concurrent batches
-    const targetDelta = calculateOptimalDelta(maxWeakenTime, batches)
-    const optimalIndex = getIndexFromDelta(maxWeakenTime, targetDelta)
-    const batchDelay = getDelta(maxWeakenTime, optimalIndex)
-
-    const hackSleep = maxWeakenTime - hackTime
-    const wkn1Sleep = maxWeakenTime - wkn1Time
-    const growSleep = maxWeakenTime - growTime
-    const wkn2Sleep = maxWeakenTime - wkn2Time
-
-    if (batchCounter === 0) {
-      ns.tprint(`Using batch delay of ${batchDelay.toFixed(0)}ms (index ${optimalIndex})`)
-      ns.tprint(
-        `Batch RAM: ${totalBatchRam.toFixed(2)} GB - Threads (H:${hackThreads} W1:${wkn1Threads} G:${growThreads} W2:${wkn2Threads}) - RAM (H:${hackServerRam.toFixed(2)} W1:${wkn1ServerRam.toFixed(2)} G:${growServerRam.toFixed(2)} W2:${wkn2ServerRam.toFixed(2)})`
-      )
-      ns.tprint(`Can run ${batches} batches in parallel on ${host} (${serverMaxRam} GB RAM)`)
-      ns.tprint(`Max weaken time: ${maxWeakenTime.toFixed(0)}ms`)
-      ns.tprint(
-        `Target delta: ${targetDelta.toFixed(0)}ms, optimal index: ${optimalIndex}, actual delta: ${batchDelay.toFixed(0)}ms`
-      )
-      ns.tprint(
-        `Batch interval: ${(batchDelay * 4).toFixed(0)}ms, overlapping batches: ${Math.ceil(maxWeakenTime / (batchDelay * 4))}`
-      )
-      setBatchInterval(batchDelay * 4)
-    }
     const currentTime = Date.now()
     const hackStr = currentTime
     const hackEnd = hackStr + hackTime + hackSleep

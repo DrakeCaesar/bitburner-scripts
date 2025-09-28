@@ -34,7 +34,7 @@ export function calculateHackThreads(server: Server, player: Person, moneyMax: n
 }
 
 export function calculateWeakThreads(server: Server, player: Player, myCores: number) {
-  const addedSecurity = server.hackDifficulty! - server.minDifficulty!
+  const addedSecurity = (server.hackDifficulty! - server.minDifficulty!) * 1.25
   return Math.max(1, Math.ceil(addedSecurity / (0.05 * (1 + (myCores - 1) / 16))))
 }
 
