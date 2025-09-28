@@ -46,6 +46,15 @@ export function getDelta(opTime: number, index: number) {
   return opTime / (2.5 + 2 * index)
 }
 
+export function getIndexFromDelta(opTime: number, targetDelta: number) {
+  const index = (opTime / targetDelta - 2.5) / 2
+  return Math.max(0, Math.round(index))
+}
+
+export function calculateOptimalDelta(maxWeakenTime: number, maxConcurrentBatches: number) {
+  return maxWeakenTime / (maxConcurrentBatches * 4)
+}
+
 export async function killOtherInstances(ns: NS) {
   const currentScript = ns.getScriptName()
   const allServers = ns.getPurchasedServers().concat(["home"])

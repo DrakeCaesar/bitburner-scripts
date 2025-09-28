@@ -2,9 +2,11 @@ import { NS } from "@ns"
 import {
   calculateGrowThreads,
   calculateHackThreads,
+  calculateOptimalDelta,
   calculateWeakThreads,
   copyRequiredScripts,
   getDelta,
+  getIndexFromDelta,
   growServerInstance,
   hackServerInstance,
   killOtherInstances,
@@ -24,6 +26,8 @@ export async function main(ns: NS) {
   initBatchVisualiser()
 
   const { moneyMax, myCores } = await prepareServer(ns, host, target)
+
+  // 0 means 100% of money hacked
   const hackThreshold = 0.25
 
   const server = ns.getServer(target)
@@ -48,7 +52,7 @@ export async function main(ns: NS) {
   const totalBatchRam = hackServerRam + wkn1ServerRam + growServerRam + wkn2ServerRam
 
   const serverMaxRam = ns.getServerMaxRam(host)
-  const batches = Math.floor(serverMaxRam / totalBatchRam)
+  const batches = Math.floor((serverMaxRam / totalBatchRam) * 0.9)
 
   const hackTime = ns.formulas.hacking.hackTime(hackServer, hackPlayer)
   const wkn1Time = ns.formulas.hacking.weakenTime(wkn2Server, wkn2Player)
@@ -56,7 +60,13 @@ export async function main(ns: NS) {
   const wkn2Time = ns.formulas.hacking.weakenTime(wkn1Server, wkn1Player)
 
   const maxWeakenTime = Math.max(wkn1Time, wkn2Time)
-  const batchDelay = getDelta(maxWeakenTime, 0)
+
+  // Calculate optimal delta based on concurrent batches
+  const targetDelta = calculateOptimalDelta(maxWeakenTime, batches)
+  const optimalIndex = getIndexFromDelta(maxWeakenTime, targetDelta)
+  const batchDelay = getDelta(maxWeakenTime, optimalIndex)
+
+  ns.tprint(`Using batch delay of ${batchDelay.toFixed(0)}ms (index ${optimalIndex})`)
 
   const hackSleep = maxWeakenTime - hackTime
   const wkn1Sleep = maxWeakenTime - wkn1Time
@@ -67,7 +77,13 @@ export async function main(ns: NS) {
     `Batch RAM: ${totalBatchRam.toFixed(2)} GB - Threads (H:${hackThreads} W1:${wkn1Threads} G:${growThreads} W2:${wkn2Threads}) - RAM (H:${hackServerRam.toFixed(2)} W1:${wkn1ServerRam.toFixed(2)} G:${growServerRam.toFixed(2)} W2:${wkn2ServerRam.toFixed(2)})`
   )
   ns.tprint(`Can run ${batches} batches in parallel on ${host} (${serverMaxRam} GB RAM)`)
-  ns.tprint(`Max weaken time: ${maxWeakenTime.toFixed(0)}ms, batch delay: ${batchDelay.toFixed(0)}ms`)
+  ns.tprint(`Max weaken time: ${maxWeakenTime.toFixed(0)}ms`)
+  ns.tprint(
+    `Target delta: ${targetDelta.toFixed(0)}ms, optimal index: ${optimalIndex}, actual delta: ${batchDelay.toFixed(0)}ms`
+  )
+  ns.tprint(
+    `Batch interval: ${(batchDelay * 4).toFixed(0)}ms, overlapping batches: ${Math.ceil(maxWeakenTime / (batchDelay * 4))}`
+  )
 
   setBatchInterval(batchDelay * 4)
 

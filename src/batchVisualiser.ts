@@ -28,7 +28,7 @@ class BatchVisualiser {
   private isAnimating = false
   private batchInterval = 5000 // milliseconds between batches (default, will be updated)
   private lastBatchTime = 0
-  private constantBatchHeight = 160 // Fixed height for each batch
+  private constantBatchHeight = 80 // Fixed height for each batch
   private firstBatchTime = 0 // When the first batch was created
 
   // Color mapping for operations
