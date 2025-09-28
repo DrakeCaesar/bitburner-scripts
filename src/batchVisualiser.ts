@@ -243,7 +243,7 @@ class BatchVisualiser {
       // Use absolute positioning based on batch ID to prevent jumping when batches are removed
       // Each batch gets a fixed position based on its ID
       // Start from the bottom, new batches appear below previous ones, scroll up over time
-      return this.margin.top + this.chartHeight - this.constantBatchHeight + (batchId * this.constantBatchHeight) - scrollOffset
+      return this.margin.top + this.chartHeight - (this.constantBatchHeight * 2) + (batchId * this.constantBatchHeight) - scrollOffset
     }
 
     // Draw grid lines
