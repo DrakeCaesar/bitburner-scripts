@@ -28,6 +28,7 @@ class BatchVisualiser {
   private isAnimating = false
   private batchInterval = 5000 // milliseconds between batches (default, will be updated)
   private lastBatchTime = 0
+  private constantBatchHeight = 80 // Fixed height for each batch
 
   // Color mapping for operations
   private predictedColors = {
@@ -228,13 +229,13 @@ class BatchVisualiser {
 
     // Calculate smooth scrolling offset based on time since last batch
     const timeSinceLastBatch = this.lastBatchTime > 0 ? now - this.lastBatchTime : 0
-    const scrollOffset = (timeSinceLastBatch / this.batchInterval) * (this.chartHeight / Math.max(batchGroups.size, 1))
+    const scrollOffset = (timeSinceLastBatch / this.batchInterval) * this.constantBatchHeight
 
-    const yScale = (batchId: number, total: number) => {
+    const yScale = (batchId: number) => {
       // Calculate position - higher batchId should be lower on screen (newer batches at bottom)
       const oldestBatchId = Math.min(...Array.from(batchGroups.keys()))
       const relativePosition = batchId - oldestBatchId // position from oldest
-      return this.margin.top + (relativePosition * this.chartHeight) / Math.max(total, 1) - scrollOffset
+      return this.margin.top + (relativePosition * this.constantBatchHeight) - scrollOffset
     }
 
     // Draw grid lines
@@ -250,10 +251,9 @@ class BatchVisualiser {
     }
 
     // Horizontal grid lines (batches)
-    const totalBatches = Math.max(batchGroups.size, 1)
     const sortedBatchIds = Array.from(batchGroups.keys()).sort((a, b) => a - b) // oldest first
     for (let i = 0; i < sortedBatchIds.length; i++) {
-      const y = yScale(sortedBatchIds[i], totalBatches)
+      const y = yScale(sortedBatchIds[i])
       if (y >= this.margin.top && y <= this.margin.top + this.chartHeight) {
         ctx.moveTo(this.margin.left, y)
         ctx.lineTo(this.margin.left + this.chartWidth, y)
@@ -275,19 +275,18 @@ class BatchVisualiser {
     ctx.stroke()
 
     // Draw operations
-    const batchHeight = (this.chartHeight / Math.max(batchGroups.size, 1)) * 0.9
     for (const [batchId, ops] of batchGroups.entries()) {
-      const baseY = yScale(batchId, batchGroups.size)
+      const baseY = yScale(batchId)
 
       // Skip drawing batches that are outside the visible area
-      if (baseY + batchHeight < this.margin.top || baseY > this.margin.top + this.chartHeight) {
+      if (baseY + this.constantBatchHeight < this.margin.top || baseY > this.margin.top + this.chartHeight) {
         continue
       }
 
       // Draw batch label
       ctx.fillStyle = "#ffffff"
       ctx.font = "10px monospace"
-      ctx.fillText(`Batch ${batchId}`, 5, baseY + batchHeight / 2)
+      ctx.fillText(`Batch ${batchId}`, 5, baseY + this.constantBatchHeight / 2)
 
       // Sort operations by start time
       ops.sort((a, b) => a.start - b.start)
@@ -298,8 +297,8 @@ class BatchVisualiser {
         // Use a fixed slot system - always assume 4 operations per batch for consistent spacing
         const maxOpsPerBatch = 4
         const slotIndex = op.operationId % maxOpsPerBatch
-        const y = baseY + (slotIndex * batchHeight) / maxOpsPerBatch
-        const opHeight = (batchHeight / maxOpsPerBatch) * 1
+        const y = baseY + (slotIndex * this.constantBatchHeight) / maxOpsPerBatch
+        const opHeight = (this.constantBatchHeight / maxOpsPerBatch) * 0.8
         const barHeight = opHeight / 2 // Split height for two bars
 
         // Draw predicted operation bar (top half)
