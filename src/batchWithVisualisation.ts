@@ -5,6 +5,17 @@ import {
   nextBatch,
   setBatchInterval,
 } from "./batchVisualiser.js"
+import {
+  prepForHack,
+  prepForWeaken,
+  prepForGrow,
+  prepForWeaken2,
+  calculateHackThreads,
+  calculateWeakenThreads,
+  calculateGrowThreads,
+  calculateWeakenThreads2,
+  getDelta,
+} from "./batchCalculations.js"
 
 export async function main(ns: NS) {
   // Kill all scripts on the host server (except this one)
@@ -100,52 +111,6 @@ export async function main(ns: NS) {
     `Prep complete on ${target}: ${postMoney} money, ${postSec} security.`
   )
 
-  function prepForHack(server: Server, player: Player) {
-    server.moneyAvailable = server.moneyMax!
-    server.hackDifficulty = server.minDifficulty
-    return { server, player }
-  }
-  function prepForWeaken(server: Server, player: Player, hackThreads: number) {
-    server.hackDifficulty =
-      server.minDifficulty! + ns.hackAnalyzeSecurity(hackThreads, undefined)
-
-    return { server, player }
-  }
-  function prepForGrow(server: Server, player: Player) {
-    server.moneyAvailable = server.moneyMax! * hackThreshold
-    server.hackDifficulty = server.minDifficulty
-
-    return { server, player }
-  }
-  function prepForWeaken2(server: Server, player: Player, growThreads: number) {
-    server.hackDifficulty =
-      server.minDifficulty! +
-      ns.growthAnalyzeSecurity(growThreads, undefined, myCores)
-
-    return { server, player }
-  }
-
-  function calculateHackThreads(server: Server, player: Person) {
-    const hackPct = ns.formulas.hacking.hackPercent(server, player)
-    return Math.ceil(
-      (moneyMax - moneyMax * hackThreshold) / (hackPct * moneyMax)
-    )
-  }
-  function calculateWeakenThreads(server: Server, player: Player) {
-    const addedSecurity = server.hackDifficulty! - server.minDifficulty!
-    return Math.max(
-      1,
-      Math.ceil(addedSecurity / (0.05 * (1 + (myCores - 1) / 16)))
-    )
-  }
-  function calculateGrowThreads(server: Server, player: Person) {
-    return Math.ceil(
-      ns.formulas.hacking.growThreads(server, player, moneyMax, myCores)
-    )
-  }
-  function calculateWeakenThreads2(server: Server, player: Player) {
-    return calculateWeakenThreads(server, player)
-  }
 
   let batchCounter = 0
   ns.tprint("Entering main batching loop.")
@@ -161,38 +126,39 @@ export async function main(ns: NS) {
       player
     )
     ns.tprint(`PrepForHack: money=${hackServer.moneyAvailable}, security=${hackServer.hackDifficulty}`)
-    const hackThreads = calculateHackThreads(hackServer, hackPlayer)
+    const hackThreads = calculateHackThreads(hackServer, hackPlayer, moneyMax, hackThreshold, ns)
     ns.tprint(`Hack threads calculated: ${hackThreads}`)
 
     const { server: weakenServer, player: weakenPlayer } = prepForWeaken(
       server,
       player,
-      hackThreads
+      hackThreads,
+      ns
     )
     ns.tprint(`PrepForWeaken1: security=${weakenServer.hackDifficulty} (base=${server.minDifficulty} + hackSec=${ns.hackAnalyzeSecurity(hackThreads, undefined)})`)
-    const weakenThreads1 = calculateWeakenThreads(weakenServer, weakenPlayer)
+    const weakenThreads1 = calculateWeakenThreads(weakenServer, weakenPlayer, myCores)
     ns.tprint(`Weaken1 threads calculated: ${weakenThreads1}`)
 
     const { server: growServer, player: growPlayer } = prepForGrow(
       server,
-      player
+      player,
+      hackThreshold
     )
     ns.tprint(`PrepForGrow: money=${growServer.moneyAvailable}, security=${growServer.hackDifficulty}`)
-    const growThreads = calculateGrowThreads(growServer, growPlayer)
+    const growThreads = calculateGrowThreads(growServer, growPlayer, moneyMax, myCores, ns)
     ns.tprint(`Grow threads calculated: ${growThreads}`)
 
     const { server: weaken2Server, player: weaken2Player } = prepForWeaken2(
       server,
       player,
-      growThreads
+      growThreads,
+      ns,
+      myCores
     )
     ns.tprint(`PrepForWeaken2: security=${weaken2Server.hackDifficulty} (base=${server.minDifficulty} + growSec=${ns.growthAnalyzeSecurity(growThreads, undefined, myCores)})`)
-    const weakenThreads2 = calculateWeakenThreads2(weaken2Server, weaken2Player)
+    const weakenThreads2 = calculateWeakenThreads2(weaken2Server, weaken2Player, myCores)
     ns.tprint(`Weaken2 threads calculated: ${weakenThreads2}`)
 
-    function getDelta(opTime: number, index: number) {
-      return opTime / (2.5 + 2 * index)
-    }
 
     const hackTime = ns.formulas.hacking.hackTime(hackServer, hackPlayer)
     const weakenTime = ns.formulas.hacking.weakenTime(
