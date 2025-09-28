@@ -232,10 +232,9 @@ class BatchVisualiser {
     const scrollOffset = (timeSinceLastBatch / this.batchInterval) * this.constantBatchHeight
 
     const yScale = (batchId: number) => {
-      // Calculate position - higher batchId should be lower on screen (newer batches at bottom)
-      const oldestBatchId = Math.min(...Array.from(batchGroups.keys()))
-      const relativePosition = batchId - oldestBatchId // position from oldest
-      return this.margin.top + (relativePosition * this.constantBatchHeight) - scrollOffset
+      // Use absolute positioning based on batch ID to prevent jumping when batches are removed
+      // Each batch gets a fixed position based on its ID
+      return this.margin.top + (batchId * this.constantBatchHeight) - scrollOffset
     }
 
     // Draw grid lines
