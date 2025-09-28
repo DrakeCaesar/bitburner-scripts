@@ -118,13 +118,13 @@ export async function main(ns: NS) {
       return [lowerBound, upperBound]
     }
 
-    function getDelta(opTime: number, index: number) {
-      if (index === 0) {
-        return opTime
-      }
-      const [lower, upper] = getDeltaInterval(opTime, index)
-      return (lower + upper) / 2
-    }
+    // function getDelta(opTime: number, index: number) {
+    //   if (index === 0) {
+    //     return opTime
+    //   }
+    //   const [lower, upper] = getDeltaInterval(opTime, index)
+    //   return (lower + upper) / 2
+    // }
 
     function getDelta(opTime: number, index: number) {
       return opTime / (2.5 + 2 * index)
