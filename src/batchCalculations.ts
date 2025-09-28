@@ -80,11 +80,15 @@ export async function prepareServer(ns: NS, host: string, target: string) {
 
   const player = ns.getPlayer()
   const myCores = ns.getServer(host).cpuCores
+  // ns.tprint(`cores: ${myCores}`)
 
   const serverActual = ns.getServer(target)
   const growThreads = Math.ceil(ns.formulas.hacking.growThreads(serverActual, player, moneyMax, myCores))
   if (growThreads > 0) {
+    // ns.tprint(`Prep: Executing grow with ${growThreads} threads on ${target}.`)
     ns.exec("/hacking/grow.js", host, growThreads, target, 0)
+  } else {
+    // ns.tprint(`Prep: Grow not needed on ${target}.`)
   }
 
   await ns.sleep(prepWeakenDelay)
@@ -96,13 +100,27 @@ export async function prepareServer(ns: NS, host: string, target: string) {
   const weakenThreadsPre = Math.max(1, Math.ceil(secToReduce / (0.05 * (1 + (myCores - 1) / 16))))
 
   if (weakenThreadsPre > 0) {
+    // ns.tprint(`Prep: Executing weaken with ${weakenThreadsPre} threads on ${target}.`)
     ns.exec("/hacking/weaken.js", host, weakenThreadsPre, target, 0)
+  } else {
+    // ns.tprint(`Prep: Weaken not needed on ${target} (security is at base).`)
   }
 
   const growTime = ns.formulas.hacking.growTime(serverActual, player)
   const weakenTime = ns.formulas.hacking.weakenTime(serverActual, player)
   const waitTime = Math.max(growTime, weakenTime) + 200
+  // ns.tprint(`Prep: Waiting ${waitTime} ms for grow/weaken to complete...`)
   await ns.sleep(waitTime)
+
+  const postMoney = ns.getServerMoneyAvailable(target)
+  const postSec = ns.getServerSecurityLevel(target)
+  if (postMoney < moneyMax * moneyTolerance) {
+    ns.tprint(`WARNING: Money is only ${postMoney} (target ${moneyMax}).`)
+  }
+  if (postSec > baseSecurity + secTolerance) {
+    ns.tprint(`WARNING: Security is ${postSec} (target ${baseSecurity}).`)
+  }
+  // ns.tprint(`Prep complete on ${target}: ${postMoney} money, ${postSec} security.`)
 
   return { moneyMax, baseSecurity, secTolerance, myCores }
 }
