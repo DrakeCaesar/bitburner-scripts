@@ -7,8 +7,7 @@ export function prepForHack(server: Server, player: Player) {
 }
 
 export function prepForWeaken(server: Server, player: Player, hackThreads: number, ns: NS) {
-  server.hackDifficulty =
-    server.minDifficulty! + ns.hackAnalyzeSecurity(hackThreads, undefined)
+  server.hackDifficulty = server.minDifficulty! + ns.hackAnalyzeSecurity(hackThreads, undefined)
 
   return { server, player }
 }
@@ -21,32 +20,23 @@ export function prepForGrow(server: Server, player: Player, hackThreshold: numbe
 }
 
 export function prepForWeaken2(server: Server, player: Player, growThreads: number, ns: NS, myCores: number) {
-  server.hackDifficulty =
-    server.minDifficulty! +
-    ns.growthAnalyzeSecurity(growThreads, undefined, myCores)
-
+  server.hackDifficulty = server.minDifficulty! + ns.growthAnalyzeSecurity(growThreads, undefined, myCores)
+  ns.tprint(`difficulty after grow: ${server.hackDifficulty}`)
   return { server, player }
 }
 
 export function calculateHackThreads(server: Server, player: Person, moneyMax: number, hackThreshold: number, ns: NS) {
   const hackPct = ns.formulas.hacking.hackPercent(server, player)
-  return Math.ceil(
-    (moneyMax - moneyMax * hackThreshold) / (hackPct * moneyMax)
-  )
+  return Math.ceil((moneyMax - moneyMax * hackThreshold) / (hackPct * moneyMax))
 }
 
 export function calculateWeakenThreads(server: Server, player: Player, myCores: number) {
   const addedSecurity = server.hackDifficulty! - server.minDifficulty!
-  return Math.max(
-    1,
-    Math.ceil(addedSecurity / (0.05 * (1 + (myCores - 1) / 16)))
-  )
+  return Math.max(1, Math.ceil(addedSecurity / (0.05 * (1 + (myCores - 1) / 16))))
 }
 
 export function calculateGrowThreads(server: Server, player: Person, moneyMax: number, myCores: number, ns: NS) {
-  return Math.ceil(
-    ns.formulas.hacking.growThreads(server, player, moneyMax, myCores)
-  )
+  return Math.ceil(ns.formulas.hacking.growThreads(server, player, moneyMax, myCores))
 }
 
 export function calculateWeakenThreads2(server: Server, player: Player, myCores: number) {
@@ -66,9 +56,7 @@ export async function killOtherInstances(ns: NS) {
     for (const script of runningScripts) {
       if (script.filename === currentScript && script.pid !== ns.pid) {
         ns.kill(script.pid)
-        ns.tprint(
-          `Killed other instance of ${currentScript} on ${server} (PID: ${script.pid})`
-        )
+        ns.tprint(`Killed other instance of ${currentScript} on ${server} (PID: ${script.pid})`)
       }
     }
   }
@@ -94,9 +82,7 @@ export async function prepareServer(ns: NS, host: string, target: string) {
   ns.tprint(`cores: ${myCores}`)
 
   const serverActual = ns.getServer(target)
-  const growThreads = Math.ceil(
-    ns.formulas.hacking.growThreads(serverActual, player, moneyMax, myCores)
-  )
+  const growThreads = Math.ceil(ns.formulas.hacking.growThreads(serverActual, player, moneyMax, myCores))
   if (growThreads > 0) {
     ns.tprint(`Prep: Executing grow with ${growThreads} threads on ${target}.`)
     ns.exec("/hacking/grow.js", host, growThreads, target, 0)
@@ -110,15 +96,10 @@ export async function prepareServer(ns: NS, host: string, target: string) {
   const currentSec = ns.getServerSecurityLevel(target)
   const expectedSecAfterGrow = currentSec + addedSecurity
   const secToReduce = expectedSecAfterGrow - baseSecurity
-  const weakenThreadsPre = Math.max(
-    1,
-    Math.ceil(secToReduce / (0.05 * (1 + (myCores - 1) / 16)))
-  )
+  const weakenThreadsPre = Math.max(1, Math.ceil(secToReduce / (0.05 * (1 + (myCores - 1) / 16))))
 
   if (weakenThreadsPre > 0) {
-    ns.tprint(
-      `Prep: Executing weaken with ${weakenThreadsPre} threads on ${target}.`
-    )
+    ns.tprint(`Prep: Executing weaken with ${weakenThreadsPre} threads on ${target}.`)
     ns.exec("/hacking/weaken.js", host, weakenThreadsPre, target, 0)
   } else {
     ns.tprint(`Prep: Weaken not needed on ${target} (security is at base).`)
@@ -138,9 +119,7 @@ export async function prepareServer(ns: NS, host: string, target: string) {
   if (postSec > baseSecurity + secTolerance) {
     ns.tprint(`WARNING: Security is ${postSec} (target ${baseSecurity}).`)
   }
-  ns.tprint(
-    `Prep complete on ${target}: ${postMoney} money, ${postSec} security.`
-  )
+  ns.tprint(`Prep complete on ${target}: ${postMoney} money, ${postSec} security.`)
 
   return { moneyMax, baseSecurity, secTolerance, myCores }
 }
