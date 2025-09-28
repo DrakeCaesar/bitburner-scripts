@@ -179,7 +179,7 @@ export async function main(ns: NS) {
     )
     const weakenThreads2 = calculateWeakenThreads2(weaken2Server, weaken2Player)
 
-    function getDeltaShotgun(opTime: number, index: number) {
+    function getDelta(opTime: number, index: number) {
       return opTime / (2.5 + 2 * index)
     }
 
@@ -198,7 +198,7 @@ export async function main(ns: NS) {
       ns.tprint(`Weaken times do not match: ${weakenTime} vs ${weaken2Time}`)
     }
 
-    const batchDelay = getDeltaShotgun(weakenTime, 2)
+    const batchDelay = getDelta(weakenTime, 2)
 
     // Set the batch interval in the visualizer on first calculation
     if (batchCounter === 0) {
