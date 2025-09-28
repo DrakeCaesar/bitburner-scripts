@@ -139,6 +139,10 @@ class BatchVisualiser {
     }
   }
 
+  public setBatchInterval(intervalMs: number): void {
+    this.batchInterval = intervalMs
+  }
+
   public nextBatch(): void {
     const now = Date.now()
     if (this.firstBatchTime === 0) {
@@ -426,7 +430,7 @@ class BatchVisualiser {
 let visualiser: BatchVisualiser | null = null
 
 // Export functions for easy use in batch.ts
-export function initBatchVisualiser(): BatchVisualiser {
+export function initBatchVisualiser(batchInterval?: number): BatchVisualiser {
   // Remove any existing visualiser instances
   if (visualiser) {
     visualiser.remove()
@@ -439,6 +443,11 @@ export function initBatchVisualiser(): BatchVisualiser {
   }
 
   visualiser = new BatchVisualiser()
+
+  // Set the base batch interval if provided
+  if (batchInterval) {
+    visualiser.setBatchInterval(batchInterval)
+  }
 
   // Expose visualizer globally for lightweight stub access
   ;(globalThis as any).batchVisualiser = visualiser
@@ -483,6 +492,12 @@ export function startBatchOperation(
 export function endBatchOperation(operationId: number): void {
   if (visualiser) {
     visualiser.endOperation(operationId)
+  }
+}
+
+export function setBatchInterval(intervalMs: number): void {
+  if (visualiser) {
+    visualiser.setBatchInterval(intervalMs)
   }
 }
 

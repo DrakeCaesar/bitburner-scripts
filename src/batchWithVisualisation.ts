@@ -3,6 +3,7 @@ import {
   initBatchVisualiser,
   logBatchOperation,
   nextBatch,
+  setBatchInterval,
 } from "./batchVisualiser.js"
 
 export async function main(ns: NS) {
@@ -37,7 +38,7 @@ export async function main(ns: NS) {
   ns.scp("/batchVisualizerStub.js", host)
   ns.tprint(`Copied scripts to ${host}`)
 
-  // Initialize the real-time visualiser
+  // Initialize the real-time visualiser (will set interval after calculating it)
   initBatchVisualiser()
   const moneyMax = ns.getServerMaxMoney(target)
   const baseSecurity = ns.getServerMinSecurityLevel(target)
@@ -198,6 +199,11 @@ export async function main(ns: NS) {
     }
 
     const batchDelay = getDeltaShotgun(weakenTime, 2)
+
+    // Set the batch interval in the visualizer on first calculation
+    if (batchCounter === 0) {
+      setBatchInterval(batchDelay * 4) // Total time for one complete batch (4 operations)
+    }
 
     const sleepHack = weakenTime - hackTime
     const sleepWeaken1 = 0
