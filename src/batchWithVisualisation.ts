@@ -4,7 +4,10 @@ import {
   calculateHackThreads,
   calculateWeakenThreads,
   calculateWeakenThreads2,
+  copyRequiredScripts,
   getDelta,
+  killOtherInstances,
+  prepareServer,
   prepForGrow,
   prepForHack,
   prepForWeaken,
@@ -18,95 +21,26 @@ import {
 } from "./batchVisualiser.js"
 
 export async function main(ns: NS) {
-  // Kill all scripts on the host server (except this one)
   const host = (ns.args[0] as string) ?? ns.getHostname()
   const target = ns.args[1] as string
 
-  // Kill other instances of this script running anywhere
-  const currentScript = ns.getScriptName()
-  const allServers = ns.getPurchasedServers().concat(["home"])
-
-  for (const server of allServers) {
-    const runningScripts = ns.ps(server)
-    for (const script of runningScripts) {
-      if (script.filename === currentScript && script.pid !== ns.pid) {
-        ns.kill(script.pid)
-      }
-    }
-  }
+  await killOtherInstances(ns)
 
   // Kill all other scripts on the host server
   ns.killall(host)
   ns.tprint(`Killed all scripts on ${host}`)
 
-  // Copy required scripts to the host server
-  ns.scp("/hacking/hack.js", host)
-  ns.scp("/hacking/grow.js", host)
-  ns.scp("/hacking/weaken.js", host)
-  ns.scp("/batchVisualizerStub.js", host)
-  ns.tprint(`Copied scripts to ${host}`)
+  await copyRequiredScripts(ns, host)
 
   // Initialize the real-time visualiser (will set interval after calculating it)
   initBatchVisualiser()
-  const moneyMax = ns.getServerMaxMoney(target)
-  const baseSecurity = ns.getServerMinSecurityLevel(target)
-  const secTolerance = 0.01
-  const moneyTolerance = 0.99
-  const prepWeakenDelay = 100
+
+  const { moneyMax, baseSecurity, secTolerance, myCores } = await prepareServer(
+    ns,
+    host,
+    target
+  )
   const hackThreshold = 0.25
-
-  const player = ns.getPlayer()
-  const myCores = ns.getServer(host).cpuCores
-  ns.tprint(`cores: ${myCores}`)
-
-  const serverActual = ns.getServer(target)
-  const growThreads = Math.ceil(
-    ns.formulas.hacking.growThreads(serverActual, player, moneyMax, myCores)
-  )
-  if (growThreads > 0) {
-    ns.tprint(`Prep: Executing grow with ${growThreads} threads on ${target}.`)
-    ns.exec("/hacking/grow.js", host, growThreads, target, 0)
-  } else {
-    ns.tprint(`Prep: Grow not needed on ${target}.`)
-  }
-
-  await ns.sleep(prepWeakenDelay)
-
-  const addedSecurity = ns.growthAnalyzeSecurity(growThreads, target, myCores)
-  const currentSec = ns.getServerSecurityLevel(target)
-  const expectedSecAfterGrow = currentSec + addedSecurity
-  const secToReduce = expectedSecAfterGrow - baseSecurity
-  const weakenThreadsPre = Math.max(
-    1,
-    Math.ceil(secToReduce / (0.05 * (1 + (myCores - 1) / 16)))
-  )
-
-  if (weakenThreadsPre > 0) {
-    ns.tprint(
-      `Prep: Executing weaken with ${weakenThreadsPre} threads on ${target}.`
-    )
-    ns.exec("/hacking/weaken.js", host, weakenThreadsPre, target, 0)
-  } else {
-    ns.tprint(`Prep: Weaken not needed on ${target} (security is at base).`)
-  }
-
-  const growTime = ns.formulas.hacking.growTime(serverActual, player)
-  const weakenTime = ns.formulas.hacking.weakenTime(serverActual, player)
-  const waitTime = Math.max(growTime, weakenTime) + 200
-  ns.tprint(`Prep: Waiting ${waitTime} ms for grow/weaken to complete...`)
-  await ns.sleep(waitTime)
-
-  const postMoney = ns.getServerMoneyAvailable(target)
-  const postSec = ns.getServerSecurityLevel(target)
-  if (postMoney < moneyMax * moneyTolerance) {
-    ns.tprint(`WARNING: Money is only ${postMoney} (target ${moneyMax}).`)
-  }
-  if (postSec > baseSecurity + secTolerance) {
-    ns.tprint(`WARNING: Security is ${postSec} (target ${baseSecurity}).`)
-  }
-  ns.tprint(
-    `Prep complete on ${target}: ${postMoney} money, ${postSec} security.`
-  )
 
   let batchCounter = 0
   ns.tprint("Entering main batching loop.")
