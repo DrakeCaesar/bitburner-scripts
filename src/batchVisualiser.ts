@@ -174,7 +174,7 @@ class BatchVisualiser {
     return operationId
   }
 
-  public logActualOperation(
+  public logActualOp(
     type: "H" | "W" | "G",
     actualStart: number,
     actualEnd: number,
@@ -489,7 +489,7 @@ export function logActualBatchOperation(
   if (!visualiser) {
     visualiser = new BatchVisualiser()
   }
-  visualiser.logActualOperation(type, actualStart, actualEnd, operationId)
+  visualiser.logActualOp(type, actualStart, actualEnd, operationId)
 }
 
 export function startBatchOperation(
