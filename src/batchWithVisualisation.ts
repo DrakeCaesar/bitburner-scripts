@@ -153,31 +153,42 @@ export async function main(ns: NS) {
   while (true) {
     const player = ns.getPlayer()
 
+    ns.tprint(`\n=== BATCH ${batchCounter} PREDICTIONS ===`)
+    ns.tprint(`Base server state: money=${server.moneyAvailable}, security=${server.hackDifficulty}, minSec=${server.minDifficulty}`)
+
     const { server: hackServer, player: hackPlayer } = prepForHack(
       server,
       player
     )
+    ns.tprint(`PrepForHack: money=${hackServer.moneyAvailable}, security=${hackServer.hackDifficulty}`)
     const hackThreads = calculateHackThreads(hackServer, hackPlayer)
+    ns.tprint(`Hack threads calculated: ${hackThreads}`)
 
     const { server: weakenServer, player: weakenPlayer } = prepForWeaken(
       server,
       player,
       hackThreads
     )
+    ns.tprint(`PrepForWeaken1: security=${weakenServer.hackDifficulty} (base=${server.minDifficulty} + hackSec=${ns.hackAnalyzeSecurity(hackThreads, undefined)})`)
     const weakenThreads1 = calculateWeakenThreads(weakenServer, weakenPlayer)
+    ns.tprint(`Weaken1 threads calculated: ${weakenThreads1}`)
 
     const { server: growServer, player: growPlayer } = prepForGrow(
       server,
       player
     )
+    ns.tprint(`PrepForGrow: money=${growServer.moneyAvailable}, security=${growServer.hackDifficulty}`)
     const growThreads = calculateGrowThreads(growServer, growPlayer)
+    ns.tprint(`Grow threads calculated: ${growThreads}`)
 
     const { server: weaken2Server, player: weaken2Player } = prepForWeaken2(
       server,
       player,
       growThreads
     )
+    ns.tprint(`PrepForWeaken2: security=${weaken2Server.hackDifficulty} (base=${server.minDifficulty} + growSec=${ns.growthAnalyzeSecurity(growThreads, undefined, myCores)})`)
     const weakenThreads2 = calculateWeakenThreads2(weaken2Server, weaken2Player)
+    ns.tprint(`Weaken2 threads calculated: ${weakenThreads2}`)
 
     function getDelta(opTime: number, index: number) {
       return opTime / (2.5 + 2 * index)
@@ -194,11 +205,14 @@ export async function main(ns: NS) {
       weaken2Player
     )
 
+    ns.tprint(`Operation times: hack=${hackTime}ms, weaken1=${weakenTime}ms, grow=${growTime}ms, weaken2=${weaken2Time}ms`)
+
     if (weakenTime !== weaken2Time) {
       ns.tprint(`Weaken times do not match: ${weakenTime} vs ${weaken2Time}`)
     }
 
-    const batchDelay = getDelta(weakenTime, 2)
+    const batchDelay = getDelta(weakenTime, 0)
+    ns.tprint(`Batch delay calculated: ${batchDelay}ms`)
 
     // Set the batch interval in the visualizer on first calculation
     if (batchCounter === 0) {
@@ -210,6 +224,8 @@ export async function main(ns: NS) {
     const sleepGrow = weakenTime - growTime
     const sleepWeaken2 = 0
 
+    ns.tprint(`Sleep times: hack=${sleepHack}ms, weaken1=${sleepWeaken1}ms, grow=${sleepGrow}ms, weaken2=${sleepWeaken2}ms`)
+
     // Calculate expected completion times for visualization
     const currentTime = Date.now()
     const hackStart = currentTime
@@ -220,6 +236,9 @@ export async function main(ns: NS) {
     const growEnd = growStart + growTime + sleepGrow
     const weaken2Start = currentTime + 3 * batchDelay
     const weaken2End = weaken2Start + weakenTime + sleepWeaken2
+
+    ns.tprint(`Expected completion order: hack=${hackEnd}, weaken1=${weaken1End}, grow=${growEnd}, weaken2=${weaken2End}`)
+    ns.tprint(`=== END BATCH ${batchCounter} PREDICTIONS ===\n`)
 
     // Log operations to visualiser (predicting when they'll complete) and get operation IDs
     const hackOpId = logBatchOperation("H", hackStart, hackEnd, batchCounter)
@@ -238,16 +257,28 @@ export async function main(ns: NS) {
     )
 
     // Check security before hack operation
-    const currentSec = ns.getServerSecurityLevel(target)
-    const difference = currentSec - baseSecurity
-    if (difference > secTolerance) {
+    const preHackSec = ns.getServerSecurityLevel(target)
+    const expectedHackSec = hackServer.hackDifficulty! // Should be baseSecurity
+    const hackSecDifference = Math.abs(preHackSec - expectedHackSec)
+    if (hackSecDifference > secTolerance) {
       ns.tprint(
-        `WARNING: Target ${target} has security increased by ${difference.toFixed(3)} (expected: ${baseSecurity}, actual: ${currentSec})`
+        `SECURITY CHECK (Hack): Expected ${expectedHackSec.toFixed(3)}, Actual ${preHackSec.toFixed(3)}, Difference ${hackSecDifference.toFixed(3)}`
       )
     }
 
     ns.exec("/hacking/hack.js", host, hackThreads, target, sleepHack, hackOpId)
     await ns.sleep(batchDelay)
+
+    // Check security before first weaken operation
+    const preWeaken1Sec = ns.getServerSecurityLevel(target)
+    const expectedWeaken1Sec = weakenServer.hackDifficulty!
+    const weaken1SecDifference = Math.abs(preWeaken1Sec - expectedWeaken1Sec)
+    if (weaken1SecDifference > secTolerance) {
+      ns.tprint(
+        `SECURITY CHECK (Weaken1): Expected ${expectedWeaken1Sec.toFixed(3)}, Actual ${preWeaken1Sec.toFixed(3)}, Difference ${weaken1SecDifference.toFixed(3)}`
+      )
+    }
+
     ns.exec(
       "/hacking/weaken.js",
       host,
@@ -257,8 +288,30 @@ export async function main(ns: NS) {
       weaken1OpId
     )
     await ns.sleep(batchDelay)
+
+    // Check security before grow operation
+    const preGrowSec = ns.getServerSecurityLevel(target)
+    const expectedGrowSec = growServer.hackDifficulty! // Should be baseSecurity
+    const growSecDifference = Math.abs(preGrowSec - expectedGrowSec)
+    if (growSecDifference > secTolerance) {
+      ns.tprint(
+        `SECURITY CHECK (Grow): Expected ${expectedGrowSec.toFixed(3)}, Actual ${preGrowSec.toFixed(3)}, Difference ${growSecDifference.toFixed(3)}`
+      )
+    }
+
     ns.exec("/hacking/grow.js", host, growThreads, target, sleepGrow, growOpId)
     await ns.sleep(batchDelay)
+
+    // Check security before second weaken operation
+    const preWeaken2Sec = ns.getServerSecurityLevel(target)
+    const expectedWeaken2Sec = weaken2Server.hackDifficulty!
+    const weaken2SecDifference = Math.abs(preWeaken2Sec - expectedWeaken2Sec)
+    if (weaken2SecDifference > secTolerance) {
+      ns.tprint(
+        `SECURITY CHECK (Weaken2): Expected ${expectedWeaken2Sec.toFixed(3)}, Actual ${preWeaken2Sec.toFixed(3)}, Difference ${weaken2SecDifference.toFixed(3)}`
+      )
+    }
+
     ns.exec(
       "/hacking/weaken.js",
       host,
