@@ -63,30 +63,30 @@ export async function main(ns: NS) {
     ns.tprint(`Weaken2 threads calculated: ${weakenThreads2}`)
 
     const hackTime = ns.formulas.hacking.hackTime(hackServer, hackPlayer)
-    const weakenTime = ns.formulas.hacking.weakenTime(weakenServer, weakenPlayer)
+    const weaken1Time = ns.formulas.hacking.weakenTime(weaken2Server, weaken2Player)  // Uses grow security state (when weaken1 starts)
     const growTime = ns.formulas.hacking.growTime(growServer, growPlayer)
-    const weaken2Time = ns.formulas.hacking.weakenTime(weaken2Server, weaken2Player)
+    const weaken2Time = ns.formulas.hacking.weakenTime(weakenServer, weakenPlayer)  // Uses hack security state (when weaken2 starts)
 
     ns.tprint(
-      `Operation times: hack=${hackTime}ms, weaken1=${weakenTime}ms, grow=${growTime}ms, weaken2=${weaken2Time}ms`
+      `Operation times: hack=${hackTime}ms, weaken1=${weaken1Time}ms, grow=${growTime}ms, weaken2=${weaken2Time}ms`
     )
 
-    if (weakenTime !== weaken2Time) {
-      ns.tprint(`Weaken times do not match: ${weakenTime} vs ${weaken2Time}`)
-    }
+    ns.tprint(`Weaken times: weaken1=${weaken1Time}ms, weaken2=${weaken2Time}ms (expected to be different)`)
 
-    const batchDelay = getDelta(weakenTime, 0)
-    ns.tprint(`Batch delay calculated: ${batchDelay}ms`)
+    // Use the longer weaken time for batch synchronization
+    const maxWeakenTime = Math.max(weaken1Time, weaken2Time)
+    const batchDelay = getDelta(maxWeakenTime, 0)
+    ns.tprint(`Batch delay calculated: ${batchDelay}ms (based on max weaken time: ${maxWeakenTime}ms)`)
 
     // Set the batch interval in the visualizer on first calculation
     if (batchCounter === 0) {
       setBatchInterval(batchDelay * 4) // Total time for one complete batch (4 operations)
     }
 
-    const sleepHack = weakenTime - hackTime
-    const sleepWeaken1 = 0
-    const sleepGrow = weakenTime - growTime
-    const sleepWeaken2 = 0
+    const sleepHack = maxWeakenTime - hackTime
+    const sleepWeaken1 = maxWeakenTime - weaken1Time
+    const sleepGrow = maxWeakenTime - growTime
+    const sleepWeaken2 = maxWeakenTime - weaken2Time
 
     ns.tprint(
       `Sleep times: hack=${sleepHack}ms, weaken1=${sleepWeaken1}ms, grow=${sleepGrow}ms, weaken2=${sleepWeaken2}ms`
@@ -97,11 +97,11 @@ export async function main(ns: NS) {
     const hackStart = currentTime
     const hackEnd = hackStart + hackTime + sleepHack
     const weaken1Start = currentTime + batchDelay
-    const weaken1End = weaken1Start + weakenTime + sleepWeaken1
+    const weaken1End = weaken1Start + weaken1Time + sleepWeaken1
     const growStart = currentTime + 2 * batchDelay
     const growEnd = growStart + growTime + sleepGrow
     const weaken2Start = currentTime + 3 * batchDelay
-    const weaken2End = weaken2Start + weakenTime + sleepWeaken2
+    const weaken2End = weaken2Start + weaken2Time + sleepWeaken2
 
     ns.tprint(
       `Expected completion order: hack=${hackEnd}, weaken1=${weaken1End}, grow=${growEnd}, weaken2=${weaken2End}`
