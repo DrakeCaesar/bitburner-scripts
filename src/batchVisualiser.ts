@@ -29,6 +29,7 @@ class BatchVisualiser {
   private batchInterval = 5000 // milliseconds between batches (default, will be updated)
   private lastBatchTime = 0
   private constantBatchHeight = 80 // Fixed height for each batch
+  private firstBatchTime = 0 // When the first batch was created
 
   // Color mapping for operations
   private predictedColors = {
@@ -140,6 +141,9 @@ class BatchVisualiser {
 
   public nextBatch(): void {
     const now = Date.now()
+    if (this.firstBatchTime === 0) {
+      this.firstBatchTime = now
+    }
     if (this.lastBatchTime > 0) {
       // Update batch interval based on actual timing
       this.batchInterval = now - this.lastBatchTime
@@ -227,9 +231,9 @@ class BatchVisualiser {
       this.margin.left +
       ((time - startTime) * this.chartWidth) / this.timeWindow
 
-    // Calculate smooth scrolling offset based on time since last batch
-    const timeSinceLastBatch = this.lastBatchTime > 0 ? now - this.lastBatchTime : 0
-    const scrollOffset = (timeSinceLastBatch / this.batchInterval) * this.constantBatchHeight
+    // Calculate smooth scrolling offset based on absolute time since first batch
+    const totalElapsedTime = this.firstBatchTime > 0 ? now - this.firstBatchTime : 0
+    const scrollOffset = (totalElapsedTime / this.batchInterval) * this.constantBatchHeight
 
     const yScale = (batchId: number) => {
       // Use absolute positioning based on batch ID to prevent jumping when batches are removed
@@ -384,6 +388,7 @@ class BatchVisualiser {
     this.currentBatchId = 0
     this.nextOperationId = 0
     this.lastBatchTime = 0
+    this.firstBatchTime = 0
     if (this.context) {
       this.context.clearRect(0, 0, this.width, this.height)
     }
