@@ -1,28 +1,32 @@
 import { NS, Person, Player, Server } from "@ns"
 
 export function prepForHack(server: Server, player: Player) {
-  server.moneyAvailable = server.moneyMax!
-  server.hackDifficulty = server.minDifficulty
-  return { server, player }
+  const serverCopy = { ...server }
+  serverCopy.moneyAvailable = serverCopy.moneyMax!
+  serverCopy.hackDifficulty = serverCopy.minDifficulty
+  return { server: serverCopy, player }
 }
 
 export function prepForWeaken(server: Server, player: Player, hackThreads: number, ns: NS) {
-  server.hackDifficulty = server.minDifficulty! + ns.hackAnalyzeSecurity(hackThreads, undefined)
+  const serverCopy = { ...server }
+  serverCopy.hackDifficulty = serverCopy.minDifficulty! + ns.hackAnalyzeSecurity(hackThreads, undefined)
 
-  return { server, player }
+  return { server: serverCopy, player }
 }
 
 export function prepForGrow(server: Server, player: Player, hackThreshold: number) {
-  server.moneyAvailable = server.moneyMax! * hackThreshold
-  server.hackDifficulty = server.minDifficulty
+  const serverCopy = { ...server }
+  serverCopy.moneyAvailable = serverCopy.moneyMax! * hackThreshold
+  serverCopy.hackDifficulty = serverCopy.minDifficulty
 
-  return { server, player }
+  return { server: serverCopy, player }
 }
 
 export function prepForWeaken2(server: Server, player: Player, growThreads: number, ns: NS, myCores: number) {
-  server.hackDifficulty = server.minDifficulty! + ns.growthAnalyzeSecurity(growThreads, undefined, myCores)
-  ns.tprint(`difficulty after grow: ${server.hackDifficulty}`)
-  return { server, player }
+  const serverCopy = { ...server }
+  serverCopy.hackDifficulty = serverCopy.minDifficulty! + ns.growthAnalyzeSecurity(growThreads, undefined, myCores)
+  ns.tprint(`difficulty after grow: ${serverCopy.hackDifficulty}`)
+  return { server: serverCopy, player }
 }
 
 export function calculateHackThreads(server: Server, player: Person, moneyMax: number, hackThreshold: number, ns: NS) {

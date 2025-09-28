@@ -21,7 +21,7 @@ class BatchVisualiser {
   private margin = { top: 40, right: 20, bottom: 60, left: 80 }
   private chartWidth = 0
   private chartHeight = 0
-  private timeWindow = 1000 * 60
+  private timeWindow = 1000 * 60 * 2
   private currentBatchId = 0
   private nextOperationId = 0
   private animationId: number | null = null
