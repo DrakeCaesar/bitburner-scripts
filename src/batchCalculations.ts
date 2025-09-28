@@ -7,7 +7,7 @@ export function prepForHack(server: Server, player: Player) {
   return { server: serverCopy, player }
 }
 
-export function prepForWeaken(server: Server, player: Player, hackThreads: number, ns: NS) {
+export function prepForWkn1(server: Server, player: Player, hackThreads: number, ns: NS) {
   const serverCopy = { ...server }
   serverCopy.hackDifficulty = serverCopy.minDifficulty! + ns.hackAnalyzeSecurity(hackThreads, undefined)
 
@@ -22,7 +22,7 @@ export function prepForGrow(server: Server, player: Player, hackThreshold: numbe
   return { server: serverCopy, player }
 }
 
-export function prepForWeaken2(server: Server, player: Player, growThreads: number, ns: NS, myCores: number) {
+export function prepForWkn2(server: Server, player: Player, growThreads: number, ns: NS, myCores: number) {
   const serverCopy = { ...server }
   serverCopy.hackDifficulty = serverCopy.minDifficulty! + ns.growthAnalyzeSecurity(growThreads, undefined, myCores)
   return { server: serverCopy, player }
@@ -107,7 +107,7 @@ export async function prepareServer(ns: NS, host: string, target: string) {
   }
 
   const growTime = ns.formulas.hacking.growTime(serverActual, player)
-  const weakenTime = ns.formulas.hacking.weakenTime(serverActual, player)
+  const weakenTime = ns.formulas.hacking.weakTime(serverActual, player)
   const waitTime = Math.max(growTime, weakenTime) + 200
   // ns.tprint(`Prep: Waiting ${waitTime} ms for grow/weaken to complete...`)
   await ns.sleep(waitTime)

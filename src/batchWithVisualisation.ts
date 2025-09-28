@@ -10,8 +10,8 @@ import {
   prepareServer,
   prepForGrow,
   prepForHack,
-  prepForWeaken,
-  prepForWeaken2,
+  prepForWkn1,
+  prepForWkn2,
 } from "./batchCalculations.js"
 import { initBatchVisualiser, logBatchOperation, nextBatch, setBatchInterval } from "./batchVisualiser.js"
 
@@ -32,60 +32,60 @@ export async function main(ns: NS) {
   while (true) {
     const player = ns.getPlayer()
 
-    const { server: hackServer, player: hackPlayer } = prepForHack(server, player)
-    const hackThreads = calculateHackThreads(hackServer, hackPlayer, moneyMax, hackThreshold, ns)
+    const { server: hackServ, player: hackPlay } = prepForHack(server, player)
+    const hackThreads = calculateHackThreads(hackServ, hackPlay, moneyMax, hackThreshold, ns)
 
-    const { server: weakenServer, player: weakenPlayer } = prepForWeaken(server, player, hackThreads, ns)
-    const weakenThreads1 = calculateWeakenThreads(weakenServer, weakenPlayer, myCores)
+    const { server: wkn1Serv, player: wkn1Play } = prepForWkn1(server, player, hackThreads, ns)
+    const wkn1Threads = calculateWeakenThreads(wkn1Serv, wkn1Play, myCores)
 
-    const { server: growServer, player: growPlayer } = prepForGrow(server, player, hackThreshold)
-    const growThreads = calculateGrowThreads(growServer, growPlayer, moneyMax, myCores, ns)
+    const { server: growServ, player: growPlay } = prepForGrow(server, player, hackThreshold)
+    const growThreads = calculateGrowThreads(growServ, growPlay, moneyMax, myCores, ns)
 
-    const { server: weaken2Server, player: weaken2Player } = prepForWeaken2(server, player, growThreads, ns, myCores)
-    const weakenThreads2 = calculateWeakenThreads2(weaken2Server, weaken2Player, myCores)
+    const { server: wkn2Serv, player: wkn2Play } = prepForWkn2(server, player, growThreads, ns, myCores)
+    const wkn2Threads = calculateWeakenThreads2(wkn2Serv, wkn2Play, myCores)
 
-    const hackTime = ns.formulas.hacking.hackTime(hackServer, hackPlayer)
-    const weaken1Time = ns.formulas.hacking.weakenTime(weaken2Server, weaken2Player)
-    const growTime = ns.formulas.hacking.growTime(growServer, growPlayer)
-    const weaken2Time = ns.formulas.hacking.weakenTime(weakenServer, weakenPlayer)
+    const hackTime = ns.formulas.hacking.hackTime(hackServ, hackPlay)
+    const wkn1Time = ns.formulas.hacking.weakTime(wkn2Serv, wkn2Play)
+    const growTime = ns.formulas.hacking.growTime(growServ, growPlay)
+    const wkn2Time = ns.formulas.hacking.weakTime(wkn1Serv, wkn1Play)
 
-    const maxWeakenTime = Math.max(weaken1Time, weaken2Time)
+    const maxWeakenTime = Math.max(wkn1Time, wkn2Time)
     const batchDelay = getDelta(maxWeakenTime, 0)
 
     if (batchCounter === 0) {
       setBatchInterval(batchDelay * 4)
     }
 
-    const sleepHack = maxWeakenTime - hackTime
-    const sleepWeaken1 = maxWeakenTime - weaken1Time
-    const sleepGrow = maxWeakenTime - growTime
-    const sleepWeaken2 = maxWeakenTime - weaken2Time
+    const hackSleep = maxWeakenTime - hackTime
+    const wkn1Sleep = maxWeakenTime - wkn1Time
+    const growSleep = maxWeakenTime - growTime
+    const wkn2Sleep = maxWeakenTime - wkn2Time
 
     const currentTime = Date.now()
-    const hackStart = currentTime
-    const hackEnd = hackStart + hackTime + sleepHack
-    const weaken1Start = currentTime + batchDelay
-    const weaken1End = weaken1Start + weaken1Time + sleepWeaken1
-    const growStart = currentTime + 2 * batchDelay
-    const growEnd = growStart + growTime + sleepGrow
-    const weaken2Start = currentTime + 3 * batchDelay
-    const weaken2End = weaken2Start + weaken2Time + sleepWeaken2
+    const hackStr = currentTime
+    const hackEnd = hackStr + hackTime + hackSleep
+    const wkn1Str = currentTime + batchDelay
+    const wkn1End = wkn1Str + wkn1Time + wkn1Sleep
+    const growStr = currentTime + 2 * batchDelay
+    const growEnd = growStr + growTime + growSleep
+    const wkn2Str = currentTime + 3 * batchDelay
+    const wkn2End = wkn2Str + wkn2Time + wkn2Sleep
 
-    const hackOpId = logBatchOperation("H", hackStart, hackEnd, batchCounter)
-    const weaken1OpId = logBatchOperation("W", weaken1Start, weaken1End, batchCounter)
-    const growOpId = logBatchOperation("G", growStart, growEnd, batchCounter)
-    const weaken2OpId = logBatchOperation("W", weaken2Start, weaken2End, batchCounter)
+    const hackOpId = logBatchOperation("H", hackStr, hackEnd, batchCounter)
+    const wkn1OpId = logBatchOperation("W", wkn1Str, wkn1End, batchCounter)
+    const growOpId = logBatchOperation("G", growStr, growEnd, batchCounter)
+    const wkn2OpId = logBatchOperation("W", wkn2Str, wkn2End, batchCounter)
 
-    ns.exec("/hacking/hack.js", host, hackThreads, target, sleepHack, hackOpId)
+    ns.exec("/hacking/hack.js", host, hackThreads, target, hackSleep, hackOpId)
     await ns.sleep(batchDelay)
 
-    ns.exec("/hacking/weaken.js", host, weakenThreads1, target, sleepWeaken1, weaken1OpId)
+    ns.exec("/hacking/weaken.js", host, wkn1Threads, target, wkn1Sleep, wkn1OpId)
     await ns.sleep(batchDelay)
 
-    ns.exec("/hacking/grow.js", host, growThreads, target, sleepGrow, growOpId)
+    ns.exec("/hacking/grow.js", host, growThreads, target, growSleep, growOpId)
     await ns.sleep(batchDelay)
 
-    ns.exec("/hacking/weaken.js", host, weakenThreads2, target, sleepWeaken2, weaken2OpId)
+    ns.exec("/hacking/weaken.js", host, wkn2Threads, target, wkn2Sleep, wkn2OpId)
     await ns.sleep(batchDelay)
 
     batchCounter++
