@@ -237,6 +237,15 @@ export async function main(ns: NS) {
       batchCounter
     )
 
+    // Check security before hack operation
+    const currentSec = ns.getServerSecurityLevel(target)
+    const difference = currentSec - baseSecurity
+    if (difference > secTolerance) {
+      ns.tprint(
+        `WARNING: Target ${target} has security increased by ${difference.toFixed(3)} (expected: ${baseSecurity}, actual: ${currentSec})`
+      )
+    }
+
     ns.exec("/hacking/hack.js", host, hackThreads, target, sleepHack, hackOpId)
     await ns.sleep(batchDelay)
     ns.exec(

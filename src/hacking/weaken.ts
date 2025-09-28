@@ -1,5 +1,5 @@
 import { NS } from "@ns"
-import { logActualBatchOperation } from "/src/batchVisualizerStub.js"
+import { logActualBatchOp } from "/src/batchVisualizerStub.js"
 
 export async function main(ns: NS) {
   const target = ns.args[0] // First parameter: target server.
@@ -8,5 +8,5 @@ export async function main(ns: NS) {
   const start = Date.now()
   await ns.weaken(target as string, { additionalMsec: delay })
   const end = Date.now()
-  logActualBatchOperation("W", start, end, operationId)
+  logActualBatchOp("W", start, end, operationId)
 }

@@ -1,5 +1,5 @@
 import { NS } from "@ns"
-import { logActualBatchOperation } from "/src/batchVisualizerStub.js"
+import { logActualBatchOp } from "/src/batchVisualizerStub.js"
 
 export async function main(ns: NS) {
   const target = ns.args[0]
@@ -8,5 +8,5 @@ export async function main(ns: NS) {
   const start = Date.now()
   await ns.grow(target as string, { additionalMsec: delay })
   const end = Date.now()
-  logActualBatchOperation("G", start, end, operationId)
+  logActualBatchOp("G", start, end, operationId)
 }

@@ -33,6 +33,7 @@ This repository contains scripts for the Bitburner programming game. Scripts run
 - **Netscript Import**: Use `import { NS } from "@ns"` for Bitburner API types
 - **Local Modules**: Use relative paths like `"./libraries/connect.js"` or `"/src/libraries/connect.js"`
 - **Path Aliases**: `@/*` and `/src/*` resolve to `./src/*`
+- **Import Extensions**: Imports use `.js` extensions even when importing from `.ts` files (TypeScript compilation requirement). When editing files referenced in imports with `.js` extensions, check for corresponding `.ts` source files first.
 
 ### Script Entry Points
 All Bitburner scripts must export a `main` function:
