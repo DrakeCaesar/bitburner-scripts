@@ -87,7 +87,7 @@ class BatchVisualiser {
     this.floatingWindow = new FloatingWindow({
       title: "Batching",
       content: this.canvas,
-      width: this.width + 22,
+      width: this.width + 18,
       height: this.height,
       id: "batch-visualiser-window",
       x: 50,
