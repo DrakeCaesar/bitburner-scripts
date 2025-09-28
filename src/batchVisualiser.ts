@@ -26,6 +26,8 @@ class BatchVisualiser {
   private nextOperationId = 0
   private animationId: number | null = null
   private isAnimating = false
+  private batchInterval = 5000 // milliseconds between batches (default, will be updated)
+  private lastBatchTime = 0
 
   // Color mapping for operations
   private predictedColors = {
@@ -136,6 +138,12 @@ class BatchVisualiser {
   }
 
   public nextBatch(): void {
+    const now = Date.now()
+    if (this.lastBatchTime > 0) {
+      // Update batch interval based on actual timing
+      this.batchInterval = now - this.lastBatchTime
+    }
+    this.lastBatchTime = now
     this.currentBatchId++
   }
 
@@ -195,6 +203,15 @@ class BatchVisualiser {
 
     if (visibleOps.length === 0) return
 
+    // Group operations by batch
+    const batchGroups = new Map<number, Operation[]>()
+    visibleOps.forEach((op) => {
+      if (!batchGroups.has(op.batchId)) {
+        batchGroups.set(op.batchId, [])
+      }
+      batchGroups.get(op.batchId)!.push(op)
+    })
+
     // Draw background
     ctx.fillStyle = "rgba(0, 0, 0, 0.9)"
     ctx.fillRect(0, 0, this.width, this.height)
@@ -209,17 +226,16 @@ class BatchVisualiser {
       this.margin.left +
       ((time - startTime) * this.chartWidth) / this.timeWindow
 
-    const yScale = (index: number, total: number) =>
-      this.margin.top + (index * this.chartHeight) / Math.max(total, 1)
+    // Calculate smooth scrolling offset based on time since last batch
+    const timeSinceLastBatch = this.lastBatchTime > 0 ? now - this.lastBatchTime : 0
+    const scrollOffset = (timeSinceLastBatch / this.batchInterval) * (this.chartHeight / Math.max(batchGroups.size, 1))
 
-    // Group operations by batch
-    const batchGroups = new Map<number, Operation[]>()
-    visibleOps.forEach((op) => {
-      if (!batchGroups.has(op.batchId)) {
-        batchGroups.set(op.batchId, [])
-      }
-      batchGroups.get(op.batchId)!.push(op)
-    })
+    const yScale = (batchId: number, total: number) => {
+      // Calculate position - higher batchId should be lower on screen (newer batches at bottom)
+      const oldestBatchId = Math.min(...Array.from(batchGroups.keys()))
+      const relativePosition = batchId - oldestBatchId // position from oldest
+      return this.margin.top + (relativePosition * this.chartHeight) / Math.max(total, 1) - scrollOffset
+    }
 
     // Draw grid lines
     ctx.strokeStyle = "#333333"
@@ -235,10 +251,13 @@ class BatchVisualiser {
 
     // Horizontal grid lines (batches)
     const totalBatches = Math.max(batchGroups.size, 1)
-    for (let i = 0; i <= totalBatches; i++) {
-      const y = yScale(i, totalBatches)
-      ctx.moveTo(this.margin.left, y)
-      ctx.lineTo(this.margin.left + this.chartWidth, y)
+    const sortedBatchIds = Array.from(batchGroups.keys()).sort((a, b) => a - b) // oldest first
+    for (let i = 0; i < sortedBatchIds.length; i++) {
+      const y = yScale(sortedBatchIds[i], totalBatches)
+      if (y >= this.margin.top && y <= this.margin.top + this.chartHeight) {
+        ctx.moveTo(this.margin.left, y)
+        ctx.lineTo(this.margin.left + this.chartWidth, y)
+      }
     }
     ctx.stroke()
 
@@ -256,11 +275,14 @@ class BatchVisualiser {
     ctx.stroke()
 
     // Draw operations
-    let batchIndex = 0
+    const batchHeight = (this.chartHeight / Math.max(batchGroups.size, 1)) * 0.9
     for (const [batchId, ops] of batchGroups.entries()) {
-      const baseY = yScale(batchIndex, batchGroups.size)
-      const batchHeight =
-        (this.chartHeight / Math.max(batchGroups.size, 1)) * 0.9
+      const baseY = yScale(batchId, batchGroups.size)
+
+      // Skip drawing batches that are outside the visible area
+      if (baseY + batchHeight < this.margin.top || baseY > this.margin.top + this.chartHeight) {
+        continue
+      }
 
       // Draw batch label
       ctx.fillStyle = "#ffffff"
@@ -324,8 +346,6 @@ class BatchVisualiser {
           )
         }
       })
-
-      batchIndex++
     }
 
     // Draw time axis labels
@@ -365,6 +385,7 @@ class BatchVisualiser {
     this.operations = []
     this.currentBatchId = 0
     this.nextOperationId = 0
+    this.lastBatchTime = 0
     if (this.context) {
       this.context.clearRect(0, 0, this.width, this.height)
     }
