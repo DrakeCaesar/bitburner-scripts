@@ -126,7 +126,7 @@ export async function main(ns: NS) {
 
     // Check security before first weaken operation
     const preWeaken1Sec = ns.getServerSecurityLevel(target)
-    const expectedWeaken1Sec = weakenServer.hackDifficulty!
+    const expectedWeaken1Sec = weaken2Server.hackDifficulty!
     const weaken1SecDifference = Math.abs(preWeaken1Sec - expectedWeaken1Sec)
     ns.tprint(
       `Weaken1: Exp ${expectedWeaken1Sec.toFixed(3)}, Act ${preWeaken1Sec.toFixed(3)}, Dif ${weaken1SecDifference.toFixed(3)}`
@@ -147,7 +147,7 @@ export async function main(ns: NS) {
 
     // Check security before second weaken operation
     const preWeaken2Sec = ns.getServerSecurityLevel(target)
-    const expectedWeaken2Sec = weaken2Server.hackDifficulty!
+    const expectedWeaken2Sec = weakenServer.hackDifficulty!
     const weaken2SecDifference = Math.abs(preWeaken2Sec - expectedWeaken2Sec)
     ns.tprint(
       `Weaken2: Exp ${expectedWeaken2Sec.toFixed(3)}, Act ${preWeaken2Sec.toFixed(3)}, Dif ${weaken2SecDifference.toFixed(3)}`
