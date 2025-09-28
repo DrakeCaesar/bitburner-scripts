@@ -50,12 +50,7 @@ class BatchVisualiser {
   }
 
   private initCanvas(): void {
-    if (
-      this.isInitialized &&
-      this.floatingWindow &&
-      this.floatingWindow.getElement()
-    )
-      return
+    if (this.isInitialized && this.floatingWindow && this.floatingWindow.getElement()) return
 
     // Remove any existing floating windows with the same ID
     const existingWindow = document.getElementById("batch-visualiser-window")
@@ -131,9 +126,7 @@ class BatchVisualiser {
   }
 
   public endOperation(operationId: number): void {
-    const operation = this.operations.find(
-      (op) => op.operationId === operationId
-    )
+    const operation = this.operations.find((op) => op.operationId === operationId)
     if (operation) {
       operation.end = Date.now()
     }
@@ -156,12 +149,7 @@ class BatchVisualiser {
     this.currentBatchId++
   }
 
-  public logOperation(
-    type: "H" | "W" | "G",
-    start: number,
-    end: number,
-    batchId?: number
-  ): number {
+  public logOperation(type: "H" | "W" | "G", start: number, end: number, batchId?: number): number {
     const operationId = this.nextOperationId++
     const operation: Operation = {
       type,
@@ -174,12 +162,7 @@ class BatchVisualiser {
     return operationId
   }
 
-  public logActualOp(
-    type: "H" | "W" | "G",
-    actualStart: number,
-    actualEnd: number,
-    operationId: number
-  ): void {
+  public logActualOp(type: "H" | "W" | "G", actualStart: number, actualEnd: number, operationId: number): void {
     // Find the exact matching predicted operation by operationId
     for (let i = 0; i < this.operations.length; i++) {
       const op = this.operations[i]
@@ -191,9 +174,7 @@ class BatchVisualiser {
     }
 
     // If no matching predicted operation found, log warning
-    console.warn(
-      `No predicted operation found for operationId ${operationId}, type ${type}`
-    )
+    console.warn(`No predicted operation found for operationId ${operationId}, type ${type}`)
   }
 
   private draw(): void {
@@ -231,15 +212,11 @@ class BatchVisualiser {
     // ctx.fillText("Batching", 10, 25)
 
     // Calculate scales
-    const xScale = (time: number) =>
-      this.margin.left +
-      ((time - startTime) * this.chartWidth) / this.timeWindow
+    const xScale = (time: number) => this.margin.left + ((time - startTime) * this.chartWidth) / this.timeWindow
 
     // Calculate smooth scrolling offset based on absolute time since first batch
-    const totalElapsedTime =
-      this.firstBatchTime > 0 ? now - this.firstBatchTime : 0
-    const scrollOffset =
-      (totalElapsedTime / this.batchInterval) * this.constantBatchHeight
+    const totalElapsedTime = this.firstBatchTime > 0 ? now - this.firstBatchTime : 0
+    const scrollOffset = (totalElapsedTime / this.batchInterval) * this.constantBatchHeight
 
     const yScale = (batchId: number) => {
       // Use absolute positioning based on batch ID to prevent jumping when batches are removed
@@ -284,10 +261,7 @@ class BatchVisualiser {
     ctx.moveTo(this.margin.left, this.margin.top)
     ctx.lineTo(this.margin.left, this.margin.top + this.chartHeight)
     ctx.moveTo(this.margin.left, this.margin.top + this.chartHeight)
-    ctx.lineTo(
-      this.margin.left + this.chartWidth,
-      this.margin.top + this.chartHeight
-    )
+    ctx.lineTo(this.margin.left + this.chartWidth, this.margin.top + this.chartHeight)
     ctx.stroke()
 
     // Draw operations
@@ -295,10 +269,7 @@ class BatchVisualiser {
       const baseY = yScale(batchId)
 
       // Skip drawing batches that are outside the visible area
-      if (
-        baseY + this.constantBatchHeight < this.margin.top ||
-        baseY > this.margin.top + this.chartHeight
-      ) {
+      if (baseY + this.constantBatchHeight < this.margin.top || baseY > this.margin.top + this.chartHeight) {
         continue
       }
 
@@ -316,8 +287,7 @@ class BatchVisualiser {
         // Use a fixed slot system - always assume 4 operations per batch for consistent spacing
         const maxOpsPerBatch = 4
         const slotIndex = op.operationId % maxOpsPerBatch
-        const y =
-          baseY + (slotIndex * this.constantBatchHeight) / maxOpsPerBatch
+        const y = baseY + (slotIndex * this.constantBatchHeight) / maxOpsPerBatch
         const opHeight = (this.constantBatchHeight / maxOpsPerBatch) * 0.8
         const barHeight = opHeight / 2 // Split height for two bars
 
@@ -358,11 +328,7 @@ class BatchVisualiser {
           const actualDuration = Math.round(op.actualEnd - op.actualStart)
           ctx.fillStyle = "#cccccc"
           ctx.font = "8px monospace"
-          ctx.fillText(
-            `A:${actualDuration}ms`,
-            actualX2 + 2,
-            actualY + barHeight / 2
-          )
+          ctx.fillText(`A:${actualDuration}ms`, actualX2 + 2, actualY + barHeight / 2)
         }
       })
     }
@@ -383,21 +349,13 @@ class BatchVisualiser {
       ctx.fillStyle = color
       ctx.fillRect(x, legendY, 15, 15)
       ctx.fillStyle = "#ffffff"
-      ctx.fillText(
-        type === "H" ? "Hack" : type === "W" ? "Weaken" : "Grow",
-        x + 20,
-        legendY + 12
-      )
+      ctx.fillText(type === "H" ? "Hack" : type === "W" ? "Weaken" : "Grow", x + 20, legendY + 12)
     })
 
     // Draw current operations count
     ctx.fillStyle = "#ffffff"
     ctx.font = "12px monospace"
-    ctx.fillText(
-      `Operations: ${this.operations.length} | Batches: ${this.currentBatchId + 1}`,
-      this.width - 200,
-      25
-    )
+    ctx.fillText(`Operations: ${this.operations.length} | Batches: ${this.currentBatchId + 1}`, this.width - 200, 25)
   }
 
   public clear(): void {
@@ -468,12 +426,7 @@ export function initBatchVisualiser(batchInterval?: number): BatchVisualiser {
   return visualiser
 }
 
-export function logBatchOperation(
-  type: "H" | "W" | "G",
-  start: number,
-  end: number,
-  batchId?: number
-): number {
+export function logBatchOperation(type: "H" | "W" | "G", start: number, end: number, batchId?: number): number {
   if (!visualiser) {
     visualiser = new BatchVisualiser()
   }
@@ -492,10 +445,7 @@ export function logActualBatchOperation(
   visualiser.logActualOp(type, actualStart, actualEnd, operationId)
 }
 
-export function startBatchOperation(
-  type: "H" | "W" | "G",
-  batchId?: number
-): number {
+export function startBatchOperation(type: "H" | "W" | "G", batchId?: number): number {
   if (!visualiser) {
     visualiser = new BatchVisualiser()
   }

@@ -28,6 +28,7 @@
     "watch:transpile": "tsc -w --preserveWatchOutput"
   },
   "prettier": {
+    "printWidth": 120,
     "quoteProps": "preserve",
     "semi": false,
     "singleQuote": false,

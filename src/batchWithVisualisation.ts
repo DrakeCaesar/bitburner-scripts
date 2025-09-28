@@ -13,33 +13,18 @@ import {
   prepForWeaken,
   prepForWeaken2,
 } from "./batchCalculations.js"
-import {
-  initBatchVisualiser,
-  logBatchOperation,
-  nextBatch,
-  setBatchInterval,
-} from "./batchVisualiser.js"
+import { initBatchVisualiser, logBatchOperation, nextBatch, setBatchInterval } from "./batchVisualiser.js"
 
 export async function main(ns: NS) {
   const host = (ns.args[0] as string) ?? ns.getHostname()
   const target = ns.args[1] as string
 
   await killOtherInstances(ns)
-
-  // Kill all other scripts on the host server
   ns.killall(host)
-  ns.tprint(`Killed all scripts on ${host}`)
-
   await copyRequiredScripts(ns, host)
-
-  // Initialize the real-time visualiser (will set interval after calculating it)
   initBatchVisualiser()
 
-  const { moneyMax, baseSecurity, secTolerance, myCores } = await prepareServer(
-    ns,
-    host,
-    target
-  )
+  const { moneyMax, baseSecurity, secTolerance, myCores } = await prepareServer(ns, host, target)
   const hackThreshold = 0.25
 
   let batchCounter = 0
@@ -53,82 +38,34 @@ export async function main(ns: NS) {
       `Base server state: money=${server.moneyAvailable}, security=${server.hackDifficulty}, minSec=${server.minDifficulty}`
     )
 
-    const { server: hackServer, player: hackPlayer } = prepForHack(
-      server,
-      player
-    )
-    ns.tprint(
-      `PrepForHack: money=${hackServer.moneyAvailable}, security=${hackServer.hackDifficulty}`
-    )
-    const hackThreads = calculateHackThreads(
-      hackServer,
-      hackPlayer,
-      moneyMax,
-      hackThreshold,
-      ns
-    )
+    const { server: hackServer, player: hackPlayer } = prepForHack(server, player)
+    ns.tprint(`PrepForHack: money=${hackServer.moneyAvailable}, security=${hackServer.hackDifficulty}`)
+    const hackThreads = calculateHackThreads(hackServer, hackPlayer, moneyMax, hackThreshold, ns)
     ns.tprint(`Hack threads calculated: ${hackThreads}`)
 
-    const { server: weakenServer, player: weakenPlayer } = prepForWeaken(
-      server,
-      player,
-      hackThreads,
-      ns
-    )
+    const { server: weakenServer, player: weakenPlayer } = prepForWeaken(server, player, hackThreads, ns)
     ns.tprint(
       `PrepForWeaken1: security=${weakenServer.hackDifficulty} (base=${server.minDifficulty} + hackSec=${ns.hackAnalyzeSecurity(hackThreads, undefined)})`
     )
-    const weakenThreads1 = calculateWeakenThreads(
-      weakenServer,
-      weakenPlayer,
-      myCores
-    )
+    const weakenThreads1 = calculateWeakenThreads(weakenServer, weakenPlayer, myCores)
     ns.tprint(`Weaken1 threads calculated: ${weakenThreads1}`)
 
-    const { server: growServer, player: growPlayer } = prepForGrow(
-      server,
-      player,
-      hackThreshold
-    )
-    ns.tprint(
-      `PrepForGrow: money=${growServer.moneyAvailable}, security=${growServer.hackDifficulty}`
-    )
-    const growThreads = calculateGrowThreads(
-      growServer,
-      growPlayer,
-      moneyMax,
-      myCores,
-      ns
-    )
+    const { server: growServer, player: growPlayer } = prepForGrow(server, player, hackThreshold)
+    ns.tprint(`PrepForGrow: money=${growServer.moneyAvailable}, security=${growServer.hackDifficulty}`)
+    const growThreads = calculateGrowThreads(growServer, growPlayer, moneyMax, myCores, ns)
     ns.tprint(`Grow threads calculated: ${growThreads}`)
 
-    const { server: weaken2Server, player: weaken2Player } = prepForWeaken2(
-      server,
-      player,
-      growThreads,
-      ns,
-      myCores
-    )
+    const { server: weaken2Server, player: weaken2Player } = prepForWeaken2(server, player, growThreads, ns, myCores)
     ns.tprint(
       `PrepForWeaken2: security=${weaken2Server.hackDifficulty} (base=${server.minDifficulty} + growSec=${ns.growthAnalyzeSecurity(growThreads, undefined, myCores)})`
     )
-    const weakenThreads2 = calculateWeakenThreads2(
-      weaken2Server,
-      weaken2Player,
-      myCores
-    )
+    const weakenThreads2 = calculateWeakenThreads2(weaken2Server, weaken2Player, myCores)
     ns.tprint(`Weaken2 threads calculated: ${weakenThreads2}`)
 
     const hackTime = ns.formulas.hacking.hackTime(hackServer, hackPlayer)
-    const weakenTime = ns.formulas.hacking.weakenTime(
-      weakenServer,
-      weakenPlayer
-    )
+    const weakenTime = ns.formulas.hacking.weakenTime(weakenServer, weakenPlayer)
     const growTime = ns.formulas.hacking.growTime(growServer, growPlayer)
-    const weaken2Time = ns.formulas.hacking.weakenTime(
-      weaken2Server,
-      weaken2Player
-    )
+    const weaken2Time = ns.formulas.hacking.weakenTime(weaken2Server, weaken2Player)
 
     ns.tprint(
       `Operation times: hack=${hackTime}ms, weaken1=${weakenTime}ms, grow=${growTime}ms, weaken2=${weaken2Time}ms`
@@ -173,19 +110,9 @@ export async function main(ns: NS) {
 
     // Log operations to visualiser (predicting when they'll complete) and get operation IDs
     const hackOpId = logBatchOperation("H", hackStart, hackEnd, batchCounter)
-    const weaken1OpId = logBatchOperation(
-      "W",
-      weaken1Start,
-      weaken1End,
-      batchCounter
-    )
+    const weaken1OpId = logBatchOperation("W", weaken1Start, weaken1End, batchCounter)
     const growOpId = logBatchOperation("G", growStart, growEnd, batchCounter)
-    const weaken2OpId = logBatchOperation(
-      "W",
-      weaken2Start,
-      weaken2End,
-      batchCounter
-    )
+    const weaken2OpId = logBatchOperation("W", weaken2Start, weaken2End, batchCounter)
 
     // Check security before hack operation
     const preHackSec = ns.getServerSecurityLevel(target)
@@ -210,14 +137,7 @@ export async function main(ns: NS) {
       )
     }
 
-    ns.exec(
-      "/hacking/weaken.js",
-      host,
-      weakenThreads1,
-      target,
-      sleepWeaken1,
-      weaken1OpId
-    )
+    ns.exec("/hacking/weaken.js", host, weakenThreads1, target, sleepWeaken1, weaken1OpId)
     await ns.sleep(batchDelay)
 
     // Check security before grow operation
@@ -243,14 +163,7 @@ export async function main(ns: NS) {
       )
     }
 
-    ns.exec(
-      "/hacking/weaken.js",
-      host,
-      weakenThreads2,
-      target,
-      sleepWeaken2,
-      weaken2OpId
-    )
+    ns.exec("/hacking/weaken.js", host, weakenThreads2, target, sleepWeaken2, weaken2OpId)
     await ns.sleep(batchDelay)
 
     batchCounter++
