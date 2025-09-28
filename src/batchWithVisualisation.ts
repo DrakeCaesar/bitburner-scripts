@@ -73,7 +73,6 @@ export async function main(ns: NS) {
 
   let batchCounter = 0
   while (true) {
-
     const currentTime = Date.now()
     const hackStr = currentTime
     const hackEnd = hackStr + hackTime + hackSleep
@@ -89,12 +88,21 @@ export async function main(ns: NS) {
     const growOpId = logBatchOperation("G", growStr, growEnd, batchCounter)
     const wkn2OpId = logBatchOperation("W", wkn2Str, wkn2End, batchCounter)
 
+    const minSecurity = ns.getServerMinSecurityLevel(target)
+    const preHackSecurityIncrease = ns.getServerSecurityLevel(target) - minSecurity
+    if (preHackSecurityIncrease > 0) {
+      ns.tprint(`WARNING: ${target} security above minimum by ${preHackSecurityIncrease.toFixed(2)}`)
+    }
     ns.exec("/hacking/hack.js", host, hackThreads, target, hackSleep, hackOpId)
     await ns.sleep(batchDelay)
 
     ns.exec("/hacking/weaken.js", host, wkn1Threads, target, wkn1Sleep, wkn1OpId)
     await ns.sleep(batchDelay)
 
+    const preGrowSecurityIncrease = ns.getServerSecurityLevel(target) - minSecurity
+    if (preGrowSecurityIncrease > ns.hackAnalyzeSecurity(hackThreads, target)) {
+      ns.tprint(`WARNING: ${target} security above minimum by ${preHackSecurityIncrease.toFixed(2)}`)
+    }
     ns.exec("/hacking/grow.js", host, growThreads, target, growSleep, growOpId)
     await ns.sleep(batchDelay)
 
