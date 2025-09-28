@@ -28,7 +28,7 @@ class BatchVisualiser {
   private isAnimating = false
   private batchInterval = 5000 // milliseconds between batches (default, will be updated)
   private lastBatchTime = 0
-  private constantBatchHeight = 80 // Fixed height for each batch
+  private constantBatchHeight = 160 // Fixed height for each batch
   private firstBatchTime = 0 // When the first batch was created
 
   // Color mapping for operations
@@ -236,14 +236,22 @@ class BatchVisualiser {
       ((time - startTime) * this.chartWidth) / this.timeWindow
 
     // Calculate smooth scrolling offset based on absolute time since first batch
-    const totalElapsedTime = this.firstBatchTime > 0 ? now - this.firstBatchTime : 0
-    const scrollOffset = (totalElapsedTime / this.batchInterval) * this.constantBatchHeight
+    const totalElapsedTime =
+      this.firstBatchTime > 0 ? now - this.firstBatchTime : 0
+    const scrollOffset =
+      (totalElapsedTime / this.batchInterval) * this.constantBatchHeight
 
     const yScale = (batchId: number) => {
       // Use absolute positioning based on batch ID to prevent jumping when batches are removed
       // Each batch gets a fixed position based on its ID
       // Start from the bottom, new batches appear below previous ones, scroll up over time
-      return this.margin.top + this.chartHeight - (this.constantBatchHeight * 2) + (batchId * this.constantBatchHeight) - scrollOffset
+      return (
+        this.margin.top +
+        this.chartHeight -
+        this.constantBatchHeight * 1.25 +
+        batchId * this.constantBatchHeight -
+        scrollOffset
+      )
     }
 
     // Draw grid lines
@@ -287,7 +295,10 @@ class BatchVisualiser {
       const baseY = yScale(batchId)
 
       // Skip drawing batches that are outside the visible area
-      if (baseY + this.constantBatchHeight < this.margin.top || baseY > this.margin.top + this.chartHeight) {
+      if (
+        baseY + this.constantBatchHeight < this.margin.top ||
+        baseY > this.margin.top + this.chartHeight
+      ) {
         continue
       }
 
@@ -305,7 +316,8 @@ class BatchVisualiser {
         // Use a fixed slot system - always assume 4 operations per batch for consistent spacing
         const maxOpsPerBatch = 4
         const slotIndex = op.operationId % maxOpsPerBatch
-        const y = baseY + (slotIndex * this.constantBatchHeight) / maxOpsPerBatch
+        const y =
+          baseY + (slotIndex * this.constantBatchHeight) / maxOpsPerBatch
         const opHeight = (this.constantBatchHeight / maxOpsPerBatch) * 0.8
         const barHeight = opHeight / 2 // Split height for two bars
 
