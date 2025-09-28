@@ -5,12 +5,12 @@ import {
   calculateWeakThreads,
   copyRequiredScripts,
   getDelta,
-  growServer,
-  hackServer,
+  growServerInstance,
+  hackServerInstance,
   killOtherInstances,
   prepareServer,
-  wkn1Server,
-  wkn2Server,
+  wkn1ServerInstance,
+  wkn2ServerInstance,
 } from "./batchCalculations.js"
 import { initBatchVisualiser, logBatchOperation, nextBatch, setBatchInterval } from "./batchVisualiser.js"
 
@@ -31,22 +31,22 @@ export async function main(ns: NS) {
   while (true) {
     const player = ns.getPlayer()
 
-    const { server: hackServ, player: hackPlay } = hackServer(server, player)
-    const hackThreads = calculateHackThreads(hackServ, hackPlay, moneyMax, hackThreshold, ns)
+    const { server: hackServer, player: hackPlayer } = hackServerInstance(server, player)
+    const hackThreads = calculateHackThreads(hackServer, hackPlayer, moneyMax, hackThreshold, ns)
 
-    const { server: wkn1Serv, player: wkn1Play } = wkn1Server(server, player, hackThreads, ns)
-    const wkn1Threads = calculateWeakThreads(wkn1Serv, wkn1Play, myCores)
+    const { server: wkn1Server, player: wkn1Player } = wkn1ServerInstance(server, player, hackThreads, ns)
+    const wkn1Threads = calculateWeakThreads(wkn1Server, wkn1Player, myCores)
 
-    const { server: growServ, player: growPlay } = growServer(server, player, hackThreshold)
-    const growThreads = calculateGrowThreads(growServ, growPlay, moneyMax, myCores, ns)
+    const { server: growServer, player: growPlayer } = growServerInstance(server, player, hackThreshold)
+    const growThreads = calculateGrowThreads(growServer, growPlayer, moneyMax, myCores, ns)
 
-    const { server: wkn2Serv, player: wkn2Play } = wkn2Server(server, player, growThreads, ns, myCores)
-    const wkn2Threads = calculateWeakThreads(wkn2Serv, wkn2Play, myCores)
+    const { server: wkn2Server, player: wkn2Player } = wkn2ServerInstance(server, player, growThreads, ns, myCores)
+    const wkn2Threads = calculateWeakThreads(wkn2Server, wkn2Player, myCores)
 
-    const hackTime = ns.formulas.hacking.hackTime(hackServ, hackPlay)
-    const wkn1Time = ns.formulas.hacking.weakTime(wkn2Serv, wkn2Play)
-    const growTime = ns.formulas.hacking.growTime(growServ, growPlay)
-    const wkn2Time = ns.formulas.hacking.weakTime(wkn1Serv, wkn1Play)
+    const hackTime = ns.formulas.hacking.hackTime(hackServer, hackPlayer)
+    const wkn1Time = ns.formulas.hacking.weakenTime(wkn2Server, wkn2Player)
+    const growTime = ns.formulas.hacking.growTime(growServer, growPlayer)
+    const wkn2Time = ns.formulas.hacking.weakenTime(wkn1Server, wkn1Player)
 
     const maxWeakenTime = Math.max(wkn1Time, wkn2Time)
     const batchDelay = getDelta(maxWeakenTime, 0)

@@ -1,20 +1,20 @@
 import { NS, Person, Player, Server } from "@ns"
 
-export function hackServer(server: Server, player: Player) {
+export function hackServerInstance(server: Server, player: Player) {
   const serverCopy = { ...server }
   serverCopy.moneyAvailable = serverCopy.moneyMax!
   serverCopy.hackDifficulty = serverCopy.minDifficulty
   return { server: serverCopy, player }
 }
 
-export function wkn1Server(server: Server, player: Player, hackThreads: number, ns: NS) {
+export function wkn1ServerInstance(server: Server, player: Player, hackThreads: number, ns: NS) {
   const serverCopy = { ...server }
   serverCopy.hackDifficulty = serverCopy.minDifficulty! + ns.hackAnalyzeSecurity(hackThreads, undefined)
 
   return { server: serverCopy, player }
 }
 
-export function growServer(server: Server, player: Player, hackThreshold: number) {
+export function growServerInstance(server: Server, player: Player, hackThreshold: number) {
   const serverCopy = { ...server }
   serverCopy.moneyAvailable = serverCopy.moneyMax! * hackThreshold
   serverCopy.hackDifficulty = serverCopy.minDifficulty
@@ -22,7 +22,7 @@ export function growServer(server: Server, player: Player, hackThreshold: number
   return { server: serverCopy, player }
 }
 
-export function wkn2Server(server: Server, player: Player, growThreads: number, ns: NS, myCores: number) {
+export function wkn2ServerInstance(server: Server, player: Player, growThreads: number, ns: NS, myCores: number) {
   const serverCopy = { ...server }
   serverCopy.hackDifficulty = serverCopy.minDifficulty! + ns.growthAnalyzeSecurity(growThreads, undefined, myCores)
   return { server: serverCopy, player }
@@ -103,7 +103,7 @@ export async function prepareServer(ns: NS, host: string, target: string) {
   }
 
   const growTime = ns.formulas.hacking.growTime(serverActual, player)
-  const weakenTime = ns.formulas.hacking.weakTime(serverActual, player)
+  const weakenTime = ns.formulas.hacking.weakenTime(serverActual, player)
   const waitTime = Math.max(growTime, weakenTime) + 200
   // ns.tprint(`Prep: Waiting ${waitTime} ms for grow/weaken to complete...`)
   await ns.sleep(waitTime)
