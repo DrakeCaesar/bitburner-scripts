@@ -63,7 +63,7 @@ class BatchVisualiser {
     this.canvas.id = "batch-visualiser"
 
     this.width = Math.min(window.innerWidth * 0.9, 2000)
-    this.height = Math.min(window.innerHeight * 0.9, 1200)
+    this.height = Math.min(window.innerHeight * 0.9, 900)
     this.canvas.width = this.width
     this.canvas.height = this.height
     this.canvas.style.backgroundColor = "rgba(0, 0, 0, 0.9)"
