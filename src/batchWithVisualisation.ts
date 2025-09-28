@@ -118,11 +118,9 @@ export async function main(ns: NS) {
     const preHackSec = ns.getServerSecurityLevel(target)
     const expectedHackSec = hackServer.hackDifficulty! // Should be baseSecurity
     const hackSecDifference = Math.abs(preHackSec - expectedHackSec)
-    if (hackSecDifference > secTolerance) {
-      ns.tprint(
-        `SECURITY CHECK (Hack): Expected ${expectedHackSec.toFixed(3)}, Actual ${preHackSec.toFixed(3)}, Difference ${hackSecDifference.toFixed(3)}`
-      )
-    }
+    ns.tprint(
+      `SECURITY CHECK (Hack): Expected ${expectedHackSec.toFixed(3)}, Actual ${preHackSec.toFixed(3)}, Difference ${hackSecDifference.toFixed(3)}`
+    )
 
     ns.exec("/hacking/hack.js", host, hackThreads, target, sleepHack, hackOpId)
     await ns.sleep(batchDelay)
@@ -131,11 +129,9 @@ export async function main(ns: NS) {
     const preWeaken1Sec = ns.getServerSecurityLevel(target)
     const expectedWeaken1Sec = weakenServer.hackDifficulty!
     const weaken1SecDifference = Math.abs(preWeaken1Sec - expectedWeaken1Sec)
-    if (weaken1SecDifference > secTolerance) {
-      ns.tprint(
-        `SECURITY CHECK (Weaken1): Expected ${expectedWeaken1Sec.toFixed(3)}, Actual ${preWeaken1Sec.toFixed(3)}, Difference ${weaken1SecDifference.toFixed(3)}`
-      )
-    }
+    ns.tprint(
+      `SECURITY CHECK (Weaken1): Expected ${expectedWeaken1Sec.toFixed(3)}, Actual ${preWeaken1Sec.toFixed(3)}, Difference ${weaken1SecDifference.toFixed(3)}`
+    )
 
     ns.exec("/hacking/weaken.js", host, weakenThreads1, target, sleepWeaken1, weaken1OpId)
     await ns.sleep(batchDelay)
@@ -144,11 +140,9 @@ export async function main(ns: NS) {
     const preGrowSec = ns.getServerSecurityLevel(target)
     const expectedGrowSec = growServer.hackDifficulty! // Should be baseSecurity
     const growSecDifference = Math.abs(preGrowSec - expectedGrowSec)
-    if (growSecDifference > secTolerance) {
-      ns.tprint(
-        `SECURITY CHECK (Grow): Expected ${expectedGrowSec.toFixed(3)}, Actual ${preGrowSec.toFixed(3)}, Difference ${growSecDifference.toFixed(3)}`
-      )
-    }
+    ns.tprint(
+      `SECURITY CHECK (Grow): Expected ${expectedGrowSec.toFixed(3)}, Actual ${preGrowSec.toFixed(3)}, Difference ${growSecDifference.toFixed(3)}`
+    )
 
     ns.exec("/hacking/grow.js", host, growThreads, target, sleepGrow, growOpId)
     await ns.sleep(batchDelay)
@@ -157,11 +151,9 @@ export async function main(ns: NS) {
     const preWeaken2Sec = ns.getServerSecurityLevel(target)
     const expectedWeaken2Sec = weaken2Server.hackDifficulty!
     const weaken2SecDifference = Math.abs(preWeaken2Sec - expectedWeaken2Sec)
-    if (weaken2SecDifference > secTolerance) {
-      ns.tprint(
-        `SECURITY CHECK (Weaken2): Expected ${expectedWeaken2Sec.toFixed(3)}, Actual ${preWeaken2Sec.toFixed(3)}, Difference ${weaken2SecDifference.toFixed(3)}`
-      )
-    }
+    ns.tprint(
+      `SECURITY CHECK (Weaken2): Expected ${expectedWeaken2Sec.toFixed(3)}, Actual ${preWeaken2Sec.toFixed(3)}, Difference ${weaken2SecDifference.toFixed(3)}`
+    )
 
     ns.exec("/hacking/weaken.js", host, weakenThreads2, target, sleepWeaken2, weaken2OpId)
     await ns.sleep(batchDelay)
