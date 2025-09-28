@@ -1,20 +1,20 @@
 import { NS, Person, Player, Server } from "@ns"
 
-export function prepForHack(server: Server, player: Player) {
+export function hackServer(server: Server, player: Player) {
   const serverCopy = { ...server }
   serverCopy.moneyAvailable = serverCopy.moneyMax!
   serverCopy.hackDifficulty = serverCopy.minDifficulty
   return { server: serverCopy, player }
 }
 
-export function prepForWkn1(server: Server, player: Player, hackThreads: number, ns: NS) {
+export function wkn1Server(server: Server, player: Player, hackThreads: number, ns: NS) {
   const serverCopy = { ...server }
   serverCopy.hackDifficulty = serverCopy.minDifficulty! + ns.hackAnalyzeSecurity(hackThreads, undefined)
 
   return { server: serverCopy, player }
 }
 
-export function prepForGrow(server: Server, player: Player, hackThreshold: number) {
+export function growServer(server: Server, player: Player, hackThreshold: number) {
   const serverCopy = { ...server }
   serverCopy.moneyAvailable = serverCopy.moneyMax! * hackThreshold
   serverCopy.hackDifficulty = serverCopy.minDifficulty
@@ -22,7 +22,7 @@ export function prepForGrow(server: Server, player: Player, hackThreshold: numbe
   return { server: serverCopy, player }
 }
 
-export function prepForWkn2(server: Server, player: Player, growThreads: number, ns: NS, myCores: number) {
+export function wkn2Server(server: Server, player: Player, growThreads: number, ns: NS, myCores: number) {
   const serverCopy = { ...server }
   serverCopy.hackDifficulty = serverCopy.minDifficulty! + ns.growthAnalyzeSecurity(growThreads, undefined, myCores)
   return { server: serverCopy, player }
@@ -33,17 +33,13 @@ export function calculateHackThreads(server: Server, player: Person, moneyMax: n
   return Math.ceil((moneyMax - moneyMax * hackThreshold) / (hackPct * moneyMax))
 }
 
-export function calculateWeakenThreads(server: Server, player: Player, myCores: number) {
+export function calculateWeakThreads(server: Server, player: Player, myCores: number) {
   const addedSecurity = server.hackDifficulty! - server.minDifficulty!
   return Math.max(1, Math.ceil(addedSecurity / (0.05 * (1 + (myCores - 1) / 16))))
 }
 
 export function calculateGrowThreads(server: Server, player: Person, moneyMax: number, myCores: number, ns: NS) {
   return Math.ceil(ns.formulas.hacking.growThreads(server, player, moneyMax, myCores))
-}
-
-export function calculateWeakenThreads2(server: Server, player: Player, myCores: number) {
-  return calculateWeakenThreads(server, player, myCores)
 }
 
 export function getDelta(opTime: number, index: number) {

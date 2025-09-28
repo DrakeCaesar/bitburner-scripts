@@ -2,16 +2,15 @@ import { NS } from "@ns"
 import {
   calculateGrowThreads,
   calculateHackThreads,
-  calculateWeakenThreads,
-  calculateWeakenThreads2,
+  calculateWeakThreads,
   copyRequiredScripts,
   getDelta,
+  growServer,
+  hackServer,
   killOtherInstances,
   prepareServer,
-  prepForGrow,
-  prepForHack,
-  prepForWkn1,
-  prepForWkn2,
+  wkn1Server,
+  wkn2Server,
 } from "./batchCalculations.js"
 import { initBatchVisualiser, logBatchOperation, nextBatch, setBatchInterval } from "./batchVisualiser.js"
 
@@ -32,17 +31,17 @@ export async function main(ns: NS) {
   while (true) {
     const player = ns.getPlayer()
 
-    const { server: hackServ, player: hackPlay } = prepForHack(server, player)
+    const { server: hackServ, player: hackPlay } = hackServer(server, player)
     const hackThreads = calculateHackThreads(hackServ, hackPlay, moneyMax, hackThreshold, ns)
 
-    const { server: wkn1Serv, player: wkn1Play } = prepForWkn1(server, player, hackThreads, ns)
-    const wkn1Threads = calculateWeakenThreads(wkn1Serv, wkn1Play, myCores)
+    const { server: wkn1Serv, player: wkn1Play } = wkn1Server(server, player, hackThreads, ns)
+    const wkn1Threads = calculateWeakThreads(wkn1Serv, wkn1Play, myCores)
 
-    const { server: growServ, player: growPlay } = prepForGrow(server, player, hackThreshold)
+    const { server: growServ, player: growPlay } = growServer(server, player, hackThreshold)
     const growThreads = calculateGrowThreads(growServ, growPlay, moneyMax, myCores, ns)
 
-    const { server: wkn2Serv, player: wkn2Play } = prepForWkn2(server, player, growThreads, ns, myCores)
-    const wkn2Threads = calculateWeakenThreads2(wkn2Serv, wkn2Play, myCores)
+    const { server: wkn2Serv, player: wkn2Play } = wkn2Server(server, player, growThreads, ns, myCores)
+    const wkn2Threads = calculateWeakThreads(wkn2Serv, wkn2Play, myCores)
 
     const hackTime = ns.formulas.hacking.hackTime(hackServ, hackPlay)
     const wkn1Time = ns.formulas.hacking.weakTime(wkn2Serv, wkn2Play)
