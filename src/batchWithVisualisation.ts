@@ -116,10 +116,9 @@ export async function main(ns: NS) {
 
     // Check security before hack operation
     const preHackSec = ns.getServerSecurityLevel(target)
-    const expectedHackSec = hackServer.hackDifficulty! // Should be baseSecurity
-    const hackSecDifference = Math.abs(preHackSec - expectedHackSec)
+    const hackSecDifference = Math.abs(preHackSec - baseSecurity)
     ns.tprint(
-      `Hack:    Exp ${expectedHackSec.toFixed(3)}, Act ${preHackSec.toFixed(3)}, Dif ${hackSecDifference.toFixed(3)}`
+      `Hack:    Exp ${baseSecurity.toFixed(3)}, Act ${preHackSec.toFixed(3)}, Dif ${hackSecDifference.toFixed(3)}`
     )
 
     ns.exec("/hacking/hack.js", host, hackThreads, target, sleepHack, hackOpId)
@@ -138,10 +137,9 @@ export async function main(ns: NS) {
 
     // Check security before grow operation
     const preGrowSec = ns.getServerSecurityLevel(target)
-    const expectedGrowSec = growServer.hackDifficulty! // Should be baseSecurity
-    const growSecDifference = Math.abs(preGrowSec - expectedGrowSec)
+    const growSecDifference = Math.abs(preGrowSec - baseSecurity)
     ns.tprint(
-      `Grow:    Exp ${expectedGrowSec.toFixed(3)}, Act ${preGrowSec.toFixed(3)}, Dif ${growSecDifference.toFixed(3)}`
+      `Grow:    Exp ${baseSecurity.toFixed(3)}, Act ${preGrowSec.toFixed(3)}, Dif ${growSecDifference.toFixed(3)}`
     )
 
     ns.exec("/hacking/grow.js", host, growThreads, target, sleepGrow, growOpId)
