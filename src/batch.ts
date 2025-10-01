@@ -22,12 +22,16 @@ export async function main(ns: NS) {
   await copyRequiredScripts(ns, host)
   initBatchVisualiser()
 
-  const { moneyMax, myCores } = await prepareServer(ns, host, target)
-
-  const server = ns.getServer(target)
   const player = ns.getPlayer()
   const serverMaxRam = ns.getServerMaxRam(host)
   const batchDelay = 10
+
+  // Create a simulated prepared server (min security, max money) to optimize threshold
+  const server = ns.getServer(target)
+  server.hackDifficulty = server.minDifficulty
+  server.moneyAvailable = server.moneyMax
+  const moneyMax = server.moneyMax!
+  const myCores = ns.getServer(host).cpuCores
 
   // Find optimal hack threshold by testing different values
   ns.tprint("Optimizing hack threshold...")
@@ -89,6 +93,9 @@ export async function main(ns: NS) {
 
   ns.tprint(`Optimal hack threshold: ${(bestThreshold * 100).toFixed(2)}% (${ns.formatNumber(bestMoneyPerSecond)}/sec)`)
   ns.tprint(`Estimated cycle time: ${bestCycleTime.toFixed(2)}ms`)
+
+  // Now actually prepare the server
+  await prepareServer(ns, host, target)
 
   // Now calculate with optimal threshold
   const hackThreshold = bestThreshold
