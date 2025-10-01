@@ -38,8 +38,6 @@ export async function main(ns: NS) {
   const ramThreshold = 0.9
 
   const weakenTime = ns.formulas.hacking.weakenTime(server, player)
-  const hackTime = ns.formulas.hacking.hackTime(server, player)
-  const growTime = ns.formulas.hacking.growTime(server, player)
 
   const hackScriptRam = ns.getScriptRam("/hacking/hack.js")
   const weakenScriptRam = ns.getScriptRam("/hacking/weaken.js")
@@ -115,13 +113,15 @@ export async function main(ns: NS) {
 
   const batches = Math.floor((serverMaxRam / totalBatchRam) * ramThreshold)
 
+  const hackTime = ns.formulas.hacking.hackTime(server, player)
+  const growTime = ns.formulas.hacking.growTime(server, player)
+
   ns.tprint(`Using batch delay of ${batchDelay}ms`)
 
-  const targetFinishTime = weakenTime + 3 * batchDelay
-  const hackAdditionalMsec = targetFinishTime - 3 * batchDelay - hackTime
-  const wkn1AdditionalMsec = targetFinishTime - 2 * batchDelay - weakenTime
-  const growAdditionalMsec = targetFinishTime - batchDelay - growTime
-  const wkn2AdditionalMsec = targetFinishTime - weakenTime
+  const hackAdditionalMsec = weakenTime - batchDelay - hackTime
+  const wkn1AdditionalMsec = 0
+  const growAdditionalMsec = weakenTime + batchDelay - growTime
+  const wkn2AdditionalMsec = 2 * batchDelay 
 
   ns.tprint(
     `Batch RAM: ${totalBatchRam.toFixed(2)} GB - Threads (H:${hackThreads} W1:${wkn1Threads} G:${growThreads} W2:${wkn2Threads})`
