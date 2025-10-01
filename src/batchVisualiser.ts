@@ -233,18 +233,28 @@ class BatchVisualiser {
 
         const opY = batchY + opIndex * operationHeight
         const barX = this.margin.left
-        const barWidth = this.chartWidth - 50
         const barHeight = operationHeight - 2
 
-        // Draw predicted bar (full width, desaturated)
-        ctx.fillStyle = this.predictedColors[op.type]
-        ctx.fillRect(barX, opY, barWidth, barHeight)
+        // Use a fixed time scale for all bars (e.g., 1 pixel per 100ms)
+        const msPerPixel = 100
+        const maxBarWidth = this.chartWidth - 50
 
-        // Draw actual bar on top if available (full width, saturated)
+        // Calculate bar widths based on absolute duration
+        const predictedDuration = op.end! - op.start
+        const predictedBarWidth = Math.min((predictedDuration / msPerPixel), maxBarWidth)
+
+        // Draw predicted bar (width = duration)
+        ctx.fillStyle = this.predictedColors[op.type]
+        ctx.fillRect(barX, opY, predictedBarWidth, barHeight)
+
+        // Draw actual bar on top if available
         if (op.actualStart && op.actualEnd) {
+          const actualDuration = op.actualEnd - op.actualStart
+          const actualBarWidth = Math.min((actualDuration / msPerPixel), maxBarWidth)
+
           ctx.fillStyle = this.actualColors[op.type]
           ctx.globalAlpha = 0.7
-          ctx.fillRect(barX, opY, barWidth, barHeight)
+          ctx.fillRect(barX, opY, actualBarWidth, barHeight)
           ctx.globalAlpha = 1.0
         }
 
@@ -254,15 +264,15 @@ class BatchVisualiser {
         ctx.fillText(op.type, barX + 5, opY + barHeight / 2 + 4)
 
         // Draw durations
-        const predictedDuration = Math.round(op.end! - op.start)
+        const predictedDurationMs = Math.round(predictedDuration)
         ctx.fillStyle = "#ffffff"
         ctx.font = "10px monospace"
-        ctx.fillText(`P:${predictedDuration}ms`, barX + 30, opY + barHeight / 2 + 3)
+        ctx.fillText(`P:${predictedDurationMs}ms`, barX + 30, opY + barHeight / 2 + 3)
 
         if (op.actualEnd) {
-          const actualDuration = Math.round(op.actualEnd - op.actualStart!)
+          const actualDurationMs = Math.round(op.actualEnd - op.actualStart!)
           ctx.fillStyle = "#ffff00"
-          ctx.fillText(`A:${actualDuration}ms`, barX + 130, opY + barHeight / 2 + 3)
+          ctx.fillText(`A:${actualDurationMs}ms`, barX + Math.max(predictedBarWidth + 5, 130), opY + barHeight / 2 + 3)
         }
       })
     }

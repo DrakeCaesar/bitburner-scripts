@@ -25,7 +25,7 @@ export async function main(ns: NS) {
   const { moneyMax, myCores } = await prepareServer(ns, host, target)
 
   // 0 means 100% of money hacked
-  const hackThreshold = 0.9
+  const hackThreshold = 0.5
 
   const server = ns.getServer(target)
   const player = ns.getPlayer()
@@ -55,7 +55,7 @@ export async function main(ns: NS) {
   const weakenTime = ns.formulas.hacking.weakenTime(server, player)
   const growTime = ns.formulas.hacking.growTime(server, player)
 
-  const batchDelay = 10
+  const batchDelay = 20
 
   ns.tprint(`Using batch delay of ${batchDelay}ms`)
 
