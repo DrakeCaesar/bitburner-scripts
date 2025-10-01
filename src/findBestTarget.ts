@@ -10,7 +10,13 @@ import {
 } from "./batchCalculations.js"
 import { crawl } from "./crawl.js"
 
-export function findBestTarget(ns: NS, host: string, playerHackLevel?: number): string {
+interface BestTargetResult {
+  serverName: string
+  hackThreshold: number
+  moneyPerSecond: number
+}
+
+export function findBestTarget(ns: NS, host: string, playerHackLevel?: number): BestTargetResult {
   // Get all servers
   const knownServers = new Set<string>()
   crawl(ns, knownServers)
@@ -108,15 +114,19 @@ export function findBestTarget(ns: NS, host: string, playerHackLevel?: number): 
   ns.tprint(`Expected income: ${ns.formatNumber(bestMoneyPerSecond)}/sec`)
   ns.tprint("=".repeat(60))
 
-  return bestServer
+  return {
+    serverName: bestServer,
+    hackThreshold: bestThreshold,
+    moneyPerSecond: bestMoneyPerSecond,
+  }
 }
 
 export async function main(ns: NS) {
   const host = (ns.args[0] as string) ?? ns.getHostname()
   const playerHackLevel = ns.args[1] ? Number(ns.args[1]) : undefined
 
-  const bestServer = findBestTarget(ns, host, playerHackLevel)
+  const result = findBestTarget(ns, host, playerHackLevel)
 
   ns.tprint("")
-  ns.tprint(`To start batching: run batch.js ${host} ${bestServer}`)
+  ns.tprint(`To start batching: run batch.js ${host}`)
 }

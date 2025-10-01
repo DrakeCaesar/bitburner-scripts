@@ -9,4 +9,11 @@ export async function main(ns: NS) {
   await ns.weaken(target as string, { additionalMsec: delay })
   const end = Date.now()
   logActualBatchOp("W", start, end, operationId)
+
+  // Check security after weaken
+  const currentSecurity = ns.getServerSecurityLevel(target as string)
+  const minSecurity = ns.getServerMinSecurityLevel(target as string)
+  if (currentSecurity > minSecurity) {
+    ns.tprint(`WARNING: WEAKEN ${target}: Security at ${currentSecurity.toFixed(2)} (min: ${minSecurity})`)
+  }
 }

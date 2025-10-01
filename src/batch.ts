@@ -29,21 +29,18 @@ export async function main(ns: NS) {
   const player = ns.getPlayer()
   const serverMaxRam = ns.getServerMaxRam(host)
   const batchDelay = 10
+  const ramThreshold = 0.9
 
-  // Create a simulated prepared server (min security, max money) to optimize threshold
-  const server = ns.getServer(target)
+  // Use the optimal threshold from findBestTarget
+  const hackThreshold = target.hackThreshold
+  ns.tprint(`Using optimal hack threshold: ${(hackThreshold * 100).toFixed(2)}% (${ns.formatNumber(target.moneyPerSecond)}/sec)`)
+
+  // Create a simulated prepared server (min security, max money)
+  const server = ns.getServer(target.serverName)
   server.hackDifficulty = server.minDifficulty
   server.moneyAvailable = server.moneyMax
   const moneyMax = server.moneyMax!
   const myCores = ns.getServer(host).cpuCores
-
-  // Find optimal hack threshold by testing different values
-  ns.tprint("Optimizing hack threshold...")
-  let bestThreshold = 0.5
-  let bestMoneyPerSecond = 0
-  const steps = 100
-
-  const ramThreshold = 0.9
 
   const weakenTime = ns.formulas.hacking.weakenTime(server, player)
 
@@ -51,58 +48,8 @@ export async function main(ns: NS) {
   const weakenScriptRam = ns.getScriptRam("/hacking/weaken.js")
   const growScriptRam = ns.getScriptRam("/hacking/grow.js")
 
-  let bestCycleTime = 0
-
-  for (let i = 1; i <= steps - 1; i++) {
-    const testThreshold = i / steps
-
-    // Calculate threads for this threshold
-    const { server: hackServer, player: hackPlayer } = hackServerInstance(server, player)
-    const hackThreads = calculateHackThreads(hackServer, hackPlayer, moneyMax, testThreshold, ns)
-
-    const { server: wkn1Server, player: wkn1Player } = wkn1ServerInstance(server, player, hackThreads, ns)
-    const wkn1Threads = calculateWeakThreads(wkn1Server, wkn1Player, myCores)
-
-    const { server: growServer, player: growPlayer } = growServerInstance(server, player, testThreshold)
-    const growThreads = calculateGrowThreads(growServer, growPlayer, moneyMax, myCores, ns)
-
-    const { server: wkn2Server, player: wkn2Player } = wkn2ServerInstance(server, player, growThreads, ns, myCores)
-    const wkn2Threads = calculateWeakThreads(wkn2Server, wkn2Player, myCores)
-
-    // Calculate RAM usage
-    const totalBatchRam =
-      hackScriptRam * hackThreads +
-      weakenScriptRam * wkn1Threads +
-      growScriptRam * growThreads +
-      weakenScriptRam * wkn2Threads
-
-    const batches = Math.floor((serverMaxRam / totalBatchRam) * ramThreshold)
-
-    // Calculate total money per cycle
-    // hackThreshold is the fraction LEFT on server, so (1 - hackThreshold) is what we hack
-    const moneyPerBatch = moneyMax * (1 - testThreshold)
-    const totalMoneyPerCycle = moneyPerBatch * batches
-
-    // Calculate cycle time: last batch's W2 finishes at weakenTime + 2*batchDelay + (batches-1)*batchDelay*4
-    const lastBatchOffset = (batches - 1) * batchDelay * 4
-    const cycleTime = weakenTime + 2 * batchDelay + lastBatchOffset // in milliseconds
-    const moneyPerSecond = (totalMoneyPerCycle / cycleTime) * 1000
-
-    if (moneyPerSecond > bestMoneyPerSecond) {
-      bestMoneyPerSecond = moneyPerSecond
-      bestThreshold = testThreshold
-      bestCycleTime = cycleTime
-    }
-  }
-
-  ns.tprint(`Optimal hack threshold: ${(bestThreshold * 100).toFixed(2)}% (${ns.formatNumber(bestMoneyPerSecond)}/sec)`)
-  ns.tprint(`Estimated cycle time: ${bestCycleTime.toFixed(2)}ms`)
-
   // Now actually prepare the server
-  await prepareServer(ns, host, target)
-
-  // Now calculate with optimal threshold
-  const hackThreshold = bestThreshold
+  await prepareServer(ns, host, target.serverName)
 
   const { server: hackServer, player: hackPlayer } = hackServerInstance(server, player)
   const hackThreads = calculateHackThreads(hackServer, hackPlayer, moneyMax, hackThreshold, ns)
@@ -141,15 +88,15 @@ export async function main(ns: NS) {
   ns.tprint(`Weaken time: ${weakenTime.toFixed(0)}ms`)
   ns.tprint(`Batch interval: ${batchDelay * 4}ms`)
 
-  const minSecurity = ns.getServerMinSecurityLevel(target)
-  const preHackSecurityIncrease = ns.getServerSecurityLevel(target) - minSecurity
+  const minSecurity = ns.getServerMinSecurityLevel(target.serverName)
+  const preHackSecurityIncrease = ns.getServerSecurityLevel(target.serverName) - minSecurity
   if (preHackSecurityIncrease > 0) {
-    ns.tprint(`WARNING: ${target} security above minimum by ${preHackSecurityIncrease.toFixed(2)}`)
+    ns.tprint(`WARNING: ${target.serverName} security above minimum by ${preHackSecurityIncrease.toFixed(2)}`)
   }
 
-  const preGrowSecurityIncrease = ns.getServerSecurityLevel(target) - minSecurity
-  if (preGrowSecurityIncrease > ns.hackAnalyzeSecurity(hackThreads, target)) {
-    ns.tprint(`WARNING: ${target} security above minimum by ${preGrowSecurityIncrease.toFixed(2)}`)
+  const preGrowSecurityIncrease = ns.getServerSecurityLevel(target.serverName) - minSecurity
+  if (preGrowSecurityIncrease > ns.hackAnalyzeSecurity(hackThreads, target.serverName)) {
+    ns.tprint(`WARNING: ${target.serverName} security above minimum by ${preGrowSecurityIncrease.toFixed(2)}`)
   }
 
   // Launch all batches at once
@@ -173,10 +120,10 @@ export async function main(ns: NS) {
     const growOpId = logBatchOperation("G", growStr, growEnd, batchCounter)
     const wkn2OpId = logBatchOperation("W", wkn2Str, wkn2End, batchCounter)
 
-    ns.exec("/hacking/hack.js", host, hackThreads, target, hackAdditionalMsec + batchOffset, hackOpId)
-    ns.exec("/hacking/weaken.js", host, wkn1Threads, target, wkn1AdditionalMsec + batchOffset, wkn1OpId)
-    ns.exec("/hacking/grow.js", host, growThreads, target, growAdditionalMsec + batchOffset, growOpId)
-    lastPid = ns.exec("/hacking/weaken.js", host, wkn2Threads, target, wkn2AdditionalMsec + batchOffset, wkn2OpId)
+    ns.exec("/hacking/hack.js", host, hackThreads, target.serverName, hackAdditionalMsec + batchOffset, hackOpId)
+    ns.exec("/hacking/weaken.js", host, wkn1Threads, target.serverName, wkn1AdditionalMsec + batchOffset, wkn1OpId)
+    ns.exec("/hacking/grow.js", host, growThreads, target.serverName, growAdditionalMsec + batchOffset, growOpId)
+    lastPid = ns.exec("/hacking/weaken.js", host, wkn2Threads, target.serverName, wkn2AdditionalMsec + batchOffset, wkn2OpId)
   }
 
   // Wait for the last script to finish
@@ -184,9 +131,9 @@ export async function main(ns: NS) {
     await ns.sleep(100)
   }
 
-  const finalSecurity = ns.getServerSecurityLevel(target)
-  const currentMoney = ns.getServerMoneyAvailable(target)
-  const maxMoney = ns.getServerMaxMoney(target)
+  const finalSecurity = ns.getServerSecurityLevel(target.serverName)
+  const currentMoney = ns.getServerMoneyAvailable(target.serverName)
+  const maxMoney = ns.getServerMaxMoney(target.serverName)
   const moneyPercent = (currentMoney / maxMoney) * 100
 
   ns.tprint("SUCCESS: All batches completed")

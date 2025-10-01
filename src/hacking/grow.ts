@@ -9,4 +9,12 @@ export async function main(ns: NS) {
   await ns.grow(target as string, { additionalMsec: delay })
   const end = Date.now()
   logActualBatchOp("G", start, end, operationId)
+
+  // Check money percentage after grow
+  const currentMoney = ns.getServerMoneyAvailable(target as string)
+  const maxMoney = ns.getServerMaxMoney(target as string)
+  const moneyPercent = (currentMoney / maxMoney) * 100
+  if (moneyPercent < 100) {
+    ns.tprint(`WARNING: GROW ${target}: Money at ${moneyPercent.toFixed(2)}%`)
+  }
 }
