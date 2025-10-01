@@ -1,189 +1,131 @@
-import { NS, Person, Player, Server } from "@ns"
+import { NS } from "@ns"
+import {
+  calculateGrowThreads,
+  calculateHackThreads,
+  calculateOptimalDelta,
+  calculateWeakThreads,
+  copyRequiredScripts,
+  getDelta,
+  getIndexFromDelta,
+  growServerInstance,
+  hackServerInstance,
+  killOtherInstances,
+  prepareServer,
+  wkn1ServerInstance,
+  wkn2ServerInstance,
+} from "./batchCalculations.js"
+import { initBatchVisualiser, logBatchOperation, nextBatch, setBatchInterval } from "./batchVisualiser.js"
+
 export async function main(ns: NS) {
   const host = (ns.args[0] as string) ?? ns.getHostname()
   const target = ns.args[1] as string
-  const moneyMax = ns.getServerMaxMoney(target)
-  const baseSecurity = ns.getServerMinSecurityLevel(target)
-  const secTolerance = 0.01
-  const moneyTolerance = 0.99
-  const prepWeakenDelay = 100
+
+  await killOtherInstances(ns)
+  ns.killall(host)
+  await copyRequiredScripts(ns, host)
+  initBatchVisualiser()
+
+  const { moneyMax, myCores } = await prepareServer(ns, host, target)
+
+  // 0 means 100% of money hacked
   const hackThreshold = 0.25
 
+  const server = ns.getServer(target)
   const player = ns.getPlayer()
-  const myCores = ns.getServer(host).cpuCores
-  ns.tprint(`cores: ${myCores}`)
 
-  const serverActual = ns.getServer(target)
-  const growThreads = Math.ceil(ns.formulas.hacking.growThreads(serverActual, player, moneyMax, myCores))
-  if (growThreads > 0) {
-    ns.tprint(`Prep: Executing grow with ${growThreads} threads on ${target}.`)
-    ns.exec("/hacking/grow.js", host, growThreads, target, 0)
-  } else {
-    ns.tprint(`Prep: Grow not needed on ${target}.`)
-  }
+  const { server: hackServer, player: hackPlayer } = hackServerInstance(server, player)
+  const hackThreads = calculateHackThreads(hackServer, hackPlayer, moneyMax, hackThreshold, ns)
 
-  await ns.sleep(prepWeakenDelay)
+  const { server: wkn1Server, player: wkn1Player } = wkn1ServerInstance(server, player, hackThreads, ns)
+  const wkn1Threads = calculateWeakThreads(wkn1Server, wkn1Player, myCores)
 
-  const addedSecurity = ns.growthAnalyzeSecurity(growThreads, target, myCores)
-  const currentSec = ns.getServerSecurityLevel(target)
-  const expectedSecAfterGrow = currentSec + addedSecurity
-  const secToReduce = expectedSecAfterGrow - baseSecurity
-  const weakenThreadsPre = Math.max(1, Math.ceil(secToReduce / (0.05 * (1 + (myCores - 1) / 16))))
+  const { server: growServer, player: growPlayer } = growServerInstance(server, player, hackThreshold)
+  const growThreads = calculateGrowThreads(growServer, growPlayer, moneyMax, myCores, ns)
 
-  if (weakenThreadsPre > 0) {
-    ns.tprint(`Prep: Executing weaken with ${weakenThreadsPre} threads on ${target}.`)
-    ns.exec("/hacking/weaken.js", host, weakenThreadsPre, target, 0)
-  } else {
-    ns.tprint(`Prep: Weaken not needed on ${target} (security is at base).`)
-  }
+  const { server: wkn2Server, player: wkn2Player } = wkn2ServerInstance(server, player, growThreads, ns, myCores)
+  const wkn2Threads = calculateWeakThreads(wkn2Server, wkn2Player, myCores)
 
-  const growTime = ns.formulas.hacking.growTime(serverActual, player)
-  const weakenTime = ns.formulas.hacking.weakenTime(serverActual, player)
-  const waitTime = Math.max(growTime, weakenTime) + 200
-  ns.tprint(`Prep: Waiting ${waitTime} ms for grow/weaken to complete...`)
-  await ns.sleep(waitTime)
+  const hackServerRam = ns.getScriptRam("/hacking/hack.js") * hackThreads
+  const wkn1ServerRam = ns.getScriptRam("/hacking/weaken.js") * wkn1Threads
+  const growServerRam = ns.getScriptRam("/hacking/grow.js") * growThreads
+  const wkn2ServerRam = ns.getScriptRam("/hacking/weaken.js") * wkn2Threads
+  const totalBatchRam = hackServerRam + wkn1ServerRam + growServerRam + wkn2ServerRam
 
-  const postMoney = ns.getServerMoneyAvailable(target)
-  const postSec = ns.getServerSecurityLevel(target)
-  if (postMoney < moneyMax * moneyTolerance) {
-    ns.tprint(`WARNING: Money is only ${postMoney} (target ${moneyMax}).`)
-  }
-  if (postSec > baseSecurity + secTolerance) {
-    ns.tprint(`WARNING: Security is ${postSec} (target ${baseSecurity}).`)
-  }
-  ns.tprint(`Prep complete on ${target}: ${postMoney} money, ${postSec} security.`)
+  const serverMaxRam = ns.getServerMaxRam(host)
+  const batches = Math.floor((serverMaxRam / totalBatchRam) * 0.9)
 
-  function prepForHack(server: Server, player: Player) {
-    server.moneyAvailable = server.moneyMax!
-    server.hackDifficulty = server.minDifficulty
-    return { server, player }
-  }
-  function prepForWeaken(server: Server, player: Player, hackThreads: number) {
-    server.hackDifficulty = server.minDifficulty! + ns.hackAnalyzeSecurity(hackThreads, undefined)
+  const hackTime = ns.formulas.hacking.hackTime(hackServer, hackPlayer)
+  const wkn1Time = ns.formulas.hacking.weakenTime(wkn2Server, wkn2Player)
+  const growTime = ns.formulas.hacking.growTime(growServer, growPlayer)
+  const wkn2Time = ns.formulas.hacking.weakenTime(wkn1Server, wkn1Player)
 
-    return { server, player }
-  }
-  function prepForGrow(server: Server, player: Player) {
-    server.moneyAvailable = server.moneyMax! * hackThreshold
-    server.hackDifficulty = server.minDifficulty
+  const maxWeakenTime = Math.max(wkn1Time, wkn2Time)
 
-    return { server, player }
-  }
-  function prepForWeaken2(server: Server, player: Player, growThreads: number) {
-    server.hackDifficulty = server.minDifficulty! + ns.growthAnalyzeSecurity(growThreads, undefined, myCores)
+  // Calculate optimal delta based on concurrent batches
+  const targetDelta = calculateOptimalDelta(maxWeakenTime, batches)
+  const optimalIndex = getIndexFromDelta(maxWeakenTime, targetDelta)
+  const batchDelay = getDelta(maxWeakenTime, optimalIndex)
 
-    return { server, player }
-  }
+  ns.tprint(`Using batch delay of ${batchDelay.toFixed(0)}ms (index ${optimalIndex})`)
 
-  function calculateHackThreads(server: Server, player: Person) {
-    const hackPct = ns.formulas.hacking.hackPercent(server, player)
-    return Math.ceil((moneyMax - moneyMax * hackThreshold) / (hackPct * moneyMax))
-  }
-  function calculateWeakenThreads(server: Server, player: Player) {
-    const addedSecurity = server.hackDifficulty! - server.minDifficulty!
-    return Math.max(1, Math.ceil(addedSecurity / (0.05 * (1 + (myCores - 1) / 16))))
-  }
-  function calculateGrowThreads(server: Server, player: Person) {
-    return Math.ceil(ns.formulas.hacking.growThreads(server, player, moneyMax, myCores))
-  }
-  function calculateWeakenThreads2(server: Server, player: Player) {
-    return calculateWeakenThreads(server, player)
-  }
+  const hackSleep = maxWeakenTime - hackTime
+  const wkn1Sleep = maxWeakenTime - wkn1Time
+  const growSleep = maxWeakenTime - growTime
+  const wkn2Sleep = maxWeakenTime - wkn2Time
+
+  ns.tprint(
+    `Batch RAM: ${totalBatchRam.toFixed(2)} GB - Threads (H:${hackThreads} W1:${wkn1Threads} G:${growThreads} W2:${wkn2Threads}) - RAM (H:${hackServerRam.toFixed(2)} W1:${wkn1ServerRam.toFixed(2)} G:${growServerRam.toFixed(2)} W2:${wkn2ServerRam.toFixed(2)})`
+  )
+  ns.tprint(`Can run ${batches} batches in parallel on ${host} (${serverMaxRam} GB RAM)`)
+  ns.tprint(`Max weaken time: ${maxWeakenTime.toFixed(0)}ms`)
+  ns.tprint(
+    `Target delta: ${targetDelta.toFixed(0)}ms, optimal index: ${optimalIndex}, actual delta: ${batchDelay.toFixed(0)}ms`
+  )
+  ns.tprint(
+    `Batch interval: ${(batchDelay * 4).toFixed(0)}ms, overlapping batches: ${Math.ceil(maxWeakenTime / (batchDelay * 4))}`
+  )
+
+  setBatchInterval(batchDelay * 4)
 
   let batchCounter = 0
-  ns.tprint("Entering main batching loop.")
-  const server = ns.getServer(target)
   while (true) {
-    const player = ns.getPlayer()
+    const currentTime = Date.now()
+    const hackStr = currentTime
+    const hackEnd = hackStr + hackTime + hackSleep
+    const wkn1Str = currentTime + batchDelay
+    const wkn1End = wkn1Str + wkn1Time + wkn1Sleep
+    const growStr = currentTime + 2 * batchDelay
+    const growEnd = growStr + growTime + growSleep
+    const wkn2Str = currentTime + 3 * batchDelay
+    const wkn2End = wkn2Str + wkn2Time + wkn2Sleep
 
-    const { server: hackServer, player: hackPlayer } = prepForHack(server, player)
-    const hackThreads = calculateHackThreads(hackServer, hackPlayer)
+    const hackOpId = logBatchOperation("H", hackStr, hackEnd, batchCounter)
+    const wkn1OpId = logBatchOperation("W", wkn1Str, wkn1End, batchCounter)
+    const growOpId = logBatchOperation("G", growStr, growEnd, batchCounter)
+    const wkn2OpId = logBatchOperation("W", wkn2Str, wkn2End, batchCounter)
 
-    const { server: weakenServer, player: weakenPlayer } = prepForWeaken(server, player, hackThreads)
-    const weakenThreads1 = calculateWeakenThreads(weakenServer, weakenPlayer)
-
-    const { server: growServer, player: growPlayer } = prepForGrow(server, player)
-    const growThreads = calculateGrowThreads(growServer, growPlayer)
-    // ns.tprint(`Batch ${batchCounter}: grow ${growThreads}`)
-
-    const { server: weaken2Server, player: weaken2Player } = prepForWeaken2(server, player, growThreads)
-    const weakenThreads2 = calculateWeakenThreads2(weaken2Server, weaken2Player)
-
-    function getDeltaInterval(opTime: number, index: number) {
-      if (index === 0) {
-        return [opTime, Infinity]
-      }
-      const lowerBound = opTime / (2 * index + 1)
-      const upperBound = opTime / (2 * index)
-      return [lowerBound, upperBound]
+    const minSecurity = ns.getServerMinSecurityLevel(target)
+    const preHackSecurityIncrease = ns.getServerSecurityLevel(target) - minSecurity
+    if (preHackSecurityIncrease > 0) {
+      ns.tprint(`WARNING: ${target} security above minimum by ${preHackSecurityIncrease.toFixed(2)}`)
     }
+    ns.exec("/hacking/hack.js", host, hackThreads, target, hackSleep, hackOpId)
+    await ns.sleep(batchDelay)
 
-    // function getDelta(opTime: number, index: number) {
-    //   if (index === 0) {
-    //     return opTime
-    //   }
-    //   const [lower, upper] = getDeltaInterval(opTime, index)
-    //   return (lower + upper) / 2
-    // }
+    ns.exec("/hacking/weaken.js", host, wkn1Threads, target, wkn1Sleep, wkn1OpId)
+    await ns.sleep(batchDelay)
 
-    function getDelta(opTime: number, index: number) {
-      return opTime / (2.5 + 2 * index)
+    const preGrowSecurityIncrease = ns.getServerSecurityLevel(target) - minSecurity
+    if (preGrowSecurityIncrease > ns.hackAnalyzeSecurity(hackThreads, target)) {
+      ns.tprint(`WARNING: ${target} security above minimum by ${preHackSecurityIncrease.toFixed(2)}`)
     }
-
-    const hackTime = ns.formulas.hacking.hackTime(hackServer, hackPlayer)
-    const weakenTime = ns.formulas.hacking.weakenTime(weakenServer, weakenPlayer)
-    const growTime = ns.formulas.hacking.growTime(growServer, growPlayer)
-    const weaken2Time = ns.formulas.hacking.weakenTime(weaken2Server, weaken2Player)
-
-    if (weakenTime !== weaken2Time) {
-      ns.tprint(`Weaken times do not match: ${weakenTime} vs ${weaken2Time}`)
-    }
-
-    const batchDelay = getDelta(weakenTime, 2)
-
-    const sleepHack = weakenTime - hackTime
-    const sleepWeaken1 = 0
-    const sleepGrow = weakenTime - growTime
-    const sleepWeaken2 = 0
-
-    // // Debug printing: show sleep times, finish times, and the differences between finish times.
-    // ns.tprint(`Batch ${batchCounter} Debug Info:`)
-    // ns.tprint(`  hackTime: ${hackTime}`)
-    // ns.tprint(`  weakenTime: ${weakenTime}`)
-    // ns.tprint(`  growTime: ${growTime}`)
-    // ns.tprint(`  batchDelay: ${batchDelay}`)
-    // ns.tprint(`  offset: ${offset}`)
-    // ns.tprint("")
-    // ns.tprint(`  Sleep Hack:    ${sleepHack}  -> Finish Hack:    ${finishHack}`)
-    // ns.tprint(
-    //   `  Sleep Weaken1: ${sleepWeaken1}  -> Finish Weaken1: ${finishWeaken1}`
-    // )
-    // ns.tprint(`  Sleep Grow:    ${sleepGrow}  -> Finish Grow:    ${finishGrow}`)
-    // ns.tprint(
-    //   `  Sleep Weaken2: ${sleepWeaken2}  -> Finish Weaken2: ${finishWeaken2}`
-    // )
-    // ns.tprint("")
-    // ns.tprint(
-    //   `  Finish Diffs: Hack->Weaken1: ${(finishWeaken1 - finishHack).toFixed(2)}, ` +
-    //     `Weaken1->Grow: ${(finishGrow - finishWeaken1).toFixed(2)}, ` +
-    //     `Grow->Weaken2: ${(finishWeaken2 - finishGrow).toFixed(2)}`
-    // )
-    // ns.tprint("--------------------------------------------------")
-
-    //print threads
-    // ns.tprint(
-    //   `Batch ${batchCounter}: hack ${hackThreads}, weaken1 ${weakenThreads1}, grow ${growThreads}, weaken2 ${weakenThreads2}`
-    // )
-
-    ns.exec("/hacking/hack.js", host, hackThreads, target, sleepHack)
+    ns.exec("/hacking/grow.js", host, growThreads, target, growSleep, growOpId)
     await ns.sleep(batchDelay)
-    ns.exec("/hacking/weaken.js", host, weakenThreads1, target, sleepWeaken1)
-    await ns.sleep(batchDelay)
-    ns.exec("/hacking/grow.js", host, growThreads, target, sleepGrow)
-    await ns.sleep(batchDelay)
-    ns.exec("/hacking/weaken.js", host, weakenThreads2, target, sleepWeaken2)
+
+    ns.exec("/hacking/weaken.js", host, wkn2Threads, target, wkn2Sleep, wkn2OpId)
     await ns.sleep(batchDelay)
 
     batchCounter++
+    nextBatch()
   }
 }
