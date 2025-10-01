@@ -21,14 +21,11 @@ class BatchVisualiser {
   private margin = { top: 40, right: 20, bottom: 60, left: 80 }
   private chartWidth = 0
   private chartHeight = 0
-  private timeWindow = 1000 * 60 * 2
   private currentBatchId = 0
   private nextOperationId = 0
   private animationId: number | null = null
   private isAnimating = false
-  private batchInterval = 5000 // milliseconds between batches (default, will be updated)
   private lastBatchTime = 0
-  private constantBatchHeight = 80 // Fixed height for each batch
   private firstBatchTime = 0 // When the first batch was created
 
   // Color mapping for operations
