@@ -1,4 +1,5 @@
 import { NS } from "@ns"
+import { killOtherInstances } from "./batchCalculations.js"
 import { formatNumber } from "./libraries/format.js"
 
 export async function main(ns: NS): Promise<void> {
@@ -7,6 +8,7 @@ export async function main(ns: NS): Promise<void> {
   const hook1 = doc.getElementById("overview-extra-hook-1")
 
   //let karma = 0.23
+  await killOtherInstances(ns)
 
   for (;;) {
     try {
