@@ -43,6 +43,8 @@ export async function main(ns: NS) {
   const weakenScriptRam = ns.getScriptRam("/hacking/weaken.js")
   const growScriptRam = ns.getScriptRam("/hacking/grow.js")
 
+  let bestCycleTime = 0
+
   for (let i = 1; i <= steps - 1; i++) {
     const testThreshold = i / steps
 
@@ -81,10 +83,12 @@ export async function main(ns: NS) {
     if (moneyPerSecond > bestMoneyPerSecond) {
       bestMoneyPerSecond = moneyPerSecond
       bestThreshold = testThreshold
+      bestCycleTime = cycleTime
     }
   }
 
   ns.tprint(`Optimal hack threshold: ${(bestThreshold * 100).toFixed(2)}% (${ns.formatNumber(bestMoneyPerSecond)}/sec)`)
+  ns.tprint(`Estimated cycle time: ${bestCycleTime.toFixed(2)}ms`)
 
   // Now calculate with optimal threshold
   const hackThreshold = bestThreshold
