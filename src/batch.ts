@@ -97,6 +97,8 @@ export async function main(ns: NS) {
 
   // Launch all batches at once
   const currentTime = Date.now()
+  let lastPid = 0
+
   for (let batchCounter = 0; batchCounter < batches; batchCounter++) {
     const batchOffset = batchCounter * batchDelay * 4
 
@@ -117,12 +119,13 @@ export async function main(ns: NS) {
     ns.exec("/hacking/hack.js", host, hackThreads, target, hackAdditionalMsec + batchOffset, hackOpId)
     ns.exec("/hacking/weaken.js", host, wkn1Threads, target, wkn1AdditionalMsec + batchOffset, wkn1OpId)
     ns.exec("/hacking/grow.js", host, growThreads, target, growAdditionalMsec + batchOffset, growOpId)
-    ns.exec("/hacking/weaken.js", host, wkn2Threads, target, wkn2AdditionalMsec + batchOffset, wkn2OpId)
+    lastPid = ns.exec("/hacking/weaken.js", host, wkn2Threads, target, wkn2AdditionalMsec + batchOffset, wkn2OpId)
   }
 
-  const lastBatchOffset = (batches - 1) * batchDelay * 4
-  const totalTime = weakenTime + wkn2AdditionalMsec + lastBatchOffset
-  await ns.sleep(totalTime + 100) // Add 100ms buffer
+  // Wait for the last script to finish
+  while (ns.isRunning(lastPid)) {
+    await ns.sleep(100)
+  }
 
   ns.tprint("SUCCESS: All batches completed")
 }
