@@ -139,7 +139,7 @@ export async function main(ns: NS) {
   const totalMaxRam = nodes.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
   const myCores = nodes.length > 0 ? ns.getServer(nodes[0]).cpuCores : 1
 
-  const result = findBestTarget(ns, totalMaxRam, myCores, playerHackLevel)
+  const result = findBestTarget(ns, totalMaxRam, myCores, 20, playerHackLevel)
 
   ns.tprint("")
   ns.tprint(`To start batching: run batch.js`)
