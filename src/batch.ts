@@ -2,11 +2,8 @@ import { NS } from "@ns"
 import {
   calculateGrowThreads,
   calculateHackThreads,
-  calculateOptimalDelta,
   calculateWeakThreads,
   copyRequiredScripts,
-  getDelta,
-  getIndexFromDelta,
   growServerInstance,
   hackServerInstance,
   killOtherInstances,
@@ -28,7 +25,7 @@ export async function main(ns: NS) {
   const { moneyMax, myCores } = await prepareServer(ns, host, target)
 
   // 0 means 100% of money hacked
-  const hackThreshold = 0.25
+  const hackThreshold = 0.9
 
   const server = ns.getServer(target)
   const player = ns.getPlayer()
@@ -58,11 +55,9 @@ export async function main(ns: NS) {
   const weakenTime = ns.formulas.hacking.weakenTime(server, player)
   const growTime = ns.formulas.hacking.growTime(server, player)
 
-  const targetDelta = calculateOptimalDelta(weakenTime, batches)
-  const optimalIndex = getIndexFromDelta(weakenTime, targetDelta)
-  const batchDelay = getDelta(weakenTime, optimalIndex)
+  const batchDelay = 10
 
-  ns.tprint(`Using batch delay of ${batchDelay.toFixed(0)}ms (index ${optimalIndex})`)
+  ns.tprint(`Using batch delay of ${batchDelay}ms`)
 
   const targetFinishTime = weakenTime + 3 * batchDelay
   const hackAdditionalMsec = targetFinishTime - 3 * batchDelay - hackTime
@@ -71,16 +66,11 @@ export async function main(ns: NS) {
   const wkn2AdditionalMsec = targetFinishTime - weakenTime
 
   ns.tprint(
-    `Batch RAM: ${totalBatchRam.toFixed(2)} GB - Threads (H:${hackThreads} W1:${wkn1Threads} G:${growThreads} W2:${wkn2Threads}) - RAM (H:${hackServerRam.toFixed(2)} W1:${wkn1ServerRam.toFixed(2)} G:${growServerRam.toFixed(2)} W2:${wkn2ServerRam.toFixed(2)})`
+    `Batch RAM: ${totalBatchRam.toFixed(2)} GB - Threads (H:${hackThreads} W1:${wkn1Threads} G:${growThreads} W2:${wkn2Threads})`
   )
   ns.tprint(`Can run ${batches} batches in parallel on ${host} (${serverMaxRam} GB RAM)`)
   ns.tprint(`Weaken time: ${weakenTime.toFixed(0)}ms`)
-  ns.tprint(
-    `Target delta: ${targetDelta.toFixed(0)}ms, optimal index: ${optimalIndex}, actual delta: ${batchDelay.toFixed(0)}ms`
-  )
-  ns.tprint(
-    `Batch interval: ${(batchDelay * 4).toFixed(0)}ms, overlapping batches: ${Math.ceil(weakenTime / (batchDelay * 4))}`
-  )
+  ns.tprint(`Batch interval: ${batchDelay * 4}ms`)
 
   setBatchInterval(batchDelay * 4)
 
@@ -127,5 +117,14 @@ export async function main(ns: NS) {
     await ns.sleep(100)
   }
 
+  const finalSecurity = ns.getServerSecurityLevel(target)
+  const currentMoney = ns.getServerMoneyAvailable(target)
+  const maxMoney = ns.getServerMaxMoney(target)
+  const moneyPercent = (currentMoney / maxMoney) * 100
+
   ns.tprint("SUCCESS: All batches completed")
+  ns.tprint(
+    `Security: ${finalSecurity.toFixed(2)} / ${minSecurity.toFixed(2)} (+${(finalSecurity - minSecurity).toFixed(2)})`
+  )
+  ns.tprint(`Money: ${moneyPercent.toFixed(2)}% (${ns.formatNumber(currentMoney)} / ${ns.formatNumber(maxMoney)})`)
 }
