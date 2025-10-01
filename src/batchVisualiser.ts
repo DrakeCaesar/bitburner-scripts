@@ -180,182 +180,126 @@ class BatchVisualiser {
   private draw(): void {
     if (!this.context) return
 
-    const ctx = this.context // Create a non-null reference
+    const ctx = this.context
 
     // Clear canvas
     ctx.clearRect(0, 0, this.width, this.height)
 
-    const now = Date.now()
-    const startTime = now - this.timeWindow
+    // Draw background
+    ctx.fillStyle = "rgba(0, 0, 0, 0.9)"
+    ctx.fillRect(0, 0, this.width, this.height)
 
-    // Filter operations within time window
-    const visibleOps = this.operations.filter((op) => op.start > startTime)
-
-    if (visibleOps.length === 0) return
+    if (this.operations.length === 0) return
 
     // Group operations by batch
     const batchGroups = new Map<number, Operation[]>()
-    visibleOps.forEach((op) => {
+    this.operations.forEach((op) => {
       if (!batchGroups.has(op.batchId)) {
         batchGroups.set(op.batchId, [])
       }
       batchGroups.get(op.batchId)!.push(op)
     })
 
-    // Draw background
-    ctx.fillStyle = "rgba(0, 0, 0, 0.9)"
-    ctx.fillRect(0, 0, this.width, this.height)
+    // Calculate row height (each batch = 4 operations stacked vertically)
+    const operationHeight = 20
+    const batchHeight = operationHeight * 4
+    const batchSpacing = 5
 
-    // Draw title
+    // Auto-scroll to keep newest batches visible
+    const totalBatches = batchGroups.size
+    const maxVisibleBatches = Math.floor(this.chartHeight / (batchHeight + batchSpacing))
+    let scrollOffset = 0
+    if (totalBatches > maxVisibleBatches) {
+      scrollOffset = (totalBatches - maxVisibleBatches) * (batchHeight + batchSpacing)
+    }
+
+    // Draw header
     ctx.fillStyle = "#ffffff"
-    ctx.font = "16px monospace"
-    // ctx.fillText("Batching", 10, 25)
+    ctx.font = "14px monospace"
+    ctx.fillText(`Batches: ${totalBatches} | Operations: ${this.operations.length}`, 10, 25)
 
-    // Calculate scales
-    const xScale = (time: number) => this.margin.left + ((time - startTime) * this.chartWidth) / this.timeWindow
+    // Draw legend
+    const legendY = 25
+    Object.entries(this.actualColors).forEach(([type, color], index) => {
+      const x = this.width - 220 + index * 70
+      ctx.fillStyle = color
+      ctx.fillRect(x, legendY - 10, 12, 12)
+      ctx.fillStyle = "#ffffff"
+      ctx.font = "10px monospace"
+      ctx.fillText(type, x + 16, legendY)
+    })
 
-    // Calculate smooth scrolling offset based on absolute time since first batch
-    const totalElapsedTime = this.firstBatchTime > 0 ? now - this.firstBatchTime : 0
-    const scrollOffset = (totalElapsedTime / this.batchInterval) * this.constantBatchHeight
+    // Sort batches by ID
+    const sortedBatchIds = Array.from(batchGroups.keys()).sort((a, b) => a - b)
 
-    const yScale = (batchId: number) => {
-      // Use absolute positioning based on batch ID to prevent jumping when batches are removed
-      // Each batch gets a fixed position based on its ID
-      // Start from the bottom, new batches appear below previous ones, scroll up over time
-      return (
-        this.margin.top +
-        this.chartHeight -
-        this.constantBatchHeight * 1.25 +
-        batchId * this.constantBatchHeight -
-        scrollOffset
-      )
-    }
+    // Draw each batch
+    for (const batchId of sortedBatchIds) {
+      const ops = batchGroups.get(batchId)!
+      const batchY = this.margin.top + batchId * (batchHeight + batchSpacing) - scrollOffset
 
-    // Draw grid lines
-    ctx.strokeStyle = "#333333"
-    ctx.lineWidth = 1
-    ctx.beginPath()
-
-    // Vertical grid lines (time)
-    for (let i = 0; i <= 10; i++) {
-      const x = this.margin.left + (i * this.chartWidth) / 10
-      ctx.moveTo(x, this.margin.top)
-      ctx.lineTo(x, this.margin.top + this.chartHeight)
-    }
-
-    // Horizontal grid lines (batches)
-    const sortedBatchIds = Array.from(batchGroups.keys()).sort((a, b) => a - b) // oldest first
-    for (let i = 0; i < sortedBatchIds.length; i++) {
-      const y = yScale(sortedBatchIds[i])
-      if (y >= this.margin.top && y <= this.margin.top + this.chartHeight) {
-        ctx.moveTo(this.margin.left, y)
-        ctx.lineTo(this.margin.left + this.chartWidth, y)
-      }
-    }
-    ctx.stroke()
-
-    // Draw axes
-    ctx.strokeStyle = "#ffffff"
-    ctx.lineWidth = 2
-    ctx.beginPath()
-    ctx.moveTo(this.margin.left, this.margin.top)
-    ctx.lineTo(this.margin.left, this.margin.top + this.chartHeight)
-    ctx.moveTo(this.margin.left, this.margin.top + this.chartHeight)
-    ctx.lineTo(this.margin.left + this.chartWidth, this.margin.top + this.chartHeight)
-    ctx.stroke()
-
-    // Draw operations
-    for (const [batchId, ops] of batchGroups.entries()) {
-      const baseY = yScale(batchId)
-
-      // Skip drawing batches that are outside the visible area
-      if (baseY + this.constantBatchHeight < this.margin.top || baseY > this.margin.top + this.chartHeight) {
+      // Skip if outside visible area
+      if (batchY + batchHeight < this.margin.top || batchY > this.height - this.margin.bottom) {
         continue
       }
 
-      // Draw batch label
-      ctx.fillStyle = "#ffffff"
+      // Draw batch number
+      ctx.fillStyle = "#aaaaaa"
       ctx.font = "10px monospace"
-      ctx.fillText(`Batch ${batchId}`, 5, baseY + this.constantBatchHeight / 2)
+      ctx.fillText(`#${batchId}`, 10, batchY + batchHeight / 2)
 
-      // Sort operations by start time
-      ops.sort((a, b) => a.start - b.start)
+      // Sort operations by type: H, W, G, W (using operationId to distinguish the two W operations)
+      const typeOrder = { H: 0, W: 1, G: 2 }
+      const sortedOps = ops.sort((a, b) => {
+        if (a.type !== b.type) {
+          // Different types: H < W < G
+          if (a.type === "H") return -1
+          if (b.type === "H") return 1
+          if (a.type === "W" && b.type === "G") return -1
+          if (a.type === "G" && b.type === "W") return 1
+        }
+        // Same type: sort by operationId
+        return a.operationId - b.operationId
+      })
 
-      ops.forEach((op) => {
+      // Draw each operation vertically stacked
+      sortedOps.forEach((op, opIndex) => {
         if (!op.end) return
 
-        // Use a fixed slot system - always assume 4 operations per batch for consistent spacing
-        const maxOpsPerBatch = 4
-        const slotIndex = op.operationId % maxOpsPerBatch
-        const y = baseY + (slotIndex * this.constantBatchHeight) / maxOpsPerBatch
-        const opHeight = (this.constantBatchHeight / maxOpsPerBatch) * 0.8
-        const barHeight = opHeight / 2 // Split height for two bars
+        const opY = batchY + opIndex * operationHeight
+        const barX = this.margin.left
+        const barWidth = this.chartWidth - 50
+        const barHeight = operationHeight - 2
 
-        // Draw predicted operation bar (top half)
-        const x1 = xScale(op.start)
-        const x2 = xScale(op.end!)
-        const width = Math.max(x2 - x1, 2) // Minimum width of 2px
-
-        // Use desaturated color for predicted bars
+        // Draw predicted bar (full width, desaturated)
         ctx.fillStyle = this.predictedColors[op.type]
-        ctx.fillRect(x1, y, width, barHeight)
+        ctx.fillRect(barX, opY, barWidth, barHeight)
 
-        // Draw operation label if bar is wide enough
-        if (width > 20) {
-          ctx.fillStyle = "#000000"
-          ctx.font = "8px monospace"
-          ctx.fillText(op.type, x1 + 2, y + barHeight - 2)
+        // Draw actual bar on top if available (full width, saturated)
+        if (op.actualStart && op.actualEnd) {
+          ctx.fillStyle = this.actualColors[op.type]
+          ctx.globalAlpha = 0.7
+          ctx.fillRect(barX, opY, barWidth, barHeight)
+          ctx.globalAlpha = 1.0
         }
 
-        // Draw predicted duration text
-        const duration = Math.round(op.end! - op.start)
+        // Draw operation label
         ctx.fillStyle = "#ffffff"
-        ctx.font = "8px monospace"
-        ctx.fillText(`P:${duration}ms`, x2 + 2, y + barHeight / 2)
+        ctx.font = "12px monospace"
+        ctx.fillText(op.type, barX + 5, opY + barHeight / 2 + 4)
 
-        // Draw actual operation bar (bottom half) if available
-        if (op.actualStart && op.actualEnd) {
-          const actualX1 = xScale(op.actualStart)
-          const actualX2 = xScale(op.actualEnd)
-          const actualWidth = Math.max(actualX2 - actualX1, 2)
-          const actualY = y + barHeight
+        // Draw durations
+        const predictedDuration = Math.round(op.end! - op.start)
+        ctx.fillStyle = "#ffffff"
+        ctx.font = "10px monospace"
+        ctx.fillText(`P:${predictedDuration}ms`, barX + 30, opY + barHeight / 2 + 3)
 
-          // Use full saturated color for actual bars
-          ctx.fillStyle = this.actualColors[op.type]
-          ctx.fillRect(actualX1, actualY, actualWidth, barHeight)
-
-          // Draw actual duration text
-          const actualDuration = Math.round(op.actualEnd - op.actualStart)
-          ctx.fillStyle = "#cccccc"
-          ctx.font = "8px monospace"
-          ctx.fillText(`A:${actualDuration}ms`, actualX2 + 2, actualY + barHeight / 2)
+        if (op.actualEnd) {
+          const actualDuration = Math.round(op.actualEnd - op.actualStart!)
+          ctx.fillStyle = "#ffff00"
+          ctx.fillText(`A:${actualDuration}ms`, barX + 130, opY + barHeight / 2 + 3)
         }
       })
     }
-
-    // Draw time axis labels
-    ctx.fillStyle = "#ffffff"
-    ctx.font = "10px monospace"
-    for (let i = 0; i <= 5; i++) {
-      const x = this.margin.left + (i * this.chartWidth) / 5
-      const timeAgo = ((5 - i) * (this.timeWindow / 5)) / 1000
-      ctx.fillText(`-${timeAgo.toFixed(1)}s`, x - 15, this.height - 10)
-    }
-
-    // Draw legend
-    const legendY = this.margin.top + this.chartHeight + 20
-    Object.entries(this.actualColors).forEach(([type, color], index) => {
-      const x = this.margin.left + index * 80
-      ctx.fillStyle = color
-      ctx.fillRect(x, legendY, 15, 15)
-      ctx.fillStyle = "#ffffff"
-      ctx.fillText(type === "H" ? "Hack" : type === "W" ? "Weaken" : "Grow", x + 20, legendY + 12)
-    })
-
-    // Draw current operations count
-    ctx.fillStyle = "#ffffff"
-    ctx.font = "12px monospace"
-    ctx.fillText(`Operations: ${this.operations.length} | Batches: ${this.currentBatchId + 1}`, this.width - 200, 25)
   }
 
   public clear(): void {
