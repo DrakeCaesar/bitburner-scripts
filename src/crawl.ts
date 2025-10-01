@@ -1,11 +1,6 @@
 import { NS } from "@ns"
 
-function crawl(
-  ns: NS,
-  knownServers: Set<string>,
-  hostname = ns.getHostname(),
-  depth = 0
-): void {
+export function crawl(ns: NS, knownServers: Set<string>, hostname = ns.getHostname(), depth = 0): void {
   ns.scan(hostname).forEach((element) => {
     if (!knownServers.has(element)) {
       knownServers.add(element)

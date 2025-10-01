@@ -8,16 +8,15 @@ import {
   wkn1ServerInstance,
   wkn2ServerInstance,
 } from "./batchCalculations.js"
-import { crawl } from "./autoNuke.js"
+import { crawl } from "./crawl.js"
 
-export async function main(ns: NS) {
-  const host = (ns.args[0] as string) ?? ns.getHostname()
-
+export function findBestTarget(ns: NS, host: string, playerHackLevel?: number): string {
   // Get all servers
-  const knownServers: string[] = []
+  const knownServers = new Set<string>()
   crawl(ns, knownServers)
 
   const player = ns.getPlayer()
+  const maxHackLevel = playerHackLevel ?? player.skills.hacking
   const serverMaxRam = ns.getServerMaxRam(host)
   const batchDelay = 10
   const myCores = ns.getServer(host).cpuCores
@@ -28,13 +27,9 @@ export async function main(ns: NS) {
   const growScriptRam = ns.getScriptRam("/hacking/grow.js")
 
   // Filter servers we can hack
-  const hackableServers = knownServers.filter((serverName) => {
+  const hackableServers = Array.from(knownServers).filter((serverName) => {
     const server = ns.getServer(serverName)
-    return (
-      server.requiredHackingSkill! <= player.skills.hacking &&
-      server.moneyMax! > 0 &&
-      server.hasAdminRights
-    )
+    return server.requiredHackingSkill! <= maxHackLevel && server.moneyMax! > 0 && server.hasAdminRights
   })
 
   ns.tprint(`Found ${hackableServers.length} hackable servers, analyzing profitability...`)
@@ -112,6 +107,16 @@ export async function main(ns: NS) {
   ns.tprint(`Optimal hack threshold: ${(bestThreshold * 100).toFixed(2)}%`)
   ns.tprint(`Expected income: ${ns.formatNumber(bestMoneyPerSecond)}/sec`)
   ns.tprint("=".repeat(60))
+
+  return bestServer
+}
+
+export async function main(ns: NS) {
+  const host = (ns.args[0] as string) ?? ns.getHostname()
+  const playerHackLevel = ns.args[1] ? Number(ns.args[1]) : undefined
+
+  const bestServer = findBestTarget(ns, host, playerHackLevel)
+
   ns.tprint("")
   ns.tprint(`To start batching: run batch.js ${host} ${bestServer}`)
 }

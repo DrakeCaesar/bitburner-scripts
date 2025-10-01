@@ -12,10 +12,14 @@ import {
   wkn2ServerInstance,
 } from "./batchCalculations.js"
 import { initBatchVisualiser, logBatchOperation } from "./batchVisualiser.js"
+import { findBestTarget } from "./findBestTarget.js"
 
 export async function main(ns: NS) {
   const host = (ns.args[0] as string) ?? ns.getHostname()
-  const target = ns.args[1] as string
+  const playerHackLevel = ns.args[1] ? Number(ns.args[1]) : undefined
+
+  // Find best target automatically
+  const target = findBestTarget(ns, host, playerHackLevel)
 
   await killOtherInstances(ns)
   ns.killall(host)
@@ -128,7 +132,7 @@ export async function main(ns: NS) {
   const hackAdditionalMsec = weakenTime - batchDelay - hackTime
   const wkn1AdditionalMsec = 0
   const growAdditionalMsec = weakenTime + batchDelay - growTime
-  const wkn2AdditionalMsec = 2 * batchDelay 
+  const wkn2AdditionalMsec = 2 * batchDelay
 
   ns.tprint(
     `Batch RAM: ${totalBatchRam.toFixed(2)} GB - Threads (H:${hackThreads} W1:${wkn1Threads} G:${growThreads} W2:${wkn2Threads})`
