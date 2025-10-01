@@ -16,24 +16,35 @@ import { upgradeServer } from "./buyServer.js"
 import { findBestTarget } from "./findBestTarget.js"
 
 export async function main(ns: NS) {
-  const host = (ns.args[0] as string) ?? ns.getHostname()
-  const playerHackLevel = ns.args[1] ? Number(ns.args[1]) : undefined
+  const playerHackLevel = ns.args[0] ? Number(ns.args[0]) : undefined
 
   await killOtherInstances(ns)
+
+  // Get all purchased servers (nodes)
+  function getAllNodes(): string[] {
+    const nodes: string[] = []
+    for (let i = 0; i < 25; i++) {
+      const nodeName = "node" + String(i).padStart(2, "0")
+      if (ns.serverExists(nodeName)) {
+        nodes.push(nodeName)
+      }
+    }
+    return nodes
+  }
 
   while (true) {
     // initBatchVisualiser()
 
-    // Try to upgrade the server first
-    const wasUpgraded = upgradeServer(ns, host)
+    // Try to upgrade node00 first
+    const wasUpgraded = upgradeServer(ns, "node00")
     if (wasUpgraded) {
       ns.tprint("Server was upgraded, restarting batch cycle...")
     }
 
     // If node00 is maxed out, try to buy additional servers
-    if (ns.serverExists(host)) {
+    if (ns.serverExists("node00")) {
       const maxRam = ns.getPurchasedServerMaxRam()
-      const currentRam = ns.getServerMaxRam(host)
+      const currentRam = ns.getServerMaxRam("node00")
 
       if (currentRam >= maxRam) {
         const cost = ns.getPurchasedServerCost(maxRam)
@@ -58,21 +69,35 @@ export async function main(ns: NS) {
       }
     }
 
-    ns.killall(host)
-    await copyRequiredScripts(ns, host)
+    const nodes = getAllNodes()
+    if (nodes.length === 0) {
+      ns.tprint("No nodes available, waiting...")
+      await ns.sleep(10000)
+      continue
+    }
+
+    // Kill all scripts on all nodes and copy required scripts
+    for (const node of nodes) {
+      ns.killall(node)
+      await copyRequiredScripts(ns, node)
+    }
 
     const batchDelay = 20
 
+    // Calculate total RAM across all nodes
+    const totalMaxRam = nodes.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
+    const myCores = ns.getServer(nodes[0]).cpuCores
+
     // Find best target automatically
-    const target = findBestTarget(ns, host, playerHackLevel, batchDelay)
+    const target = findBestTarget(ns, totalMaxRam, myCores, batchDelay, playerHackLevel)
 
     const player = ns.getPlayer()
-    const serverMaxRam = ns.getServerMaxRam(host)
     const ramThreshold = 0.9
 
     // Use the optimal threshold from findBestTarget
     const hackThreshold = target.hackThreshold
     ns.tprint(`Target: ${target.serverName}`)
+    ns.tprint(`Using ${nodes.length} node(s) with ${ns.formatRam(totalMaxRam)} total RAM`)
     ns.tprint(
       `Using optimal hack threshold: ${(hackThreshold * 100).toFixed(2)}% (${ns.formatNumber(target.moneyPerSecond)}/sec)`
     )
@@ -82,7 +107,6 @@ export async function main(ns: NS) {
     server.hackDifficulty = server.minDifficulty
     server.moneyAvailable = server.moneyMax
     const moneyMax = server.moneyMax!
-    const myCores = ns.getServer(host).cpuCores
 
     const weakenTime = ns.formulas.hacking.weakenTime(server, player)
 
@@ -90,8 +114,8 @@ export async function main(ns: NS) {
     const weakenScriptRam = ns.getScriptRam("/hacking/weaken.js")
     const growScriptRam = ns.getScriptRam("/hacking/grow.js")
 
-    // Now actually prepare the server
-    await prepareServer(ns, host, target.serverName)
+    // Now actually prepare the server (use first node for prep)
+    await prepareServer(ns, nodes[0], target.serverName)
 
     const { server: hackServer, player: hackPlayer } = hackServerInstance(server, player)
     const hackThreads = calculateHackThreads(hackServer, hackPlayer, moneyMax, hackThreshold, ns)
@@ -111,7 +135,7 @@ export async function main(ns: NS) {
     const wkn2ServerRam = ns.getScriptRam("/hacking/weaken.js") * wkn2Threads
     const totalBatchRam = hackServerRam + wkn1ServerRam + growServerRam + wkn2ServerRam
 
-    const batches = Math.floor((serverMaxRam / totalBatchRam) * ramThreshold)
+    const batches = Math.floor((totalMaxRam / totalBatchRam) * ramThreshold)
 
     const hackTime = ns.formulas.hacking.hackTime(server, player)
     const growTime = ns.formulas.hacking.growTime(server, player)
@@ -126,7 +150,7 @@ export async function main(ns: NS) {
     ns.tprint(
       `Batch RAM: ${totalBatchRam.toFixed(2)} GB - Threads (H:${hackThreads} W1:${wkn1Threads} G:${growThreads} W2:${wkn2Threads})`
     )
-    ns.tprint(`Can run ${batches} batches in parallel on ${host} (${serverMaxRam} GB RAM)`)
+    ns.tprint(`Can run ${batches} batches in parallel (${ns.formatRam(totalMaxRam)} total RAM)`)
     ns.tprint(`Weaken time: ${weakenTime.toFixed(0)}ms`)
     ns.tprint(`Batch interval: ${batchDelay * 4}ms`)
 
@@ -141,31 +165,47 @@ export async function main(ns: NS) {
       ns.tprint(`WARNING: ${target.serverName} security above minimum by ${preGrowSecurityIncrease.toFixed(2)}`)
     }
 
-    // Launch all batches at once
+    // Helper to find a node with enough RAM for a given number of threads
+    function findNodeForThreads(threads: number, scriptRam: number): string | null {
+      const neededRam = threads * scriptRam
+      for (const node of nodes) {
+        const availableRam = ns.getServerMaxRam(node) - ns.getServerUsedRam(node)
+        if (availableRam >= neededRam) {
+          return node
+        }
+      }
+      return null
+    }
+
+    // Launch all batches at once, distributing across nodes
     const currentTime = Date.now()
     let lastPid = 0
 
     for (let batchCounter = 0; batchCounter < batches; batchCounter++) {
       const batchOffset = batchCounter * batchDelay * 4
 
-      const hackStr = currentTime
-      const hackEnd = hackStr + hackTime + hackAdditionalMsec + batchOffset
-      const wkn1Str = currentTime
-      const wkn1End = wkn1Str + weakenTime + wkn1AdditionalMsec + batchOffset
-      const growStr = currentTime
-      const growEnd = growStr + growTime + growAdditionalMsec + batchOffset
-      const wkn2Str = currentTime
-      const wkn2End = wkn2Str + weakenTime + wkn2AdditionalMsec + batchOffset
+      // Find nodes for each operation
+      const hackNode = findNodeForThreads(hackThreads, hackScriptRam)
+      const wkn1Node = findNodeForThreads(wkn1Threads, weakenScriptRam)
+      const growNode = findNodeForThreads(growThreads, growScriptRam)
+      const wkn2Node = findNodeForThreads(wkn2Threads, weakenScriptRam)
 
-      // const hackOpId = logBatchOperation("H", hackStr, hackEnd, batchCounter)
-      // const wkn1OpId = logBatchOperation("W", wkn1Str, wkn1End, batchCounter)
-      // const growOpId = logBatchOperation("G", growStr, growEnd, batchCounter)
-      // const wkn2OpId = logBatchOperation("W", wkn2Str, wkn2End, batchCounter)
+      if (!hackNode || !wkn1Node || !growNode || !wkn2Node) {
+        ns.tprint(`ERROR: Not enough RAM to launch batch ${batchCounter}`)
+        break
+      }
 
-      ns.exec("/hacking/hack.js", host, hackThreads, target.serverName, hackAdditionalMsec + batchOffset, 0)
-      ns.exec("/hacking/weaken.js", host, wkn1Threads, target.serverName, wkn1AdditionalMsec + batchOffset, 0)
-      ns.exec("/hacking/grow.js", host, growThreads, target.serverName, growAdditionalMsec + batchOffset, 0)
-      lastPid = ns.exec("/hacking/weaken.js", host, wkn2Threads, target.serverName, wkn2AdditionalMsec + batchOffset, 0)
+      ns.exec("/hacking/hack.js", hackNode, hackThreads, target.serverName, hackAdditionalMsec + batchOffset, 0)
+      ns.exec("/hacking/weaken.js", wkn1Node, wkn1Threads, target.serverName, wkn1AdditionalMsec + batchOffset, 0)
+      ns.exec("/hacking/grow.js", growNode, growThreads, target.serverName, growAdditionalMsec + batchOffset, 0)
+      lastPid = ns.exec(
+        "/hacking/weaken.js",
+        wkn2Node,
+        wkn2Threads,
+        target.serverName,
+        wkn2AdditionalMsec + batchOffset,
+        0
+      )
     }
 
     // Wait for the last script to finish

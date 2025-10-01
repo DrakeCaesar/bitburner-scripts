@@ -16,15 +16,19 @@ interface BestTargetResult {
   moneyPerSecond: number
 }
 
-export function findBestTarget(ns: NS, host: string, playerHackLevel?: number, batchDelay = 20): BestTargetResult {
+export function findBestTarget(
+  ns: NS,
+  totalMaxRam: number,
+  myCores: number,
+  batchDelay: number,
+  playerHackLevel?: number
+): BestTargetResult {
   // Get all servers
   const knownServers = new Set<string>()
   crawl(ns, knownServers)
 
   const player = ns.getPlayer()
   const maxHackLevel = playerHackLevel ?? player.skills.hacking
-  const serverMaxRam = ns.getServerMaxRam(host)
-  const myCores = ns.getServer(host).cpuCores
 
   // Get constants
   const hackScriptRam = ns.getScriptRam("/hacking/hack.js")
@@ -80,7 +84,7 @@ export function findBestTarget(ns: NS, host: string, playerHackLevel?: number, b
         growScriptRam * growThreads +
         weakenScriptRam * wkn2Threads
 
-      const batches = Math.floor((serverMaxRam / totalBatchRam) * 0.9)
+      const batches = Math.floor((totalMaxRam / totalBatchRam) * 0.9)
 
       // Calculate total money per cycle
       const moneyPerBatch = moneyMax * (1 - testThreshold)
@@ -121,11 +125,22 @@ export function findBestTarget(ns: NS, host: string, playerHackLevel?: number, b
 }
 
 export async function main(ns: NS) {
-  const host = (ns.args[0] as string) ?? ns.getHostname()
-  const playerHackLevel = ns.args[1] ? Number(ns.args[1]) : undefined
+  const playerHackLevel = ns.args[0] ? Number(ns.args[0]) : undefined
 
-  const result = findBestTarget(ns, host, playerHackLevel)
+  // Get all nodes and calculate total RAM
+  const nodes: string[] = []
+  for (let i = 0; i < 25; i++) {
+    const nodeName = "node" + String(i).padStart(2, "0")
+    if (ns.serverExists(nodeName)) {
+      nodes.push(nodeName)
+    }
+  }
+
+  const totalMaxRam = nodes.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
+  const myCores = nodes.length > 0 ? ns.getServer(nodes[0]).cpuCores : 1
+
+  const result = findBestTarget(ns, totalMaxRam, myCores, playerHackLevel)
 
   ns.tprint("")
-  ns.tprint(`To start batching: run batch.js ${host}`)
+  ns.tprint(`To start batching: run batch.js`)
 }
