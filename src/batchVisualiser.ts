@@ -33,15 +33,15 @@ class BatchVisualiser {
 
   // Color mapping for operations
   private predictedColors = {
-    H: "#994444", // Desaturated Red for Predicted Hack
-    W: "#444499", // Desaturated Blue for Predicted Weaken
-    G: "#449944", // Desaturated Green for Predicted Grow
+    H: "#664444", // Desaturated Red for Predicted Hack
+    W: "#444466", // Desaturated Blue for Predicted Weaken
+    G: "#446644", // Desaturated Green for Predicted Grow
   }
 
   private actualColors = {
-    H: "#ff4444", // Bright Red for Actual Hack
-    W: "#4444ff", // Bright Blue for Actual Weaken
-    G: "#44ff44", // Bright Green for Actual Grow
+    H: "#884444", // Bright Red for Actual Hack
+    W: "#444488", // Bright Blue for Actual Weaken
+    G: "#448844", // Bright Green for Actual Grow
   }
 
   constructor() {
@@ -247,22 +247,8 @@ class BatchVisualiser {
       ctx.font = "10px monospace"
       ctx.fillText(`#${batchId}`, 10, batchY + batchHeight / 2)
 
-      // Sort operations by type: H, W, G, W (using operationId to distinguish the two W operations)
-      const typeOrder = { H: 0, W: 1, G: 2 }
-      const sortedOps = ops.sort((a, b) => {
-        if (a.type !== b.type) {
-          // Different types: H < W < G
-          if (a.type === "H") return -1
-          if (b.type === "H") return 1
-          if (a.type === "W" && b.type === "G") return -1
-          if (a.type === "G" && b.type === "W") return 1
-        }
-        // Same type: sort by operationId
-        return a.operationId - b.operationId
-      })
-
-      // Draw each operation vertically stacked
-      sortedOps.forEach((op, opIndex) => {
+      // Draw each operation vertically stacked (already in correct order: H, W1, G, W2)
+      ops.forEach((op, opIndex) => {
         if (!op.end) return
 
         const opY = batchY + opIndex * operationHeight
