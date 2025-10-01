@@ -30,6 +30,34 @@ export async function main(ns: NS) {
       ns.tprint("Server was upgraded, restarting batch cycle...")
     }
 
+    // If node00 is maxed out, try to buy additional servers
+    if (ns.serverExists(host)) {
+      const maxRam = ns.getPurchasedServerMaxRam()
+      const currentRam = ns.getServerMaxRam(host)
+
+      if (currentRam >= maxRam) {
+        const cost = ns.getPurchasedServerCost(maxRam)
+        const money = ns.getPlayer().money
+
+        // Buy as many maxed servers as we can afford
+        for (let i = 1; i < 25; i++) {
+          const nodeName = "node" + String(i).padStart(2, "0")
+
+          if (!ns.serverExists(nodeName) && money >= cost) {
+            ns.purchaseServer(nodeName, maxRam)
+            ns.tprint(`Bought new maxed server: ${nodeName} (${maxRam} GB)`)
+            break
+          } else if (ns.serverExists(nodeName) && ns.getServerMaxRam(nodeName) < maxRam && money >= cost) {
+            ns.killall(nodeName)
+            ns.deleteServer(nodeName)
+            ns.purchaseServer(nodeName, maxRam)
+            ns.tprint(`Upgraded ${nodeName} to max RAM (${maxRam} GB)`)
+            break
+          }
+        }
+      }
+    }
+
     ns.killall(host)
     await copyRequiredScripts(ns, host)
 
