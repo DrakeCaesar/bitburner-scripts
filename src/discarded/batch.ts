@@ -14,7 +14,7 @@ import {
   wkn1ServerInstance,
   wkn2ServerInstance,
 } from "./batchCalculations.js"
-import { initBatchVisualiser, logBatchOperation, setBatchInterval } from "./batchVisualiser.js"
+import { initBatchVisualiser, logBatchOperation, nextBatch, setBatchInterval } from "./batchVisualiser.js"
 
 export async function main(ns: NS) {
   const host = (ns.args[0] as string) ?? ns.getHostname()
@@ -52,77 +52,80 @@ export async function main(ns: NS) {
   const totalBatchRam = hackServerRam + wkn1ServerRam + growServerRam + wkn2ServerRam
 
   const serverMaxRam = ns.getServerMaxRam(host)
-  const batches = Math.floor((serverMaxRam / totalBatchRam) * 0.8)
+  const batches = Math.floor((serverMaxRam / totalBatchRam) * 0.9)
 
-  const hackTime = ns.formulas.hacking.hackTime(server, player)
-  const weakenTime = ns.formulas.hacking.weakenTime(server, player)
-  const growTime = ns.formulas.hacking.growTime(server, player)
+  const hackTime = ns.formulas.hacking.hackTime(hackServer, hackPlayer)
+  const wkn1Time = ns.formulas.hacking.weakenTime(wkn2Server, wkn2Player)
+  const growTime = ns.formulas.hacking.growTime(growServer, growPlayer)
+  const wkn2Time = ns.formulas.hacking.weakenTime(wkn1Server, wkn1Player)
 
-  const targetDelta = calculateOptimalDelta(weakenTime, batches)
-  const optimalIndex = getIndexFromDelta(weakenTime, targetDelta)
-  const batchDelay = getDelta(weakenTime, optimalIndex)
+  const maxWeakenTime = Math.max(wkn1Time, wkn2Time)
+
+  // Calculate optimal delta based on concurrent batches
+  const targetDelta = calculateOptimalDelta(maxWeakenTime, batches)
+  const optimalIndex = getIndexFromDelta(maxWeakenTime, targetDelta)
+  const batchDelay = getDelta(maxWeakenTime, optimalIndex)
 
   ns.tprint(`Using batch delay of ${batchDelay.toFixed(0)}ms (index ${optimalIndex})`)
 
-  const targetFinishTime = weakenTime + 3 * batchDelay
-  const hackAdditionalMsec = targetFinishTime - 3 * batchDelay - hackTime
-  const wkn1AdditionalMsec = targetFinishTime - 2 * batchDelay - weakenTime
-  const growAdditionalMsec = targetFinishTime - batchDelay - growTime
-  const wkn2AdditionalMsec = targetFinishTime - weakenTime
+  const hackSleep = maxWeakenTime - hackTime
+  const wkn1Sleep = maxWeakenTime - wkn1Time
+  const growSleep = maxWeakenTime - growTime
+  const wkn2Sleep = maxWeakenTime - wkn2Time
 
   ns.tprint(
     `Batch RAM: ${totalBatchRam.toFixed(2)} GB - Threads (H:${hackThreads} W1:${wkn1Threads} G:${growThreads} W2:${wkn2Threads}) - RAM (H:${hackServerRam.toFixed(2)} W1:${wkn1ServerRam.toFixed(2)} G:${growServerRam.toFixed(2)} W2:${wkn2ServerRam.toFixed(2)})`
   )
   ns.tprint(`Can run ${batches} batches in parallel on ${host} (${serverMaxRam} GB RAM)`)
-  ns.tprint(`Weaken time: ${weakenTime.toFixed(0)}ms`)
+  ns.tprint(`Max weaken time: ${maxWeakenTime.toFixed(0)}ms`)
   ns.tprint(
     `Target delta: ${targetDelta.toFixed(0)}ms, optimal index: ${optimalIndex}, actual delta: ${batchDelay.toFixed(0)}ms`
   )
   ns.tprint(
-    `Batch interval: ${(batchDelay * 4).toFixed(0)}ms, overlapping batches: ${Math.ceil(weakenTime / (batchDelay * 4))}`
+    `Batch interval: ${(batchDelay * 4).toFixed(0)}ms, overlapping batches: ${Math.ceil(maxWeakenTime / (batchDelay * 4))}`
   )
 
   setBatchInterval(batchDelay * 4)
 
-  const minSecurity = ns.getServerMinSecurityLevel(target)
-  const preHackSecurityIncrease = ns.getServerSecurityLevel(target) - minSecurity
-  if (preHackSecurityIncrease > 0) {
-    ns.tprint(`WARNING: ${target} security above minimum by ${preHackSecurityIncrease.toFixed(2)}`)
-  }
-
-  const preGrowSecurityIncrease = ns.getServerSecurityLevel(target) - minSecurity
-  if (preGrowSecurityIncrease > ns.hackAnalyzeSecurity(hackThreads, target)) {
-    ns.tprint(`WARNING: ${target} security above minimum by ${preGrowSecurityIncrease.toFixed(2)}`)
-  }
-
-  // Launch all batches at once
-  const currentTime = Date.now()
-  for (let batchCounter = 0; batchCounter < batches; batchCounter++) {
-    const batchOffset = batchCounter * batchDelay * 4
-
+  let batchCounter = 0
+  while (true) {
+    const currentTime = Date.now()
     const hackStr = currentTime
-    const hackEnd = hackStr + hackTime + hackAdditionalMsec + batchOffset
-    const wkn1Str = currentTime
-    const wkn1End = wkn1Str + weakenTime + wkn1AdditionalMsec + batchOffset
-    const growStr = currentTime
-    const growEnd = growStr + growTime + growAdditionalMsec + batchOffset
-    const wkn2Str = currentTime
-    const wkn2End = wkn2Str + weakenTime + wkn2AdditionalMsec + batchOffset
+    const hackEnd = hackStr + hackTime + hackSleep
+    const wkn1Str = currentTime + batchDelay
+    const wkn1End = wkn1Str + wkn1Time + wkn1Sleep
+    const growStr = currentTime + 2 * batchDelay
+    const growEnd = growStr + growTime + growSleep
+    const wkn2Str = currentTime + 3 * batchDelay
+    const wkn2End = wkn2Str + wkn2Time + wkn2Sleep
 
     const hackOpId = logBatchOperation("H", hackStr, hackEnd, batchCounter)
     const wkn1OpId = logBatchOperation("W", wkn1Str, wkn1End, batchCounter)
     const growOpId = logBatchOperation("G", growStr, growEnd, batchCounter)
     const wkn2OpId = logBatchOperation("W", wkn2Str, wkn2End, batchCounter)
 
-    ns.exec("/hacking/hack.js", host, hackThreads, target, hackAdditionalMsec + batchOffset, hackOpId)
-    ns.exec("/hacking/weaken.js", host, wkn1Threads, target, wkn1AdditionalMsec + batchOffset, wkn1OpId)
-    ns.exec("/hacking/grow.js", host, growThreads, target, growAdditionalMsec + batchOffset, growOpId)
-    ns.exec("/hacking/weaken.js", host, wkn2Threads, target, wkn2AdditionalMsec + batchOffset, wkn2OpId)
+    const minSecurity = ns.getServerMinSecurityLevel(target)
+    const preHackSecurityIncrease = ns.getServerSecurityLevel(target) - minSecurity
+    if (preHackSecurityIncrease > 0) {
+      ns.tprint(`WARNING: ${target} security above minimum by ${preHackSecurityIncrease.toFixed(2)}`)
+    }
+    ns.exec("/hacking/hack.js", host, hackThreads, target, hackSleep, hackOpId)
+    await ns.sleep(batchDelay)
+
+    ns.exec("/hacking/weaken.js", host, wkn1Threads, target, wkn1Sleep, wkn1OpId)
+    await ns.sleep(batchDelay)
+
+    const preGrowSecurityIncrease = ns.getServerSecurityLevel(target) - minSecurity
+    if (preGrowSecurityIncrease > ns.hackAnalyzeSecurity(hackThreads, target)) {
+      ns.tprint(`WARNING: ${target} security above minimum by ${preHackSecurityIncrease.toFixed(2)}`)
+    }
+    ns.exec("/hacking/grow.js", host, growThreads, target, growSleep, growOpId)
+    await ns.sleep(batchDelay)
+
+    ns.exec("/hacking/weaken.js", host, wkn2Threads, target, wkn2Sleep, wkn2OpId)
+    await ns.sleep(batchDelay)
+
+    batchCounter++
+    nextBatch()
   }
-
-  const lastBatchOffset = (batches - 1) * batchDelay * 4
-  const totalTime = weakenTime + wkn2AdditionalMsec + lastBatchOffset
-  await ns.sleep(totalTime + 100) // Add 100ms buffer
-
-  ns.tprint("SUCCESS: All batches completed")
 }
