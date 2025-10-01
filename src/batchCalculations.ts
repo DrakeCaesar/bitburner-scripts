@@ -79,8 +79,8 @@ export async function copyRequiredScripts(ns: NS, host: string) {
 export async function prepareServer(ns: NS, host: string, target: string) {
   const moneyMax = ns.getServerMaxMoney(target)
   const baseSecurity = ns.getServerMinSecurityLevel(target)
-  const secTolerance = 0.01
-  const moneyTolerance = 0.99
+  const secTolerance = 0
+  const moneyTolerance = 1
   const prepWeakenDelay = 100
 
   const player = ns.getPlayer()
@@ -104,18 +104,22 @@ export async function prepareServer(ns: NS, host: string, target: string) {
   const secToReduce = expectedSecAfterGrow - baseSecurity
   const weakenThreadsPre = Math.max(1, Math.ceil(secToReduce / (0.05 * (1 + (myCores - 1) / 16))))
 
-  if (weakenThreadsPre > 0) {
-    // ns.tprint(`Prep: Executing weaken with ${weakenThreadsPre} threads on ${target}.`)
+  let needsWait = false
+  if (weakenThreadsPre > 0 && secToReduce > secTolerance) {
+    ns.tprint(`Prep: Executing weaken with ${weakenThreadsPre} threads on ${target}.`)
     ns.exec("/hacking/weaken.js", host, weakenThreadsPre, target, 0)
+    needsWait = true
   } else {
-    // ns.tprint(`Prep: Weaken not needed on ${target} (security is at base).`)
+    ns.tprint(`Prep: Weaken not needed on ${target} (security is at base).`)
   }
 
-  const growTime = ns.formulas.hacking.growTime(serverActual, player)
-  const weakenTime = ns.formulas.hacking.weakenTime(serverActual, player)
-  const waitTime = Math.max(growTime, weakenTime) + 200
-  // ns.tprint(`Prep: Waiting ${waitTime} ms for grow/weaken to complete...`)
-  await ns.sleep(waitTime)
+  if (needsWait || growThreads > 0) {
+    const growTime = ns.formulas.hacking.growTime(serverActual, player)
+    const weakenTime = ns.formulas.hacking.weakenTime(serverActual, player)
+    const waitTime = Math.max(growTime, weakenTime) + 200
+    ns.tprint(`Prep: Waiting ${waitTime} ms for grow/weaken to complete...`)
+    await ns.sleep(waitTime)
+  }
 
   const postMoney = ns.getServerMoneyAvailable(target)
   const postSec = ns.getServerSecurityLevel(target)
@@ -125,7 +129,7 @@ export async function prepareServer(ns: NS, host: string, target: string) {
   if (postSec > baseSecurity + secTolerance) {
     ns.tprint(`WARNING: Security is ${postSec} (target ${baseSecurity}).`)
   }
-  // ns.tprint(`Prep complete on ${target}: ${postMoney} money, ${postSec} security.`)
+  ns.tprint(`Prep complete on ${target}: ${postMoney} money, ${postSec} security.`)
 
   return { moneyMax, baseSecurity, secTolerance, myCores }
 }
