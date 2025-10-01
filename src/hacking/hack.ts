@@ -1,5 +1,5 @@
 import { NS } from "@ns"
-import { logActualBatchOp } from "/src/batchVisualizerStub.js"
+// import { logActualBatchOp } from "/src/batchVisualizerStub.js"
 
 export async function main(ns: NS) {
   const target = ns.args[0]
@@ -10,5 +10,5 @@ export async function main(ns: NS) {
   await ns.hack(target as string, { additionalMsec: delay })
   const end = Date.now()
 
-  logActualBatchOp("H", start, end, operationId)
+  // logActualBatchOp("H", start, end, operationId)
 }

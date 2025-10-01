@@ -1,5 +1,5 @@
 import { NS } from "@ns"
-import { logActualBatchOp } from "/src/batchVisualizerStub.js"
+// import { logActualBatchOp } from "/src/batchVisualizerStub.js"
 
 export async function main(ns: NS) {
   const target = ns.args[0]
@@ -8,7 +8,7 @@ export async function main(ns: NS) {
   const start = Date.now()
   await ns.grow(target as string, { additionalMsec: delay })
   const end = Date.now()
-  logActualBatchOp("G", start, end, operationId)
+  // logActualBatchOp("G", start, end, operationId)
 
   // Check money percentage after grow
   const currentMoney = ns.getServerMoneyAvailable(target as string)

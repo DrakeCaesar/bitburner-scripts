@@ -11,7 +11,7 @@ import {
   wkn1ServerInstance,
   wkn2ServerInstance,
 } from "./batchCalculations.js"
-import { initBatchVisualiser, logBatchOperation } from "./batchVisualiser.js"
+// import { initBatchVisualiser, logBatchOperation } from "./batchVisualiser.js"
 import { upgradeServer } from "./buyServer.js"
 import { findBestTarget } from "./findBestTarget.js"
 
@@ -22,7 +22,7 @@ export async function main(ns: NS) {
   await killOtherInstances(ns)
 
   while (true) {
-    initBatchVisualiser()
+    // initBatchVisualiser()
 
     // Try to upgrade the server first
     const wasUpgraded = upgradeServer(ns, host)
@@ -128,22 +128,15 @@ export async function main(ns: NS) {
       const wkn2Str = currentTime
       const wkn2End = wkn2Str + weakenTime + wkn2AdditionalMsec + batchOffset
 
-      const hackOpId = logBatchOperation("H", hackStr, hackEnd, batchCounter)
-      const wkn1OpId = logBatchOperation("W", wkn1Str, wkn1End, batchCounter)
-      const growOpId = logBatchOperation("G", growStr, growEnd, batchCounter)
-      const wkn2OpId = logBatchOperation("W", wkn2Str, wkn2End, batchCounter)
+      // const hackOpId = logBatchOperation("H", hackStr, hackEnd, batchCounter)
+      // const wkn1OpId = logBatchOperation("W", wkn1Str, wkn1End, batchCounter)
+      // const growOpId = logBatchOperation("G", growStr, growEnd, batchCounter)
+      // const wkn2OpId = logBatchOperation("W", wkn2Str, wkn2End, batchCounter)
 
-      ns.exec("/hacking/hack.js", host, hackThreads, target.serverName, hackAdditionalMsec + batchOffset, hackOpId)
-      ns.exec("/hacking/weaken.js", host, wkn1Threads, target.serverName, wkn1AdditionalMsec + batchOffset, wkn1OpId)
-      ns.exec("/hacking/grow.js", host, growThreads, target.serverName, growAdditionalMsec + batchOffset, growOpId)
-      lastPid = ns.exec(
-        "/hacking/weaken.js",
-        host,
-        wkn2Threads,
-        target.serverName,
-        wkn2AdditionalMsec + batchOffset,
-        wkn2OpId
-      )
+      ns.exec("/hacking/hack.js", host, hackThreads, target.serverName, hackAdditionalMsec + batchOffset, 0)
+      ns.exec("/hacking/weaken.js", host, wkn1Threads, target.serverName, wkn1AdditionalMsec + batchOffset, 0)
+      ns.exec("/hacking/grow.js", host, growThreads, target.serverName, growAdditionalMsec + batchOffset, 0)
+      lastPid = ns.exec("/hacking/weaken.js", host, wkn2Threads, target.serverName, wkn2AdditionalMsec + batchOffset, 0)
     }
 
     // Wait for the last script to finish
