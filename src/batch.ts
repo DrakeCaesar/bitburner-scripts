@@ -14,6 +14,7 @@ import {
 // import { initBatchVisualiser, logBatchOperation } from "./batchVisualiser.js"
 import { upgradeServer } from "./buyServer.js"
 import { findBestTarget } from "./findBestTarget.js"
+import { main as autoNuke } from "./autoNuke.js"
 
 export async function main(ns: NS) {
   const playerHackLevel = ns.args[0] ? Number(ns.args[0]) : undefined
@@ -34,6 +35,9 @@ export async function main(ns: NS) {
 
   while (true) {
     // initBatchVisualiser()
+
+    // Run autoNuke to gain access to new servers
+    await autoNuke(ns)
 
     // Try to upgrade node00 first
     const wasUpgraded = upgradeServer(ns, "node00")
