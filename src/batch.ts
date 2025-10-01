@@ -35,6 +35,8 @@ export async function main(ns: NS) {
   let bestMoneyPerSecond = 0
   const steps = 100
 
+  const ramThreshold = 0.9
+
   const weakenTime = ns.formulas.hacking.weakenTime(server, player)
   const hackTime = ns.formulas.hacking.hackTime(server, player)
   const growTime = ns.formulas.hacking.growTime(server, player)
@@ -68,7 +70,7 @@ export async function main(ns: NS) {
       growScriptRam * growThreads +
       weakenScriptRam * wkn2Threads
 
-    const batches = Math.floor((serverMaxRam / totalBatchRam) * 0.8)
+    const batches = Math.floor((serverMaxRam / totalBatchRam) * ramThreshold)
 
     // Calculate total money per cycle
     // hackThreshold is the fraction LEFT on server, so (1 - hackThreshold) is what we hack
@@ -111,7 +113,7 @@ export async function main(ns: NS) {
   const wkn2ServerRam = ns.getScriptRam("/hacking/weaken.js") * wkn2Threads
   const totalBatchRam = hackServerRam + wkn1ServerRam + growServerRam + wkn2ServerRam
 
-  const batches = Math.floor((serverMaxRam / totalBatchRam) * 0.8)
+  const batches = Math.floor((serverMaxRam / totalBatchRam) * ramThreshold)
 
   ns.tprint(`Using batch delay of ${batchDelay}ms`)
 
