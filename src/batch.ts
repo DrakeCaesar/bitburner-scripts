@@ -11,7 +11,7 @@ import {
   wkn1ServerInstance,
   wkn2ServerInstance,
 } from "./batchCalculations.js"
-import { initBatchVisualiser, logBatchOperation, setBatchInterval } from "./batchVisualiser.js"
+import { initBatchVisualiser, logBatchOperation } from "./batchVisualiser.js"
 
 export async function main(ns: NS) {
   const host = (ns.args[0] as string) ?? ns.getHostname()
@@ -71,8 +71,6 @@ export async function main(ns: NS) {
   ns.tprint(`Can run ${batches} batches in parallel on ${host} (${serverMaxRam} GB RAM)`)
   ns.tprint(`Weaken time: ${weakenTime.toFixed(0)}ms`)
   ns.tprint(`Batch interval: ${batchDelay * 4}ms`)
-
-  setBatchInterval(batchDelay * 4)
 
   const minSecurity = ns.getServerMinSecurityLevel(target)
   const preHackSecurityIncrease = ns.getServerSecurityLevel(target) - minSecurity

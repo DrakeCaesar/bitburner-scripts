@@ -129,23 +129,6 @@ class BatchVisualiser {
     }
   }
 
-  public setBatchInterval(intervalMs: number): void {
-    this.batchInterval = intervalMs
-  }
-
-  public nextBatch(): void {
-    const now = Date.now()
-    if (this.firstBatchTime === 0) {
-      this.firstBatchTime = now
-    }
-    if (this.lastBatchTime > 0) {
-      // Update batch interval based on actual timing
-      this.batchInterval = now - this.lastBatchTime
-    }
-    this.lastBatchTime = now
-    this.currentBatchId++
-  }
-
   public logOperation(type: "H" | "W" | "G", start: number, end: number, batchId?: number): number {
     const operationId = this.nextOperationId++
     const operation: Operation = {
@@ -342,11 +325,6 @@ export function initBatchVisualiser(batchInterval?: number): BatchVisualiser {
 
   visualiser = new BatchVisualiser()
 
-  // Set the base batch interval if provided
-  if (batchInterval) {
-    visualiser.setBatchInterval(batchInterval)
-  }
-
   // Expose visualizer globally for lightweight stub access
   ;(globalThis as any).batchVisualiser = visualiser
 
@@ -382,18 +360,6 @@ export function startBatchOperation(type: "H" | "W" | "G", batchId?: number): nu
 export function endBatchOperation(operationId: number): void {
   if (visualiser) {
     visualiser.endOperation(operationId)
-  }
-}
-
-export function setBatchInterval(intervalMs: number): void {
-  if (visualiser) {
-    visualiser.setBatchInterval(intervalMs)
-  }
-}
-
-export function nextBatch(): void {
-  if (visualiser) {
-    visualiser.nextBatch()
   }
 }
 
