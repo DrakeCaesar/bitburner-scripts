@@ -24,11 +24,65 @@ export async function main(ns: NS) {
 
   const { moneyMax, myCores } = await prepareServer(ns, host, target)
 
-  // 0 means 100% of money hacked
-  const hackThreshold = 0.5
-
   const server = ns.getServer(target)
   const player = ns.getPlayer()
+  const serverMaxRam = ns.getServerMaxRam(host)
+  const batchDelay = 10
+
+  // Find optimal hack threshold by testing different values
+  ns.tprint("Optimizing hack threshold...")
+  let bestThreshold = 0.5
+  let bestMoneyPerSecond = 0
+  const steps = 100
+
+  // Get operation times
+  const tempWeakenTime = ns.formulas.hacking.weakenTime(server, player)
+
+  for (let i = 1; i <= steps - 1; i++) {
+    const testThreshold = i / steps
+
+    // Calculate threads for this threshold
+    const { server: hackServer, player: hackPlayer } = hackServerInstance(server, player)
+    const hackThreads = calculateHackThreads(hackServer, hackPlayer, moneyMax, testThreshold, ns)
+
+    const { server: wkn1Server, player: wkn1Player } = wkn1ServerInstance(server, player, hackThreads, ns)
+    const wkn1Threads = calculateWeakThreads(wkn1Server, wkn1Player, myCores)
+
+    const { server: growServer, player: growPlayer } = growServerInstance(server, player, testThreshold)
+    const growThreads = calculateGrowThreads(growServer, growPlayer, moneyMax, myCores, ns)
+
+    const { server: wkn2Server, player: wkn2Player } = wkn2ServerInstance(server, player, growThreads, ns, myCores)
+    const wkn2Threads = calculateWeakThreads(wkn2Server, wkn2Player, myCores)
+
+    // Calculate RAM usage
+    const hackServerRam = ns.getScriptRam("/hacking/hack.js") * hackThreads
+    const wkn1ServerRam = ns.getScriptRam("/hacking/weaken.js") * wkn1Threads
+    const growServerRam = ns.getScriptRam("/hacking/grow.js") * growThreads
+    const wkn2ServerRam = ns.getScriptRam("/hacking/weaken.js") * wkn2Threads
+    const totalBatchRam = hackServerRam + wkn1ServerRam + growServerRam + wkn2ServerRam
+
+    const batches = Math.floor((serverMaxRam / totalBatchRam) * 0.8)
+
+    // Calculate total money per cycle
+    // hackThreshold is the fraction LEFT on server, so (1 - hackThreshold) is what we hack
+    const moneyPerBatch = moneyMax * (1 - testThreshold)
+    const totalMoneyPerCycle = moneyPerBatch * batches
+
+    // Calculate cycle time: last batch's W2 finishes at weakenTime + 2*batchDelay + (batches-1)*batchDelay*4
+    const lastBatchOffset = (batches - 1) * batchDelay * 4
+    const cycleTime = tempWeakenTime + 2 * batchDelay + lastBatchOffset // in milliseconds
+    const moneyPerSecond = (totalMoneyPerCycle / cycleTime) * 1000
+
+    if (moneyPerSecond > bestMoneyPerSecond) {
+      bestMoneyPerSecond = moneyPerSecond
+      bestThreshold = testThreshold
+    }
+  }
+
+  ns.tprint(`Optimal hack threshold: ${(bestThreshold * 100).toFixed(2)}% (${ns.formatNumber(bestMoneyPerSecond)}/sec)`)
+
+  // Now calculate with optimal threshold
+  const hackThreshold = bestThreshold
 
   const { server: hackServer, player: hackPlayer } = hackServerInstance(server, player)
   const hackThreads = calculateHackThreads(hackServer, hackPlayer, moneyMax, hackThreshold, ns)
@@ -48,14 +102,11 @@ export async function main(ns: NS) {
   const wkn2ServerRam = ns.getScriptRam("/hacking/weaken.js") * wkn2Threads
   const totalBatchRam = hackServerRam + wkn1ServerRam + growServerRam + wkn2ServerRam
 
-  const serverMaxRam = ns.getServerMaxRam(host)
   const batches = Math.floor((serverMaxRam / totalBatchRam) * 0.8)
 
   const hackTime = ns.formulas.hacking.hackTime(server, player)
   const weakenTime = ns.formulas.hacking.weakenTime(server, player)
   const growTime = ns.formulas.hacking.growTime(server, player)
-
-  const batchDelay = 20
 
   ns.tprint(`Using batch delay of ${batchDelay}ms`)
 
