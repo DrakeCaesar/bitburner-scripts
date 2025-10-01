@@ -30,11 +30,11 @@ export function wkn2ServerInstance(server: Server, player: Player, growThreads: 
 
 export function calculateHackThreads(server: Server, player: Person, moneyMax: number, hackThreshold: number, ns: NS) {
   const hackPct = ns.formulas.hacking.hackPercent(server, player)
-  return Math.ceil((moneyMax - moneyMax * hackThreshold) / (hackPct * moneyMax))
+  return Math.floor((moneyMax - moneyMax * hackThreshold) / (hackPct * moneyMax))
 }
 
 export function calculateWeakThreads(server: Server, player: Player, myCores: number) {
-  const addedSecurity = (server.hackDifficulty! - server.minDifficulty!) * 1.25
+  const addedSecurity = server.hackDifficulty! - server.minDifficulty!
   return Math.max(1, Math.ceil(addedSecurity / (0.05 * (1 + (myCores - 1) / 16))))
 }
 
