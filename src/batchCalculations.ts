@@ -106,30 +106,30 @@ export async function prepareServer(ns: NS, host: string, target: string) {
 
   let needsWait = false
   if (weakenThreadsPre > 0 && secToReduce > secTolerance) {
-    ns.tprint(`Prep: Executing weaken with ${weakenThreadsPre} threads on ${target}.`)
+    // ns.tprint(`Prep: Executing weaken with ${weakenThreadsPre} threads on ${target}.`)
     ns.exec("/hacking/weaken.js", host, weakenThreadsPre, target, 0)
     needsWait = true
   } else {
-    ns.tprint(`Prep: Weaken not needed on ${target} (security is at base).`)
+    // ns.tprint(`Prep: Weaken not needed on ${target} (security is at base).`)
   }
 
   if (needsWait || growThreads > 0) {
     const growTime = ns.formulas.hacking.growTime(serverActual, player)
     const weakenTime = ns.formulas.hacking.weakenTime(serverActual, player)
     const waitTime = Math.max(growTime, weakenTime) + 200
-    ns.tprint(`Prep: Waiting ${waitTime} ms for grow/weaken to complete...`)
+    // ns.tprint(`Prep: Waiting ${waitTime} ms for grow/weaken to complete...`)
     await ns.sleep(waitTime)
   }
 
   const postMoney = ns.getServerMoneyAvailable(target)
   const postSec = ns.getServerSecurityLevel(target)
   if (postMoney < moneyMax * moneyTolerance) {
-    ns.tprint(`WARNING: Money is only ${postMoney} (target ${moneyMax}).`)
+    // ns.tprint(`WARNING: Money is only ${postMoney} (target ${moneyMax}).`)
   }
   if (postSec > baseSecurity + secTolerance) {
-    ns.tprint(`WARNING: Security is ${postSec} (target ${baseSecurity}).`)
+    // ns.tprint(`WARNING: Security is ${postSec} (target ${baseSecurity}).`)
   }
-  ns.tprint(`Prep complete on ${target}: ${postMoney} money, ${postSec} security.`)
+  // ns.tprint(`Prep complete on ${target}: ${postMoney} money, ${postSec} security.`)
 
   return { moneyMax, baseSecurity, secTolerance, myCores }
 }
