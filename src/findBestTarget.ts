@@ -16,7 +16,7 @@ interface BestTargetResult {
   moneyPerSecond: number
 }
 
-export function findBestTarget(ns: NS, host: string, playerHackLevel?: number): BestTargetResult {
+export function findBestTarget(ns: NS, host: string, playerHackLevel?: number, batchDelay = 20): BestTargetResult {
   // Get all servers
   const knownServers = new Set<string>()
   crawl(ns, knownServers)
@@ -24,7 +24,6 @@ export function findBestTarget(ns: NS, host: string, playerHackLevel?: number): 
   const player = ns.getPlayer()
   const maxHackLevel = playerHackLevel ?? player.skills.hacking
   const serverMaxRam = ns.getServerMaxRam(host)
-  const batchDelay = 10
   const myCores = ns.getServer(host).cpuCores
 
   // Get constants

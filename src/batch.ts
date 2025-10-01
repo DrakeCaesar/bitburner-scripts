@@ -61,12 +61,13 @@ export async function main(ns: NS) {
     ns.killall(host)
     await copyRequiredScripts(ns, host)
 
+    const batchDelay = 20
+
     // Find best target automatically
-    const target = findBestTarget(ns, host, playerHackLevel)
+    const target = findBestTarget(ns, host, playerHackLevel, batchDelay)
 
     const player = ns.getPlayer()
     const serverMaxRam = ns.getServerMaxRam(host)
-    const batchDelay = 10
     const ramThreshold = 0.9
 
     // Use the optimal threshold from findBestTarget
