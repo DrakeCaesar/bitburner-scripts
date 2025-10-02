@@ -56,6 +56,11 @@ export async function main(ns: NS) {
         { name: "relaySMTP.exe", cost: 5000000 },
         { name: "HTTPWorm.exe", cost: 30000000 },
         { name: "SQLInject.exe", cost: 250000000 },
+
+        { name: "ServerProfiler.exe", cost: 500000 },
+        { name: "DeepscanV1.exe", cost: 500000 },
+        { name: "DeepscanV2.exe", cost: 25000000 },
+        { name: "AutoLink.exe", cost: 1000000 },
       ]
 
       for (const program of programs) {
@@ -313,7 +318,6 @@ export async function main(ns: NS) {
         expectedWkn2Level,
         expectedWkn2Xp
       )
-      return
     }
 
     // Wait for the last script to finish
