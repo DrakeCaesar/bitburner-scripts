@@ -1,5 +1,40 @@
 import { NS, Person, Player, Server } from "@ns"
 
+/**
+ * Calculate XP gained from a hacking operation (hack/grow/weaken)
+ * Based on ns.formulas.hacking.hackExp()
+ */
+export function calculateOperationXp(
+  server: Server,
+  player: Person,
+  threads: number,
+  ns: NS
+): number {
+  const xpPerThread = ns.formulas.hacking.hackExp(server, player)
+  return xpPerThread * threads
+}
+
+/**
+ * Update player object with new hacking XP and recalculate hacking level
+ * Only copies the necessary nested objects to avoid deprecated property warnings
+ */
+export function updatePlayerWithXp(player: Player, xpGained: number, ns: NS): Player {
+  const updatedPlayer = {
+    ...player,
+    exp: { ...player.exp },
+    skills: { ...player.skills },
+  }
+  updatedPlayer.exp.hacking += xpGained
+
+  // Recalculate hacking skill level from total XP
+  updatedPlayer.skills.hacking = ns.formulas.skills.calculateSkill(
+    updatedPlayer.exp.hacking,
+    updatedPlayer.mults.hacking
+  )
+
+  return updatedPlayer
+}
+
 export function hackServerInstance(server: Server, player: Player) {
   const serverCopy = { ...server }
   serverCopy.moneyAvailable = serverCopy.moneyMax!

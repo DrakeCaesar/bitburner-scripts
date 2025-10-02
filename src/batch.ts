@@ -2,12 +2,14 @@ import { NS } from "@ns"
 import {
   calculateGrowThreads,
   calculateHackThreads,
+  calculateOperationXp,
   calculateWeakThreads,
   copyRequiredScripts,
   growServerInstance,
   hackServerInstance,
   killOtherInstances,
   prepareServer,
+  updatePlayerWithXp,
   wkn1ServerInstance,
   wkn2ServerInstance,
 } from "./batchCalculations.js"
@@ -195,8 +197,33 @@ export async function main(ns: NS) {
     const currentTime = Date.now()
     let lastPid = 0
 
+    // Track player state as operations complete to predict hacking level
+    let currentPlayer = { ...player }
+
     for (let batchCounter = 0; batchCounter < batches; batchCounter++) {
       const batchOffset = batchCounter * batchDelay * 4
+
+      // Calculate XP gains for this batch (operations complete in order: H, W1, G, W2)
+      const hackXp = calculateOperationXp(server, currentPlayer, hackThreads, ns)
+      const wkn1Xp = calculateOperationXp(server, currentPlayer, wkn1Threads, ns)
+      const growXp = calculateOperationXp(server, currentPlayer, growThreads, ns)
+      const wkn2Xp = calculateOperationXp(server, currentPlayer, wkn2Threads, ns)
+
+      // Calculate expected hacking levels as each operation completes
+      const playerAfterHack = updatePlayerWithXp(currentPlayer, hackXp, ns)
+      const expectedHackLevel = playerAfterHack.skills.hacking
+
+      const playerAfterWkn1 = updatePlayerWithXp(playerAfterHack, wkn1Xp, ns)
+      const expectedWkn1Level = playerAfterWkn1.skills.hacking
+
+      const playerAfterGrow = updatePlayerWithXp(playerAfterWkn1, growXp, ns)
+      const expectedGrowLevel = playerAfterGrow.skills.hacking
+
+      const playerAfterWkn2 = updatePlayerWithXp(playerAfterGrow, wkn2Xp, ns)
+      const expectedWkn2Level = playerAfterWkn2.skills.hacking
+
+      // Update current player state for next batch calculations
+      currentPlayer = playerAfterWkn2
 
       // Find nodes for each operation
       const hackNode = findNodeForThreads(hackThreads, hackScriptRam)
@@ -209,16 +236,42 @@ export async function main(ns: NS) {
         break
       }
 
-      ns.exec("/hacking/hack.js", hackNode, hackThreads, target.serverName, hackAdditionalMsec + batchOffset, 0)
-      ns.exec("/hacking/weaken.js", wkn1Node, wkn1Threads, target.serverName, wkn1AdditionalMsec + batchOffset, 0)
-      ns.exec("/hacking/grow.js", growNode, growThreads, target.serverName, growAdditionalMsec + batchOffset, 0)
+      // Launch operations with expected hacking level for validation
+      ns.exec(
+        "/hacking/hack.js",
+        hackNode,
+        hackThreads,
+        target.serverName,
+        hackAdditionalMsec + batchOffset,
+        0,
+        expectedHackLevel
+      )
+      ns.exec(
+        "/hacking/weaken.js",
+        wkn1Node,
+        wkn1Threads,
+        target.serverName,
+        wkn1AdditionalMsec + batchOffset,
+        0,
+        expectedWkn1Level
+      )
+      ns.exec(
+        "/hacking/grow.js",
+        growNode,
+        growThreads,
+        target.serverName,
+        growAdditionalMsec + batchOffset,
+        0,
+        expectedGrowLevel
+      )
       lastPid = ns.exec(
         "/hacking/weaken.js",
         wkn2Node,
         wkn2Threads,
         target.serverName,
         wkn2AdditionalMsec + batchOffset,
-        0
+        0,
+        expectedWkn2Level
       )
     }
 

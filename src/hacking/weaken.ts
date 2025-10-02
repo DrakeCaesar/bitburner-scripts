@@ -5,10 +5,21 @@ export async function main(ns: NS) {
   const target = ns.args[0] // First parameter: target server.
   const delay = ns.args[1] ? Number(ns.args[1]) : 0 // Second parameter (optional): delay in ms.
   const operationId = ns.args[2] ? Number(ns.args[2]) : 0 // Third parameter: operation ID
+  const expectedHackLevel = ns.args[3] ? Number(ns.args[3]) : undefined // Fourth parameter: expected hacking level
   const start = Date.now()
   await ns.weaken(target as string, { additionalMsec: delay })
   const end = Date.now()
   // logActualBatchOp("W", start, end, operationId)
+
+  // Validate expected hacking level if provided
+  if (expectedHackLevel !== undefined) {
+    const actualHackLevel = ns.getPlayer().skills.hacking
+    if (actualHackLevel !== expectedHackLevel) {
+      ns.tprint(
+        `WEAKEN ${target}: Level mismatch! Expected: ${expectedHackLevel}, Actual: ${actualHackLevel}, Diff: ${actualHackLevel - expectedHackLevel}`
+      )
+    }
+  }
 
   // Check security after weaken
   const currentSecurity = ns.getServerSecurityLevel(target as string)
