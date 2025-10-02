@@ -12,9 +12,9 @@ import {
   wkn2ServerInstance,
 } from "./batchCalculations.js"
 // import { initBatchVisualiser, logBatchOperation } from "./batchVisualiser.js"
+import { main as autoNuke } from "./autoNuke.js"
 import { upgradeServer } from "./buyServer.js"
 import { findBestTarget } from "./findBestTarget.js"
-import { main as autoNuke } from "./autoNuke.js"
 
 export async function main(ns: NS) {
   const playerHackLevel = ns.args[0] ? Number(ns.args[0]) : undefined
@@ -73,17 +73,16 @@ export async function main(ns: NS) {
       }
     }
 
-    const nodes = getAllNodes()
+    let nodes = getAllNodes()
     if (nodes.length === 0) {
-      ns.tprint("No nodes available, waiting...")
-      await ns.sleep(10000)
-      continue
-    }
-
-    // Kill all scripts on all nodes and copy required scripts
-    for (const node of nodes) {
-      ns.killall(node)
-      await copyRequiredScripts(ns, node)
+      ns.tprint("No purchased servers found, using home...")
+      nodes = ["home"]
+    } else {
+      // Kill all scripts on all nodes and copy required scripts
+      for (const node of nodes) {
+        ns.killall(node)
+        await copyRequiredScripts(ns, node)
+      }
     }
 
     const batchDelay = 20
