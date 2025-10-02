@@ -4,12 +4,7 @@ import { NS, Person, Player, Server } from "@ns"
  * Calculate XP gained from a hacking operation (hack/grow/weaken)
  * Based on ns.formulas.hacking.hackExp()
  */
-export function calculateOperationXp(
-  server: Server,
-  player: Person,
-  threads: number,
-  ns: NS
-): number {
+export function calculateOperationXp(server: Server, player: Person, threads: number, ns: NS): number {
   const xpPerThread = ns.formulas.hacking.hackExp(server, player)
   return xpPerThread * threads
 }
@@ -160,7 +155,7 @@ export async function prepareServer(ns: NS, host: string, target: string) {
 
     if (totalSecToReduce > secTolerance) {
       const weakenThreadsNeeded = Math.max(1, Math.ceil(totalSecToReduce / (0.05 * (1 + (myCores - 1) / 16))))
-      const ramAfterGrow = currentAvailableRam - (growThreads * growScriptRam)
+      const ramAfterGrow = currentAvailableRam - growThreads * growScriptRam
       const maxWeakenThreads = Math.floor(ramAfterGrow / weakenScriptRam)
       weakenThreads = Math.min(weakenThreadsNeeded, maxWeakenThreads)
     }
@@ -187,7 +182,7 @@ export async function prepareServer(ns: NS, host: string, target: string) {
       await ns.sleep(estimatedTime)
 
       // Then verify all scripts have actually finished
-      while (pids.some(pid => ns.isRunning(pid))) {
+      while (pids.some((pid) => ns.isRunning(pid))) {
         await ns.sleep(100)
       }
     } else {
