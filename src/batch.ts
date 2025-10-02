@@ -249,7 +249,7 @@ export async function main(ns: NS) {
 
       const playerAfterWkn1 = updatePlayerWithXp(playerAfterHack, wkn1Xp, ns)
       const expectedWkn1Xp = playerAfterWkn1.exp.hacking
-      const expectedWkn1Level = playerAfterHack.skills.hacking
+      const expectedWkn1Level = playerAfterWkn1.skills.hacking
 
       const growXp = calculateOperationXp(server, playerAfterWkn1, growThreads, ns)
 
