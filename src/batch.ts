@@ -187,7 +187,7 @@ export async function main(ns: NS) {
     const hackTime = ns.formulas.hacking.hackTime(server, player)
     const growTime = ns.formulas.hacking.growTime(server, player)
 
-    ns.tprint(`Using batch delay of ${batchDelay}ms`)
+    ns.tprint(`Using batch delay of ${ns.tFormat(batchDelay)}`)
 
     const hackAdditionalMsec = weakenTime - batchDelay - hackTime
     const wkn1AdditionalMsec = 0
@@ -198,8 +198,8 @@ export async function main(ns: NS) {
       `Batch RAM: ${totalBatchRam.toFixed(2)} GB - Threads (H:${hackThreads} W1:${wkn1Threads} G:${growThreads} W2:${wkn2Threads})`
     )
     ns.tprint(`Can run ${batches} batches in parallel (${ns.formatRam(totalMaxRam)} total RAM)`)
-    ns.tprint(`Weaken time: ${weakenTime.toFixed(0)}ms`)
-    ns.tprint(`Batch interval: ${batchDelay * 4}ms`)
+    ns.tprint(`Weaken time: ${ns.tFormat(weakenTime)}`)
+    ns.tprint(`Batch interval: ${ns.tFormat(batchDelay * 4)}`)
 
     const minSecurity = ns.getServerMinSecurityLevel(target.serverName)
     const preHackSecurityIncrease = ns.getServerSecurityLevel(target.serverName) - minSecurity
