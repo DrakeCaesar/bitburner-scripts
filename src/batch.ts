@@ -234,28 +234,29 @@ export async function main(ns: NS) {
     for (let batchCounter = 0; batchCounter < batches; batchCounter++) {
       const batchOffset = batchCounter * batchDelay * 4
 
-      // Calculate XP gains for this batch (operations complete in order: H, W1, G, W2)
       const hackXp = calculateOperationXp(server, currentPlayer, hackThreads, ns)
-      const wkn1Xp = calculateOperationXp(server, currentPlayer, wkn1Threads, ns)
-      const growXp = calculateOperationXp(server, currentPlayer, growThreads, ns)
-      const wkn2Xp = calculateOperationXp(server, currentPlayer, wkn2Threads, ns)
 
-      // Expected level and XP are the values WHEN the operation completes (before XP is applied)
       const expectedHackLevel = currentPlayer.skills.hacking
-      const expectedHackXp = currentPlayer.exp.hacking
       const playerAfterHack = updatePlayerWithXp(currentPlayer, hackXp, ns)
+      const expectedHackXp = playerAfterHack.exp.hacking
+
+      const wkn1Xp = calculateOperationXp(server, playerAfterHack, wkn1Threads, ns)
 
       const expectedWkn1Level = playerAfterHack.skills.hacking
-      const expectedWkn1Xp = playerAfterHack.exp.hacking
       const playerAfterWkn1 = updatePlayerWithXp(playerAfterHack, wkn1Xp, ns)
+      const expectedWkn1Xp = playerAfterWkn1.exp.hacking
+
+      const growXp = calculateOperationXp(server, playerAfterWkn1, growThreads, ns)
 
       const expectedGrowLevel = playerAfterWkn1.skills.hacking
-      const expectedGrowXp = playerAfterWkn1.exp.hacking
       const playerAfterGrow = updatePlayerWithXp(playerAfterWkn1, growXp, ns)
+      const expectedGrowXp = playerAfterGrow.exp.hacking
+
+      const wkn2Xp = calculateOperationXp(server, playerAfterGrow, wkn2Threads, ns)
 
       const expectedWkn2Level = playerAfterGrow.skills.hacking
-      const expectedWkn2Xp = playerAfterGrow.exp.hacking
       const playerAfterWkn2 = updatePlayerWithXp(playerAfterGrow, wkn2Xp, ns)
+      const expectedWkn2Xp = playerAfterWkn2.exp.hacking
 
       // Update current player state for next batch calculations
       currentPlayer = playerAfterWkn2
@@ -312,6 +313,7 @@ export async function main(ns: NS) {
         expectedWkn2Level,
         expectedWkn2Xp
       )
+      return
     }
 
     // Wait for the last script to finish
