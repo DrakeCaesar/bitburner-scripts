@@ -84,7 +84,7 @@ export async function main(ns: NS) {
 
       if (homeRam > totalPurchasedRam) {
         ns.tprint(
-          `Home has more RAM (${ns.formatRam(homeRam)}) than purchased servers (${ns.formatRam(totalPurchasedRam)}), using home...`,
+          `Home has more RAM (${ns.formatRam(homeRam)}) than purchased servers (${ns.formatRam(totalPurchasedRam)}), using home...`
         )
         nodes = ["home"]
       }
@@ -96,7 +96,7 @@ export async function main(ns: NS) {
       await copyRequiredScripts(ns, node)
     }
 
-    const batchDelay = 20
+    const batchDelay = 50
 
     // Calculate total RAM across all nodes
     const totalMaxRam = nodes.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
