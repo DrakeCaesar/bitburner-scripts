@@ -16,37 +16,23 @@ interface FloatingWindowOptions {
 
 // Function to extract CSS classes from the existing overview element
 function extractCSSClasses(): typeof CSS_CLASSES {
-  const overviewElement = document.querySelector(
-    '[class*="-overviewContainer"]'
-  ) as HTMLElement
+  const overviewElement = document.querySelector('[class*="-overviewContainer"]') as HTMLElement
 
   if (!overviewElement) {
-    throw new Error(
-      "Could not find overview container element to extract CSS classes"
-    )
+    throw new Error("Could not find overview container element to extract CSS classes")
   }
 
   // Extract classes using selectors from the overview element structure
   const dragContainer = overviewElement.querySelector(".drag") as HTMLElement
-  const header = overviewElement.querySelector(
-    '[class*="-header"]'
-  ) as HTMLElement
+  const header = overviewElement.querySelector('[class*="-header"]') as HTMLElement
   const headerIcon = header?.querySelector("svg") as SVGElement
   const headerTitle = header?.querySelector("p") as HTMLElement
   const collapseButton = header?.querySelector("button") as HTMLButtonElement
   const collapseIcon = collapseButton?.querySelector("svg") as SVGElement
-  const touchRipple = collapseButton?.querySelector(
-    '[class*="MuiTouchRipple"]'
-  ) as HTMLElement
-  const collapseContainer = overviewElement.querySelector(
-    '[class*="MuiCollapse-root"]'
-  ) as HTMLElement
-  const collapseWrapper = collapseContainer?.querySelector(
-    '[class*="MuiCollapse-wrapper"]'
-  ) as HTMLElement
-  const wrapperInner = collapseWrapper?.querySelector(
-    '[class*="MuiCollapse-wrapperInner"]'
-  ) as HTMLElement
+  const touchRipple = collapseButton?.querySelector('[class*="MuiTouchRipple"]') as HTMLElement
+  const collapseContainer = overviewElement.querySelector('[class*="MuiCollapse-root"]') as HTMLElement
+  const collapseWrapper = collapseContainer?.querySelector('[class*="MuiCollapse-wrapper"]') as HTMLElement
+  const wrapperInner = collapseWrapper?.querySelector('[class*="MuiCollapse-wrapperInner"]') as HTMLElement
   const table = wrapperInner?.querySelector("table") as HTMLTableElement
   const tbody = table?.querySelector("tbody") as HTMLTableSectionElement
   // Get the 4th table row paragraph for correct typography styling
@@ -57,9 +43,7 @@ function extractCSSClasses(): typeof CSS_CLASSES {
   const tableRow = tableCell?.parentElement as HTMLTableRowElement
 
   // Helper function to extract css-* class from element
-  const extractCssClass = (
-    element: HTMLElement | SVGElement | null
-  ): string => {
+  const extractCssClass = (element: HTMLElement | SVGElement | null): string => {
     if (!element) return ""
     const classList = Array.from(element.classList)
     return classList.find((cls) => cls.startsWith("css-")) || ""
@@ -127,10 +111,7 @@ export class FloatingWindow {
     try {
       CSS_CLASSES = extractCSSClasses()
     } catch (error) {
-      console.warn(
-        "Could not extract CSS classes from overview element, using defaults:",
-        error
-      )
+      console.warn("Could not extract CSS classes from overview element, using defaults:", error)
     }
 
     this.title = options.title || "Floating Window"
@@ -161,11 +142,7 @@ export class FloatingWindow {
     this.attachEventListeners()
   }
 
-  private createSvgIcon(
-    classes: string,
-    testId: string,
-    pathData: string
-  ): SVGElement {
+  private createSvgIcon(classes: string, testId: string, pathData: string): SVGElement {
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg")
     svg.setAttribute("class", classes)
     svg.setAttribute("focusable", "false")
@@ -176,11 +153,7 @@ export class FloatingWindow {
     return svg
   }
 
-  private createButton(
-    classes: string,
-    ariaLabel: string,
-    onClick: () => void
-  ): HTMLButtonElement {
+  private createButton(classes: string, ariaLabel: string, onClick: () => void): HTMLButtonElement {
     const button = document.createElement("button")
     button.className = classes
     button.setAttribute("tabindex", "0")
@@ -360,9 +333,7 @@ export class FloatingWindow {
 
   private createElement(): void {
     // Find the overview element to copy styling and position next to it
-    const overviewElement = document.querySelector(
-      '[class*="-overviewContainer"]'
-    ) as HTMLElement
+    const overviewElement = document.querySelector('[class*="-overviewContainer"]') as HTMLElement
 
     if (!overviewElement) {
       throw new Error("Could not find overview container element")
@@ -396,10 +367,7 @@ export class FloatingWindow {
     this.element.appendChild(contentArea)
 
     // Insert as sibling after the overview element
-    overviewElement.parentNode!.insertBefore(
-      this.element,
-      overviewElement.nextSibling
-    )
+    overviewElement.parentNode!.insertBefore(this.element, overviewElement.nextSibling)
   }
 
   private attachEventListeners(): void {
@@ -495,9 +463,7 @@ export class FloatingWindow {
   public toggle(): void {
     this.isCollapsed = !this.isCollapsed
     const contentArea = this.element?.children[1] as HTMLElement // Second child is content area
-    const collapseBtn = this.element?.querySelector(
-      `.${CSS_CLASSES.visibilityToggle}`
-    ) as HTMLElement
+    const collapseBtn = this.element?.querySelector(`.${CSS_CLASSES.visibilityToggle}`) as HTMLElement
     const collapseSvg = collapseBtn?.querySelector("svg") as SVGElement
 
     if (contentArea) {
@@ -522,10 +488,7 @@ export class FloatingWindow {
 
     if (collapseSvg) {
       // Update SVG icon and data-testid
-      collapseSvg.setAttribute(
-        "data-testid",
-        this.isCollapsed ? "KeyboardArrowDownIcon" : "KeyboardArrowUpIcon"
-      )
+      collapseSvg.setAttribute("data-testid", this.isCollapsed ? "KeyboardArrowDownIcon" : "KeyboardArrowUpIcon")
       collapseSvg.innerHTML = this.isCollapsed
         ? '<path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"></path>'
         : '<path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z"></path>'
@@ -620,8 +583,6 @@ export class FloatingWindow {
 }
 
 // Convenience function for quick window creation
-export function createFloatingWindow(
-  options: FloatingWindowOptions = {}
-): FloatingWindow {
+export function createFloatingWindow(options: FloatingWindowOptions = {}): FloatingWindow {
   return new FloatingWindow(options)
 }
