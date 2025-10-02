@@ -77,6 +77,7 @@ export async function main(ns: NS) {
     if (nodes.length === 0) {
       ns.tprint("No purchased servers found, using home...")
       nodes = ["home"]
+      ns.killall(nodes[0])
     } else {
       // Kill all scripts on all nodes and copy required scripts
       for (const node of nodes) {

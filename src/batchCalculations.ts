@@ -85,51 +85,60 @@ export async function prepareServer(ns: NS, host: string, target: string) {
 
   const player = ns.getPlayer()
   const myCores = ns.getServer(host).cpuCores
-  // ns.tprint(`cores: ${myCores}`)
 
-  const serverActual = ns.getServer(target)
-  const growThreads = Math.ceil(ns.formulas.hacking.growThreads(serverActual, player, moneyMax, myCores))
-  if (growThreads > 0) {
-    // ns.tprint(`Prep: Executing grow with ${growThreads} threads on ${target}.`)
-    ns.exec("/hacking/grow.js", host, growThreads, target, 0)
-  } else {
-    // ns.tprint(`Prep: Grow not needed on ${target}.`)
-  }
+  const growScriptRam = ns.getScriptRam("/hacking/grow.js")
+  const weakenScriptRam = ns.getScriptRam("/hacking/weaken.js")
+  const availableRam = ns.getServerMaxRam(host) - ns.getServerUsedRam(host)
 
-  await ns.sleep(prepWeakenDelay)
+  ns.tprint(`Prep: Starting preparation with ${ns.formatRam(availableRam)} available RAM`)
 
-  const addedSecurity = ns.growthAnalyzeSecurity(growThreads, target, myCores)
-  const currentSec = ns.getServerSecurityLevel(target)
-  const expectedSecAfterGrow = currentSec + addedSecurity
-  const secToReduce = expectedSecAfterGrow - baseSecurity
-  const weakenThreadsPre = Math.max(1, Math.ceil(secToReduce / (0.05 * (1 + (myCores - 1) / 16))))
+  // Loop until server is prepared
+  while (true) {
+    const currentMoney = ns.getServerMoneyAvailable(target)
+    const currentSec = ns.getServerSecurityLevel(target)
 
-  let needsWait = false
-  if (weakenThreadsPre > 0 && secToReduce > secTolerance) {
-    // ns.tprint(`Prep: Executing weaken with ${weakenThreadsPre} threads on ${target}.`)
-    ns.exec("/hacking/weaken.js", host, weakenThreadsPre, target, 0)
-    needsWait = true
-  } else {
-    // ns.tprint(`Prep: Weaken not needed on ${target} (security is at base).`)
-  }
+    // Check if preparation is complete
+    if (currentMoney >= moneyMax * moneyTolerance && currentSec <= baseSecurity + secTolerance) {
+      ns.tprint(
+        `Prep: Complete - Money: ${ns.formatNumber(currentMoney)}/${ns.formatNumber(moneyMax)}, Security: ${currentSec.toFixed(2)}/${baseSecurity}`
+      )
+      break
+    }
 
-  if (needsWait || growThreads > 0) {
+    const serverActual = ns.getServer(target)
+    const currentAvailableRam = ns.getServerMaxRam(host) - ns.getServerUsedRam(host)
+
+    // Grow if needed
+    if (currentMoney < moneyMax * moneyTolerance) {
+      const growThreadsNeeded = Math.ceil(ns.formulas.hacking.growThreads(serverActual, player, moneyMax, myCores))
+      const maxGrowThreads = Math.floor(currentAvailableRam / growScriptRam)
+      const growThreads = Math.min(growThreadsNeeded, maxGrowThreads)
+
+      if (growThreads > 0) {
+        ns.exec("/hacking/grow.js", host, growThreads, target, 0)
+        await ns.sleep(prepWeakenDelay)
+      }
+    }
+
+    // Weaken if needed
+    if (currentSec > baseSecurity + secTolerance) {
+      const secToReduce = currentSec - baseSecurity
+      const weakenThreadsNeeded = Math.max(1, Math.ceil(secToReduce / (0.05 * (1 + (myCores - 1) / 16))))
+      const currentAvailableRamAfterGrow = ns.getServerMaxRam(host) - ns.getServerUsedRam(host)
+      const maxWeakenThreads = Math.floor(currentAvailableRamAfterGrow / weakenScriptRam)
+      const weakenThreads = Math.min(weakenThreadsNeeded, maxWeakenThreads)
+
+      if (weakenThreads > 0) {
+        ns.exec("/hacking/weaken.js", host, weakenThreads, target, 0)
+      }
+    }
+
+    // Wait for operations to complete
     const growTime = ns.formulas.hacking.growTime(serverActual, player)
     const weakenTime = ns.formulas.hacking.weakenTime(serverActual, player)
     const waitTime = Math.max(growTime, weakenTime) + 200
-    // ns.tprint(`Prep: Waiting ${waitTime} ms for grow/weaken to complete...`)
     await ns.sleep(waitTime)
   }
-
-  const postMoney = ns.getServerMoneyAvailable(target)
-  const postSec = ns.getServerSecurityLevel(target)
-  if (postMoney < moneyMax * moneyTolerance) {
-    // ns.tprint(`WARNING: Money is only ${postMoney} (target ${moneyMax}).`)
-  }
-  if (postSec > baseSecurity + secTolerance) {
-    // ns.tprint(`WARNING: Security is ${postSec} (target ${baseSecurity}).`)
-  }
-  // ns.tprint(`Prep complete on ${target}: ${postMoney} money, ${postSec} security.`)
 
   return { moneyMax, baseSecurity, secTolerance, myCores }
 }
