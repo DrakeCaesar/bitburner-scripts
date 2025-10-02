@@ -134,7 +134,7 @@ export async function main(ns: NS) {
       await copyRequiredScripts(ns, node)
     }
 
-    const batchDelay = 20
+    const batchDelay = 50
 
     // Calculate total RAM across all nodes
     const totalMaxRam = nodes.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
