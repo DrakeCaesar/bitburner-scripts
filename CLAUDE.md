@@ -27,7 +27,9 @@ This repository contains scripts for the Bitburner programming game. Scripts run
 - `src/` - Source TypeScript/JavaScript files
 - `dist/` - Compiled output (synced to game)
 - `build/` - Custom build system (watch.js, init.js, config.js)
-- `NetscriptDefinitions.d.ts` - Bitburner API type definitions
+- `NetscriptDefinitions.d.ts` - **Complete Bitburner API type definitions (10,000+ lines)**
+  - **ALWAYS reference this file when using NS functions** to verify signatures, parameters, RAM costs, and return types
+  - Contains comprehensive JSDoc documentation for all Netscript API methods
 
 ### Module System
 - **Netscript Import**: Use `import { NS } from "@ns"` for Bitburner API types
@@ -74,6 +76,7 @@ export async function main(ns: NS): Promise<void> {
 - Visual modification scripts use extensive DOM manipulation and CSS injection
 
 ## Important Instructions
+- **ALWAYS consult NetscriptDefinitions.d.ts when working with NS API functions** - it contains complete documentation, RAM costs, and type signatures
 - NEVER run linter, TypeScript checks, or build commands unless explicitly requested by the User
 - Do what has been asked; nothing more, nothing less
 - NEVER create files unless they're absolutely necessary for achieving your goal
