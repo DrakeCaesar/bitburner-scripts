@@ -90,7 +90,7 @@ export async function main(ns: NS) {
 
       if (currentRam >= maxRam) {
         const cost = ns.getPurchasedServerCost(maxRam)
-        const money = ns.getPlayer().money
+        let money = ns.getPlayer().money
 
         // Buy as many maxed servers as we can afford
         for (let i = 1; i < 25; i++) {
@@ -99,13 +99,13 @@ export async function main(ns: NS) {
           if (!ns.serverExists(nodeName) && money >= cost) {
             ns.purchaseServer(nodeName, maxRam)
             ns.tprint(`Bought new maxed server: ${nodeName} (${maxRam} GB)`)
-            break
+            money -= cost
           } else if (ns.serverExists(nodeName) && ns.getServerMaxRam(nodeName) < maxRam && money >= cost) {
             ns.killall(nodeName)
             ns.deleteServer(nodeName)
             ns.purchaseServer(nodeName, maxRam)
             ns.tprint(`Upgraded ${nodeName} to max RAM (${maxRam} GB)`)
-            break
+            money -= cost
           }
         }
       }
@@ -134,7 +134,7 @@ export async function main(ns: NS) {
       await copyRequiredScripts(ns, node)
     }
 
-    const batchDelay = 50
+    const batchDelay = 10
 
     // Calculate total RAM across all nodes
     const totalMaxRam = nodes.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
