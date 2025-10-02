@@ -332,9 +332,14 @@ export class FloatingWindow {
   }
 
   private positionWindow(overviewElement: HTMLElement): void {
-    // Apply width constraint first
-    this.element!.style.width = `${this.options.width}px`
-    this.element!.style.maxWidth = `${this.options.width}px`
+    // Apply width constraint if specified, otherwise auto-size to content
+    if (this.options.width) {
+      this.element!.style.width = `${this.options.width}px`
+      this.element!.style.maxWidth = `${this.options.width}px`
+    } else {
+      this.element!.style.width = "auto"
+      this.element!.style.maxWidth = "none"
+    }
 
     // Get the transform values of the overview element
     const style = window.getComputedStyle(overviewElement)
@@ -533,9 +538,14 @@ export class FloatingWindow {
         this.element.style.width = "auto"
         this.element.style.maxWidth = "none"
       } else {
-        // When expanded, restore configured width
-        this.element.style.width = `${this.options.width}px`
-        this.element.style.maxWidth = `${this.options.width}px`
+        // When expanded, restore configured width (or auto if not specified)
+        if (this.options.width) {
+          this.element.style.width = `${this.options.width}px`
+          this.element.style.maxWidth = `${this.options.width}px`
+        } else {
+          this.element.style.width = "auto"
+          this.element.style.maxWidth = "none"
+        }
       }
       this.element.style.height = "auto"
     }

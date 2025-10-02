@@ -125,13 +125,20 @@ export function main(ns: NS) {
   pre.style.whiteSpace = "pre"
   pre.style.lineHeight = "1.2"
   pre.style.color = primaryColor
+  pre.style.overflow = "auto"
   pre.textContent = fullTable
+
+  // Calculate content width based on longest line (approximate)
+  const lines = fullTable.split("\n")
+  const maxLineLength = Math.max(...lines.map((line) => line.length))
+  // Approximate character width: 7.2px per character for 12px monospace font
+  const contentWidth = Math.min(maxLineLength * 7.2 + 40, window.innerWidth - 100)
 
   // Create floating window
   new FloatingWindow({
     title: `Server List (${items.size} servers)`,
     content: pre,
-    width: 800,
+    width: contentWidth,
     height: 600,
     id: "server-list-window",
   })
