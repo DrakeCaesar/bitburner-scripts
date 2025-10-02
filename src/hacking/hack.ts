@@ -26,7 +26,7 @@ export async function main(ns: NS) {
 
     if (expectedHackXp !== undefined) {
       const xpDiff = Math.abs(actualHackXp - expectedHackXp)
-      if (xpDiff > 0.01) {
+      if (xpDiff > 0.001) {
         // Allow small floating point errors
         ns.tprint(
           `HACK ${target}: XP mismatch! Expected: ${expectedHackXp.toFixed(2)}, Actual: ${actualHackXp.toFixed(2)}, Diff: ${(actualHackXp - expectedHackXp).toFixed(2)}`

@@ -26,14 +26,9 @@ export async function main(ns: NS) {
 
     if (expectedHackXp !== undefined) {
       const xpDiff = Math.abs(actualHackXp - expectedHackXp)
-      if (xpDiff > 0.01) {
+      if (xpDiff > 0.001) {
         ns.tprint(
           `WEAKEN ${target}: XP mismatch! Expected: ${expectedHackXp.toFixed(2)}, Actual: ${actualHackXp.toFixed(2)}, Diff: ${(actualHackXp - expectedHackXp).toFixed(2)}`
-        )
-      } else {
-        // print both values for debugging
-        ns.tprint(
-          `WEAKEN ${target}: XP match. Expected: ${expectedHackXp.toFixed(2)}, Actual: ${actualHackXp.toFixed(2)}`
         )
       }
     }
