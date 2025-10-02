@@ -153,9 +153,13 @@ export async function prepareServer(ns: NS, host: string, target: string) {
     }
 
     // Calculate threads needed for weaken using remaining RAM
-    if (currentSec > baseSecurity + secTolerance) {
-      const secToReduce = currentSec - baseSecurity
-      const weakenThreadsNeeded = Math.max(1, Math.ceil(secToReduce / (0.05 * (1 + (myCores - 1) / 16))))
+    // Need to reduce current excess security PLUS security added by grow
+    const currentExcessSec = currentSec - baseSecurity
+    const growSecurityIncrease = growThreads > 0 ? ns.growthAnalyzeSecurity(growThreads, undefined, myCores) : 0
+    const totalSecToReduce = currentExcessSec + growSecurityIncrease
+
+    if (totalSecToReduce > secTolerance) {
+      const weakenThreadsNeeded = Math.max(1, Math.ceil(totalSecToReduce / (0.05 * (1 + (myCores - 1) / 16))))
       const ramAfterGrow = currentAvailableRam - (growThreads * growScriptRam)
       const maxWeakenThreads = Math.floor(ramAfterGrow / weakenScriptRam)
       weakenThreads = Math.min(weakenThreadsNeeded, maxWeakenThreads)
