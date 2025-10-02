@@ -77,13 +77,23 @@ export async function main(ns: NS) {
     if (nodes.length === 0) {
       ns.tprint("No purchased servers found, using home...")
       nodes = ["home"]
-      ns.killall(nodes[0])
     } else {
-      // Kill all scripts on all nodes and copy required scripts
-      for (const node of nodes) {
-        ns.killall(node)
-        await copyRequiredScripts(ns, node)
+      // Check if home has more RAM than purchased servers
+      const homeRam = ns.getServerMaxRam("home")
+      const totalPurchasedRam = nodes.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
+
+      if (homeRam > totalPurchasedRam) {
+        ns.tprint(
+          `Home has more RAM (${ns.formatRam(homeRam)}) than purchased servers (${ns.formatRam(totalPurchasedRam)}), using home...`,
+        )
+        nodes = ["home"]
       }
+    }
+
+    // Kill all scripts on all nodes and copy required scripts
+    for (const node of nodes) {
+      ns.killall(node)
+      await copyRequiredScripts(ns, node)
     }
 
     const batchDelay = 20
