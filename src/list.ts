@@ -1,82 +1,134 @@
 import { NS } from "@ns"
 import { crawl } from "./libraries/crawl.js"
+import { FloatingWindow } from "./libraries/floatingWindow.js"
 
 export function main(ns: NS) {
-  const knownServers = crawl(ns)
-  let paddingServers = 0
-  let paddinglevels = 0
-  for (const key of knownServers) {
-    paddingServers = Math.max(key.length, paddingServers)
-
-    paddinglevels = Math.max(
-      String(ns.getServerRequiredHackingLevel(key)).length,
-      paddinglevels
-    )
+  // Remove existing list window if it exists
+  const existingWindow = document.querySelector("#server-list-window")
+  if (existingWindow) {
+    existingWindow.remove()
   }
 
-  let items = new Map<string, number>()
+  const knownServers = crawl(ns)
+  const player = ns.getPlayer()
+
+  // Build server data with nuking
+  let items = new Map<string, { level: number; server: any }>()
   for (const key of knownServers) {
     if (!key.includes("node")) {
-      items.set(key, ns.getServerRequiredHackingLevel(key))
+      const level = ns.getServerRequiredHackingLevel(key)
+      const server = ns.getServer(key)
+
+      // Attempt to nuke if possible
+      let numPortsOpen = 0
+      if (ns.fileExists("BruteSSH.exe", "home")) {
+        ns.brutessh(key)
+        ++numPortsOpen
+      }
+      if (ns.fileExists("FTPCrack.exe", "home")) {
+        ns.ftpcrack(key)
+        ++numPortsOpen
+      }
+      if (ns.fileExists("relaySMTP.exe", "home")) {
+        ns.relaysmtp(key)
+        ++numPortsOpen
+      }
+      if (ns.fileExists("HTTPWorm.exe", "home")) {
+        ns.httpworm(key)
+        ++numPortsOpen
+      }
+      if (ns.fileExists("SQLInject.exe", "home")) {
+        ns.sqlinject(key)
+        ++numPortsOpen
+      }
+      if (
+        ns.fileExists("NUKE.exe", "home") &&
+        level <= player.skills.hacking &&
+        ns.getServerNumPortsRequired(key) <= numPortsOpen
+      ) {
+        ns.nuke(key)
+      }
+
+      // Re-get server to get updated root status
+      items.set(key, { level, server: ns.getServer(key) })
     }
   }
 
-  items = new Map(
-    [...items].sort(function (first, second) {
-      return first[1] - second[1]
-    })
-  )
+  // Sort by hacking level
+  items = new Map([...items].sort((a, b) => a[1].level - b[1].level))
 
-  for (const [target, level] of items) {
-    const player = ns.getPlayer()
-    const server = ns.getServer(target)
-    ns.tprint(
-      target.padEnd(paddingServers, " ") +
-        "    LVL: " +
-        String(level).padStart(paddinglevels, " ") +
-        (level <= player.skills.hacking ? " <= " : " >> ") +
-        player.skills.hacking +
-        (server.hasAdminRights ? "  ROOT" : "      ") +
-        "  SEC: " +
-        ((server.hackDifficulty ?? 0) - (server.minDifficulty ?? 0))
-          .toFixed(2)
-          .padStart(8) +
-        "  MEM: " +
-        String(server.maxRam).padEnd(8) +
-        "    MON: " +
-        String(Math.floor(server.moneyMax ?? 0)).padStart(20) +
-        "    TIM: " +
-        ns.tFormat(ns.getWeakenTime(target)).padEnd(30)
-    )
-    let numPortsOpen = 0
-    if (ns.fileExists("BruteSSH.exe", "home")) {
-      ns.brutessh(target)
-      ++numPortsOpen
-    }
-    if (ns.fileExists("FTPCrack.exe", "home")) {
-      ns.ftpcrack(target)
-      ++numPortsOpen
-    }
-    if (ns.fileExists("relaySMTP.exe", "home")) {
-      ns.relaysmtp(target)
-      ++numPortsOpen
-    }
-    if (ns.fileExists("HTTPWorm.exe", "home")) {
-      ns.httpworm(target)
-      ++numPortsOpen
-    }
-    if (ns.fileExists("SQLInject.exe", "home")) {
-      ns.sqlinject(target)
-      ++numPortsOpen
-    }
-    if (
-      ns.fileExists("NUKE.exe", "home") &&
-      level <= player.skills.hacking &&
-      ns.getServerNumPortsRequired(target) <= numPortsOpen
-    ) {
-      ns.nuke(target)
-    }
+  // Column headers
+  const serverCol = "Server"
+  const lvlCol = "Level"
+  const rootCol = "Root"
+  const secCol = "Security"
+  const ramCol = "RAM"
+  const moneyCol = "Money"
+  const timeCol = "Time"
+
+  // Calculate column widths
+  let serverLen = serverCol.length
+  let lvlLen = lvlCol.length
+  let rootLen = rootCol.length
+  let secLen = secCol.length
+  let ramLen = ramCol.length
+  let moneyLen = moneyCol.length
+  let timeLen = timeCol.length
+
+  for (const [target, { level, server }] of items) {
+    serverLen = Math.max(serverLen, target.length)
+    lvlLen = Math.max(lvlLen, level.toString().length)
+    rootLen = Math.max(rootLen, (server.hasAdminRights ? "✓" : "✗").length)
+    secLen = Math.max(secLen, ((server.hackDifficulty ?? 0) - (server.minDifficulty ?? 0)).toFixed(2).length)
+    ramLen = Math.max(ramLen, ns.formatRam(server.maxRam).length)
+    moneyLen = Math.max(moneyLen, ns.formatNumber(server.moneyMax ?? 0).length)
+    timeLen = Math.max(timeLen, ns.tFormat(ns.getWeakenTime(target)).length)
   }
 
-  //ns.tprint(items);
+  // Build table with box-drawing characters
+  let tableRows = ""
+  for (const [target, { level, server }] of items) {
+    const hackable = level <= player.skills.hacking ? "✓" : "✗"
+    const hasRoot = server.hasAdminRights ? "✓" : "✗"
+    const secDiff = ((server.hackDifficulty ?? 0) - (server.minDifficulty ?? 0)).toFixed(2).padStart(secLen)
+    const ram = ns.formatRam(server.maxRam).padStart(ramLen)
+    const money = ns.formatNumber(server.moneyMax ?? 0).padStart(moneyLen)
+    const time = ns.tFormat(ns.getWeakenTime(target)).padStart(timeLen)
+
+    tableRows += `┃ ${target.padEnd(serverLen)} ┃ ${level.toString().padStart(lvlLen)} ${hackable} ┃ ${hasRoot.padStart(rootLen)} ┃ ${secDiff} ┃ ${ram} ┃ ${money} ┃ ${time} ┃\n`
+  }
+
+  const fullTable =
+    `┏━${"━".repeat(serverLen)}━┳━${"━".repeat(lvlLen + 2)}━┳━${"━".repeat(rootLen)}━┳━${"━".repeat(secLen)}━┳━${"━".repeat(ramLen)}━┳━${"━".repeat(moneyLen)}━┳━${"━".repeat(timeLen)}━┓\n` +
+    `┃ ${serverCol.padEnd(serverLen)} ┃ ${lvlCol.padStart(lvlLen + 2)} ┃ ${rootCol.padStart(rootLen)} ┃ ${secCol.padStart(secLen)} ┃ ${ramCol.padStart(ramLen)} ┃ ${moneyCol.padStart(moneyLen)} ┃ ${timeCol.padStart(timeLen)} ┃\n` +
+    `┣━${"━".repeat(serverLen)}━╋━${"━".repeat(lvlLen + 2)}━╋━${"━".repeat(rootLen)}━╋━${"━".repeat(secLen)}━╋━${"━".repeat(ramLen)}━╋━${"━".repeat(moneyLen)}━╋━${"━".repeat(timeLen)}━┫\n` +
+    `${tableRows}` +
+    `┗━${"━".repeat(serverLen)}━┻━${"━".repeat(lvlLen + 2)}━┻━${"━".repeat(rootLen)}━┻━${"━".repeat(secLen)}━┻━${"━".repeat(ramLen)}━┻━${"━".repeat(moneyLen)}━┻━${"━".repeat(timeLen)}━┛`
+
+  // Extract primary text color from game's CSS
+  const primaryElement = document.querySelector('[class*="css-"][class*="-primary"]') as HTMLElement
+  let primaryColor = "#0f0" // Fallback green
+  if (primaryElement) {
+    const computedStyle = window.getComputedStyle(primaryElement)
+    primaryColor = computedStyle.color || primaryColor
+  }
+
+  // Create pre element for monospace formatting
+  const pre = document.createElement("pre")
+  pre.style.margin = "0"
+  pre.style.fontFamily = "monospace"
+  pre.style.fontSize = "12px"
+  pre.style.whiteSpace = "pre"
+  pre.style.lineHeight = "1.2"
+  pre.style.color = primaryColor
+  pre.textContent = fullTable
+
+  // Create floating window
+  new FloatingWindow({
+    title: `Server List (${items.size} servers)`,
+    content: pre,
+    width: 800,
+    height: 600,
+    id: "server-list-window",
+  })
 }

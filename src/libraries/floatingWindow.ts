@@ -526,8 +526,17 @@ export class FloatingWindow {
         : '<path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z"></path>'
     }
 
-    // Let the container size adjust naturally
+    // Adjust window width based on collapse state
     if (this.element) {
+      if (this.isCollapsed) {
+        // When collapsed, shrink to fit header content only
+        this.element.style.width = "auto"
+        this.element.style.maxWidth = "none"
+      } else {
+        // When expanded, restore configured width
+        this.element.style.width = `${this.options.width}px`
+        this.element.style.maxWidth = `${this.options.width}px`
+      }
       this.element.style.height = "auto"
     }
   }
