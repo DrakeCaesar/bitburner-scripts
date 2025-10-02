@@ -29,6 +29,7 @@ export interface ServerProfitability {
 
 /**
  * Analyze all hackable servers and return detailed profitability data
+ * @param includePrepTime - If true, includes server prep time in profitability calculation (default: false)
  * @returns Array of servers sorted by profitability (best first)
  */
 export function analyzeAllServers(
@@ -36,7 +37,8 @@ export function analyzeAllServers(
   totalMaxRam: number,
   myCores: number,
   batchDelay: number,
-  playerHackLevel?: number
+  playerHackLevel?: number,
+  includePrepTime = false
 ): ServerProfitability[] {
   // Get all servers
   const knownServers = new Set<string>()
@@ -59,17 +61,20 @@ export function analyzeAllServers(
   const profitabilityData: ServerProfitability[] = []
 
   for (const targetName of hackableServers) {
-    // Get actual server state to calculate prep time
-    const actualServer = ns.getServer(targetName)
-    const securityDiff = (actualServer.hackDifficulty ?? 0) - (actualServer.minDifficulty ?? 0)
-    const moneyRatio = (actualServer.moneyAvailable ?? 0) / (actualServer.moneyMax ?? 1)
+    // Calculate prep time if requested
+    let prepTime = 0
+    if (includePrepTime) {
+      const actualServer = ns.getServer(targetName)
+      const securityDiff = (actualServer.hackDifficulty ?? 0) - (actualServer.minDifficulty ?? 0)
+      const moneyRatio = (actualServer.moneyAvailable ?? 0) / (actualServer.moneyMax ?? 1)
 
-    // Estimate prep time:
-    // - If security is above minimum OR money is below max, we need to prep
-    // - Prep requires weaken (if security high) + grow (if money low) + weaken (after grow)
-    // - Worst case: full weaken time (they run in parallel but weaken is longest)
-    const needsPrep = securityDiff > 0 || moneyRatio < 1
-    const prepTime = needsPrep ? ns.formulas.hacking.weakenTime(actualServer, player) : 0
+      // Estimate prep time:
+      // - If security is above minimum OR money is below max, we need to prep
+      // - Prep requires weaken (if security high) + grow (if money low) + weaken (after grow)
+      // - Worst case: full weaken time (they run in parallel but weaken is longest)
+      const needsPrep = securityDiff > 0 || moneyRatio < 1
+      prepTime = needsPrep ? ns.formulas.hacking.weakenTime(actualServer, player) : 0
+    }
 
     // Simulate prepared server
     const server = ns.getServer(targetName)
@@ -153,10 +158,11 @@ export function findBestTarget(
   totalMaxRam: number,
   myCores: number,
   batchDelay: number,
-  playerHackLevel?: number
+  playerHackLevel?: number,
+  includePrepTime = false
 ): BestTargetResult {
   // Use the analysis function to get all server profitability data
-  const profitabilityData = analyzeAllServers(ns, totalMaxRam, myCores, batchDelay, playerHackLevel)
+  const profitabilityData = analyzeAllServers(ns, totalMaxRam, myCores, batchDelay, playerHackLevel, includePrepTime)
 
   ns.tprint(`Found ${profitabilityData.length} hackable servers, analyzing profitability...`)
 
