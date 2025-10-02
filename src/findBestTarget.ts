@@ -10,19 +10,34 @@ import {
 } from "./batchCalculations.js"
 import { crawl } from "./crawl.js"
 
-interface BestTargetResult {
+export interface BestTargetResult {
   serverName: string
   hackThreshold: number
   moneyPerSecond: number
 }
 
-export function findBestTarget(
+export interface ServerProfitability {
+  serverName: string
+  hackLevel: number
+  moneyMax: number
+  weakenTime: number
+  optimalThreshold: number
+  moneyPerSecond: number
+  batchRam: number
+  batches: number
+}
+
+/**
+ * Analyze all hackable servers and return detailed profitability data
+ * @returns Array of servers sorted by profitability (best first)
+ */
+export function analyzeAllServers(
   ns: NS,
   totalMaxRam: number,
   myCores: number,
   batchDelay: number,
   playerHackLevel?: number
-): BestTargetResult {
+): ServerProfitability[] {
   // Get all servers
   const knownServers = new Set<string>()
   crawl(ns, knownServers)
@@ -41,13 +56,21 @@ export function findBestTarget(
     return server.requiredHackingSkill! <= maxHackLevel && server.moneyMax! > 0 && server.hasAdminRights
   })
 
-  ns.tprint(`Found ${hackableServers.length} hackable servers, analyzing profitability...`)
-
-  let bestServer = ""
-  let bestMoneyPerSecond = 0
-  let bestThreshold = 0.5
+  const profitabilityData: ServerProfitability[] = []
 
   for (const targetName of hackableServers) {
+    // Get actual server state to calculate prep time
+    const actualServer = ns.getServer(targetName)
+    const securityDiff = (actualServer.hackDifficulty ?? 0) - (actualServer.minDifficulty ?? 0)
+    const moneyRatio = (actualServer.moneyAvailable ?? 0) / (actualServer.moneyMax ?? 1)
+
+    // Estimate prep time:
+    // - If security is above minimum OR money is below max, we need to prep
+    // - Prep requires weaken (if security high) + grow (if money low) + weaken (after grow)
+    // - Worst case: full weaken time (they run in parallel but weaken is longest)
+    const needsPrep = securityDiff > 0 || moneyRatio < 1
+    const prepTime = needsPrep ? ns.formulas.hacking.weakenTime(actualServer, player) : 0
+
     // Simulate prepared server
     const server = ns.getServer(targetName)
     server.hackDifficulty = server.minDifficulty
@@ -59,6 +82,8 @@ export function findBestTarget(
     // Test different thresholds for this server
     let serverBestMoneyPerSecond = 0
     let serverBestThreshold = 0.5
+    let serverBestBatchRam = 0
+    let serverBestBatches = 0
 
     const steps = 100
     for (let i = 1; i <= steps - 1; i++) {
@@ -90,37 +115,69 @@ export function findBestTarget(
       const moneyPerBatch = moneyMax * (1 - testThreshold)
       const totalMoneyPerCycle = moneyPerBatch * batches
 
-      // Calculate cycle time
+      // Calculate cycle time (including prep time)
       const lastBatchOffset = (batches - 1) * batchDelay * 4
       const lastOperationFinishTime = weakenTime + 2 * batchDelay + lastBatchOffset
-      const cycleTime = lastOperationFinishTime
-      const moneyPerSecond = (totalMoneyPerCycle / cycleTime) * 1000
+      const batchCycleTime = lastOperationFinishTime
+      const totalCycleTime = batchCycleTime + prepTime
+      const moneyPerSecond = (totalMoneyPerCycle / totalCycleTime) * 1000
 
       if (moneyPerSecond > serverBestMoneyPerSecond) {
         serverBestMoneyPerSecond = moneyPerSecond
         serverBestThreshold = testThreshold
+        serverBestBatchRam = totalBatchRam
+        serverBestBatches = batches
       }
     }
 
-    // Track best overall server
-    if (serverBestMoneyPerSecond > bestMoneyPerSecond) {
-      bestMoneyPerSecond = serverBestMoneyPerSecond
-      bestServer = targetName
-      bestThreshold = serverBestThreshold
-    }
+    profitabilityData.push({
+      serverName: targetName,
+      hackLevel: server.requiredHackingSkill!,
+      moneyMax: moneyMax,
+      weakenTime: weakenTime,
+      optimalThreshold: serverBestThreshold,
+      moneyPerSecond: serverBestMoneyPerSecond,
+      batchRam: serverBestBatchRam,
+      batches: serverBestBatches,
+    })
+  }
+
+  // Sort by money per second (descending)
+  profitabilityData.sort((a, b) => b.moneyPerSecond - a.moneyPerSecond)
+
+  return profitabilityData
+}
+
+export function findBestTarget(
+  ns: NS,
+  totalMaxRam: number,
+  myCores: number,
+  batchDelay: number,
+  playerHackLevel?: number
+): BestTargetResult {
+  // Use the analysis function to get all server profitability data
+  const profitabilityData = analyzeAllServers(ns, totalMaxRam, myCores, batchDelay, playerHackLevel)
+
+  ns.tprint(`Found ${profitabilityData.length} hackable servers, analyzing profitability...`)
+
+  // Best server is the first one (already sorted by profitability)
+  const best = profitabilityData[0]
+
+  if (!best) {
+    throw new Error("No hackable servers found!")
   }
 
   ns.tprint("")
   ns.tprint("=".repeat(60))
-  ns.tprint(`Best target: ${bestServer}`)
-  ns.tprint(`Optimal hack threshold: ${(bestThreshold * 100).toFixed(2)}%`)
-  ns.tprint(`Expected income: ${ns.formatNumber(bestMoneyPerSecond)}/sec`)
+  ns.tprint(`Best target: ${best.serverName}`)
+  ns.tprint(`Optimal hack threshold: ${(best.optimalThreshold * 100).toFixed(2)}%`)
+  ns.tprint(`Expected income: ${ns.formatNumber(best.moneyPerSecond)}/sec`)
   ns.tprint("=".repeat(60))
 
   return {
-    serverName: bestServer,
-    hackThreshold: bestThreshold,
-    moneyPerSecond: bestMoneyPerSecond,
+    serverName: best.serverName,
+    hackThreshold: best.optimalThreshold,
+    moneyPerSecond: best.moneyPerSecond,
   }
 }
 
