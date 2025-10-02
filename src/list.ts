@@ -61,6 +61,7 @@ export function main(ns: NS) {
   const serverCol = "Server"
   const lvlCol = "Level"
   const rootCol = "Root"
+  const backdoorCol = "BD"
   const secCol = "Security"
   const ramCol = "RAM"
   const moneyCol = "Money"
@@ -70,6 +71,7 @@ export function main(ns: NS) {
   let serverLen = serverCol.length
   let lvlLen = lvlCol.length
   let rootLen = rootCol.length
+  let backdoorLen = backdoorCol.length
   let secLen = secCol.length
   let ramLen = ramCol.length
   let moneyLen = moneyCol.length
@@ -78,7 +80,8 @@ export function main(ns: NS) {
   for (const [target, { level, server }] of items) {
     serverLen = Math.max(serverLen, target.length)
     lvlLen = Math.max(lvlLen, level.toString().length)
-    rootLen = Math.max(rootLen, (server.hasAdminRights ? "✓" : "✗").length)
+    rootLen = Math.max(rootLen, (server.hasAdminRights ? "" : "X").length)
+    backdoorLen = Math.max(backdoorLen, (server.backdoorInstalled ? "" : "X").length)
     secLen = Math.max(secLen, ((server.hackDifficulty ?? 0) - (server.minDifficulty ?? 0)).toFixed(2).length)
     ramLen = Math.max(ramLen, ns.formatRam(server.maxRam).length)
     moneyLen = Math.max(moneyLen, ns.formatNumber(server.moneyMax ?? 0).length)
@@ -88,22 +91,23 @@ export function main(ns: NS) {
   // Build table with box-drawing characters
   let tableRows = ""
   for (const [target, { level, server }] of items) {
-    const hackable = level <= player.skills.hacking ? "✓" : "✗"
-    const hasRoot = server.hasAdminRights ? "✓" : "✗"
+    const hackable = level <= player.skills.hacking ? " " : "X"
+    const hasRoot = server.hasAdminRights ? " " : "X"
+    const hasBackdoor = server.backdoorInstalled ? " " : "X"
     const secDiff = ((server.hackDifficulty ?? 0) - (server.minDifficulty ?? 0)).toFixed(2).padStart(secLen)
     const ram = ns.formatRam(server.maxRam).padStart(ramLen)
     const money = ns.formatNumber(server.moneyMax ?? 0).padStart(moneyLen)
     const time = ns.tFormat(ns.getWeakenTime(target)).padStart(timeLen)
 
-    tableRows += `┃ ${target.padEnd(serverLen)} ┃ ${level.toString().padStart(lvlLen)} ${hackable} ┃ ${hasRoot.padStart(rootLen)} ┃ ${secDiff} ┃ ${ram} ┃ ${money} ┃ ${time} ┃\n`
+    tableRows += `┃ ${target.padEnd(serverLen)} ┃ ${level.toString().padStart(lvlLen)} ${hackable} ┃ ${hasRoot.padStart(rootLen)} ┃ ${hasBackdoor.padStart(backdoorLen)} ┃ ${secDiff} ┃ ${ram} ┃ ${money} ┃ ${time} ┃\n`
   }
 
   const fullTable =
-    `┏━${"━".repeat(serverLen)}━┳━${"━".repeat(lvlLen + 2)}━┳━${"━".repeat(rootLen)}━┳━${"━".repeat(secLen)}━┳━${"━".repeat(ramLen)}━┳━${"━".repeat(moneyLen)}━┳━${"━".repeat(timeLen)}━┓\n` +
-    `┃ ${serverCol.padEnd(serverLen)} ┃ ${lvlCol.padStart(lvlLen + 2)} ┃ ${rootCol.padStart(rootLen)} ┃ ${secCol.padStart(secLen)} ┃ ${ramCol.padStart(ramLen)} ┃ ${moneyCol.padStart(moneyLen)} ┃ ${timeCol.padStart(timeLen)} ┃\n` +
-    `┣━${"━".repeat(serverLen)}━╋━${"━".repeat(lvlLen + 2)}━╋━${"━".repeat(rootLen)}━╋━${"━".repeat(secLen)}━╋━${"━".repeat(ramLen)}━╋━${"━".repeat(moneyLen)}━╋━${"━".repeat(timeLen)}━┫\n` +
+    `┏━${"━".repeat(serverLen)}━┳━${"━".repeat(lvlLen + 2)}━┳━${"━".repeat(rootLen)}━┳━${"━".repeat(backdoorLen)}━┳━${"━".repeat(secLen)}━┳━${"━".repeat(ramLen)}━┳━${"━".repeat(moneyLen)}━┳━${"━".repeat(timeLen)}━┓\n` +
+    `┃ ${serverCol.padEnd(serverLen)} ┃ ${lvlCol.padStart(lvlLen + 2)} ┃ ${rootCol.padStart(rootLen)} ┃ ${backdoorCol.padStart(backdoorLen)} ┃ ${secCol.padStart(secLen)} ┃ ${ramCol.padStart(ramLen)} ┃ ${moneyCol.padStart(moneyLen)} ┃ ${timeCol.padStart(timeLen)} ┃\n` +
+    `┣━${"━".repeat(serverLen)}━╋━${"━".repeat(lvlLen + 2)}━╋━${"━".repeat(rootLen)}━╋━${"━".repeat(backdoorLen)}━╋━${"━".repeat(secLen)}━╋━${"━".repeat(ramLen)}━╋━${"━".repeat(moneyLen)}━╋━${"━".repeat(timeLen)}━┫\n` +
     `${tableRows}` +
-    `┗━${"━".repeat(serverLen)}━┻━${"━".repeat(lvlLen + 2)}━┻━${"━".repeat(rootLen)}━┻━${"━".repeat(secLen)}━┻━${"━".repeat(ramLen)}━┻━${"━".repeat(moneyLen)}━┻━${"━".repeat(timeLen)}━┛`
+    `┗━${"━".repeat(serverLen)}━┻━${"━".repeat(lvlLen + 2)}━┻━${"━".repeat(rootLen)}━┻━${"━".repeat(backdoorLen)}━┻━${"━".repeat(secLen)}━┻━${"━".repeat(ramLen)}━┻━${"━".repeat(moneyLen)}━┻━${"━".repeat(timeLen)}━┛`
 
   // Extract primary text color from game's CSS
   const primaryElement = document.querySelector('[class*="css-"][class*="-primary"]') as HTMLElement
