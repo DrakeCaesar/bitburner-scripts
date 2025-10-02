@@ -38,6 +38,37 @@ export async function main(ns: NS) {
   while (true) {
     // initBatchVisualiser()
 
+    // Purchase TOR router if we don't have it
+    if (!ns.hasTorRouter()) {
+      const torCost = 200000 // TOR router costs $200k
+      if (ns.getPlayer().money >= torCost) {
+        if (ns.singularity.purchaseTor()) {
+          ns.tprint("Purchased TOR router")
+        }
+      }
+    }
+
+    // Purchase port-opening programs if we have TOR and can afford them
+    if (ns.hasTorRouter()) {
+      const programs = [
+        { name: "BruteSSH.exe", cost: 500000 },
+        { name: "FTPCrack.exe", cost: 1500000 },
+        { name: "relaySMTP.exe", cost: 5000000 },
+        { name: "HTTPWorm.exe", cost: 30000000 },
+        { name: "SQLInject.exe", cost: 250000000 },
+      ]
+
+      for (const program of programs) {
+        if (!ns.fileExists(program.name, "home")) {
+          if (ns.getPlayer().money >= program.cost) {
+            if (ns.singularity.purchaseProgram(program.name)) {
+              ns.tprint(`Purchased ${program.name}`)
+            }
+          }
+        }
+      }
+    }
+
     // Run autoNuke to gain access to new servers
     await autoNuke(ns)
 
