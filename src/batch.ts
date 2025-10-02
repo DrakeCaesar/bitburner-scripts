@@ -8,7 +8,6 @@ import {
   growServerInstance,
   hackServerInstance,
   killOtherInstances,
-  prepareServer,
   updatePlayerWithXp,
   wkn1ServerInstance,
   wkn2ServerInstance,
@@ -17,6 +16,7 @@ import {
 import { main as autoNuke } from "./autoNuke.js"
 import { upgradeServer } from "./buyServer.js"
 import { findBestTarget } from "./findBestTarget.js"
+import { crawl } from "./libraries/crawl.js"
 
 export async function main(ns: NS) {
   const playerHackLevel = ns.args[0] ? Number(ns.args[0]) : undefined
@@ -166,8 +166,96 @@ export async function main(ns: NS) {
     const weakenScriptRam = ns.getScriptRam("/hacking/weaken.js")
     const growScriptRam = ns.getScriptRam("/hacking/grow.js")
 
-    // Now actually prepare the server (use first node for prep)
-    await prepareServer(ns, nodes[0], target.serverName)
+    // Prep the target server and opportunistically prep other servers in parallel
+    // Get all hackable servers and their weaken times
+    const knownServers = new Set<string>()
+    crawl(ns, knownServers)
+
+    const otherServers: { name: string; weakenTime: number }[] = []
+    for (const serverName of knownServers) {
+      if (serverName === target.serverName) continue
+
+      const srv = ns.getServer(serverName)
+      if (!srv.hasAdminRights || !srv.moneyMax || srv.requiredHackingSkill! > player.skills.hacking) continue
+
+      // Check if server needs prep
+      const securityDiff = (srv.hackDifficulty ?? 0) - (srv.minDifficulty ?? 0)
+      const moneyRatio = (srv.moneyAvailable ?? 0) / (srv.moneyMax ?? 1)
+      const needsPrep = securityDiff > 0 || moneyRatio < 1
+
+      if (needsPrep) {
+        const serverWeakenTime = ns.formulas.hacking.weakenTime(srv, player)
+        // Only include servers with weaken time less than or equal to target's weaken time
+        if (serverWeakenTime <= weakenTime) {
+          otherServers.push({ name: serverName, weakenTime: serverWeakenTime })
+        }
+      }
+    }
+
+    // Sort by weaken time (shortest first)
+    otherServers.sort((a, b) => a.weakenTime - b.weakenTime)
+
+    // Calculate how many additional servers we can prep with available RAM
+    const prepScriptRam = ns.getScriptRam("/prepareServer.js")
+    const serversToPrep: { name: string; weakenTime: number }[] = [{ name: target.serverName, weakenTime }]
+
+    // Check how many other servers we can fit
+    let totalPrepRamNeeded = prepScriptRam
+    for (const srv of otherServers) {
+      const nextRamNeeded = totalPrepRamNeeded + prepScriptRam
+      if (nextRamNeeded <= totalMaxRam * 0.9) {
+        // Leave some RAM buffer
+        serversToPrep.push(srv)
+        totalPrepRamNeeded = nextRamNeeded
+      } else {
+        break
+      }
+    }
+
+    const maxWeakenTime = Math.max(...serversToPrep.map((s) => s.weakenTime))
+
+    if (serversToPrep.length > 1) {
+      ns.tprint(
+        `Preparing ${serversToPrep.length} servers in parallel (max ${ns.tFormat(maxWeakenTime)}): ${serversToPrep.map((s) => s.name).join(", ")}`
+      )
+    } else {
+      ns.tprint(`Preparing ${target.serverName}...`)
+    }
+
+    // Helper to find a node with enough RAM
+    function findNodeForPrep(scriptRam: number): string | null {
+      for (const node of nodes) {
+        const availableRam = ns.getServerMaxRam(node) - ns.getServerUsedRam(node)
+        if (availableRam >= scriptRam) {
+          return node
+        }
+      }
+      return null
+    }
+
+    // Launch prep scripts in parallel, finding nodes with available RAM
+    const prepPids: number[] = []
+    for (let i = 0; i < serversToPrep.length; i++) {
+      const serverName = serversToPrep[i].name
+      const node = findNodeForPrep(prepScriptRam)
+      if (!node) {
+        ns.tprint(`WARNING: Not enough RAM to prep ${serverName}, stopping parallel prep`)
+        break
+      }
+      const pid = ns.exec("/prepareServer.js", node, 1, serverName)
+      if (pid > 0) {
+        prepPids.push(pid)
+      } else {
+        ns.tprint(`WARNING: Failed to launch prep for ${serverName}`)
+      }
+    }
+
+    // Wait for all prep scripts to complete
+    while (prepPids.some((pid) => ns.isRunning(pid))) {
+      await ns.sleep(1000)
+    }
+
+    ns.tprint(`Server preparation complete!`)
 
     const { server: hackServer, player: hackPlayer } = hackServerInstance(server, player)
     const hackThreads = calculateHackThreads(hackServer, hackPlayer, moneyMax, hackThreshold, ns)

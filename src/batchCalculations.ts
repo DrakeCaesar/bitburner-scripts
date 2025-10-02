@@ -103,6 +103,8 @@ export async function copyRequiredScripts(ns: NS, host: string) {
   ns.scp("/hacking/hack.js", host)
   ns.scp("/hacking/grow.js", host)
   ns.scp("/hacking/weaken.js", host)
+  ns.scp("/prepareServer.js", host)
+  ns.scp("/batchCalculations.js", host)
   ns.scp("/batchVisualizerStub.js", host)
 }
 
