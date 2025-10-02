@@ -116,7 +116,6 @@ export async function prepareServer(ns: NS, host: string, target: string) {
   const baseSecurity = ns.getServerMinSecurityLevel(target)
   const secTolerance = 0
   const moneyTolerance = 1
-  const prepWeakenDelay = 100
 
   const player = ns.getPlayer()
   const myCores = ns.getServer(host).cpuCores
@@ -143,36 +142,54 @@ export async function prepareServer(ns: NS, host: string, target: string) {
     const serverActual = ns.getServer(target)
     const currentAvailableRam = ns.getServerMaxRam(host) - ns.getServerUsedRam(host)
 
-    // Grow if needed
+    let growThreads = 0
+    let weakenThreads = 0
+
+    // Calculate threads needed for grow
     if (currentMoney < moneyMax * moneyTolerance) {
       const growThreadsNeeded = Math.ceil(ns.formulas.hacking.growThreads(serverActual, player, moneyMax, myCores))
       const maxGrowThreads = Math.floor(currentAvailableRam / growScriptRam)
-      const growThreads = Math.min(growThreadsNeeded, maxGrowThreads)
-
-      if (growThreads > 0) {
-        ns.exec("/hacking/grow.js", host, growThreads, target, 0)
-        await ns.sleep(prepWeakenDelay)
-      }
+      growThreads = Math.min(growThreadsNeeded, maxGrowThreads)
     }
 
-    // Weaken if needed
+    // Calculate threads needed for weaken using remaining RAM
     if (currentSec > baseSecurity + secTolerance) {
       const secToReduce = currentSec - baseSecurity
       const weakenThreadsNeeded = Math.max(1, Math.ceil(secToReduce / (0.05 * (1 + (myCores - 1) / 16))))
-      const currentAvailableRamAfterGrow = ns.getServerMaxRam(host) - ns.getServerUsedRam(host)
-      const maxWeakenThreads = Math.floor(currentAvailableRamAfterGrow / weakenScriptRam)
-      const weakenThreads = Math.min(weakenThreadsNeeded, maxWeakenThreads)
-
-      if (weakenThreads > 0) {
-        ns.exec("/hacking/weaken.js", host, weakenThreads, target, 0)
-      }
+      const ramAfterGrow = currentAvailableRam - (growThreads * growScriptRam)
+      const maxWeakenThreads = Math.floor(ramAfterGrow / weakenScriptRam)
+      weakenThreads = Math.min(weakenThreadsNeeded, maxWeakenThreads)
     }
 
-    // Wait for operations to complete
-    const growTime = ns.formulas.hacking.growTime(serverActual, player)
-    const weakenTime = ns.formulas.hacking.weakenTime(serverActual, player)
-    const waitTime = Math.max(growTime, weakenTime) + 200
-    await ns.sleep(waitTime)
+    // Launch both operations immediately (no delay between them)
+    const pids: number[] = []
+
+    if (growThreads > 0) {
+      const pid = ns.exec("/hacking/grow.js", host, growThreads, target, 0)
+      if (pid > 0) pids.push(pid)
+    }
+
+    if (weakenThreads > 0) {
+      const pid = ns.exec("/hacking/weaken.js", host, weakenThreads, target, 0)
+      if (pid > 0) pids.push(pid)
+    }
+
+    // Wait for all launched operations to complete
+    if (pids.length > 0) {
+      // First wait the estimated time to avoid unnecessary polling
+      const growTime = ns.formulas.hacking.growTime(serverActual, player)
+      const weakenTime = ns.formulas.hacking.weakenTime(serverActual, player)
+      const estimatedTime = Math.max(growTime, weakenTime)
+      await ns.sleep(estimatedTime)
+
+      // Then verify all scripts have actually finished
+      while (pids.some(pid => ns.isRunning(pid))) {
+        await ns.sleep(100)
+      }
+    } else {
+      // No operations could be launched (not enough RAM), wait a bit and retry
+      await ns.sleep(500)
+    }
   }
 
   return { moneyMax, baseSecurity, secTolerance, myCores }
