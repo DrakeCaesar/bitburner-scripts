@@ -240,17 +240,21 @@ export async function main(ns: NS) {
       const growXp = calculateOperationXp(server, currentPlayer, growThreads, ns)
       const wkn2Xp = calculateOperationXp(server, currentPlayer, wkn2Threads, ns)
 
-      // Expected level is the level WHEN the operation completes (before XP is applied)
+      // Expected level and XP are the values WHEN the operation completes (before XP is applied)
       const expectedHackLevel = currentPlayer.skills.hacking
+      const expectedHackXp = currentPlayer.exp.hacking
       const playerAfterHack = updatePlayerWithXp(currentPlayer, hackXp, ns)
 
       const expectedWkn1Level = playerAfterHack.skills.hacking
+      const expectedWkn1Xp = playerAfterHack.exp.hacking
       const playerAfterWkn1 = updatePlayerWithXp(playerAfterHack, wkn1Xp, ns)
 
       const expectedGrowLevel = playerAfterWkn1.skills.hacking
+      const expectedGrowXp = playerAfterWkn1.exp.hacking
       const playerAfterGrow = updatePlayerWithXp(playerAfterWkn1, growXp, ns)
 
       const expectedWkn2Level = playerAfterGrow.skills.hacking
+      const expectedWkn2Xp = playerAfterGrow.exp.hacking
       const playerAfterWkn2 = updatePlayerWithXp(playerAfterGrow, wkn2Xp, ns)
 
       // Update current player state for next batch calculations
@@ -267,7 +271,7 @@ export async function main(ns: NS) {
         break
       }
 
-      // Launch operations with expected hacking level for validation
+      // Launch operations with expected hacking level and XP for validation
       ns.exec(
         "/hacking/hack.js",
         hackNode,
@@ -275,7 +279,8 @@ export async function main(ns: NS) {
         target.serverName,
         hackAdditionalMsec + batchOffset,
         0,
-        expectedHackLevel
+        expectedHackLevel,
+        expectedHackXp
       )
       ns.exec(
         "/hacking/weaken.js",
@@ -284,7 +289,8 @@ export async function main(ns: NS) {
         target.serverName,
         wkn1AdditionalMsec + batchOffset,
         0,
-        expectedWkn1Level
+        expectedWkn1Level,
+        expectedWkn1Xp
       )
       ns.exec(
         "/hacking/grow.js",
@@ -293,7 +299,8 @@ export async function main(ns: NS) {
         target.serverName,
         growAdditionalMsec + batchOffset,
         0,
-        expectedGrowLevel
+        expectedGrowLevel,
+        expectedGrowXp
       )
       lastPid = ns.exec(
         "/hacking/weaken.js",
@@ -302,7 +309,8 @@ export async function main(ns: NS) {
         target.serverName,
         wkn2AdditionalMsec + batchOffset,
         0,
-        expectedWkn2Level
+        expectedWkn2Level,
+        expectedWkn2Xp
       )
     }
 
