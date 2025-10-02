@@ -241,27 +241,27 @@ export async function main(ns: NS) {
 
       const hackXp = calculateOperationXp(server, currentPlayer, hackThreads, ns)
 
-      const expectedHackLevel = currentPlayer.skills.hacking
       const playerAfterHack = updatePlayerWithXp(currentPlayer, hackXp, ns)
       const expectedHackXp = playerAfterHack.exp.hacking
+      const expectedHackLevel = playerAfterHack.skills.hacking
 
       const wkn1Xp = calculateOperationXp(server, playerAfterHack, wkn1Threads, ns)
 
-      const expectedWkn1Level = playerAfterHack.skills.hacking
       const playerAfterWkn1 = updatePlayerWithXp(playerAfterHack, wkn1Xp, ns)
       const expectedWkn1Xp = playerAfterWkn1.exp.hacking
+      const expectedWkn1Level = playerAfterHack.skills.hacking
 
       const growXp = calculateOperationXp(server, playerAfterWkn1, growThreads, ns)
 
-      const expectedGrowLevel = playerAfterWkn1.skills.hacking
       const playerAfterGrow = updatePlayerWithXp(playerAfterWkn1, growXp, ns)
       const expectedGrowXp = playerAfterGrow.exp.hacking
+      const expectedGrowLevel = playerAfterGrow.skills.hacking
 
       const wkn2Xp = calculateOperationXp(server, playerAfterGrow, wkn2Threads, ns)
 
-      const expectedWkn2Level = playerAfterGrow.skills.hacking
       const playerAfterWkn2 = updatePlayerWithXp(playerAfterGrow, wkn2Xp, ns)
       const expectedWkn2Xp = playerAfterWkn2.exp.hacking
+      const expectedWkn2Level = playerAfterWkn2.skills.hacking
 
       // Update current player state for next batch calculations
       currentPlayer = playerAfterWkn2
