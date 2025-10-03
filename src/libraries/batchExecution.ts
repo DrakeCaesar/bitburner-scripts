@@ -75,8 +75,8 @@ export function calculateBatchTimings(ns: NS, server: Server, player: Player, ba
 }
 
 export async function executeBatches(ns: NS, config: BatchConfig, threads: ReturnType<typeof calculateBatchThreads>, timings: ReturnType<typeof calculateBatchTimings>, batchLimit?: number) {
-  const { target, server, player, batchDelay, nodes, totalMaxRam, ramThreshold } = config
-  const { hackThreads, wkn1Threads, growThreads, wkn2Threads, totalBatchRam } = threads
+  const { target, server, player, batchDelay, nodes, totalMaxRam, ramThreshold, hackThreshold, myCores } = config
+  const { totalBatchRam } = threads
   const { hackAdditionalMsec, wkn1AdditionalMsec, growAdditionalMsec, wkn2AdditionalMsec, effectiveBatchDelay } = timings
 
   const maxBatches = Math.floor((totalMaxRam / totalBatchRam) * ramThreshold)
@@ -93,19 +93,32 @@ export async function executeBatches(ns: NS, config: BatchConfig, threads: Retur
 
   let lastPid = 0
   let currentPlayer = { ...player }
+  const moneyMax = server.moneyMax!
 
   for (let batchCounter = 0; batchCounter < batches; batchCounter++) {
     const batchOffset = batchCounter * effectiveBatchDelay * 4
 
+    // Calculate hack threads and XP with current player state (e.g., level 10)
+    const { server: hackServer, player: hackPlayer } = hackServerInstance(server, currentPlayer)
+    const hackThreads = calculateHackThreads(hackServer, hackPlayer, moneyMax, hackThreshold, ns)
     const hackXp = calculateOperationXp(server, currentPlayer, hackThreads, ns)
     const playerAfterHack = updatePlayerWithXp(currentPlayer, hackXp, ns)
 
+    // Calculate weaken1 threads and XP with player state after hack (e.g., level 11)
+    const { server: wkn1Server, player: wkn1Player } = wkn1ServerInstance(server, playerAfterHack, hackThreads, ns)
+    const wkn1Threads = calculateWeakThreads(wkn1Server, wkn1Player, myCores)
     const wkn1Xp = calculateOperationXp(server, playerAfterHack, wkn1Threads, ns)
     const playerAfterWkn1 = updatePlayerWithXp(playerAfterHack, wkn1Xp, ns)
 
+    // Calculate grow threads and XP with player state after weaken1 (e.g., level 12)
+    const { server: growServer, player: growPlayer } = growServerInstance(server, playerAfterWkn1, hackThreshold)
+    const growThreads = calculateGrowThreads(growServer, growPlayer, moneyMax, myCores, ns)
     const growXp = calculateOperationXp(server, playerAfterWkn1, growThreads, ns)
     const playerAfterGrow = updatePlayerWithXp(playerAfterWkn1, growXp, ns)
 
+    // Calculate weaken2 threads and XP with player state after grow (e.g., level 13)
+    const { server: wkn2Server, player: wkn2Player } = wkn2ServerInstance(server, playerAfterGrow, growThreads, ns, myCores)
+    const wkn2Threads = calculateWeakThreads(wkn2Server, wkn2Player, myCores)
     const wkn2Xp = calculateOperationXp(server, playerAfterGrow, wkn2Threads, ns)
     const playerAfterWkn2 = updatePlayerWithXp(playerAfterGrow, wkn2Xp, ns)
 
