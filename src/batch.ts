@@ -135,6 +135,7 @@ export async function main(ns: NS) {
     }
 
     const batchDelay = 50
+    const enableParallelPrep = false
 
     // Calculate total RAM across all nodes
     const totalMaxRam = nodes.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
@@ -167,48 +168,49 @@ export async function main(ns: NS) {
     const growScriptRam = ns.getScriptRam("/hacking/grow.js")
 
     // Prep the target server and opportunistically prep other servers in parallel
-    // Get all hackable servers and their weaken times
-    const knownServers = new Set<string>()
-    crawl(ns, knownServers)
+    const prepScriptRam = ns.getScriptRam("/prepareServer.js")
+    let serversToPrep: { name: string; weakenTime: number }[] = [{ name: target.serverName, weakenTime }]
 
-    const otherServers: { name: string; weakenTime: number }[] = []
-    for (const serverName of knownServers) {
-      if (serverName === target.serverName) continue
+    if (enableParallelPrep) {
+      // Get all hackable servers and their weaken times
+      const knownServers = new Set<string>()
+      crawl(ns, knownServers)
 
-      const srv = ns.getServer(serverName)
-      if (!srv.hasAdminRights || !srv.moneyMax || srv.requiredHackingSkill! > player.skills.hacking) continue
+      const otherServers: { name: string; weakenTime: number }[] = []
+      for (const serverName of knownServers) {
+        if (serverName === target.serverName) continue
 
-      // Check if server needs prep
-      const securityDiff = (srv.hackDifficulty ?? 0) - (srv.minDifficulty ?? 0)
-      const moneyRatio = (srv.moneyAvailable ?? 0) / (srv.moneyMax ?? 1)
-      const needsPrep = securityDiff > 0 || moneyRatio < 1
+        const srv = ns.getServer(serverName)
+        if (!srv.hasAdminRights || !srv.moneyMax || srv.requiredHackingSkill! > player.skills.hacking) continue
 
-      if (needsPrep) {
-        const serverWeakenTime = ns.formulas.hacking.weakenTime(srv, player)
-        // Only include servers with weaken time less than or equal to target's weaken time
-        if (serverWeakenTime <= weakenTime) {
-          otherServers.push({ name: serverName, weakenTime: serverWeakenTime })
+        // Check if server needs prep
+        const securityDiff = (srv.hackDifficulty ?? 0) - (srv.minDifficulty ?? 0)
+        const moneyRatio = (srv.moneyAvailable ?? 0) / (srv.moneyMax ?? 1)
+        const needsPrep = securityDiff > 0 || moneyRatio < 1
+
+        if (needsPrep) {
+          const serverWeakenTime = ns.formulas.hacking.weakenTime(srv, player)
+          // Only include servers with weaken time less than or equal to target's weaken time
+          if (serverWeakenTime <= weakenTime) {
+            otherServers.push({ name: serverName, weakenTime: serverWeakenTime })
+          }
         }
       }
-    }
 
-    // Sort by weaken time (shortest first)
-    otherServers.sort((a, b) => a.weakenTime - b.weakenTime)
+      // Sort by weaken time (shortest first)
+      otherServers.sort((a, b) => a.weakenTime - b.weakenTime)
 
-    // Calculate how many additional servers we can prep with available RAM
-    const prepScriptRam = ns.getScriptRam("/prepareServer.js")
-    const serversToPrep: { name: string; weakenTime: number }[] = [{ name: target.serverName, weakenTime }]
-
-    // Check how many other servers we can fit
-    let totalPrepRamNeeded = prepScriptRam
-    for (const srv of otherServers) {
-      const nextRamNeeded = totalPrepRamNeeded + prepScriptRam
-      if (nextRamNeeded <= totalMaxRam * 0.9) {
-        // Leave some RAM buffer
-        serversToPrep.push(srv)
-        totalPrepRamNeeded = nextRamNeeded
-      } else {
-        break
+      // Check how many other servers we can fit
+      let totalPrepRamNeeded = prepScriptRam
+      for (const srv of otherServers) {
+        const nextRamNeeded = totalPrepRamNeeded + prepScriptRam
+        if (nextRamNeeded <= totalMaxRam * 0.9) {
+          // Leave some RAM buffer
+          serversToPrep.push(srv)
+          totalPrepRamNeeded = nextRamNeeded
+        } else {
+          break
+        }
       }
     }
 
