@@ -115,7 +115,6 @@ export async function prepareServer(ns: NS, host: string, target: string) {
   const secTolerance = 0
   const moneyTolerance = 1
 
-  const player = ns.getPlayer()
   const myCores = ns.getServer(host).cpuCores
 
   const growScriptRam = ns.getScriptRam("/hacking/grow.js")
@@ -126,8 +125,11 @@ export async function prepareServer(ns: NS, host: string, target: string) {
 
   // Loop until server is prepared
   while (true) {
-    const currentMoney = ns.getServerMoneyAvailable(target)
-    const currentSec = ns.getServerSecurityLevel(target)
+    // Update server and player state at the start of each iteration
+    const player = ns.getPlayer()
+    const serverActual = ns.getServer(target)
+    const currentMoney = serverActual.moneyAvailable ?? 0
+    const currentSec = serverActual.hackDifficulty ?? 0
 
     // Check if preparation is complete
     if (currentMoney >= moneyMax * moneyTolerance && currentSec <= baseSecurity + secTolerance) {
@@ -137,7 +139,6 @@ export async function prepareServer(ns: NS, host: string, target: string) {
       break
     }
 
-    const serverActual = ns.getServer(target)
     const currentAvailableRam = ns.getServerMaxRam(host) - ns.getServerUsedRam(host)
 
     let growThreads = 0
@@ -178,9 +179,12 @@ export async function prepareServer(ns: NS, host: string, target: string) {
 
     // Wait for all launched operations to complete
     if (pids.length > 0) {
-      // First wait the estimated time to avoid unnecessary polling
-      const growTime = ns.formulas.hacking.growTime(serverActual, player)
-      const weakenTime = ns.formulas.hacking.weakenTime(serverActual, player)
+      // Calculate wait time based on which operations we actually launched
+      const growTime = growThreads > 0 ? ns.formulas.hacking.growTime(serverActual, player) : 0
+      const weakenTime = weakenThreads > 0 ? ns.formulas.hacking.weakenTime(serverActual, player) : 0
+
+      // If we only ran grow (no weaken due to insufficient RAM), only wait for grow time
+      // Otherwise wait for the longer of the two operations
       const estimatedTime = Math.max(growTime, weakenTime)
       await ns.sleep(estimatedTime)
 
