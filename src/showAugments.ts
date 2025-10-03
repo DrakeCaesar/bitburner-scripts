@@ -1,6 +1,12 @@
 import { NS } from "@ns"
+import { FloatingWindow } from "./libraries/floatingWindow.js"
 
 export async function main(ns: NS) {
+  // Remove existing augments window if it exists
+  const existingWindow = eval("document").querySelector("#augments-window")
+  if (existingWindow) {
+    existingWindow.remove()
+  }
   const buyMode = ns.args[0] === "buy"
   const buyFlux = ns.args[1] === "flux"
   const player = ns.getPlayer()
@@ -20,6 +26,7 @@ export async function main(ns: NS) {
     price: number
     repReq: number
     owned: boolean
+    prereqs: string[] // Prerequisites for this augment
   }
 
   const augmentMap = new Map<string, AugmentInfo>()
@@ -32,6 +39,7 @@ export async function main(ns: NS) {
       const price = ns.singularity.getAugmentationPrice(augName)
       const repReq = ns.singularity.getAugmentationRepReq(augName)
       const owned = ns.singularity.getOwnedAugmentations(true).includes(augName)
+      const prereqs = ns.singularity.getAugmentationPrereq(augName)
 
       // Handle NeuroFlux Governor separately
       if (augName.startsWith("NeuroFlux Governor")) {
@@ -42,6 +50,7 @@ export async function main(ns: NS) {
             price: price,
             repReq: repReq,
             owned: owned,
+            prereqs: prereqs,
           }
         } else {
           neuroFluxInfo.factions.push(faction)
@@ -59,6 +68,7 @@ export async function main(ns: NS) {
           price: price,
           repReq: repReq,
           owned: owned,
+          prereqs: prereqs,
         })
       }
     }
@@ -87,101 +97,246 @@ export async function main(ns: NS) {
     }
   }
 
-  // Sort both lists by price (most expensive first)
-  affordable.sort((a, b) => b.price - a.price)
+  // Topological sort to handle prerequisites
+  function topologicalSort(augs: AugmentInfo[]): AugmentInfo[] {
+    const sorted: AugmentInfo[] = []
+    const visited = new Set<string>()
+    const visiting = new Set<string>()
+    const augsByName = new Map(augs.map((aug) => [aug.name, aug]))
+
+    function visit(aug: AugmentInfo) {
+      if (visited.has(aug.name)) return
+      if (visiting.has(aug.name)) {
+        // Circular dependency - shouldn't happen in Bitburner but handle gracefully
+        return
+      }
+
+      visiting.add(aug.name)
+
+      // Visit prerequisites first
+      for (const prereqName of aug.prereqs) {
+        const prereq = augsByName.get(prereqName)
+        if (prereq) {
+          visit(prereq)
+        }
+      }
+
+      visiting.delete(aug.name)
+      visited.add(aug.name)
+      sorted.push(aug)
+    }
+
+    for (const aug of augs) {
+      visit(aug)
+    }
+
+    return sorted
+  }
+
+  // Sort affordable with prerequisites first, then by price (most expensive first)
+  const affordableSorted = topologicalSort(affordable)
+
+  // Sort unaffordable by price (most expensive first)
   unaffordable.sort((a, b) => b.price - a.price)
 
-  // Display table
-  ns.tprint("\n" + "=".repeat(120))
-  ns.tprint("AVAILABLE AUGMENTATIONS")
-  ns.tprint("=".repeat(120))
+  // Calculate column widths
+  const orderCol = "#"
+  const nameCol = "Augmentation"
+  const factionCol = "Faction"
+  const priceCol = "Price"
+  const repCol = "Rep Req"
+  const ownedCol = "Own"
+  const statusCol = "Stat"
 
-  // Header
-  const header =
-    "AUGMENTATION".padEnd(50) +
-    "FACTION".padEnd(30) +
-    "PRICE".padEnd(20) +
-    "REP REQ".padEnd(15) +
-    "OWNED"
-  ns.tprint(header)
-  ns.tprint("-".repeat(120))
+  let orderLen = orderCol.length
+  let nameLen = nameCol.length
+  let factionLen = factionCol.length
+  let priceLen = priceCol.length
+  let repLen = repCol.length
+  let ownedLen = ownedCol.length
+  let statusLen = statusCol.length
 
-  // Helper function to format faction column with truncation
-  function formatFactionCol(factions: string[], maxWidth = 30): string {
+  const allAugs = [...affordableSorted, ...unaffordable]
+  if (neuroFluxInfo) allAugs.push(neuroFluxInfo)
+
+  orderLen = Math.max(orderLen, affordableSorted.length.toString().length)
+
+  for (const aug of allAugs) {
+    nameLen = Math.max(nameLen, aug.name.length)
+    const validFactions = aug.factions.filter((f) => (factionReps.get(f) ?? 0) >= aug.repReq)
+    const factionText = (validFactions.length > 0 ? validFactions : aug.factions).join(", ")
+    factionLen = Math.max(factionLen, Math.min(factionText.length, 30))
+    priceLen = Math.max(priceLen, ns.formatNumber(aug.price).length)
+    repLen = Math.max(repLen, ns.formatNumber(aug.repReq).length)
+  }
+
+  // Helper to truncate faction names
+  function formatFactionText(factions: string[], maxWidth: number): string {
     const joined = factions.join(", ")
-    if (joined.length <= maxWidth) {
-      return joined.padEnd(maxWidth)
-    }
-    return (joined.substring(0, maxWidth - 3) + "...").padEnd(maxWidth)
+    if (joined.length <= maxWidth) return joined
+    return joined.substring(0, maxWidth - 3) + "..."
   }
 
-  // Display affordable augmentations first
-  if (affordable.length > 0) {
-    ns.tprint("\x1b[32mAFFORDABLE:\x1b[0m")
-    for (const aug of affordable) {
-      const nameCol = aug.name.padEnd(50)
-      // Show faction(s) where we have enough rep
-      const validFactions = aug.factions.filter((f) => (factionReps.get(f) ?? 0) >= aug.repReq)
-      const factionCol = formatFactionCol(validFactions)
-      const priceCol = ns.formatNumber(aug.price).padEnd(20)
-      const repCol = ns.formatNumber(aug.repReq).padEnd(15)
-      const ownedCol = aug.owned ? "YES" : "NO"
-
-      ns.tprint(nameCol + factionCol + priceCol + repCol + ownedCol)
-    }
+  // Extract primary text color from game's CSS
+  const primaryElement = eval("document").querySelector('[class*="css-"][class*="-primary"]') as HTMLElement
+  let primaryColor = "#0f0" // Fallback green
+  if (primaryElement) {
+    const computedStyle = eval("window").getComputedStyle(primaryElement)
+    primaryColor = computedStyle.color || primaryColor
   }
 
-  // Display unaffordable augmentations
-  if (unaffordable.length > 0) {
-    ns.tprint("\n\x1b[31mNOT AFFORDABLE:\x1b[0m")
-    for (const aug of unaffordable) {
-      const hasEnoughMoney = playerMoney >= aug.price
-      const hasEnoughRep = aug.factions.some((faction) => (factionReps.get(faction) ?? 0) >= aug.repReq)
-
-      const nameCol = aug.name.padEnd(50)
-      const factionCol = formatFactionCol(aug.factions)
-
-      // Color price red if not enough money
-      const priceStr = ns.formatNumber(aug.price).padEnd(20)
-      const priceCol = hasEnoughMoney ? priceStr : `\x1b[31m${priceStr}\x1b[0m`
-
-      // Color rep red if not enough reputation
-      const repStr = ns.formatNumber(aug.repReq).padEnd(15)
-      const repCol = hasEnoughRep ? repStr : `\x1b[31m${repStr}\x1b[0m`
-
-      const ownedCol = aug.owned ? "YES" : "NO"
-
-      ns.tprint(nameCol + factionCol + priceCol + repCol + ownedCol)
-    }
+  // Build table with HTML spans for coloring
+  interface TableRow {
+    order: string
+    name: string
+    faction: string
+    price: string
+    priceRed: boolean
+    rep: string
+    repRed: boolean
+    owned: string
+    status: string
   }
 
-  // Always display NeuroFlux Governor at the end
+  const rows: TableRow[] = []
+
+  // Affordable section
+  let orderNum = 1
+  for (const aug of affordableSorted) {
+    const validFactions = aug.factions.filter((f) => (factionReps.get(f) ?? 0) >= aug.repReq)
+    rows.push({
+      order: orderNum.toString().padStart(orderLen),
+      name: aug.name.padEnd(nameLen),
+      faction: formatFactionText(validFactions, factionLen).padEnd(factionLen),
+      price: ns.formatNumber(aug.price).padStart(priceLen),
+      priceRed: false,
+      rep: ns.formatNumber(aug.repReq).padStart(repLen),
+      repRed: false,
+      owned: (aug.owned ? "Y" : " ").padStart(ownedLen),
+      status: "✓".padStart(statusLen),
+    })
+    orderNum++
+  }
+
+  // Unaffordable section
+  for (const aug of unaffordable) {
+    const hasEnoughMoney = playerMoney >= aug.price
+    const hasEnoughRep = aug.factions.some((faction) => (factionReps.get(faction) ?? 0) >= aug.repReq)
+
+    const validFactions = aug.factions.filter((f) => (factionReps.get(f) ?? 0) >= aug.repReq)
+    const factionList = validFactions.length > 0 ? validFactions : aug.factions
+
+    let statusSymbol = "✗"
+    if (!hasEnoughMoney && !hasEnoughRep) statusSymbol = "✗✗"
+    else if (!hasEnoughMoney) statusSymbol = "✗$"
+    else if (!hasEnoughRep) statusSymbol = "✗R"
+
+    rows.push({
+      order: " ".repeat(orderLen),
+      name: aug.name.padEnd(nameLen),
+      faction: formatFactionText(factionList, factionLen).padEnd(factionLen),
+      price: ns.formatNumber(aug.price).padStart(priceLen),
+      priceRed: !hasEnoughMoney,
+      rep: ns.formatNumber(aug.repReq).padStart(repLen),
+      repRed: !hasEnoughRep,
+      owned: (aug.owned ? "Y" : " ").padStart(ownedLen),
+      status: statusSymbol.padStart(statusLen),
+    })
+  }
+
+  // NeuroFlux section
   if (neuroFluxInfo) {
-    ns.tprint("\n\x1b[36mNEUROFLUX GOVERNOR:\x1b[0m")
     const hasEnoughMoney = playerMoney >= neuroFluxInfo.price
-    const hasEnoughRep = neuroFluxInfo.factions.some((faction) => (factionReps.get(faction) ?? 0) >= neuroFluxInfo.repReq)
+    const hasEnoughRep = neuroFluxInfo.factions.some(
+      (faction) => (factionReps.get(faction) ?? 0) >= neuroFluxInfo.repReq
+    )
 
-    const nameCol = neuroFluxInfo.name.padEnd(50)
-    const factionCol = formatFactionCol(neuroFluxInfo.factions)
+    const canAfford = hasEnoughMoney && hasEnoughRep
 
-    const priceStr = ns.formatNumber(neuroFluxInfo.price).padEnd(20)
-    const priceCol = hasEnoughMoney ? priceStr : `\x1b[31m${priceStr}\x1b[0m`
-
-    const repStr = ns.formatNumber(neuroFluxInfo.repReq).padEnd(15)
-    const repCol = hasEnoughRep ? repStr : `\x1b[31m${repStr}\x1b[0m`
-
-    const ownedCol = neuroFluxInfo.owned ? "YES" : "NO"
-
-    ns.tprint(nameCol + factionCol + priceCol + repCol + ownedCol)
+    rows.push({
+      order: " ".repeat(orderLen),
+      name: neuroFluxInfo.name.padEnd(nameLen),
+      faction: formatFactionText(neuroFluxInfo.factions, factionLen).padEnd(factionLen),
+      price: ns.formatNumber(neuroFluxInfo.price).padStart(priceLen),
+      priceRed: !hasEnoughMoney,
+      rep: ns.formatNumber(neuroFluxInfo.repReq).padStart(repLen),
+      repRed: !hasEnoughRep,
+      owned: (neuroFluxInfo.owned ? "Y" : " ").padStart(ownedLen),
+      status: (canAfford ? "~" : "✗").padStart(statusLen),
+    })
   }
 
-  ns.tprint("=".repeat(120))
-  ns.tprint(`Affordable: ${affordable.length} | Not affordable: ${unaffordable.length} | Total: ${affordable.length + unaffordable.length}`)
-  ns.tprint(`Current money: ${ns.formatNumber(playerMoney)}`)
+  // Build table header and footer
+  const tableHeader =
+    `┏━${"━".repeat(orderLen)}━┳━${"━".repeat(nameLen)}━┳━${"━".repeat(factionLen)}━┳━${"━".repeat(priceLen)}━┳━${"━".repeat(repLen)}━┳━${"━".repeat(ownedLen)}━┳━${"━".repeat(statusLen)}━┓\n` +
+    `┃ ${orderCol.padStart(orderLen)} ┃ ${nameCol.padEnd(nameLen)} ┃ ${factionCol.padEnd(factionLen)} ┃ ${priceCol.padStart(priceLen)} ┃ ${repCol.padStart(repLen)} ┃ ${ownedCol.padStart(ownedLen)} ┃ ${statusCol.padStart(statusLen)} ┃\n` +
+    `┣━${"━".repeat(orderLen)}━╋━${"━".repeat(nameLen)}━╋━${"━".repeat(factionLen)}━╋━${"━".repeat(priceLen)}━╋━${"━".repeat(repLen)}━╋━${"━".repeat(ownedLen)}━╋━${"━".repeat(statusLen)}━┫\n`
+
+  const tableFooter =
+    `┗━${"━".repeat(orderLen)}━┻━${"━".repeat(nameLen)}━┻━${"━".repeat(factionLen)}━┻━${"━".repeat(priceLen)}━┻━${"━".repeat(repLen)}━┻━${"━".repeat(ownedLen)}━┻━${"━".repeat(statusLen)}━┛\n` +
+    `\nAffordable: ${affordable.length} | Not affordable: ${unaffordable.length} | Total: ${allAugs.length}\n` +
+    `Current money: ${ns.formatNumber(playerMoney)}`
+
+  // Create div container for the table
+  const container = eval("document").createElement("div")
+  container.style.fontFamily = "monospace"
+  container.style.fontSize = "12px"
+  container.style.whiteSpace = "pre"
+  container.style.lineHeight = "1.2"
+  container.style.color = primaryColor
+  container.style.overflow = "auto"
+
+  // Add header
+  const headerSpan = eval("document").createElement("span")
+  headerSpan.textContent = tableHeader
+  container.appendChild(headerSpan)
+
+  // Add rows with conditional coloring
+  for (const row of rows) {
+    const rowSpan = eval("document").createElement("span")
+    rowSpan.textContent = `┃ ${row.order} ┃ ${row.name} ┃ ${row.faction} ┃ `
+    container.appendChild(rowSpan)
+
+    const priceSpan = eval("document").createElement("span")
+    priceSpan.textContent = row.price
+    if (row.priceRed) priceSpan.style.color = "#ff4444"
+    container.appendChild(priceSpan)
+
+    const midSpan = eval("document").createElement("span")
+    midSpan.textContent = " ┃ "
+    container.appendChild(midSpan)
+
+    const repSpan = eval("document").createElement("span")
+    repSpan.textContent = row.rep
+    if (row.repRed) repSpan.style.color = "#ff4444"
+    container.appendChild(repSpan)
+
+    const endSpan = eval("document").createElement("span")
+    endSpan.textContent = ` ┃ ${row.owned} ┃ ${row.status} ┃\n`
+    container.appendChild(endSpan)
+  }
+
+  // Add footer
+  const footerSpan = eval("document").createElement("span")
+  footerSpan.textContent = tableFooter
+  container.appendChild(footerSpan)
+
+  // Calculate content width based on table width
+  const tableWidth = orderLen + nameLen + factionLen + priceLen + repLen + ownedLen + statusLen + 20 // +20 for borders
+  const contentWidth = Math.min(tableWidth * 7.2 + 40, eval("window").innerWidth - 100)
+
+  // Create floating window
+  new FloatingWindow({
+    title: `Augmentations (✓ = affordable, ✗ = not affordable, ~ = NeuroFlux)`,
+    content: container,
+    width: contentWidth,
+    height: 600,
+    id: "augments-window",
+  })
 
   // Buy mode - purchase all affordable augmentations
   if (buyMode) {
-    const toPurchase = buyFlux && neuroFluxInfo ? [neuroFluxInfo] : affordable
+    const toPurchase = buyFlux && neuroFluxInfo ? [neuroFluxInfo] : affordableSorted
 
     if (toPurchase.length === 0) {
       ns.tprint("\nNo augmentations to purchase.")
@@ -189,7 +344,7 @@ export async function main(ns: NS) {
     }
 
     ns.tprint("\n" + "=".repeat(120))
-    ns.tprint(buyFlux ? "PURCHASING NEUROFLUX GOVERNOR" : "PURCHASING AUGMENTATIONS (most expensive first)")
+    ns.tprint(buyFlux ? "PURCHASING NEUROFLUX GOVERNOR" : "PURCHASING AUGMENTATIONS (prerequisites first)")
     ns.tprint("=".repeat(120))
 
     let purchaseCount = 0
@@ -200,7 +355,7 @@ export async function main(ns: NS) {
       const validFaction = aug.factions.find((f) => (factionReps.get(f) ?? 0) >= aug.repReq)
 
       if (!validFaction) {
-        ns.tprint(`✗ No valid faction found for: ${aug.name}`)
+        ns.tprint(`X No valid faction found for: ${aug.name}`)
         continue
       }
 
@@ -210,7 +365,7 @@ export async function main(ns: NS) {
         purchaseCount++
         totalSpent += aug.price
       } else {
-        ns.tprint(`✗ Failed to purchase: ${aug.name} from ${validFaction}`)
+        ns.tprint(`X Failed to purchase: ${aug.name} from ${validFaction}`)
       }
     }
 
