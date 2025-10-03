@@ -41,7 +41,7 @@ export async function main(ns: NS) {
       await copyRequiredScripts(ns, node)
     }
 
-    const batchDelay = 50
+    const batchDelay = 1000
     const enableParallelPrep = false
     const ramThreshold = 0.9
 
@@ -118,14 +118,18 @@ export async function main(ns: NS) {
     const threads = calculateBatchThreads(ns, batchConfig)
     const timings = calculateBatchTimings(ns, server, player, batchDelay)
 
-    ns.tprint(`Using batch delay of ${ns.tFormat(batchDelay)}`)
+    ns.tprint(`Requested batch delay: ${ns.tFormat(batchDelay)}`)
+    if (timings.effectiveBatchDelay !== batchDelay) {
+      ns.tprint(`Effective batch delay: ${ns.tFormat(timings.effectiveBatchDelay)} (adjusted due to low weaken time)`)
+    }
     ns.tprint(
       `Batch RAM: ${threads.totalBatchRam.toFixed(2)} GB - Threads (H:${threads.hackThreads} W1:${threads.wkn1Threads} G:${threads.growThreads} W2:${threads.wkn2Threads})`
     )
     const maxBatches = Math.floor((totalMaxRam / threads.totalBatchRam) * ramThreshold)
-    const batches = Math.min(1, maxBatches) // DEBUG: Limit to 10 batches (40 ops)
+    const batches = Math.min(10, maxBatches) // DEBUG: Limit to 10 batches (40 ops)
+    ns.tprint(`Can run ${maxBatches} batches in parallel, limiting to ${batches} for debugging (${ns.formatRam(totalMaxRam)} total RAM)`)
     ns.tprint(`Weaken time: ${ns.tFormat(timings.weakenTime)}`)
-    ns.tprint(`Batch interval: ${ns.tFormat(batchDelay * 4)}`)
+    ns.tprint(`Batch interval: ${ns.tFormat(timings.effectiveBatchDelay * 4)}`)
 
     // Security checks
     const minSecurity = ns.getServerMinSecurityLevel(target.serverName)

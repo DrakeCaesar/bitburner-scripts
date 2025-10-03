@@ -50,10 +50,17 @@ export function calculateBatchTimings(ns: NS, server: Server, player: Player, ba
   const hackTime = ns.formulas.hacking.hackTime(server, player)
   const growTime = ns.formulas.hacking.growTime(server, player)
 
-  const hackAdditionalMsec = weakenTime - batchDelay - hackTime
+  // Adjust batch delay if it's too large for the weaken time
+  // We need at least 4 * batchDelay for all operations to fit
+  const minWeakenTime = 4 * batchDelay
+  const effectiveBatchDelay = weakenTime < minWeakenTime ? Math.floor(weakenTime / 5) : batchDelay
+
+  // Calculate additional delays to ensure proper timing
+  // Operations should finish in order: Hack -> Weaken1 -> Grow -> Weaken2
+  const hackAdditionalMsec = Math.max(0, weakenTime - effectiveBatchDelay - hackTime)
   const wkn1AdditionalMsec = 0
-  const growAdditionalMsec = weakenTime + batchDelay - growTime
-  const wkn2AdditionalMsec = 2 * batchDelay
+  const growAdditionalMsec = Math.max(0, weakenTime + effectiveBatchDelay - growTime)
+  const wkn2AdditionalMsec = 2 * effectiveBatchDelay
 
   return {
     weakenTime,
@@ -63,13 +70,14 @@ export function calculateBatchTimings(ns: NS, server: Server, player: Player, ba
     wkn1AdditionalMsec,
     growAdditionalMsec,
     wkn2AdditionalMsec,
+    effectiveBatchDelay,
   }
 }
 
 export async function executeBatches(ns: NS, config: BatchConfig, threads: ReturnType<typeof calculateBatchThreads>, timings: ReturnType<typeof calculateBatchTimings>, batchLimit?: number) {
   const { target, server, player, batchDelay, nodes, totalMaxRam, ramThreshold } = config
   const { hackThreads, wkn1Threads, growThreads, wkn2Threads, totalBatchRam } = threads
-  const { hackAdditionalMsec, wkn1AdditionalMsec, growAdditionalMsec, wkn2AdditionalMsec } = timings
+  const { hackAdditionalMsec, wkn1AdditionalMsec, growAdditionalMsec, wkn2AdditionalMsec, effectiveBatchDelay } = timings
 
   const maxBatches = Math.floor((totalMaxRam / totalBatchRam) * ramThreshold)
   const batches = batchLimit !== undefined ? Math.min(batchLimit, maxBatches) : maxBatches
@@ -78,11 +86,16 @@ export async function executeBatches(ns: NS, config: BatchConfig, threads: Retur
   const weakenScriptRam = ns.getScriptRam("/hacking/weaken.js")
   const growScriptRam = ns.getScriptRam("/hacking/grow.js")
 
+  // Warn if batch delay was adjusted
+  if (effectiveBatchDelay !== batchDelay) {
+    ns.tprint(`WARNING: Batch delay adjusted from ${batchDelay}ms to ${effectiveBatchDelay}ms due to low weaken time`)
+  }
+
   let lastPid = 0
   let currentPlayer = { ...player }
 
   for (let batchCounter = 0; batchCounter < batches; batchCounter++) {
-    const batchOffset = batchCounter * batchDelay * 4
+    const batchOffset = batchCounter * effectiveBatchDelay * 4
 
     const hackXp = calculateOperationXp(server, currentPlayer, hackThreads, ns)
     const playerAfterHack = updatePlayerWithXp(currentPlayer, hackXp, ns)
