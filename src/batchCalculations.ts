@@ -1,4 +1,5 @@
 import { NS, Person, Player, Server } from "@ns"
+import { crawl } from "./libraries/crawl.js"
 
 /**
  * Calculate XP gained from a hacking operation (hack/grow/weaken)
@@ -223,8 +224,6 @@ export function getServersToPrep(
   const player = ns.getPlayer()
   const knownServers = new Set<string>()
 
-  // Import crawl dynamically
-  const { crawl } = require("./libraries/crawl.js")
   crawl(ns, knownServers)
 
   const otherServers: ServerPrepInfo[] = []
