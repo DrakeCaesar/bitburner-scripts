@@ -11,6 +11,16 @@ export async function main(ns: NS) {
     return
   }
 
+  const scriptName = ns.getScriptName()
+  const hostname = ns.getHostname()
+  const processes = ns.ps(hostname)
+
+  for (const proc of processes) {
+    if (proc.filename === scriptName && proc.pid !== ns.pid && proc.args.length === 0) {
+      ns.kill(proc.pid)
+    }
+  }
+
   // Otherwise, create updating window
   await createAugmentsWindow(ns)
 }
@@ -49,9 +59,7 @@ async function doPurchase(ns: NS, buyFlux: boolean) {
     while (remainingMoney >= currentPrice) {
       const success = ns.singularity.purchaseAugmentation(validFaction, neuroFluxInfo.name)
       if (success) {
-        ns.tprint(
-          `✓ Purchased: ${neuroFluxInfo.name} from ${validFaction} for ${ns.formatNumber(currentPrice)}`
-        )
+        ns.tprint(`✓ Purchased: ${neuroFluxInfo.name} from ${validFaction} for ${ns.formatNumber(currentPrice)}`)
         purchaseCount++
         totalSpent += currentPrice
         remainingMoney -= currentPrice
@@ -322,10 +330,7 @@ async function createAugmentsWindow(ns: NS) {
   // Calculate content width based on table width
   const firstData = getAugmentData(ns, ns.getPlayer().factions)
   const orderLen = Math.max(1, firstData.affordableSorted.length.toString().length)
-  const contentWidth = Math.min(
-    (orderLen + 50 + 30 + 20 + 15 + 3 + 4 + 20) * 7.2 + 40,
-    eval("window").innerWidth - 100
-  )
+  const contentWidth = Math.min((orderLen + 50 + 30 + 20 + 15 + 3 + 4 + 20) * 7.2 + 40, eval("window").innerWidth - 100)
 
   // Create floating window
   new FloatingWindow({
