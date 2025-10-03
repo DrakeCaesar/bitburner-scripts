@@ -1,5 +1,5 @@
 import { NS, Player, Server } from "@ns"
-import { calculateHackThreads, calculateGrowThreads, calculateWeakThreads, calculateOperationXp, updatePlayerWithXp, hackServerInstance, wkn1ServerInstance, growServerInstance, wkn2ServerInstance } from "../batchCalculations.js"
+import { calculateGrowThreads, calculateHackThreads, calculateOperationXp, calculateWeakThreads, growServerInstance, hackServerInstance, updatePlayerWithXp, wkn1ServerInstance, wkn2ServerInstance } from "../batchCalculations.js"
 import { findNodeWithRam } from "./serverManagement.js"
 
 export interface BatchConfig {
@@ -66,12 +66,13 @@ export function calculateBatchTimings(ns: NS, server: Server, player: Player, ba
   }
 }
 
-export async function executeBatches(ns: NS, config: BatchConfig, threads: ReturnType<typeof calculateBatchThreads>, timings: ReturnType<typeof calculateBatchTimings>) {
+export async function executeBatches(ns: NS, config: BatchConfig, threads: ReturnType<typeof calculateBatchThreads>, timings: ReturnType<typeof calculateBatchTimings>, batchLimit?: number) {
   const { target, server, player, batchDelay, nodes, totalMaxRam, ramThreshold } = config
   const { hackThreads, wkn1Threads, growThreads, wkn2Threads, totalBatchRam } = threads
   const { hackAdditionalMsec, wkn1AdditionalMsec, growAdditionalMsec, wkn2AdditionalMsec } = timings
 
-  const batches = Math.floor((totalMaxRam / totalBatchRam) * ramThreshold)
+  const maxBatches = Math.floor((totalMaxRam / totalBatchRam) * ramThreshold)
+  const batches = batchLimit !== undefined ? Math.min(batchLimit, maxBatches) : maxBatches
 
   const hackScriptRam = ns.getScriptRam("/hacking/hack.js")
   const weakenScriptRam = ns.getScriptRam("/hacking/weaken.js")

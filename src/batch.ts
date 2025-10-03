@@ -1,12 +1,12 @@
 import { NS } from "@ns"
-import { copyRequiredScripts, killOtherInstances, getServersToPrep } from "./batchCalculations.js"
+import { copyRequiredScripts, getServersToPrep, killOtherInstances } from "./batchCalculations.js"
 // import { initBatchVisualiser, logBatchOperation } from "./batchVisualiser.js"
 import { main as autoNuke } from "./autoNuke.js"
 import { upgradeServer } from "./buyServer.js"
 import { findBestTarget } from "./findBestTarget.js"
-import { purchaseTorRouter, purchasePrograms } from "./libraries/purchasePrograms.js"
-import { selectOptimalNodes, purchaseAdditionalServers, findNodeWithRam } from "./libraries/serverManagement.js"
 import { calculateBatchThreads, calculateBatchTimings, executeBatches } from "./libraries/batchExecution.js"
+import { purchasePrograms, purchaseTorRouter } from "./libraries/purchasePrograms.js"
+import { findNodeWithRam, purchaseAdditionalServers, selectOptimalNodes } from "./libraries/serverManagement.js"
 
 export async function main(ns: NS) {
   const playerHackLevel = ns.args[0] ? Number(ns.args[0]) : undefined
@@ -122,8 +122,8 @@ export async function main(ns: NS) {
     ns.tprint(
       `Batch RAM: ${threads.totalBatchRam.toFixed(2)} GB - Threads (H:${threads.hackThreads} W1:${threads.wkn1Threads} G:${threads.growThreads} W2:${threads.wkn2Threads})`
     )
-    const batches = Math.floor((totalMaxRam / threads.totalBatchRam) * ramThreshold)
-    ns.tprint(`Can run ${batches} batches in parallel (${ns.formatRam(totalMaxRam)} total RAM)`)
+    const maxBatches = Math.floor((totalMaxRam / threads.totalBatchRam) * ramThreshold)
+    const batches = Math.min(1, maxBatches) // DEBUG: Limit to 10 batches (40 ops)
     ns.tprint(`Weaken time: ${ns.tFormat(timings.weakenTime)}`)
     ns.tprint(`Batch interval: ${ns.tFormat(batchDelay * 4)}`)
 
@@ -136,7 +136,7 @@ export async function main(ns: NS) {
     }
 
     // Execute batches
-    await executeBatches(ns, batchConfig, threads, timings)
+    await executeBatches(ns, batchConfig, threads, timings, batches)
 
     const finalSecurity = ns.getServerSecurityLevel(target.serverName)
     const currentMoney = ns.getServerMoneyAvailable(target.serverName)
@@ -148,5 +148,6 @@ export async function main(ns: NS) {
       `Security: ${finalSecurity.toFixed(2)} / ${minSecurity.toFixed(2)} (+${(finalSecurity - minSecurity).toFixed(2)})`
     )
     ns.tprint(`Money: ${moneyPercent.toFixed(2)}% (${ns.formatNumber(currentMoney)} / ${ns.formatNumber(maxMoney)})`)
+    break
   }
 }
