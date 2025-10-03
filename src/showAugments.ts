@@ -24,14 +24,7 @@ async function doPurchase(ns: NS, buyFlux: boolean) {
     return
   }
 
-  const { affordableSorted, neuroFluxInfo, factionReps } = getAugmentData(ns, playerFactions)
-
-  const toPurchase = buyFlux && neuroFluxInfo ? [neuroFluxInfo] : affordableSorted
-
-  if (toPurchase.length === 0) {
-    ns.tprint("\nNo augmentations to purchase.")
-    return
-  }
+  const { affordableSorted, neuroFluxInfo, factionReps, playerMoney } = getAugmentData(ns, playerFactions)
 
   ns.tprint("\n" + "=".repeat(120))
   ns.tprint(buyFlux ? "PURCHASING NEUROFLUX GOVERNOR" : "PURCHASING AUGMENTATIONS (prerequisites first)")
@@ -40,22 +33,58 @@ async function doPurchase(ns: NS, buyFlux: boolean) {
   let purchaseCount = 0
   let totalSpent = 0
 
-  for (const aug of toPurchase) {
-    // Find a faction where we have enough rep to buy from
-    const validFaction = aug.factions.find((f) => (factionReps.get(f) ?? 0) >= aug.repReq)
+  if (buyFlux && neuroFluxInfo) {
+    // Calculate how many NeuroFlux can be afforded
+    const AUGMENT_PRICE_MULT = 1.9
+    const validFaction = neuroFluxInfo.factions.find((f) => (factionReps.get(f) ?? 0) >= neuroFluxInfo.repReq)
 
     if (!validFaction) {
-      ns.tprint(`✗ No valid faction found for: ${aug.name}`)
-      continue
+      ns.tprint(`✗ No valid faction found for: ${neuroFluxInfo.name}`)
+      return
     }
 
-    const success = ns.singularity.purchaseAugmentation(validFaction, aug.name)
-    if (success) {
-      ns.tprint(`✓ Purchased: ${aug.name} from ${validFaction} for ${ns.formatNumber(aug.price)}`)
-      purchaseCount++
-      totalSpent += aug.price
-    } else {
-      ns.tprint(`✗ Failed to purchase: ${aug.name} from ${validFaction}`)
+    let currentPrice = neuroFluxInfo.price
+    let remainingMoney = playerMoney
+
+    while (remainingMoney >= currentPrice) {
+      const success = ns.singularity.purchaseAugmentation(validFaction, neuroFluxInfo.name)
+      if (success) {
+        ns.tprint(
+          `✓ Purchased: ${neuroFluxInfo.name} from ${validFaction} for ${ns.formatNumber(currentPrice)}`
+        )
+        purchaseCount++
+        totalSpent += currentPrice
+        remainingMoney -= currentPrice
+        currentPrice *= AUGMENT_PRICE_MULT
+      } else {
+        ns.tprint(`✗ Failed to purchase: ${neuroFluxInfo.name} from ${validFaction}`)
+        break
+      }
+    }
+  } else {
+    // Purchase regular augmentations
+    if (affordableSorted.length === 0) {
+      ns.tprint("\nNo augmentations to purchase.")
+      return
+    }
+
+    for (const aug of affordableSorted) {
+      // Find a faction where we have enough rep to buy from
+      const validFaction = aug.factions.find((f) => (factionReps.get(f) ?? 0) >= aug.repReq)
+
+      if (!validFaction) {
+        ns.tprint(`✗ No valid faction found for: ${aug.name}`)
+        continue
+      }
+
+      const success = ns.singularity.purchaseAugmentation(validFaction, aug.name)
+      if (success) {
+        ns.tprint(`✓ Purchased: ${aug.name} from ${validFaction} for ${ns.formatNumber(aug.price)}`)
+        purchaseCount++
+        totalSpent += aug.price
+      } else {
+        ns.tprint(`✗ Failed to purchase: ${aug.name} from ${validFaction}`)
+      }
     }
   }
 
@@ -206,9 +235,27 @@ async function createAugmentsWindow(ns: NS) {
 
       const canAfford = hasEnoughMoney && hasEnoughRep
 
+      // Calculate how many NeuroFlux can be afforded
+      const AUGMENT_PRICE_MULT = 1.9
+      let count = 0
+      let totalCost = 0
+      let currentPrice = neuroFluxInfo.price
+
+      if (canAfford) {
+        let remainingMoney = playerMoney
+        while (remainingMoney >= currentPrice) {
+          remainingMoney -= currentPrice
+          totalCost += currentPrice
+          count++
+          currentPrice *= AUGMENT_PRICE_MULT
+        }
+      }
+
+      const nameText = count > 0 ? `${neuroFluxInfo.name} (x${count})` : neuroFluxInfo.name
+
       rows.push({
         order: " ".repeat(orderLen),
-        name: neuroFluxInfo.name.padEnd(nameLen),
+        name: nameText.padEnd(nameLen),
         faction: formatFactionText(neuroFluxInfo.factions, factionLen).padEnd(factionLen),
         price: ns.formatNumber(neuroFluxInfo.price).padStart(priceLen),
         priceRed: !hasEnoughMoney,
