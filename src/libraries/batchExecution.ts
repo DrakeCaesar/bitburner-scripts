@@ -1,5 +1,15 @@
 import { NS, Player, Server } from "@ns"
-import { calculateGrowThreads, calculateHackThreads, calculateOperationXp, calculateWeakThreads, growServerInstance, hackServerInstance, updatePlayerWithXp, wkn1ServerInstance, wkn2ServerInstance } from "../batchCalculations.js"
+import {
+  calculateGrowThreads,
+  calculateHackThreads,
+  calculateOperationXp,
+  calculateWeakThreads,
+  growServerInstance,
+  hackServerInstance,
+  updatePlayerWithXp,
+  wkn1ServerInstance,
+  wkn2ServerInstance,
+} from "../batchCalculations.js"
 import { findNodeWithRam } from "./serverManagement.js"
 
 export interface BatchConfig {
@@ -74,10 +84,17 @@ export function calculateBatchTimings(ns: NS, server: Server, player: Player, ba
   }
 }
 
-export async function executeBatches(ns: NS, config: BatchConfig, threads: ReturnType<typeof calculateBatchThreads>, timings: ReturnType<typeof calculateBatchTimings>, batchLimit?: number) {
+export async function executeBatches(
+  ns: NS,
+  config: BatchConfig,
+  threads: ReturnType<typeof calculateBatchThreads>,
+  timings: ReturnType<typeof calculateBatchTimings>,
+  batchLimit?: number
+) {
   const { target, server, player, batchDelay, nodes, totalMaxRam, ramThreshold, hackThreshold, myCores } = config
   const { totalBatchRam } = threads
-  const { hackAdditionalMsec, wkn1AdditionalMsec, growAdditionalMsec, wkn2AdditionalMsec, effectiveBatchDelay } = timings
+  const { hackAdditionalMsec, wkn1AdditionalMsec, growAdditionalMsec, wkn2AdditionalMsec, effectiveBatchDelay } =
+    timings
 
   const maxBatches = Math.floor((totalMaxRam / totalBatchRam) * ramThreshold)
   const batches = batchLimit !== undefined ? Math.min(batchLimit, maxBatches) : maxBatches
@@ -117,7 +134,13 @@ export async function executeBatches(ns: NS, config: BatchConfig, threads: Retur
     const playerAfterGrow = updatePlayerWithXp(playerAfterWkn1, growXp, ns)
 
     // Calculate weaken2 threads and XP with player state after grow (e.g., level 13)
-    const { server: wkn2Server, player: wkn2Player } = wkn2ServerInstance(server, playerAfterGrow, growThreads, ns, myCores)
+    const { server: wkn2Server, player: wkn2Player } = wkn2ServerInstance(
+      server,
+      playerAfterGrow,
+      growThreads,
+      ns,
+      myCores
+    )
     const wkn2Threads = calculateWeakThreads(wkn2Server, wkn2Player, myCores)
     const wkn2Xp = calculateOperationXp(server, playerAfterGrow, wkn2Threads, ns)
     const playerAfterWkn2 = updatePlayerWithXp(playerAfterGrow, wkn2Xp, ns)

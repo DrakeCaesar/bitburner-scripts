@@ -18,20 +18,20 @@ export async function main(ns: NS) {
     const actualHackLevel = player.skills.hacking
     const actualHackXp = player.exp.hacking
 
-    if (expectedHackLevel !== undefined && actualHackLevel !== expectedHackLevel) {
+    const levelMismatch = expectedHackLevel !== undefined && actualHackLevel !== expectedHackLevel
+
+    if (levelMismatch) {
       ns.tprint(
         `HACK ${target}: Level mismatch! Expected: ${expectedHackLevel}, Actual: ${actualHackLevel}, Diff: ${actualHackLevel - expectedHackLevel}`
       )
     }
 
-    if (expectedHackXp !== undefined) {
+    // Only report XP mismatch if there's also a level mismatch (otherwise it's just floating point error)
+    if (expectedHackXp !== undefined && levelMismatch) {
       const xpDiff = Math.abs(actualHackXp - expectedHackXp)
-      if (xpDiff > 0.001) {
-        // Allow small floating point errors
-        ns.tprint(
-          `HACK ${target}: XP mismatch! Expected: ${expectedHackXp.toFixed(2)}, Actual: ${actualHackXp.toFixed(2)}, Diff: ${(actualHackXp - expectedHackXp).toFixed(2)}`
-        )
-      }
+      ns.tprint(
+        `HACK ${target}: XP mismatch! Expected: ${expectedHackXp.toFixed(2)}, Actual: ${actualHackXp.toFixed(2)}, Diff: ${(actualHackXp - expectedHackXp).toFixed(2)}`
+      )
     }
   }
 

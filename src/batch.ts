@@ -41,7 +41,7 @@ export async function main(ns: NS) {
       await copyRequiredScripts(ns, node)
     }
 
-    const batchDelay = 1000
+    const batchDelay = 50
     const enableParallelPrep = false
     const ramThreshold = 0.9
 
@@ -68,7 +68,14 @@ export async function main(ns: NS) {
     const prepScriptRam = ns.getScriptRam("/prepareServer.js")
 
     // Get servers to prep (target + optional parallel prep)
-    const serversToPrep = getServersToPrep(ns, target.serverName, weakenTime, enableParallelPrep, totalMaxRam, prepScriptRam)
+    const serversToPrep = getServersToPrep(
+      ns,
+      target.serverName,
+      weakenTime,
+      enableParallelPrep,
+      totalMaxRam,
+      prepScriptRam
+    )
     const maxWeakenTime = Math.max(...serversToPrep.map((s) => s.weakenTime))
 
     if (serversToPrep.length > 1) {
@@ -126,8 +133,11 @@ export async function main(ns: NS) {
       `Batch RAM: ${threads.totalBatchRam.toFixed(2)} GB - Threads (H:${threads.hackThreads} W1:${threads.wkn1Threads} G:${threads.growThreads} W2:${threads.wkn2Threads})`
     )
     const maxBatches = Math.floor((totalMaxRam / threads.totalBatchRam) * ramThreshold)
-    const batches = Math.min(10, maxBatches) // DEBUG: Limit to 10 batches (40 ops)
-    ns.tprint(`Can run ${maxBatches} batches in parallel, limiting to ${batches} for debugging (${ns.formatRam(totalMaxRam)} total RAM)`)
+    // const batches = Math.min(10, maxBatches) // DEBUG: Limit to 10 batches (40 ops)
+    const batches = maxBatches
+    ns.tprint(
+      `Can run ${maxBatches} batches in parallel, limiting to ${batches} for debugging (${ns.formatRam(totalMaxRam)} total RAM)`
+    )
     ns.tprint(`Weaken time: ${ns.tFormat(timings.weakenTime)}`)
     ns.tprint(`Batch interval: ${ns.tFormat(timings.effectiveBatchDelay * 4)}`)
 
@@ -152,6 +162,6 @@ export async function main(ns: NS) {
       `Security: ${finalSecurity.toFixed(2)} / ${minSecurity.toFixed(2)} (+${(finalSecurity - minSecurity).toFixed(2)})`
     )
     ns.tprint(`Money: ${moneyPercent.toFixed(2)}% (${ns.formatNumber(currentMoney)} / ${ns.formatNumber(maxMoney)})`)
-    break
+    // break
   }
 }
