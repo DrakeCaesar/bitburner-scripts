@@ -1,4 +1,4 @@
-import { CityName, CompanyName, NS } from "@ns"
+import { NS } from "@ns"
 
 import { FloatingWindow } from "./libraries/floatingWindow.js"
 
@@ -9,9 +9,9 @@ export function main(ns: NS) {
     existingWindow.remove()
   }
 
-  const cities: CityName[] = ["Aevum", "Chongqing", "Sector-12", "New Tokyo", "Ishima", "Volhaven"]
+  const cities = ["Aevum", "Chongqing", "Sector-12", "New Tokyo", "Ishima", "Volhaven"] as const
 
-  const companies: CompanyName[] = [
+  const companies = [
     "ECorp",
     "MegaCorp",
     "Bachman & Associates",
@@ -50,7 +50,7 @@ export function main(ns: NS) {
     "Joe's Guns",
     "Omega Software",
     "Noodle Bar",
-  ]
+  ] as const
 
   // Build job data grouped by city
   const jobsByCity = new Map<string, { company: string; positions: string[] }[]>()
