@@ -196,3 +196,68 @@ export async function prepareServer(ns: NS, host: string, target: string) {
 
   return { moneyMax, baseSecurity, secTolerance, myCores }
 }
+
+export interface ServerPrepInfo {
+  name: string
+  weakenTime: number
+}
+
+export function getServersToPrep(
+  ns: NS,
+  targetServer: string,
+  targetWeakenTime: number,
+  enableParallel: boolean,
+  totalMaxRam: number,
+  prepScriptRam: number
+): ServerPrepInfo[] {
+  const serversToPrep: ServerPrepInfo[] = [{ name: targetServer, weakenTime: targetWeakenTime }]
+
+  if (!enableParallel) {
+    return serversToPrep
+  }
+
+  const player = ns.getPlayer()
+  const knownServers = new Set<string>()
+
+  // Import crawl dynamically
+  const { crawl } = require("./libraries/crawl.js")
+  crawl(ns, knownServers)
+
+  const otherServers: ServerPrepInfo[] = []
+  for (const serverName of knownServers) {
+    if (serverName === targetServer) continue
+
+    const srv = ns.getServer(serverName)
+    if (!srv.hasAdminRights || !srv.moneyMax || srv.requiredHackingSkill! > player.skills.hacking) continue
+
+    // Check if server needs prep
+    const securityDiff = (srv.hackDifficulty ?? 0) - (srv.minDifficulty ?? 0)
+    const moneyRatio = (srv.moneyAvailable ?? 0) / (srv.moneyMax ?? 1)
+    const needsPrep = securityDiff > 0 || moneyRatio < 1
+
+    if (needsPrep) {
+      const serverWeakenTime = ns.formulas.hacking.weakenTime(srv, player)
+      // Only include servers with weaken time less than or equal to target's weaken time
+      if (serverWeakenTime <= targetWeakenTime) {
+        otherServers.push({ name: serverName, weakenTime: serverWeakenTime })
+      }
+    }
+  }
+
+  // Sort by weaken time (shortest first)
+  otherServers.sort((a, b) => a.weakenTime - b.weakenTime)
+
+  // Check how many other servers we can fit
+  let totalPrepRamNeeded = prepScriptRam
+  for (const srv of otherServers) {
+    const nextRamNeeded = totalPrepRamNeeded + prepScriptRam
+    if (nextRamNeeded <= totalMaxRam * 0.9) {
+      serversToPrep.push(srv)
+      totalPrepRamNeeded = nextRamNeeded
+    } else {
+      break
+    }
+  }
+
+  return serversToPrep
+}
