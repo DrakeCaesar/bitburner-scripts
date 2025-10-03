@@ -34,48 +34,17 @@ async function doPurchase(ns: NS, buyFlux: boolean) {
     return
   }
 
-  const { affordableSorted, neuroFluxInfo, factionReps, playerMoney } = getAugmentData(ns, playerFactions)
+  let { affordableSorted, neuroFluxInfo, factionReps, playerMoney } = getAugmentData(ns, playerFactions)
 
   ns.tprint("\n" + "=".repeat(120))
-  ns.tprint(buyFlux ? "PURCHASING NEUROFLUX GOVERNOR" : "PURCHASING AUGMENTATIONS (prerequisites first)")
+  ns.tprint(buyFlux ? "PURCHASING AUGMENTATIONS + TOPPING UP WITH NEUROFLUX" : "PURCHASING AUGMENTATIONS (prerequisites first)")
   ns.tprint("=".repeat(120))
 
   let purchaseCount = 0
   let totalSpent = 0
 
-  if (buyFlux && neuroFluxInfo) {
-    // Calculate how many NeuroFlux can be afforded
-    const AUGMENT_PRICE_MULT = 1.9
-    const validFaction = neuroFluxInfo.factions.find((f) => (factionReps.get(f) ?? 0) >= neuroFluxInfo.repReq)
-
-    if (!validFaction) {
-      ns.tprint(`✗ No valid faction found for: ${neuroFluxInfo.name}`)
-      return
-    }
-
-    let currentPrice = neuroFluxInfo.price
-    let remainingMoney = playerMoney
-
-    while (remainingMoney >= currentPrice) {
-      const success = ns.singularity.purchaseAugmentation(validFaction, neuroFluxInfo.name)
-      if (success) {
-        ns.tprint(`✓ Purchased: ${neuroFluxInfo.name} from ${validFaction} for ${ns.formatNumber(currentPrice)}`)
-        purchaseCount++
-        totalSpent += currentPrice
-        remainingMoney -= currentPrice
-        currentPrice *= AUGMENT_PRICE_MULT
-      } else {
-        ns.tprint(`✗ Failed to purchase: ${neuroFluxInfo.name} from ${validFaction}`)
-        break
-      }
-    }
-  } else {
-    // Purchase regular augmentations
-    if (affordableSorted.length === 0) {
-      ns.tprint("\nNo augmentations to purchase.")
-      return
-    }
-
+  // Always purchase regular augmentations first (whether buyFlux is true or not)
+  if (affordableSorted.length > 0) {
     for (const aug of affordableSorted) {
       // Find a faction where we have enough rep to buy from
       const validFaction = aug.factions.find((f) => (factionReps.get(f) ?? 0) >= aug.repReq)
@@ -92,6 +61,35 @@ async function doPurchase(ns: NS, buyFlux: boolean) {
         totalSpent += aug.price
       } else {
         ns.tprint(`✗ Failed to purchase: ${aug.name} from ${validFaction}`)
+      }
+    }
+  }
+
+  // If buyFlux is true, top up with NeuroFlux Governor
+  if (buyFlux && neuroFluxInfo) {
+    // Recalculate remaining money after purchasing regular augmentations
+    const remainingMoney = ns.getPlayer().money
+    const AUGMENT_PRICE_MULT = 1.9
+    const validFaction = neuroFluxInfo.factions.find((f) => (factionReps.get(f) ?? 0) >= neuroFluxInfo.repReq)
+
+    if (!validFaction) {
+      ns.tprint(`✗ No valid faction found for: ${neuroFluxInfo.name}`)
+    } else {
+      let currentPrice = neuroFluxInfo.price
+      let currentMoney = remainingMoney
+
+      while (currentMoney >= currentPrice) {
+        const success = ns.singularity.purchaseAugmentation(validFaction, neuroFluxInfo.name)
+        if (success) {
+          ns.tprint(`✓ Purchased: ${neuroFluxInfo.name} from ${validFaction} for ${ns.formatNumber(currentPrice)}`)
+          purchaseCount++
+          totalSpent += currentPrice
+          currentMoney -= currentPrice
+          currentPrice *= AUGMENT_PRICE_MULT
+        } else {
+          ns.tprint(`✗ Failed to purchase: ${neuroFluxInfo.name} from ${validFaction}`)
+          break
+        }
       }
     }
   }
