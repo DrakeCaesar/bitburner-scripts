@@ -1,36 +1,66 @@
 import { NS } from "@ns"
 
 export async function main(ns: NS): Promise<void> {
-  const host = "home"
   const scriptPath = "/shareRam.js"
 
-  // Kill all existing shareRam instances
-  ns.scriptKill(scriptPath, host)
+  // Get all purchased servers (nodes)
+  function getAllNodes(): string[] {
+    const nodes: string[] = []
+    for (let i = 0; i < 25; i++) {
+      const nodeName = "node" + String(i).padStart(2, "0")
+      if (ns.serverExists(nodeName)) {
+        nodes.push(nodeName)
+      }
+    }
+    return nodes
+  }
 
   while (true) {
-    const scriptRam = ns.getScriptRam(scriptPath)
-    const availableRam = ns.getServerMaxRam(host) * 0.9 - ns.getServerUsedRam(host)
-    const threads = Math.floor(availableRam / scriptRam)
+    const nodes = getAllNodes()
+    const allServers = ["home", ...nodes]
 
-    if (threads > 0) {
-      // ns.tprint(
-      //   `Starting ${threads} threads of shareRam (${ns.formatRam(threads * scriptRam)} / ${ns.formatRam(availableRam)} available)`
-      // )
-      ns.run(scriptPath, threads)
-    } else {
-      ns.tprint(`Not enough RAM to run shareRam. Need ${ns.formatRam(scriptRam)}, have ${ns.formatRam(availableRam)}`)
+    // Copy script to all servers and start sharing
+    for (const server of allServers) {
+      // Skip if we can't write to this server
+      if (!ns.hasRootAccess(server)) continue
+
+      // Copy the script if needed
+      if (!ns.fileExists(scriptPath, server)) {
+        await ns.scp(scriptPath, server)
+      }
+
+      // Kill existing shareRam instances on this server
+      ns.scriptKill(scriptPath, server)
+
+      const scriptRam = ns.getScriptRam(scriptPath)
+      const availableRam = ns.getServerMaxRam(server) - ns.getServerUsedRam(server)
+      const threads = Math.floor(availableRam / scriptRam)
+
+      if (threads > 0) {
+        ns.exec(scriptPath, server, threads)
+        ns.tprint(`Started ${threads} share threads on ${server} (${ns.formatRam(threads * scriptRam)})`)
+      }
     }
 
-    // Wait and check if we can add more threads
+    // Wait and check if we can add more threads on any server
     await ns.sleep(10000)
 
-    // Check if we can run more threads
-    const currentAvailableRam = ns.getServerMaxRam(host) - ns.getServerUsedRam(host)
-    const additionalThreads = Math.floor(currentAvailableRam / scriptRam)
+    let needsRestart = false
+    for (const server of allServers) {
+      if (!ns.hasRootAccess(server)) continue
 
-    if (additionalThreads > 0) {
-      ns.scriptKill(scriptPath, host)
-      continue // Restart with new thread count
+      const scriptRam = ns.getScriptRam(scriptPath)
+      const currentAvailableRam = ns.getServerMaxRam(server) - ns.getServerUsedRam(server)
+      const additionalThreads = Math.floor(currentAvailableRam / scriptRam)
+
+      if (additionalThreads > 0) {
+        needsRestart = true
+        break
+      }
+    }
+
+    if (needsRestart) {
+      continue // Restart with new thread counts
     }
   }
 }
