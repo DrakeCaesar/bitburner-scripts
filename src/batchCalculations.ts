@@ -68,8 +68,9 @@ export function calculateWeakThreads(server: Server, player: Player, myCores: nu
   return Math.max(1, Math.ceil(addedSecurity / (0.05 * (1 + (myCores - 1) / 16))))
 }
 
+// TODO: Verify if adding 1 is a good approach here
 export function calculateGrowThreads(server: Server, player: Person, moneyMax: number, myCores: number, ns: NS) {
-  return Math.ceil(ns.formulas.hacking.growThreads(server, player, moneyMax, myCores))
+  return Math.ceil(ns.formulas.hacking.growThreads(server, player, moneyMax, myCores) + 1)
 }
 
 export function getDelta(opTime: number, index: number) {
