@@ -108,6 +108,7 @@ export async function copyRequiredScripts(ns: NS, host: string) {
   ns.scp("/prepareServer.js", host)
   ns.scp("/batchCalculations.js", host)
   ns.scp("/batchVisualizerStub.js", host)
+  ns.scp("/libraries/crawl.js", host)
 }
 
 export async function prepareServer(ns: NS, host: string, target: string) {
