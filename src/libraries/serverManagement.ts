@@ -1,4 +1,5 @@
 import { NS } from "@ns"
+import { crawl } from "../crawl.js"
 
 export function getAllNodes(ns: NS): string[] {
   const nodes: string[] = []
@@ -8,6 +9,49 @@ export function getAllNodes(ns: NS): string[] {
       nodes.push(nodeName)
     }
   }
+  return nodes
+}
+
+/**
+ * Get nodes for batching with fallback logic:
+ * 1. Try purchased servers (node00-node24) or home if it has more RAM
+ * 2. If no purchased servers, use all nuked servers with >=16GB RAM
+ * 3. If no suitable servers found, return empty array
+ */
+export function getNodesForBatching(ns: NS): string[] {
+  // First try purchased servers
+  let nodes = getAllNodes(ns)
+
+  // if (nodes.length === 0) {
+  //   ns.tprint("No purchased servers found, using home...")
+  //   return ["home"]
+  // }
+
+  // Check if home has more RAM than purchased servers
+  const homeRam = ns.getServerMaxRam("home")
+  const totalPurchasedRam = nodes.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
+
+  // if (homeRam > totalPurchasedRam) {
+  //   ns.tprint(
+  //     `Home has more RAM (${ns.formatRam(homeRam)}) than purchased servers (${ns.formatRam(totalPurchasedRam)}), using home...`
+  //   )
+  //   return ["home"]
+  // }
+
+  // If only home or no purchased servers, use all nuked servers with enough RAM
+  if (nodes.length === 0 || (nodes.length === 1 && nodes[0] === "home")) {
+    const knownServers = new Set<string>()
+    crawl(ns, knownServers)
+
+    nodes = []
+    for (const serverName of knownServers) {
+      const server = ns.getServer(serverName)
+      if (server.hasAdminRights && server.maxRam >= 16 && serverName !== "home") {
+        nodes.push(serverName)
+      }
+    }
+  }
+
   return nodes
 }
 
@@ -43,28 +87,6 @@ export function purchaseAdditionalServers(ns: NS): number {
   }
 
   return purchaseCount
-}
-
-export function selectOptimalNodes(ns: NS): string[] {
-  let nodes = getAllNodes(ns)
-
-  if (nodes.length === 0) {
-    ns.tprint("No purchased servers found, using home...")
-    return ["home"]
-  }
-
-  // Check if home has more RAM than purchased servers
-  const homeRam = ns.getServerMaxRam("home")
-  const totalPurchasedRam = nodes.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
-
-  if (homeRam > totalPurchasedRam) {
-    ns.tprint(
-      `Home has more RAM (${ns.formatRam(homeRam)}) than purchased servers (${ns.formatRam(totalPurchasedRam)}), using home...`
-    )
-    return ["home"]
-  }
-
-  return nodes
 }
 
 export function findNodeWithRam(ns: NS, nodes: string[], requiredRam: number): string | null {

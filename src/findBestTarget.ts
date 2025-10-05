@@ -93,9 +93,14 @@ export function analyzeAllServers(
     let serverBestBatchRam = 0
     let serverBestBatches = 0
 
-    const steps = 100
-    for (let i = 1; i <= steps - 1; i++) {
-      const testThreshold = i / steps
+    // Use logarithmic distribution: more samples near 1.0 (99-100%) than near 0
+    // This gives us finer granularity where it matters most
+    const totalSteps = 1000
+    for (let i = 1; i < totalSteps; i++) {
+      // Map i logarithmically: threshold = 1 - 10^(-x)
+      // When i=0: threshold ≈ 0, when i→totalSteps: threshold → 1
+      const logScale = i / totalSteps // 0 to ~1
+      const testThreshold = 1 - Math.pow(10, -logScale * 3) // Maps to ~0.001 to 0.999
 
       // Calculate threads for this threshold
       const { server: hackServer, player: hackPlayer } = hackServerInstance(server, player)
@@ -117,10 +122,9 @@ export function analyzeAllServers(
       const wkn2Ram = weakenScriptRam * wkn2Threads
       const totalBatchRam = hackRam + wkn1Ram + growRam + wkn2Ram
 
-      // Check if the largest single operation fits in the smallest node
-      const maxOperationRam = Math.max(hackRam, wkn1Ram, growRam, wkn2Ram)
-      if (maxOperationRam > minNodeRam) {
-        // Skip this threshold - operations too large for smallest node
+      // Check if the total batch RAM fits in the smallest node
+      if (totalBatchRam > minNodeRam) {
+        // Skip this threshold - batch too large for smallest node
         continue
       }
 

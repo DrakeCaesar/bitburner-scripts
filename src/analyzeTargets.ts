@@ -1,6 +1,7 @@
 import { NS } from "@ns"
 import { analyzeAllServers } from "./findBestTarget.js"
 import { FloatingWindow } from "./libraries/floatingWindow.js"
+import { getNodesForBatching } from "./libraries/serverManagement.js"
 
 export async function main(ns: NS) {
   const playerHackLevel = ns.args[0] ? Number(ns.args[0]) : undefined
@@ -12,22 +13,22 @@ export async function main(ns: NS) {
     existingWindow.remove()
   }
 
-  // Get all nodes and calculate total RAM
-  const nodes: string[] = []
-  for (let i = 0; i < 25; i++) {
-    const nodeName = "node" + String(i).padStart(2, "0")
-    if (ns.serverExists(nodeName)) {
-      nodes.push(nodeName)
-    }
-  }
+  // Get nodes for batching (same logic as batch.ts)
+  const nodes = getNodesForBatching(ns)
 
   if (nodes.length === 0) {
-    nodes.push("home")
+    ns.tprint("ERROR: No nodes with root access found")
+    return
   }
 
-  const totalMaxRam = nodes.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
-  const minNodeRam = nodes.length > 0 ? Math.min(...nodes.map(node => ns.getServerMaxRam(node))) : ns.getServerMaxRam("home")
-  const myCores = nodes.length > 0 ? ns.getServer(nodes[0]).cpuCores : 1
+  const totalMaxRam = nodes.reduce((sum: number, node: string) => {
+    if (node === "home") {
+      return sum + (ns.getServerMaxRam(node) - ns.getServerUsedRam(node))
+    }
+    return sum + ns.getServerMaxRam(node)
+  }, 0)
+  const minNodeRam = Math.min(...nodes.map((node: string) => ns.getServerMaxRam(node)))
+  const myCores = ns.getServer(nodes[0]).cpuCores
   const batchDelay = 50
 
   // Use the imported function to analyze servers

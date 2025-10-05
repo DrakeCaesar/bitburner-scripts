@@ -3,11 +3,10 @@ import { copyRequiredScripts, getServersToPrep, killOtherInstances } from "./bat
 // import { initBatchVisualiser, logBatchOperation } from "./batchVisualiser.js"
 import { main as autoNuke } from "./autoNuke.js"
 import { upgradeServer } from "./buyServer.js"
-import { crawl } from "./crawl.js"
 import { findBestTarget } from "./findBestTarget.js"
 import { calculateBatchThreads, calculateBatchTimings, executeBatches } from "./libraries/batchExecution.js"
 import { purchasePrograms, purchaseTorRouter } from "./libraries/purchasePrograms.js"
-import { findNodeWithRam, purchaseAdditionalServers, selectOptimalNodes } from "./libraries/serverManagement.js"
+import { findNodeWithRam, getNodesForBatching, purchaseAdditionalServers } from "./libraries/serverManagement.js"
 
 export async function main(ns: NS) {
   const playerHackLevel = ns.args[0] ? Number(ns.args[0]) : undefined
@@ -33,27 +32,12 @@ export async function main(ns: NS) {
     // If node00 is maxed out, try to buy additional servers
     purchaseAdditionalServers(ns)
 
-    // Select optimal nodes to use
-    let nodes = selectOptimalNodes(ns)
+    // Get nodes for batching (purchased servers or all nuked servers)
+    const nodes = getNodesForBatching(ns)
 
-    // If no purchased servers, use all nuked servers
-    if (nodes.length === 0 || (nodes.length === 1 && nodes[0] === "home")) {
-      ns.tprint("No purchased servers found, using all nuked servers...")
-      const knownServers = new Set<string>()
-      crawl(ns, knownServers)
-
-      nodes = []
-      for (const serverName of knownServers) {
-        const server = ns.getServer(serverName)
-        if (server.hasAdminRights && server.maxRam >= 16 && serverName !== "home") {
-          nodes.push(serverName)
-        }
-      }
-
-      if (nodes.length === 0) {
-        ns.tprint("ERROR: No nodes with root access found")
-        return
-      }
+    if (nodes.length === 0) {
+      ns.tprint("ERROR: No nodes with root access found")
+      return
     }
 
     // Kill all scripts on all nodes and copy required scripts
