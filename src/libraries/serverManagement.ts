@@ -70,6 +70,7 @@ export function selectOptimalNodes(ns: NS): string[] {
 export function findNodeWithRam(ns: NS, nodes: string[], requiredRam: number): string | null {
   for (const node of nodes) {
     const availableRam = ns.getServerMaxRam(node) - ns.getServerUsedRam(node)
+    // ns.tprint(`Node ${node} has ${availableRam.toFixed(2)} GB available RAM (requires ${requiredRam.toFixed(2)} GB)`)
     if (availableRam >= requiredRam) {
       return node
     }

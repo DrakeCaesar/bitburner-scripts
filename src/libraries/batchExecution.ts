@@ -24,37 +24,64 @@ export interface BatchConfig {
   nodes: string[]
   totalMaxRam: number
   ramThreshold: number
+  minNodeRam: number
 }
 
 export function calculateBatchThreads(ns: NS, config: BatchConfig) {
-  const { server, player, hackThreshold, myCores } = config
+  const { server, player, hackThreshold, myCores, minNodeRam } = config
   const moneyMax = server.moneyMax!
 
-  const { server: hackServer, player: hackPlayer } = hackServerInstance(server, player)
-  const hackThreads = calculateHackThreads(hackServer, hackPlayer, moneyMax, hackThreshold, ns)
+  const hackScriptRam = ns.getScriptRam("/hacking/hack.js")
+  const weakenScriptRam = ns.getScriptRam("/hacking/weaken.js")
+  const growScriptRam = ns.getScriptRam("/hacking/grow.js")
 
-  const { server: wkn1Server, player: wkn1Player } = wkn1ServerInstance(server, player, hackThreads, ns)
-  const wkn1Threads = calculateWeakThreads(wkn1Server, wkn1Player, myCores)
+  // Try progressively higher thresholds (steal less money) until operations fit in minNodeRam
+  let actualThreshold = hackThreshold
+  const maxIterations = 1000 // Prevent infinite loops
 
-  const { server: growServer, player: growPlayer } = growServerInstance(server, player, hackThreshold)
-  const growThreads = calculateGrowThreads(growServer, growPlayer, moneyMax, myCores, ns)
+  for (let i = 0; i < maxIterations; i++) {
+    const { server: hackServer, player: hackPlayer } = hackServerInstance(server, player)
+    const hackThreads = calculateHackThreads(hackServer, hackPlayer, moneyMax, actualThreshold, ns)
 
-  const { server: wkn2Server, player: wkn2Player } = wkn2ServerInstance(server, player, growThreads, ns, myCores)
-  const wkn2Threads = calculateWeakThreads(wkn2Server, wkn2Player, myCores)
+    const { server: wkn1Server, player: wkn1Player } = wkn1ServerInstance(server, player, hackThreads, ns)
+    const wkn1Threads = calculateWeakThreads(wkn1Server, wkn1Player, myCores)
 
-  const hackServerRam = ns.getScriptRam("/hacking/hack.js") * hackThreads
-  const wkn1ServerRam = ns.getScriptRam("/hacking/weaken.js") * wkn1Threads
-  const growServerRam = ns.getScriptRam("/hacking/grow.js") * growThreads
-  const wkn2ServerRam = ns.getScriptRam("/hacking/weaken.js") * wkn2Threads
-  const totalBatchRam = hackServerRam + wkn1ServerRam + growServerRam + wkn2ServerRam
+    const { server: growServer, player: growPlayer } = growServerInstance(server, player, actualThreshold)
+    const growThreads = calculateGrowThreads(growServer, growPlayer, moneyMax, myCores, ns)
 
-  return {
-    hackThreads,
-    wkn1Threads,
-    growThreads,
-    wkn2Threads,
-    totalBatchRam,
+    const { server: wkn2Server, player: wkn2Player } = wkn2ServerInstance(server, player, growThreads, ns, myCores)
+    const wkn2Threads = calculateWeakThreads(wkn2Server, wkn2Player, myCores)
+
+    const hackServerRam = hackScriptRam * hackThreads
+    const wkn1ServerRam = weakenScriptRam * wkn1Threads
+    const growServerRam = growScriptRam * growThreads
+    const wkn2ServerRam = weakenScriptRam * wkn2Threads
+
+    const maxOperationRam = hackServerRam + wkn1ServerRam + growServerRam + wkn2ServerRam
+    // const maxOperationRam = Math.max(hackServerRam, wkn1ServerRam, growServerRam, wkn2ServerRam)
+    // Check if all operations fit in the smallest node
+    if (maxOperationRam <= minNodeRam) {
+      const totalBatchRam = hackServerRam + wkn1ServerRam + growServerRam + wkn2ServerRam
+      return {
+        hackThreads,
+        wkn1Threads,
+        growThreads,
+        wkn2Threads,
+        totalBatchRam,
+        actualThreshold,
+      }
+    }
+
+    // Increase threshold to steal less (move 50% closer to 1)
+    const remaining = 1 - actualThreshold
+    if (remaining < 0.00001) break // Stop if we're extremely close to 1
+    actualThreshold = actualThreshold + remaining * 0.5
   }
+
+  // If we get here, even threshold very close to 1 doesn't fit
+  throw new Error(
+    `Cannot find a hack threshold that fits in minimum node RAM (${minNodeRam} GB). Consider upgrading servers.`
+  )
 }
 
 export function calculateBatchTimings(ns: NS, server: Server, player: Player, batchDelay: number) {
@@ -93,8 +120,8 @@ export async function executeBatches(
   timings: ReturnType<typeof calculateBatchTimings>,
   batchLimit?: number
 ) {
-  const { target, server, player, batchDelay, nodes, totalMaxRam, ramThreshold, hackThreshold, myCores } = config
-  const { totalBatchRam } = threads
+  const { target, server, player, batchDelay, nodes, totalMaxRam, ramThreshold, myCores } = config
+  const { totalBatchRam, actualThreshold } = threads
   const { hackAdditionalMsec, wkn1AdditionalMsec, growAdditionalMsec, wkn2AdditionalMsec, effectiveBatchDelay } =
     timings
 
@@ -122,7 +149,7 @@ export async function executeBatches(
 
     // Calculate hack threads and XP with current player state (e.g., level 10)
     const { server: hackServer, player: hackPlayer } = hackServerInstance(server, currentPlayer)
-    const hackThreads = calculateHackThreads(hackServer, hackPlayer, moneyMax, hackThreshold, ns)
+    const hackThreads = calculateHackThreads(hackServer, hackPlayer, moneyMax, actualThreshold, ns)
     const hackXp = calculateOperationXp(server, currentPlayer, hackThreads, ns)
     xpKahan = kahanAdd(xpKahan, hackXp)
     const playerAfterHack = updatePlayerWithKahanXp(currentPlayer, xpKahan, ns)
@@ -135,7 +162,7 @@ export async function executeBatches(
     const playerAfterWkn1 = updatePlayerWithKahanXp(currentPlayer, xpKahan, ns)
 
     // Calculate grow threads and XP with player state after weaken1 (e.g., level 12)
-    const { server: growServer, player: growPlayer } = growServerInstance(server, playerAfterWkn1, hackThreshold)
+    const { server: growServer, player: growPlayer } = growServerInstance(server, playerAfterWkn1, actualThreshold)
     const growThreads = calculateGrowThreads(growServer, growPlayer, moneyMax, myCores, ns)
     const growXp = calculateOperationXp(server, playerAfterWkn1, growThreads, ns)
     xpKahan = kahanAdd(xpKahan, growXp)
@@ -157,6 +184,12 @@ export async function executeBatches(
     currentPlayer = playerAfterWkn2
 
     // Find nodes for each operation
+    // ns.tprint(
+    //   `Launching batch ${batchCounter + 1}/${batches}: H:${hackThreads} W1:${wkn1Threads} G:${growThreads} W2:${wkn2Threads} (Total RAM: ${totalBatchRam.toFixed(2)} GB)`
+    // )
+    // print nodes and their ram
+    // ns.tprint(`Nodes: ${nodes.map((n) => `${n} (${ns.getServerMaxRam(n)} GB)`).join(", ")}`)
+
     const hackNode = findNodeWithRam(ns, nodes, hackThreads * hackScriptRam)
     const wkn1Node = findNodeWithRam(ns, nodes, wkn1Threads * weakenScriptRam)
     const growNode = findNodeWithRam(ns, nodes, growThreads * growScriptRam)

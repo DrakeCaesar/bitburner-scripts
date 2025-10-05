@@ -45,7 +45,7 @@ export async function main(ns: NS) {
       nodes = []
       for (const serverName of knownServers) {
         const server = ns.getServer(serverName)
-        if (server.hasAdminRights && server.maxRam > 0) {
+        if (server.hasAdminRights && server.maxRam >= 16 && serverName !== "home") {
           nodes.push(serverName)
         }
       }
@@ -85,6 +85,8 @@ export async function main(ns: NS) {
     // Find best target automatically (constrained by smallest node RAM)
     const target = findBestTarget(ns, totalMaxRam, minNodeRam, myCores, batchDelay, playerHackLevel)
     const player = ns.getPlayer()
+    
+    
 
     ns.tprint(`Target: ${target.serverName}`)
     ns.tprint(`Using ${nodes.length} node(s) with ${ns.formatRam(totalMaxRam)} total RAM`)
@@ -153,6 +155,7 @@ export async function main(ns: NS) {
       nodes,
       totalMaxRam,
       ramThreshold,
+      minNodeRam,
     }
 
     const threads = calculateBatchThreads(ns, batchConfig)
@@ -161,6 +164,11 @@ export async function main(ns: NS) {
     ns.tprint(`Requested batch delay: ${ns.tFormat(batchDelay)}`)
     if (timings.effectiveBatchDelay !== batchDelay) {
       ns.tprint(`Effective batch delay: ${ns.tFormat(timings.effectiveBatchDelay)} (adjusted due to low weaken time)`)
+    }
+    if (threads.actualThreshold !== target.hackThreshold) {
+      ns.tprint(
+        `Adjusted hack threshold from ${(target.hackThreshold * 100).toFixed(2)}% to ${(threads.actualThreshold * 100).toFixed(2)}% to fit in ${ns.formatRam(minNodeRam)} nodes`
+      )
     }
     ns.tprint(
       `Batch RAM: ${threads.totalBatchRam.toFixed(2)} GB - Threads (H:${threads.hackThreads} W1:${threads.wkn1Threads} G:${threads.growThreads} W2:${threads.wkn2Threads})`
