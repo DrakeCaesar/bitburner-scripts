@@ -1,12 +1,16 @@
 import { NS } from "@ns"
-import { copyRequiredScripts, getServersToPrep, killOtherInstances } from "./batchCalculations.js"
+import {
+  calculatePrepTime,
+  copyRequiredScripts,
+  killOtherInstances,
+  prepareServerMultiNode,
+} from "./batchCalculations.js"
 // import { initBatchVisualiser, logBatchOperation } from "./batchVisualiser.js"
 import { main as autoNuke } from "./autoNuke.js"
 import { upgradeServer } from "./buyServer.js"
 import { findBestTarget } from "./findBestTarget.js"
 import { calculateBatchThreads, calculateBatchTimings, executeBatches } from "./libraries/batchExecution.js"
-import { purchasePrograms, purchaseTorRouter } from "./libraries/purchasePrograms.js"
-import { findNodeWithRam, getNodesForBatching, purchaseAdditionalServers } from "./libraries/serverManagement.js"
+import { getNodesForBatching, purchaseAdditionalServers } from "./libraries/serverManagement.js"
 
 export async function main(ns: NS) {
   const playerHackLevel = ns.args[0] ? Number(ns.args[0]) : undefined
@@ -17,8 +21,8 @@ export async function main(ns: NS) {
     // initBatchVisualiser()
 
     // Purchase TOR router and programs
-    purchaseTorRouter(ns)
-    purchasePrograms(ns)
+    // purchaseTorRouter(ns)
+    // purchasePrograms(ns)
 
     // Run autoNuke to gain access to new servers
     await autoNuke(ns)
@@ -47,7 +51,6 @@ export async function main(ns: NS) {
     }
 
     const batchDelay = 50
-    const enableParallelPrep = false
     const ramThreshold = 0.9
 
     // Calculate total RAM across all nodes and find minimum node RAM
@@ -69,8 +72,6 @@ export async function main(ns: NS) {
     // Find best target automatically (constrained by smallest node RAM)
     const target = findBestTarget(ns, totalMaxRam, minNodeRam, myCores, batchDelay, playerHackLevel)
     const player = ns.getPlayer()
-    
-    
 
     ns.tprint(`Target: ${target.serverName}`)
     ns.tprint(`Using ${nodes.length} node(s) with ${ns.formatRam(totalMaxRam)} total RAM`)
@@ -83,50 +84,18 @@ export async function main(ns: NS) {
     server.hackDifficulty = server.minDifficulty
     server.moneyAvailable = server.moneyMax
 
-    const weakenTime = ns.formulas.hacking.weakenTime(server, player)
-    const prepScriptRam = ns.getScriptRam("/prepareServer.js")
-
-    // Get servers to prep (target + optional parallel prep)
-    const serversToPrep = getServersToPrep(
-      ns,
-      target.serverName,
-      weakenTime,
-      enableParallelPrep,
-      totalMaxRam,
-      prepScriptRam
-    )
-    const maxWeakenTime = Math.max(...serversToPrep.map((s) => s.weakenTime))
-
-    if (serversToPrep.length > 1) {
-      ns.tprint(
-        `Preparing ${serversToPrep.length} servers in parallel (max ${ns.tFormat(maxWeakenTime)}): ${serversToPrep.map((s) => s.name).join(", ")}`
-      )
+    // Calculate and show estimated prep time based on available RAM across all nodes
+    const estimatedPrepTime = calculatePrepTime(ns, nodes, target.serverName)
+    if (estimatedPrepTime > 0) {
+      ns.tprint(`Preparing ${target.serverName}... (estimated time: ${ns.tFormat(estimatedPrepTime)})`)
     } else {
-      ns.tprint(`Preparing ${target.serverName}...`)
+      ns.tprint(`${target.serverName} is already prepared!`)
     }
 
-    // Launch prep scripts in parallel
-    const prepPids: number[] = []
-    for (const serverInfo of serversToPrep) {
-      const node = findNodeWithRam(ns, nodes, prepScriptRam)
-      if (!node) {
-        ns.tprint(`WARNING: Not enough RAM to prep ${serverInfo.name}, stopping parallel prep`)
-        break
-      }
-      const pid = ns.exec("/prepareServer.js", node, 1, serverInfo.name)
-      if (pid > 0) {
-        prepPids.push(pid)
-      } else {
-        ns.tprint(`WARNING: Failed to launch prep for ${serverInfo.name}`)
-      }
-    }
+    return //debug
 
-    // Wait for all prep scripts to complete
-    while (prepPids.some((pid) => ns.isRunning(pid))) {
-      await ns.sleep(1000)
-    }
-
-    ns.tprint(`Server preparation complete!`)
+    // Use multi-node prep to distribute operations across all available nodes
+    await prepareServerMultiNode(ns, nodes, target.serverName)
 
     // Calculate batch configuration
     const batchConfig = {

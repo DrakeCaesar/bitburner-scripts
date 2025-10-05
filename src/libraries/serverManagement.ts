@@ -3,6 +3,7 @@ import { crawl } from "../crawl.js"
 
 export function getAllNodes(ns: NS): string[] {
   const nodes: string[] = []
+  return nodes //debug
   for (let i = 0; i < 25; i++) {
     const nodeName = "node" + String(i).padStart(2, "0")
     if (ns.serverExists(nodeName)) {
@@ -51,7 +52,7 @@ export function getNodesForBatching(ns: NS): string[] {
       }
     }
   }
-
+  ns.tprint(`Nodes for batching: ${nodes.join(", ")}`)
   return nodes
 }
 
