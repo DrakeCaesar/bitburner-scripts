@@ -4,7 +4,7 @@ import { FloatingWindow } from "./libraries/floatingWindow.js"
 
 export async function main(ns: NS) {
   const playerHackLevel = ns.args[0] ? Number(ns.args[0]) : undefined
-  const includePrepTime = ns.args[1] === "true" || ns.args[1] === "1"
+  const includePrepTime: Boolean = ns.args[1] === "true"
 
   // Remove existing window if it exists
   const existingWindow = eval("document").querySelector("#target-analysis-window")
@@ -26,11 +26,12 @@ export async function main(ns: NS) {
   }
 
   const totalMaxRam = nodes.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
+  const minNodeRam = nodes.length > 0 ? Math.min(...nodes.map(node => ns.getServerMaxRam(node))) : ns.getServerMaxRam("home")
   const myCores = nodes.length > 0 ? ns.getServer(nodes[0]).cpuCores : 1
   const batchDelay = 50
 
   // Use the imported function to analyze servers
-  const profitabilityData = analyzeAllServers(ns, totalMaxRam, myCores, batchDelay, playerHackLevel, includePrepTime)
+  const profitabilityData = analyzeAllServers(ns, totalMaxRam, minNodeRam, myCores, batchDelay, playerHackLevel, includePrepTime)
 
   // Column headers
   const serverCol = "Server"

@@ -29,16 +29,19 @@ export interface ServerProfitability {
 
 /**
  * Analyze all hackable servers and return detailed profitability data
+ * @param totalMaxRam - Total RAM across all nodes (for calculating total batches)
+ * @param minNodeRam - Minimum RAM of the smallest node (constrains single operation size)
  * @param includePrepTime - If true, includes server prep time in profitability calculation (default: false)
  * @returns Array of servers sorted by profitability (best first)
  */
 export function analyzeAllServers(
   ns: NS,
   totalMaxRam: number,
+  minNodeRam: number,
   myCores: number,
   batchDelay: number,
   playerHackLevel?: number,
-  includePrepTime = false
+  includePrepTime: Boolean = false
 ): ServerProfitability[] {
   // Get all servers
   const knownServers = new Set<string>()
@@ -107,12 +110,19 @@ export function analyzeAllServers(
       const { server: wkn2Server, player: wkn2Player } = wkn2ServerInstance(server, player, growThreads, ns, myCores)
       const wkn2Threads = calculateWeakThreads(wkn2Server, wkn2Player, myCores)
 
-      // Calculate RAM usage
-      const totalBatchRam =
-        hackScriptRam * hackThreads +
-        weakenScriptRam * wkn1Threads +
-        growScriptRam * growThreads +
-        weakenScriptRam * wkn2Threads
+      // Calculate RAM usage for each operation
+      const hackRam = hackScriptRam * hackThreads
+      const wkn1Ram = weakenScriptRam * wkn1Threads
+      const growRam = growScriptRam * growThreads
+      const wkn2Ram = weakenScriptRam * wkn2Threads
+      const totalBatchRam = hackRam + wkn1Ram + growRam + wkn2Ram
+
+      // Check if the largest single operation fits in the smallest node
+      const maxOperationRam = Math.max(hackRam, wkn1Ram, growRam, wkn2Ram)
+      if (maxOperationRam > minNodeRam) {
+        // Skip this threshold - operations too large for smallest node
+        continue
+      }
 
       const batches = Math.floor((totalMaxRam / totalBatchRam) * 0.9)
 
@@ -156,13 +166,22 @@ export function analyzeAllServers(
 export function findBestTarget(
   ns: NS,
   totalMaxRam: number,
+  minNodeRam: number,
   myCores: number,
   batchDelay: number,
   playerHackLevel?: number,
   includePrepTime = false
 ): BestTargetResult {
   // Use the analysis function to get all server profitability data
-  const profitabilityData = analyzeAllServers(ns, totalMaxRam, myCores, batchDelay, playerHackLevel, includePrepTime)
+  const profitabilityData = analyzeAllServers(
+    ns,
+    totalMaxRam,
+    minNodeRam,
+    myCores,
+    batchDelay,
+    playerHackLevel,
+    includePrepTime
+  )
 
   ns.tprint(`Found ${profitabilityData.length} hackable servers, analyzing profitability...`)
 
@@ -200,9 +219,11 @@ export async function main(ns: NS) {
   }
 
   const totalMaxRam = nodes.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
+  const minNodeRam =
+    nodes.length > 0 ? Math.min(...nodes.map((node) => ns.getServerMaxRam(node))) : ns.getServerMaxRam("home")
   const myCores = nodes.length > 0 ? ns.getServer(nodes[0]).cpuCores : 1
 
-  const result = findBestTarget(ns, totalMaxRam, myCores, 20, playerHackLevel)
+  const result = findBestTarget(ns, totalMaxRam, minNodeRam, myCores, 20, playerHackLevel)
 
   ns.tprint("")
   ns.tprint(`To start batching: run batch.js`)

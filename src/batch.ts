@@ -3,6 +3,7 @@ import { copyRequiredScripts, getServersToPrep, killOtherInstances } from "./bat
 // import { initBatchVisualiser, logBatchOperation } from "./batchVisualiser.js"
 import { main as autoNuke } from "./autoNuke.js"
 import { upgradeServer } from "./buyServer.js"
+import { crawl } from "./crawl.js"
 import { findBestTarget } from "./findBestTarget.js"
 import { calculateBatchThreads, calculateBatchTimings, executeBatches } from "./libraries/batchExecution.js"
 import { purchasePrograms, purchaseTorRouter } from "./libraries/purchasePrograms.js"
@@ -33,7 +34,27 @@ export async function main(ns: NS) {
     purchaseAdditionalServers(ns)
 
     // Select optimal nodes to use
-    const nodes = selectOptimalNodes(ns)
+    let nodes = selectOptimalNodes(ns)
+
+    // If no purchased servers, use all nuked servers
+    if (nodes.length === 0 || (nodes.length === 1 && nodes[0] === "home")) {
+      ns.tprint("No purchased servers found, using all nuked servers...")
+      const knownServers = new Set<string>()
+      crawl(ns, knownServers)
+
+      nodes = []
+      for (const serverName of knownServers) {
+        const server = ns.getServer(serverName)
+        if (server.hasAdminRights && server.maxRam > 0) {
+          nodes.push(serverName)
+        }
+      }
+
+      if (nodes.length === 0) {
+        ns.tprint("ERROR: No nodes with root access found")
+        return
+      }
+    }
 
     // Kill all scripts on all nodes and copy required scripts
     for (const node of nodes) {
@@ -45,12 +66,24 @@ export async function main(ns: NS) {
     const enableParallelPrep = false
     const ramThreshold = 0.9
 
-    // Calculate total RAM across all nodes
-    const totalMaxRam = nodes.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
+    // Calculate total RAM across all nodes and find minimum node RAM
+    // For home, subtract used RAM since this script is running there
+    const totalMaxRam = nodes.reduce((sum, node) => {
+      if (node === "home") {
+        return sum + (ns.getServerMaxRam(node) - ns.getServerUsedRam(node))
+      }
+      return sum + ns.getServerMaxRam(node)
+    }, 0)
+    const minNodeRam = Math.min(
+      ...nodes.map((node) => {
+        return ns.getServerMaxRam(node)
+      })
+    )
+    ns.tprint(`Minimum node RAM: ${minNodeRam} GB`)
     const myCores = ns.getServer(nodes[0]).cpuCores
 
-    // Find best target automatically
-    const target = findBestTarget(ns, totalMaxRam, myCores, batchDelay, playerHackLevel)
+    // Find best target automatically (constrained by smallest node RAM)
+    const target = findBestTarget(ns, totalMaxRam, minNodeRam, myCores, batchDelay, playerHackLevel)
     const player = ns.getPlayer()
 
     ns.tprint(`Target: ${target.serverName}`)

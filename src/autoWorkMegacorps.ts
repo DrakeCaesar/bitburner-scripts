@@ -11,8 +11,8 @@ export async function main(ns: NS) {
   const megacorps: MegacorpTarget[] = [
     { company: "ECorp", requiredRep: 200000, factionName: "ECorp" },
     { company: "MegaCorp", requiredRep: 200000, factionName: "MegaCorp" },
-    { company: "KuaiGong International", requiredRep: 200000, factionName: "KuaiGong International" },
     { company: "Four Sigma", requiredRep: 200000, factionName: "Four Sigma" },
+    { company: "KuaiGong International", requiredRep: 200000, factionName: "KuaiGong International" },
     { company: "NWO", requiredRep: 200000, factionName: "NWO" },
     { company: "Blade Industries", requiredRep: 200000, factionName: "Blade Industries" },
     { company: "OmniTek Incorporated", requiredRep: 200000, factionName: "OmniTek Incorporated" },
