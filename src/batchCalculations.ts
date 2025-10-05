@@ -11,6 +11,39 @@ export function calculateOperationXp(server: Server, player: Person, threads: nu
 }
 
 /**
+ * Kahan summation state for accumulating XP with minimal floating point error
+ */
+export interface KahanSum {
+  sum: number
+  compensation: number
+}
+
+/**
+ * Create a new Kahan summation state
+ */
+export function createKahanSum(initialValue = 0): KahanSum {
+  return { sum: initialValue, compensation: 0 }
+}
+
+/**
+ * Add a value to a Kahan sum, returning updated state
+ * Uses Kahan summation algorithm to minimize floating point error accumulation
+ */
+export function kahanAdd(kahan: KahanSum, value: number): KahanSum {
+  // Kahan summation algorithm:
+  // 1. Adjust input by accumulated error compensation
+  const y = value - kahan.compensation
+  // 2. Add to running sum
+  const t = kahan.sum + y
+  // 3. Calculate new error: (t - sum) should equal y, but floating point error means it doesn't
+  //    This error becomes the compensation for next iteration
+  kahan.compensation = t - kahan.sum - y
+  // 4. Update sum
+  kahan.sum = t
+  return kahan
+}
+
+/**
  * Update player object with new hacking XP and recalculate hacking level
  * Only copies the necessary nested objects to avoid deprecated property warnings
  */
@@ -21,6 +54,27 @@ export function updatePlayerWithXp(player: Player, xpGained: number, ns: NS): Pl
     skills: { ...player.skills },
   }
   updatedPlayer.exp.hacking += xpGained
+
+  // Recalculate hacking skill level from total XP
+  updatedPlayer.skills.hacking = ns.formulas.skills.calculateSkill(
+    updatedPlayer.exp.hacking,
+    updatedPlayer.mults.hacking
+  )
+
+  return updatedPlayer
+}
+
+/**
+ * Update player object with XP from Kahan accumulator and recalculate hacking level
+ * More accurate than updatePlayerWithXp when accumulating many small XP values
+ */
+export function updatePlayerWithKahanXp(player: Player, xpKahan: KahanSum, ns: NS): Player {
+  const updatedPlayer = {
+    ...player,
+    exp: { ...player.exp },
+    skills: { ...player.skills },
+  }
+  updatedPlayer.exp.hacking = xpKahan.sum
 
   // Recalculate hacking skill level from total XP
   updatedPlayer.skills.hacking = ns.formulas.skills.calculateSkill(

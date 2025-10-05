@@ -4,9 +4,11 @@ import {
   calculateHackThreads,
   calculateOperationXp,
   calculateWeakThreads,
+  createKahanSum,
   growServerInstance,
   hackServerInstance,
-  updatePlayerWithXp,
+  kahanAdd,
+  updatePlayerWithKahanXp,
   wkn1ServerInstance,
   wkn2ServerInstance,
 } from "../batchCalculations.js"
@@ -112,6 +114,9 @@ export async function executeBatches(
   let currentPlayer = { ...player }
   const moneyMax = server.moneyMax!
 
+  // Use Kahan summation to accumulate XP with minimal floating point error
+  let xpKahan = createKahanSum(player.exp.hacking)
+
   for (let batchCounter = 0; batchCounter < batches; batchCounter++) {
     const batchOffset = batchCounter * effectiveBatchDelay * 4
 
@@ -119,19 +124,22 @@ export async function executeBatches(
     const { server: hackServer, player: hackPlayer } = hackServerInstance(server, currentPlayer)
     const hackThreads = calculateHackThreads(hackServer, hackPlayer, moneyMax, hackThreshold, ns)
     const hackXp = calculateOperationXp(server, currentPlayer, hackThreads, ns)
-    const playerAfterHack = updatePlayerWithXp(currentPlayer, hackXp, ns)
+    xpKahan = kahanAdd(xpKahan, hackXp)
+    const playerAfterHack = updatePlayerWithKahanXp(currentPlayer, xpKahan, ns)
 
     // Calculate weaken1 threads and XP with player state after hack (e.g., level 11)
     const { server: wkn1Server, player: wkn1Player } = wkn1ServerInstance(server, playerAfterHack, hackThreads, ns)
     const wkn1Threads = calculateWeakThreads(wkn1Server, wkn1Player, myCores)
     const wkn1Xp = calculateOperationXp(server, playerAfterHack, wkn1Threads, ns)
-    const playerAfterWkn1 = updatePlayerWithXp(playerAfterHack, wkn1Xp, ns)
+    xpKahan = kahanAdd(xpKahan, wkn1Xp)
+    const playerAfterWkn1 = updatePlayerWithKahanXp(currentPlayer, xpKahan, ns)
 
     // Calculate grow threads and XP with player state after weaken1 (e.g., level 12)
     const { server: growServer, player: growPlayer } = growServerInstance(server, playerAfterWkn1, hackThreshold)
     const growThreads = calculateGrowThreads(growServer, growPlayer, moneyMax, myCores, ns)
     const growXp = calculateOperationXp(server, playerAfterWkn1, growThreads, ns)
-    const playerAfterGrow = updatePlayerWithXp(playerAfterWkn1, growXp, ns)
+    xpKahan = kahanAdd(xpKahan, growXp)
+    const playerAfterGrow = updatePlayerWithKahanXp(currentPlayer, xpKahan, ns)
 
     // Calculate weaken2 threads and XP with player state after grow (e.g., level 13)
     const { server: wkn2Server, player: wkn2Player } = wkn2ServerInstance(
@@ -143,7 +151,8 @@ export async function executeBatches(
     )
     const wkn2Threads = calculateWeakThreads(wkn2Server, wkn2Player, myCores)
     const wkn2Xp = calculateOperationXp(server, playerAfterGrow, wkn2Threads, ns)
-    const playerAfterWkn2 = updatePlayerWithXp(playerAfterGrow, wkn2Xp, ns)
+    xpKahan = kahanAdd(xpKahan, wkn2Xp)
+    const playerAfterWkn2 = updatePlayerWithKahanXp(currentPlayer, xpKahan, ns)
 
     currentPlayer = playerAfterWkn2
 
