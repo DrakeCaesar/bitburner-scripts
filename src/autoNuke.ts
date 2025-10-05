@@ -14,10 +14,7 @@ export async function main(ns: NS): Promise<void> {
     if (serverLevel <= playerLevel) {
       paddingServers = Math.max(key.length, paddingServers)
 
-      paddingLevels = Math.max(
-        String(ns.getServerRequiredHackingLevel(key)).length,
-        paddingLevels
-      )
+      paddingLevels = Math.max(String(ns.getServerRequiredHackingLevel(key)).length, paddingLevels)
     }
   }
 
@@ -95,12 +92,13 @@ export async function main(ns: NS): Promise<void> {
         "fulcrumassets",
         "megacorp",
       ]
+      const backdoorAll = false
 
       if (
         !server.backdoorInstalled &&
         !serverName.match("home") &&
         !serverName.startsWith("node") &&
-        BACKDOOR_SERVERS.includes(serverName)
+        (BACKDOOR_SERVERS.includes(serverName) || backdoorAll)
       ) {
         connect(ns, serverName)
         await ns.singularity.installBackdoor()
@@ -113,12 +111,7 @@ export async function main(ns: NS): Promise<void> {
   connect(ns, "home")
 }
 
-export function crawl(
-  ns: NS,
-  knownServers: string[],
-  hostname?: string,
-  depth = 0
-): void {
+export function crawl(ns: NS, knownServers: string[], hostname?: string, depth = 0): void {
   const servers: string[] = ns.scan(hostname)
   for (const element of servers) {
     if (!knownServers.includes(element)) {
