@@ -170,7 +170,23 @@ export async function copyRequiredScripts(ns: NS, host: string) {
  * Simulates the prep process to determine how many iterations are needed
  * @param showVerbose - If true, displays detailed simulation output to console
  */
-export function calculatePrepTime(ns: NS, nodes: string[], target: string, showVerbose = false): number {
+export function calculatePrepTime(
+  ns: NS,
+  nodes: string[],
+  target: string,
+  showVerbose = false
+): {
+  totalTime: number
+  iterationDetails: Array<{
+    iteration: number
+    time: number
+    moneyBefore: number
+    moneyAfter: number
+    secBefore: number
+    secAfter: number
+    playerLevel: number
+  }>
+} {
   const server = ns.getServer(target)
   let player = ns.getPlayer()
   const moneyMax = server.moneyMax ?? 0
@@ -183,7 +199,7 @@ export function calculatePrepTime(ns: NS, nodes: string[], target: string, showV
   const currentMoney = server.moneyAvailable ?? 0
   if (currentMoney >= moneyMax * moneyTolerance && currentSec <= baseSecurity + secTolerance) {
     ns.tprint(`[Prep Sim] Server already prepped!`)
-    return 0
+    return { totalTime: 0, iterationDetails: [] }
   }
 
   const myCores = ns.getServer(nodes[0]).cpuCores
@@ -434,6 +450,16 @@ export function calculatePrepTime(ns: NS, nodes: string[], target: string, showV
   let simMoney = currentMoney
   let iterations = 0
   const maxIterations = 100 // Safety limit
+  let totalTime = 0 // Track cumulative time across iterations
+  const iterationDetails: Array<{
+    iteration: number
+    time: number
+    moneyBefore: number
+    moneyAfter: number
+    secBefore: number
+    secAfter: number
+    playerLevel: number
+  }> = []
 
   log(
     `[Prep Sim] Starting simulation - Money: ${ns.formatNumber(simMoney)}/${ns.formatNumber(moneyMax)} (${((simMoney / moneyMax) * 100).toFixed(1)}%), Security: ${simSec.toFixed(2)}/${baseSecurity.toFixed(2)} (+${(simSec - baseSecurity).toFixed(2)}), Player Level: ${player.skills.hacking}`
@@ -441,6 +467,10 @@ export function calculatePrepTime(ns: NS, nodes: string[], target: string, showV
 
   while ((simMoney < moneyMax * moneyTolerance || simSec > baseSecurity + secTolerance) && iterations < maxIterations) {
     iterations++
+
+    // Track state before this iteration
+    const moneyBefore = simMoney
+    const secBefore = simSec
 
     // Calculate total available RAM across all nodes
     const currentTotalRam = nodes.reduce((sum, node) => {
@@ -621,11 +651,23 @@ export function calculatePrepTime(ns: NS, nodes: string[], target: string, showV
     if (player.skills.hacking > previousLevel) {
       log(`  Player leveled up! ${previousLevel} -> ${player.skills.hacking}`)
     }
-  }
 
-  // Calculate total time based on weaken time (longest operation)
-  const weakenTime = ns.formulas.hacking.weakenTime(server, player)
-  const totalTime = weakenTime * iterations
+    // Calculate time for this iteration based on current player and server state
+    const simServer = { ...server, hackDifficulty: simSec, moneyAvailable: simMoney }
+    const iterationTime = ns.formulas.hacking.weakenTime(simServer, player)
+    totalTime += iterationTime
+
+    // Save iteration details
+    iterationDetails.push({
+      iteration: iterations,
+      time: iterationTime,
+      moneyBefore,
+      moneyAfter: simMoney,
+      secBefore,
+      secAfter: simSec,
+      playerLevel: player.skills.hacking,
+    })
+  }
 
   log(
     `\n[Prep Sim] Complete - ${iterations} iterations, estimated time: ${ns.tFormat(totalTime)}, final player level: ${player.skills.hacking}`
@@ -636,7 +678,7 @@ export function calculatePrepTime(ns: NS, nodes: string[], target: string, showV
     ns.tprint(verboseOutput)
   }
 
-  return totalTime
+  return { totalTime, iterationDetails }
 }
 
 /**
@@ -646,7 +688,20 @@ export function calculatePrepTime(ns: NS, nodes: string[], target: string, showV
  * 2. Otherwise, prioritize weaken to min security first
  * 3. If we have RAM left after weakening to min, add grow operations and adjust weaken threads to offset the grow security increase
  */
-export async function prepareServerMultiNode(ns: NS, nodes: string[], target: string) {
+export async function prepareServerMultiNode(
+  ns: NS,
+  nodes: string[],
+  target: string,
+  predictedIterations?: Array<{
+    iteration: number
+    time: number
+    moneyBefore: number
+    moneyAfter: number
+    secBefore: number
+    secAfter: number
+    playerLevel: number
+  }>
+) {
   const moneyMax = ns.getServerMaxMoney(target)
   const baseSecurity = ns.getServerMinSecurityLevel(target)
   const secTolerance = 0
@@ -666,6 +721,9 @@ export async function prepareServerMultiNode(ns: NS, nodes: string[], target: st
     `Prep: Starting multi-node preparation with ${ns.formatRam(totalAvailableRam)} total available RAM across ${nodes.length} nodes`
   )
 
+  // Track iterations for comparison
+  let iterationCount = 0
+
   // Loop until server is prepared
   while (true) {
     const player = ns.getPlayer()
@@ -680,6 +738,9 @@ export async function prepareServerMultiNode(ns: NS, nodes: string[], target: st
       )
       break
     }
+
+    iterationCount++
+    const iterationStartTime = Date.now()
 
     // Calculate total available RAM across all nodes
     const currentTotalRam = nodes.reduce((sum, node) => {
@@ -914,6 +975,31 @@ export async function prepareServerMultiNode(ns: NS, nodes: string[], target: st
     } else {
       // No operations could be launched (not enough RAM), wait a bit and retry
       await ns.sleep(500)
+    }
+
+    // Compare actual results with prediction
+    const iterationEndTime = Date.now()
+    const actualIterationTime = iterationEndTime - iterationStartTime
+    const newMoney = ns.getServerMoneyAvailable(target)
+    const newSec = ns.getServerSecurityLevel(target)
+    const newPlayerLevel = ns.getPlayer().skills.hacking
+
+    if (predictedIterations && iterationCount <= predictedIterations.length) {
+      const predicted = predictedIterations[iterationCount - 1]
+      if (predicted) {
+        const moneyDiff = newMoney - predicted.moneyAfter
+        const secDiff = newSec - predicted.secAfter
+        const timeDiff = actualIterationTime - predicted.time
+        const levelDiff = newPlayerLevel - predicted.playerLevel
+
+        ns.tprint(
+          `\n[Iteration ${iterationCount}] Actual vs Predicted:\n` +
+            `  Time: ${ns.tFormat(actualIterationTime)} vs ${ns.tFormat(predicted.time)} (diff: ${Math.abs(timeDiff).toFixed(0)}ms)\n` +
+            `  Money: ${ns.formatNumber(newMoney)} vs ${ns.formatNumber(predicted.moneyAfter)} (diff: ${ns.formatNumber(Math.abs(moneyDiff))})\n` +
+            `  Sec: ${newSec.toFixed(2)} vs ${predicted.secAfter.toFixed(2)} (diff: ${Math.abs(secDiff).toFixed(2)})\n` +
+            `  Level: ${newPlayerLevel} vs ${predicted.playerLevel} (diff: ${Math.abs(levelDiff)})`
+        )
+      }
     }
   }
 

@@ -85,27 +85,28 @@ export async function main(ns: NS) {
     server.moneyAvailable = server.moneyMax
 
     // Calculate and show estimated prep time based on available RAM across all nodes
-    const estimatedPrepTime = calculatePrepTime(ns, nodes, target.serverName, true) // true = show verbose output
-    if (estimatedPrepTime > 0) {
-      ns.tprint(`Preparing ${target.serverName}... (estimated time: ${ns.tFormat(estimatedPrepTime)})`)
+    const prepEstimate = calculatePrepTime(ns, nodes, target.serverName, true) // true = show verbose output
+    if (prepEstimate.totalTime > 0) {
+      ns.tprint(`Preparing ${target.serverName}... (estimated time: ${ns.tFormat(prepEstimate.totalTime)})`)
     } else {
       ns.tprint(`${target.serverName} is already prepared!`)
     }
 
-    // return //debug
-
     // Use multi-node prep to distribute operations across all available nodes
+    // Pass predicted iterations for comparison
     const prepStartTime = Date.now()
-    await prepareServerMultiNode(ns, nodes, target.serverName)
+    await prepareServerMultiNode(ns, nodes, target.serverName, prepEstimate.iterationDetails)
     const prepEndTime = Date.now()
     const actualPrepTime = prepEndTime - prepStartTime
 
     // Print timing comparison
-    const timeDiff = actualPrepTime - estimatedPrepTime
-    const percentDiff = ((timeDiff / estimatedPrepTime) * 100).toFixed(1)
+    const timeDiff = actualPrepTime - prepEstimate.totalTime
+    const percentDiff = ((timeDiff / prepEstimate.totalTime) * 100).toFixed(1)
     ns.tprint(
-      `Prep time - Estimated: ${ns.tFormat(estimatedPrepTime)}, Actual: ${ns.tFormat(actualPrepTime)}, Difference: ${ns.tFormat(Math.abs(timeDiff))} (${percentDiff}%)`
+      `\nPrep time - Estimated: ${ns.tFormat(prepEstimate.totalTime)}, Actual: ${ns.tFormat(actualPrepTime)}, Difference: ${ns.tFormat(Math.abs(timeDiff))} (${percentDiff}%)`
     )
+
+    return //debug
 
     // Calculate batch configuration
     const batchConfig = {
