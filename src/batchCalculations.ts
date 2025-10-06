@@ -173,13 +173,15 @@ export async function copyRequiredScripts(ns: NS, host: string) {
 export function calculatePrepTime(ns: NS, nodes: string[], target: string): number {
   const server = ns.getServer(target)
   const player = ns.getPlayer()
-  const currentSec = server.hackDifficulty ?? 0
-  const baseSec = server.minDifficulty ?? 0
-  const currentMoney = server.moneyAvailable ?? 0
-  const maxMoney = server.moneyMax ?? 0
+  const moneyMax = server.moneyMax ?? 0
+  const baseSecurity = server.minDifficulty ?? 0
+  const secTolerance = 0
+  const moneyTolerance = 1
 
   // If already prepped, return 0
-  if (currentSec <= baseSec && currentMoney >= maxMoney) {
+  const currentSec = server.hackDifficulty ?? 0
+  const currentMoney = server.moneyAvailable ?? 0
+  if (currentMoney >= moneyMax * moneyTolerance && currentSec <= baseSecurity + secTolerance) {
     return 0
   }
 
@@ -188,9 +190,15 @@ export function calculatePrepTime(ns: NS, nodes: string[], target: string): numb
   const weakenScriptRam = ns.getScriptRam("/hacking/weaken.js")
 
   // Calculate total available RAM across all nodes
-  const totalAvailableRam = nodes.reduce((sum, node) => {
+  const currentTotalRam = nodes.reduce((sum, node) => {
     return sum + (ns.getServerMaxRam(node) - ns.getServerUsedRam(node))
   }, 0)
+
+  // Helper to calculate weaken threads needed for a given security reduction
+  const calcWeakenThreads = (secToReduce: number): number => {
+    if (secToReduce <= 0) return 0
+    return Math.ceil(secToReduce / (0.05 * (1 + (myCores - 1) / 16)))
+  }
 
   // Simulate prep iterations
   let simSec = currentSec
@@ -198,41 +206,116 @@ export function calculatePrepTime(ns: NS, nodes: string[], target: string): numb
   let iterations = 0
   const maxIterations = 100 // Safety limit
 
-  while ((simSec > baseSec || simMoney < maxMoney) && iterations < maxIterations) {
+  while (
+    (simMoney < moneyMax * moneyTolerance || simSec > baseSecurity + secTolerance) &&
+    iterations < maxIterations
+  ) {
     iterations++
 
-    // Simulate what we'd do this iteration with available RAM
     let growThreads = 0
-    if (simMoney < maxMoney) {
-      const simServer = { ...server, hackDifficulty: simSec, moneyAvailable: simMoney }
-      const growThreadsNeeded = Math.ceil(ns.formulas.hacking.growThreads(simServer, player, maxMoney, myCores))
-      const maxGrowThreads = Math.floor(totalAvailableRam / growScriptRam)
-      growThreads = Math.min(growThreadsNeeded, maxGrowThreads)
-    }
-
-    const currentExcessSec = simSec - baseSec
-    const growSecurityIncrease = growThreads > 0 ? ns.growthAnalyzeSecurity(growThreads, undefined, myCores) : 0
-    const totalSecToReduce = currentExcessSec + growSecurityIncrease
-
     let weakenThreads = 0
-    if (totalSecToReduce > 0) {
-      const weakenThreadsNeeded = Math.max(1, Math.ceil(totalSecToReduce / (0.05 * (1 + (myCores - 1) / 16))))
-      const ramAfterGrow = totalAvailableRam - growThreads * growScriptRam
-      const maxWeakenThreads = Math.floor(ramAfterGrow / weakenScriptRam)
+
+    const currentExcessSec = simSec - baseSecurity
+    const needsMoney = simMoney < moneyMax * moneyTolerance
+    const needsWeaken = currentExcessSec > secTolerance
+
+    // Match the exact logic from prepareServerMultiNode
+    if (needsMoney && needsWeaken) {
+      // Calculate ideal threads
+      const simServer = { ...server, hackDifficulty: simSec, moneyAvailable: simMoney }
+      const growThreadsNeeded = Math.ceil(ns.formulas.hacking.growThreads(simServer, player, moneyMax, myCores))
+      const growSecurityIncrease = ns.growthAnalyzeSecurity(growThreadsNeeded, undefined, myCores)
+      const totalSecToReduce = currentExcessSec + growSecurityIncrease
+      const weakenThreadsNeeded = calcWeakenThreads(totalSecToReduce)
+
+      const totalRamNeeded = growThreadsNeeded * growScriptRam + weakenThreadsNeeded * weakenScriptRam
+
+      // Can we do both?
+      if (totalRamNeeded <= currentTotalRam) {
+        growThreads = growThreadsNeeded
+        weakenThreads = weakenThreadsNeeded
+      } else {
+        // Can't do both - prioritize weaken to min security first
+        const weakenToMinThreads = calcWeakenThreads(currentExcessSec)
+        const weakenToMinRam = weakenToMinThreads * weakenScriptRam
+
+        if (weakenToMinRam <= currentTotalRam) {
+          // We can weaken to min, check if we have RAM left for grow
+          const remainingRam = currentTotalRam - weakenToMinRam
+          const maxGrowThreads = Math.floor(remainingRam / growScriptRam)
+
+          if (maxGrowThreads > 0) {
+            // Add grow operations, but recalculate weaken to offset grow security
+            growThreads = Math.min(growThreadsNeeded, maxGrowThreads)
+            const growSecIncrease = ns.growthAnalyzeSecurity(growThreads, undefined, myCores)
+            const totalSecWithGrow = currentExcessSec + growSecIncrease
+            const weakenNeededWithGrow = calcWeakenThreads(totalSecWithGrow)
+
+            // Verify we still have enough RAM for adjusted weaken
+            const adjustedTotalRam = growThreads * growScriptRam + weakenNeededWithGrow * weakenScriptRam
+            if (adjustedTotalRam <= currentTotalRam) {
+              weakenThreads = weakenNeededWithGrow
+            } else {
+              // Adjusted weaken doesn't fit, just weaken to min without grow
+              weakenThreads = weakenToMinThreads
+              growThreads = 0
+            }
+          } else {
+            // No RAM left for grow, just weaken to min
+            weakenThreads = weakenToMinThreads
+          }
+        } else {
+          // Can't even weaken to min in one go, use all RAM for weaken
+          const maxWeakenThreads = Math.floor(currentTotalRam / weakenScriptRam)
+          weakenThreads = Math.max(1, maxWeakenThreads)
+        }
+      }
+    } else if (needsWeaken) {
+      // Only need weaken
+      const weakenThreadsNeeded = calcWeakenThreads(currentExcessSec)
+      const maxWeakenThreads = Math.floor(currentTotalRam / weakenScriptRam)
       weakenThreads = Math.min(weakenThreadsNeeded, maxWeakenThreads)
+    } else if (needsMoney) {
+      // Only need grow (security already at min)
+      const simServer = { ...server, hackDifficulty: simSec, moneyAvailable: simMoney }
+      const growThreadsNeeded = Math.ceil(ns.formulas.hacking.growThreads(simServer, player, moneyMax, myCores))
+      const growSecurityIncrease = ns.growthAnalyzeSecurity(growThreadsNeeded, undefined, myCores)
+
+      // Need to offset grow security increase
+      const weakenThreadsNeeded = calcWeakenThreads(growSecurityIncrease)
+      const totalRamNeeded = growThreadsNeeded * growScriptRam + weakenThreadsNeeded * weakenScriptRam
+
+      if (totalRamNeeded <= currentTotalRam) {
+        growThreads = growThreadsNeeded
+        weakenThreads = weakenThreadsNeeded
+      } else {
+        // Can't do full grow, calculate what we can fit
+        const maxGrowThreads = Math.floor(currentTotalRam / growScriptRam)
+        if (maxGrowThreads > 0) {
+          growThreads = Math.min(growThreadsNeeded, maxGrowThreads)
+
+          // Recalculate weaken for actual grow threads
+          const actualGrowSecIncrease = ns.growthAnalyzeSecurity(growThreads, undefined, myCores)
+          const actualWeakenNeeded = calcWeakenThreads(actualGrowSecIncrease)
+          const ramAfterGrow = currentTotalRam - growThreads * growScriptRam
+          weakenThreads = Math.min(actualWeakenNeeded, Math.floor(ramAfterGrow / weakenScriptRam))
+        }
+        // If maxGrowThreads is 0, we can't grow at all - leave both at 0
+      }
     }
 
     // Update simulated state
     if (growThreads > 0) {
       const simServer = { ...server, hackDifficulty: simSec, moneyAvailable: simMoney }
       const growMultiplier = ns.formulas.hacking.growPercent(simServer, growThreads, player, myCores)
-      simMoney = Math.min(maxMoney, simMoney * growMultiplier)
+      simMoney = Math.min(moneyMax, simMoney * growMultiplier)
+      const growSecurityIncrease = ns.growthAnalyzeSecurity(growThreads, undefined, myCores)
       simSec += growSecurityIncrease
     }
 
     if (weakenThreads > 0) {
       const weakenAmount = 0.05 * weakenThreads * (1 + (myCores - 1) / 16)
-      simSec = Math.max(baseSec, simSec - weakenAmount)
+      simSec = Math.max(baseSecurity, simSec - weakenAmount)
     }
 
     // If we can't make progress, break
@@ -298,13 +381,19 @@ export async function prepareServerMultiNode(ns: NS, nodes: string[], target: st
     const needsMoney = currentMoney < moneyMax * moneyTolerance
     const needsWeaken = currentExcessSec > secTolerance
 
+    // Helper to calculate weaken threads needed for a given security reduction
+    const calcWeakenThreads = (secToReduce: number): number => {
+      if (secToReduce <= 0) return 0
+      return Math.ceil(secToReduce / (0.05 * (1 + (myCores - 1) / 16)))
+    }
+
     // Strategy 1: Try to do both weaken and grow in one go (ideal case)
     if (needsMoney && needsWeaken) {
       // Calculate ideal threads
       const growThreadsNeeded = Math.ceil(ns.formulas.hacking.growThreads(serverActual, player, moneyMax, myCores))
       const growSecurityIncrease = ns.growthAnalyzeSecurity(growThreadsNeeded, undefined, myCores)
       const totalSecToReduce = currentExcessSec + growSecurityIncrease
-      const weakenThreadsNeeded = Math.max(1, Math.ceil(totalSecToReduce / (0.05 * (1 + (myCores - 1) / 16))))
+      const weakenThreadsNeeded = calcWeakenThreads(totalSecToReduce)
 
       const totalRamNeeded = growThreadsNeeded * growScriptRam + weakenThreadsNeeded * weakenScriptRam
 
@@ -314,7 +403,7 @@ export async function prepareServerMultiNode(ns: NS, nodes: string[], target: st
         weakenThreads = weakenThreadsNeeded
       } else {
         // Can't do both - prioritize weaken to min security first
-        const weakenToMinThreads = Math.max(1, Math.ceil(currentExcessSec / (0.05 * (1 + (myCores - 1) / 16))))
+        const weakenToMinThreads = calcWeakenThreads(currentExcessSec)
         const weakenToMinRam = weakenToMinThreads * weakenScriptRam
 
         if (weakenToMinRam <= currentTotalRam) {
@@ -327,7 +416,7 @@ export async function prepareServerMultiNode(ns: NS, nodes: string[], target: st
             growThreads = Math.min(growThreadsNeeded, maxGrowThreads)
             const growSecIncrease = ns.growthAnalyzeSecurity(growThreads, undefined, myCores)
             const totalSecWithGrow = currentExcessSec + growSecIncrease
-            const weakenNeededWithGrow = Math.max(1, Math.ceil(totalSecWithGrow / (0.05 * (1 + (myCores - 1) / 16))))
+            const weakenNeededWithGrow = calcWeakenThreads(totalSecWithGrow)
 
             // Verify we still have enough RAM for adjusted weaken
             const adjustedTotalRam = growThreads * growScriptRam + weakenNeededWithGrow * weakenScriptRam
@@ -344,12 +433,13 @@ export async function prepareServerMultiNode(ns: NS, nodes: string[], target: st
           }
         } else {
           // Can't even weaken to min in one go, use all RAM for weaken
-          weakenThreads = Math.floor(currentTotalRam / weakenScriptRam)
+          const maxWeakenThreads = Math.floor(currentTotalRam / weakenScriptRam)
+          weakenThreads = Math.max(1, maxWeakenThreads)
         }
       }
     } else if (needsWeaken) {
       // Only need weaken
-      const weakenThreadsNeeded = Math.max(1, Math.ceil(currentExcessSec / (0.05 * (1 + (myCores - 1) / 16))))
+      const weakenThreadsNeeded = calcWeakenThreads(currentExcessSec)
       const maxWeakenThreads = Math.floor(currentTotalRam / weakenScriptRam)
       weakenThreads = Math.min(weakenThreadsNeeded, maxWeakenThreads)
     } else if (needsMoney) {
@@ -358,7 +448,7 @@ export async function prepareServerMultiNode(ns: NS, nodes: string[], target: st
       const growSecurityIncrease = ns.growthAnalyzeSecurity(growThreadsNeeded, undefined, myCores)
 
       // Need to offset grow security increase
-      const weakenThreadsNeeded = Math.max(1, Math.ceil(growSecurityIncrease / (0.05 * (1 + (myCores - 1) / 16))))
+      const weakenThreadsNeeded = calcWeakenThreads(growSecurityIncrease)
       const totalRamNeeded = growThreadsNeeded * growScriptRam + weakenThreadsNeeded * weakenScriptRam
 
       if (totalRamNeeded <= currentTotalRam) {
@@ -367,13 +457,16 @@ export async function prepareServerMultiNode(ns: NS, nodes: string[], target: st
       } else {
         // Can't do full grow, calculate what we can fit
         const maxGrowThreads = Math.floor(currentTotalRam / growScriptRam)
-        growThreads = Math.min(growThreadsNeeded, maxGrowThreads)
+        if (maxGrowThreads > 0) {
+          growThreads = Math.min(growThreadsNeeded, maxGrowThreads)
 
-        // Recalculate weaken for actual grow threads
-        const actualGrowSecIncrease = ns.growthAnalyzeSecurity(growThreads, undefined, myCores)
-        const actualWeakenNeeded = Math.max(1, Math.ceil(actualGrowSecIncrease / (0.05 * (1 + (myCores - 1) / 16))))
-        const ramAfterGrow = currentTotalRam - growThreads * growScriptRam
-        weakenThreads = Math.min(actualWeakenNeeded, Math.floor(ramAfterGrow / weakenScriptRam))
+          // Recalculate weaken for actual grow threads
+          const actualGrowSecIncrease = ns.growthAnalyzeSecurity(growThreads, undefined, myCores)
+          const actualWeakenNeeded = calcWeakenThreads(actualGrowSecIncrease)
+          const ramAfterGrow = currentTotalRam - growThreads * growScriptRam
+          weakenThreads = Math.min(actualWeakenNeeded, Math.floor(ramAfterGrow / weakenScriptRam))
+        }
+        // If maxGrowThreads is 0, we can't grow at all - leave both at 0
       }
     }
 

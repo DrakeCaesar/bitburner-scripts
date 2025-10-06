@@ -27,11 +27,11 @@ export async function main(ns: NS) {
     // Run autoNuke to gain access to new servers
     await autoNuke(ns)
 
-    // Try to upgrade node00 first
-    const wasUpgraded = upgradeServer(ns, "node00")
-    if (wasUpgraded) {
-      ns.tprint("Server was upgraded, restarting batch cycle...")
-    }
+    // // Try to upgrade node00 first
+    // const wasUpgraded = upgradeServer(ns, "node00")
+    // if (wasUpgraded) {
+    //   ns.tprint("Server was upgraded, restarting batch cycle...")
+    // }
 
     // If node00 is maxed out, try to buy additional servers
     purchaseAdditionalServers(ns)
