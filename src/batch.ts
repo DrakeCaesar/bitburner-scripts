@@ -84,13 +84,18 @@ export async function main(ns: NS) {
     server.hackDifficulty = server.minDifficulty
     server.moneyAvailable = server.moneyMax
 
+    // Debug flag - set to true for verbose prep output
+    const debug = true
+
     // Calculate and show estimated prep time based on available RAM across all nodes
     const calcStartTime = Date.now()
-    const prepEstimate = calculatePrepTime(ns, nodes, target.serverName, true) // true = show verbose output
+    const prepEstimate = calculatePrepTime(ns, nodes, target.serverName, debug) // Pass debug flag
     const calcEndTime = Date.now()
     const calcDuration = calcEndTime - calcStartTime
 
-    ns.tprint(`Prep calculation took: ${calcDuration}ms`)
+    if (debug) {
+      ns.tprint(`Prep calculation took: ${calcDuration}ms`)
+    }
 
     if (prepEstimate.totalTime > 0) {
       ns.tprint(`Preparing ${target.serverName}... (estimated time: ${ns.tFormat(prepEstimate.totalTime)})`)
@@ -101,19 +106,21 @@ export async function main(ns: NS) {
     // Use multi-node prep to distribute operations across all available nodes
     // Pass predicted iterations for comparison
     const prepStartTime = Date.now()
-    await prepareServerMultiNode(ns, nodes, target.serverName, prepEstimate.iterationDetails)
+    await prepareServerMultiNode(ns, nodes, target.serverName, prepEstimate.iterationDetails, debug)
     const prepEndTime = Date.now()
     const actualPrepTime = prepEndTime - prepStartTime
 
     // Print timing comparison
     const timeDiff = actualPrepTime - prepEstimate.totalTime
     const percentDiff = ((timeDiff / prepEstimate.totalTime) * 100).toFixed(1)
-    ns.tprint(
-      `\n=== TOTAL PREP TIME ===\n` +
-        `Estimated: ${ns.tFormat(prepEstimate.totalTime)}\n` +
-        `Actual: ${ns.tFormat(actualPrepTime)}\n` +
-        `Difference: ${Math.abs(timeDiff).toFixed(0)}ms (${percentDiff}%)`
-    )
+    if (debug) {
+      ns.tprint(
+        `\n=== TOTAL PREP TIME ===\n` +
+          `Estimated: ${ns.tFormat(prepEstimate.totalTime)}\n` +
+          `Actual: ${ns.tFormat(actualPrepTime)}\n` +
+          `Difference: ${Math.abs(timeDiff).toFixed(0)}ms (${percentDiff}%)`
+      )
+    }
 
     return //debug
 

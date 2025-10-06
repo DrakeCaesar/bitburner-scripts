@@ -703,7 +703,8 @@ export async function prepareServerMultiNode(
     secBefore: number
     secAfter: number
     playerLevel: number
-  }>
+  }>,
+  debug = false
 ) {
   const moneyMax = ns.getServerMaxMoney(target)
   const baseSecurity = ns.getServerMinSecurityLevel(target)
@@ -720,9 +721,11 @@ export async function prepareServerMultiNode(
     return sum + (ns.getServerMaxRam(node) - ns.getServerUsedRam(node))
   }, 0)
 
-  ns.tprint(
-    `Prep: Starting multi-node preparation with ${ns.formatRam(totalAvailableRam)} total available RAM across ${nodes.length} nodes`
-  )
+  if (debug) {
+    ns.tprint(
+      `Prep: Starting multi-node preparation with ${ns.formatRam(totalAvailableRam)} total available RAM across ${nodes.length} nodes`
+    )
+  }
 
   // Track iterations for comparison
   let iterationCount = 0
@@ -736,9 +739,11 @@ export async function prepareServerMultiNode(
 
     // Check if preparation is complete
     if (currentMoney >= moneyMax * moneyTolerance && currentSec <= baseSecurity + secTolerance) {
-      ns.tprint(
-        `Prep: Complete - Money: ${ns.formatNumber(currentMoney)}/${ns.formatNumber(moneyMax)}, Security: ${currentSec.toFixed(2)}/${baseSecurity}`
-      )
+      if (debug) {
+        ns.tprint(
+          `Prep: Complete - Money: ${ns.formatNumber(currentMoney)}/${ns.formatNumber(moneyMax)}, Security: ${currentSec.toFixed(2)}/${baseSecurity}`
+        )
+      }
       break
     }
 
@@ -1001,14 +1006,16 @@ export async function prepareServerMultiNode(
           .slice(iterationCount)
           .reduce((sum, iter) => sum + iter.time, 0)
 
-        ns.tprint(
-          `\n[Iteration ${iterationCount}/${predictedIterations.length}] Actual vs Predicted:\n` +
-            `  Time: ${ns.tFormat(actualIterationTime)} vs ${ns.tFormat(predicted.time)} (diff: ${Math.abs(timeDiff).toFixed(0)}ms)\n` +
-            `  Money: ${ns.formatNumber(newMoney)} vs ${ns.formatNumber(predicted.moneyAfter)} (diff: ${ns.formatNumber(Math.abs(moneyDiff))})\n` +
-            `  Sec: ${newSec.toFixed(2)} vs ${predicted.secAfter.toFixed(2)} (diff: ${Math.abs(secDiff).toFixed(2)})\n` +
-            `  Level: ${newPlayerLevel} vs ${predicted.playerLevel} (diff: ${Math.abs(levelDiff)})\n` +
-            `  Estimated time remaining: ${ns.tFormat(estimatedTimeRemaining)} (${remainingIterations} iterations left)`
-        )
+        if (debug) {
+          ns.tprint(
+            `\n[Iteration ${iterationCount}/${predictedIterations.length}] Actual vs Predicted:\n` +
+              `  Time: ${ns.tFormat(actualIterationTime)} vs ${ns.tFormat(predicted.time)} (diff: ${Math.abs(timeDiff).toFixed(0)}ms)\n` +
+              `  Money: ${ns.formatNumber(newMoney)} vs ${ns.formatNumber(predicted.moneyAfter)} (diff: ${ns.formatNumber(Math.abs(moneyDiff))})\n` +
+              `  Sec: ${newSec.toFixed(2)} vs ${predicted.secAfter.toFixed(2)} (diff: ${Math.abs(secDiff).toFixed(2)})\n` +
+              `  Level: ${newPlayerLevel} vs ${predicted.playerLevel} (diff: ${Math.abs(levelDiff)})\n` +
+              `  Estimated time remaining: ${ns.tFormat(estimatedTimeRemaining)} (${remainingIterations} iterations left)`
+          )
+        }
       }
     }
   }
