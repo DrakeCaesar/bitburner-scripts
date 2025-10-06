@@ -85,7 +85,13 @@ export async function main(ns: NS) {
     server.moneyAvailable = server.moneyMax
 
     // Calculate and show estimated prep time based on available RAM across all nodes
+    const calcStartTime = Date.now()
     const prepEstimate = calculatePrepTime(ns, nodes, target.serverName, true) // true = show verbose output
+    const calcEndTime = Date.now()
+    const calcDuration = calcEndTime - calcStartTime
+
+    ns.tprint(`Prep calculation took: ${calcDuration}ms`)
+
     if (prepEstimate.totalTime > 0) {
       ns.tprint(`Preparing ${target.serverName}... (estimated time: ${ns.tFormat(prepEstimate.totalTime)})`)
     } else {
@@ -103,12 +109,16 @@ export async function main(ns: NS) {
     const timeDiff = actualPrepTime - prepEstimate.totalTime
     const percentDiff = ((timeDiff / prepEstimate.totalTime) * 100).toFixed(1)
     ns.tprint(
-      `\nPrep time - Estimated: ${ns.tFormat(prepEstimate.totalTime)}, Actual: ${ns.tFormat(actualPrepTime)}, Difference: ${ns.tFormat(Math.abs(timeDiff))} (${percentDiff}%)`
+      `\n=== TOTAL PREP TIME ===\n` +
+        `Estimated: ${ns.tFormat(prepEstimate.totalTime)}\n` +
+        `Actual: ${ns.tFormat(actualPrepTime)}\n` +
+        `Difference: ${Math.abs(timeDiff).toFixed(0)}ms (${percentDiff}%)`
     )
 
     return //debug
 
     // Calculate batch configuration
+    const batchConfigStartTime = Date.now()
     const batchConfig = {
       target: target.serverName,
       server,
@@ -124,6 +134,17 @@ export async function main(ns: NS) {
 
     const threads = calculateBatchThreads(ns, batchConfig)
     const timings = calculateBatchTimings(ns, server, player, batchDelay)
+    const batchConfigEndTime = Date.now()
+    const batchConfigDuration = batchConfigEndTime - batchConfigStartTime
+    const prepToBatchGap = batchConfigStartTime - prepEndTime
+
+    ns.tprint(
+      `\n=== Timing Summary ===\n` +
+        `Prep calculation: ${calcDuration}ms\n` +
+        `Actual prep execution: ${ns.tFormat(actualPrepTime)}\n` +
+        `Gap between prep end and batch config start: ${prepToBatchGap}ms\n` +
+        `Batch configuration calculation: ${batchConfigDuration}ms`
+    )
 
     ns.tprint(`Requested batch delay: ${ns.tFormat(batchDelay)}`)
     if (timings.effectiveBatchDelay !== batchDelay) {

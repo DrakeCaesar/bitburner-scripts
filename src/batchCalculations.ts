@@ -471,6 +471,11 @@ export function calculatePrepTime(
     // Track state before this iteration
     const moneyBefore = simMoney
     const secBefore = simSec
+    const playerLevelBefore = player.skills.hacking
+
+    // Calculate iteration time BEFORE any state changes (this is when operations are launched)
+    const iterationStartServer = { ...server, hackDifficulty: simSec, moneyAvailable: simMoney }
+    const iterationTime = ns.formulas.hacking.weakenTime(iterationStartServer, player)
 
     // Calculate total available RAM across all nodes
     const currentTotalRam = nodes.reduce((sum, node) => {
@@ -652,9 +657,7 @@ export function calculatePrepTime(
       log(`  Player leveled up! ${previousLevel} -> ${player.skills.hacking}`)
     }
 
-    // Calculate time for this iteration based on current player and server state
-    const simServer = { ...server, hackDifficulty: simSec, moneyAvailable: simMoney }
-    const iterationTime = ns.formulas.hacking.weakenTime(simServer, player)
+    // Add iteration time to total (calculated at start of iteration)
     totalTime += iterationTime
 
     // Save iteration details
@@ -665,7 +668,7 @@ export function calculatePrepTime(
       moneyAfter: simMoney,
       secBefore,
       secAfter: simSec,
-      playerLevel: player.skills.hacking,
+      playerLevel: playerLevelBefore, // Use level at start of iteration
     })
   }
 
@@ -967,10 +970,10 @@ export async function prepareServerMultiNode(
       const growTime = growThreads > 0 ? ns.formulas.hacking.growTime(serverActual, player) : 0
       const weakenTime = weakenThreads > 0 ? ns.formulas.hacking.weakenTime(serverActual, player) : 0
       const estimatedTime = Math.max(growTime, weakenTime)
-      await ns.sleep(estimatedTime)
+      await ns.sleep(estimatedTime - 20)
 
       while (pids.some((pid) => ns.isRunning(pid))) {
-        await ns.sleep(100)
+        await ns.sleep(1)
       }
     } else {
       // No operations could be launched (not enough RAM), wait a bit and retry
@@ -992,12 +995,19 @@ export async function prepareServerMultiNode(
         const timeDiff = actualIterationTime - predicted.time
         const levelDiff = newPlayerLevel - predicted.playerLevel
 
+        // Calculate estimated time remaining based on remaining iterations
+        const remainingIterations = predictedIterations.length - iterationCount
+        const estimatedTimeRemaining = predictedIterations
+          .slice(iterationCount)
+          .reduce((sum, iter) => sum + iter.time, 0)
+
         ns.tprint(
-          `\n[Iteration ${iterationCount}] Actual vs Predicted:\n` +
+          `\n[Iteration ${iterationCount}/${predictedIterations.length}] Actual vs Predicted:\n` +
             `  Time: ${ns.tFormat(actualIterationTime)} vs ${ns.tFormat(predicted.time)} (diff: ${Math.abs(timeDiff).toFixed(0)}ms)\n` +
             `  Money: ${ns.formatNumber(newMoney)} vs ${ns.formatNumber(predicted.moneyAfter)} (diff: ${ns.formatNumber(Math.abs(moneyDiff))})\n` +
             `  Sec: ${newSec.toFixed(2)} vs ${predicted.secAfter.toFixed(2)} (diff: ${Math.abs(secDiff).toFixed(2)})\n` +
-            `  Level: ${newPlayerLevel} vs ${predicted.playerLevel} (diff: ${Math.abs(levelDiff)})`
+            `  Level: ${newPlayerLevel} vs ${predicted.playerLevel} (diff: ${Math.abs(levelDiff)})\n` +
+            `  Estimated time remaining: ${ns.tFormat(estimatedTimeRemaining)} (${remainingIterations} iterations left)`
         )
       }
     }
