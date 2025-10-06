@@ -1,0 +1,176 @@
+This file contains the list of potential API break. A pattern was used to look through all your files and note the spots where you might have a problem. Not everything here is broken./ns\.getScriptExpGain/g
+getScriptExpGain with 0 argument no longer returns the sum of all scripts. Use getTotalScriptExpGain
+
+	karma.js
+		Line 18 values.push(formatNumber(ns.getScriptExpGain()))
+
+
+/ns\.getScriptExpGain/g
+getScriptIncome with 0 argument no longer returns the sum of all scripts. Use getTotalScriptIncome
+
+	karma.js
+		Line 18 values.push(formatNumber(ns.getScriptExpGain()))
+
+
+/ns\.scp/g
+scp arguments were switch, it is now scp(files, destination, optionally_source). If you were using 2 argument (not 3) this doesn't affect you.
+
+	/discarded/deployParallel.js
+		Line 6 await ns.scp(
+	/discarded/softDeploy.js
+		Line 6 await ns.scp("hack.js", target)
+		Line 7 await ns.scp("grow.js", target)
+		Line 8 await ns.scp("weaken.js", target)
+		Line 9 await ns.scp("autoHack.js", target)
+		Line 10 await ns.scp("autoHackBootstrap.js", target)
+	/hacking/autoHackParallel.js
+		Line 199 await ns.scp("/data/" + params.interval.target + ".txt", "home")
+	autoHackBootstrap.js
+		Line 77 await ns.scp(
+	buyServer.js
+		Line 35 await ns.scp(
+	copyHome.js
+		Line 5 await ns.scp(file, "home")
+	crawlIPs.js
+		Line 27 await ns.scp("printHostname.js", ip)
+		Line 60 await ns.scp("printHostname.js", ip)
+	deployParallel.js
+		Line 7 await ns.scp(
+	ls.js
+		Line 24 await ns.scp("copyHome.js", hostname)
+	removeSecurity.js
+		Line 5 await ns.scp("/hacking/weaken.js", node)
+
+
+/hacking_grow_mult/g
+ns.getPlayer().hacking_grow_mult was moved to ns.getPlayer().mults.hacking_grow
+
+	/hacking/autoHackTest.js
+		Line 34 const multiplier = ns.getPlayer().hacking_grow_mult
+	/libraries/batching.js
+		Line 110 const multiplier = ns.getPlayer().hacking_grow_mult
+
+
+/hacking/g
+The work system is completely reworked and ns.getPlayer().hacking no longer exists. This data is likely available inside ns.getPlayer().currentWork, skills, exp, or hp
+
+	/discarded/deployParallel.js
+		Line 8 "/hacking/hack.js",
+		Line 9 "/hacking/grow.js",
+		Line 10 "/hacking/weaken.js",
+		Line 11 "/hacking/autoHackParallel.js",
+		Line 15 ns.exec("/hacking/autoHackParallel.js", node, 1, target)
+	/hacking/autoHackParallel.js
+		Line 7 let playerLevel = ns.getPlayer().hacking
+		Line 25 playerLevel = ns.getPlayer().hacking
+		Line 60 "/hacking/hack.js",
+		Line 73 "/hacking/grow.js",
+		Line 94 "/hacking/weaken.js",
+		Line 107 ns.getScriptRam("/hacking/autoHackParallel.js")) *
+		Line 139 ns.getScriptRam("/hacking/autoHackParallel.js")) *
+		Line 174 ns.getScriptRam("/hacking/autoHackParallel.js")) *
+		Line 177 params.hack.weakenThreads * ns.getScriptRam("/hacking/weaken.js") +
+		Line 178 params.grow.weakenThreads * ns.getScriptRam("/hacking/weaken.js") +
+		Line 179 params.hack.threads * ns.getScriptRam("/hacking/hack.js") +
+		Line 180 params.grow.threads * ns.getScriptRam("/hacking/grow.js")
+		Line 185 const level = ns.getPlayer().hacking
+		Line 208 ns.getScriptRam("/hacking/autoHackParallel.js")) *
+		Line 240 actionPid = ns.exec("/hacking/grow.js", node, threads, target)
+		Line 244 "/hacking/weaken.js",
+		Line 254 actionPid = ns.exec("/hacking/grow.js", node, grow.threads, target)
+		Line 256 "/hacking/weaken.js",
+		Line 263 actionPid = ns.exec("/hacking/hack.js", node, hack.threads, target)
+		Line 265 "/hacking/weaken.js",
+	/hacking/autoHackTest.js
+		Line 34 const multiplier = ns.getPlayer().hacking_grow_mult
+	autoBackdoor.js
+		Line 10 let playerLevel = ns.getPlayer().hacking
+	autoHackBootstrap.js
+		Line 17 let hackingLevelUpperBound = Infinity
+		Line 19 hackingLevelUpperBound = ns.args[0]
+		Line 24 let playerLevel = ns.getPlayer().hacking
+		Line 27 level <= hackingLevelUpperBound &&
+		Line 49 //ns.kill("/hacking/autoHackParallel.js", "home","home","fulcrumassets")
+		Line 50 //ns.run("/hacking/autoHackParallel.js", "home", 1, "home", "fulcrumassets")
+		Line 70 //ns.kill("/hacking/autoHackParallel.js", "home", node, target)
+		Line 79 "/hacking/hack.js",
+		Line 80 "/hacking/grow.js",
+		Line 81 "/hacking/weaken.js",
+		Line 82 "/hacking/autoHackParallel.js",
+		Line 87 ns.exec("/hacking/autoHackParallel.js", "home", 1, node, target)
+	autoHack.js
+		Line 28 //ns.tprint(ram / ns.getScriptRam("/hacking/hack.js"))
+		Line 45 Math.floor(ram / ns.getScriptRam("/hacking/weaken.js"))
+		Line 50 pidW = ns.run("/hacking/weaken.js", threads, target)
+		Line 58 Math.floor(ram / ns.getScriptRam("/hacking/hack.js"))
+		Line 63 if (threads) pid = ns.run("/hacking/hack.js", threads, target)
+		Line 75 Math.floor(ram / ns.getScriptRam("/hacking/grow.js"))
+		Line 79 if (threads) pid = ns.run("/hacking/grow.js", threads, target)
+	autoNuke.js
+		Line 9 let playerLevel = ns.getPlayer().hacking
+		Line 54 level <= player.hacking &&
+		Line 64 player.hacking +
+		Line 71 //ns.tprint(server +"\t level" + level + " is lower than player hacking level of " + player.hacking + ", executing nuke")
+	buyServer.js
+		Line 37 "/hacking/hack.js",
+		Line 38 "/hacking/grow.js",
+		Line 39 "/hacking/weaken.js",
+		Line 40 "/hacking/autoHackParallel.js",
+		Line 46 ns.exec("/hacking/autoHackParallel.js", "home", 1, node, target)
+	crawlIPs.js
+		Line 9 let playerLevel = ns.getPlayer().hacking
+	deployParallel.js
+		Line 5 ns.kill("/hacking/autoHackParallel.js", node, node, target)
+		Line 9 "/hacking/hack.js",
+		Line 10 "/hacking/grow.js",
+		Line 11 "/hacking/weaken.js",
+		Line 12 "/hacking/autoHackParallel.js",
+		Line 17 ns.exec("/hacking/autoHackParallel.js", node, 1, node, target)
+	list.js
+		Line 34 (level <= player.hacking ? " <= " : " >> ") +
+		Line 35 player.hacking +
+		Line 71 level <= player.hacking &&
+	removeSecurity.js
+		Line 5 await ns.scp("/hacking/weaken.js", node)
+		Line 23 let playerLevel = ns.getPlayer().hacking
+		Line 61 !ns.getRunningScript("/hacking/weaken.js", node, target) &&
+		Line 62 ns.exec("/hacking/weaken.js", node, weakenThreads, target)
+	/libraries/batching.js
+		Line 110 const multiplier = ns.getPlayer().hacking_grow_mult
+
+
+/strength/g
+The work system is completely reworked and ns.getPlayer().strength no longer exists. This data is likely available inside ns.getPlayer().currentWork, skills, exp, or hp
+
+	workout.js
+		Line 9 p.agility < p.strength
+		Line 12 } else if (p.dexterity < p.defense && p.dexterity < p.strength) {
+		Line 14 } else if (p.defense < p.strength) {
+
+
+/defense/g
+The work system is completely reworked and ns.getPlayer().defense no longer exists. This data is likely available inside ns.getPlayer().currentWork, skills, exp, or hp
+
+	workout.js
+		Line 8 p.agility < p.defense &&
+		Line 12 } else if (p.dexterity < p.defense && p.dexterity < p.strength) {
+		Line 14 } else if (p.defense < p.strength) {
+
+
+/dexterity/g
+The work system is completely reworked and ns.getPlayer().dexterity no longer exists. This data is likely available inside ns.getPlayer().currentWork, skills, exp, or hp
+
+	workout.js
+		Line 7 p.agility < p.dexterity &&
+		Line 12 } else if (p.dexterity < p.defense && p.dexterity < p.strength) {
+
+
+/agility/g
+The work system is completely reworked and ns.getPlayer().agility no longer exists. This data is likely available inside ns.getPlayer().currentWork, skills, exp, or hp
+
+	workout.js
+		Line 7 p.agility < p.dexterity &&
+		Line 8 p.agility < p.defense &&
+		Line 9 p.agility < p.strength
+
+
