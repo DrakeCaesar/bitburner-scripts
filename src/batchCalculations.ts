@@ -767,44 +767,139 @@ export async function prepareServerMultiNode(ns: NS, nodes: string[], target: st
         growThreads = growThreadsNeeded
         weakenThreads = weakenThreadsNeeded
       } else {
-        // Can't do full grow, calculate what we can fit
-        const maxGrowThreads = Math.floor(currentTotalRam / growScriptRam)
-        if (maxGrowThreads > 0) {
-          growThreads = Math.min(growThreadsNeeded, maxGrowThreads)
+        // Can't do full grow - calculate per-server to ensure grow+weaken fit together
+        let totalGrow = 0
+        let totalWeaken = 0
 
-          // Recalculate weaken for actual grow threads
-          const actualGrowSecIncrease = ns.growthAnalyzeSecurity(growThreads, undefined, myCores)
-          const actualWeakenNeeded = calcWeakenThreads(actualGrowSecIncrease)
-          const ramAfterGrow = currentTotalRam - growThreads * growScriptRam
-          weakenThreads = Math.min(actualWeakenNeeded, Math.floor(ramAfterGrow / weakenScriptRam))
+        for (const node of nodes) {
+          const nodeRam = ns.getServerMaxRam(node) - ns.getServerUsedRam(node)
+
+          // Binary search for max grow on this server that fits with its weaken
+          let low = 1
+          let high = Math.floor(nodeRam / growScriptRam)
+          let bestNodeGrow = 0
+          let bestNodeWeaken = 0
+
+          while (low <= high) {
+            const mid = Math.floor((low + high) / 2)
+            const nodeGrowSecIncrease = ns.growthAnalyzeSecurity(mid, undefined, myCores)
+            const nodeWeakenNeeded = calcWeakenThreads(nodeGrowSecIncrease)
+            const nodeRamNeeded = mid * growScriptRam + nodeWeakenNeeded * weakenScriptRam
+
+            if (nodeRamNeeded <= nodeRam) {
+              bestNodeGrow = mid
+              bestNodeWeaken = nodeWeakenNeeded
+              low = mid + 1
+            } else {
+              high = mid - 1
+            }
+          }
+
+          totalGrow += bestNodeGrow
+          totalWeaken += bestNodeWeaken
+
+          if (totalGrow >= growThreadsNeeded) {
+            totalGrow = growThreadsNeeded
+            const actualGrowSecIncrease = ns.growthAnalyzeSecurity(totalGrow, undefined, myCores)
+            totalWeaken = calcWeakenThreads(actualGrowSecIncrease)
+            break
+          }
         }
-        // If maxGrowThreads is 0, we can't grow at all - leave both at 0
+
+        growThreads = totalGrow
+        weakenThreads = totalWeaken
       }
     }
 
-    // Distribute threads across nodes
+    // Distribute threads across nodes with opportunistic RAM usage
     const pids: number[] = []
+    let remainingGrow = growThreads
+    let remainingWeaken = weakenThreads
 
-    // Helper function to distribute threads across nodes
-    const distributeThreads = (threads: number, scriptRam: number, scriptPath: string) => {
-      let remaining = threads
+    // Helper function to distribute threads across nodes with opportunistic RAM usage
+    const distributeThreads = () => {
       for (const node of nodes) {
-        if (remaining === 0) break
-        const availableRam = ns.getServerMaxRam(node) - ns.getServerUsedRam(node)
-        const maxThreads = Math.floor(availableRam / scriptRam)
-        const threadsToRun = Math.min(remaining, maxThreads)
-        if (threadsToRun > 0) {
-          const pid = ns.exec(scriptPath, node, threadsToRun, target, 0)
-          if (pid > 0) pids.push(pid)
-          remaining -= threadsToRun
+        if (remainingGrow === 0 && remainingWeaken === 0) break
+
+        const availRam = ns.getServerMaxRam(node) - ns.getServerUsedRam(node)
+
+        // Calculate how many threads of each type we can run
+        let nodeGrowThreads = 0
+        let nodeWeakenThreads = 0
+
+        // First, allocate requested threads
+        const maxGrowThreads = Math.floor(availRam / growScriptRam)
+        nodeGrowThreads = Math.min(remainingGrow, maxGrowThreads)
+
+        const ramAfterGrow = availRam - nodeGrowThreads * growScriptRam
+        const maxWeakenThreads = Math.floor(ramAfterGrow / weakenScriptRam)
+        nodeWeakenThreads = Math.min(remainingWeaken, maxWeakenThreads)
+
+        // After allocating requested threads, use any leftover RAM opportunistically
+        const usedSoFar = nodeGrowThreads * growScriptRam + nodeWeakenThreads * weakenScriptRam
+        const leftoverRam = availRam - usedSoFar
+
+        // If we have leftover RAM, try to use it
+        if (leftoverRam >= weakenScriptRam) {
+          // Prioritize weaken if we have weaken quota left
+          if (remainingWeaken > 0) {
+            const extraWeakenThreads = Math.min(Math.floor(leftoverRam / weakenScriptRam), remainingWeaken)
+            nodeWeakenThreads += extraWeakenThreads
+          } else if (leftoverRam >= growScriptRam + weakenScriptRam) {
+            // Try to fit grow+weaken pairs in leftover RAM
+            // This is opportunistic: use spare RAM to make progress even if quotas are met
+            let extraLow = 1
+            let extraHigh = Math.floor(leftoverRam / growScriptRam)
+            let extraBestGrow = 0
+            let extraBestWeaken = 0
+
+            while (extraLow <= extraHigh) {
+              const extraMid = Math.floor((extraLow + extraHigh) / 2)
+              const extraGrowSec = ns.growthAnalyzeSecurity(extraMid, undefined, myCores)
+              const extraWeakenNeeded = calcWeakenThreads(extraGrowSec)
+              const extraRamNeeded = extraMid * growScriptRam + extraWeakenNeeded * weakenScriptRam
+
+              if (extraRamNeeded <= leftoverRam) {
+                extraBestGrow = extraMid
+                extraBestWeaken = extraWeakenNeeded
+                extraLow = extraMid + 1
+              } else {
+                extraHigh = extraMid - 1
+              }
+            }
+
+            if (extraBestGrow > 0) {
+              // Use leftover RAM for opportunistic grow+weaken
+              const actualExtraGrow = remainingGrow > 0 ? Math.min(extraBestGrow, remainingGrow) : extraBestGrow
+              const actualExtraGrowSec = ns.growthAnalyzeSecurity(actualExtraGrow, undefined, myCores)
+              const actualExtraWeaken = calcWeakenThreads(actualExtraGrowSec)
+
+              nodeGrowThreads += actualExtraGrow
+              nodeWeakenThreads += actualExtraWeaken
+            }
+          }
+        }
+
+        // Launch operations
+        if (nodeGrowThreads > 0) {
+          const pid = ns.exec("/hacking/grow.js", node, nodeGrowThreads, target, 0)
+          if (pid > 0) {
+            pids.push(pid)
+            remainingGrow -= Math.min(nodeGrowThreads, remainingGrow)
+          }
+        }
+        if (nodeWeakenThreads > 0) {
+          const pid = ns.exec("/hacking/weaken.js", node, nodeWeakenThreads, target, 0)
+          if (pid > 0) {
+            pids.push(pid)
+            remainingWeaken -= Math.min(nodeWeakenThreads, remainingWeaken)
+          }
         }
       }
-      return remaining
     }
 
     // Launch operations
-    distributeThreads(growThreads, growScriptRam, "/hacking/grow.js")
-    distributeThreads(weakenThreads, weakenScriptRam, "/hacking/weaken.js")
+    distributeThreads()
 
     // Wait for all launched operations to complete
     if (pids.length > 0) {

@@ -92,10 +92,20 @@ export async function main(ns: NS) {
       ns.tprint(`${target.serverName} is already prepared!`)
     }
 
-    return //debug
+    // return //debug
 
     // Use multi-node prep to distribute operations across all available nodes
+    const prepStartTime = Date.now()
     await prepareServerMultiNode(ns, nodes, target.serverName)
+    const prepEndTime = Date.now()
+    const actualPrepTime = prepEndTime - prepStartTime
+
+    // Print timing comparison
+    const timeDiff = actualPrepTime - estimatedPrepTime
+    const percentDiff = ((timeDiff / estimatedPrepTime) * 100).toFixed(1)
+    ns.tprint(
+      `Prep time - Estimated: ${ns.tFormat(estimatedPrepTime)}, Actual: ${ns.tFormat(actualPrepTime)}, Difference: ${ns.tFormat(Math.abs(timeDiff))} (${percentDiff}%)`
+    )
 
     // Calculate batch configuration
     const batchConfig = {
