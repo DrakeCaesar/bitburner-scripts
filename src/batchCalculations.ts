@@ -1,6 +1,5 @@
 import { NS, Person, Player, Server } from "@ns"
 import { crawl } from "./libraries/crawl.js"
-
 /**
  * Calculate XP gained from a hacking operation (hack/grow/weaken)
  * Based on ns.formulas.hacking.hackExp()
@@ -169,10 +168,11 @@ export async function copyRequiredScripts(ns: NS, host: string) {
 /**
  * Calculate estimated prep time for a server based on available RAM across all nodes
  * Simulates the prep process to determine how many iterations are needed
+ * @param showVerbose - If true, displays detailed simulation output to console
  */
-export function calculatePrepTime(ns: NS, nodes: string[], target: string): number {
+export function calculatePrepTime(ns: NS, nodes: string[], target: string, showVerbose = false): number {
   const server = ns.getServer(target)
-  const player = ns.getPlayer()
+  let player = ns.getPlayer()
   const moneyMax = server.moneyMax ?? 0
   const baseSecurity = server.minDifficulty ?? 0
   const secTolerance = 0
@@ -182,6 +182,7 @@ export function calculatePrepTime(ns: NS, nodes: string[], target: string): numb
   const currentSec = server.hackDifficulty ?? 0
   const currentMoney = server.moneyAvailable ?? 0
   if (currentMoney >= moneyMax * moneyTolerance && currentSec <= baseSecurity + secTolerance) {
+    ns.tprint(`[Prep Sim] Server already prepped!`)
     return 0
   }
 
@@ -189,10 +190,14 @@ export function calculatePrepTime(ns: NS, nodes: string[], target: string): numb
   const growScriptRam = ns.getScriptRam("/hacking/grow.js")
   const weakenScriptRam = ns.getScriptRam("/hacking/weaken.js")
 
-  // Calculate total available RAM across all nodes
-  const currentTotalRam = nodes.reduce((sum, node) => {
-    return sum + (ns.getServerMaxRam(node) - ns.getServerUsedRam(node))
-  }, 0)
+  // Accumulate verbose output
+  let verboseOutput = ""
+  const log = (msg: string) => {
+    verboseOutput += msg + "\n"
+    if (!showVerbose) {
+      ns.tprint(msg)
+    }
+  }
 
   // Helper to calculate weaken threads needed for a given security reduction
   const calcWeakenThreads = (secToReduce: number): number => {
@@ -200,17 +205,201 @@ export function calculatePrepTime(ns: NS, nodes: string[], target: string): numb
     return Math.ceil(secToReduce / (0.05 * (1 + (myCores - 1) / 16)))
   }
 
+  // Helper to simulate thread distribution across nodes and build capacity table
+  interface NodeCapacity {
+    name: string
+    availRam: number
+    growThreads: number
+    weakenThreads: number
+    usedRam: number
+    totalRam: number
+  }
+
+  const simulateDistribution = (
+    growThreadsNeeded: number,
+    weakenThreadsNeeded: number
+  ): {
+    actualGrowThreads: number
+    actualWeakenThreads: number
+    nodeCapacities: NodeCapacity[]
+  } => {
+    const nodeCapacities: NodeCapacity[] = []
+    let remainingGrow = growThreadsNeeded
+    let remainingWeaken = weakenThreadsNeeded
+
+    for (const node of nodes) {
+      const totalRam = ns.getServerMaxRam(node)
+      const usedRam = ns.getServerUsedRam(node)
+      const availRam = totalRam - usedRam
+      let nodeGrowThreads = 0
+      let nodeWeakenThreads = 0
+
+      // Allocate grow and weaken together on this node
+      if (remainingGrow > 0 && remainingWeaken > 0) {
+        // Try to fit both grow and weaken on this node
+        const maxGrowThreads = Math.floor(availRam / growScriptRam)
+        const potentialGrowThreads = Math.min(remainingGrow, maxGrowThreads)
+
+        // Calculate weaken needed for this grow amount
+        const growSecIncrease = ns.growthAnalyzeSecurity(potentialGrowThreads, undefined, myCores)
+        const weakenNeeded = calcWeakenThreads(growSecIncrease)
+        const weakenForThisGrow = Math.min(weakenNeeded, remainingWeaken)
+
+        // Check if both fit
+        const ramNeeded = potentialGrowThreads * growScriptRam + weakenForThisGrow * weakenScriptRam
+        if (ramNeeded <= availRam) {
+          nodeGrowThreads = potentialGrowThreads
+          nodeWeakenThreads = weakenForThisGrow
+          remainingGrow -= nodeGrowThreads
+          remainingWeaken -= nodeWeakenThreads
+        } else {
+          // Find max grow that fits with its weaken on this node
+          let low = 1
+          let high = potentialGrowThreads
+          let bestGrow = 0
+          let bestWeaken = 0
+
+          while (low <= high) {
+            const mid = Math.floor((low + high) / 2)
+            const testGrowSecIncrease = ns.growthAnalyzeSecurity(mid, undefined, myCores)
+            const testWeakenNeeded = calcWeakenThreads(testGrowSecIncrease)
+            const testWeaken = Math.min(testWeakenNeeded, remainingWeaken)
+            const testRamNeeded = mid * growScriptRam + testWeaken * weakenScriptRam
+
+            if (testRamNeeded <= availRam) {
+              bestGrow = mid
+              bestWeaken = testWeaken
+              low = mid + 1
+            } else {
+              high = mid - 1
+            }
+          }
+
+          nodeGrowThreads = bestGrow
+          nodeWeakenThreads = bestWeaken
+          remainingGrow -= nodeGrowThreads
+          remainingWeaken -= nodeWeakenThreads
+        }
+      } else if (remainingGrow > 0) {
+        // Only grow left
+        const maxGrowThreads = Math.floor(availRam / growScriptRam)
+        nodeGrowThreads = Math.min(remainingGrow, maxGrowThreads)
+        remainingGrow -= nodeGrowThreads
+      } else if (remainingWeaken > 0) {
+        // Only weaken left
+        const maxWeakenThreads = Math.floor(availRam / weakenScriptRam)
+        nodeWeakenThreads = Math.min(remainingWeaken, maxWeakenThreads)
+        remainingWeaken -= nodeWeakenThreads
+      }
+
+      nodeCapacities.push({
+        name: node,
+        availRam,
+        growThreads: nodeGrowThreads,
+        weakenThreads: nodeWeakenThreads,
+        usedRam,
+        totalRam,
+      })
+    }
+
+    return {
+      actualGrowThreads: growThreadsNeeded - remainingGrow,
+      actualWeakenThreads: weakenThreadsNeeded - remainingWeaken,
+      nodeCapacities,
+    }
+  }
+
+  // Helper to build table from node capacities
+  const buildCapacityTable = (nodeCapacities: NodeCapacity[], iteration: number): string => {
+    // Column headers
+    const serverCol = "Server"
+    const availRamCol = "Avail"
+    const growCol = "G"
+    const growRamCol = "G RAM"
+    const weakenCol = "W"
+    const weakenRamCol = "W RAM"
+    const remainCol = "Left"
+
+    // Calculate column widths
+    let serverLen = serverCol.length
+    let availRamLen = availRamCol.length
+    let growLen = growCol.length
+    let growRamLen = growRamCol.length
+    let weakenLen = weakenCol.length
+    let weakenRamLen = weakenRamCol.length
+    let remainLen = remainCol.length
+
+    for (const nc of nodeCapacities) {
+      const growRam = nc.growThreads * growScriptRam
+      const weakenRam = nc.weakenThreads * weakenScriptRam
+      const remaining = nc.availRam - growRam - weakenRam
+
+      serverLen = Math.max(serverLen, nc.name.length)
+      availRamLen = Math.max(availRamLen, ns.formatRam(nc.availRam).length)
+      growLen = Math.max(growLen, nc.growThreads.toString().length)
+      growRamLen = Math.max(growRamLen, ns.formatRam(growRam).length)
+      weakenLen = Math.max(weakenLen, nc.weakenThreads.toString().length)
+      weakenRamLen = Math.max(weakenRamLen, ns.formatRam(weakenRam).length)
+      remainLen = Math.max(remainLen, ns.formatRam(remaining).length)
+    }
+
+    // Build table rows
+    let tableRows = ""
+    for (const nc of nodeCapacities) {
+      const growRam = nc.growThreads * growScriptRam
+      const weakenRam = nc.weakenThreads * weakenScriptRam
+      const remaining = nc.availRam - growRam - weakenRam
+
+      const server = nc.name.padEnd(serverLen)
+      const availRam = ns.formatRam(nc.availRam).padStart(availRamLen)
+      const grow = nc.growThreads.toString().padStart(growLen)
+      const growRamStr = ns.formatRam(growRam).padStart(growRamLen)
+      const weaken = nc.weakenThreads.toString().padStart(weakenLen)
+      const weakenRamStr = ns.formatRam(weakenRam).padStart(weakenRamLen)
+      const remain = ns.formatRam(remaining).padStart(remainLen)
+
+      tableRows += `┃ ${server} ┃ ${availRam} ┃ ${grow} ┃ ${growRamStr} ┃ ${weaken} ┃ ${weakenRamStr} ┃ ${remain} ┃\n`
+    }
+
+    // Add script cost info
+    const scriptInfo = `Grow: ${ns.formatRam(growScriptRam)}/t, Weaken: ${ns.formatRam(weakenScriptRam)}/t`
+
+    // Build full table with box-drawing characters
+    const fullTable =
+      `\n═══ Iteration ${iteration} ═══ ${scriptInfo}\n` +
+      `┏━${"━".repeat(serverLen)}━┳━${"━".repeat(availRamLen)}━┳━${"━".repeat(growLen)}━┳━${"━".repeat(growRamLen)}━┳━${"━".repeat(weakenLen)}━┳━${"━".repeat(weakenRamLen)}━┳━${"━".repeat(remainLen)}━┓\n` +
+      `┃ ${serverCol.padEnd(serverLen)} ┃ ${availRamCol.padStart(availRamLen)} ┃ ${growCol.padStart(growLen)} ┃ ${growRamCol.padStart(growRamLen)} ┃ ${weakenCol.padStart(weakenLen)} ┃ ${weakenRamCol.padStart(weakenRamLen)} ┃ ${remainCol.padStart(remainLen)} ┃\n` +
+      `┣━${"━".repeat(serverLen)}━╋━${"━".repeat(availRamLen)}━╋━${"━".repeat(growLen)}━╋━${"━".repeat(growRamLen)}━╋━${"━".repeat(weakenLen)}━╋━${"━".repeat(weakenRamLen)}━╋━${"━".repeat(remainLen)}━┫\n` +
+      `${tableRows}` +
+      `┗━${"━".repeat(serverLen)}━┻━${"━".repeat(availRamLen)}━┻━${"━".repeat(growLen)}━┻━${"━".repeat(growRamLen)}━┻━${"━".repeat(weakenLen)}━┻━${"━".repeat(weakenRamLen)}━┻━${"━".repeat(remainLen)}━┛`
+
+    return fullTable
+  }
+
+  // Initialize XP tracking with Kahan summation for accuracy
+  let xpKahan = createKahanSum(player.exp.hacking)
+
   // Simulate prep iterations
   let simSec = currentSec
   let simMoney = currentMoney
   let iterations = 0
   const maxIterations = 100 // Safety limit
 
-  while (
-    (simMoney < moneyMax * moneyTolerance || simSec > baseSecurity + secTolerance) &&
-    iterations < maxIterations
-  ) {
+  log(
+    `[Prep Sim] Starting simulation - Money: ${ns.formatNumber(simMoney)}/${ns.formatNumber(moneyMax)} (${((simMoney / moneyMax) * 100).toFixed(1)}%), Security: ${simSec.toFixed(2)}/${baseSecurity.toFixed(2)} (+${(simSec - baseSecurity).toFixed(2)}), Player Level: ${player.skills.hacking}`
+  )
+
+  while ((simMoney < moneyMax * moneyTolerance || simSec > baseSecurity + secTolerance) && iterations < maxIterations) {
     iterations++
+
+    // Calculate total available RAM across all nodes
+    const currentTotalRam = nodes.reduce((sum, node) => {
+      return sum + (ns.getServerMaxRam(node) - ns.getServerUsedRam(node))
+    }, 0)
+
+    log(
+      `\n[Prep Sim] Iteration ${iterations} - Money: ${ns.formatNumber(simMoney)}/${ns.formatNumber(moneyMax)} (${((simMoney / moneyMax) * 100).toFixed(1)}%), Security: ${simSec.toFixed(2)}/${baseSecurity.toFixed(2)} (+${(simSec - baseSecurity).toFixed(2)}), Player Level: ${player.skills.hacking}`
+    )
 
     let growThreads = 0
     let weakenThreads = 0
@@ -289,44 +478,115 @@ export function calculatePrepTime(ns: NS, nodes: string[], target: string): numb
         growThreads = growThreadsNeeded
         weakenThreads = weakenThreadsNeeded
       } else {
-        // Can't do full grow, calculate what we can fit
-        const maxGrowThreads = Math.floor(currentTotalRam / growScriptRam)
-        if (maxGrowThreads > 0) {
-          growThreads = Math.min(growThreadsNeeded, maxGrowThreads)
+        // Can't do full grow - calculate per-server to ensure grow+weaken fit together
+        // For each server, find max grow threads that fit with their weaken on that server
+        let totalGrow = 0
+        let totalWeaken = 0
 
-          // Recalculate weaken for actual grow threads
-          const actualGrowSecIncrease = ns.growthAnalyzeSecurity(growThreads, undefined, myCores)
-          const actualWeakenNeeded = calcWeakenThreads(actualGrowSecIncrease)
-          const ramAfterGrow = currentTotalRam - growThreads * growScriptRam
-          weakenThreads = Math.min(actualWeakenNeeded, Math.floor(ramAfterGrow / weakenScriptRam))
+        for (const node of nodes) {
+          const nodeRam = ns.getServerMaxRam(node) - ns.getServerUsedRam(node)
+
+          // Binary search for max grow on this server that fits with its weaken
+          let low = 1
+          let high = Math.floor(nodeRam / growScriptRam)
+          let bestNodeGrow = 0
+          let bestNodeWeaken = 0
+
+          while (low <= high) {
+            const mid = Math.floor((low + high) / 2)
+            const nodeGrowSecIncrease = ns.growthAnalyzeSecurity(mid, undefined, myCores)
+            const nodeWeakenNeeded = calcWeakenThreads(nodeGrowSecIncrease)
+            const nodeRamNeeded = mid * growScriptRam + nodeWeakenNeeded * weakenScriptRam
+
+            if (nodeRamNeeded <= nodeRam) {
+              // This fits on this server, try for more
+              bestNodeGrow = mid
+              bestNodeWeaken = nodeWeakenNeeded
+              low = mid + 1
+            } else {
+              // Too much, try less
+              high = mid - 1
+            }
+          }
+
+          totalGrow += bestNodeGrow
+          totalWeaken += bestNodeWeaken
+
+          // Stop if we've reached our goal
+          if (totalGrow >= growThreadsNeeded) {
+            totalGrow = growThreadsNeeded
+            // Recalculate total weaken needed for the actual grow amount
+            const actualGrowSecIncrease = ns.growthAnalyzeSecurity(totalGrow, undefined, myCores)
+            totalWeaken = calcWeakenThreads(actualGrowSecIncrease)
+            break
+          }
         }
-        // If maxGrowThreads is 0, we can't grow at all - leave both at 0
+
+        growThreads = totalGrow
+        weakenThreads = totalWeaken
       }
-    }
-
-    // Update simulated state
-    if (growThreads > 0) {
-      const simServer = { ...server, hackDifficulty: simSec, moneyAvailable: simMoney }
-      const growMultiplier = ns.formulas.hacking.growPercent(simServer, growThreads, player, myCores)
-      simMoney = Math.min(moneyMax, simMoney * growMultiplier)
-      const growSecurityIncrease = ns.growthAnalyzeSecurity(growThreads, undefined, myCores)
-      simSec += growSecurityIncrease
-    }
-
-    if (weakenThreads > 0) {
-      const weakenAmount = 0.05 * weakenThreads * (1 + (myCores - 1) / 16)
-      simSec = Math.max(baseSecurity, simSec - weakenAmount)
     }
 
     // If we can't make progress, break
     if (growThreads === 0 && weakenThreads === 0) {
+      log(`[Prep Sim] ERROR: No progress possible - insufficient RAM`)
       break
+    }
+
+    // Simulate distribution and build capacity table
+    const distribution = simulateDistribution(growThreads, weakenThreads)
+    const actualGrowThreads = distribution.actualGrowThreads
+    const actualWeakenThreads = distribution.actualWeakenThreads
+
+    // Build and log capacity table
+    const table = buildCapacityTable(distribution.nodeCapacities, iterations)
+    log(table)
+
+    // Update simulated state with actual distributed threads
+    if (actualGrowThreads > 0) {
+      const simServer = { ...server, hackDifficulty: simSec, moneyAvailable: simMoney }
+      const growMultiplier = ns.formulas.hacking.growPercent(simServer, actualGrowThreads, player, myCores)
+      simMoney = Math.min(moneyMax, simMoney * growMultiplier)
+      const growSecurityIncrease = ns.growthAnalyzeSecurity(actualGrowThreads, undefined, myCores)
+      simSec += growSecurityIncrease
+
+      // Calculate and track XP gain from grow
+      const growXp = calculateOperationXp(simServer, player, actualGrowThreads, ns)
+      xpKahan = kahanAdd(xpKahan, growXp)
+    }
+
+    if (actualWeakenThreads > 0) {
+      const weakenAmount = 0.05 * actualWeakenThreads * (1 + (myCores - 1) / 16)
+      simSec = Math.max(baseSecurity, simSec - weakenAmount)
+
+      // Calculate and track XP gain from weaken
+      const simServer = { ...server, hackDifficulty: simSec, moneyAvailable: simMoney }
+      const weakenXp = calculateOperationXp(simServer, player, actualWeakenThreads, ns)
+      xpKahan = kahanAdd(xpKahan, weakenXp)
+    }
+
+    // Update player with accumulated XP and recalculate level
+    const previousLevel = player.skills.hacking
+    player = updatePlayerWithKahanXp(player, xpKahan, ns)
+    if (player.skills.hacking > previousLevel) {
+      log(`  Player leveled up! ${previousLevel} -> ${player.skills.hacking}`)
     }
   }
 
   // Calculate total time based on weaken time (longest operation)
   const weakenTime = ns.formulas.hacking.weakenTime(server, player)
-  return weakenTime * iterations
+  const totalTime = weakenTime * iterations
+
+  log(
+    `\n[Prep Sim] Complete - ${iterations} iterations, estimated time: ${ns.tFormat(totalTime)}, final player level: ${player.skills.hacking}`
+  )
+
+  // Display verbose output if requested
+  if (showVerbose) {
+    ns.tprint(verboseOutput)
+  }
+
+  return totalTime
 }
 
 /**
@@ -352,7 +612,9 @@ export async function prepareServerMultiNode(ns: NS, nodes: string[], target: st
     return sum + (ns.getServerMaxRam(node) - ns.getServerUsedRam(node))
   }, 0)
 
-  ns.tprint(`Prep: Starting multi-node preparation with ${ns.formatRam(totalAvailableRam)} total available RAM across ${nodes.length} nodes`)
+  ns.tprint(
+    `Prep: Starting multi-node preparation with ${ns.formatRam(totalAvailableRam)} total available RAM across ${nodes.length} nodes`
+  )
 
   // Loop until server is prepared
   while (true) {

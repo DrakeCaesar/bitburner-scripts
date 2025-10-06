@@ -7,7 +7,7 @@ import {
 } from "./batchCalculations.js"
 // import { initBatchVisualiser, logBatchOperation } from "./batchVisualiser.js"
 import { main as autoNuke } from "./autoNuke.js"
-import { upgradeServer } from "./buyServer.js"
+// import { upgradeServer } from "./buyServer.js"
 import { findBestTarget } from "./findBestTarget.js"
 import { calculateBatchThreads, calculateBatchTimings, executeBatches } from "./libraries/batchExecution.js"
 import { getNodesForBatching, purchaseAdditionalServers } from "./libraries/serverManagement.js"
@@ -85,7 +85,7 @@ export async function main(ns: NS) {
     server.moneyAvailable = server.moneyMax
 
     // Calculate and show estimated prep time based on available RAM across all nodes
-    const estimatedPrepTime = calculatePrepTime(ns, nodes, target.serverName)
+    const estimatedPrepTime = calculatePrepTime(ns, nodes, target.serverName, true) // true = show verbose output
     if (estimatedPrepTime > 0) {
       ns.tprint(`Preparing ${target.serverName}... (estimated time: ${ns.tFormat(estimatedPrepTime)})`)
     } else {
