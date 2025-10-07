@@ -51,7 +51,6 @@ export async function main(ns: NS) {
       ns.scriptKill("hack.js", node)
       ns.scriptKill("grow.js", node)
       ns.scriptKill("weaken.js", node)
-      ns.scriptKill("batch.js", node)
       await copyRequiredScripts(ns, node)
     }
 
