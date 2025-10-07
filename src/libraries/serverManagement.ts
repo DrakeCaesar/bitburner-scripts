@@ -3,7 +3,7 @@ import { crawl } from "../crawl.js"
 
 export function getAllNodes(ns: NS): string[] {
   const nodes: string[] = []
-  return nodes //debug
+  // return nodes //debug
   for (let i = 0; i < 25; i++) {
     const nodeName = "node" + String(i).padStart(2, "0")
     if (ns.serverExists(nodeName)) {
@@ -14,44 +14,38 @@ export function getAllNodes(ns: NS): string[] {
 }
 
 /**
- * Get nodes for batching with fallback logic:
- * 1. Try purchased servers (node00-node24) or home if it has more RAM
- * 2. If no purchased servers, use all nuked servers with >=16GB RAM
- * 3. If no suitable servers found, return empty array
+ * Get all available nodes for batching:
+ * - Always includes home
+ * - Includes all purchased servers (node00-node24)
+ * - Includes all nuked servers with RAM
  */
 export function getNodesForBatching(ns: NS): string[] {
-  // First try purchased servers
-  let nodes = getAllNodes(ns)
+  const nodes: string[] = []
 
-  // if (nodes.length === 0) {
-  //   ns.tprint("No purchased servers found, using home...")
-  //   return ["home"]
-  // }
+  // Add all purchased servers
+  const purchasedServers = getAllNodes(ns)
+  if (purchasedServers.length == 0) {
+    nodes.push("home")
+  }
 
-  // Check if home has more RAM than purchased servers
-  const homeRam = ns.getServerMaxRam("home")
-  const totalPurchasedRam = nodes.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
+  nodes.push(...purchasedServers)
 
-  // if (homeRam > totalPurchasedRam) {
-  //   ns.tprint(
-  //     `Home has more RAM (${ns.formatRam(homeRam)}) than purchased servers (${ns.formatRam(totalPurchasedRam)}), using home...`
-  //   )
-  //   return ["home"]
-  // }
+  // Add all nuked servers with RAM
+  const knownServers = new Set<string>()
+  crawl(ns, knownServers)
 
-  // If only home or no purchased servers, use all nuked servers with enough RAM
-  if (nodes.length === 0 || (nodes.length === 1 && nodes[0] === "home")) {
-    const knownServers = new Set<string>()
-    crawl(ns, knownServers)
-
-    nodes = []
-    for (const serverName of knownServers) {
-      const server = ns.getServer(serverName)
-      if (server.hasAdminRights && server.maxRam >= 16 && serverName !== "home") {
-        nodes.push(serverName)
-      }
+  for (const serverName of knownServers) {
+    const server = ns.getServer(serverName)
+    // Skip home (already added) and purchased servers (already added)
+    if (serverName === "home" || purchasedServers.includes(serverName)) {
+      continue
+    }
+    // Add servers that are nuked and have RAM
+    if (server.hasAdminRights && server.maxRam > 0) {
+      nodes.push(serverName)
     }
   }
+
   ns.tprint(`Nodes for batching: ${nodes.join(", ")}`)
   return nodes
 }

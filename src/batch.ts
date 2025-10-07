@@ -8,8 +8,10 @@ import {
 // import { initBatchVisualiser, logBatchOperation } from "./batchVisualiser.js"
 import { main as autoNuke } from "./autoNuke.js"
 // import { upgradeServer } from "./buyServer.js"
+import { upgradeServer } from "./buyServer.js"
 import { findBestTarget } from "./findBestTarget.js"
 import { calculateBatchThreads, calculateBatchTimings, executeBatches } from "./libraries/batchExecution.js"
+import { purchasePrograms, purchaseTorRouter } from "./libraries/purchasePrograms.js"
 import { getNodesForBatching, purchaseAdditionalServers } from "./libraries/serverManagement.js"
 
 export async function main(ns: NS) {
@@ -21,23 +23,28 @@ export async function main(ns: NS) {
     // initBatchVisualiser()
 
     // Purchase TOR router and programs
-    // purchaseTorRouter(ns)
-    // purchasePrograms(ns)
+    purchaseTorRouter(ns)
+    purchasePrograms(ns)
 
     // Run autoNuke to gain access to new servers
     await autoNuke(ns)
 
-    // // Try to upgrade node00 first
-    // const wasUpgraded = upgradeServer(ns, "node00")
-    // if (wasUpgraded) {
-    //   ns.tprint("Server was upgraded, restarting batch cycle...")
-    // }
+    // Try to upgrade node00 first
+    const wasUpgraded = upgradeServer(ns, "node00")
+    if (wasUpgraded) {
+      ns.tprint("Server was upgraded, restarting batch cycle...")
+    }
 
     // If node00 is maxed out, try to buy additional servers
     purchaseAdditionalServers(ns)
 
     // Get nodes for batching (purchased servers or all nuked servers)
     const nodes = getNodesForBatching(ns)
+
+    // print nodes
+    for (const node of nodes) {
+      ns.tprint(`Node: ${node}, RAM: ${ns.getServerMaxRam(node)} GB`)
+    }
 
     if (nodes.length === 0) {
       ns.tprint("ERROR: No nodes with root access found")
@@ -61,11 +68,12 @@ export async function main(ns: NS) {
       }
       return sum + ns.getServerMaxRam(node)
     }, 0)
-    const minNodeRam = Math.min(
+    let minNodeRam = Math.min(
       ...nodes.map((node) => {
         return ns.getServerMaxRam(node)
       })
     )
+    minNodeRam = 16 // DEBUG
     ns.tprint(`Minimum node RAM: ${minNodeRam} GB`)
     const myCores = ns.getServer(nodes[0]).cpuCores
 
@@ -122,7 +130,7 @@ export async function main(ns: NS) {
       )
     }
 
-    return //debug
+    // return //debug
 
     // Calculate batch configuration
     const batchConfigStartTime = Date.now()
