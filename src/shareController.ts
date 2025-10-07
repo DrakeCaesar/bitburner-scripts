@@ -46,7 +46,7 @@ export async function main(ns: NS): Promise<void> {
     if (useNukedServers) {
       const nukedServers = getNukedServers()
       allServers = nukedServers
-      ns.tprint(`Running on ${nukedServers.length} nuked servers only`)
+      // ns.tprint(`Running on ${nukedServers.length} nuked servers only`)
     } else {
       const nodes = getAllNodes()
       allServers = ["home", ...nodes]
@@ -71,7 +71,7 @@ export async function main(ns: NS): Promise<void> {
 
       if (threads > 0) {
         ns.exec(scriptPath, server, threads)
-        ns.tprint(`Started ${threads} share threads on ${server} (${ns.formatRam(threads * scriptRam)})`)
+        // ns.tprint(`Started ${threads} share threads on ${server} (${ns.formatRam(threads * scriptRam)})`)
       }
     }
 
