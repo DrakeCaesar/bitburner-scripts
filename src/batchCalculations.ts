@@ -210,7 +210,7 @@ export function calculatePrepTime(
   let verboseOutput = ""
   const log = (msg: string) => {
     verboseOutput += msg + "\n"
-    if (!showVerbose) {
+    if (showVerbose) {
       ns.tprint(msg)
     }
   }
