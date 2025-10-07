@@ -120,7 +120,7 @@ export function main(ns: NS) {
   // Create pre element for monospace formatting
   const pre = document.createElement("pre")
   pre.style.margin = "0"
-  pre.style.fontFamily = "monospace"
+  pre.style.fontFamily = "inherit"
   pre.style.fontSize = "12px"
   pre.style.whiteSpace = "pre"
   pre.style.lineHeight = "1.2"

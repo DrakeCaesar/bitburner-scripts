@@ -151,7 +151,7 @@ async function createAugmentsWindow(ns: NS) {
 
   // Create container that will be updated
   const containerDiv = eval("document").createElement("div")
-  containerDiv.style.fontFamily = "monospace"
+  containerDiv.style.fontFamily = "inherit"
   containerDiv.style.fontSize = "12px"
   containerDiv.style.whiteSpace = "pre"
   containerDiv.style.lineHeight = "1.2"

@@ -32,7 +32,16 @@ export async function main(ns: NS) {
   const batchDelay = 50
 
   // Use the imported function to analyze servers
-  const profitabilityData = analyzeAllServers(ns, totalMaxRam, minNodeRam, myCores, batchDelay, nodes, playerHackLevel, batchCycles)
+  const profitabilityData = analyzeAllServers(
+    ns,
+    totalMaxRam,
+    minNodeRam,
+    myCores,
+    batchDelay,
+    nodes,
+    playerHackLevel,
+    batchCycles
+  )
 
   // Column headers
   const serverCol = "Server"
@@ -98,7 +107,7 @@ export async function main(ns: NS) {
   // Create pre element for monospace formatting
   const pre = eval("document").createElement("pre")
   pre.style.margin = "0"
-  pre.style.fontFamily = "monospace"
+  pre.style.fontFamily = "inherit"
   pre.style.fontSize = "12px"
   pre.style.whiteSpace = "pre"
   pre.style.lineHeight = "1.2"
