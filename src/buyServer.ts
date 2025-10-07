@@ -22,17 +22,6 @@ export function upgradeServer(ns: NS): boolean {
   const money = Math.floor(ns.getPlayer().money)
   const maxRam = ns.getPurchasedServerMaxRam()
 
-  // Find the highest RAM we can afford
-  let affordableRam = 0
-  let cost = 0
-  for (let ram = 1; ram <= maxRam && ns.getPurchasedServerCost(ram * 2) <= money; ram *= 2) {
-    affordableRam = ram
-    cost = ns.getPurchasedServerCost(ram)
-  }
-
-  // Can't afford anything
-  if (affordableRam === 0) return false
-
   // Get all existing servers and their RAM
   const existingServers: ServerInfo[] = []
   for (let i = 0; i < 25; i++) {
@@ -48,8 +37,17 @@ export function upgradeServer(ns: NS): boolean {
   // Find our best server RAM
   const bestRam = existingServers.length > 0 ? Math.max(...existingServers.map((s) => s.ram)) : 0
 
-  // Only proceed if we can afford better than our best (or we have no servers yet)
-  if (existingServers.length > 0 && affordableRam <= bestRam) {
+  // Calculate target RAM - double the best, or 1 if no servers, capped at maxRam
+  const targetRam = bestRam > 0 ? Math.min(bestRam * 2, maxRam) : 1
+  const cost = ns.getPurchasedServerCost(targetRam)
+
+  // Check if we can afford the target
+  if (money < cost) {
+    return false
+  }
+
+  // If best is already maxed, don't try to double it
+  if (bestRam >= maxRam) {
     return false
   }
 
@@ -58,25 +56,25 @@ export function upgradeServer(ns: NS): boolean {
     for (let i = 0; i < 25; i++) {
       const nodeName = "node" + String(i).padStart(2, "0")
       if (!ns.serverExists(nodeName)) {
-        ns.purchaseServer(nodeName, affordableRam)
-        ns.tprint(`Purchased ${nodeName} with ${format(affordableRam)} GB RAM (cost: ${format(cost)})`)
+        ns.purchaseServer(nodeName, targetRam)
+        ns.tprint(`Purchased ${nodeName} with ${format(targetRam)} GB RAM (cost: ${format(cost)})`)
         return true
       }
     }
   }
 
-  // Strategy 2: All slots filled - upgrade the worst server if we can afford better than our best
+  // Strategy 2: All slots filled - upgrade the worst server
   // Find the server with the smallest RAM
   existingServers.sort((a, b) => a.ram - b.ram)
   const worstServer = existingServers[0]
 
-  // Only upgrade if the new RAM is better than what we're replacing
-  if (affordableRam > worstServer.ram) {
+  // Only upgrade if the target RAM is better than what we're replacing
+  if (targetRam > worstServer.ram) {
     ns.killall(worstServer.name)
     ns.deleteServer(worstServer.name)
-    ns.purchaseServer(worstServer.name, affordableRam)
+    ns.purchaseServer(worstServer.name, targetRam)
     ns.tprint(
-      `Upgraded ${worstServer.name} from ${format(worstServer.ram)} to ${format(affordableRam)} GB (cost: ${format(cost)})`
+      `Upgraded ${worstServer.name} from ${format(worstServer.ram)} to ${format(targetRam)} GB (cost: ${format(cost)})`
     )
     return true
   }

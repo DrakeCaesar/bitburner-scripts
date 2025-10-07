@@ -124,42 +124,43 @@ async function createNodesWindow(ns: NS): Promise<void> {
     const minRam = existingNodes.length > 0 ? Math.min(...existingNodes.map((n) => n.ram)) : 0
     const maxNodeRam = existingNodes.length > 0 ? Math.max(...existingNodes.map((n) => n.ram)) : 0
 
-    // Calculate what we can afford
+    // Calculate target RAM and cost
     const money = ns.getPlayer().money
-    let affordableRam = 0
-    let cost = 0
-    for (let ram = 1; ram <= maxRam && ns.getPurchasedServerCost(ram * 2) <= money; ram *= 2) {
-      affordableRam = ram
-      cost = ns.getPurchasedServerCost(ram)
-    }
+    const bestRam = existingNodes.length > 0 ? Math.max(...existingNodes.map((n) => n.ram)) : 0
+
+    // Target is always double the best (or 1 if no servers), capped at maxRam
+    const targetRam = bestRam > 0 ? Math.min(bestRam * 2, maxRam) : 1
+    const cost = ns.getPurchasedServerCost(targetRam)
 
     // Determine next action and calculate savings progress
     let nextAction = "Save money"
     let savingsInfo = ""
-    const bestRam = existingNodes.length > 0 ? Math.max(...existingNodes.map((n) => n.ram)) : 0
 
-    if (affordableRam > bestRam) {
+    if (bestRam >= maxRam) {
+      // Already maxed out
+      nextAction = `All servers maxed at ${ns.formatRam(maxRam)}`
+      savingsInfo = `No upgrades available`
+    } else if (money >= cost) {
+      // Can afford the target
       if (existingNodes.length < 25) {
-        nextAction = `Buy ${ns.formatRam(affordableRam)} server (${ns.formatNumber(cost)})`
+        nextAction = `Buy ${ns.formatRam(targetRam)} server (${ns.formatNumber(cost)})`
       } else {
         const worstNode = existingNodes.reduce((min, n) => (n.ram < min.ram ? n : min))
-        nextAction = `Upgrade ${worstNode.name} to ${ns.formatRam(affordableRam)} (${ns.formatNumber(cost)})`
+        nextAction = `Upgrade ${worstNode.name} to ${ns.formatRam(targetRam)} (${ns.formatNumber(cost)})`
       }
       savingsInfo = `Ready to purchase!`
     } else {
-      // Calculate next target RAM (double the current best, or 1 if no servers)
-      const nextTargetRam = bestRam > 0 ? bestRam * 2 : 1
-      const nextCost = ns.getPurchasedServerCost(nextTargetRam)
-      const needed = nextCost - money
-      const percentSaved = (money / nextCost) * 100
+      // Saving for target
+      const needed = cost - money
+      const percentSaved = (money / cost) * 100
 
       if (existingNodes.length < 25) {
-        nextAction = `Save for ${ns.formatRam(nextTargetRam)} server`
+        nextAction = `Save for ${ns.formatRam(targetRam)} server`
       } else {
         const worstNode = existingNodes.reduce((min, n) => (n.ram < min.ram ? n : min))
-        nextAction = `Save to upgrade ${worstNode.name} to ${ns.formatRam(nextTargetRam)}`
+        nextAction = `Save to upgrade ${worstNode.name} to ${ns.formatRam(targetRam)}`
       }
-      savingsInfo = `Saving: ${ns.formatNumber(money)} / ${ns.formatNumber(nextCost)} (${percentSaved.toFixed(1)}%) - Need ${ns.formatNumber(needed)} more`
+      savingsInfo = `Saving: ${ns.formatNumber(money)} / ${ns.formatNumber(cost)} (${percentSaved.toFixed(1)}%) - Need ${ns.formatNumber(needed)} more`
     }
 
     // Calculate column widths
