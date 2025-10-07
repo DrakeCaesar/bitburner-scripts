@@ -2,6 +2,7 @@ import { NS } from "@ns"
 import { connect } from "./libraries/connect.js"
 
 export async function main(ns: NS): Promise<void> {
+  const backdoorAll = ns.args[0] === "all"
   const knownServers: string[] = []
   crawl(ns, knownServers)
   knownServers.sort()
@@ -92,7 +93,6 @@ export async function main(ns: NS): Promise<void> {
         "fulcrumassets",
         "megacorp",
       ]
-      const backdoorAll = false
 
       if (
         !server.backdoorInstalled &&
