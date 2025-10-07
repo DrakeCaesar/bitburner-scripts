@@ -1,7 +1,9 @@
 import { NS } from "@ns"
+import { crawl } from "./crawl.js"
 
 export async function main(ns: NS): Promise<void> {
   const scriptPath = "/shareRam.js"
+  const useNukedServers = ns.args[0] === "nuked"
 
   // Get all purchased servers (nodes)
   function getAllNodes(): string[] {
@@ -15,9 +17,40 @@ export async function main(ns: NS): Promise<void> {
     return nodes
   }
 
+  // Get all nuked servers
+  function getNukedServers(): string[] {
+    const knownServers = new Set<string>()
+    crawl(ns, knownServers)
+
+    const purchasedServers = getAllNodes()
+    const nukedServers: string[] = []
+
+    for (const serverName of knownServers) {
+      const server = ns.getServer(serverName)
+      // Skip home and purchased servers
+      if (serverName === "home" || purchasedServers.includes(serverName)) {
+        continue
+      }
+      // Add servers that are nuked and have RAM
+      if (server.hasAdminRights && server.maxRam > 0) {
+        nukedServers.push(serverName)
+      }
+    }
+
+    return nukedServers
+  }
+
   while (true) {
-    const nodes = getAllNodes()
-    const allServers = ["home", ...nodes]
+    let allServers: string[]
+
+    if (useNukedServers) {
+      const nukedServers = getNukedServers()
+      allServers = nukedServers
+      ns.tprint(`Running on ${nukedServers.length} nuked servers only`)
+    } else {
+      const nodes = getAllNodes()
+      allServers = ["home", ...nodes]
+    }
 
     // Copy script to all servers and start sharing
     for (const server of allServers) {
