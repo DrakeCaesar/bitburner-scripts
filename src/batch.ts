@@ -176,6 +176,12 @@ export async function main(ns: NS) {
     ns.tprint(`Weaken time: ${ns.tFormat(timings.weakenTime)}`)
     ns.tprint(`Batch interval: ${ns.tFormat(timings.effectiveBatchDelay * 4)}`)
 
+    // Calculate predicted batch cycle time
+    const lastBatchOffset = (batches - 1) * timings.effectiveBatchDelay * 4
+    const lastOperationFinishTime = timings.weakenTime + 2 * timings.effectiveBatchDelay + lastBatchOffset
+    const predictedBatchCycleTime = lastOperationFinishTime
+    ns.tprint(`Predicted batch cycle time: ${ns.tFormat(predictedBatchCycleTime)}`)
+
     // Security checks
     const minSecurity = ns.getServerMinSecurityLevel(target.serverName)
     const currentSecurity = ns.getServerSecurityLevel(target.serverName)
@@ -184,19 +190,36 @@ export async function main(ns: NS) {
       ns.tprint(`WARNING: ${target.serverName} security above minimum by ${securityDiff.toFixed(2)}`)
     }
 
-    // Execute batches
+    // Execute batches with timing measurement
+    const batchStartTime = Date.now()
     await executeBatches(ns, batchConfig, threads, timings, batches)
+    const batchEndTime = Date.now()
+    const actualBatchCycleTime = batchEndTime - batchStartTime
 
     const finalSecurity = ns.getServerSecurityLevel(target.serverName)
     const currentMoney = ns.getServerMoneyAvailable(target.serverName)
     const maxMoney = ns.getServerMaxMoney(target.serverName)
     const moneyPercent = (currentMoney / maxMoney) * 100
 
+    // Print batch timing comparison
+    const batchTimeDiff = actualBatchCycleTime - predictedBatchCycleTime
+    const batchPercentDiff = ((batchTimeDiff / predictedBatchCycleTime) * 100).toFixed(1)
+
+    ns.tprint("\n=== BATCH EXECUTION RESULTS ===")
     ns.tprint("SUCCESS: All batches completed")
     ns.tprint(
       `Security: ${finalSecurity.toFixed(2)} / ${minSecurity.toFixed(2)} (+${(finalSecurity - minSecurity).toFixed(2)})`
     )
     ns.tprint(`Money: ${moneyPercent.toFixed(2)}% (${ns.formatNumber(currentMoney)} / ${ns.formatNumber(maxMoney)})`)
+
+    if (debug) {
+      ns.tprint(
+        `\n=== BATCH CYCLE TIME ===\n` +
+          `Predicted: ${ns.tFormat(predictedBatchCycleTime)}\n` +
+          `Actual: ${ns.tFormat(actualBatchCycleTime)}\n` +
+          `Difference: ${Math.abs(batchTimeDiff).toFixed(0)}ms (${batchPercentDiff}%)`
+      )
+    }
     // break
   }
 }
