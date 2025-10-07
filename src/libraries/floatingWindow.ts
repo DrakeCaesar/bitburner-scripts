@@ -305,12 +305,12 @@ export class FloatingWindow {
   }
 
   private positionWindow(overviewElement: HTMLElement): void {
-    // Apply width constraint if specified, otherwise auto-size to content
+    // Always use auto width to fit content
+    this.element!.style.width = "auto"
+    // Apply max-width constraint if specified
     if (this.options.width) {
-      this.element!.style.width = `${this.options.width}px`
       this.element!.style.maxWidth = `${this.options.width}px`
     } else {
-      this.element!.style.width = "auto"
       this.element!.style.maxWidth = "none"
     }
 
@@ -496,17 +496,17 @@ export class FloatingWindow {
 
     // Adjust window width based on collapse state
     if (this.element) {
+      // Always use auto width
+      this.element.style.width = "auto"
+
       if (this.isCollapsed) {
-        // When collapsed, shrink to fit header content only
-        this.element.style.width = "auto"
+        // When collapsed, remove max-width to shrink to fit header content only
         this.element.style.maxWidth = "none"
       } else {
-        // When expanded, restore configured width (or auto if not specified)
+        // When expanded, restore configured max-width (or none if not specified)
         if (this.options.width) {
-          this.element.style.width = `${this.options.width}px`
           this.element.style.maxWidth = `${this.options.width}px`
         } else {
-          this.element.style.width = "auto"
           this.element.style.maxWidth = "none"
         }
       }

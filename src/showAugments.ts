@@ -186,8 +186,6 @@ async function createAugmentsWindow(ns: NS) {
     const allAugs = [...affordableSorted, ...tooExpensiveCumulative, ...unaffordable]
     if (neuroFluxInfo) allAugs.push(neuroFluxInfo)
 
-    orderLen = Math.max(orderLen, affordableSorted.length.toString().length)
-
     // Calculate adjusted prices and cumulative costs for affordable + too expensive augments
     const AUGMENT_PRICE_MULT = 1.9
     let cumulativeCost = 0
@@ -201,6 +199,29 @@ async function createAugmentsWindow(ns: NS) {
       cumulativeCost += adjustedPrice
       cumulativeCosts.push(cumulativeCost)
     }
+
+    // Pre-calculate NeuroFlux count for order column width
+    let neuroFluxCount = 0
+    if (neuroFluxInfo) {
+      const NEUROFLUX_REP_MULT = 1.9
+      const lastAffordableCost = affordableSorted.length > 0 ? cumulativeCosts[affordableSorted.length - 1] : 0
+      let remainingMoney = playerMoney - lastAffordableCost
+      const positionOffset = affordableSorted.length
+      let currentPrice = neuroFluxInfo.price * Math.pow(AUGMENT_PRICE_MULT, positionOffset)
+      let currentRepReq = neuroFluxInfo.repReq
+      const maxFactionRep = Math.max(...neuroFluxInfo.factions.map((f) => factionReps.get(f) ?? 0))
+
+      while (remainingMoney >= currentPrice && maxFactionRep >= currentRepReq) {
+        neuroFluxCount++
+        remainingMoney -= currentPrice
+        currentPrice *= AUGMENT_PRICE_MULT
+        currentRepReq *= NEUROFLUX_REP_MULT
+      }
+    }
+
+    // Calculate order column width based on total numbered items
+    const totalNumberedItems = affordableSorted.length + neuroFluxCount
+    orderLen = Math.max(orderLen, totalNumberedItems.toString().length)
 
     for (const aug of allAugs) {
       nameLen = Math.max(nameLen, aug.name.length)
@@ -322,6 +343,7 @@ async function createAugmentsWindow(ns: NS) {
     }
 
     // NeuroFlux section - expand to show individual purchases after all affordable regular augments
+    // Note: NeuroFlux can be purchased multiple times, so we show it even if "owned"
     if (neuroFluxInfo) {
       // NeuroFlux Governor's price and rep requirements both increase with each level
       const NEUROFLUX_REP_MULT = 1.9 // Reputation requirement multiplier per level
@@ -345,7 +367,7 @@ async function createAugmentsWindow(ns: NS) {
         neuroFluxCumulative += currentPrice
 
         rows.push({
-          order: " ".repeat(orderLen),
+          order: orderNum.toString().padStart(orderLen),
           name: neuroFluxInfo.name.padEnd(nameLen),
           faction: formatFactionText(neuroFluxInfo.factions, factionLen).padEnd(factionLen),
           price: ns.formatNumber(neuroFluxInfo.price).padStart(priceLen),
@@ -364,6 +386,7 @@ async function createAugmentsWindow(ns: NS) {
         currentPrice *= AUGMENT_PRICE_MULT
         currentRepReq *= NEUROFLUX_REP_MULT
         neuroFluxIndex++
+        orderNum++
       }
 
       // If we can't afford even one, or don't have rep, show one row indicating unavailability
@@ -557,15 +580,18 @@ function getAugmentData(ns: NS, playerFactions: string[]) {
     factionReps.set(faction, ns.singularity.getFactionRep(faction))
   }
 
-  // First, filter out owned augmentations and check rep requirements
+  // Filter out owned augmentations and check rep requirements
   const potentiallyAffordable: AugmentInfo[] = []
   const unaffordable: AugmentInfo[] = []
 
   for (const aug of augmentMap.values()) {
+    // Skip owned augmentations entirely
+    if (aug.owned) continue
+
     // Check if we have enough rep in ANY of the factions that offer this augment
     const hasEnoughRep = aug.factions.some((faction) => (factionReps.get(faction) ?? 0) >= aug.repReq)
 
-    if (hasEnoughRep && !aug.owned) {
+    if (hasEnoughRep) {
       potentiallyAffordable.push(aug)
     } else {
       unaffordable.push(aug)
