@@ -76,16 +76,15 @@ async function createNodesWindow(ns: NS): Promise<void> {
     let result = ""
 
     for (let i = 0; i < totalChars; i++) {
-      if (i < bars) {
-        // Filled segment
-        if (i === 0) result += FILLED_LEFT
-        else if (i === bars - 1) result += FILLED_RIGHT
-        else result += FILLED_CENTER
+      if (i === 0) {
+        // Very start
+        result += i < bars ? FILLED_LEFT : EMPTY_LEFT
+      } else if (i === totalChars - 1) {
+        // Very end
+        result += i < bars ? FILLED_RIGHT : EMPTY_RIGHT
       } else {
-        // Empty segment
-        if (i === bars) result += EMPTY_LEFT
-        else if (i === totalChars - 1) result += EMPTY_RIGHT
-        else result += EMPTY_CENTER
+        // Middle section
+        result += i < bars ? FILLED_CENTER : EMPTY_CENTER
       }
     }
 
