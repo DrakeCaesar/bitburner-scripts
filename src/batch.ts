@@ -63,10 +63,13 @@ export async function main(ns: NS) {
       }
       return sum + ns.getServerMaxRam(node)
     }, 0)
-    const minNodeRam = Math.min(
-      ...nodes.map((node) => {
-        return ns.getServerMaxRam(node)
-      })
+    const minNodeRam = Math.max(
+      16,
+      Math.min(
+        ...nodes.map((node) => {
+          return ns.getServerMaxRam(node)
+        })
+      )
     )
     ns.tprint(`Minimum node RAM: ${ns.formatRam(minNodeRam)}`)
     const myCores = ns.getServer(nodes[0]).cpuCores

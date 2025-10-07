@@ -45,7 +45,7 @@ export function analyzeAllServers(
   batchDelay: number,
   nodes: string[],
   playerHackLevel?: number,
-  batchCycles: number = 3
+  batchCycles: number = 20
 ): ServerProfitability[] {
   // Get all servers
   const knownServers = new Set<string>()
@@ -88,12 +88,13 @@ export function analyzeAllServers(
 
     // Use logarithmic distribution: more samples near 1.0 (99-100%) than near 0
     // This gives us finer granularity where it matters most
-    const totalSteps = 1000
+    const totalSteps = 200
     for (let i = 1; i < totalSteps; i++) {
       // Map i logarithmically: threshold = 1 - 10^(-x)
       // When i=0: threshold ≈ 0, when i→totalSteps: threshold → 1
       const logScale = i / totalSteps // 0 to ~1
       const testThreshold = 1 - Math.pow(10, -logScale * 3) // Maps to ~0.001 to 0.999
+      ns.tprint(`Testing ${targetName} at threshold ${(testThreshold * 100).toFixed(2)}%`)
 
       // Calculate threads for this threshold
       const { server: hackServer, player: hackPlayer } = hackServerInstance(server, player)

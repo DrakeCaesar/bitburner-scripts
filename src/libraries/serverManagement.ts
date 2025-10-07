@@ -43,6 +43,7 @@ export function getNodesForBatching(ns: NS): string[] {
   // Calculate total RAM for each group
   const purchasedTotalRam = purchasedServers.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
   const nukedTotalRam = nukedServers.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
+  const homeRemainingRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home")
 
   let nodes: string[] = []
 
@@ -51,18 +52,18 @@ export function getNodesForBatching(ns: NS): string[] {
     nodes = [...purchasedServers]
     ns.tprint(
       `Using ${purchasedServers.length} purchased server(s) (${ns.formatRam(purchasedTotalRam)} total) ` +
-      `over ${nukedServers.length} nuked server(s) (${ns.formatRam(nukedTotalRam)} total)`
+        `over ${nukedServers.length} nuked server(s) (${ns.formatRam(nukedTotalRam)} total)`
     )
-  } else if (nukedServers.length > 0) {
+  } else if (nukedServers.length > 0 && nukedTotalRam > homeRemainingRam) {
     // Use nuked servers if they have more RAM or no purchased servers exist
     nodes = [...nukedServers]
     ns.tprint(
       `Using ${nukedServers.length} nuked server(s) (${ns.formatRam(nukedTotalRam)} total)` +
-      (purchasedServers.length > 0
-        ? ` over ${purchasedServers.length} purchased server(s) (${ns.formatRam(purchasedTotalRam)} total)`
-        : "")
+        (purchasedServers.length > 0
+          ? ` over ${purchasedServers.length} purchased server(s) (${ns.formatRam(purchasedTotalRam)} total)`
+          : "")
     )
-  } else if (purchasedServers.length > 0) {
+  } else if (purchasedServers.length > 0 && purchasedTotalRam > homeRemainingRam) {
     // Fallback to purchased servers if no nuked servers
     nodes = [...purchasedServers]
     ns.tprint(`Using ${purchasedServers.length} purchased server(s) (${ns.formatRam(purchasedTotalRam)} total)`)
@@ -71,6 +72,7 @@ export function getNodesForBatching(ns: NS): string[] {
     nodes = ["home"]
     ns.tprint("No purchased or nuked servers found, using home")
   }
+  ns.tprint(`Using ${nodes.length} nodes for batching: ${nodes.join(", ")}`)
 
   return nodes
 }
