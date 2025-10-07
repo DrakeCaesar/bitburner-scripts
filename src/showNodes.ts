@@ -69,33 +69,27 @@ async function createNodesWindow(ns: NS): Promise<void> {
     // Calculate current doublings from 1 to ram
     const currentDoublings = Math.log2(ram)
 
-    // Calculate bars (filled) and dashes (empty) - total must equal totalChars
+    // Calculate bars (filled)
     const bars = Math.floor((currentDoublings / maxDoublings) * totalChars)
-    const dashes = totalChars - bars
 
-    if (bars === 0) {
-      // All empty
-      return EMPTY_LEFT + EMPTY_CENTER.repeat(totalChars - 2) + EMPTY_RIGHT
-    } else if (dashes === 0) {
-      // All filled
-      return FILLED_LEFT + FILLED_CENTER.repeat(totalChars - 2) + FILLED_RIGHT
-    } else if (bars === 1) {
-      // Only 1 filled (left)
-      return FILLED_LEFT + EMPTY_CENTER.repeat(dashes - 2) + EMPTY_RIGHT
-    } else if (dashes === 1) {
-      // Only 1 empty (right)
-      return FILLED_LEFT + FILLED_CENTER.repeat(bars - 2) + EMPTY_RIGHT
-    } else if (bars === 2) {
-      // 2 filled
-      return FILLED_LEFT + FILLED_CENTER + EMPTY_CENTER.repeat(dashes - 2) + EMPTY_RIGHT
-    } else if (dashes === 2) {
-      // 2 empty
-      return FILLED_LEFT + FILLED_CENTER.repeat(bars - 2) + FILLED_CENTER + EMPTY_RIGHT
-    } else {
-      // Normal case: filled left + filled centers + empty centers + empty right
-      // Transition is just =- (no decorators between)
-      return FILLED_LEFT + FILLED_CENTER.repeat(bars - 1) + EMPTY_CENTER.repeat(dashes - 1) + EMPTY_RIGHT
+    // Build the progress bar
+    let result = ""
+
+    for (let i = 0; i < totalChars; i++) {
+      if (i < bars) {
+        // Filled segment
+        if (i === 0) result += FILLED_LEFT
+        else if (i === bars - 1) result += FILLED_RIGHT
+        else result += FILLED_CENTER
+      } else {
+        // Empty segment
+        if (i === bars) result += EMPTY_LEFT
+        else if (i === totalChars - 1) result += EMPTY_RIGHT
+        else result += EMPTY_CENTER
+      }
     }
+
+    return result
   }
 
   function updateTable(): void {
