@@ -133,8 +133,9 @@ async function createNodesWindow(ns: NS): Promise<void> {
       cost = ns.getPurchasedServerCost(ram)
     }
 
-    // Determine next action
+    // Determine next action and calculate savings progress
     let nextAction = "Save money"
+    let savingsInfo = ""
     const bestRam = existingNodes.length > 0 ? Math.max(...existingNodes.map((n) => n.ram)) : 0
 
     if (affordableRam > bestRam) {
@@ -144,8 +145,21 @@ async function createNodesWindow(ns: NS): Promise<void> {
         const worstNode = existingNodes.reduce((min, n) => (n.ram < min.ram ? n : min))
         nextAction = `Upgrade ${worstNode.name} to ${ns.formatRam(affordableRam)} (${ns.formatNumber(cost)})`
       }
-    } else if (existingNodes.length === 0) {
-      nextAction = `Save ${ns.formatNumber(ns.getPurchasedServerCost(1) - money)} more`
+      savingsInfo = `Ready to purchase!`
+    } else {
+      // Calculate next target RAM (double the current best, or 1 if no servers)
+      const nextTargetRam = bestRam > 0 ? bestRam * 2 : 1
+      const nextCost = ns.getPurchasedServerCost(nextTargetRam)
+      const needed = nextCost - money
+      const percentSaved = (money / nextCost) * 100
+
+      if (existingNodes.length < 25) {
+        nextAction = `Save for ${ns.formatRam(nextTargetRam)} server`
+      } else {
+        const worstNode = existingNodes.reduce((min, n) => (n.ram < min.ram ? n : min))
+        nextAction = `Save to upgrade ${worstNode.name} to ${ns.formatRam(nextTargetRam)}`
+      }
+      savingsInfo = `Saving: ${ns.formatNumber(money)} / ${ns.formatNumber(nextCost)} (${percentSaved.toFixed(1)}%) - Need ${ns.formatNumber(needed)} more`
     }
 
     // Calculate column widths
@@ -174,7 +188,8 @@ async function createNodesWindow(ns: NS): Promise<void> {
       `┗━${"━".repeat(nameLen)}━┻━${"━".repeat(ramLen)}━┻━${"━".repeat(progressLen)}━┻━${"━".repeat(statusLen)}━┛\n` +
       `\nServers: ${existingNodes.length}/25 | Total RAM: ${ns.formatRam(totalRam)} | Avg: ${ns.formatRam(avgRam)}\n` +
       `Min: ${ns.formatRam(minRam)} | Max: ${ns.formatRam(maxNodeRam)} | System Max: ${ns.formatRam(maxRam)}\n` +
-      `Money: ${ns.formatNumber(money)} | Next: ${nextAction}`
+      `Next: ${nextAction}\n` +
+      `${savingsInfo}`
 
     // Clear and rebuild container
     containerDiv.innerHTML = ""
