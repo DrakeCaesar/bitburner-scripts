@@ -94,7 +94,7 @@ export function analyzeAllServers(
       // When i=0: threshold ≈ 0, when i→totalSteps: threshold → 1
       const logScale = i / totalSteps // 0 to ~1
       const testThreshold = 1 - Math.pow(10, -logScale * 3) // Maps to ~0.001 to 0.999
-      ns.tprint(`Testing ${targetName} at threshold ${(testThreshold * 100).toFixed(2)}%`)
+      // ns.tprint(`Testing ${targetName} at threshold ${(testThreshold * 100).toFixed(2)}%`)
 
       // Calculate threads for this threshold
       const { server: hackServer, player: hackPlayer } = hackServerInstance(server, player)

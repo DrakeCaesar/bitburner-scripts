@@ -190,10 +190,22 @@ export async function executeBatches(
     // print nodes and their ram
     // ns.tprint(`Nodes: ${nodes.map((n) => `${n} (${ns.getServerMaxRam(n)} GB)`).join(", ")}`)
 
-    const hackNode = findNodeWithRam(ns, nodes, hackThreads * hackScriptRam)
-    const wkn1Node = findNodeWithRam(ns, nodes, wkn1Threads * weakenScriptRam)
-    const growNode = findNodeWithRam(ns, nodes, growThreads * growScriptRam)
-    const wkn2Node = findNodeWithRam(ns, nodes, wkn2Threads * weakenScriptRam)
+    const hackTotalRam = hackThreads * hackScriptRam
+    const wkn1TotalRam = wkn1Threads * weakenScriptRam
+    const growTotalRam = growThreads * growScriptRam
+    const wkn2TotalRam = wkn2Threads * weakenScriptRam
+    const totalRamCheck = hackTotalRam + wkn1TotalRam + growTotalRam + wkn2TotalRam
+
+    const hackNode = findNodeWithRam(ns, nodes, totalRamCheck)
+    const wkn1Node = hackNode
+    const growNode = hackNode
+    const wkn2Node = hackNode
+
+    //TODO: Fix this to distribute across multiple nodes
+    // const hackNode = findNodeWithRam(ns, nodes, hackThreads * hackScriptRam)
+    // const wkn1Node = findNodeWithRam(ns, nodes, wkn1Threads * weakenScriptRam)
+    // const growNode = findNodeWithRam(ns, nodes, growThreads * growScriptRam)
+    // const wkn2Node = findNodeWithRam(ns, nodes, wkn2Threads * weakenScriptRam)
 
     if (!hackNode || !wkn1Node || !growNode || !wkn2Node) {
       ns.tprint(`ERROR: Not enough RAM to launch batch ${batchCounter}`)

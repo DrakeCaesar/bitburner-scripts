@@ -50,6 +50,10 @@ export function getNodesForBatching(ns: NS): string[] {
   // If we have purchased servers and they have more total RAM than nuked servers, use only purchased servers
   if (purchasedServers.length > 0 && purchasedTotalRam >= nukedTotalRam) {
     nodes = [...purchasedServers]
+    // add home if it has over 100 GB free RAM
+    if (homeRemainingRam >= 128) {
+      nodes.push("home")
+    }
     ns.tprint(
       `Using ${purchasedServers.length} purchased server(s) (${ns.formatRam(purchasedTotalRam)} total) ` +
         `over ${nukedServers.length} nuked server(s) (${ns.formatRam(nukedTotalRam)} total)`
