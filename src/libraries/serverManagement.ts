@@ -15,38 +15,63 @@ export function getAllNodes(ns: NS): string[] {
 
 /**
  * Get all available nodes for batching:
- * - Always includes home
- * - Includes all purchased servers (node00-node24)
- * - Includes all nuked servers with RAM
+ * - If purchased servers (node00+) have more total RAM than nuked servers, only use purchased servers
+ * - Otherwise use all nuked servers
+ * - Falls back to home if no purchased servers exist
  */
 export function getNodesForBatching(ns: NS): string[] {
-  const nodes: string[] = []
-
-  // Add all purchased servers
+  // Get all purchased servers
   const purchasedServers = getAllNodes(ns)
-  if (purchasedServers.length == 0) {
-    nodes.push("home")
-  }
 
-  nodes.push(...purchasedServers)
-
-  // Add all nuked servers with RAM
+  // Get all nuked servers with RAM
   const knownServers = new Set<string>()
   crawl(ns, knownServers)
 
+  const nukedServers: string[] = []
   for (const serverName of knownServers) {
     const server = ns.getServer(serverName)
-    // Skip home (already added) and purchased servers (already added)
+    // Skip home and purchased servers
     if (serverName === "home" || purchasedServers.includes(serverName)) {
       continue
     }
     // Add servers that are nuked and have RAM
     if (server.hasAdminRights && server.maxRam > 0) {
-      nodes.push(serverName)
+      nukedServers.push(serverName)
     }
   }
 
-  ns.tprint(`Nodes for batching: ${nodes.join(", ")}`)
+  // Calculate total RAM for each group
+  const purchasedTotalRam = purchasedServers.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
+  const nukedTotalRam = nukedServers.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
+
+  let nodes: string[] = []
+
+  // If we have purchased servers and they have more total RAM than nuked servers, use only purchased servers
+  if (purchasedServers.length > 0 && purchasedTotalRam >= nukedTotalRam) {
+    nodes = [...purchasedServers]
+    ns.tprint(
+      `Using ${purchasedServers.length} purchased server(s) (${ns.formatRam(purchasedTotalRam)} total) ` +
+      `over ${nukedServers.length} nuked server(s) (${ns.formatRam(nukedTotalRam)} total)`
+    )
+  } else if (nukedServers.length > 0) {
+    // Use nuked servers if they have more RAM or no purchased servers exist
+    nodes = [...nukedServers]
+    ns.tprint(
+      `Using ${nukedServers.length} nuked server(s) (${ns.formatRam(nukedTotalRam)} total)` +
+      (purchasedServers.length > 0
+        ? ` over ${purchasedServers.length} purchased server(s) (${ns.formatRam(purchasedTotalRam)} total)`
+        : "")
+    )
+  } else if (purchasedServers.length > 0) {
+    // Fallback to purchased servers if no nuked servers
+    nodes = [...purchasedServers]
+    ns.tprint(`Using ${purchasedServers.length} purchased server(s) (${ns.formatRam(purchasedTotalRam)} total)`)
+  } else {
+    // Last resort: use home
+    nodes = ["home"]
+    ns.tprint("No purchased or nuked servers found, using home")
+  }
+
   return nodes
 }
 

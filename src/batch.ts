@@ -41,11 +41,6 @@ export async function main(ns: NS) {
     // Get nodes for batching (purchased servers or all nuked servers)
     const nodes = getNodesForBatching(ns)
 
-    // print nodes
-    for (const node of nodes) {
-      ns.tprint(`Node: ${node}, RAM: ${ns.getServerMaxRam(node)} GB`)
-    }
-
     if (nodes.length === 0) {
       ns.tprint("ERROR: No nodes with root access found")
       return
@@ -68,13 +63,12 @@ export async function main(ns: NS) {
       }
       return sum + ns.getServerMaxRam(node)
     }, 0)
-    let minNodeRam = Math.min(
+    const minNodeRam = Math.min(
       ...nodes.map((node) => {
         return ns.getServerMaxRam(node)
       })
     )
-    minNodeRam = 16 // DEBUG
-    ns.tprint(`Minimum node RAM: ${minNodeRam} GB`)
+    ns.tprint(`Minimum node RAM: ${ns.formatRam(minNodeRam)}`)
     const myCores = ns.getServer(nodes[0]).cpuCores
 
     // Find best target automatically (constrained by smallest node RAM)
