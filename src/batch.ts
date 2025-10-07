@@ -7,12 +7,11 @@ import {
 } from "./batchCalculations.js"
 // import { initBatchVisualiser, logBatchOperation } from "./batchVisualiser.js"
 import { main as autoNuke } from "./autoNuke.js"
-// import { upgradeServer } from "./buyServer.js"
 import { upgradeServer } from "./buyServer.js"
 import { findBestTarget } from "./findBestTarget.js"
 import { calculateBatchThreads, calculateBatchTimings, executeBatches } from "./libraries/batchExecution.js"
 import { purchasePrograms, purchaseTorRouter } from "./libraries/purchasePrograms.js"
-import { getNodesForBatching, purchaseAdditionalServers } from "./libraries/serverManagement.js"
+import { getNodesForBatching } from "./libraries/serverManagement.js"
 
 export async function main(ns: NS) {
   const playerHackLevel = ns.args[0] ? Number(ns.args[0]) : undefined
@@ -29,14 +28,11 @@ export async function main(ns: NS) {
     // Run autoNuke to gain access to new servers
     await autoNuke(ns)
 
-    // Try to upgrade node00 first
-    const wasUpgraded = upgradeServer(ns, "node00")
+    // Try to purchase or upgrade servers
+    const wasUpgraded = upgradeServer(ns)
     if (wasUpgraded) {
-      ns.tprint("Server was upgraded, restarting batch cycle...")
+      ns.tprint("Server was purchased/upgraded, restarting batch cycle...")
     }
-
-    // If node00 is maxed out, try to buy additional servers
-    purchaseAdditionalServers(ns)
 
     // Get nodes for batching (purchased servers or all nuked servers)
     const nodes = getNodesForBatching(ns)
