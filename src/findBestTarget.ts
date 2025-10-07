@@ -122,7 +122,7 @@ export function analyzeAllServers(
         continue
       }
 
-      const batches = Math.floor((totalMaxRam / totalBatchRam) * 0.9)
+      const batches = Math.floor(totalMaxRam / totalBatchRam)
 
       // Calculate total money per cycle
       const moneyPerBatch = moneyMax * (1 - testThreshold)

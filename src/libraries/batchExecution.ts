@@ -208,7 +208,7 @@ export async function executeBatches(
     // const wkn2Node = findNodeWithRam(ns, nodes, wkn2Threads * weakenScriptRam)
 
     if (!hackNode || !wkn1Node || !growNode || !wkn2Node) {
-      ns.tprint(`ERROR: Not enough RAM to launch batch ${batchCounter}`)
+      // ns.tprint(`Warning: Not enough RAM to launch batch ${batchCounter}`)
       break
     }
 

@@ -53,7 +53,7 @@ export async function main(ns: NS) {
     }
 
     const batchDelay = 50
-    const ramThreshold = 0.9
+    const ramThreshold = 1
 
     // Calculate total RAM across all nodes and find minimum node RAM
     // For home, subtract used RAM since this script is running there
