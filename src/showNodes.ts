@@ -208,9 +208,9 @@ async function createNodesWindow(ns: NS): Promise<void> {
       }
       containerDiv.appendChild(ramSpan)
 
-      const midSpan = eval("document").createElement("span")
-      midSpan.textContent = " ┃ "
-      containerDiv.appendChild(midSpan)
+      const midSpan1 = eval("document").createElement("span")
+      midSpan1.textContent = " ┃ "
+      containerDiv.appendChild(midSpan1)
 
       const progressSpan = eval("document").createElement("span")
       progressSpan.textContent = node.progressBar
@@ -230,15 +230,23 @@ async function createNodesWindow(ns: NS): Promise<void> {
       }
       containerDiv.appendChild(progressSpan)
 
+      const midSpan2 = eval("document").createElement("span")
+      midSpan2.textContent = " ┃ "
+      containerDiv.appendChild(midSpan2)
+
       const statusSpan = eval("document").createElement("span")
       const status = node.exists ? "●" : "○"
-      statusSpan.textContent = ` ┃ ${status.padEnd(statusLen)} ┃\n`
+      statusSpan.textContent = status.padEnd(statusLen)
       if (node.exists) {
         statusSpan.style.color = "#00ff00"
       } else {
         statusSpan.style.color = "#666666"
       }
       containerDiv.appendChild(statusSpan)
+
+      const endSpan = eval("document").createElement("span")
+      endSpan.textContent = " ┃\n"
+      containerDiv.appendChild(endSpan)
     }
 
     // Add footer
