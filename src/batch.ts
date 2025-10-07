@@ -48,7 +48,10 @@ export async function main(ns: NS) {
 
     // Kill all scripts on all nodes and copy required scripts
     for (const node of nodes) {
-      ns.killall(node)
+      ns.scriptKill("hack.js", node)
+      ns.scriptKill("grow.js", node)
+      ns.scriptKill("weaken.js", node)
+      ns.scriptKill("batch.js", node)
       await copyRequiredScripts(ns, node)
     }
 
