@@ -2,6 +2,7 @@ import { NS } from "@ns"
 import {
   calculateGrowThreads,
   calculateHackThreads,
+  calculatePrepTime,
   calculateWeakThreads,
   growServerInstance,
   hackServerInstance,
@@ -9,6 +10,7 @@ import {
   wkn2ServerInstance,
 } from "./batchCalculations.js"
 import { crawl } from "./crawl.js"
+import { getAllNodes } from "./libraries/serverManagement.js"
 
 export interface BestTargetResult {
   serverName: string
@@ -31,7 +33,8 @@ export interface ServerProfitability {
  * Analyze all hackable servers and return detailed profitability data
  * @param totalMaxRam - Total RAM across all nodes (for calculating total batches)
  * @param minNodeRam - Minimum RAM of the smallest node (constrains single operation size)
- * @param includePrepTime - If true, includes server prep time in profitability calculation (default: false)
+ * @param nodes - Array of node names to use for prep time calculation
+ * @param batchCycles - Number of batch cycles to weight against prep time (default: 3)
  * @returns Array of servers sorted by profitability (best first)
  */
 export function analyzeAllServers(
@@ -40,8 +43,9 @@ export function analyzeAllServers(
   minNodeRam: number,
   myCores: number,
   batchDelay: number,
+  nodes: string[],
   playerHackLevel?: number,
-  includePrepTime: Boolean = false
+  batchCycles: number = 3
 ): ServerProfitability[] {
   // Get all servers
   const knownServers = new Set<string>()
@@ -64,20 +68,9 @@ export function analyzeAllServers(
   const profitabilityData: ServerProfitability[] = []
 
   for (const targetName of hackableServers) {
-    // Calculate prep time if requested
-    let prepTime = 0
-    if (includePrepTime) {
-      const actualServer = ns.getServer(targetName)
-      const securityDiff = (actualServer.hackDifficulty ?? 0) - (actualServer.minDifficulty ?? 0)
-      const moneyRatio = (actualServer.moneyAvailable ?? 0) / (actualServer.moneyMax ?? 1)
-
-      // Estimate prep time:
-      // - If security is above minimum OR money is below max, we need to prep
-      // - Prep requires weaken (if security high) + grow (if money low) + weaken (after grow)
-      // - Worst case: full weaken time (they run in parallel but weaken is longest)
-      const needsPrep = securityDiff > 0 || moneyRatio < 1
-      prepTime = needsPrep ? ns.formulas.hacking.weakenTime(actualServer, player) : 0
-    }
+    // Calculate accurate prep time using the same function as batch.ts
+    const prepTimeResult = calculatePrepTime(ns, nodes, targetName, false)
+    const prepTime = prepTimeResult.totalTime
 
     // Simulate prepared server
     const server = ns.getServer(targetName)
@@ -134,12 +127,18 @@ export function analyzeAllServers(
       const moneyPerBatch = moneyMax * (1 - testThreshold)
       const totalMoneyPerCycle = moneyPerBatch * batches
 
-      // Calculate cycle time (including prep time)
+      // Calculate cycle time
       const lastBatchOffset = (batches - 1) * batchDelay * 4
       const lastOperationFinishTime = weakenTime + 2 * batchDelay + lastBatchOffset
       const batchCycleTime = lastOperationFinishTime
-      const totalCycleTime = batchCycleTime + prepTime
-      const moneyPerSecond = (totalMoneyPerCycle / totalCycleTime) * 1000
+
+      // Weight prep time vs batch cycles:
+      // Prep happens once, batches run multiple times (batchCycles parameter, default 3)
+      // Total time = prepTime + (batchCycleTime * batchCycles)
+      // Total money = totalMoneyPerCycle * batchCycles
+      const totalTime = prepTime + batchCycleTime * batchCycles
+      const totalMoney = totalMoneyPerCycle * batchCycles
+      const moneyPerSecond = totalTime > 0 ? (totalMoney / totalTime) * 1000 : 0
 
       if (moneyPerSecond > serverBestMoneyPerSecond) {
         serverBestMoneyPerSecond = moneyPerSecond
@@ -173,8 +172,9 @@ export function findBestTarget(
   minNodeRam: number,
   myCores: number,
   batchDelay: number,
+  nodes: string[],
   playerHackLevel?: number,
-  includePrepTime = false
+  batchCycles: number = 3
 ): BestTargetResult {
   // Use the analysis function to get all server profitability data
   const profitabilityData = analyzeAllServers(
@@ -183,8 +183,9 @@ export function findBestTarget(
     minNodeRam,
     myCores,
     batchDelay,
+    nodes,
     playerHackLevel,
-    includePrepTime
+    batchCycles
   )
 
   ns.tprint(`Found ${profitabilityData.length} hackable servers, analyzing profitability...`)
@@ -214,20 +215,16 @@ export async function main(ns: NS) {
   const playerHackLevel = ns.args[0] ? Number(ns.args[0]) : undefined
 
   // Get all nodes and calculate total RAM
-  const nodes: string[] = []
-  for (let i = 0; i < 25; i++) {
-    const nodeName = "node" + String(i).padStart(2, "0")
-    if (ns.serverExists(nodeName)) {
-      nodes.push(nodeName)
-    }
+  const nodes = getAllNodes(ns)
+  if (nodes.length === 0) {
+    nodes.push("home")
   }
 
   const totalMaxRam = nodes.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
-  const minNodeRam =
-    nodes.length > 0 ? Math.min(...nodes.map((node) => ns.getServerMaxRam(node))) : ns.getServerMaxRam("home")
-  const myCores = nodes.length > 0 ? ns.getServer(nodes[0]).cpuCores : 1
+  const minNodeRam = Math.min(...nodes.map((node) => ns.getServerMaxRam(node)))
+  const myCores = ns.getServer(nodes[0]).cpuCores
 
-  const result = findBestTarget(ns, totalMaxRam, minNodeRam, myCores, 20, playerHackLevel)
+  findBestTarget(ns, totalMaxRam, minNodeRam, myCores, 20, nodes, playerHackLevel)
 
   ns.tprint("")
   ns.tprint(`To start batching: run batch.js`)

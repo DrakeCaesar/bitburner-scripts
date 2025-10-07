@@ -72,7 +72,7 @@ export async function main(ns: NS) {
     const myCores = ns.getServer(nodes[0]).cpuCores
 
     // Find best target automatically (constrained by smallest node RAM)
-    const target = findBestTarget(ns, totalMaxRam, minNodeRam, myCores, batchDelay, playerHackLevel)
+    const target = findBestTarget(ns, totalMaxRam, minNodeRam, myCores, batchDelay, nodes, playerHackLevel)
     const player = ns.getPlayer()
 
     ns.tprint(`Target: ${target.serverName}`)

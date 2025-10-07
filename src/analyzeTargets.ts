@@ -5,7 +5,7 @@ import { getNodesForBatching } from "./libraries/serverManagement.js"
 
 export async function main(ns: NS) {
   const playerHackLevel = ns.args[0] ? Number(ns.args[0]) : undefined
-  const includePrepTime: Boolean = ns.args[1] === "true"
+  const batchCycles = ns.args[1] ? Number(ns.args[1]) : 3
 
   // Remove existing window if it exists
   const existingWindow = eval("document").querySelector("#target-analysis-window")
@@ -32,7 +32,7 @@ export async function main(ns: NS) {
   const batchDelay = 50
 
   // Use the imported function to analyze servers
-  const profitabilityData = analyzeAllServers(ns, totalMaxRam, minNodeRam, myCores, batchDelay, playerHackLevel, includePrepTime)
+  const profitabilityData = analyzeAllServers(ns, totalMaxRam, minNodeRam, myCores, batchDelay, nodes, playerHackLevel, batchCycles)
 
   // Column headers
   const serverCol = "Server"
