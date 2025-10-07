@@ -37,7 +37,11 @@ async function doPurchase(ns: NS, buyFlux: boolean) {
   let { affordableSorted, neuroFluxInfo, factionReps, playerMoney } = getAugmentData(ns, playerFactions)
 
   ns.tprint("\n" + "=".repeat(120))
-  ns.tprint(buyFlux ? "PURCHASING AUGMENTATIONS + TOPPING UP WITH NEUROFLUX" : "PURCHASING AUGMENTATIONS (optimal order, within budget)")
+  ns.tprint(
+    buyFlux
+      ? "PURCHASING AUGMENTATIONS + TOPPING UP WITH NEUROFLUX"
+      : "PURCHASING AUGMENTATIONS (optimal order, within budget)"
+  )
   ns.tprint("=".repeat(120))
 
   let purchaseCount = 0
@@ -62,7 +66,9 @@ async function doPurchase(ns: NS, buyFlux: boolean) {
 
   // Purchase augmentations we can actually afford
   if (affordableWithBudget.length > 0) {
-    ns.tprint(`Can afford ${affordableWithBudget.length} of ${affordableSorted.length} augmentations (total cost: ${ns.formatNumber(cumulativeCost > playerMoney ? playerMoney : cumulativeCost)})`)
+    ns.tprint(
+      `Can afford ${affordableWithBudget.length} of ${affordableSorted.length} augmentations (total cost: ${ns.formatNumber(cumulativeCost > playerMoney ? playerMoney : cumulativeCost)})`
+    )
 
     for (const aug of affordableWithBudget) {
       // Find a faction where we have enough rep to buy from
@@ -83,7 +89,9 @@ async function doPurchase(ns: NS, buyFlux: boolean) {
       }
     }
   } else if (affordableSorted.length > 0) {
-    ns.tprint(`Cannot afford any augmentations. Cheapest would cost ${ns.formatNumber(affordableSorted[0].price)}, you have ${ns.formatNumber(playerMoney)}`)
+    ns.tprint(
+      `Cannot afford any augmentations. Cheapest would cost ${ns.formatNumber(affordableSorted[0].price)}, you have ${ns.formatNumber(playerMoney)}`
+    )
   }
 
   // If buyFlux is true, top up with NeuroFlux Governor
@@ -151,10 +159,8 @@ async function createAugmentsWindow(ns: NS) {
   containerDiv.style.overflow = "auto"
 
   function updateTable() {
-    const { affordableSorted, unaffordable, neuroFluxInfo, affordable, playerMoney, factionReps } = getAugmentData(
-      ns,
-      ns.getPlayer().factions
-    )
+    const { affordableSorted, tooExpensiveCumulative, unaffordable, neuroFluxInfo, playerMoney, factionReps } =
+      getAugmentData(ns, ns.getPlayer().factions)
 
     // Calculate column widths
     const orderCol = "#"
@@ -177,18 +183,20 @@ async function createAugmentsWindow(ns: NS) {
     let ownedLen = ownedCol.length
     let statusLen = statusCol.length
 
-    const allAugs = [...affordableSorted, ...unaffordable]
+    const allAugs = [...affordableSorted, ...tooExpensiveCumulative, ...unaffordable]
     if (neuroFluxInfo) allAugs.push(neuroFluxInfo)
 
     orderLen = Math.max(orderLen, affordableSorted.length.toString().length)
 
-    // Calculate adjusted prices and cumulative costs for affordable augments
+    // Calculate adjusted prices and cumulative costs for affordable + too expensive augments
     const AUGMENT_PRICE_MULT = 1.9
     let cumulativeCost = 0
     const adjustedPrices: number[] = []
     const cumulativeCosts: number[] = []
-    for (let i = 0; i < affordableSorted.length; i++) {
-      const adjustedPrice = affordableSorted[i].price * Math.pow(AUGMENT_PRICE_MULT, i)
+    const combinedList = [...affordableSorted, ...tooExpensiveCumulative]
+
+    for (let i = 0; i < combinedList.length; i++) {
+      const adjustedPrice = combinedList[i].price * Math.pow(AUGMENT_PRICE_MULT, i)
       adjustedPrices.push(adjustedPrice)
       cumulativeCost += adjustedPrice
       cumulativeCosts.push(cumulativeCost)
@@ -258,8 +266,33 @@ async function createAugmentsWindow(ns: NS) {
       orderNum++
     }
 
-    // Unaffordable section
-    for (const aug of unaffordable) {
+    // Too expensive (cumulative) section - have rep but can't afford due to price escalation
+    for (let i = 0; i < tooExpensiveCumulative.length; i++) {
+      const aug = tooExpensiveCumulative[i]
+      const adjustedIdx = affordableSorted.length + i
+      const validFactions = aug.factions.filter((f) => (factionReps.get(f) ?? 0) >= aug.repReq)
+
+      rows.push({
+        order: " ".repeat(orderLen),
+        name: aug.name.padEnd(nameLen),
+        faction: formatFactionText(validFactions, factionLen).padEnd(factionLen),
+        price: ns.formatNumber(aug.price).padStart(priceLen),
+        priceRed: false,
+        adjusted: ns.formatNumber(adjustedPrices[adjustedIdx]).padStart(adjustedLen),
+        adjustedRed: true,
+        cumulative: ns.formatNumber(cumulativeCosts[adjustedIdx]).padStart(cumulativeLen),
+        cumulativeRed: true,
+        rep: ns.formatNumber(aug.repReq).padStart(repLen),
+        repRed: false,
+        owned: (aug.owned ? "Y" : " ").padStart(ownedLen),
+        status: "✗$".padStart(statusLen),
+      })
+    }
+
+    // Unaffordable section - sort by price (most expensive first)
+    const sortedUnaffordable = [...unaffordable].sort((a, b) => b.price - a.price)
+
+    for (const aug of sortedUnaffordable) {
       const hasEnoughMoney = playerMoney >= aug.price
       const hasEnoughRep = aug.factions.some((faction) => (factionReps.get(faction) ?? 0) >= aug.repReq)
 
@@ -288,24 +321,27 @@ async function createAugmentsWindow(ns: NS) {
       })
     }
 
-    // NeuroFlux section - expand to show individual purchases after all regular augments
+    // NeuroFlux section - expand to show individual purchases after all affordable regular augments
     if (neuroFluxInfo) {
-      const hasEnoughRep = neuroFluxInfo.factions.some(
-        (faction) => (factionReps.get(faction) ?? 0) >= neuroFluxInfo.repReq
-      )
+      // NeuroFlux Governor's price and rep requirements both increase with each level
+      const NEUROFLUX_REP_MULT = 1.9 // Reputation requirement multiplier per level
 
-      // Start from the money remaining after purchasing all regular augments
-      const lastCumulativeCost = cumulativeCosts.length > 0 ? cumulativeCosts[cumulativeCosts.length - 1] : 0
-      let remainingMoney = playerMoney - lastCumulativeCost
+      // Start from the money remaining after purchasing affordable regular augments only
+      const lastAffordableCost = affordableSorted.length > 0 ? cumulativeCosts[affordableSorted.length - 1] : 0
+      let remainingMoney = playerMoney - lastAffordableCost
 
-      // Calculate position offset (number of regular augments purchased affects price multiplier)
+      // Calculate position offset (number of affordable augments purchased affects price multiplier)
       const positionOffset = affordableSorted.length
       let currentPrice = neuroFluxInfo.price * Math.pow(AUGMENT_PRICE_MULT, positionOffset)
-      let neuroFluxCumulative = lastCumulativeCost
+      let currentRepReq = neuroFluxInfo.repReq
+      let neuroFluxCumulative = lastAffordableCost
       let neuroFluxIndex = 0
 
+      // Get max rep across all factions offering NeuroFlux
+      const maxFactionRep = Math.max(...neuroFluxInfo.factions.map((f) => factionReps.get(f) ?? 0))
+
       // Create a row for each NeuroFlux purchase we can afford
-      while (remainingMoney >= currentPrice && hasEnoughRep) {
+      while (remainingMoney >= currentPrice && maxFactionRep >= currentRepReq) {
         neuroFluxCumulative += currentPrice
 
         rows.push({
@@ -318,7 +354,7 @@ async function createAugmentsWindow(ns: NS) {
           adjustedRed: false,
           cumulative: ns.formatNumber(neuroFluxCumulative).padStart(cumulativeLen),
           cumulativeRed: false,
-          rep: ns.formatNumber(neuroFluxInfo.repReq).padStart(repLen),
+          rep: ns.formatNumber(currentRepReq).padStart(repLen),
           repRed: false,
           owned: (neuroFluxInfo.owned ? "Y" : " ").padStart(ownedLen),
           status: "~".padStart(statusLen),
@@ -326,6 +362,7 @@ async function createAugmentsWindow(ns: NS) {
 
         remainingMoney -= currentPrice
         currentPrice *= AUGMENT_PRICE_MULT
+        currentRepReq *= NEUROFLUX_REP_MULT
         neuroFluxIndex++
       }
 
@@ -333,6 +370,7 @@ async function createAugmentsWindow(ns: NS) {
       if (neuroFluxIndex === 0) {
         const basePrice = neuroFluxInfo.price * Math.pow(AUGMENT_PRICE_MULT, positionOffset)
         const canAffordMoney = remainingMoney >= basePrice
+        const hasEnoughRep = maxFactionRep >= currentRepReq
 
         let statusSymbol = "✗"
         if (!canAffordMoney && !hasEnoughRep) statusSymbol = "✗✗"
@@ -349,7 +387,7 @@ async function createAugmentsWindow(ns: NS) {
           adjustedRed: !canAffordMoney,
           cumulative: " ".repeat(cumulativeLen),
           cumulativeRed: false,
-          rep: ns.formatNumber(neuroFluxInfo.repReq).padStart(repLen),
+          rep: ns.formatNumber(currentRepReq).padStart(repLen),
           repRed: !hasEnoughRep,
           owned: (neuroFluxInfo.owned ? "Y" : " ").padStart(ownedLen),
           status: statusSymbol.padStart(statusLen),
@@ -365,7 +403,7 @@ async function createAugmentsWindow(ns: NS) {
 
     const tableFooter =
       `┗━${"━".repeat(orderLen)}━┻━${"━".repeat(nameLen)}━┻━${"━".repeat(factionLen)}━┻━${"━".repeat(priceLen)}━┻━${"━".repeat(adjustedLen)}━┻━${"━".repeat(cumulativeLen)}━┻━${"━".repeat(repLen)}━┻━${"━".repeat(ownedLen)}━┻━${"━".repeat(statusLen)}━┛\n` +
-      `\nAffordable: ${affordable.length} | Not affordable: ${unaffordable.length} | Total: ${allAugs.length}\n` +
+      `\nAffordable: ${affordableSorted.length} | Too expensive (cumulative): ${tooExpensiveCumulative.length} | No rep: ${unaffordable.length} | Total: ${allAugs.length}\n` +
       `Current money: ${ns.formatNumber(playerMoney)}`
 
     // Clear and rebuild container
@@ -431,7 +469,10 @@ async function createAugmentsWindow(ns: NS) {
   // Calculate content width based on table width
   const firstData = getAugmentData(ns, ns.getPlayer().factions)
   const orderLen = Math.max(1, firstData.affordableSorted.length.toString().length)
-  const contentWidth = Math.min((orderLen + 50 + 30 + 20 + 15 + 20 + 15 + 3 + 4 + 20) * 7.2 + 40, eval("window").innerWidth - 100)
+  const contentWidth = Math.min(
+    (orderLen + 50 + 30 + 20 + 15 + 20 + 15 + 3 + 4 + 20) * 7.2 + 40,
+    eval("window").innerWidth - 100
+  )
 
   // Create floating window
   new FloatingWindow({
@@ -516,17 +557,16 @@ function getAugmentData(ns: NS, playerFactions: string[]) {
     factionReps.set(faction, ns.singularity.getFactionRep(faction))
   }
 
-  // Separate into affordable and unaffordable
-  const affordable: AugmentInfo[] = []
+  // First, filter out owned augmentations and check rep requirements
+  const potentiallyAffordable: AugmentInfo[] = []
   const unaffordable: AugmentInfo[] = []
 
   for (const aug of augmentMap.values()) {
-    const hasEnoughMoney = playerMoney >= aug.price
     // Check if we have enough rep in ANY of the factions that offer this augment
     const hasEnoughRep = aug.factions.some((faction) => (factionReps.get(faction) ?? 0) >= aug.repReq)
 
-    if (hasEnoughMoney && hasEnoughRep && !aug.owned) {
-      affordable.push(aug)
+    if (hasEnoughRep && !aug.owned) {
+      potentiallyAffordable.push(aug)
     } else {
       unaffordable.push(aug)
     }
@@ -582,17 +622,36 @@ function getAugmentData(ns: NS, playerFactions: string[]) {
     return result
   }
 
-  // Sort affordable for optimal purchase order (expensive first, respecting prereqs)
-  const affordableSorted = topologicalSort(affordable)
+  // Sort all potentially affordable augments for optimal purchase order (expensive first, respecting prereqs)
+  const optimallySorted = topologicalSort(potentiallyAffordable)
+
+  // Now split into truly affordable (based on cumulative adjusted cost) and too expensive
+  const AUGMENT_PRICE_MULT = 1.9
+  let cumulativeCost = 0
+  const affordable: AugmentInfo[] = []
+  const tooExpensiveCumulative: AugmentInfo[] = []
+
+  for (let i = 0; i < optimallySorted.length; i++) {
+    const adjustedPrice = optimallySorted[i].price * Math.pow(AUGMENT_PRICE_MULT, i)
+    cumulativeCost += adjustedPrice
+
+    if (cumulativeCost <= playerMoney) {
+      affordable.push(optimallySorted[i])
+    } else {
+      // This and all subsequent augments are unaffordable due to cumulative cost
+      tooExpensiveCumulative.push(...optimallySorted.slice(i))
+      break
+    }
+  }
 
   // Sort unaffordable by price (most expensive first)
   unaffordable.sort((a, b) => b.price - a.price)
 
   return {
-    affordableSorted,
+    affordableSorted: affordable,
+    tooExpensiveCumulative,
     unaffordable,
     neuroFluxInfo,
-    affordable,
     playerMoney,
     factionReps,
   }
