@@ -3,7 +3,7 @@ import { connect } from "./libraries/connect.js"
 import { crawl } from "./libraries/crawl.js"
 
 export async function main(ns: NS): Promise<void> {
-  autoNuke(ns)
+  await autoNuke(ns)
 }
 
 export async function autoNuke(ns: NS): Promise<void> {
@@ -106,6 +106,7 @@ export async function autoNuke(ns: NS): Promise<void> {
       ) {
         connect(ns, serverName)
         await ns.singularity.installBackdoor()
+        // connect(ns, "home")
         ns.tprint(`Installed backdoor on ${serverName}`)
       }
     }
