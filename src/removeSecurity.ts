@@ -1,9 +1,9 @@
-/** @param {import("..").NS } ns */
 import { crawl } from "@/libraries/crawl.js"
-export async function main(ns) {
+import { NS } from "@ns"
+export async function main(ns: NS): Promise<void> {
   //ns.disableLog("ALL")
-  let node = ns.args[0] || "home"
-  await ns.scp("/hacking/weaken.js", node)
+  let node = (ns.args[0] as string) || "home"
+  ns.scp("/hacking/weaken.js", node)
   const knownServers: Set<string> = new Set<string>()
 
   crawl(ns, knownServers)
@@ -15,7 +15,7 @@ export async function main(ns) {
     paddingLevels = Math.max(String(ns.getServerRequiredHackingLevel(key)).length, paddingLevels)
   }
   for (;;) {
-    var items = []
+    var items: [string, number][] = []
     for (const key of knownServers) {
       let level = ns.getServerRequiredHackingLevel(key)
       let playerLevel = ns.getPlayer().skills.hacking
@@ -33,7 +33,7 @@ export async function main(ns) {
         !key.includes("node") &&
         ns.getServerMinSecurityLevel(key) != ns.getServerSecurityLevel(key)
       ) {
-        items.push([key, level])
+        items.push([key as string, level as number])
       }
     }
     items.sort(function (first, second) {
