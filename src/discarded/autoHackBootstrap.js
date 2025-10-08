@@ -89,14 +89,3 @@ export async function main(ns) {
   }
   ns.tprint("total hackable servers: " + items.length)
 }
-
-/** @param {import("../../NetscriptDefinitions").NS } ns */
-export function crawl(ns, knownServers, hostname, depth = 0) {
-  let servers = ns.scan(hostname)
-  for (const element of servers) {
-    if (!knownServers.includes(element)) {
-      knownServers.push(element)
-      crawl(ns, knownServers, element, depth + 1)
-    }
-  }
-}

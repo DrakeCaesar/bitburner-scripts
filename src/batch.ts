@@ -6,6 +6,7 @@ import {
   prepareServerMultiNode,
 } from "./libraries/batchCalculations.js"
 // import { initBatchVisualiser, logBatchOperation } from "./batchVisualiser.js"
+import { autoNuke } from "./autoNuke.js"
 import { calculateBatchThreads, calculateBatchTimings, executeBatches } from "./libraries/batchExecution.js"
 import { upgradeServer } from "./libraries/buyServer.js"
 import { findBestTarget } from "./libraries/findBestTarget.js"
@@ -25,7 +26,7 @@ export async function main(ns: NS) {
     purchasePrograms(ns)
 
     // Run autoNuke to gain access to new servers
-    // await autoNuke(ns)
+    await autoNuke(ns)
 
     // Try to purchase or upgrade servers
     const wasUpgraded = upgradeServer(ns)

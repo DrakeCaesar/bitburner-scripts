@@ -11,10 +11,7 @@ export async function main(ns) {
   for (const key of knownServers) {
     paddingServers = Math.max(key.length, paddingServers)
 
-    paddingLevels = Math.max(
-      String(ns.getServerRequiredHackingLevel(key)).length,
-      paddingLevels
-    )
+    paddingLevels = Math.max(String(ns.getServerRequiredHackingLevel(key)).length, paddingLevels)
   }
   for (;;) {
     var items = []
@@ -45,12 +42,8 @@ export async function main(ns) {
     // eslint-disable-next-line no-unused-vars
     for (const [target, level] of items) {
       // ns.run("autoNuke.js")
-      let security =
-        ns.getServerSecurityLevel(target) - ns.getServerMinSecurityLevel(target)
-      let weakenThreads = Math.min(
-        Math.ceil(security / 0.05),
-        Math.floor(ns.getServerMaxRam(node) / 2)
-      )
+      let security = ns.getServerSecurityLevel(target) - ns.getServerMinSecurityLevel(target)
+      let weakenThreads = Math.min(Math.ceil(security / 0.05), Math.floor(ns.getServerMaxRam(node) / 2))
       //ns.tprint(target)
       if (
         ns.hasRootAccess(target) &&
@@ -65,26 +58,10 @@ export async function main(ns) {
             String(level).padStart(5) +
             ns.getServerMinSecurityLevel(target).toFixed(2).padStart(6) +
             " + " +
-            (
-              ns.getServerSecurityLevel(target) -
-              ns.getServerMinSecurityLevel(target)
-            )
-              .toFixed(2)
-              .padStart(6)
+            (ns.getServerSecurityLevel(target) - ns.getServerMinSecurityLevel(target)).toFixed(2).padStart(6)
         )
       }
     }
     await ns.sleep(10000)
-  }
-}
-
-/** @param {import("..").NS } ns */
-export function crawl(ns, knownServers, hostname, depth = 0) {
-  let servers = ns.scan(hostname)
-  for (const element of servers) {
-    if (!knownServers.includes(element)) {
-      knownServers.push(element)
-      crawl(ns, knownServers, element, depth + 1)
-    }
   }
 }

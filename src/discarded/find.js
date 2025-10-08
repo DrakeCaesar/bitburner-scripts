@@ -32,13 +32,4 @@ export function main(ns) {
   }
 }
 
-/** @param {import("../NetscriptDefinitions").NS } ns */
-export function crawl(ns, knownServers, hostname, depth = 0, path = []) {
-  let servers = ns.scan(hostname)
-  for (const element of servers) {
-    if (!(element in knownServers)) {
-      knownServers[element] = path.concat([element])
-      crawl(ns, knownServers, element, depth + 1, path.concat([element]))
-    }
-  }
-}
+

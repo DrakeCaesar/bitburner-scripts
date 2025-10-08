@@ -1,11 +1,15 @@
 import { NS } from "@ns"
 import { connect } from "./libraries/connect.js"
+import { crawl } from "./libraries/crawl.js"
 
 export async function main(ns: NS): Promise<void> {
+  autoNuke(ns)
+}
+
+export async function autoNuke(ns: NS): Promise<void> {
   const backdoorAll = ns.args[0] === "all"
-  const knownServers: string[] = []
+  const knownServers: Set<string> = new Set<string>()
   crawl(ns, knownServers)
-  knownServers.sort()
 
   let paddingServers = 0
   let paddingLevels = 0
