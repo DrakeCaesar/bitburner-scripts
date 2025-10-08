@@ -1,11 +1,12 @@
 /** @param {import("..").NS } ns */
+import { crawl } from "@/libraries/crawl.js"
 export async function main(ns) {
   //ns.disableLog("ALL")
-  let node = ns.args[0]
+  let node = ns.args[0] || "home"
   await ns.scp("/hacking/weaken.js", node)
-  let knownServers = []
+  const knownServers: Set<string> = new Set<string>()
+
   crawl(ns, knownServers)
-  knownServers.sort()
   let paddingServers = 0
   let paddingLevels = 0
   for (const key of knownServers) {
@@ -52,7 +53,7 @@ export async function main(ns) {
         !ns.getRunningScript("/hacking/weaken.js", node, target) &&
         ns.exec("/hacking/weaken.js", node, weakenThreads, target)
       ) {
-        ns.tprint(
+        ns.print(
           target.padEnd(18) +
             "level: " +
             String(level).padStart(5) +
