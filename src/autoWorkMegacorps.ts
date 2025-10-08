@@ -82,15 +82,17 @@ export async function main(ns: NS) {
         return
       }
 
-      // Find the position with the best skill match ratio
+      // Find the position with the highest sum of required skills (proxy for rep gain)
       let bestField: JobField | null = null
       let bestPositionName = ""
-      let bestScore = -1
+      let bestSkillSum = -1
 
       for (const position of positions) {
         const posInfo = ns.singularity.getCompanyPositionInfo(target.company, position)
         const skills = posInfo.requiredSkills
         const player = ns.getPlayer()
+
+        if (skills.defense != 0) continue
 
         if (skills.hacking > player.skills.hacking) continue
         if (skills.strength > player.skills.strength) continue
@@ -100,18 +102,18 @@ export async function main(ns: NS) {
         if (skills.charisma > player.skills.charisma) continue
         if (skills.intelligence > player.skills.intelligence) continue
 
-        // Calculate score by summing (player_skill / required_skill) for non-zero requirements
-        let score = 0
-        if (skills.hacking !== 0) score += player.skills.hacking / skills.hacking
-        if (skills.strength !== 0) score += player.skills.strength / skills.strength
-        if (skills.defense !== 0) score += player.skills.defense / skills.defense
-        if (skills.dexterity !== 0) score += player.skills.dexterity / skills.dexterity
-        if (skills.agility !== 0) score += player.skills.agility / skills.agility
-        if (skills.charisma !== 0) score += player.skills.charisma / skills.charisma
-        if (skills.intelligence !== 0) score += player.skills.intelligence / skills.intelligence
+        // Calculate sum of all skill requirements as a proxy for reputation gain
+        const skillSum =
+          skills.hacking +
+          skills.strength +
+          skills.defense +
+          skills.dexterity +
+          skills.agility +
+          skills.charisma +
+          skills.intelligence
 
-        if (score > bestScore) {
-          bestScore = score
+        if (skillSum > bestSkillSum) {
+          bestSkillSum = skillSum
           bestField = posInfo.field
           bestPositionName = position
         }
@@ -135,7 +137,7 @@ export async function main(ns: NS) {
       }
 
       ns.tprint(
-        `Working: ${jobName || bestPositionName} (score: ${bestScore.toFixed(2)}) | Current: ${ns.formatNumber(currentRep)}/${ns.formatNumber(target.requiredRep)}`
+        `Working: ${jobName || bestPositionName} (skill req: ${bestSkillSum}) | Current: ${ns.formatNumber(currentRep)}/${ns.formatNumber(target.requiredRep)}`
       )
 
       // Wait before checking again
