@@ -7,7 +7,6 @@ interface MegacorpTarget {
   company: CompanyName
   requiredRep: number
   factionName: string
-  backdoorServer?: string
 }
 
 export async function main(ns: NS) {
@@ -25,7 +24,6 @@ export async function main(ns: NS) {
       company: "Fulcrum Secret Technologies" as CompanyName,
       requiredRep: 350000,
       factionName: "Fulcrum Secret Technologies",
-      backdoorServer: "fulcrumassets",
     },
   ]
 
@@ -40,17 +38,6 @@ export async function main(ns: NS) {
     ns.tprint(`Target: ${target.company} (${target.factionName})`)
     ns.tprint(`Required Reputation: ${ns.formatNumber(target.requiredRep)}`)
     ns.tprint(`${"=".repeat(60)}`)
-
-    // Check if backdoor is required and installed
-    if (target.backdoorServer) {
-      const server = ns.getServer(target.backdoorServer)
-      if (!server.backdoorInstalled) {
-        ns.tprint(`ERROR: Backdoor not installed on ${target.backdoorServer}!`)
-        ns.tprint(`Install backdoor manually and restart script.`)
-        return
-      }
-      ns.tprint(`✓ Backdoor installed on ${target.backdoorServer}`)
-    }
 
     // Work at this company until we reach the required reputation
     while (true) {
