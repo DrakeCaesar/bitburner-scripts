@@ -110,13 +110,3 @@ export async function main(ns: NS): Promise<void> {
   // ns.tprint(items)
   connect(ns, "home")
 }
-
-export function crawl(ns: NS, knownServers: string[], hostname?: string, depth = 0): void {
-  const servers: string[] = ns.scan(hostname)
-  for (const element of servers) {
-    if (!knownServers.includes(element)) {
-      knownServers.push(element)
-      crawl(ns, knownServers, element, depth + 1)
-    }
-  }
-}

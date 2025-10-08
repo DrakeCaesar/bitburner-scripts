@@ -16,9 +16,7 @@ export async function main(ns: NS) {
 
   // Add mutation observer
   const mutationObserver = new MutationObserver(() => {
-    const newParagraphs = document.querySelectorAll(
-      ".jss1.MuiBox-root.css-0 > p"
-    )
+    const newParagraphs = document.querySelectorAll(".jss1.MuiBox-root.css-0 > p")
     if (newParagraphs.length !== processedParagraphs.length) {
       passToFunction(newParagraphs as NodeListOf<HTMLParagraphElement>)
       processedParagraphs = newParagraphs as NodeListOf<HTMLParagraphElement>
