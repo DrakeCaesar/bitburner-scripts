@@ -27,7 +27,7 @@ export async function main(ns: NS) {
     }
     return sum + ns.getServerMaxRam(node)
   }, 0)
-  const minNodeRam = Math.min(...nodes.map((node: string) => ns.getServerMaxRam(node)))
+  const nodeRamLimit = Math.min(...nodes.map((node: string) => ns.getServerMaxRam(node)))
   const myCores = ns.getServer(nodes[0]).cpuCores
   const batchDelay = 50
 
@@ -35,7 +35,7 @@ export async function main(ns: NS) {
   const profitabilityData = analyzeAllServers(
     ns,
     totalMaxRam,
-    minNodeRam,
+    nodeRamLimit,
     myCores,
     batchDelay,
     nodes,

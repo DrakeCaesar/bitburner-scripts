@@ -50,7 +50,7 @@ export async function main(ns: NS) {
       await copyRequiredScripts(ns, node)
     }
 
-    const batchDelay = 50
+    const batchDelay = 20
     const ramThreshold = 1
 
     // Calculate total RAM across all nodes and find minimum node RAM
@@ -61,19 +61,16 @@ export async function main(ns: NS) {
       }
       return sum + ns.getServerMaxRam(node)
     }, 0)
-    const minNodeRam = Math.max(
-      16,
-      Math.min(
-        ...nodes.map((node) => {
-          return ns.getServerMaxRam(node)
-        })
-      )
+    const nodeRamLimit = Math.max(
+      ...nodes.map((node) => {
+        return ns.getServerMaxRam(node)
+      })
     )
-    ns.tprint(`Minimum node RAM: ${ns.formatRam(minNodeRam)}`)
+    ns.tprint(`Minimum node RAM: ${ns.formatRam(nodeRamLimit)}`)
     const myCores = ns.getServer(nodes[0]).cpuCores
 
     // Find best target automatically (constrained by smallest node RAM)
-    const target = findBestTarget(ns, totalMaxRam, minNodeRam, myCores, batchDelay, nodes, playerHackLevel)
+    const target = findBestTarget(ns, totalMaxRam, nodeRamLimit, myCores, batchDelay, nodes, playerHackLevel)
     const player = ns.getPlayer()
 
     ns.tprint(`Target: ${target.serverName}`)
@@ -139,7 +136,7 @@ export async function main(ns: NS) {
       nodes,
       totalMaxRam,
       ramThreshold,
-      minNodeRam,
+      nodeRamLimit,
     }
 
     const threads = calculateBatchThreads(ns, batchConfig)
@@ -162,7 +159,7 @@ export async function main(ns: NS) {
     }
     if (threads.actualThreshold !== target.hackThreshold) {
       ns.tprint(
-        `Adjusted hack threshold from ${(target.hackThreshold * 100).toFixed(2)}% to ${(threads.actualThreshold * 100).toFixed(2)}% to fit in ${ns.formatRam(minNodeRam)} nodes`
+        `Adjusted hack threshold from ${(target.hackThreshold * 100).toFixed(2)}% to ${(threads.actualThreshold * 100).toFixed(2)}% to fit in ${ns.formatRam(nodeRamLimit)} nodes`
       )
     }
     ns.tprint(

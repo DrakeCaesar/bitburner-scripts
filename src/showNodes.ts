@@ -132,7 +132,9 @@ async function createNodesWindow(ns: NS): Promise<void> {
     if (bestRam >= maxRam) {
       // Already maxed out
       nextAction = `All servers maxed at ${ns.formatRam(maxRam)}`
-      savingsInfo = `No upgrades available`
+      // savingsInfo = `No upgrades available`
+      // show max cost
+      savingsInfo = `Max server RAM reached (${ns.formatRam(maxRam)}) - Cost to purchase: ${ns.formatNumber(cost)}`
     } else if (money >= cost) {
       // Can afford the target
       if (existingNodes.length < 25) {

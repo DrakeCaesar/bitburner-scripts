@@ -32,7 +32,7 @@ export interface ServerProfitability {
 /**
  * Analyze all hackable servers and return detailed profitability data
  * @param totalMaxRam - Total RAM across all nodes (for calculating total batches)
- * @param minNodeRam - Minimum RAM of the smallest node (constrains single operation size)
+ * @param nodeRamLimit - constrains single operation size
  * @param nodes - Array of node names to use for prep time calculation
  * @param batchCycles - Number of batch cycles to weight against prep time (default: 3)
  * @returns Array of servers sorted by profitability (best first)
@@ -40,7 +40,7 @@ export interface ServerProfitability {
 export function analyzeAllServers(
   ns: NS,
   totalMaxRam: number,
-  minNodeRam: number,
+  nodeRamLimit: number,
   myCores: number,
   batchDelay: number,
   nodes: string[],
@@ -117,7 +117,7 @@ export function analyzeAllServers(
       const totalBatchRam = hackRam + wkn1Ram + growRam + wkn2Ram
 
       // Check if the total batch RAM fits in the smallest node
-      if (totalBatchRam > minNodeRam) {
+      if (totalBatchRam > nodeRamLimit) {
         // Skip this threshold - batch too large for smallest node
         continue
       }
@@ -170,7 +170,7 @@ export function analyzeAllServers(
 export function findBestTarget(
   ns: NS,
   totalMaxRam: number,
-  minNodeRam: number,
+  nodeRamLimit: number,
   myCores: number,
   batchDelay: number,
   nodes: string[],
@@ -181,7 +181,7 @@ export function findBestTarget(
   const profitabilityData = analyzeAllServers(
     ns,
     totalMaxRam,
-    minNodeRam,
+    nodeRamLimit,
     myCores,
     batchDelay,
     nodes,
@@ -222,10 +222,10 @@ export async function main(ns: NS) {
   }
 
   const totalMaxRam = nodes.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
-  const minNodeRam = Math.min(...nodes.map((node) => ns.getServerMaxRam(node)))
+  const nodeRamLimit = Math.min(...nodes.map((node) => ns.getServerMaxRam(node)))
   const myCores = ns.getServer(nodes[0]).cpuCores
 
-  findBestTarget(ns, totalMaxRam, minNodeRam, myCores, 20, nodes, playerHackLevel)
+  findBestTarget(ns, totalMaxRam, nodeRamLimit, myCores, 20, nodes, playerHackLevel)
 
   ns.tprint("")
   ns.tprint(`To start batching: run batch.js`)

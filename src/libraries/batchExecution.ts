@@ -24,18 +24,18 @@ export interface BatchConfig {
   nodes: string[]
   totalMaxRam: number
   ramThreshold: number
-  minNodeRam: number
+  nodeRamLimit: number
 }
 
 export function calculateBatchThreads(ns: NS, config: BatchConfig) {
-  const { server, player, hackThreshold, myCores, minNodeRam } = config
+  const { server, player, hackThreshold, myCores, nodeRamLimit } = config
   const moneyMax = server.moneyMax!
 
   const hackScriptRam = ns.getScriptRam("/hacking/hack.js")
   const weakenScriptRam = ns.getScriptRam("/hacking/weaken.js")
   const growScriptRam = ns.getScriptRam("/hacking/grow.js")
 
-  // Try progressively higher thresholds (steal less money) until operations fit in minNodeRam
+  // Try progressively higher thresholds (steal less money) until operations fit in nodeRamLimit
   let actualThreshold = hackThreshold
   const maxIterations = 1000 // Prevent infinite loops
 
@@ -60,7 +60,7 @@ export function calculateBatchThreads(ns: NS, config: BatchConfig) {
     const maxOperationRam = hackServerRam + wkn1ServerRam + growServerRam + wkn2ServerRam
     // const maxOperationRam = Math.max(hackServerRam, wkn1ServerRam, growServerRam, wkn2ServerRam)
     // Check if all operations fit in the smallest node
-    if (maxOperationRam <= minNodeRam) {
+    if (maxOperationRam <= nodeRamLimit) {
       const totalBatchRam = hackServerRam + wkn1ServerRam + growServerRam + wkn2ServerRam
       return {
         hackThreads,
@@ -80,7 +80,7 @@ export function calculateBatchThreads(ns: NS, config: BatchConfig) {
 
   // If we get here, even threshold very close to 1 doesn't fit
   throw new Error(
-    `Cannot find a hack threshold that fits in minimum node RAM (${minNodeRam} GB). Consider upgrading servers.`
+    `Cannot find a hack threshold that fits in minimum node RAM (${nodeRamLimit} GB). Consider upgrading servers.`
   )
 }
 
