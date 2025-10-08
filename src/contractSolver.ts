@@ -34,7 +34,7 @@ export async function main(ns: NS): Promise<void> {
     }
   }
   const url = URL.createObjectURL(
-    new Blob([`${ns.read("contractWorker.js")}`], {
+    new Blob([`${ns.read("libraries/contractWorker.js")}`], {
       type: "text/javascript",
     })
   )
