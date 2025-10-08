@@ -12,18 +12,18 @@ interface MegacorpTarget {
 
 export async function main(ns: NS) {
   const megacorps: MegacorpTarget[] = [
-    { company: "ECorp" as CompanyName, requiredRep: 200000, factionName: "ECorp" },
-    { company: "MegaCorp" as CompanyName, requiredRep: 200000, factionName: "MegaCorp" },
-    { company: "FourSigma" as CompanyName, requiredRep: 200000, factionName: "Four Sigma" },
-    { company: "KuaiGongInternational" as CompanyName, requiredRep: 200000, factionName: "KuaiGong International" },
-    { company: "NWO" as CompanyName, requiredRep: 200000, factionName: "NWO" },
-    { company: "BladeIndustries" as CompanyName, requiredRep: 200000, factionName: "Blade Industries" },
-    { company: "OmniTekIncorporated" as CompanyName, requiredRep: 200000, factionName: "OmniTek Incorporated" },
-    { company: "BachmanAndAssociates" as CompanyName, requiredRep: 200000, factionName: "Bachman & Associates" },
-    { company: "ClarkeIncorporated" as CompanyName, requiredRep: 200000, factionName: "Clarke Incorporated" },
+    { company: "ECorp" as CompanyName, requiredRep: 300000, factionName: "ECorp" },
+    { company: "MegaCorp" as CompanyName, requiredRep: 300000, factionName: "MegaCorp" },
+    { company: "Four Sigma" as CompanyName, requiredRep: 300000, factionName: "Four Sigma" },
+    { company: "KuaiGong International" as CompanyName, requiredRep: 300000, factionName: "KuaiGong International" },
+    { company: "NWO" as CompanyName, requiredRep: 300000, factionName: "NWO" },
+    { company: "Blade Industries" as CompanyName, requiredRep: 300000, factionName: "Blade Industries" },
+    { company: "OmniTek Incorporated" as CompanyName, requiredRep: 300000, factionName: "OmniTek Incorporated" },
+    { company: "Bachman & Associates" as CompanyName, requiredRep: 300000, factionName: "Bachman & Associates" },
+    { company: "Clarke Incorporated" as CompanyName, requiredRep: 300000, factionName: "Clarke Incorporated" },
     {
-      company: "FulcrumTechnologies" as CompanyName,
-      requiredRep: 250000,
+      company: "Fulcrum Secret Technologies" as CompanyName,
+      requiredRep: 350000,
       factionName: "Fulcrum Secret Technologies",
       backdoorServer: "fulcrumassets",
     },
@@ -91,6 +91,8 @@ export async function main(ns: NS) {
         const posInfo = ns.singularity.getCompanyPositionInfo(target.company, position)
         const skills = posInfo.requiredSkills
         const player = ns.getPlayer()
+
+        // if (skills.charisma != 0) continue
 
         if (skills.hacking > player.skills.hacking) continue
         if (skills.strength > player.skills.strength) continue
