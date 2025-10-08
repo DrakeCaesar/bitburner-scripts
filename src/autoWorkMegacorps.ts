@@ -92,7 +92,7 @@ export async function main(ns: NS) {
         const skills = posInfo.requiredSkills
         const player = ns.getPlayer()
 
-        // if (skills.charisma != 0) continue
+        if (skills.defense != 0) continue
 
         if (skills.hacking > player.skills.hacking) continue
         if (skills.strength > player.skills.strength) continue
