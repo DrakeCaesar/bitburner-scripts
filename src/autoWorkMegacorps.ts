@@ -1,7 +1,9 @@
+import type { CompanyName, JobField } from "@ns"
+
 import { NS } from "@ns"
 
 interface MegacorpTarget {
-  company: string
+  company: CompanyName
   requiredRep: number
   factionName: string
   backdoorServer?: string
@@ -9,17 +11,17 @@ interface MegacorpTarget {
 
 export async function main(ns: NS) {
   const megacorps: MegacorpTarget[] = [
-    { company: "ECorp", requiredRep: 200000, factionName: "ECorp" },
-    { company: "MegaCorp", requiredRep: 200000, factionName: "MegaCorp" },
-    { company: "Four Sigma", requiredRep: 200000, factionName: "Four Sigma" },
-    { company: "KuaiGong International", requiredRep: 200000, factionName: "KuaiGong International" },
-    { company: "NWO", requiredRep: 200000, factionName: "NWO" },
-    { company: "Blade Industries", requiredRep: 200000, factionName: "Blade Industries" },
-    { company: "OmniTek Incorporated", requiredRep: 200000, factionName: "OmniTek Incorporated" },
-    { company: "Bachman & Associates", requiredRep: 200000, factionName: "Bachman & Associates" },
-    { company: "Clarke Incorporated", requiredRep: 200000, factionName: "Clarke Incorporated" },
+    { company: "ECorp" as CompanyName, requiredRep: 200000, factionName: "ECorp" },
+    { company: "MegaCorp" as CompanyName, requiredRep: 200000, factionName: "MegaCorp" },
+    { company: "FourSigma" as CompanyName, requiredRep: 200000, factionName: "Four Sigma" },
+    { company: "KuaiGongInternational" as CompanyName, requiredRep: 200000, factionName: "KuaiGong International" },
+    { company: "NWO" as CompanyName, requiredRep: 200000, factionName: "NWO" },
+    { company: "BladeIndustries" as CompanyName, requiredRep: 200000, factionName: "Blade Industries" },
+    { company: "OmniTekIncorporated" as CompanyName, requiredRep: 200000, factionName: "OmniTek Incorporated" },
+    { company: "BachmanAndAssociates" as CompanyName, requiredRep: 200000, factionName: "Bachman & Associates" },
+    { company: "ClarkeIncorporated" as CompanyName, requiredRep: 200000, factionName: "Clarke Incorporated" },
     {
-      company: "Fulcrum Technologies",
+      company: "FulcrumTechnologies" as CompanyName,
       requiredRep: 250000,
       factionName: "Fulcrum Secret Technologies",
       backdoorServer: "fulcrumassets",
@@ -78,7 +80,7 @@ export async function main(ns: NS) {
       }
 
       // Find the position with the highest sum of required skills (proxy for rep gain)
-      let bestField = ""
+      let bestField: JobField | null = null
       let bestPositionName = ""
       let bestSkillSum = -1
 
