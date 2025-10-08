@@ -203,7 +203,7 @@ async function createAugmentsWindow(ns: NS) {
     // Pre-calculate NeuroFlux count for order column width
     let neuroFluxCount = 0
     if (neuroFluxInfo) {
-      const NEUROFLUX_REP_MULT = 1.9
+      const NEUROFLUX_MULT = 1.14
       const lastAffordableCost = affordableSorted.length > 0 ? cumulativeCosts[affordableSorted.length - 1] : 0
       let remainingMoney = playerMoney - lastAffordableCost
       const positionOffset = affordableSorted.length
@@ -214,8 +214,8 @@ async function createAugmentsWindow(ns: NS) {
       while (remainingMoney >= currentPrice && maxFactionRep >= currentRepReq) {
         neuroFluxCount++
         remainingMoney -= currentPrice
-        currentPrice *= AUGMENT_PRICE_MULT
-        currentRepReq *= NEUROFLUX_REP_MULT
+        currentPrice *= AUGMENT_PRICE_MULT * NEUROFLUX_MULT
+        currentRepReq *= NEUROFLUX_MULT
       }
     }
 
