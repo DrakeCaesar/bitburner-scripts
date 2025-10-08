@@ -6,7 +6,6 @@ import {
   prepareServerMultiNode,
 } from "./batchCalculations.js"
 // import { initBatchVisualiser, logBatchOperation } from "./batchVisualiser.js"
-import { main as autoNuke } from "./autoNuke.js"
 import { upgradeServer } from "./buyServer.js"
 import { findBestTarget } from "./findBestTarget.js"
 import { calculateBatchThreads, calculateBatchTimings, executeBatches } from "./libraries/batchExecution.js"
@@ -26,7 +25,7 @@ export async function main(ns: NS) {
     purchasePrograms(ns)
 
     // Run autoNuke to gain access to new servers
-    await autoNuke(ns)
+    // await autoNuke(ns)
 
     // Try to purchase or upgrade servers
     const wasUpgraded = upgradeServer(ns)
@@ -44,9 +43,9 @@ export async function main(ns: NS) {
 
     // Kill all scripts on all nodes and copy required scripts
     for (const node of nodes) {
-      ns.scriptKill("hack.js", node)
-      ns.scriptKill("grow.js", node)
-      ns.scriptKill("weaken.js", node)
+      ns.scriptKill("hacking/hack.js", node)
+      ns.scriptKill("hacking/grow.js", node)
+      ns.scriptKill("hacking/weaken.js", node)
       await copyRequiredScripts(ns, node)
     }
 
