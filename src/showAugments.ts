@@ -75,17 +75,17 @@ async function doPurchase(ns: NS, buyFlux: boolean) {
       const validFaction = aug.factions.find((f) => (factionReps.get(f) ?? 0) >= aug.repReq)
 
       if (!validFaction) {
-        ns.tprint(`✗ No valid faction found for: ${aug.name}`)
+        ns.tprint(`No valid faction found for: ${aug.name}`)
         continue
       }
 
       const success = ns.singularity.purchaseAugmentation(validFaction, aug.name)
       if (success) {
-        ns.tprint(`✓ Purchased: ${aug.name} from ${validFaction} for ${ns.formatNumber(aug.price)}`)
+        ns.tprint(`Purchased: ${aug.name} from ${validFaction} for ${ns.formatNumber(aug.price)}`)
         purchaseCount++
         totalSpent += aug.price
       } else {
-        ns.tprint(`✗ Failed to purchase: ${aug.name} from ${validFaction}`)
+        ns.tprint(`Failed to purchase: ${aug.name} from ${validFaction}`)
       }
     }
   } else if (affordableSorted.length > 0) {
@@ -102,7 +102,7 @@ async function doPurchase(ns: NS, buyFlux: boolean) {
     const validFaction = neuroFluxInfo.factions.find((f) => (factionReps.get(f) ?? 0) >= neuroFluxInfo.repReq)
 
     if (!validFaction) {
-      ns.tprint(`✗ No valid faction found for: ${neuroFluxInfo.name}`)
+      ns.tprint(`No valid faction found for: ${neuroFluxInfo.name}`)
     } else {
       let currentPrice = neuroFluxInfo.price
       let currentMoney = remainingMoney
@@ -110,13 +110,13 @@ async function doPurchase(ns: NS, buyFlux: boolean) {
       while (currentMoney >= currentPrice) {
         const success = ns.singularity.purchaseAugmentation(validFaction, neuroFluxInfo.name)
         if (success) {
-          ns.tprint(`✓ Purchased: ${neuroFluxInfo.name} from ${validFaction} for ${ns.formatNumber(currentPrice)}`)
+          ns.tprint(`Purchased: ${neuroFluxInfo.name} from ${validFaction} for ${ns.formatNumber(currentPrice)}`)
           purchaseCount++
           totalSpent += currentPrice
           currentMoney -= currentPrice
           currentPrice *= AUGMENT_PRICE_MULT
         } else {
-          ns.tprint(`✗ Failed to purchase: ${neuroFluxInfo.name} from ${validFaction}`)
+          ns.tprint(`Failed to purchase: ${neuroFluxInfo.name} from ${validFaction}`)
           break
         }
       }
@@ -282,7 +282,7 @@ async function createAugmentsWindow(ns: NS) {
         rep: ns.formatNumber(aug.repReq).padStart(repLen),
         repRed: false,
         owned: (aug.owned ? "Y" : " ").padStart(ownedLen),
-        status: "✓".padStart(statusLen),
+        status: "Y".padStart(statusLen),
       })
       orderNum++
     }
@@ -306,7 +306,7 @@ async function createAugmentsWindow(ns: NS) {
         rep: ns.formatNumber(aug.repReq).padStart(repLen),
         repRed: false,
         owned: (aug.owned ? "Y" : " ").padStart(ownedLen),
-        status: "✗$".padStart(statusLen),
+        status: "X$".padStart(statusLen),
       })
     }
 
@@ -320,10 +320,10 @@ async function createAugmentsWindow(ns: NS) {
       const validFactions = aug.factions.filter((f) => (factionReps.get(f) ?? 0) >= aug.repReq)
       const factionList = validFactions.length > 0 ? validFactions : aug.factions
 
-      let statusSymbol = "✗"
-      if (!hasEnoughMoney && !hasEnoughRep) statusSymbol = "✗✗"
-      else if (!hasEnoughMoney) statusSymbol = "✗$"
-      else if (!hasEnoughRep) statusSymbol = "✗R"
+      let statusSymbol = "X"
+      if (!hasEnoughMoney && !hasEnoughRep) statusSymbol = "XX"
+      else if (!hasEnoughMoney) statusSymbol = "X$"
+      else if (!hasEnoughRep) statusSymbol = "XR"
 
       rows.push({
         order: " ".repeat(orderLen),
@@ -395,10 +395,10 @@ async function createAugmentsWindow(ns: NS) {
         const canAffordMoney = remainingMoney >= basePrice
         const hasEnoughRep = maxFactionRep >= currentRepReq
 
-        let statusSymbol = "✗"
-        if (!canAffordMoney && !hasEnoughRep) statusSymbol = "✗✗"
-        else if (!canAffordMoney) statusSymbol = "✗$"
-        else if (!hasEnoughRep) statusSymbol = "✗R"
+        let statusSymbol = "X"
+        if (!canAffordMoney && !hasEnoughRep) statusSymbol = "XX"
+        else if (!canAffordMoney) statusSymbol = "X$"
+        else if (!hasEnoughRep) statusSymbol = "XR"
 
         rows.push({
           order: " ".repeat(orderLen),
@@ -499,7 +499,7 @@ async function createAugmentsWindow(ns: NS) {
 
   // Create floating window
   new FloatingWindow({
-    title: `Augmentations (✓ = affordable, ✗ = not affordable, ~ = NeuroFlux)`,
+    title: "Augmentations",
     content: containerDiv,
     width: contentWidth,
     height: 600,
