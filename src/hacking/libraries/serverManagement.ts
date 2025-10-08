@@ -1,5 +1,5 @@
+import { crawl } from "@/libraries/crawl"
 import { NS } from "@ns"
-import { crawl } from "./crawl"
 
 export function getAllNodes(ns: NS): string[] {
   const nodes: string[] = []

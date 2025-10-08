@@ -1,4 +1,4 @@
-/** @param {import("..").NS } ns */
+/** @param {import("../../NetscriptDefinitions").NS } ns */
 export async function main(ns) {
   for (let i = 0; i < 100; i++) {
     for (let j = 0; j < 10; j++) {

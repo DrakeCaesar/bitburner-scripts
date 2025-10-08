@@ -1,4 +1,4 @@
-/** @param {import("../NetscriptDefinitions").NS } ns */
+/** @param {import("../../NetscriptDefinitions.js").NS } ns */
 
 import { test } from "./testparse.js"
 

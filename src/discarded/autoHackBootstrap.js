@@ -1,4 +1,4 @@
-/** @param {import("..").NS } ns */
+/** @param {import("../../NetscriptDefinitions").NS } ns */
 export async function main(ns) {
   //ns.disableLog("ALL")
   let knownServers = []
@@ -9,10 +9,7 @@ export async function main(ns) {
   for (const key of knownServers) {
     paddingServers = Math.max(key.length, paddingServers)
 
-    paddingLevels = Math.max(
-      String(ns.getServerRequiredHackingLevel(key)).length,
-      paddingLevels
-    )
+    paddingLevels = Math.max(String(ns.getServerRequiredHackingLevel(key)).length, paddingLevels)
   }
   let hackingLevelUpperBound = Infinity
   if (ns.args.length > 0) {
@@ -93,7 +90,7 @@ export async function main(ns) {
   ns.tprint("total hackable servers: " + items.length)
 }
 
-/** @param {import("..").NS } ns */
+/** @param {import("../../NetscriptDefinitions").NS } ns */
 export function crawl(ns, knownServers, hostname, depth = 0) {
   let servers = ns.scan(hostname)
   for (const element of servers) {

@@ -1,4 +1,4 @@
-/** @param {import("..").NS} ns */
+/** @param {import("../../NetscriptDefinitions").NS} ns */
 export async function main(ns) {
   const target = ns.args[0]
   const host = ns.getHostname()
@@ -38,9 +38,7 @@ export async function main(ns) {
     const myCores = ns.getServer(host).cpuCores
     const desiredMoney = moneyMax * growThreshold
     const { server, player } = getServerAndPlayer()
-    return Math.ceil(
-      ns.formulas.hacking.growThreads(server, player, desiredMoney, myCores)
-    )
+    return Math.ceil(ns.formulas.hacking.growThreads(server, player, desiredMoney, myCores))
   }
 
   /**
@@ -50,9 +48,7 @@ export async function main(ns) {
     const currentMoney = ns.getServerMoneyAvailable(target)
     const { server, player } = getServerAndPlayer()
     const hackPct = ns.formulas.hacking.hackPercent(server, player)
-    return Math.ceil(
-      (currentMoney - moneyMax * hackThreshold) / (hackPct * currentMoney)
-    )
+    return Math.ceil((currentMoney - moneyMax * hackThreshold) / (hackPct * currentMoney))
   }
 
   /**
@@ -86,13 +82,7 @@ export async function main(ns) {
    * @param {(server: NS.Server, player: NS.Player) => number} runtimeCalcFn - Calculates the operation runtime.
    * @param {string} script - The script to run for this phase.
    */
-  async function processPhase(
-    phaseName,
-    conditionFn,
-    threadCalcFn,
-    runtimeCalcFn,
-    script
-  ) {
+  async function processPhase(phaseName, conditionFn, threadCalcFn, runtimeCalcFn, script) {
     while (conditionFn()) {
       const threads = threadCalcFn()
       const { server, player } = getServerAndPlayer()
@@ -102,12 +92,9 @@ export async function main(ns) {
   }
 
   // Condition functions for each phase.
-  const weakenCondition = () =>
-    ns.getServerSecurityLevel(target) > securityMin + secTolerance
-  const growCondition = () =>
-    ns.getServerMoneyAvailable(target) < moneyMax * growThreshold
-  const hackCondition = () =>
-    ns.getServerMoneyAvailable(target) > moneyMax * hackThreshold
+  const weakenCondition = () => ns.getServerSecurityLevel(target) > securityMin + secTolerance
+  const growCondition = () => ns.getServerMoneyAvailable(target) < moneyMax * growThreshold
+  const hackCondition = () => ns.getServerMoneyAvailable(target) > moneyMax * hackThreshold
 
   // Main loop: repeatedly run the phases in sequence.
   while (true) {

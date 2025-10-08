@@ -1,5 +1,5 @@
 import { NS, Person, Player, Server } from "@ns"
-import { crawl } from "./libraries/crawl.js"
+import { crawl } from "./crawl.js"
 /**
  * Calculate XP gained from a hacking operation (hack/grow/weaken)
  * Based on ns.formulas.hacking.hackExp()

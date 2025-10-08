@@ -1,4 +1,5 @@
 import { NS, Player, Server } from "@ns"
+
 import {
   calculateGrowThreads,
   calculateHackThreads,
@@ -11,7 +12,7 @@ import {
   updatePlayerWithKahanXp,
   wkn1ServerInstance,
   wkn2ServerInstance,
-} from "./batchCalculations.js"
+} from "@/libraries/batchCalculations.js"
 import { findNodeWithRam } from "./serverManagement.js"
 
 export interface BatchConfig {

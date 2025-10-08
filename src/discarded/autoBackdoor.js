@@ -1,4 +1,4 @@
-/** @param {import("..").NS } ns */
+/** @param {import("../../NetscriptDefinitions").NS } ns */
 export async function main(ns) {
   let knownServers = {
     home: [],
@@ -33,7 +33,7 @@ export async function main(ns) {
   await navigator.clipboard.writeText(bigConnectString)
 }
 
-/** @param {import("..").NS } ns */
+/** @param {import("../../NetscriptDefinitions").NS } ns */
 export function crawl(ns, knownServers, hostname, depth = 0, path = []) {
   let servers = ns.scan(hostname)
   for (const element of servers) {

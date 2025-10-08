@@ -4,11 +4,11 @@ import {
   copyRequiredScripts,
   killOtherInstances,
   prepareServerMultiNode,
-} from "./batchCalculations.js"
+} from "./libraries/batchCalculations.js"
 // import { initBatchVisualiser, logBatchOperation } from "./batchVisualiser.js"
-import { upgradeServer } from "./buyServer.js"
-import { findBestTarget } from "./findBestTarget.js"
 import { calculateBatchThreads, calculateBatchTimings, executeBatches } from "./libraries/batchExecution.js"
+import { upgradeServer } from "./libraries/buyServer.js"
+import { findBestTarget } from "./libraries/findBestTarget.js"
 import { purchasePrograms, purchaseTorRouter } from "./libraries/purchasePrograms.js"
 import { getNodesForBatching } from "./libraries/serverManagement.js"
 

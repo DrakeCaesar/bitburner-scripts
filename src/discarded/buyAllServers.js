@@ -1,4 +1,4 @@
-/** @param {import("..").NS } ns */
+/** @param {import("../../NetscriptDefinitions").NS } ns */
 export async function main(ns) {
   while (!ns.serverExists("node24")) {
     let future = ns.getPurchasedServerMaxRam()
@@ -14,14 +14,8 @@ export async function main(ns) {
       // eslint-disable-next-line quotes
       let target = "node" + String(i).padStart(2, "0")
 
-      if (
-        ns.serverExists(target) &&
-        ns.getServerMaxRam(target) < future &&
-        count > 0
-      ) {
-        ns.tprint(
-          target + ": to buy " + ns.getServerMaxRam(target) + " < " + future
-        )
+      if (ns.serverExists(target) && ns.getServerMaxRam(target) < future && count > 0) {
+        ns.tprint(target + ": to buy " + ns.getServerMaxRam(target) + " < " + future)
         count--
         ns.killall(target)
         ns.deleteServer(target)

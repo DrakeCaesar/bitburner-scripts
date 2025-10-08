@@ -1,4 +1,4 @@
-import { FloatingWindow } from "./libraries/floatingWindow.js"
+import { FloatingWindow } from "../libraries/floatingWindow.js"
 
 interface Operation {
   type: "H" | "W" | "G"

@@ -1,5 +1,5 @@
 import { NS } from "@ns"
-import { analyzeAllServers } from "./findBestTarget.js"
+import { analyzeAllServers } from "./libraries/findBestTarget.js"
 import { FloatingWindow } from "./libraries/floatingWindow.js"
 import { getNodesForBatching } from "./libraries/serverManagement.js"
 

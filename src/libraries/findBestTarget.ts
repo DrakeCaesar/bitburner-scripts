@@ -10,7 +10,7 @@ import {
   wkn2ServerInstance,
 } from "./batchCalculations.js"
 import { crawl } from "./crawl.js"
-import { getAllNodes } from "./libraries/serverManagement.js"
+import { getAllNodes } from "./serverManagement.js"
 
 export interface BestTargetResult {
   serverName: string

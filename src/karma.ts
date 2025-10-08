@@ -1,5 +1,5 @@
 import { NS } from "@ns"
-import { killOtherInstances } from "./batchCalculations.js"
+import { killOtherInstances } from "./libraries/batchCalculations.js"
 import { formatNumber } from "./libraries/format.js"
 
 export async function main(ns: NS): Promise<void> {

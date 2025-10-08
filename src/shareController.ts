@@ -1,8 +1,8 @@
 import { NS } from "@ns"
-import { crawl } from "./crawl.js"
+import { crawl } from "./libraries/crawl"
 
 export async function main(ns: NS): Promise<void> {
-  const scriptPath = "/shareRam.js"
+  const scriptPath = "libraries/shareRam.js"
   const useNukedServers = ns.args[0] === "nuked"
   const useAllServers = ns.args[0] === "all"
 

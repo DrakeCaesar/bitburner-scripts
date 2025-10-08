@@ -1,6 +1,6 @@
 const doc = eval("document")
 
-/** @param {import("..").NS } ns */
+/** @param {import("../../NetscriptDefinitions").NS } ns */
 export async function main(ns) {
   const crimeText = ns.args[0]
   if (!isString(crimeText)) {
@@ -12,10 +12,7 @@ export async function main(ns) {
   for (var i = 0; i < count; ++i) {
     const crime = getCrime(crimeText)
     if (crime == null) {
-      ns.toast(
-        "Abort: cannot find element containing textContent: " + crimeText + ".",
-        "error"
-      )
+      ns.toast("Abort: cannot find element containing textContent: " + crimeText + ".", "error")
       return
     }
     const handler = Object.keys(crime)[1]

@@ -1,4 +1,4 @@
-/** @param {import("..").NS} ns */
+/** @param {import("../../NetscriptDefinitions").NS} ns */
 export async function main(ns) {
   const target = ns.args[0]
   const moneyMax = ns.getServerMaxMoney(target)
@@ -76,14 +76,7 @@ export async function main(ns) {
     while (ns.getServerMoneyAvailable(target) < moneyMax * growThreshold) {
       const currentMoney = ns.getServerMoneyAvailable(target)
       const desiredMoney = moneyMax * growThreshold
-      let threads = Math.ceil(
-        ns.formulas.hacking.growThreads(
-          serverObj,
-          player,
-          desiredMoney,
-          myCores
-        )
-      )
+      let threads = Math.ceil(ns.formulas.hacking.growThreads(serverObj, player, desiredMoney, myCores))
       threads = Math.min(threads, getMaxThreads("/hacking/grow.js"))
       if (threads <= 0) {
         ns.print("Not enough RAM for grow.")
@@ -92,12 +85,7 @@ export async function main(ns) {
       }
 
       // Calculate predicted money after grow.
-      const predictedMoney = ns.formulas.hacking.growAmount(
-        serverObj,
-        player,
-        threads,
-        myCores
-      )
+      const predictedMoney = ns.formulas.hacking.growAmount(serverObj, player, threads, myCores)
       const predictedPct = Math.min((predictedMoney / moneyMax) * 100, 100)
       ns.tprint(
         `DEBUG (grow): Using ${threads} thread${threads > 1 ? "s" : ""} -> predicted money: ${predictedPct.toFixed(2)}% of max.`
@@ -113,9 +101,7 @@ export async function main(ns) {
     while (ns.getServerMoneyAvailable(target) > moneyMax * hackThreshold) {
       const currentMoney = ns.getServerMoneyAvailable(target)
       const hackPct = ns.formulas.hacking.hackPercent(serverObj, player)
-      let threads = Math.ceil(
-        (currentMoney - moneyMax * hackThreshold) / (hackPct * currentMoney)
-      )
+      let threads = Math.ceil((currentMoney - moneyMax * hackThreshold) / (hackPct * currentMoney))
       threads = Math.min(threads, getMaxThreads("/hacking/hack.js"))
       if (threads <= 0) {
         ns.print("Not enough RAM for hack.")
