@@ -1,6 +1,7 @@
 import type { CompanyName, JobField } from "@ns"
 
 import { NS } from "@ns"
+import { killOtherInstances } from "./libraries/batchCalculations"
 
 interface MegacorpTarget {
   company: CompanyName
@@ -28,7 +29,9 @@ export async function main(ns: NS) {
     },
   ]
 
-  const checkInterval = 60000 // Check every 60 seconds
+  const checkInterval = 1000
+
+  await killOtherInstances(ns)
 
   ns.tprint("Starting megacorp reputation grind...")
 
@@ -87,6 +90,15 @@ export async function main(ns: NS) {
       for (const position of positions) {
         const posInfo = ns.singularity.getCompanyPositionInfo(target.company, position)
         const skills = posInfo.requiredSkills
+        const player = ns.getPlayer()
+
+        if (skills.hacking > player.skills.hacking) continue
+        if (skills.strength > player.skills.strength) continue
+        if (skills.defense > player.skills.defense) continue
+        if (skills.dexterity > player.skills.dexterity) continue
+        if (skills.agility > player.skills.agility) continue
+        if (skills.charisma > player.skills.charisma) continue
+        if (skills.intelligence > player.skills.intelligence) continue
 
         // Calculate sum of all skill requirements as a proxy for reputation gain
         const skillSum =
@@ -116,7 +128,7 @@ export async function main(ns: NS) {
         ns.tprint(`Applied to ${target.company} in field: ${bestField}, got position: ${jobName}`)
       }
 
-      const working = ns.singularity.workForCompany(target.company, true)
+      const working = ns.singularity.workForCompany(target.company, false)
       if (!working) {
         ns.tprint(`ERROR: Failed to work at ${target.company}`)
         return
