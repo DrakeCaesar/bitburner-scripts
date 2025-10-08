@@ -271,7 +271,7 @@ async function createNodesWindow(ns: NS): Promise<void> {
 
   // Create floating window
   new FloatingWindow({
-    title: "Server Nodes (● = active, ○ = empty, Progress = RAM doublings)",
+    title: "Server Nodes",
     content: containerDiv,
     width: 600,
     height: 700,
