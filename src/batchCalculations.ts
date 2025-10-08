@@ -122,9 +122,26 @@ export function calculateWeakThreads(server: Server, player: Player, myCores: nu
   return Math.max(1, Math.ceil(addedSecurity / (0.05 * (1 + (myCores - 1) / 16))))
 }
 
-// TODO: Verify if adding 1 is a good approach here
-export function calculateGrowThreads(server: Server, player: Person, moneyMax: number, myCores: number, ns: NS) {
-  return Math.ceil(ns.formulas.hacking.growThreads(server, player, moneyMax, myCores) + 1)
+/**
+ * Calculate grow threads needed to reach target money, with configurable thread top-up.
+ * The top-up ensures we don't fall short due to rounding or precision issues.
+ * @param topUp - Multiplier or additive amount to apply. Default adds 1 thread.
+ *                Examples: 1 (add 1 thread), 1.1 (multiply by 1.1), 1.05 (multiply by 1.05)
+ */
+export function calculateGrowThreads(
+  server: Server,
+  player: Person,
+  moneyMax: number,
+  myCores: number,
+  ns: NS,
+  topUp: number = 1.1
+) {
+  const baseThreads = ns.formulas.hacking.growThreads(server, player, moneyMax, myCores)
+  if (topUp > 1 && topUp < 2) {
+    return Math.ceil(baseThreads * topUp)
+  } else {
+    return Math.ceil(baseThreads + topUp)
+  }
 }
 
 export function getDelta(opTime: number, index: number) {
@@ -497,7 +514,7 @@ export function calculatePrepTime(
     if (needsMoney && needsWeaken) {
       // Calculate ideal threads
       const simServer = { ...server, hackDifficulty: simSec, moneyAvailable: simMoney }
-      const growThreadsNeeded = Math.ceil(ns.formulas.hacking.growThreads(simServer, player, moneyMax, myCores))
+      const growThreadsNeeded = calculateGrowThreads(simServer, player, moneyMax, myCores, ns)
       const growSecurityIncrease = ns.growthAnalyzeSecurity(growThreadsNeeded, undefined, myCores)
       const totalSecToReduce = currentExcessSec + growSecurityIncrease
       const weakenThreadsNeeded = calcWeakenThreads(totalSecToReduce)
@@ -552,7 +569,7 @@ export function calculatePrepTime(
     } else if (needsMoney) {
       // Only need grow (security already at min)
       const simServer = { ...server, hackDifficulty: simSec, moneyAvailable: simMoney }
-      const growThreadsNeeded = Math.ceil(ns.formulas.hacking.growThreads(simServer, player, moneyMax, myCores))
+      const growThreadsNeeded = calculateGrowThreads(simServer, player, moneyMax, myCores, ns)
       const growSecurityIncrease = ns.growthAnalyzeSecurity(growThreadsNeeded, undefined, myCores)
 
       // Need to offset grow security increase
@@ -771,7 +788,7 @@ export async function prepareServerMultiNode(
     // Strategy 1: Try to do both weaken and grow in one go (ideal case)
     if (needsMoney && needsWeaken) {
       // Calculate ideal threads
-      const growThreadsNeeded = Math.ceil(ns.formulas.hacking.growThreads(serverActual, player, moneyMax, myCores))
+      const growThreadsNeeded = calculateGrowThreads(serverActual, player, moneyMax, myCores, ns)
       const growSecurityIncrease = ns.growthAnalyzeSecurity(growThreadsNeeded, undefined, myCores)
       const totalSecToReduce = currentExcessSec + growSecurityIncrease
       const weakenThreadsNeeded = calcWeakenThreads(totalSecToReduce)
@@ -825,7 +842,7 @@ export async function prepareServerMultiNode(
       weakenThreads = Math.min(weakenThreadsNeeded, maxWeakenThreads)
     } else if (needsMoney) {
       // Only need grow (security already at min)
-      const growThreadsNeeded = Math.ceil(ns.formulas.hacking.growThreads(serverActual, player, moneyMax, myCores))
+      const growThreadsNeeded = calculateGrowThreads(serverActual, player, moneyMax, myCores, ns)
       const growSecurityIncrease = ns.growthAnalyzeSecurity(growThreadsNeeded, undefined, myCores)
 
       // Need to offset grow security increase
@@ -1060,7 +1077,7 @@ export async function prepareServer(ns: NS, host: string, target: string) {
 
     // Calculate threads needed for grow
     if (currentMoney < moneyMax * moneyTolerance) {
-      const growThreadsNeeded = Math.ceil(ns.formulas.hacking.growThreads(serverActual, player, moneyMax, myCores))
+      const growThreadsNeeded = calculateGrowThreads(serverActual, player, moneyMax, myCores, ns)
       const maxGrowThreads = Math.floor(currentAvailableRam / growScriptRam)
       growThreads = Math.min(growThreadsNeeded, maxGrowThreads)
     }
