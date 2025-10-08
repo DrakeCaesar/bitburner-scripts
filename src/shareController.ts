@@ -4,6 +4,7 @@ import { crawl } from "./crawl.js"
 export async function main(ns: NS): Promise<void> {
   const scriptPath = "/shareRam.js"
   const useNukedServers = ns.args[0] === "nuked"
+  const useAllServers = ns.args[0] === "all"
 
   // Get all purchased servers (nodes)
   function getAllNodes(): string[] {
@@ -47,6 +48,11 @@ export async function main(ns: NS): Promise<void> {
       const nukedServers = getNukedServers()
       allServers = nukedServers
       // ns.tprint(`Running on ${nukedServers.length} nuked servers only`)
+    } else if (useAllServers) {
+      const nodes = getAllNodes()
+      const nukedServers = getNukedServers()
+      allServers = ["home", ...nodes, ...nukedServers]
+      // ns.tprint(`Running on all servers: ${allServers.length} total`)
     } else {
       const nodes = getAllNodes()
       allServers = ["home", ...nodes]
