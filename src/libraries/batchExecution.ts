@@ -12,7 +12,7 @@ import {
   wkn1ServerInstance,
   wkn2ServerInstance,
 } from "./batchCalculations.js"
-import { findNodeWithRam } from "./serverManagement.js"
+import { distributeOperationsAcrossNodes } from "./serverManagement.js"
 
 export interface BatchConfig {
   target: string
@@ -194,65 +194,74 @@ export async function executeBatches(
     const wkn1TotalRam = wkn1Threads * weakenScriptRam
     const growTotalRam = growThreads * growScriptRam
     const wkn2TotalRam = wkn2Threads * weakenScriptRam
-    const totalRamCheck = hackTotalRam + wkn1TotalRam + growTotalRam + wkn2TotalRam
 
-    const hackNode = findNodeWithRam(ns, nodes, totalRamCheck)
-    const wkn1Node = hackNode
-    const growNode = hackNode
-    const wkn2Node = hackNode
+    // Distribute operations across available nodes using knapsack approach
+    const operations = [
+      {
+        ram: hackTotalRam,
+        scriptPath: "/hacking/hack.js",
+        args: [
+          target,
+          hackAdditionalMsec + batchOffset,
+          0,
+          playerAfterHack.skills.hacking,
+          playerAfterHack.exp.hacking,
+        ],
+        threads: hackThreads,
+      },
+      {
+        ram: wkn1TotalRam,
+        scriptPath: "/hacking/weaken.js",
+        args: [
+          target,
+          wkn1AdditionalMsec + batchOffset,
+          0,
+          playerAfterWkn1.skills.hacking,
+          playerAfterWkn1.exp.hacking,
+        ],
+        threads: wkn1Threads,
+      },
+      {
+        ram: growTotalRam,
+        scriptPath: "/hacking/grow.js",
+        args: [
+          target,
+          growAdditionalMsec + batchOffset,
+          0,
+          playerAfterGrow.skills.hacking,
+          playerAfterGrow.exp.hacking,
+        ],
+        threads: growThreads,
+      },
+      {
+        ram: wkn2TotalRam,
+        scriptPath: "/hacking/weaken.js",
+        args: [
+          target,
+          wkn2AdditionalMsec + batchOffset,
+          0,
+          playerAfterWkn2.skills.hacking,
+          playerAfterWkn2.exp.hacking,
+        ],
+        threads: wkn2Threads,
+      },
+    ]
 
-    //TODO: Fix this to distribute across multiple nodes
-    // const hackNode = findNodeWithRam(ns, nodes, hackThreads * hackScriptRam)
-    // const wkn1Node = findNodeWithRam(ns, nodes, wkn1Threads * weakenScriptRam)
-    // const growNode = findNodeWithRam(ns, nodes, growThreads * growScriptRam)
-    // const wkn2Node = findNodeWithRam(ns, nodes, wkn2Threads * weakenScriptRam)
+    const assignments = distributeOperationsAcrossNodes(ns, nodes, operations)
 
-    if (!hackNode || !wkn1Node || !growNode || !wkn2Node) {
+    if (!assignments) {
       // ns.tprint(`Warning: Not enough RAM to launch batch ${batchCounter}`)
       break
     }
 
-    // Launch operations
-    ns.exec(
-      "/hacking/hack.js",
-      hackNode,
-      hackThreads,
-      target,
-      hackAdditionalMsec + batchOffset,
-      0,
-      playerAfterHack.skills.hacking,
-      playerAfterHack.exp.hacking
-    )
-    ns.exec(
-      "/hacking/weaken.js",
-      wkn1Node,
-      wkn1Threads,
-      target,
-      wkn1AdditionalMsec + batchOffset,
-      0,
-      playerAfterWkn1.skills.hacking,
-      playerAfterWkn1.exp.hacking
-    )
-    ns.exec(
-      "/hacking/grow.js",
-      growNode,
-      growThreads,
-      target,
-      growAdditionalMsec + batchOffset,
-      0,
-      playerAfterGrow.skills.hacking,
-      playerAfterGrow.exp.hacking
-    )
-    lastPid = ns.exec(
-      "/hacking/weaken.js",
-      wkn2Node,
-      wkn2Threads,
-      target,
-      wkn2AdditionalMsec + batchOffset,
-      0,
-      playerAfterWkn2.skills.hacking,
-      playerAfterWkn2.exp.hacking
-    )
+    // Launch operations on assigned nodes
+    for (let i = 0; i < assignments.length; i++) {
+      const { node, operation } = assignments[i]
+      const pid = ns.exec(operation.scriptPath, node, operations[i].threads, ...operation.args)
+      if (i === assignments.length - 1) {
+        lastPid = pid
+      }
+    }
   }
 
   // Wait for the last script to finish
