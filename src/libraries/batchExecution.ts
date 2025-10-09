@@ -12,7 +12,7 @@ import {
   wkn1ServerInstance,
   wkn2ServerInstance,
 } from "./batchCalculations.js"
-import { distributeOperationsAcrossNodes } from "./serverManagement.js"
+import { distributeBatchesAcrossNodes } from "./serverManagement.js"
 
 export interface BatchConfig {
   target: string
@@ -137,12 +137,14 @@ export async function executeBatches(
     ns.tprint(`WARNING: Batch delay adjusted from ${batchDelay}ms to ${effectiveBatchDelay}ms due to low weaken time`)
   }
 
-  let lastPid = 0
   let currentPlayer = { ...player }
   const moneyMax = server.moneyMax!
 
   // Use Kahan summation to accumulate XP with minimal floating point error
   let xpKahan = createKahanSum(player.exp.hacking)
+
+  // Pre-plan all operations for all batches
+  const allOperations: Array<{ ram: number; scriptPath: string; args: any[]; threads: number; batchIndex: number }> = []
 
   for (let batchCounter = 0; batchCounter < batches; batchCounter++) {
     const batchOffset = batchCounter * effectiveBatchDelay * 4
@@ -195,8 +197,8 @@ export async function executeBatches(
     const growTotalRam = growThreads * growScriptRam
     const wkn2TotalRam = wkn2Threads * weakenScriptRam
 
-    // Distribute operations across available nodes using knapsack approach
-    const operations = [
+    // Add all 4 operations for this batch to the operations array
+    allOperations.push(
       {
         ram: hackTotalRam,
         scriptPath: "/hacking/hack.js",
@@ -208,6 +210,7 @@ export async function executeBatches(
           playerAfterHack.exp.hacking,
         ],
         threads: hackThreads,
+        batchIndex: batchCounter,
       },
       {
         ram: wkn1TotalRam,
@@ -220,6 +223,7 @@ export async function executeBatches(
           playerAfterWkn1.exp.hacking,
         ],
         threads: wkn1Threads,
+        batchIndex: batchCounter,
       },
       {
         ram: growTotalRam,
@@ -232,6 +236,7 @@ export async function executeBatches(
           playerAfterGrow.exp.hacking,
         ],
         threads: growThreads,
+        batchIndex: batchCounter,
       },
       {
         ram: wkn2TotalRam,
@@ -244,30 +249,37 @@ export async function executeBatches(
           playerAfterWkn2.exp.hacking,
         ],
         threads: wkn2Threads,
-      },
-    ]
-
-    const assignments = distributeOperationsAcrossNodes(ns, nodes, operations)
-
-    if (!assignments) {
-      // ns.tprint(`Warning: Not enough RAM to launch batch ${batchCounter}`)
-      break
-    }
-
-    // Launch operations on assigned nodes
-    for (let i = 0; i < assignments.length; i++) {
-      const { node, operation } = assignments[i]
-      const pid = ns.exec(operation.scriptPath, node, operations[i].threads, ...operation.args)
-      if (i === assignments.length - 1) {
-        lastPid = pid
+        batchIndex: batchCounter,
       }
+    )
+  }
+
+  // Now distribute all operations across nodes using knapsack approach
+  // This will fit as many COMPLETE batches as possible
+  const { assignments, completeBatches } = distributeBatchesAcrossNodes(ns, nodes, allOperations)
+
+  if (completeBatches < batches) {
+    ns.tprint(
+      `INFO: Could only fit ${completeBatches} complete batches out of ${batches} requested (${assignments.length} operations)`
+    )
+  }
+
+  // Execute all assigned operations
+  let lastPid = 0
+  for (let i = 0; i < assignments.length; i++) {
+    const { node, operation } = assignments[i]
+    const pid = ns.exec(operation.scriptPath, node, operation.threads, ...operation.args)
+    if (i === assignments.length - 1) {
+      lastPid = pid
     }
   }
 
   // Wait for the last script to finish
-  while (ns.isRunning(lastPid)) {
-    await ns.sleep(100)
+  if (lastPid > 0) {
+    while (ns.isRunning(lastPid)) {
+      await ns.sleep(100)
+    }
   }
 
-  return batches
+  return completeBatches
 }
