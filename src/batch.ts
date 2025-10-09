@@ -61,11 +61,13 @@ export async function main(ns: NS) {
       }
       return sum + ns.getServerMaxRam(node)
     }, 0)
-    const nodeRamLimit = Math.max(
-      ...nodes.map((node) => {
-        return ns.getServerMaxRam(node)
-      })
-    )
+    
+    // Use median of available servers
+    const nodeRamValues = nodes.map((node) => ns.getServerMaxRam(node)).sort((a, b) => a - b)
+    const middle = Math.floor(nodeRamValues.length / 2)
+    const nodeRamLimit =
+      nodeRamValues.length % 2 === 0 ? (nodeRamValues[middle - 1] + nodeRamValues[middle]) / 2 : nodeRamValues[middle]
+    
     ns.tprint(`Minimum node RAM: ${ns.formatRam(nodeRamLimit)}`)
     const myCores = ns.getServer(nodes[0]).cpuCores
 
