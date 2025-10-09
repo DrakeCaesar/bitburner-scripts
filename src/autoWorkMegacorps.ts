@@ -11,18 +11,18 @@ interface MegacorpTarget {
 
 export async function main(ns: NS) {
   const megacorps: MegacorpTarget[] = [
-    { company: "ECorp" as CompanyName, requiredRep: 300000, factionName: "ECorp" },
-    { company: "MegaCorp" as CompanyName, requiredRep: 300000, factionName: "MegaCorp" },
-    { company: "Four Sigma" as CompanyName, requiredRep: 300000, factionName: "Four Sigma" },
-    { company: "KuaiGong International" as CompanyName, requiredRep: 300000, factionName: "KuaiGong International" },
-    { company: "NWO" as CompanyName, requiredRep: 300000, factionName: "NWO" },
+    // { company: "ECorp" as CompanyName, requiredRep: 300000, factionName: "ECorp" },
+    // { company: "MegaCorp" as CompanyName, requiredRep: 300000, factionName: "MegaCorp" },
+    // { company: "Four Sigma" as CompanyName, requiredRep: 300000, factionName: "Four Sigma" },
+    // { company: "KuaiGong International" as CompanyName, requiredRep: 300000, factionName: "KuaiGong International" },
+    // { company: "NWO" as CompanyName, requiredRep: 300000, factionName: "NWO" },
     { company: "Blade Industries" as CompanyName, requiredRep: 300000, factionName: "Blade Industries" },
     { company: "OmniTek Incorporated" as CompanyName, requiredRep: 300000, factionName: "OmniTek Incorporated" },
     { company: "Bachman & Associates" as CompanyName, requiredRep: 300000, factionName: "Bachman & Associates" },
     { company: "Clarke Incorporated" as CompanyName, requiredRep: 300000, factionName: "Clarke Incorporated" },
     {
-      company: "Fulcrum Secret Technologies" as CompanyName,
-      requiredRep: 350000,
+      company: "Fulcrum Technologies" as CompanyName,
+      requiredRep: 300000,
       factionName: "Fulcrum Secret Technologies",
     },
   ]
@@ -123,7 +123,7 @@ export async function main(ns: NS) {
         return
       }
 
-      ns.tprint(
+      ns.print(
         `Working: ${jobName || bestPositionName} (skill req: ${bestSkillSum}) | Current: ${ns.formatNumber(currentRep)}/${ns.formatNumber(target.requiredRep)}`
       )
 
