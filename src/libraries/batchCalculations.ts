@@ -57,7 +57,7 @@ export function updatePlayerWithXp(player: Player, xpGained: number, ns: NS): Pl
   // Recalculate hacking skill level from total XP
   updatedPlayer.skills.hacking = ns.formulas.skills.calculateSkill(
     updatedPlayer.exp.hacking,
-    updatedPlayer.mults.hacking
+    updatedPlayer.mults.hacking * ns.getBitNodeMultipliers().HackingLevelMultiplier
   )
 
   return updatedPlayer
@@ -78,7 +78,7 @@ export function updatePlayerWithKahanXp(player: Player, xpKahan: KahanSum, ns: N
   // Recalculate hacking skill level from total XP
   updatedPlayer.skills.hacking = ns.formulas.skills.calculateSkill(
     updatedPlayer.exp.hacking,
-    updatedPlayer.mults.hacking
+    updatedPlayer.mults.hacking * ns.getBitNodeMultipliers().HackingLevelMultiplier
   )
 
   return updatedPlayer
@@ -655,6 +655,7 @@ export function calculatePrepTime(
       // Calculate and track XP gain from grow
       const growXp = calculateOperationXp(simServer, player, actualGrowThreads, ns)
       xpKahan = kahanAdd(xpKahan, growXp)
+      player = updatePlayerWithXp(player, growXp, ns)
     }
 
     if (actualWeakenThreads > 0) {
@@ -665,14 +666,15 @@ export function calculatePrepTime(
       const simServer = { ...server, hackDifficulty: simSec, moneyAvailable: simMoney }
       const weakenXp = calculateOperationXp(simServer, player, actualWeakenThreads, ns)
       xpKahan = kahanAdd(xpKahan, weakenXp)
+      player = updatePlayerWithXp(player, weakenXp, ns)
     }
 
     // Update player with accumulated XP and recalculate level
-    const previousLevel = player.skills.hacking
-    player = updatePlayerWithKahanXp(player, xpKahan, ns)
-    if (player.skills.hacking > previousLevel) {
-      log(`  Player leveled up! ${previousLevel} -> ${player.skills.hacking}`)
-    }
+    // const previousLevel = player.skills.hacking
+    // player = updatePlayerWithKahanXp(player, xpKahan, ns)
+    // if (player.skills.hacking > previousLevel) {
+    //   log(`  Player leveled up! ${previousLevel} -> ${player.skills.hacking}`)
+    // }
 
     // Add iteration time to total (calculated at start of iteration)
     totalTime += iterationTime
