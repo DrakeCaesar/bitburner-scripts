@@ -61,13 +61,14 @@ export async function main(ns: NS) {
       }
       return sum + ns.getServerMaxRam(node)
     }, 0)
-    
+
     // Use median of available servers
     const nodeRamValues = nodes.map((node) => ns.getServerMaxRam(node)).sort((a, b) => a - b)
     const middle = Math.floor(nodeRamValues.length / 2)
-    const nodeRamLimit =
+    let nodeRamLimit =
       nodeRamValues.length % 2 === 0 ? (nodeRamValues[middle - 1] + nodeRamValues[middle]) / 2 : nodeRamValues[middle]
-    
+    nodeRamLimit *= 1.0 // DEBUG: Adjust to test different scenarios
+
     ns.tprint(`Minimum node RAM: ${ns.formatRam(nodeRamLimit)}`)
     const myCores = ns.getServer(nodes[0]).cpuCores
 
@@ -192,7 +193,12 @@ export async function main(ns: NS) {
 
     // Execute batches with timing measurement
     const batchStartTime = Date.now()
-    await executeBatches(ns, batchConfig, threads, timings, batches)
+    const completedBatches = await executeBatches(ns, batchConfig, threads, timings, batches)
+    if (completedBatches == 0) {
+      ns.tprint("ERROR: No batches were executed. Exiting.")
+      return
+    }
+
     const batchEndTime = Date.now()
     const actualBatchCycleTime = batchEndTime - batchStartTime
 
