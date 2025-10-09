@@ -133,8 +133,8 @@ export function findNodeWithRam(ns: NS, nodes: string[], requiredRam: number): s
 export function distributeOperationsAcrossNodes(
   ns: NS,
   nodes: string[],
-  operations: Array<{ ram: number; scriptPath: string; args: any[] }>
-): Array<{ node: string; operation: { ram: number; scriptPath: string; args: any[] } }> | null {
+  operations: Array<{ ram: number; scriptPath: string; args: any[]; threads: number }>
+): Array<{ node: string; operation: { ram: number; scriptPath: string; args: any[]; threads: number } }> | null {
   // Get available RAM for each node
   const nodeCapacity = nodes.map((node) => ({
     name: node,
@@ -144,7 +144,10 @@ export function distributeOperationsAcrossNodes(
   // Sort nodes by available RAM (descending)
   nodeCapacity.sort((a, b) => b.available - a.available)
 
-  const assignments: Array<{ node: string; operation: { ram: number; scriptPath: string; args: any[] } }> = []
+  const assignments: Array<{
+    node: string
+    operation: { ram: number; scriptPath: string; args: any[]; threads: number }
+  }> = []
 
   // Try to assign each operation to a node with sufficient RAM
   for (const operation of operations) {
