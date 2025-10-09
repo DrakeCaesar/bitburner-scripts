@@ -10,7 +10,7 @@ import {
   wkn2ServerInstance,
 } from "./batchCalculations.js"
 import { crawl } from "./crawl.js"
-import { getAllNodes } from "./serverManagement.js"
+import { distributeBatchesAcrossNodes, getAllNodes } from "./serverManagement.js"
 
 export interface BestTargetResult {
   serverName: string
@@ -122,7 +122,29 @@ export function analyzeAllServers(
         continue
       }
 
-      const batches = Math.floor(totalMaxRam / totalBatchRam)
+      // Use knapsack algorithm to determine realistic batch count
+      // This accounts for RAM fragmentation and distribution inefficiencies
+      const estimatedBatches = Math.floor(totalMaxRam / totalBatchRam)
+      const testOperations: Array<{
+        ram: number
+        scriptPath: string
+        args: any[]
+        threads: number
+        batchIndex: number
+      }> = []
+
+      // Create mock operations for estimated batches
+      for (let b = 0; b < estimatedBatches; b++) {
+        testOperations.push(
+          { ram: hackRam, scriptPath: "/hacking/hack.js", args: [], threads: hackThreads, batchIndex: b },
+          { ram: wkn1Ram, scriptPath: "/hacking/weaken.js", args: [], threads: wkn1Threads, batchIndex: b },
+          { ram: growRam, scriptPath: "/hacking/grow.js", args: [], threads: growThreads, batchIndex: b },
+          { ram: wkn2Ram, scriptPath: "/hacking/weaken.js", args: [], threads: wkn2Threads, batchIndex: b }
+        )
+      }
+
+      // Simulate knapsack distribution to get realistic batch count
+      const { completeBatches: batches } = distributeBatchesAcrossNodes(ns, nodes, testOperations)
 
       // Calculate total money per cycle
       const moneyPerBatch = moneyMax * (1 - testThreshold)
