@@ -127,44 +127,61 @@ export function findNodeWithRam(ns: NS, nodes: string[], requiredRam: number): s
 }
 
 /**
- * Distributes operations across nodes using a knapsack-like approach.
- * Tries to fit as many complete operation sets as possible across all available nodes.
+ * Distributes batches across nodes using a greedy knapsack approach.
+ * Fast O(n*m) algorithm that fits as many COMPLETE batches (sets of 4 operations) as possible.
+ * If we can only fit partial batches, we exclude the incomplete set.
+ *
+ * This is a first-fit descending heuristic - fast but not guaranteed optimal.
  */
-export function distributeOperationsAcrossNodes(
+export function distributeBatchesAcrossNodes(
   ns: NS,
   nodes: string[],
-  operations: Array<{ ram: number; scriptPath: string; args: any[]; threads: number }>
-): Array<{ node: string; operation: { ram: number; scriptPath: string; args: any[]; threads: number } }> | null {
+  allOperations: Array<{ ram: number; scriptPath: string; args: any[]; threads: number; batchIndex: number }>
+): {
+  assignments: Array<{ node: string; operation: { ram: number; scriptPath: string; args: any[]; threads: number } }>
+  completeBatches: number
+} {
+  const operationsPerBatch = 4
+
   // Get available RAM for each node
   const nodeCapacity = nodes.map((node) => ({
     name: node,
     available: ns.getServerMaxRam(node) - ns.getServerUsedRam(node),
   }))
 
-  // Sort nodes by available RAM (descending)
+  // Sort nodes by available RAM (descending) for greedy allocation
   nodeCapacity.sort((a, b) => b.available - a.available)
 
-  const assignments: Array<{
-    node: string
-    operation: { ram: number; scriptPath: string; args: any[]; threads: number }
-  }> = []
+  const assignments: Array<{ node: string; operation: { ram: number; scriptPath: string; args: any[]; threads: number } }> = []
+  let operationsFitted = 0
 
-  // Try to assign each operation to a node with sufficient RAM
-  for (const operation of operations) {
+  // Try to fit operations one by one
+  for (const operation of allOperations) {
     let assigned = false
     for (const node of nodeCapacity) {
       if (node.available >= operation.ram) {
         assignments.push({ node: node.name, operation })
         node.available -= operation.ram
         assigned = true
+        operationsFitted++
         break
       }
     }
     if (!assigned) {
-      // Cannot fit all operations
-      return null
+      // Cannot fit this operation, stop here
+      break
     }
   }
 
-  return assignments
+  // Calculate how many complete batches we fitted
+  const completeBatches = Math.floor(operationsFitted / operationsPerBatch)
+  const completeOperations = completeBatches * operationsPerBatch
+
+  // Trim assignments to only include complete batches
+  const finalAssignments = assignments.slice(0, completeOperations)
+
+  return {
+    assignments: finalAssignments,
+    completeBatches,
+  }
 }
