@@ -49,7 +49,7 @@ export function getNodesForBatching(ns: NS): string[] {
 
   // If we have purchased servers and they have more total RAM than nuked servers, use only purchased servers
   if (purchasedServers.length > 0 && purchasedTotalRam >= nukedTotalRam) {
-    nodes = [...purchasedServers]
+    nodes = [...purchasedServers, ...nukedServers]
     // add home if it has over 100 GB free RAM
     if (homeRemainingRam >= 128) {
       nodes.push("home")
@@ -60,7 +60,7 @@ export function getNodesForBatching(ns: NS): string[] {
     )
   } else if (nukedServers.length > 0 && nukedTotalRam > homeRemainingRam) {
     // Use nuked servers if they have more RAM or no purchased servers exist
-    nodes = [...nukedServers]
+    nodes = [...purchasedServers, ...nukedServers]
     ns.tprint(
       `Using ${nukedServers.length} nuked server(s) (${ns.formatRam(nukedTotalRam)} total)` +
         (purchasedServers.length > 0
@@ -124,4 +124,44 @@ export function findNodeWithRam(ns: NS, nodes: string[], requiredRam: number): s
     }
   }
   return null
+}
+
+/**
+ * Distributes operations across nodes using a knapsack-like approach.
+ * Tries to fit as many complete operation sets as possible across all available nodes.
+ */
+export function distributeOperationsAcrossNodes(
+  ns: NS,
+  nodes: string[],
+  operations: Array<{ ram: number; scriptPath: string; args: any[] }>
+): Array<{ node: string; operation: { ram: number; scriptPath: string; args: any[] } }> | null {
+  // Get available RAM for each node
+  const nodeCapacity = nodes.map((node) => ({
+    name: node,
+    available: ns.getServerMaxRam(node) - ns.getServerUsedRam(node),
+  }))
+
+  // Sort nodes by available RAM (descending)
+  nodeCapacity.sort((a, b) => b.available - a.available)
+
+  const assignments: Array<{ node: string; operation: { ram: number; scriptPath: string; args: any[] } }> = []
+
+  // Try to assign each operation to a node with sufficient RAM
+  for (const operation of operations) {
+    let assigned = false
+    for (const node of nodeCapacity) {
+      if (node.available >= operation.ram) {
+        assignments.push({ node: node.name, operation })
+        node.available -= operation.ram
+        assigned = true
+        break
+      }
+    }
+    if (!assigned) {
+      // Cannot fit all operations
+      return null
+    }
+  }
+
+  return assignments
 }
