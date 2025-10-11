@@ -4,7 +4,7 @@
 
 import { NS } from "@ns"
 import { AugmentInfo } from "../augmentations"
-import { FloatingWindow } from "../floatingWindow"
+import { createStandardContainer, FloatingWindow } from "../floatingWindow"
 import { formatTableRow, getTableBorders } from "../tableBuilder"
 
 interface AugmentsWindow {
@@ -12,14 +12,13 @@ interface AugmentsWindow {
   container: HTMLElement
 }
 
-export function createAugmentsWindow(ns: NS, primaryColor: string): AugmentsWindow {
-  const containerDiv = document.createElement("div")
-  containerDiv.style.fontFamily = "inherit"
-  containerDiv.style.fontSize = "12px"
-  containerDiv.style.whiteSpace = "pre"
-  containerDiv.style.lineHeight = "1.2"
-  containerDiv.style.color = primaryColor
-  containerDiv.style.overflow = "auto"
+export function createAugmentsWindow(
+  ns: NS,
+  primaryColor: string,
+  position?: { x: number; y: number },
+  isCollapsed?: boolean
+): AugmentsWindow {
+  const containerDiv = createStandardContainer(primaryColor)
 
   const window = new FloatingWindow({
     title: "Augmentations",
@@ -27,8 +26,9 @@ export function createAugmentsWindow(ns: NS, primaryColor: string): AugmentsWind
     width: 1000,
     height: 600,
     id: "augments-window",
-    x: 1000,
-    y: 700,
+    x: position?.x ?? 1000,
+    y: position?.y ?? 700,
+    isCollapsed: isCollapsed ?? false,
   })
 
   return { window, container: containerDiv }

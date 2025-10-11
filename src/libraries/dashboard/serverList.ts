@@ -1,6 +1,6 @@
 import { NS } from "@ns"
 import { crawl } from "../crawl"
-import { FloatingWindow } from "../floatingWindow"
+import { createStandardContainer, FloatingWindow } from "../floatingWindow"
 import { formatTableRow, getTableBorders } from "../tableBuilder"
 
 interface ServerListWindow {
@@ -8,14 +8,13 @@ interface ServerListWindow {
   container: HTMLElement
 }
 
-export function createServerListWindow(ns: NS, primaryColor: string): ServerListWindow {
-  const containerDiv = document.createElement("div")
-  containerDiv.style.fontFamily = "inherit"
-  containerDiv.style.fontSize = "12px"
-  containerDiv.style.whiteSpace = "pre"
-  containerDiv.style.lineHeight = "1.2"
-  containerDiv.style.color = primaryColor
-  containerDiv.style.overflow = "auto"
+export function createServerListWindow(
+  ns: NS,
+  primaryColor: string,
+  position?: { x: number; y: number },
+  isCollapsed?: boolean
+): ServerListWindow {
+  const containerDiv = createStandardContainer(primaryColor)
 
   const window = new FloatingWindow({
     title: "Server List",
@@ -23,8 +22,9 @@ export function createServerListWindow(ns: NS, primaryColor: string): ServerList
     width: 800,
     height: 600,
     id: "server-list-window",
-    x: 50,
-    y: 50,
+    x: position?.x ?? 50,
+    y: position?.y ?? 50,
+    isCollapsed: isCollapsed ?? false,
   })
 
   return { window, container: containerDiv }

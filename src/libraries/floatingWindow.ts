@@ -101,6 +101,7 @@ export class FloatingWindow {
   private width: number
   private height: number
   private isVisible: boolean
+  private hasCustomPosition: boolean
   private options: Required<Omit<FloatingWindowOptions, "attachTo" | "id">> & {
     attachTo?: HTMLElement
     id?: string
@@ -116,8 +117,9 @@ export class FloatingWindow {
 
     this.title = options.title || "Floating Window"
     this.content = options.content || "Content"
-    this.x = options.x || 100
-    this.y = options.y || 100
+    this.hasCustomPosition = options.x !== undefined && options.y !== undefined
+    this.x = options.x ?? 100
+    this.y = options.y ?? 100
     this.width = options.width || 300
     this.height = options.height || 200
     this.isVisible = options.isVisible !== false
@@ -314,18 +316,24 @@ export class FloatingWindow {
       this.element!.style.maxWidth = "none"
     }
 
-    // Get the transform values of the overview element
-    const style = window.getComputedStyle(overviewElement)
-    const matrix = new DOMMatrix(style.transform)
-    const overviewX = matrix.m41 || 0
-    const overviewY = matrix.m42 || 0
+    let windowX = this.x
+    let windowY = this.y
 
-    // Get overview element width for proper positioning
-    const overviewRect = overviewElement.getBoundingClientRect()
+    // If position was not explicitly provided, calculate relative to overview
+    if (!this.hasCustomPosition) {
+      // Get the transform values of the overview element
+      const style = window.getComputedStyle(overviewElement)
+      const matrix = new DOMMatrix(style.transform)
+      const overviewX = matrix.m41 || 0
+      const overviewY = matrix.m42 || 0
 
-    // Position so the left edge is 20px from the right edge of overview
-    const windowX = overviewX - overviewRect.width - 20
-    const windowY = overviewY
+      // Get overview element width for proper positioning
+      const overviewRect = overviewElement.getBoundingClientRect()
+
+      // Position so the left edge is 20px from the right edge of overview
+      windowX = overviewX - overviewRect.width - 20
+      windowY = overviewY
+    }
 
     // Apply transform positioning
     this.element!.style.transform = `translate(${windowX}px, ${windowY}px)`
@@ -585,4 +593,16 @@ export class FloatingWindow {
 // Convenience function for quick window creation
 export function createFloatingWindow(options: FloatingWindowOptions = {}): FloatingWindow {
   return new FloatingWindow(options)
+}
+
+// Helper function to create a standard container div for dashboard windows
+export function createStandardContainer(primaryColor: string): HTMLDivElement {
+  const containerDiv = document.createElement("div")
+  containerDiv.style.fontFamily = "inherit"
+  containerDiv.style.fontSize = "12px"
+  containerDiv.style.whiteSpace = "pre"
+  containerDiv.style.lineHeight = "1.2"
+  containerDiv.style.color = primaryColor
+  containerDiv.style.overflow = "auto"
+  return containerDiv
 }

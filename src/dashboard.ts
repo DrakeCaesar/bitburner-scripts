@@ -21,17 +21,40 @@ export async function main(ns: NS): Promise<void> {
     }
   }
 
-  // Remove existing windows if they exist
-  const existingServerList = document.querySelector("#server-list-window")
+  // Check for existing windows and preserve their positions
+  const existingServerList = document.querySelector("#server-list-window") as HTMLElement
+  const existingNodes = document.querySelector("#nodes-window") as HTMLElement
+  const existingTargets = document.querySelector("#target-analysis-window") as HTMLElement
+  const existingAugments = document.querySelector("#augments-window") as HTMLElement
+
+  // Extract positions and collapsed state from existing windows
+  const getPosition = (element: HTMLElement | null): { x: number; y: number } | null => {
+    if (!element) return null
+    const style = window.getComputedStyle(element)
+    const matrix = new DOMMatrix(style.transform)
+    return { x: matrix.m41 || 0, y: matrix.m42 || 0 }
+  }
+
+  const getCollapsedState = (element: HTMLElement | null): boolean => {
+    if (!element) return false
+    // Check if the content area has the collapsed class (without MuiCollapse-entered)
+    const contentArea = element.querySelector('[class*="MuiCollapse-root"]')
+    if (!contentArea) return false
+    return !contentArea.classList.contains("MuiCollapse-entered")
+  }
+
+  const serverListPos = getPosition(existingServerList)
+  const nodesPos = getPosition(existingNodes)
+  const augmentsPos = getPosition(existingAugments)
+
+  const serverListCollapsed = getCollapsedState(existingServerList)
+  const nodesCollapsed = getCollapsedState(existingNodes)
+  const augmentsCollapsed = getCollapsedState(existingAugments)
+
+  // Remove existing windows
   if (existingServerList) existingServerList.remove()
-
-  const existingNodes = document.querySelector("#nodes-window")
   if (existingNodes) existingNodes.remove()
-
-  const existingTargets = document.querySelector("#target-analysis-window")
   if (existingTargets) existingTargets.remove()
-
-  const existingAugments = document.querySelector("#augments-window")
   if (existingAugments) existingAugments.remove()
 
   // Extract primary text color from game's CSS (do this once)
@@ -42,11 +65,11 @@ export async function main(ns: NS): Promise<void> {
     primaryColor = computedStyle.color || primaryColor
   }
 
-  // Create all four windows
-  const serverListWindow = createServerListWindow(ns, primaryColor)
-  const nodesWindow = createNodesWindow(ns, primaryColor)
+  // Create all windows with preserved positions and collapsed states
+  const serverListWindow = createServerListWindow(ns, primaryColor, serverListPos ?? undefined, serverListCollapsed)
+  const nodesWindow = createNodesWindow(ns, primaryColor, nodesPos ?? undefined, nodesCollapsed)
   // const targetsWindow = createTargetsWindow(ns, primaryColor)
-  const augmentsWindow = createAugmentsWindow(ns, primaryColor)
+  const augmentsWindow = createAugmentsWindow(ns, primaryColor, augmentsPos ?? undefined, augmentsCollapsed)
 
   // Get overview hooks for karma/stats display
   const hook0 = document.getElementById("overview-extra-hook-0")

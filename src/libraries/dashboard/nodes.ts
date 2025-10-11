@@ -1,5 +1,5 @@
 import { NS } from "@ns"
-import { FloatingWindow } from "../floatingWindow"
+import { createStandardContainer, FloatingWindow } from "../floatingWindow"
 import { formatTableRow, getTableBorders } from "../tableBuilder"
 
 interface NodesWindow {
@@ -15,14 +15,13 @@ interface NodeInfo {
   progressBar: string
 }
 
-export function createNodesWindow(ns: NS, primaryColor: string): NodesWindow {
-  const containerDiv = document.createElement("div")
-  containerDiv.style.fontFamily = "inherit"
-  containerDiv.style.fontSize = "12px"
-  containerDiv.style.whiteSpace = "pre"
-  containerDiv.style.lineHeight = "1.2"
-  containerDiv.style.color = primaryColor
-  containerDiv.style.overflow = "auto"
+export function createNodesWindow(
+  ns: NS,
+  primaryColor: string,
+  position?: { x: number; y: number },
+  isCollapsed?: boolean
+): NodesWindow {
+  const containerDiv = createStandardContainer(primaryColor)
 
   const window = new FloatingWindow({
     title: "Purchased Servers",
@@ -30,8 +29,9 @@ export function createNodesWindow(ns: NS, primaryColor: string): NodesWindow {
     width: 600,
     height: 700,
     id: "nodes-window",
-    x: 900,
-    y: 50,
+    x: position?.x ?? 900,
+    y: position?.y ?? 50,
+    isCollapsed: isCollapsed ?? false,
   })
 
   return { window, container: containerDiv }
