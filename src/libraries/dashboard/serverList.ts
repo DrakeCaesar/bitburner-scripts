@@ -34,8 +34,41 @@ function formatNumber(ns: NS, num: number = 0): string {
   return num < 1000 ? ns.formatNumber(num) + " " : ns.formatNumber(num)
 }
 
-function tFormat(ns: NS, time: number = 0): string {
-  return ns.tFormat(time)
+function tFormat(time: number = 0): { html: string; length: number } {
+  const totalSeconds = Math.floor(time / 1000)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+
+  const h = hours.toString().padStart(2, "0")
+  const m = minutes.toString().padStart(2, "0")
+  const s = seconds.toString().padStart(2, "0")
+
+  // Build the full string
+  const fullTime = `${h}:${m}:${s}`
+
+  // Find the first non-zero digit
+  let firstNonZeroIndex = -1
+  for (let i = 0; i < fullTime.length; i++) {
+    if (fullTime[i] !== "0" && fullTime[i] !== ":") {
+      firstNonZeroIndex = i
+      break
+    }
+  }
+
+  // If all zeros (or no non-zero found), grey out everything except last digit
+  if (firstNonZeroIndex === -1) {
+    firstNonZeroIndex = fullTime.length - 1
+  }
+
+  // Split into grey and normal parts
+  const greyPart = fullTime.substring(0, firstNonZeroIndex)
+  const normalPart = fullTime.substring(firstNonZeroIndex)
+
+  return {
+    html: greyPart ? `<span style="color:#444">${greyPart}</span>${normalPart}` : fullTime,
+    length: 8, // Always 8 characters visually: HH:MM:SS
+  }
 }
 
 export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor: string): void {
@@ -81,7 +114,7 @@ export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor
     secLen = Math.max(secLen, ((server.hackDifficulty ?? 0) - (server.minDifficulty ?? 0)).toFixed(2).length)
     ramLen = Math.max(ramLen, ns.formatRam(server.maxRam, 0).length)
     moneyLen = Math.max(moneyLen, formatNumber(ns, server.moneyMax).length)
-    timeLen = Math.max(timeLen, tFormat(ns, ns.getWeakenTime(target)).length)
+    timeLen = Math.max(timeLen, 8) // tFormat always returns 8 characters visually
   }
 
   // Build table
@@ -115,10 +148,14 @@ export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor
     const secDiff = ((server.hackDifficulty ?? 0) - (server.minDifficulty ?? 0)).toFixed(2)
     const ram = ns.formatRam(server.maxRam, 0)
     const money = formatNumber(ns, server.moneyMax ?? 0)
-    const time = ns.tFormat(ns.getWeakenTime(target))
+    const timeFormatted = tFormat(ns.getWeakenTime(target))
+
+    // Pad the time HTML to the correct width by adding leading spaces
+    const timePadding = " ".repeat(Math.max(0, timeLen - timeFormatted.length))
+    const timePadded = timePadding + timeFormatted.html
 
     const rowSpan = document.createElement("span")
-    rowSpan.textContent = formatTableRow([
+    rowSpan.innerHTML = formatTableRow([
       target.padEnd(nameLen),
       `${level} ${hackable}`.padStart(lvlLen),
       hasRoot.padStart(rootLen),
@@ -126,9 +163,9 @@ export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor
       secDiff.padStart(secLen),
       ram.padStart(ramLen),
       money.padStart(moneyLen),
-      time.padStart(timeLen),
+      timePadded,
     ])
-    rowSpan.textContent += "\n"
+    rowSpan.innerHTML += "\n"
     containerDiv.appendChild(rowSpan)
   }
 
