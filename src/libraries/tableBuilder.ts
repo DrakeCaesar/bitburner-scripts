@@ -231,3 +231,49 @@ export function buildThreeColumnTable(config: ThreeColumnTableConfig): string {
 export function buildHeader(text: string): string {
   return `\n═══ ${text} ═══`
 }
+
+/**
+ * Generate table border lines for custom table building
+ * Useful when you need colored output or custom cell rendering
+ *
+ * @param columnWidths Array of column widths
+ * @returns Object with border line generators
+ *
+ * @example
+ * ```ts
+ * const borders = getTableBorders([10, 15, 8])
+ * console.log(borders.top())      // ┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━┓
+ * console.log(borders.header())   // ┣━━━━━━━━━━━╋━━━━━━━━━━━━━━━╋━━━━━━━━┫
+ * console.log(borders.separator())// ┣━━━━━━━━━━━╋━━━━━━━━━━━━━━━╋━━━━━━━━┫
+ * console.log(borders.bottom())   // ┗━━━━━━━━━━━┻━━━━━━━━━━━━━━━┻━━━━━━━━┛
+ * ```
+ */
+export function getTableBorders(columnWidths: number[]): {
+  top: () => string
+  header: () => string
+  separator: () => string
+  bottom: () => string
+} {
+  return {
+    top: () => `┏━${columnWidths.map((w) => "━".repeat(w)).join("━┳━")}━┓`,
+    header: () => `┣━${columnWidths.map((w) => "━".repeat(w)).join("━╋━")}━┫`,
+    separator: () => `┣━${columnWidths.map((w) => "━".repeat(w)).join("━╋━")}━┫`,
+    bottom: () => `┗━${columnWidths.map((w) => "━".repeat(w)).join("━┻━")}━┛`,
+  }
+}
+
+/**
+ * Format a table row with proper cell separators
+ *
+ * @param cells Array of cell contents (already padded to correct width)
+ * @returns Formatted row string
+ *
+ * @example
+ * ```ts
+ * const row = formatTableRow(["Server".padEnd(10), "100".padStart(5), "50%".padStart(5)])
+ * // Output: ┃ Server     ┃   100 ┃   50% ┃
+ * ```
+ */
+export function formatTableRow(cells: string[]): string {
+  return `┃ ${cells.join(" ┃ ")} ┃`
+}

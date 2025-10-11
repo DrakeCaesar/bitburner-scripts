@@ -1,5 +1,6 @@
 import { NS } from "@ns"
 import { FloatingWindow } from "./libraries/floatingWindow.js"
+import { getTableBorders, formatTableRow } from "./libraries/tableBuilder.js"
 
 export async function main(ns: NS) {
   const buyMode = ns.args[0] === "buy"
@@ -418,14 +419,25 @@ async function createAugmentsWindow(ns: NS) {
       }
     }
 
-    // Build table header and footer
-    const tableHeader =
-      `┏━${"━".repeat(orderLen)}━┳━${"━".repeat(nameLen)}━┳━${"━".repeat(factionLen)}━┳━${"━".repeat(priceLen)}━┳━${"━".repeat(adjustedLen)}━┳━${"━".repeat(cumulativeLen)}━┳━${"━".repeat(repLen)}━┳━${"━".repeat(ownedLen)}━┳━${"━".repeat(statusLen)}━┓\n` +
-      `┃ ${orderCol.padStart(orderLen)} ┃ ${nameCol.padEnd(nameLen)} ┃ ${factionCol.padEnd(factionLen)} ┃ ${priceCol.padStart(priceLen)} ┃ ${adjustedCol.padStart(adjustedLen)} ┃ ${cumulativeCol.padStart(cumulativeLen)} ┃ ${repCol.padStart(repLen)} ┃ ${ownedCol.padStart(ownedLen)} ┃ ${statusCol.padStart(statusLen)} ┃\n` +
-      `┣━${"━".repeat(orderLen)}━╋━${"━".repeat(nameLen)}━╋━${"━".repeat(factionLen)}━╋━${"━".repeat(priceLen)}━╋━${"━".repeat(adjustedLen)}━╋━${"━".repeat(cumulativeLen)}━╋━${"━".repeat(repLen)}━╋━${"━".repeat(ownedLen)}━╋━${"━".repeat(statusLen)}━┫\n`
+    // Build table header and footer using table builder
+    const colWidths = [orderLen, nameLen, factionLen, priceLen, adjustedLen, cumulativeLen, repLen, ownedLen, statusLen]
+    const borders = getTableBorders(colWidths)
 
+    const headerCells = [
+      orderCol.padStart(orderLen),
+      nameCol.padEnd(nameLen),
+      factionCol.padEnd(factionLen),
+      priceCol.padStart(priceLen),
+      adjustedCol.padStart(adjustedLen),
+      cumulativeCol.padStart(cumulativeLen),
+      repCol.padStart(repLen),
+      ownedCol.padStart(ownedLen),
+      statusCol.padStart(statusLen)
+    ]
+
+    const tableHeader = `${borders.top()}\n${formatTableRow(headerCells)}\n${borders.header()}\n`
     const tableFooter =
-      `┗━${"━".repeat(orderLen)}━┻━${"━".repeat(nameLen)}━┻━${"━".repeat(factionLen)}━┻━${"━".repeat(priceLen)}━┻━${"━".repeat(adjustedLen)}━┻━${"━".repeat(cumulativeLen)}━┻━${"━".repeat(repLen)}━┻━${"━".repeat(ownedLen)}━┻━${"━".repeat(statusLen)}━┛\n` +
+      `${borders.bottom()}\n` +
       `\nAffordable: ${affordableSorted.length} | Too expensive (cumulative): ${tooExpensiveCumulative.length} | No rep: ${unaffordable.length} | Total: ${allAugs.length}\n` +
       `Current money: ${ns.formatNumber(playerMoney)}`
 

@@ -1,5 +1,6 @@
 import { NS } from "@ns"
 import { FloatingWindow } from "./libraries/floatingWindow.js"
+import { getTableBorders, formatTableRow } from "./libraries/tableBuilder.js"
 
 export async function main(ns: NS): Promise<void> {
   const scriptName = ns.getScriptName()
@@ -174,14 +175,21 @@ async function createNodesWindow(ns: NS): Promise<void> {
       ramLen = Math.max(ramLen, node.ramFormatted.length)
     }
 
-    // Build table header
-    const tableHeader =
-      `┏━${"━".repeat(nameLen)}━┳━${"━".repeat(ramLen)}━┳━${"━".repeat(progressLen)}━┳━${"━".repeat(statusLen)}━┓\n` +
-      `┃ ${nameCol.padEnd(nameLen)} ┃ ${ramCol.padEnd(ramLen)} ┃ ${progressCol.padEnd(progressLen)} ┃ ${statusCol.padEnd(statusLen)} ┃\n` +
-      `┣━${"━".repeat(nameLen)}━╋━${"━".repeat(ramLen)}━╋━${"━".repeat(progressLen)}━╋━${"━".repeat(statusLen)}━┫\n`
+    // Build table header and footer using table builder
+    const colWidths = [nameLen, ramLen, progressLen, statusLen]
+    const borders = getTableBorders(colWidths)
+
+    const headerCells = [
+      nameCol.padEnd(nameLen),
+      ramCol.padEnd(ramLen),
+      progressCol.padEnd(progressLen),
+      statusCol.padEnd(statusLen)
+    ]
+
+    const tableHeader = `${borders.top()}\n${formatTableRow(headerCells)}\n${borders.header()}\n`
 
     const tableFooter =
-      `┗━${"━".repeat(nameLen)}━┻━${"━".repeat(ramLen)}━┻━${"━".repeat(progressLen)}━┻━${"━".repeat(statusLen)}━┛\n` +
+      `${borders.bottom()}\n` +
       `\nServers: ${existingNodes.length}/25 | Total RAM: ${ns.formatRam(totalRam)} | Avg: ${ns.formatRam(avgRam)}\n` +
       `Min: ${ns.formatRam(minRam)} | Max: ${ns.formatRam(maxNodeRam)} | System Max: ${ns.formatRam(maxRam)}\n` +
       `Next: ${nextAction}\n` +
