@@ -143,12 +143,10 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
   const nameCol = "Node"
   const ramCol = "RAM"
   const progressCol = "Progress"
-  const statusCol = "Status"
 
   let nameLen = nameCol.length
   let ramLen = ramCol.length
   const progressLen = 20 // Fixed width for progress bar
-  let statusLen = statusCol.length
 
   for (const node of nodes) {
     nameLen = Math.max(nameLen, node.name.length)
@@ -156,15 +154,10 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
   }
 
   // Build table
-  const colWidths = [nameLen, ramLen, progressLen, statusLen]
+  const colWidths = [nameLen, ramLen, progressLen]
   const borders = getTableBorders(colWidths)
 
-  const headerCells = [
-    nameCol.padEnd(nameLen),
-    ramCol.padEnd(ramLen),
-    progressCol.padEnd(progressLen),
-    statusCol.padEnd(statusLen),
-  ]
+  const headerCells = [nameCol.padEnd(nameLen), ramCol.padEnd(ramLen), progressCol.padEnd(progressLen)]
 
   // Clear and rebuild container
   containerDiv.innerHTML = ""
@@ -182,7 +175,6 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
       node.name.padEnd(nameLen),
       node.ramFormatted.padEnd(ramLen),
       node.progressBar.padEnd(progressLen),
-      status.padEnd(statusLen),
     ])
     rowSpan.textContent += "\n"
     containerDiv.appendChild(rowSpan)
