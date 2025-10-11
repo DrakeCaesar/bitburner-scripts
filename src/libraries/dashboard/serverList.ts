@@ -34,6 +34,10 @@ function formatNumber(ns: NS, num: number = 0): string {
   return num < 1000 ? ns.formatNumber(num) + " " : ns.formatNumber(num)
 }
 
+function tFormat(ns: NS, time: number = 0): string {
+  return ns.tFormat(time)
+}
+
 export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor: string): void {
   const knownServers = crawl(ns)
   const player = ns.getPlayer()
@@ -77,7 +81,7 @@ export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor
     secLen = Math.max(secLen, ((server.hackDifficulty ?? 0) - (server.minDifficulty ?? 0)).toFixed(2).length)
     ramLen = Math.max(ramLen, ns.formatRam(server.maxRam, 0).length)
     moneyLen = Math.max(moneyLen, formatNumber(ns, server.moneyMax).length)
-    timeLen = Math.max(timeLen, ns.tFormat(ns.getWeakenTime(target)).length)
+    timeLen = Math.max(timeLen, tFormat(ns, ns.getWeakenTime(target)).length)
   }
 
   // Build table
