@@ -37,41 +37,8 @@ export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor
   // Build server data with nuking
   let items = new Map<string, { level: number; server: any }>()
   for (const key of knownServers) {
-    if (!key.includes("node")) {
+    if (!key.includes("node") && key !== "home" && key !== "darkweb") {
       const level = ns.getServerRequiredHackingLevel(key)
-      const server = ns.getServer(key)
-
-      // Attempt to nuke if possible
-      let numPortsOpen = 0
-      if (ns.fileExists("BruteSSH.exe", "home")) {
-        ns.brutessh(key)
-        ++numPortsOpen
-      }
-      if (ns.fileExists("FTPCrack.exe", "home")) {
-        ns.ftpcrack(key)
-        ++numPortsOpen
-      }
-      if (ns.fileExists("relaySMTP.exe", "home")) {
-        ns.relaysmtp(key)
-        ++numPortsOpen
-      }
-      if (ns.fileExists("HTTPWorm.exe", "home")) {
-        ns.httpworm(key)
-        ++numPortsOpen
-      }
-      if (ns.fileExists("SQLInject.exe", "home")) {
-        ns.sqlinject(key)
-        ++numPortsOpen
-      }
-      if (
-        ns.fileExists("NUKE.exe", "home") &&
-        level <= player.skills.hacking &&
-        ns.getServerNumPortsRequired(key) <= numPortsOpen
-      ) {
-        ns.nuke(key)
-      }
-
-      // Re-get server to get updated root status
       items.set(key, { level, server: ns.getServer(key) })
     }
   }
@@ -82,8 +49,8 @@ export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor
   // Calculate column widths
   const nameCol = "Server"
   const lvlCol = "Level"
-  const rootCol = "Root"
-  const backdoorCol = "BD"
+  const rootCol = "R"
+  const backdoorCol = "B"
   const secCol = "Security"
   const ramCol = "RAM"
   const moneyCol = "Money"
