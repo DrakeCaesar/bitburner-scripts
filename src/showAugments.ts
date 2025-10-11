@@ -1,6 +1,7 @@
 import { NS } from "@ns"
 import { FloatingWindow } from "./libraries/floatingWindow.js"
 import { getTableBorders, formatTableRow } from "./libraries/tableBuilder.js"
+import { getAugmentData, purchaseAugmentations, AugmentInfo } from "./libraries/augmentations.js"
 
 export async function main(ns: NS) {
   const buyMode = ns.args[0] === "buy"
@@ -8,7 +9,7 @@ export async function main(ns: NS) {
 
   // If in buy mode, just purchase and exit
   if (buyMode) {
-    await doPurchase(ns, buyFlux)
+    await purchaseAugmentations(ns, buyFlux)
     return
   }
 
@@ -24,108 +25,6 @@ export async function main(ns: NS) {
 
   // Otherwise, create updating window
   await createAugmentsWindow(ns)
-}
-
-async function doPurchase(ns: NS, buyFlux: boolean) {
-  const player = ns.getPlayer()
-  const playerFactions = player.factions
-
-  if (playerFactions.length === 0) {
-    ns.tprint("You are not in any factions yet.")
-    return
-  }
-
-  let { affordableSorted, neuroFluxInfo, factionReps, playerMoney } = getAugmentData(ns, playerFactions)
-
-  ns.tprint("\n" + "=".repeat(120))
-  ns.tprint(
-    buyFlux
-      ? "PURCHASING AUGMENTATIONS + TOPPING UP WITH NEUROFLUX"
-      : "PURCHASING AUGMENTATIONS (optimal order, within budget)"
-  )
-  ns.tprint("=".repeat(120))
-
-  let purchaseCount = 0
-  let totalSpent = 0
-
-  // Calculate cumulative costs to determine affordability
-  const AUGMENT_PRICE_MULT = 1.9
-  let cumulativeCost = 0
-  const affordableWithBudget: typeof affordableSorted = []
-
-  for (let i = 0; i < affordableSorted.length; i++) {
-    const adjustedPrice = affordableSorted[i].price * Math.pow(AUGMENT_PRICE_MULT, i)
-    cumulativeCost += adjustedPrice
-
-    if (cumulativeCost <= playerMoney) {
-      affordableWithBudget.push(affordableSorted[i])
-    } else {
-      // Stop once we exceed budget
-      break
-    }
-  }
-
-  // Purchase augmentations we can actually afford
-  if (affordableWithBudget.length > 0) {
-    ns.tprint(
-      `Can afford ${affordableWithBudget.length} of ${affordableSorted.length} augmentations (total cost: ${ns.formatNumber(cumulativeCost > playerMoney ? playerMoney : cumulativeCost)})`
-    )
-
-    for (const aug of affordableWithBudget) {
-      // Find a faction where we have enough rep to buy from
-      const validFaction = aug.factions.find((f) => (factionReps.get(f) ?? 0) >= aug.repReq)
-
-      if (!validFaction) {
-        ns.tprint(`No valid faction found for: ${aug.name}`)
-        continue
-      }
-
-      const success = ns.singularity.purchaseAugmentation(validFaction, aug.name)
-      if (success) {
-        ns.tprint(`Purchased: ${aug.name} from ${validFaction} for ${ns.formatNumber(aug.price)}`)
-        purchaseCount++
-        totalSpent += aug.price
-      } else {
-        ns.tprint(`Failed to purchase: ${aug.name} from ${validFaction}`)
-      }
-    }
-  } else if (affordableSorted.length > 0) {
-    ns.tprint(
-      `Cannot afford any augmentations. Cheapest would cost ${ns.formatNumber(affordableSorted[0].price)}, you have ${ns.formatNumber(playerMoney)}`
-    )
-  }
-
-  // If buyFlux is true, top up with NeuroFlux Governor
-  if (buyFlux && neuroFluxInfo) {
-    // Recalculate remaining money after purchasing regular augmentations
-    const remainingMoney = ns.getPlayer().money
-    const AUGMENT_PRICE_MULT = 1.9
-    const validFaction = neuroFluxInfo.factions.find((f) => (factionReps.get(f) ?? 0) >= neuroFluxInfo.repReq)
-
-    if (!validFaction) {
-      ns.tprint(`No valid faction found for: ${neuroFluxInfo.name}`)
-    } else {
-      let currentPrice = neuroFluxInfo.price
-      let currentMoney = remainingMoney
-
-      while (currentMoney >= currentPrice) {
-        const success = ns.singularity.purchaseAugmentation(validFaction, neuroFluxInfo.name)
-        if (success) {
-          ns.tprint(`Purchased: ${neuroFluxInfo.name} from ${validFaction} for ${ns.formatNumber(currentPrice)}`)
-          purchaseCount++
-          totalSpent += currentPrice
-          currentMoney -= currentPrice
-          currentPrice *= AUGMENT_PRICE_MULT
-        } else {
-          ns.tprint(`Failed to purchase: ${neuroFluxInfo.name} from ${validFaction}`)
-          break
-        }
-      }
-    }
-  }
-
-  ns.tprint("=".repeat(120))
-  ns.tprint(`Purchased ${purchaseCount} augmentations for ${ns.formatNumber(totalSpent)}`)
 }
 
 async function createAugmentsWindow(ns: NS) {
@@ -161,7 +60,7 @@ async function createAugmentsWindow(ns: NS) {
 
   function updateTable() {
     const { affordableSorted, tooExpensiveCumulative, unaffordable, neuroFluxInfo, playerMoney, factionReps } =
-      getAugmentData(ns, ns.getPlayer().factions)
+      getAugmentDataForDisplay(ns, ns.getPlayer().factions)
 
     // Calculate column widths
     const orderCol = "#"
@@ -529,17 +428,8 @@ async function createAugmentsWindow(ns: NS) {
   }
 }
 
-// Collect augmentation data
-interface AugmentInfo {
-  name: string
-  factions: string[] // All factions that offer this augment
-  price: number
-  repReq: number
-  owned: boolean
-  prereqs: string[] // Prerequisites for this augment
-}
-
-function getAugmentData(ns: NS, playerFactions: string[]) {
+// Get augmentation data with display-specific optimizations (topological sort)
+function getAugmentDataForDisplay(ns: NS, playerFactions: string[]) {
   const augmentMap = new Map<string, AugmentInfo>()
   let neuroFluxInfo: AugmentInfo | null = null
 
