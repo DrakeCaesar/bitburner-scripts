@@ -174,11 +174,10 @@ export async function main(ns: NS) {
     ]
 
     if (threads.actualThreshold !== target.hackThreshold) {
-      configRows.splice(
-        1,
-        0,
-        { label: "Original Threshold", value: `${(target.hackThreshold * 100).toFixed(2)}% (adjusted to fit)` }
-      )
+      configRows.splice(1, 0, {
+        label: "Original Threshold",
+        value: `${(target.hackThreshold * 100).toFixed(2)}% (adjusted to fit)`,
+      })
     }
 
     let labelLen = Math.max(...configRows.map((r) => r.label.length))
@@ -199,13 +198,33 @@ export async function main(ns: NS) {
 
     // Table 2: Thread Distribution & Timing
     const timingRows = [
-      { label: "Hack Threads", value: threads.hackThreads.toString(), ram: ns.formatRam(ns.getScriptRam("/hacking/hack.js") * threads.hackThreads) },
-      { label: "Weaken 1 Threads", value: threads.wkn1Threads.toString(), ram: ns.formatRam(ns.getScriptRam("/hacking/weaken.js") * threads.wkn1Threads) },
-      { label: "Grow Threads", value: threads.growThreads.toString(), ram: ns.formatRam(ns.getScriptRam("/hacking/grow.js") * threads.growThreads) },
-      { label: "Weaken 2 Threads", value: threads.wkn2Threads.toString(), ram: ns.formatRam(ns.getScriptRam("/hacking/weaken.js") * threads.wkn2Threads) },
+      {
+        label: "Hack Threads",
+        value: threads.hackThreads.toString(),
+        ram: ns.formatRam(ns.getScriptRam("/hacking/hack.js") * threads.hackThreads),
+      },
+      {
+        label: "Weaken 1 Threads",
+        value: threads.wkn1Threads.toString(),
+        ram: ns.formatRam(ns.getScriptRam("/hacking/weaken.js") * threads.wkn1Threads),
+      },
+      {
+        label: "Grow Threads",
+        value: threads.growThreads.toString(),
+        ram: ns.formatRam(ns.getScriptRam("/hacking/grow.js") * threads.growThreads),
+      },
+      {
+        label: "Weaken 2 Threads",
+        value: threads.wkn2Threads.toString(),
+        ram: ns.formatRam(ns.getScriptRam("/hacking/weaken.js") * threads.wkn2Threads),
+      },
       { label: "Total Batch RAM", value: "", ram: ns.formatRam(threads.totalBatchRam) },
       { label: "Weaken Time", value: ns.tFormat(timings.weakenTime), ram: "" },
-      { label: "Batch Delay", value: ns.tFormat(timings.effectiveBatchDelay), ram: timings.effectiveBatchDelay !== batchDelay ? "(adjusted)" : "" },
+      {
+        label: "Batch Delay",
+        value: ns.tFormat(timings.effectiveBatchDelay),
+        ram: timings.effectiveBatchDelay !== batchDelay ? "(adjusted)" : "",
+      },
       { label: "Batch Interval", value: ns.tFormat(timings.effectiveBatchDelay * 4), ram: "" },
       { label: "Cycle Time", value: ns.tFormat(predictedBatchCycleTime), ram: "" },
     ]
