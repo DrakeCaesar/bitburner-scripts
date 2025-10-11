@@ -1,8 +1,7 @@
 import { NS } from "@ns"
+import { createAugmentsWindow, updateAugmentsView } from "./libraries/dashboard/augments.js"
 import { createNodesWindow, updateNodesView } from "./libraries/dashboard/nodes.js"
 import { createServerListWindow, updateServerList } from "./libraries/dashboard/serverList.js"
-import { createTargetsWindow, updateTargetsView } from "./libraries/dashboard/targetAnalysis.js"
-import { createAugmentsWindow, updateAugmentsView } from "./libraries/dashboard/augments.js"
 
 /**
  * Unified Dashboard Script
@@ -45,14 +44,14 @@ export async function main(ns: NS): Promise<void> {
   // Create all four windows
   const serverListWindow = createServerListWindow(ns, primaryColor)
   const nodesWindow = createNodesWindow(ns, primaryColor)
-  const targetsWindow = createTargetsWindow(ns, primaryColor)
+  // const targetsWindow = createTargetsWindow(ns, primaryColor)
   const augmentsWindow = createAugmentsWindow(ns, primaryColor)
 
   // Update loop - refresh all views every second
   while (true) {
     updateServerList(ns, serverListWindow.container, primaryColor)
     updateNodesView(ns, nodesWindow.container, primaryColor)
-    updateTargetsView(ns, targetsWindow.container, primaryColor)
+    // updateTargetsView(ns, targetsWindow.container, primaryColor)
     updateAugmentsView(ns, augmentsWindow.container, primaryColor)
     await ns.sleep(1000)
   }
