@@ -148,40 +148,96 @@ export async function main(ns: NS) {
     const batchConfigDuration = batchConfigEndTime - batchConfigStartTime
     const prepToBatchGap = batchConfigStartTime - prepEndTime
 
-    ns.tprint(
-      `\n=== Timing Summary ===\n` +
-        `Prep calculation: ${calcDuration}ms\n` +
-        `Actual prep execution: ${ns.tFormat(actualPrepTime)}\n` +
-        `Gap between prep end and batch config start: ${prepToBatchGap}ms\n` +
-        `Batch configuration calculation: ${batchConfigDuration}ms`
-    )
-
-    ns.tprint(`Requested batch delay: ${ns.tFormat(batchDelay)}`)
-    if (timings.effectiveBatchDelay !== batchDelay) {
-      ns.tprint(`Effective batch delay: ${ns.tFormat(timings.effectiveBatchDelay)} (adjusted due to low weaken time)`)
-    }
-    if (threads.actualThreshold !== target.hackThreshold) {
-      ns.tprint(
-        `Adjusted hack threshold from ${(target.hackThreshold * 100).toFixed(2)}% to ${(threads.actualThreshold * 100).toFixed(2)}% to fit in ${ns.formatRam(nodeRamLimit)} nodes`
-      )
-    }
-    ns.tprint(
-      `Batch RAM: ${threads.totalBatchRam.toFixed(2)} GB - Threads (H:${threads.hackThreads} W1:${threads.wkn1Threads} G:${threads.growThreads} W2:${threads.wkn2Threads})`
-    )
     const maxBatches = Math.floor((totalMaxRam / threads.totalBatchRam) * ramThreshold)
-    // const batches = Math.min(10, maxBatches) // DEBUG: Limit to 10 batches (40 ops)
     const batches = maxBatches
-    ns.tprint(
-      `Can run ${maxBatches} batches in parallel, limiting to ${batches} for debugging (${ns.formatRam(totalMaxRam)} total RAM)`
-    )
-    ns.tprint(`Weaken time: ${ns.tFormat(timings.weakenTime)}`)
-    ns.tprint(`Batch interval: ${ns.tFormat(timings.effectiveBatchDelay * 4)}`)
 
-    // Calculate predicted batch cycle time
+    // Calculate predicted batch cycle time and money
     const lastBatchOffset = (batches - 1) * timings.effectiveBatchDelay * 4
     const lastOperationFinishTime = timings.weakenTime + 2 * timings.effectiveBatchDelay + lastBatchOffset
     const predictedBatchCycleTime = lastOperationFinishTime
-    ns.tprint(`Predicted batch cycle time: ${ns.tFormat(predictedBatchCycleTime)}`)
+    const targetMaxMoney = ns.getServerMaxMoney(target.serverName)
+    const moneyPerBatch = targetMaxMoney * (1 - threads.actualThreshold)
+    const totalMoneyPerCycle = moneyPerBatch * batches
+    const moneyPerSecond = predictedBatchCycleTime > 0 ? (totalMoneyPerCycle / predictedBatchCycleTime) * 1000 : 0
+
+    // Table 1: Batch Configuration
+    const configRows = [
+      { label: "Target Server", value: target.serverName },
+      { label: "Hack Threshold", value: `${(threads.actualThreshold * 100).toFixed(2)}%` },
+      { label: "Max Money", value: ns.formatNumber(targetMaxMoney) },
+      { label: "Money/Batch", value: ns.formatNumber(moneyPerBatch) },
+      { label: "Money/Cycle", value: ns.formatNumber(totalMoneyPerCycle) },
+      { label: "Money/Second", value: `${ns.formatNumber(moneyPerSecond)}/s` },
+      { label: "Parallel Batches", value: batches.toString() },
+      { label: "Total Nodes", value: nodes.length.toString() },
+      { label: "Total RAM", value: ns.formatRam(totalMaxRam) },
+    ]
+
+    if (threads.actualThreshold !== target.hackThreshold) {
+      configRows.splice(
+        1,
+        0,
+        { label: "Original Threshold", value: `${(target.hackThreshold * 100).toFixed(2)}% (adjusted to fit)` }
+      )
+    }
+
+    let labelLen = Math.max(...configRows.map((r) => r.label.length))
+    let valueLen = Math.max(...configRows.map((r) => r.value.length))
+
+    let configTable = `\n═══ Batch Configuration ═══\n`
+    configTable += `┏━${"━".repeat(labelLen)}━┳━${"━".repeat(valueLen)}━┓\n`
+    for (let i = 0; i < configRows.length; i++) {
+      const row = configRows[i]
+      configTable += `┃ ${row.label.padEnd(labelLen)} ┃ ${row.value.padStart(valueLen)} ┃\n`
+      if (i === 5) {
+        // Add separator after Money/Second
+        configTable += `┣━${"━".repeat(labelLen)}━╋━${"━".repeat(valueLen)}━┫\n`
+      }
+    }
+    configTable += `┗━${"━".repeat(labelLen)}━┻━${"━".repeat(valueLen)}━┛`
+    ns.tprint(configTable)
+
+    // Table 2: Thread Distribution & Timing
+    const timingRows = [
+      { label: "Hack Threads", value: threads.hackThreads.toString(), ram: ns.formatRam(ns.getScriptRam("/hacking/hack.js") * threads.hackThreads) },
+      { label: "Weaken 1 Threads", value: threads.wkn1Threads.toString(), ram: ns.formatRam(ns.getScriptRam("/hacking/weaken.js") * threads.wkn1Threads) },
+      { label: "Grow Threads", value: threads.growThreads.toString(), ram: ns.formatRam(ns.getScriptRam("/hacking/grow.js") * threads.growThreads) },
+      { label: "Weaken 2 Threads", value: threads.wkn2Threads.toString(), ram: ns.formatRam(ns.getScriptRam("/hacking/weaken.js") * threads.wkn2Threads) },
+      { label: "Total Batch RAM", value: "", ram: ns.formatRam(threads.totalBatchRam) },
+      { label: "Weaken Time", value: ns.tFormat(timings.weakenTime), ram: "" },
+      { label: "Batch Delay", value: ns.tFormat(timings.effectiveBatchDelay), ram: timings.effectiveBatchDelay !== batchDelay ? "(adjusted)" : "" },
+      { label: "Batch Interval", value: ns.tFormat(timings.effectiveBatchDelay * 4), ram: "" },
+      { label: "Cycle Time", value: ns.tFormat(predictedBatchCycleTime), ram: "" },
+    ]
+
+    labelLen = Math.max(...timingRows.map((r) => r.label.length))
+    valueLen = Math.max(...timingRows.map((r) => r.value.length))
+    let ramLen = Math.max(...timingRows.map((r) => r.ram.length), 6)
+
+    let timingTable = `\n═══ Thread Distribution & Timing ═══\n`
+    timingTable += `┏━${"━".repeat(labelLen)}━┳━${"━".repeat(valueLen)}━┳━${"━".repeat(ramLen)}━┓\n`
+    timingTable += `┃ ${"Operation".padEnd(labelLen)} ┃ ${"Threads".padStart(valueLen)} ┃ ${"RAM".padStart(ramLen)} ┃\n`
+    timingTable += `┣━${"━".repeat(labelLen)}━╋━${"━".repeat(valueLen)}━╋━${"━".repeat(ramLen)}━┫\n`
+    for (let i = 0; i < timingRows.length; i++) {
+      const row = timingRows[i]
+      timingTable += `┃ ${row.label.padEnd(labelLen)} ┃ ${row.value.padStart(valueLen)} ┃ ${row.ram.padStart(ramLen)} ┃\n`
+      if (i === 4 || i === 4) {
+        // Add separator after RAM total and before timing section
+        timingTable += `┣━${"━".repeat(labelLen)}━╋━${"━".repeat(valueLen)}━╋━${"━".repeat(ramLen)}━┫\n`
+      }
+    }
+    timingTable += `┗━${"━".repeat(labelLen)}━┻━${"━".repeat(valueLen)}━┻━${"━".repeat(ramLen)}━┛`
+    ns.tprint(timingTable)
+
+    if (debug) {
+      ns.tprint(
+        `\n[Timing Debug]\n` +
+          `  Prep calculation: ${calcDuration}ms\n` +
+          `  Prep execution: ${ns.tFormat(actualPrepTime)}\n` +
+          `  Prep→Batch gap: ${prepToBatchGap}ms\n` +
+          `  Batch config: ${batchConfigDuration}ms`
+      )
+    }
 
     // Security checks
     const minSecurity = ns.getServerMinSecurityLevel(target.serverName)
