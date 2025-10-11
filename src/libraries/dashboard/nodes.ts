@@ -31,8 +31,12 @@ export function createNodesWindow(
     id: "nodes-window",
     x: position?.x ?? 900,
     y: position?.y ?? 50,
-    isCollapsed: isCollapsed ?? false,
   })
+
+  // Toggle to collapsed state if needed
+  if (isCollapsed) {
+    window.toggle()
+  }
 
   return { window, container: containerDiv }
 }

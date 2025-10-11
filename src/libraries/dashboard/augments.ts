@@ -28,8 +28,11 @@ export function createAugmentsWindow(
     id: "augments-window",
     x: position?.x ?? 1000,
     y: position?.y ?? 700,
-    isCollapsed: isCollapsed ?? false,
   })
+  // Toggle to collapsed state if needed
+  if (isCollapsed) {
+    window.toggle()
+  }
 
   return { window, container: containerDiv }
 }

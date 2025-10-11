@@ -24,8 +24,12 @@ export function createServerListWindow(
     id: "server-list-window",
     x: position?.x ?? 50,
     y: position?.y ?? 50,
-    isCollapsed: isCollapsed ?? false,
   })
+
+  // Toggle to collapsed state if needed
+  if (isCollapsed) {
+    window.toggle()
+  }
 
   return { window, container: containerDiv }
 }
