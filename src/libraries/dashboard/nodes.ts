@@ -50,20 +50,14 @@ function generateProgressBar(ram: number, maxRam: number): string {
   const EMPTY_CENTER = ""
   const EMPTY_RIGHT = ""
 
-  const totalChars = 20
+  const totalChars = Math.log2(maxRam) + 1
 
   if (ram === 0) {
     // All empty
     return EMPTY_LEFT + EMPTY_CENTER.repeat(totalChars - 2) + EMPTY_RIGHT
   }
 
-  // Calculate how many doublings from 1 to maxRam
-  const maxDoublings = Math.log2(maxRam)
-  // Calculate current doublings from 1 to ram
-  const currentDoublings = Math.log2(ram)
-
-  // Calculate bars (filled)
-  const bars = Math.floor((currentDoublings / maxDoublings) * totalChars)
+  const bars = Math.log2(ram) + 1
 
   // Build the progress bar
   let result = ""
@@ -150,7 +144,7 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
 
   let nameLen = nameCol.length
   let ramLen = ramCol.length
-  const progressLen = 20 // Fixed width for progress bar
+  const progressLen = Math.log2(maxRam) + 1
 
   for (const node of nodes) {
     nameLen = Math.max(nameLen, node.name.length)
