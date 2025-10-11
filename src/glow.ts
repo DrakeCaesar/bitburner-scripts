@@ -16,7 +16,7 @@ import {
 export async function main(): Promise<void> {
   // Define the CSS class for the glow effect
   const glowClass = "glow"
-  const doc: Document = eval("document")
+  const doc: Document = document
   const glowSize = 20
 
   toggleGlow()
@@ -65,20 +65,14 @@ export async function main(): Promise<void> {
               applyGlowEffectToElementsInContainer(element)
             }
           })
-        } else if (
-          mutation.type === "attributes" &&
-          mutation.attributeName === "class"
-        ) {
+        } else if (mutation.type === "attributes" && mutation.attributeName === "class") {
           const element = mutation.target as HTMLElement
           if (element instanceof HTMLElement) {
             console.log(element.className)
             applyGlowEffectToElementsInContainer(element)
             applyGlowEffectToSkillBars()
           }
-        } else if (
-          mutation.type === "attributes" &&
-          mutation.attributeName === "style"
-        ) {
+        } else if (mutation.type === "attributes" && mutation.attributeName === "style") {
           const element = mutation.target as HTMLElement
           if (element.classList.contains("MuiLinearProgress-bar")) {
             applyGlowEffectToSkillBars()
@@ -122,9 +116,7 @@ export async function main(): Promise<void> {
     if (element.parentElement) {
       if (
         element.parentElement.parentElement instanceof HTMLDivElement &&
-        getComputedStyle(element.parentElement.parentElement).border.includes(
-          "1px solid"
-        )
+        getComputedStyle(element.parentElement.parentElement).border.includes("1px solid")
       ) {
         // Border handling logic could go here if needed
       }
@@ -146,18 +138,14 @@ export async function main(): Promise<void> {
 
   // Function to apply the glow effect to a skill bar element
   function updateSkillBars() {
-    const skillBarElements = doc.querySelectorAll(
-      ".MuiLinearProgress-bar"
-    ) as NodeListOf<HTMLElement>
+    const skillBarElements = doc.querySelectorAll(".MuiLinearProgress-bar") as NodeListOf<HTMLElement>
     if (skillBarElements.length == 0) return
     const parent = skillBarElements.item(0).parentElement
     if (parent == null) return
     skillBarElements.forEach((element) => {
       const transform = element.style.transform
       const translateXRegex = /([-0-9]+.[0-9]+)/
-      const translateX: number = parseFloat(
-        transform.match(translateXRegex)?.[1] ?? ""
-      )
+      const translateX: number = parseFloat(transform.match(translateXRegex)?.[1] ?? "")
       if (translateX < -1 && translateX > -100) {
         const width = (parent.offsetWidth / 100) * (100 + translateX)
         element.style.width = `${width}px`
@@ -167,9 +155,7 @@ export async function main(): Promise<void> {
   }
 
   function applyGlowEffectToSkillBars() {
-    const skillBarElements = doc.querySelectorAll(
-      ".MuiLinearProgress-bar"
-    ) as NodeListOf<HTMLElement>
+    const skillBarElements = doc.querySelectorAll(".MuiLinearProgress-bar") as NodeListOf<HTMLElement>
 
     skillBarElements.forEach((element) => {
       const parent = element.parentElement
@@ -177,9 +163,7 @@ export async function main(): Promise<void> {
 
       const transform = element.style.transform
       const translateXRegex = /([-0-9]+.[0-9]+)/
-      const translateX: number = parseFloat(
-        transform.match(translateXRegex)?.[1] ?? ""
-      )
+      const translateX: number = parseFloat(transform.match(translateXRegex)?.[1] ?? "")
       if (!isNaN(translateX)) {
         const width = (parent.offsetWidth / 100) * (100 + translateX)
         element.style.width = `${width}px`
@@ -200,9 +184,7 @@ export async function main(): Promise<void> {
         ? color.replace("rgb", "rgba").replace(")", `, ${intensity})`)
         : `rgba(70%, 70%, 70%, ${intensity})`
 
-      const boxShadowStyle = `box-shadow: 0 0 ${
-        intensity * glowSize
-      }px ${shadowColor};`
+      const boxShadowStyle = `box-shadow: 0 0 ${intensity * glowSize}px ${shadowColor};`
 
       // Apply glow and smooth width transition
       const barStyle = `
@@ -247,14 +229,12 @@ export async function main(): Promise<void> {
 
     const inputElements = container.querySelectorAll("input[type='text']")
     inputElements.forEach(function (inputElement) {
-      if (!inputElement.classList.contains(glowClass))
-        applyGlowEffectToInputElement(inputElement as HTMLInputElement)
+      if (!inputElement.classList.contains(glowClass)) applyGlowEffectToInputElement(inputElement as HTMLInputElement)
     })
 
     const svgElements = container.querySelectorAll("svg, img")
     svgElements.forEach(function (svgElement) {
-      if (!svgElement.classList.contains(glowClass))
-        applyGlowEffectToSvgElement(svgElement as HTMLElement)
+      if (!svgElement.classList.contains(glowClass)) applyGlowEffectToSvgElement(svgElement as HTMLElement)
     })
 
     // Special case for the terminal
@@ -310,9 +290,6 @@ function applyGlowEffectToOverview(container: HTMLElement) {
 
 function applyGlowEffectToTerminal(container: HTMLElement) {
   const color = getComputedStyle(container).backgroundColor
-  const semiTransparentColor = createColorWithTransparency(
-    color,
-    GLOW_CONFIG.terminalTransparency
-  )
+  const semiTransparentColor = createColorWithTransparency(color, GLOW_CONFIG.terminalTransparency)
   addStyle(container, `background-color: ${semiTransparentColor}`)
 }

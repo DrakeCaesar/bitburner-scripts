@@ -1,6 +1,6 @@
 const glowClass = "glow"
-const doc: Document = eval("document")
-const win: Window = eval("window")
+const doc: Document = document
+const win: Window = window
 const glowSize = 20
 
 // Configuration constants
@@ -28,17 +28,13 @@ export function makeDropShadow(element: HTMLElement): SVGFEDropShadowElement {
   let color = getComputedStyle(element).fill
   const isAchievement = element.style.filter.includes("hue-rotate")
   if (isAchievement) {
-    const heading = element.parentElement?.nextSibling
-      ?.firstChild as HTMLElement
+    const heading = element.parentElement?.nextSibling?.firstChild as HTMLElement
     color = getComputedStyle(heading).color
   }
   const intensity = calculateGlowIntensity(color)
   const opacity = intensity
 
-  const feDropShadow = doc.createElementNS(
-    "http://www.w3.org/2000/svg",
-    "feDropShadow"
-  )
+  const feDropShadow = doc.createElementNS("http://www.w3.org/2000/svg", "feDropShadow")
   feDropShadow.setAttribute("dx", "0")
   feDropShadow.setAttribute("dy", "0")
   feDropShadow.setAttribute("stdDeviation", `${glowSize / 2}`)
@@ -65,9 +61,7 @@ export function addDropShadowFilter(element: HTMLElement): string {
 
   const shadowHash = generateHash(shadow.outerHTML)
 
-  const filterElement = doc.body.querySelector(
-    `body > svg > #glow-filter${shadowHash}`
-  )
+  const filterElement = doc.body.querySelector(`body > svg > #glow-filter${shadowHash}`)
   if (!filterElement) {
     const filter = doc.createElementNS("http://www.w3.org/2000/svg", "filter")
     filter.setAttribute("id", `glow-filter${shadowHash}`)
@@ -101,32 +95,16 @@ export function calculateSvgStyle(element: HTMLElement): string {
   const computedStyle = getComputedStyle(element)
 
   const originalMarginTop = parseInt(computedStyle.marginTop.replace("px", ""))
-  const originalMarginRight = parseInt(
-    computedStyle.marginRight.replace("px", "")
-  )
-  const originalMarginBottom = parseInt(
-    computedStyle.marginBottom.replace("px", "")
-  )
-  const originalMarginLeft = parseInt(
-    computedStyle.marginLeft.replace("px", "")
-  )
+  const originalMarginRight = parseInt(computedStyle.marginRight.replace("px", ""))
+  const originalMarginBottom = parseInt(computedStyle.marginBottom.replace("px", ""))
+  const originalMarginLeft = parseInt(computedStyle.marginLeft.replace("px", ""))
 
-  const originalPaddingTop = parseInt(
-    computedStyle.paddingTop.replace("px", "")
-  )
-  const originalPaddingRight = parseInt(
-    computedStyle.paddingRight.replace("px", "")
-  )
-  const originalPaddingBottom = parseInt(
-    computedStyle.paddingBottom.replace("px", "")
-  )
-  const originalPaddingLeft = parseInt(
-    computedStyle.paddingLeft.replace("px", "")
-  )
+  const originalPaddingTop = parseInt(computedStyle.paddingTop.replace("px", ""))
+  const originalPaddingRight = parseInt(computedStyle.paddingRight.replace("px", ""))
+  const originalPaddingBottom = parseInt(computedStyle.paddingBottom.replace("px", ""))
+  const originalPaddingLeft = parseInt(computedStyle.paddingLeft.replace("px", ""))
   const style = `
-  filter: ${
-    element.style.filter ?? ""
-  } url(#glow-filter${shadowHash}) !important;
+  filter: ${element.style.filter ?? ""} url(#glow-filter${shadowHash}) !important;
   margin-top: ${originalMarginTop - glowSize}px !important;
   margin-right: ${originalMarginRight - glowSize}px !important;
   margin-bottom: ${originalMarginBottom - glowSize}px !important;
@@ -144,12 +122,8 @@ export function calculateInputStyle(element: HTMLElement): string {
   const computedStyle = getComputedStyle(element)
   const color = computedStyle.color
   const intensity = calculateGlowIntensity(color)
-  const originalMarginLeft = parseInt(
-    computedStyle.marginLeft.replace("px", "")
-  )
-  const originalTextIndent = parseInt(
-    computedStyle.textIndent.replace("px", "")
-  )
+  const originalMarginLeft = parseInt(computedStyle.marginLeft.replace("px", ""))
+  const originalTextIndent = parseInt(computedStyle.textIndent.replace("px", ""))
 
   // Determine shadow color based on configuration
   const shadowColor = GLOW_CONFIG.useColoredShadows
@@ -202,12 +176,9 @@ export function generateHash(str: string): string {
 export function getHash(element: HTMLElement): string {
   const classlist = element.classList
   const classNames = Array.from(classlist)
-  const glowClassNames = classNames.filter(
-    (className) => className !== "glow" && className.startsWith("glow")
-  )
+  const glowClassNames = classNames.filter((className) => className !== "glow" && className.startsWith("glow"))
   if (glowClassNames.length > 0) {
-    if (glowClassNames.length > 1)
-      console.log("Multiple glow classes found on element")
+    if (glowClassNames.length > 1) console.log("Multiple glow classes found on element")
     return glowClassNames[0].substring(4)
   }
   return ""
@@ -218,9 +189,7 @@ export function printStyleRules(rule: CSSStyleRule) {
   const cssText = rule.style.cssText
   const style = rule.style
   const styleKeys = Object.keys(style)
-  const nonEmptyStyleKeys = styleKeys.filter(
-    (key) => style[key as keyof CSSStyleDeclaration] !== ""
-  )
+  const nonEmptyStyleKeys = styleKeys.filter((key) => style[key as keyof CSSStyleDeclaration] !== "")
   // const nonEmptyStyleText = nonEmptyStyle.join("; ")
   console.log(
     `${rule.selectorText}\n{ ${cssText} }`
@@ -228,10 +197,7 @@ export function printStyleRules(rule: CSSStyleRule) {
   )
 }
 
-export function addStyle(
-  element: HTMLElement,
-  style: string
-): string | undefined {
+export function addStyle(element: HTMLElement, style: string): string | undefined {
   // Try to get the unique stylesheet by ID
   const sheet = getOrCreateStyleSheet()
 
@@ -257,11 +223,7 @@ export function addStyle(
   return newClassName
 }
 
-export function addStyleAfter(
-  element: HTMLElement,
-  style: string,
-  className: string
-) {
+export function addStyleAfter(element: HTMLElement, style: string, className: string) {
   if (element.classList.contains("glow-after")) {
     return
   }
@@ -282,9 +244,7 @@ function getOrCreateStyleSheet() {
   const uniqueStyleSheetId = "glow-style-sheet"
 
   // Try to get the unique stylesheet by ID
-  let styleSheet = doc.getElementById(
-    uniqueStyleSheetId
-  ) as HTMLStyleElement | null
+  let styleSheet = doc.getElementById(uniqueStyleSheetId) as HTMLStyleElement | null
 
   if (!styleSheet) {
     // If the unique stylesheet does not exist, create it.
@@ -315,9 +275,7 @@ export function removeGlowFromAllElements() {
   const elementsWithGlow = doc.querySelectorAll(`.${glowClass}`)
   elementsWithGlow.forEach((element) => {
     const classList = element.classList
-    const classNamesToRemove = Array.from(classList).filter((className) =>
-      className.startsWith("glow")
-    )
+    const classNamesToRemove = Array.from(classList).filter((className) => className.startsWith("glow"))
     classNamesToRemove.forEach((className) => classList.remove(className))
   })
   // Remove the unique stylesheet
@@ -328,9 +286,7 @@ export function removeGlowFromAllElements() {
   if (filterElement) filterElement.remove()
 
   // Remove glow from skill bars
-  const skillBarElements = doc.querySelectorAll(
-    ".MuiLinearProgress-bar"
-  ) as NodeListOf<HTMLElement>
+  const skillBarElements = doc.querySelectorAll(".MuiLinearProgress-bar") as NodeListOf<HTMLElement>
   skillBarElements.forEach((element) => {
     element.style.transition = "none"
     element.style.width = ""
@@ -408,10 +364,7 @@ export function replaceOldProgressBars(node: HTMLParagraphElement) {
           }
           const span = newNode.querySelector("span.expanded")
           if (span) {
-            addStyle(
-              span as HTMLElement,
-              generateNewProgressBarStyle(bars, dashes)
-            )
+            addStyle(span as HTMLElement, generateNewProgressBarStyle(bars, dashes))
           }
         }
       }
@@ -419,10 +372,7 @@ export function replaceOldProgressBars(node: HTMLParagraphElement) {
   }
 }
 
-export function createColorWithTransparency(
-  color: string,
-  transparency: number
-): string {
+export function createColorWithTransparency(color: string, transparency: number): string {
   const rgbValues = color.match(/\d+/g)
   if (rgbValues) {
     const red = rgbValues[0]

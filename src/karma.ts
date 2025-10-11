@@ -3,7 +3,7 @@ import { killOtherInstances } from "./libraries/batchCalculations.js"
 import { formatNumber } from "./libraries/format.js"
 
 export async function main(ns: NS): Promise<void> {
-  const doc = eval("document")
+  const doc = document
   const hook0 = doc.getElementById("overview-extra-hook-0")
   const hook1 = doc.getElementById("overview-extra-hook-1")
 

@@ -21,23 +21,23 @@ export async function main(ns: NS): Promise<void> {
   }
 
   // Remove existing windows if they exist
-  const existingServerList = eval("document").querySelector("#server-list-window")
+  const existingServerList = document.querySelector("#server-list-window")
   if (existingServerList) existingServerList.remove()
 
-  const existingNodes = eval("document").querySelector("#nodes-window")
+  const existingNodes = document.querySelector("#nodes-window")
   if (existingNodes) existingNodes.remove()
 
-  const existingTargets = eval("document").querySelector("#target-analysis-window")
+  const existingTargets = document.querySelector("#target-analysis-window")
   if (existingTargets) existingTargets.remove()
 
-  const existingAugments = eval("document").querySelector("#augments-window")
+  const existingAugments = document.querySelector("#augments-window")
   if (existingAugments) existingAugments.remove()
 
   // Extract primary text color from game's CSS (do this once)
-  const primaryElement = eval("document").querySelector('[class*="css-"][class*="-primary"]') as HTMLElement
+  const primaryElement = document.querySelector('[class*="css-"][class*="-primary"]') as HTMLElement
   let primaryColor = "#0f0" // Fallback green
   if (primaryElement) {
-    const computedStyle = eval("window").getComputedStyle(primaryElement)
+    const computedStyle = window.getComputedStyle(primaryElement)
     primaryColor = computedStyle.color || primaryColor
   }
 

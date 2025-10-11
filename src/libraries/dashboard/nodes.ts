@@ -16,7 +16,7 @@ interface NodeInfo {
 }
 
 export function createNodesWindow(ns: NS, primaryColor: string): NodesWindow {
-  const containerDiv = eval("document").createElement("div")
+  const containerDiv = document.createElement("div")
   containerDiv.style.fontFamily = "inherit"
   containerDiv.style.fontSize = "12px"
   containerDiv.style.whiteSpace = "pre"
@@ -163,14 +163,14 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
   containerDiv.innerHTML = ""
 
   // Add header
-  const headerSpan = eval("document").createElement("span")
+  const headerSpan = document.createElement("span")
   headerSpan.textContent = `${borders.top()}\n${formatTableRow(headerCells)}\n${borders.header()}\n`
   containerDiv.appendChild(headerSpan)
 
   // Add rows
   for (const node of nodes) {
     const status = node.exists ? "✓" : " "
-    const rowSpan = eval("document").createElement("span")
+    const rowSpan = document.createElement("span")
     rowSpan.textContent = formatTableRow([
       node.name.padEnd(nameLen),
       node.ramFormatted.padEnd(ramLen),
@@ -181,7 +181,7 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
   }
 
   // Add footer
-  const footerSpan = eval("document").createElement("span")
+  const footerSpan = document.createElement("span")
   footerSpan.textContent =
     `${borders.bottom()}\n` +
     `\nServers: ${existingNodes.length}/25 | Total RAM: ${ns.formatRam(totalRam)} | Avg: ${ns.formatRam(avgRam)}\n` +

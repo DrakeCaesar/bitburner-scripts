@@ -10,7 +10,7 @@ interface TargetsWindow {
 }
 
 export function createTargetsWindow(ns: NS, primaryColor: string): TargetsWindow {
-  const containerDiv = eval("document").createElement("div")
+  const containerDiv = document.createElement("div")
   containerDiv.style.fontFamily = "inherit"
   containerDiv.style.fontSize = "12px"
   containerDiv.style.whiteSpace = "pre"
@@ -116,13 +116,13 @@ export function updateTargetsView(ns: NS, containerDiv: HTMLElement, primaryColo
   containerDiv.innerHTML = ""
 
   // Add header
-  const headerSpan = eval("document").createElement("span")
+  const headerSpan = document.createElement("span")
   headerSpan.textContent = `${borders.top()}\n${formatTableRow(headerCells)}\n${borders.header()}\n`
   containerDiv.appendChild(headerSpan)
 
   // Add rows
   for (const data of topServers) {
-    const rowSpan = eval("document").createElement("span")
+    const rowSpan = document.createElement("span")
     rowSpan.textContent = formatTableRow([
       data.serverName.padEnd(serverLen),
       data.hackLevel.toString().padStart(lvlLen),
@@ -138,7 +138,7 @@ export function updateTargetsView(ns: NS, containerDiv: HTMLElement, primaryColo
   }
 
   // Add footer
-  const footerSpan = eval("document").createElement("span")
+  const footerSpan = document.createElement("span")
   footerSpan.textContent = `${borders.bottom()}\n\nShowing top 20 of ${profitabilityData.length} servers | Total RAM: ${ns.formatRam(totalMaxRam)}`
   containerDiv.appendChild(footerSpan)
 }

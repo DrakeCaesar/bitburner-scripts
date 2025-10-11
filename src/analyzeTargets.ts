@@ -9,7 +9,7 @@ export async function main(ns: NS) {
   const batchCycles = ns.args[1] ? Number(ns.args[1]) : 3
 
   // Remove existing window if it exists
-  const existingWindow = eval("document").querySelector("#target-analysis-window")
+  const existingWindow = document.querySelector("#target-analysis-window")
   if (existingWindow) {
     existingWindow.remove()
   }
@@ -69,15 +69,15 @@ export async function main(ns: NS) {
   })
 
   // Extract primary text color from game's CSS
-  const primaryElement = eval("document").querySelector('[class*="css-"][class*="-primary"]') as HTMLElement
+  const primaryElement = document.querySelector('[class*="css-"][class*="-primary"]') as HTMLElement
   let primaryColor = "#0f0" // Fallback green
   if (primaryElement) {
-    const computedStyle = eval("window").getComputedStyle(primaryElement)
+    const computedStyle = window.getComputedStyle(primaryElement)
     primaryColor = computedStyle.color || primaryColor
   }
 
   // Create pre element for monospace formatting
-  const pre = eval("document").createElement("pre")
+  const pre = document.createElement("pre")
   pre.style.margin = "0"
   pre.style.fontFamily = "inherit"
   pre.style.fontSize = "12px"
@@ -91,7 +91,7 @@ export async function main(ns: NS) {
   const lines = fullTable.split("\n")
   const maxLineLength = Math.max(...lines.map((line) => line.length))
   // Approximate character width: 7.2px per character for 12px monospace font
-  const contentWidth = Math.min(maxLineLength * 7.2 + 40, eval("window").innerWidth - 100)
+  const contentWidth = Math.min(maxLineLength * 7.2 + 40, window.innerWidth - 100)
 
   // Create floating window
   new FloatingWindow({

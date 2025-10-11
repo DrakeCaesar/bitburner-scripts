@@ -5,7 +5,7 @@
 import { NS } from "@ns"
 import { AugmentInfo } from "../augmentations"
 import { FloatingWindow } from "../floatingWindow"
-import { getTableBorders, formatTableRow } from "../tableBuilder"
+import { formatTableRow, getTableBorders } from "../tableBuilder"
 
 interface AugmentsWindow {
   window: any
@@ -13,7 +13,7 @@ interface AugmentsWindow {
 }
 
 export function createAugmentsWindow(ns: NS, primaryColor: string): AugmentsWindow {
-  const containerDiv = eval("document").createElement("div")
+  const containerDiv = document.createElement("div")
   containerDiv.style.fontFamily = "inherit"
   containerDiv.style.fontSize = "12px"
   containerDiv.style.whiteSpace = "pre"
@@ -484,55 +484,55 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
   containerDiv.innerHTML = ""
 
   // Add header
-  const headerSpan = eval("document").createElement("span")
+  const headerSpan = document.createElement("span")
   headerSpan.textContent = tableHeader
   containerDiv.appendChild(headerSpan)
 
   // Add rows with conditional coloring
   for (const row of rows) {
-    const rowSpan = eval("document").createElement("span")
+    const rowSpan = document.createElement("span")
     rowSpan.textContent = `┃ ${row.order} ┃ ${row.name} ┃ ${row.faction} ┃ `
     containerDiv.appendChild(rowSpan)
 
-    const priceSpan = eval("document").createElement("span")
+    const priceSpan = document.createElement("span")
     priceSpan.textContent = row.price
     if (row.priceRed) priceSpan.style.color = "#ff4444"
     containerDiv.appendChild(priceSpan)
 
-    const midSpan1 = eval("document").createElement("span")
+    const midSpan1 = document.createElement("span")
     midSpan1.textContent = " ┃ "
     containerDiv.appendChild(midSpan1)
 
-    const adjustedSpan = eval("document").createElement("span")
+    const adjustedSpan = document.createElement("span")
     adjustedSpan.textContent = row.adjusted
     if (row.adjustedRed) adjustedSpan.style.color = "#ff4444"
     containerDiv.appendChild(adjustedSpan)
 
-    const midSpan2 = eval("document").createElement("span")
+    const midSpan2 = document.createElement("span")
     midSpan2.textContent = " ┃ "
     containerDiv.appendChild(midSpan2)
 
-    const cumulativeSpan = eval("document").createElement("span")
+    const cumulativeSpan = document.createElement("span")
     cumulativeSpan.textContent = row.cumulative
     if (row.cumulativeRed) cumulativeSpan.style.color = "#ff4444"
     containerDiv.appendChild(cumulativeSpan)
 
-    const midSpan3 = eval("document").createElement("span")
+    const midSpan3 = document.createElement("span")
     midSpan3.textContent = " ┃ "
     containerDiv.appendChild(midSpan3)
 
-    const repSpan = eval("document").createElement("span")
+    const repSpan = document.createElement("span")
     repSpan.textContent = row.rep
     if (row.repRed) repSpan.style.color = "#ff4444"
     containerDiv.appendChild(repSpan)
 
-    const endSpan = eval("document").createElement("span")
+    const endSpan = document.createElement("span")
     endSpan.textContent = ` ┃ ${row.owned} ┃ ${row.status} ┃\n`
     containerDiv.appendChild(endSpan)
   }
 
   // Add footer
-  const footerSpan = eval("document").createElement("span")
+  const footerSpan = document.createElement("span")
   footerSpan.textContent = tableFooter
   containerDiv.appendChild(footerSpan)
 }

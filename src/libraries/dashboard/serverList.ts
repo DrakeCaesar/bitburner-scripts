@@ -9,7 +9,7 @@ interface ServerListWindow {
 }
 
 export function createServerListWindow(ns: NS, primaryColor: string): ServerListWindow {
-  const containerDiv = eval("document").createElement("div")
+  const containerDiv = document.createElement("div")
   containerDiv.style.fontFamily = "inherit"
   containerDiv.style.fontSize = "12px"
   containerDiv.style.whiteSpace = "pre"
@@ -71,7 +71,7 @@ export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor
     rootLen = Math.max(rootLen, 1)
     backdoorLen = Math.max(backdoorLen, 1)
     secLen = Math.max(secLen, ((server.hackDifficulty ?? 0) - (server.minDifficulty ?? 0)).toFixed(2).length)
-    ramLen = Math.max(ramLen, ns.formatRam(server.maxRam).length)
+    ramLen = Math.max(ramLen, ns.formatRam(server.maxRam, 0).length)
     moneyLen = Math.max(moneyLen, ns.formatNumber(server.moneyMax ?? 0).length)
     timeLen = Math.max(timeLen, ns.tFormat(ns.getWeakenTime(target)).length)
   }
@@ -95,7 +95,7 @@ export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor
   containerDiv.innerHTML = ""
 
   // Add header
-  const headerSpan = eval("document").createElement("span")
+  const headerSpan = document.createElement("span")
   headerSpan.textContent = `${borders.top()}\n${formatTableRow(headerCells)}\n${borders.header()}\n`
   containerDiv.appendChild(headerSpan)
 
@@ -105,11 +105,11 @@ export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor
     const hasRoot = server.hasAdminRights ? " " : "X"
     const hasBackdoor = server.backdoorInstalled ? " " : "X"
     const secDiff = ((server.hackDifficulty ?? 0) - (server.minDifficulty ?? 0)).toFixed(2)
-    const ram = ns.formatRam(server.maxRam)
+    const ram = ns.formatRam(server.maxRam, 0)
     const money = ns.formatNumber(server.moneyMax ?? 0)
     const time = ns.tFormat(ns.getWeakenTime(target))
 
-    const rowSpan = eval("document").createElement("span")
+    const rowSpan = document.createElement("span")
     rowSpan.textContent = formatTableRow([
       target.padEnd(nameLen),
       `${level} ${hackable}`.padStart(lvlLen),
@@ -125,7 +125,7 @@ export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor
   }
 
   // Add footer
-  const footerSpan = eval("document").createElement("span")
+  const footerSpan = document.createElement("span")
   footerSpan.textContent = borders.bottom()
   containerDiv.appendChild(footerSpan)
 }
