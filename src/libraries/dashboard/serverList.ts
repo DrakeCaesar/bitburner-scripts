@@ -1,0 +1,164 @@
+import { NS } from "@ns"
+import { crawl } from "../crawl"
+import { FloatingWindow } from "../floatingWindow"
+import { formatTableRow, getTableBorders } from "../tableBuilder"
+
+interface ServerListWindow {
+  window: any
+  container: HTMLElement
+}
+
+export function createServerListWindow(ns: NS, primaryColor: string): ServerListWindow {
+  const containerDiv = eval("document").createElement("div")
+  containerDiv.style.fontFamily = "inherit"
+  containerDiv.style.fontSize = "12px"
+  containerDiv.style.whiteSpace = "pre"
+  containerDiv.style.lineHeight = "1.2"
+  containerDiv.style.color = primaryColor
+  containerDiv.style.overflow = "auto"
+
+  const window = new FloatingWindow({
+    title: "Server List",
+    content: containerDiv,
+    width: 800,
+    height: 600,
+    id: "server-list-window",
+    x: 50,
+    y: 50,
+  })
+
+  return { window, container: containerDiv }
+}
+
+export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor: string): void {
+  const knownServers = crawl(ns)
+  const player = ns.getPlayer()
+
+  // Build server data with nuking
+  let items = new Map<string, { level: number; server: any }>()
+  for (const key of knownServers) {
+    if (!key.includes("node")) {
+      const level = ns.getServerRequiredHackingLevel(key)
+      const server = ns.getServer(key)
+
+      // Attempt to nuke if possible
+      let numPortsOpen = 0
+      if (ns.fileExists("BruteSSH.exe", "home")) {
+        ns.brutessh(key)
+        ++numPortsOpen
+      }
+      if (ns.fileExists("FTPCrack.exe", "home")) {
+        ns.ftpcrack(key)
+        ++numPortsOpen
+      }
+      if (ns.fileExists("relaySMTP.exe", "home")) {
+        ns.relaysmtp(key)
+        ++numPortsOpen
+      }
+      if (ns.fileExists("HTTPWorm.exe", "home")) {
+        ns.httpworm(key)
+        ++numPortsOpen
+      }
+      if (ns.fileExists("SQLInject.exe", "home")) {
+        ns.sqlinject(key)
+        ++numPortsOpen
+      }
+      if (
+        ns.fileExists("NUKE.exe", "home") &&
+        level <= player.skills.hacking &&
+        ns.getServerNumPortsRequired(key) <= numPortsOpen
+      ) {
+        ns.nuke(key)
+      }
+
+      // Re-get server to get updated root status
+      items.set(key, { level, server: ns.getServer(key) })
+    }
+  }
+
+  // Sort by hacking level
+  items = new Map([...items].sort((a, b) => a[1].level - b[1].level))
+
+  // Calculate column widths
+  const nameCol = "Server"
+  const lvlCol = "Level"
+  const rootCol = "Root"
+  const backdoorCol = "BD"
+  const secCol = "Security"
+  const ramCol = "RAM"
+  const moneyCol = "Money"
+  const timeCol = "Time"
+
+  let nameLen = nameCol.length
+  let lvlLen = lvlCol.length + 2 // +2 for " X" suffix
+  let rootLen = rootCol.length
+  let backdoorLen = backdoorCol.length
+  let secLen = secCol.length
+  let ramLen = ramCol.length
+  let moneyLen = moneyCol.length
+  let timeLen = timeCol.length
+
+  for (const [target, { level, server }] of items) {
+    nameLen = Math.max(nameLen, target.length)
+    lvlLen = Math.max(lvlLen, (level.toString() + " X").length)
+    rootLen = Math.max(rootLen, 1)
+    backdoorLen = Math.max(backdoorLen, 1)
+    secLen = Math.max(secLen, ((server.hackDifficulty ?? 0) - (server.minDifficulty ?? 0)).toFixed(2).length)
+    ramLen = Math.max(ramLen, ns.formatRam(server.maxRam).length)
+    moneyLen = Math.max(moneyLen, ns.formatNumber(server.moneyMax ?? 0).length)
+    timeLen = Math.max(timeLen, ns.tFormat(ns.getWeakenTime(target)).length)
+  }
+
+  // Build table
+  const colWidths = [nameLen, lvlLen, rootLen, backdoorLen, secLen, ramLen, moneyLen, timeLen]
+  const borders = getTableBorders(colWidths)
+
+  const headerCells = [
+    nameCol.padEnd(nameLen),
+    lvlCol.padStart(lvlLen),
+    rootCol.padStart(rootLen),
+    backdoorCol.padStart(backdoorLen),
+    secCol.padStart(secLen),
+    ramCol.padStart(ramLen),
+    moneyCol.padStart(moneyLen),
+    timeCol.padStart(timeLen),
+  ]
+
+  // Clear and rebuild container
+  containerDiv.innerHTML = ""
+
+  // Add header
+  const headerSpan = eval("document").createElement("span")
+  headerSpan.textContent = `${borders.top()}\n${formatTableRow(headerCells)}\n${borders.header()}\n`
+  containerDiv.appendChild(headerSpan)
+
+  // Add rows
+  for (const [target, { level, server }] of items) {
+    const hackable = level <= player.skills.hacking ? " " : "X"
+    const hasRoot = server.hasAdminRights ? " " : "X"
+    const hasBackdoor = server.backdoorInstalled ? " " : "X"
+    const secDiff = ((server.hackDifficulty ?? 0) - (server.minDifficulty ?? 0)).toFixed(2)
+    const ram = ns.formatRam(server.maxRam)
+    const money = ns.formatNumber(server.moneyMax ?? 0)
+    const time = ns.tFormat(ns.getWeakenTime(target))
+
+    const rowSpan = eval("document").createElement("span")
+    rowSpan.textContent = formatTableRow([
+      target.padEnd(nameLen),
+      `${level} ${hackable}`.padStart(lvlLen),
+      hasRoot.padStart(rootLen),
+      hasBackdoor.padStart(backdoorLen),
+      secDiff.padStart(secLen),
+      ram.padStart(ramLen),
+      money.padStart(moneyLen),
+      time.padStart(timeLen),
+    ])
+    rowSpan.textContent += "\n"
+    containerDiv.appendChild(rowSpan)
+  }
+
+  // Add footer
+  const footerSpan = eval("document").createElement("span")
+  footerSpan.textContent = borders.bottom()
+  containerDiv.appendChild(footerSpan)
+}
