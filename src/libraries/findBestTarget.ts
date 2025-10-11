@@ -11,6 +11,7 @@ import {
 } from "./batchCalculations.js"
 import { crawl } from "./crawl.js"
 import { distributeBatchesAcrossNodes, getAllNodes } from "./serverManagement.js"
+import { buildTable } from "./tableBuilder.js"
 
 export interface BestTargetResult {
   serverName: string
@@ -85,6 +86,16 @@ export function analyzeAllServers(
     let serverBestThreshold = 0.5
     let serverBestBatchRam = 0
     let serverBestBatches = 0
+
+    // Store results for table output
+    const thresholdResults: Array<{
+      threshold: number
+      cycleTime: number
+      moneyPerCycle: number
+      moneyPerSecond: number
+      batches: number
+      batchRam: number
+    }> = []
 
     // Use logarithmic distribution: more samples near 1.0 (99-100%) than near 0
     // This gives us finer granularity where it matters most
@@ -163,6 +174,16 @@ export function analyzeAllServers(
       const totalMoney = totalMoneyPerCycle * batchCycles
       const moneyPerSecond = totalTime > 0 ? (totalMoney / totalTime) * 1000 : 0
 
+      // Store result for this threshold
+      thresholdResults.push({
+        threshold: testThreshold,
+        cycleTime: batchCycleTime,
+        moneyPerCycle: totalMoneyPerCycle,
+        moneyPerSecond: moneyPerSecond,
+        batches: batches,
+        batchRam: totalBatchRam,
+      })
+
       if (moneyPerSecond > serverBestMoneyPerSecond) {
         serverBestMoneyPerSecond = moneyPerSecond
         serverBestThreshold = testThreshold
@@ -170,6 +191,28 @@ export function analyzeAllServers(
         serverBestBatches = batches
       }
     }
+
+    // Print table for this server using the table builder
+    const serverTable = buildTable({
+      title: `${targetName} (Level ${server.requiredHackingSkill}, Max: ${ns.formatNumber(moneyMax)})`,
+      columns: [
+        { header: "Threshold", align: "right" },
+        { header: "Cycle Time", align: "right" },
+        { header: "Money/Cycle", align: "right" },
+        { header: "Money/Sec", align: "right" },
+        { header: "Batches", align: "right" },
+      ],
+      rows: thresholdResults
+        .filter((_, i) => i % 10 === 0) // Print every 10th result to keep output manageable
+        .map((result) => [
+          `${(result.threshold * 100).toFixed(2)}%`,
+          ns.tFormat(result.cycleTime),
+          ns.formatNumber(result.moneyPerCycle),
+          ns.formatNumber(result.moneyPerSecond),
+          result.batches.toString(),
+        ]),
+    })
+    ns.tprint(serverTable)
 
     profitabilityData.push({
       serverName: targetName,

@@ -1,5 +1,6 @@
 import { NS } from "@ns"
 import { crawl } from "/src/libraries/crawl.js"
+import { buildTable } from "/src/libraries/tableBuilder.js"
 
 type ContractTypeMap = Map<
   string,
@@ -114,65 +115,58 @@ export async function main(ns: NS): Promise<void> {
     worker.terminate()
   }
 
-  const nT = "Contract Type"
-  const cT = "Count"
-  const tT = "Avg. Time"
-
-  let nL = nT.length
-  let cL = cT.length
-  let tL = tT.length
-
-  // Get longest length for count and time columns
-  for (const [type, list] of contractMap) {
-    nL = Math.max(nL, type.length)
-    cL = Math.max(cL, list.contracts.length.toString().length)
-    tL = Math.max(tL, list.totalTime.toFixed(2).toString().length)
-  }
-
-  // Create table rows for implemented contracts
-  let tableRows = ""
   // Identify unimplemented contract types and counts
   const unsolvedTypes = new Map<string, number>()
   for (const [type, list] of contractMap) {
     const missing = list.contracts.filter((c) => c.answer == null).length
     if (missing > 0) unsolvedTypes.set(type, missing)
   }
+
   // Prepare array of implemented contract types
   const implArr = Array.from(contractMap, ([type, list]) => ({
     type,
     list,
   })).filter((item) => !unsolvedTypes.has(item.type))
+
   // Sort by average execution time descending
   implArr.sort(
     (a, b) =>
       b.list.totalTime / b.list.contracts.length -
       a.list.totalTime / a.list.contracts.length
   )
-  // Build rows for implemented contracts
+
+  // Build table rows
+  const tableRows: string[][] = []
+  const separatorAfter: number[] = []
+
+  // Add implemented contracts
   for (const { type, list } of implArr) {
-    const count = list.contracts.length.toString().padStart(cL)
-    const averageTime = (list.totalTime / list.contracts.length)
-      .toFixed(2)
-      .padStart(tL)
-    tableRows += `┃ ${type.padEnd(nL)} ┃ ${count} ┃ ${averageTime} ┃\n`
+    const count = list.contracts.length.toString()
+    const averageTime = (list.totalTime / list.contracts.length).toFixed(2)
+    tableRows.push([type, count, averageTime])
   }
-  // Separator before unimplemented contract summary
+
+  // Add separator before unimplemented contracts
   if (unsolvedTypes.size > 0) {
-    tableRows += `┣━${"━".repeat(nL)}━╋━${"━".repeat(cL)}━╋━${"━".repeat(tL)}━┫\n`
+    separatorAfter.push(tableRows.length - 1)
     for (const [type, countNum] of unsolvedTypes) {
-      const count = countNum.toString().padStart(cL)
-      const emptyTime = "".padStart(tL)
-      tableRows += `┃ ${type.padEnd(nL)} ┃ ${count} ┃ ${emptyTime} ┃\n`
+      tableRows.push([type, countNum.toString(), ""])
     }
   }
-  // Bottom border and initial output table
+
+  // Build table using the table builder library
   let fullOutput =
-    `\n` +
-    `┏━${"━".repeat(nL)}━┳━${"━".repeat(cL)}━┳━${"━".repeat(tL)}━┓\n` +
-    `┃ ${nT.padEnd(nL)} ┃ ${cT.padStart(cL)} ┃ ${tT.padStart(tL)} ┃\n` +
-    `┣━${"━".repeat(nL)}━╋━${"━".repeat(cL)}━╋━${"━".repeat(tL)}━┫\n` +
-    `${tableRows}` +
-    `┗━${"━".repeat(nL)}━┻━${"━".repeat(cL)}━┻━${"━".repeat(tL)}━┛\n`
+    "\n" +
+    buildTable({
+      columns: [
+        { header: "Contract Type", align: "left" },
+        { header: "Count", align: "right" },
+        { header: "Avg. Time", align: "right" },
+      ],
+      rows: tableRows,
+      separatorAfter: separatorAfter,
+    }) +
+    "\n"
   // Combine with details of first unimplemented contracts
   if (unsolvedTypes.size > 0) {
     for (const type of unsolvedTypes.keys()) {

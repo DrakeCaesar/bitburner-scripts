@@ -2,6 +2,7 @@ import { NS } from "@ns"
 import { analyzeAllServers } from "./libraries/findBestTarget.js"
 import { FloatingWindow } from "./libraries/floatingWindow.js"
 import { getNodesForBatching } from "./libraries/serverManagement.js"
+import { buildTable } from "./libraries/tableBuilder.js"
 
 export async function main(ns: NS) {
   const playerHackLevel = ns.args[0] ? Number(ns.args[0]) : undefined
@@ -43,58 +44,29 @@ export async function main(ns: NS) {
     batchCycles
   )
 
-  // Column headers
-  const serverCol = "Server"
-  const lvlCol = "Level"
-  const moneyCol = "Max Money"
-  const timeCol = "Weaken Time"
-  const thresholdCol = "Threshold"
-  const incomeCol = "$/sec"
-  const ramCol = "Batch RAM"
-  const batchesCol = "Batches"
-
-  // Calculate column widths
-  let serverLen = serverCol.length
-  let lvlLen = lvlCol.length
-  let moneyLen = moneyCol.length
-  let timeLen = timeCol.length
-  let thresholdLen = thresholdCol.length
-  let incomeLen = incomeCol.length
-  let ramLen = ramCol.length
-  let batchesLen = batchesCol.length
-
-  for (const data of profitabilityData) {
-    serverLen = Math.max(serverLen, data.serverName.length)
-    lvlLen = Math.max(lvlLen, data.hackLevel.toString().length)
-    moneyLen = Math.max(moneyLen, ns.formatNumber(data.moneyMax).length)
-    timeLen = Math.max(timeLen, ns.tFormat(data.weakenTime).length)
-    thresholdLen = Math.max(thresholdLen, `${(data.optimalThreshold * 100).toFixed(1)}%`.length)
-    incomeLen = Math.max(incomeLen, ns.formatNumber(data.moneyPerSecond).length)
-    ramLen = Math.max(ramLen, ns.formatRam(data.batchRam).length)
-    batchesLen = Math.max(batchesLen, data.batches.toString().length)
-  }
-
-  // Build table with box-drawing characters
-  let tableRows = ""
-  for (const data of profitabilityData) {
-    const server = data.serverName.padEnd(serverLen)
-    const lvl = data.hackLevel.toString().padStart(lvlLen)
-    const money = ns.formatNumber(data.moneyMax).padStart(moneyLen)
-    const time = ns.tFormat(data.weakenTime).padStart(timeLen)
-    const threshold = `${(data.optimalThreshold * 100).toFixed(1)}%`.padStart(thresholdLen)
-    const income = ns.formatNumber(data.moneyPerSecond).padStart(incomeLen)
-    const ram = ns.formatRam(data.batchRam).padStart(ramLen)
-    const batches = data.batches.toString().padStart(batchesLen)
-
-    tableRows += `┃ ${server} ┃ ${lvl} ┃ ${money} ┃ ${time} ┃ ${threshold} ┃ ${income} ┃ ${ram} ┃ ${batches} ┃\n`
-  }
-
-  const fullTable =
-    `┏━${"━".repeat(serverLen)}━┳━${"━".repeat(lvlLen)}━┳━${"━".repeat(moneyLen)}━┳━${"━".repeat(timeLen)}━┳━${"━".repeat(thresholdLen)}━┳━${"━".repeat(incomeLen)}━┳━${"━".repeat(ramLen)}━┳━${"━".repeat(batchesLen)}━┓\n` +
-    `┃ ${serverCol.padEnd(serverLen)} ┃ ${lvlCol.padStart(lvlLen)} ┃ ${moneyCol.padStart(moneyLen)} ┃ ${timeCol.padStart(timeLen)} ┃ ${thresholdCol.padStart(thresholdLen)} ┃ ${incomeCol.padStart(incomeLen)} ┃ ${ramCol.padStart(ramLen)} ┃ ${batchesCol.padStart(batchesLen)} ┃\n` +
-    `┣━${"━".repeat(serverLen)}━╋━${"━".repeat(lvlLen)}━╋━${"━".repeat(moneyLen)}━╋━${"━".repeat(timeLen)}━╋━${"━".repeat(thresholdLen)}━╋━${"━".repeat(incomeLen)}━╋━${"━".repeat(ramLen)}━╋━${"━".repeat(batchesLen)}━┫\n` +
-    `${tableRows}` +
-    `┗━${"━".repeat(serverLen)}━┻━${"━".repeat(lvlLen)}━┻━${"━".repeat(moneyLen)}━┻━${"━".repeat(timeLen)}━┻━${"━".repeat(thresholdLen)}━┻━${"━".repeat(incomeLen)}━┻━${"━".repeat(ramLen)}━┻━${"━".repeat(batchesLen)}━┛`
+  // Build table using the table builder library
+  const fullTable = buildTable({
+    columns: [
+      { header: "Server", align: "left" },
+      { header: "Level", align: "right" },
+      { header: "Max Money", align: "right" },
+      { header: "Weaken Time", align: "right" },
+      { header: "Threshold", align: "right" },
+      { header: "$/sec", align: "right" },
+      { header: "Batch RAM", align: "right" },
+      { header: "Batches", align: "right" },
+    ],
+    rows: profitabilityData.map((data) => [
+      data.serverName,
+      data.hackLevel.toString(),
+      ns.formatNumber(data.moneyMax),
+      ns.tFormat(data.weakenTime),
+      `${(data.optimalThreshold * 100).toFixed(1)}%`,
+      ns.formatNumber(data.moneyPerSecond),
+      ns.formatRam(data.batchRam),
+      data.batches.toString(),
+    ]),
+  })
 
   // Extract primary text color from game's CSS
   const primaryElement = eval("document").querySelector('[class*="css-"][class*="-primary"]') as HTMLElement

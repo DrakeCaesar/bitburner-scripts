@@ -1,6 +1,7 @@
 import { NS } from "@ns"
 import { crawl } from "./libraries/crawl.js"
 import { FloatingWindow } from "./libraries/floatingWindow.js"
+import { buildTable } from "./libraries/tableBuilder.js"
 
 export function main(ns: NS) {
   // Remove existing list window if it exists
@@ -57,57 +58,30 @@ export function main(ns: NS) {
   // Sort by hacking level
   items = new Map([...items].sort((a, b) => a[1].level - b[1].level))
 
-  // Column headers
-  const serverCol = "Server"
-  const lvlCol = "Level"
-  const rootCol = "Root"
-  const backdoorCol = "BD"
-  const secCol = "Security"
-  const ramCol = "RAM"
-  const moneyCol = "Money"
-  const timeCol = "Time"
+  // Build table using the table builder library
+  const fullTable = buildTable({
+    columns: [
+      { header: "Server", align: "left" },
+      { header: "Level", align: "right", minWidth: 7 }, // minWidth for "Level X" format
+      { header: "Root", align: "right" },
+      { header: "BD", align: "right" },
+      { header: "Security", align: "right" },
+      { header: "RAM", align: "right" },
+      { header: "Money", align: "right" },
+      { header: "Time", align: "right" },
+    ],
+    rows: Array.from(items).map(([target, { level, server }]) => {
+      const hackable = level <= player.skills.hacking ? " " : "X"
+      const hasRoot = server.hasAdminRights ? " " : "X"
+      const hasBackdoor = server.backdoorInstalled ? " " : "X"
+      const secDiff = ((server.hackDifficulty ?? 0) - (server.minDifficulty ?? 0)).toFixed(2)
+      const ram = ns.formatRam(server.maxRam)
+      const money = ns.formatNumber(server.moneyMax ?? 0)
+      const time = ns.tFormat(ns.getWeakenTime(target))
 
-  // Calculate column widths
-  let serverLen = serverCol.length
-  let lvlLen = lvlCol.length
-  let rootLen = rootCol.length
-  let backdoorLen = backdoorCol.length
-  let secLen = secCol.length
-  let ramLen = ramCol.length
-  let moneyLen = moneyCol.length
-  let timeLen = timeCol.length
-
-  for (const [target, { level, server }] of items) {
-    serverLen = Math.max(serverLen, target.length)
-    lvlLen = Math.max(lvlLen, level.toString().length)
-    rootLen = Math.max(rootLen, (server.hasAdminRights ? "" : "X").length)
-    backdoorLen = Math.max(backdoorLen, (server.backdoorInstalled ? "" : "X").length)
-    secLen = Math.max(secLen, ((server.hackDifficulty ?? 0) - (server.minDifficulty ?? 0)).toFixed(2).length)
-    ramLen = Math.max(ramLen, ns.formatRam(server.maxRam).length)
-    moneyLen = Math.max(moneyLen, ns.formatNumber(server.moneyMax ?? 0).length)
-    timeLen = Math.max(timeLen, ns.tFormat(ns.getWeakenTime(target)).length)
-  }
-
-  // Build table with box-drawing characters
-  let tableRows = ""
-  for (const [target, { level, server }] of items) {
-    const hackable = level <= player.skills.hacking ? " " : "X"
-    const hasRoot = server.hasAdminRights ? " " : "X"
-    const hasBackdoor = server.backdoorInstalled ? " " : "X"
-    const secDiff = ((server.hackDifficulty ?? 0) - (server.minDifficulty ?? 0)).toFixed(2).padStart(secLen)
-    const ram = ns.formatRam(server.maxRam).padStart(ramLen)
-    const money = ns.formatNumber(server.moneyMax ?? 0).padStart(moneyLen)
-    const time = ns.tFormat(ns.getWeakenTime(target)).padStart(timeLen)
-
-    tableRows += `┃ ${target.padEnd(serverLen)} ┃ ${level.toString().padStart(lvlLen)} ${hackable} ┃ ${hasRoot.padStart(rootLen)} ┃ ${hasBackdoor.padStart(backdoorLen)} ┃ ${secDiff} ┃ ${ram} ┃ ${money} ┃ ${time} ┃\n`
-  }
-
-  const fullTable =
-    `┏━${"━".repeat(serverLen)}━┳━${"━".repeat(lvlLen + 2)}━┳━${"━".repeat(rootLen)}━┳━${"━".repeat(backdoorLen)}━┳━${"━".repeat(secLen)}━┳━${"━".repeat(ramLen)}━┳━${"━".repeat(moneyLen)}━┳━${"━".repeat(timeLen)}━┓\n` +
-    `┃ ${serverCol.padEnd(serverLen)} ┃ ${lvlCol.padStart(lvlLen + 2)} ┃ ${rootCol.padStart(rootLen)} ┃ ${backdoorCol.padStart(backdoorLen)} ┃ ${secCol.padStart(secLen)} ┃ ${ramCol.padStart(ramLen)} ┃ ${moneyCol.padStart(moneyLen)} ┃ ${timeCol.padStart(timeLen)} ┃\n` +
-    `┣━${"━".repeat(serverLen)}━╋━${"━".repeat(lvlLen + 2)}━╋━${"━".repeat(rootLen)}━╋━${"━".repeat(backdoorLen)}━╋━${"━".repeat(secLen)}━╋━${"━".repeat(ramLen)}━╋━${"━".repeat(moneyLen)}━╋━${"━".repeat(timeLen)}━┫\n` +
-    `${tableRows}` +
-    `┗━${"━".repeat(serverLen)}━┻━${"━".repeat(lvlLen + 2)}━┻━${"━".repeat(rootLen)}━┻━${"━".repeat(backdoorLen)}━┻━${"━".repeat(secLen)}━┻━${"━".repeat(ramLen)}━┻━${"━".repeat(moneyLen)}━┻━${"━".repeat(timeLen)}━┛`
+      return [target, `${level} ${hackable}`, hasRoot, hasBackdoor, secDiff, ram, money, time]
+    }),
+  })
 
   // Extract primary text color from game's CSS
   const primaryElement = document.querySelector('[class*="css-"][class*="-primary"]') as HTMLElement

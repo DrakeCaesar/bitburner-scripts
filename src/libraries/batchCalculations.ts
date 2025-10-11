@@ -1,5 +1,6 @@
 import { NS, Person, Player, Server } from "@ns"
 import { crawl } from "./crawl.js"
+import { buildTable } from "./tableBuilder.js"
 /**
  * Calculate XP gained from a hacking operation (hack/grow/weaken)
  * Based on ns.formulas.hacking.hackExp()
@@ -394,67 +395,36 @@ export function calculatePrepTime(
 
   // Helper to build table from node capacities
   const buildCapacityTable = (nodeCapacities: NodeCapacity[], iteration: number): string => {
-    // Column headers
-    const serverCol = "Server"
-    const availRamCol = "Avail"
-    const growCol = "G"
-    const growRamCol = "G RAM"
-    const weakenCol = "W"
-    const weakenRamCol = "W RAM"
-    const remainCol = "Left"
-
-    // Calculate column widths
-    let serverLen = serverCol.length
-    let availRamLen = availRamCol.length
-    let growLen = growCol.length
-    let growRamLen = growRamCol.length
-    let weakenLen = weakenCol.length
-    let weakenRamLen = weakenRamCol.length
-    let remainLen = remainCol.length
-
-    for (const nc of nodeCapacities) {
-      const growRam = nc.growThreads * growScriptRam
-      const weakenRam = nc.weakenThreads * weakenScriptRam
-      const remaining = nc.availRam - growRam - weakenRam
-
-      serverLen = Math.max(serverLen, nc.name.length)
-      availRamLen = Math.max(availRamLen, ns.formatRam(nc.availRam).length)
-      growLen = Math.max(growLen, nc.growThreads.toString().length)
-      growRamLen = Math.max(growRamLen, ns.formatRam(growRam).length)
-      weakenLen = Math.max(weakenLen, nc.weakenThreads.toString().length)
-      weakenRamLen = Math.max(weakenRamLen, ns.formatRam(weakenRam).length)
-      remainLen = Math.max(remainLen, ns.formatRam(remaining).length)
-    }
-
-    // Build table rows
-    let tableRows = ""
-    for (const nc of nodeCapacities) {
-      const growRam = nc.growThreads * growScriptRam
-      const weakenRam = nc.weakenThreads * weakenScriptRam
-      const remaining = nc.availRam - growRam - weakenRam
-
-      const server = nc.name.padEnd(serverLen)
-      const availRam = ns.formatRam(nc.availRam).padStart(availRamLen)
-      const grow = nc.growThreads.toString().padStart(growLen)
-      const growRamStr = ns.formatRam(growRam).padStart(growRamLen)
-      const weaken = nc.weakenThreads.toString().padStart(weakenLen)
-      const weakenRamStr = ns.formatRam(weakenRam).padStart(weakenRamLen)
-      const remain = ns.formatRam(remaining).padStart(remainLen)
-
-      tableRows += `┃ ${server} ┃ ${availRam} ┃ ${grow} ┃ ${growRamStr} ┃ ${weaken} ┃ ${weakenRamStr} ┃ ${remain} ┃\n`
-    }
-
     // Add script cost info
     const scriptInfo = `Grow: ${ns.formatRam(growScriptRam)}/t, Weaken: ${ns.formatRam(weakenScriptRam)}/t`
 
-    // Build full table with box-drawing characters
-    const fullTable =
-      `\n═══ Iteration ${iteration} ═══ ${scriptInfo}\n` +
-      `┏━${"━".repeat(serverLen)}━┳━${"━".repeat(availRamLen)}━┳━${"━".repeat(growLen)}━┳━${"━".repeat(growRamLen)}━┳━${"━".repeat(weakenLen)}━┳━${"━".repeat(weakenRamLen)}━┳━${"━".repeat(remainLen)}━┓\n` +
-      `┃ ${serverCol.padEnd(serverLen)} ┃ ${availRamCol.padStart(availRamLen)} ┃ ${growCol.padStart(growLen)} ┃ ${growRamCol.padStart(growRamLen)} ┃ ${weakenCol.padStart(weakenLen)} ┃ ${weakenRamCol.padStart(weakenRamLen)} ┃ ${remainCol.padStart(remainLen)} ┃\n` +
-      `┣━${"━".repeat(serverLen)}━╋━${"━".repeat(availRamLen)}━╋━${"━".repeat(growLen)}━╋━${"━".repeat(growRamLen)}━╋━${"━".repeat(weakenLen)}━╋━${"━".repeat(weakenRamLen)}━╋━${"━".repeat(remainLen)}━┫\n` +
-      `${tableRows}` +
-      `┗━${"━".repeat(serverLen)}━┻━${"━".repeat(availRamLen)}━┻━${"━".repeat(growLen)}━┻━${"━".repeat(growRamLen)}━┻━${"━".repeat(weakenLen)}━┻━${"━".repeat(weakenRamLen)}━┻━${"━".repeat(remainLen)}━┛`
+    const fullTable = buildTable({
+      title: `Iteration ${iteration} ═══ ${scriptInfo}`,
+      columns: [
+        { header: "Server", align: "left" },
+        { header: "Avail", align: "right" },
+        { header: "G", align: "right" },
+        { header: "G RAM", align: "right" },
+        { header: "W", align: "right" },
+        { header: "W RAM", align: "right" },
+        { header: "Left", align: "right" },
+      ],
+      rows: nodeCapacities.map((nc) => {
+        const growRam = nc.growThreads * growScriptRam
+        const weakenRam = nc.weakenThreads * weakenScriptRam
+        const remaining = nc.availRam - growRam - weakenRam
+
+        return [
+          nc.name,
+          ns.formatRam(nc.availRam),
+          nc.growThreads.toString(),
+          ns.formatRam(growRam),
+          nc.weakenThreads.toString(),
+          ns.formatRam(weakenRam),
+          ns.formatRam(remaining),
+        ]
+      }),
+    })
 
     return fullTable
   }

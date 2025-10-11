@@ -12,6 +12,7 @@ import { upgradeServer } from "./libraries/buyServer.js"
 import { findBestTarget } from "./libraries/findBestTarget.js"
 import { purchasePrograms, purchaseTorRouter } from "./libraries/purchasePrograms.js"
 import { getNodesForBatching } from "./libraries/serverManagement.js"
+import { buildKeyValueTable, buildThreeColumnTable } from "./libraries/tableBuilder.js"
 
 export async function main(ns: NS) {
   const playerHackLevel = ns.args[0] ? Number(ns.args[0]) : undefined
@@ -180,72 +181,31 @@ export async function main(ns: NS) {
       })
     }
 
-    let labelLen = Math.max(...configRows.map((r) => r.label.length))
-    let valueLen = Math.max(...configRows.map((r) => r.value.length))
-
-    let configTable = `\n═══ Batch Configuration ═══\n`
-    configTable += `┏━${"━".repeat(labelLen)}━┳━${"━".repeat(valueLen)}━┓\n`
-    for (let i = 0; i < configRows.length; i++) {
-      const row = configRows[i]
-      configTable += `┃ ${row.label.padEnd(labelLen)} ┃ ${row.value.padStart(valueLen)} ┃\n`
-      if (i === 5) {
-        // Add separator after Money/Second
-        configTable += `┣━${"━".repeat(labelLen)}━╋━${"━".repeat(valueLen)}━┫\n`
-      }
-    }
-    configTable += `┗━${"━".repeat(labelLen)}━┻━${"━".repeat(valueLen)}━┛`
+    const configTable = buildKeyValueTable({
+      title: "Batch Configuration",
+      rows: configRows,
+      separatorAfter: [5], // Separator after Money/Second
+    })
     ns.tprint(configTable)
 
     // Table 2: Thread Distribution & Timing
-    const timingRows = [
-      {
-        label: "Hack Threads",
-        value: threads.hackThreads.toString(),
-        ram: ns.formatRam(ns.getScriptRam("/hacking/hack.js") * threads.hackThreads),
-      },
-      {
-        label: "Weaken 1 Threads",
-        value: threads.wkn1Threads.toString(),
-        ram: ns.formatRam(ns.getScriptRam("/hacking/weaken.js") * threads.wkn1Threads),
-      },
-      {
-        label: "Grow Threads",
-        value: threads.growThreads.toString(),
-        ram: ns.formatRam(ns.getScriptRam("/hacking/grow.js") * threads.growThreads),
-      },
-      {
-        label: "Weaken 2 Threads",
-        value: threads.wkn2Threads.toString(),
-        ram: ns.formatRam(ns.getScriptRam("/hacking/weaken.js") * threads.wkn2Threads),
-      },
-      { label: "Total Batch RAM", value: "", ram: ns.formatRam(threads.totalBatchRam) },
-      { label: "Weaken Time", value: ns.tFormat(timings.weakenTime), ram: "" },
-      {
-        label: "Batch Delay",
-        value: ns.tFormat(timings.effectiveBatchDelay),
-        ram: timings.effectiveBatchDelay !== batchDelay ? "(adjusted)" : "",
-      },
-      { label: "Batch Interval", value: ns.tFormat(timings.effectiveBatchDelay * 4), ram: "" },
-      { label: "Cycle Time", value: ns.tFormat(predictedBatchCycleTime), ram: "" },
-    ]
-
-    labelLen = Math.max(...timingRows.map((r) => r.label.length))
-    valueLen = Math.max(...timingRows.map((r) => r.value.length))
-    let ramLen = Math.max(...timingRows.map((r) => r.ram.length), 6)
-
-    let timingTable = `\n═══ Thread Distribution & Timing ═══\n`
-    timingTable += `┏━${"━".repeat(labelLen)}━┳━${"━".repeat(valueLen)}━┳━${"━".repeat(ramLen)}━┓\n`
-    timingTable += `┃ ${"Operation".padEnd(labelLen)} ┃ ${"Threads".padStart(valueLen)} ┃ ${"RAM".padStart(ramLen)} ┃\n`
-    timingTable += `┣━${"━".repeat(labelLen)}━╋━${"━".repeat(valueLen)}━╋━${"━".repeat(ramLen)}━┫\n`
-    for (let i = 0; i < timingRows.length; i++) {
-      const row = timingRows[i]
-      timingTable += `┃ ${row.label.padEnd(labelLen)} ┃ ${row.value.padStart(valueLen)} ┃ ${row.ram.padStart(ramLen)} ┃\n`
-      if (i === 4 || i === 4) {
-        // Add separator after RAM total and before timing section
-        timingTable += `┣━${"━".repeat(labelLen)}━╋━${"━".repeat(valueLen)}━╋━${"━".repeat(ramLen)}━┫\n`
-      }
-    }
-    timingTable += `┗━${"━".repeat(labelLen)}━┻━${"━".repeat(valueLen)}━┻━${"━".repeat(ramLen)}━┛`
+    const timingTable = buildThreeColumnTable({
+      title: "Thread Distribution & Timing",
+      headers: ["Operation", "Threads", "RAM"],
+      rows: [
+        ["Hack Threads", threads.hackThreads.toString(), ns.formatRam(ns.getScriptRam("/hacking/hack.js") * threads.hackThreads)],
+        ["Weaken 1 Threads", threads.wkn1Threads.toString(), ns.formatRam(ns.getScriptRam("/hacking/weaken.js") * threads.wkn1Threads)],
+        ["Grow Threads", threads.growThreads.toString(), ns.formatRam(ns.getScriptRam("/hacking/grow.js") * threads.growThreads)],
+        ["Weaken 2 Threads", threads.wkn2Threads.toString(), ns.formatRam(ns.getScriptRam("/hacking/weaken.js") * threads.wkn2Threads)],
+        ["Total Batch RAM", "", ns.formatRam(threads.totalBatchRam)],
+        ["Weaken Time", ns.tFormat(timings.weakenTime), ""],
+        ["Batch Delay", ns.tFormat(timings.effectiveBatchDelay), timings.effectiveBatchDelay !== batchDelay ? "(adjusted)" : ""],
+        ["Batch Interval", ns.tFormat(timings.effectiveBatchDelay * 4), ""],
+        ["Cycle Time", ns.tFormat(predictedBatchCycleTime), ""],
+      ],
+      separatorAfter: [4], // Separator after Total Batch RAM
+      align: ["left", "right", "right"],
+    })
     ns.tprint(timingTable)
 
     if (debug) {
