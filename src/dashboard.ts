@@ -2,6 +2,7 @@ import { NS } from "@ns"
 import { createAugmentsWindow, updateAugmentsView } from "./libraries/dashboard/augments.js"
 import { createNodesWindow, updateNodesView } from "./libraries/dashboard/nodes.js"
 import { createServerListWindow, updateServerList } from "./libraries/dashboard/serverList.js"
+import { formatNumber } from "./libraries/format.js"
 
 /**
  * Unified Dashboard Script
@@ -47,12 +48,42 @@ export async function main(ns: NS): Promise<void> {
   // const targetsWindow = createTargetsWindow(ns, primaryColor)
   const augmentsWindow = createAugmentsWindow(ns, primaryColor)
 
+  // Get overview hooks for karma/stats display
+  const hook0 = document.getElementById("overview-extra-hook-0")
+  const hook1 = document.getElementById("overview-extra-hook-1")
+
   // Update loop - refresh all views every second
   while (true) {
-    updateServerList(ns, serverListWindow.container, primaryColor)
-    updateNodesView(ns, nodesWindow.container, primaryColor)
-    // updateTargetsView(ns, targetsWindow.container, primaryColor)
-    updateAugmentsView(ns, augmentsWindow.container, primaryColor)
+    try {
+      // Update floating windows
+      updateServerList(ns, serverListWindow.container, primaryColor)
+      updateNodesView(ns, nodesWindow.container, primaryColor)
+      // updateTargetsView(ns, targetsWindow.container, primaryColor)
+      updateAugmentsView(ns, augmentsWindow.container, primaryColor)
+
+      if (hook0 && hook1) {
+        const karma = ns.heart.break()
+
+        const headers = []
+        const values = []
+
+        headers.push("Kar")
+        values.push(formatNumber(karma))
+
+        headers.push("Exp")
+        values.push(formatNumber(ns.getTotalScriptExpGain()))
+
+        headers.push("Mon")
+        values.push(formatNumber(ns.getTotalScriptIncome()[0]))
+
+        hook0.innerText = headers.join(" \n")
+        hook1.innerText = values.join("\n")
+        hook1.style.whiteSpace = "pre-wrap"
+      }
+    } catch (err) {
+      ns.print("ERROR: Update Skipped: " + String(err))
+    }
+
     await ns.sleep(1000)
   }
 }
