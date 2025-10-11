@@ -70,7 +70,7 @@ function tFormat(time: number = 0): { html: string; length: number } {
   const normalPart = fullTime.substring(firstNonZeroIndex)
 
   return {
-    html: greyPart ? `<span style="color:#444">${greyPart}</span>${normalPart}` : fullTime,
+    html: greyPart ? `<span style="color:#44444400">${greyPart}</span>${normalPart}` : fullTime,
     length: 8, // Always 8 characters visually: HH:MM:SS
   }
 }

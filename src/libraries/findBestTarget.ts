@@ -104,7 +104,7 @@ export function analyzeAllServers(
       // Map i logarithmically: threshold = 1 - 10^(-x)
       // When i=0: threshold ≈ 0, when i→totalSteps: threshold → 1
       const logScale = i / totalSteps // 0 to ~1
-      const testThreshold = 1 - Math.pow(10, -logScale * 3) // Maps to ~0.001 to 0.999
+      const testThreshold = 1 - Math.pow(10, -logScale * 2) // Maps to ~0.001 to 0.999
       // ns.tprint(`Testing ${targetName} at threshold ${(testThreshold * 100).toFixed(2)}%`)
 
       // Calculate threads for this threshold
@@ -128,6 +128,7 @@ export function analyzeAllServers(
       const totalBatchRam = hackRam + wkn1Ram + growRam + wkn2Ram
 
       // Check if the total batch RAM fits in the smallest node
+      // ns.tprint(nodeRamLimit)
       if (totalBatchRam > nodeRamLimit) {
         // Skip this threshold - batch too large for smallest node
         continue

@@ -319,7 +319,7 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
       name: aug.name.padEnd(nameLen),
       faction: formatFactionText(validFactions, factionLen).padEnd(factionLen),
       price: ns.formatNumber(aug.price).padStart(priceLen),
-      priceRed: false,
+      priceRed: playerMoney < aug.price,
       adjusted: ns.formatNumber(adjustedPrices[i]).padStart(adjustedLen),
       adjustedRed: false,
       cumulative: ns.formatNumber(cumulativeCosts[i]).padStart(cumulativeLen),
@@ -343,7 +343,7 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
       name: aug.name.padEnd(nameLen),
       faction: formatFactionText(validFactions, factionLen).padEnd(factionLen),
       price: ns.formatNumber(aug.price).padStart(priceLen),
-      priceRed: false,
+      priceRed: playerMoney < aug.price,
       adjusted: ns.formatNumber(adjustedPrices[adjustedIdx]).padStart(adjustedLen),
       adjustedRed: true,
       cumulative: ns.formatNumber(cumulativeCosts[adjustedIdx]).padStart(cumulativeLen),
@@ -414,7 +414,7 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
         name: neuroFluxInfo.name.padEnd(nameLen),
         faction: formatFactionText(neuroFluxInfo.factions, factionLen).padEnd(factionLen),
         price: ns.formatNumber(neuroFluxInfo.price).padStart(priceLen),
-        priceRed: false,
+        priceRed: playerMoney < neuroFluxInfo.price,
         adjusted: ns.formatNumber(currentPrice).padStart(adjustedLen),
         adjustedRed: false,
         cumulative: ns.formatNumber(neuroFluxCumulative).padStart(cumulativeLen),
@@ -462,17 +462,18 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
   }
 
   // Build table header and footer using table builder
-  const colWidths = [orderLen, nameLen, factionLen, priceLen, adjustedLen, cumulativeLen, repLen, ownedLen, statusLen]
+  // Reorder columns: Rep Req comes before Price
+  const colWidths = [orderLen, nameLen, factionLen, repLen, priceLen, adjustedLen, cumulativeLen, ownedLen, statusLen]
   const borders = getTableBorders(colWidths)
 
   const headerCells = [
     orderCol.padStart(orderLen),
     nameCol.padEnd(nameLen),
     factionCol.padEnd(factionLen),
+    repCol.padStart(repLen),
     priceCol.padStart(priceLen),
     adjustedCol.padStart(adjustedLen),
     cumulativeCol.padStart(cumulativeLen),
-    repCol.padStart(repLen),
     ownedCol.padStart(ownedLen),
     statusCol.padStart(statusLen),
   ]
@@ -497,37 +498,43 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
     rowSpan.textContent = `┃ ${row.order} ┃ ${row.name} ┃ ${row.faction} ┃ `
     containerDiv.appendChild(rowSpan)
 
-    const priceSpan = document.createElement("span")
-    priceSpan.textContent = row.price
-    if (row.priceRed) priceSpan.style.color = "#ff4444"
-    containerDiv.appendChild(priceSpan)
+    // Rep requirement column (moved before price)
+    const repSpan = document.createElement("span")
+    repSpan.textContent = row.rep
+    if (row.repRed) repSpan.style.color = "rgb(195, 45, 45)"
+    containerDiv.appendChild(repSpan)
 
     const midSpan1 = document.createElement("span")
     midSpan1.textContent = " ┃ "
     containerDiv.appendChild(midSpan1)
 
-    const adjustedSpan = document.createElement("span")
-    adjustedSpan.textContent = row.adjusted
-    if (row.adjustedRed) adjustedSpan.style.color = "#ff4444"
-    containerDiv.appendChild(adjustedSpan)
+    // Price column - green if affordable, red if unaffordable
+    const priceSpan = document.createElement("span")
+    priceSpan.textContent = row.price
+    if (row.priceRed) {
+      priceSpan.style.color = "rgb(195, 45, 45)"
+    } else {
+      priceSpan.style.color = "rgb(100, 214, 100)"
+    }
+    containerDiv.appendChild(priceSpan)
 
     const midSpan2 = document.createElement("span")
     midSpan2.textContent = " ┃ "
     containerDiv.appendChild(midSpan2)
 
-    const cumulativeSpan = document.createElement("span")
-    cumulativeSpan.textContent = row.cumulative
-    if (row.cumulativeRed) cumulativeSpan.style.color = "#ff4444"
-    containerDiv.appendChild(cumulativeSpan)
+    const adjustedSpan = document.createElement("span")
+    adjustedSpan.textContent = row.adjusted
+    if (row.adjustedRed) adjustedSpan.style.color = "rgb(195, 45, 45)"
+    containerDiv.appendChild(adjustedSpan)
 
     const midSpan3 = document.createElement("span")
     midSpan3.textContent = " ┃ "
     containerDiv.appendChild(midSpan3)
 
-    const repSpan = document.createElement("span")
-    repSpan.textContent = row.rep
-    if (row.repRed) repSpan.style.color = "#ff4444"
-    containerDiv.appendChild(repSpan)
+    const cumulativeSpan = document.createElement("span")
+    cumulativeSpan.textContent = row.cumulative
+    if (row.cumulativeRed) cumulativeSpan.style.color = "rgb(195, 45, 45)"
+    containerDiv.appendChild(cumulativeSpan)
 
     const endSpan = document.createElement("span")
     endSpan.textContent = ` ┃ ${row.owned} ┃ ${row.status} ┃\n`

@@ -51,7 +51,7 @@ export async function main(ns: NS) {
       await copyRequiredScripts(ns, node)
     }
 
-    const batchDelay = 20
+    const batchDelay = 5
     const ramThreshold = 1
 
     // Calculate total RAM across all nodes and find minimum node RAM
@@ -69,6 +69,7 @@ export async function main(ns: NS) {
     let nodeRamLimit =
       nodeRamValues.length % 2 === 0 ? (nodeRamValues[middle - 1] + nodeRamValues[middle]) / 2 : nodeRamValues[middle]
     nodeRamLimit *= 1.0 // DEBUG: Adjust to test different scenarios
+    nodeRamLimit = Infinity
 
     ns.tprint(`Minimum node RAM: ${ns.formatRam(nodeRamLimit)}`)
     const myCores = ns.getServer(nodes[0]).cpuCores
@@ -193,13 +194,33 @@ export async function main(ns: NS) {
       title: "Thread Distribution & Timing",
       headers: ["Operation", "Threads", "RAM"],
       rows: [
-        ["Hack Threads", threads.hackThreads.toString(), ns.formatRam(ns.getScriptRam("/hacking/hack.js") * threads.hackThreads)],
-        ["Weaken 1 Threads", threads.wkn1Threads.toString(), ns.formatRam(ns.getScriptRam("/hacking/weaken.js") * threads.wkn1Threads)],
-        ["Grow Threads", threads.growThreads.toString(), ns.formatRam(ns.getScriptRam("/hacking/grow.js") * threads.growThreads)],
-        ["Weaken 2 Threads", threads.wkn2Threads.toString(), ns.formatRam(ns.getScriptRam("/hacking/weaken.js") * threads.wkn2Threads)],
+        [
+          "Hack Threads",
+          threads.hackThreads.toString(),
+          ns.formatRam(ns.getScriptRam("/hacking/hack.js") * threads.hackThreads),
+        ],
+        [
+          "Weaken 1 Threads",
+          threads.wkn1Threads.toString(),
+          ns.formatRam(ns.getScriptRam("/hacking/weaken.js") * threads.wkn1Threads),
+        ],
+        [
+          "Grow Threads",
+          threads.growThreads.toString(),
+          ns.formatRam(ns.getScriptRam("/hacking/grow.js") * threads.growThreads),
+        ],
+        [
+          "Weaken 2 Threads",
+          threads.wkn2Threads.toString(),
+          ns.formatRam(ns.getScriptRam("/hacking/weaken.js") * threads.wkn2Threads),
+        ],
         ["Total Batch RAM", "", ns.formatRam(threads.totalBatchRam)],
         ["Weaken Time", ns.tFormat(timings.weakenTime), ""],
-        ["Batch Delay", ns.tFormat(timings.effectiveBatchDelay), timings.effectiveBatchDelay !== batchDelay ? "(adjusted)" : ""],
+        [
+          "Batch Delay",
+          ns.tFormat(timings.effectiveBatchDelay),
+          timings.effectiveBatchDelay !== batchDelay ? "(adjusted)" : "",
+        ],
         ["Batch Interval", ns.tFormat(timings.effectiveBatchDelay * 4), ""],
         ["Cycle Time", ns.tFormat(predictedBatchCycleTime), ""],
       ],
