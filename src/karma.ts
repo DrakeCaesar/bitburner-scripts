@@ -29,9 +29,9 @@ export async function main(ns: NS): Promise<void> {
       headers.push("Mon")
       values.push(formatNumber(ns.getTotalScriptIncome()[0]))
 
-      hook0.innerText = headers.join(" \n")
-      hook1.innerText = values.join("\n")
-      hook1.style.whiteSpace = "pre-wrap"
+      hook0!.innerText = headers.join(" \n")
+      hook1!.innerText = values.join("\n")
+      hook1!.style.whiteSpace = "pre-wrap"
     } catch (err) {
       // This might come in handy later
       ns.print("ERROR: Update Skipped: " + String(err))

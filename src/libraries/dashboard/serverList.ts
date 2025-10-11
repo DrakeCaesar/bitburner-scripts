@@ -30,6 +30,10 @@ export function createServerListWindow(ns: NS, primaryColor: string): ServerList
   return { window, container: containerDiv }
 }
 
+function formatNumber(ns: NS, num: number = 0): string {
+  return num < 1000 ? ns.formatNumber(num) + " " : ns.formatNumber(num)
+}
+
 export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor: string): void {
   const knownServers = crawl(ns)
   const player = ns.getPlayer()
@@ -57,7 +61,7 @@ export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor
   const timeCol = "Time"
 
   let nameLen = nameCol.length
-  let lvlLen = lvlCol.length + 2 // +2 for " X" suffix
+  let lvlLen = lvlCol.length
   let rootLen = rootCol.length
   let backdoorLen = backdoorCol.length
   let secLen = secCol.length
@@ -72,7 +76,7 @@ export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor
     backdoorLen = Math.max(backdoorLen, 1)
     secLen = Math.max(secLen, ((server.hackDifficulty ?? 0) - (server.minDifficulty ?? 0)).toFixed(2).length)
     ramLen = Math.max(ramLen, ns.formatRam(server.maxRam, 0).length)
-    moneyLen = Math.max(moneyLen, ns.formatNumber(server.moneyMax ?? 0).length)
+    moneyLen = Math.max(moneyLen, formatNumber(ns, server.moneyMax).length)
     timeLen = Math.max(timeLen, ns.tFormat(ns.getWeakenTime(target)).length)
   }
 
@@ -106,7 +110,7 @@ export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor
     const hasBackdoor = server.backdoorInstalled ? " " : "X"
     const secDiff = ((server.hackDifficulty ?? 0) - (server.minDifficulty ?? 0)).toFixed(2)
     const ram = ns.formatRam(server.maxRam, 0)
-    const money = ns.formatNumber(server.moneyMax ?? 0)
+    const money = formatNumber(ns, server.moneyMax ?? 0)
     const time = ns.tFormat(ns.getWeakenTime(target))
 
     const rowSpan = document.createElement("span")
