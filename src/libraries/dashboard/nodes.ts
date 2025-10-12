@@ -227,7 +227,7 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
     "\n" +
     formatTableRow([
       homeCoresProgressBar.padStart(nodeProgressLen), // Right-align to end of column
-      (homeCores.toString() + (homeCores == 1 ? "  Core" : " Cores")).padStart(valueLen), // Right-align value
+      (homeCores.toString() + (homeCores == 1 ? " Core " : " Cores")).padStart(valueLen), // Right-align value
     ]) +
     "\n" +
     borders.header() +
