@@ -176,15 +176,12 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
   }
 
   // Calculate column widths - using 2 columns: Node+Progress merged, and Value
-  const nodeProgressCol = "Node"
-  const valueCol = "Value"
-
   // Calculate the length needed for node name + progress bar
   const ramProgressLen = Math.log2(maxRam) + 1
   const homeRamProgressLen = Math.log2(maxHomeRam) + 1 // This is the longest progress bar
 
   // Node column width is the max of node names
-  let maxNodeNameLen = nodeProgressCol.length
+  let maxNodeNameLen = 0
   for (const node of nodes) {
     maxNodeNameLen = Math.max(maxNodeNameLen, node.name.length)
   }
@@ -198,7 +195,7 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
   )
 
   // Value column width
-  let valueLen = valueCol.length
+  let valueLen = 0
   valueLen = Math.max(valueLen, ns.formatRam(homeRam).length, homeCores.toString().length)
   for (const node of nodes) {
     valueLen = Math.max(valueLen, node.ramFormatted.length)
@@ -208,15 +205,13 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
   const colWidths = [nodeProgressLen, valueLen]
   const borders = getTableBorders(colWidths)
 
-  const headerCells = [nodeProgressCol.padEnd(nodeProgressLen), valueCol.padEnd(valueLen)]
-
   // Clear and rebuild container
   containerDiv.innerHTML = ""
 
-  // Add header
-  const headerSpan = document.createElement("span")
-  headerSpan.textContent = `${borders.top()}\n${formatTableRow(headerCells)}\n${borders.header()}\n`
-  containerDiv.appendChild(headerSpan)
+  // Add top border only (no header)
+  const topBorderSpan = document.createElement("span")
+  topBorderSpan.textContent = `${borders.top()}\n`
+  containerDiv.appendChild(topBorderSpan)
 
   // Add home server rows (without "home" label to save space)
   const homeSpan = document.createElement("span")
