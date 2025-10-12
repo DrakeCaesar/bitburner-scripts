@@ -174,7 +174,7 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
       const worstNode = existingNodes.reduce((min, n) => (n.ram < min.ram ? n : min))
       nextAction = `Save to upgrade ${worstNode.name} to ${ns.formatRam(targetRam, digits)}`
     }
-    savingsInfo = `${ns.formatNumber(money)} / ${ns.formatNumber(cost)} (${percentSaved.toFixed(1)}%) - Need ${ns.formatNumber(needed)} more`
+    savingsInfo = `${ns.formatNumber(money)} / ${ns.formatNumber(cost)} (${percentSaved.toFixed(1)}%) - ${ns.formatNumber(needed)}`
   }
 
   // Calculate column widths - using 2 columns: Node+Progress merged, and Value

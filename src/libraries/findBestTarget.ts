@@ -213,7 +213,7 @@ export async function analyzeAllServers(
           result.batches.toString(),
         ]),
     })
-    ns.tprint(serverTable)
+    // ns.tprint(serverTable)
 
     profitabilityData.push({
       serverName: targetName,

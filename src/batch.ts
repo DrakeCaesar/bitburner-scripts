@@ -1,9 +1,5 @@
 import { NS } from "@ns"
-import {
-  copyRequiredScripts,
-  killOtherInstances,
-  prepareServerMultiNode,
-} from "./libraries/batchCalculations.js"
+import { copyRequiredScripts, killOtherInstances, prepareServerMultiNode } from "./libraries/batchCalculations.js"
 // import { initBatchVisualiser, logBatchOperation } from "./batchVisualiser.js"
 import { autoNuke } from "./autoNuke.js"
 import { calculateBatchThreads, calculateBatchTimings, executeBatches } from "./libraries/batchExecution.js"
@@ -89,11 +85,14 @@ export async function main(ns: NS) {
     server.moneyAvailable = server.moneyMax
 
     // Debug flag - set to true for verbose prep output
-    const debug = true
+    const debug = false
 
     // Calculate and show estimated prep time based on available RAM across all nodes
     const calcStartTime = Date.now()
-    const prepEstimate = await prepareServerMultiNode(ns, nodes, target.serverName, { dryRun: true, showVerbose: debug })
+    const prepEstimate = await prepareServerMultiNode(ns, nodes, target.serverName, {
+      dryRun: true,
+      showVerbose: debug,
+    })
     const calcEndTime = Date.now()
     const calcDuration = calcEndTime - calcStartTime
 

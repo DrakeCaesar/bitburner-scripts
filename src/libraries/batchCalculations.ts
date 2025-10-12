@@ -303,14 +303,16 @@ export async function prepareServerMultiNode(
         const weakenAmount = 0.05 * distribution.actualWeakenThreads * (1 + (myCores - 1) / 16)
         const willReachMinSec = weakenAmount >= totalSecToReduce - 0.01
 
-        if (distribution.actualGrowThreads === mid &&
-            distribution.actualWeakenThreads === weakenNeeded &&
-            willReachMinSec) {
+        if (
+          distribution.actualGrowThreads === mid &&
+          distribution.actualWeakenThreads === weakenNeeded &&
+          willReachMinSec
+        ) {
           // Success! Try for more grow
           bestResult = {
             grow: distribution.actualGrowThreads,
             weaken: distribution.actualWeakenThreads,
-            nodes: distribution.nodeCapacities
+            nodes: distribution.nodeCapacities,
           }
           low = mid + 1
         } else {
@@ -324,7 +326,7 @@ export async function prepareServerMultiNode(
         return {
           growThreads: bestResult.grow,
           weakenThreads: bestResult.weaken,
-          nodeCapacities: bestResult.nodes
+          nodeCapacities: bestResult.nodes,
         }
       }
 
@@ -334,7 +336,7 @@ export async function prepareServerMultiNode(
       return {
         growThreads: 0,
         weakenThreads: pureWeakenDist.actualWeakenThreads,
-        nodeCapacities: pureWeakenDist.nodeCapacities
+        nodeCapacities: pureWeakenDist.nodeCapacities,
       }
     } else if (needsWeaken) {
       // Only need weaken
@@ -343,7 +345,7 @@ export async function prepareServerMultiNode(
       return {
         growThreads: 0,
         weakenThreads: distribution.actualWeakenThreads,
-        nodeCapacities: distribution.nodeCapacities
+        nodeCapacities: distribution.nodeCapacities,
       }
     } else if (needsMoney) {
       // Only need grow (security already at min) - must offset grow's security increase
@@ -368,14 +370,16 @@ export async function prepareServerMultiNode(
         const weakenAmount = 0.05 * distribution.actualWeakenThreads * (1 + (myCores - 1) / 16)
         const willMaintainMinSec = weakenAmount >= growSecIncrease - 0.01
 
-        if (distribution.actualGrowThreads === mid &&
-            distribution.actualWeakenThreads === weakenNeeded &&
-            willMaintainMinSec) {
+        if (
+          distribution.actualGrowThreads === mid &&
+          distribution.actualWeakenThreads === weakenNeeded &&
+          willMaintainMinSec
+        ) {
           // Success! Try for more grow
           bestResult = {
             grow: distribution.actualGrowThreads,
             weaken: distribution.actualWeakenThreads,
-            nodes: distribution.nodeCapacities
+            nodes: distribution.nodeCapacities,
           }
           low = mid + 1
         } else {
@@ -389,7 +393,7 @@ export async function prepareServerMultiNode(
         return {
           growThreads: bestResult.grow,
           weakenThreads: bestResult.weaken,
-          nodeCapacities: bestResult.nodes
+          nodeCapacities: bestResult.nodes,
         }
       }
 
@@ -579,7 +583,11 @@ export async function prepareServerMultiNode(
       // Calculate threads using distribution-aware helper
       const simServer = { ...server, hackDifficulty: simSec, moneyAvailable: simMoney }
       const currentExcessSec = simSec - baseSecurity
-      const { growThreads, weakenThreads, nodeCapacities } = calculateThreadsWithDistribution(simServer, player, currentExcessSec)
+      const { growThreads, weakenThreads, nodeCapacities } = calculateThreadsWithDistribution(
+        simServer,
+        player,
+        currentExcessSec
+      )
 
       // If we can't make progress, break
       if (growThreads === 0 && weakenThreads === 0) {
@@ -700,7 +708,11 @@ export async function prepareServerMultiNode(
 
       // Calculate threads using distribution-aware helper
       const currentExcessSec = currentSecActual - baseSecurity
-      const { growThreads, weakenThreads, nodeCapacities } = calculateThreadsWithDistribution(serverActual, player, currentExcessSec)
+      const { growThreads, weakenThreads, nodeCapacities } = calculateThreadsWithDistribution(
+        serverActual,
+        player,
+        currentExcessSec
+      )
 
       const pids: number[] = []
 
