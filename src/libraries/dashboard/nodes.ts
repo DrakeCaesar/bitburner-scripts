@@ -75,7 +75,8 @@ function generateProgressBar(ram: number, maxRam: number): string {
 
 export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor: string): void {
   const maxRam = ns.getPurchasedServerMaxRam()
-  const maxCores = 8 // Maximum cores for home server
+  const maxHomeRam = Math.pow(2, 30)
+  const maxCores = 16 // Maximum cores for home server
   const nodes: NodeInfo[] = []
 
   // Get home server info
@@ -148,8 +149,9 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
   let nameLen = Math.max(nameCol.length, "home".length, "RAM".length, "Cores".length)
   let valueLen = Math.max(valueCol.length, ns.formatRam(homeRam).length, homeCores.toString().length)
   const ramProgressLen = Math.log2(maxRam) + 1
+  const homeRamProgressLen = Math.log2(maxHomeRam) + 1
   const coresProgressLen = Math.log2(maxCores) + 1
-  const progressLen = Math.max(ramProgressLen, coresProgressLen)
+  const progressLen = Math.max(ramProgressLen, coresProgressLen, homeRamProgressLen)
 
   for (const node of nodes) {
     nameLen = Math.max(nameLen, node.name.length)
@@ -172,7 +174,7 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
 
   // Add home server rows
   const homeSpan = document.createElement("span")
-  const homeRamProgressBar = generateProgressBar(homeRam, maxRam)
+  const homeRamProgressBar = generateProgressBar(homeRam, maxHomeRam)
   const homeCoresProgressBar = generateProgressBar(homeCores, maxCores)
   homeSpan.textContent =
     formatTableRow([
