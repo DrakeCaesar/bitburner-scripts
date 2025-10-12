@@ -204,13 +204,29 @@ function getAugmentDataForDisplay(ns: NS, playerFactions: string[]) {
 export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryColor: string): void {
   const player = ns.getPlayer()
 
-  if (player.factions.length === 0) {
-    containerDiv.textContent = "I am not in any factions yet."
-    return
+  // if (player.factions.length === 0) {
+  //   containerDiv.textContent = "I am not in any factions yet."
+  //   return
+  // }
+  const factions = player.factions
+
+  const cityFactions: string[] = ["Aevum", "Sector12", "Volhaven", "Chongqing", "Ishima", "NewTokyo"]
+
+  const inCityFaction = factions.some((r) => cityFactions.includes(r))
+
+  if (!inCityFaction) {
+    factions.push(ns.enums.FactionName.Aevum)
+    factions.push(ns.enums.FactionName.Sector12)
+
+    factions.push(ns.enums.FactionName.Volhaven)
+
+    factions.push(ns.enums.FactionName.Chongqing)
+    factions.push(ns.enums.FactionName.Ishima)
+    factions.push(ns.enums.FactionName.NewTokyo)
   }
 
   const { affordableSorted, tooExpensiveCumulative, unaffordable, neuroFluxInfo, playerMoney, factionReps } =
-    getAugmentDataForDisplay(ns, player.factions)
+    getAugmentDataForDisplay(ns, factions)
 
   // Calculate column widths
   const orderCol = "#"
