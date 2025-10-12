@@ -197,7 +197,7 @@ export async function purchaseAugmentations(ns: NS, buyFlux: boolean, dryRun = f
   const playerFactions = player.factions
 
   if (playerFactions.length === 0) {
-    ns.tprint("You are not in any factions yet.")
+    ns.tprint("I am not in any factions yet.")
     return
   }
 

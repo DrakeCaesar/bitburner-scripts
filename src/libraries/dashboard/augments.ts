@@ -205,7 +205,7 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
   const player = ns.getPlayer()
 
   if (player.factions.length === 0) {
-    containerDiv.textContent = "You are not in any factions yet."
+    containerDiv.textContent = "I am not in any factions yet."
     return
   }
 

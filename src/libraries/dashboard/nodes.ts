@@ -167,12 +167,12 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
     const percentSaved = (money / cost) * 100
 
     if (existingNodes.length < 25) {
-      nextAction = `Save for ${ns.formatRam(targetRam)} server`
+      nextAction = `Saving for ${ns.formatRam(targetRam)} server`
     } else {
       const worstNode = existingNodes.reduce((min, n) => (n.ram < min.ram ? n : min))
       nextAction = `Save to upgrade ${worstNode.name} to ${ns.formatRam(targetRam)}`
     }
-    savingsInfo = `Saving: ${ns.formatNumber(money)} / ${ns.formatNumber(cost)} (${percentSaved.toFixed(1)}%) - Need ${ns.formatNumber(needed)} more`
+    savingsInfo = `${ns.formatNumber(money)} / ${ns.formatNumber(cost)} (${percentSaved.toFixed(1)}%) - Need ${ns.formatNumber(needed)} more`
   }
 
   // Calculate column widths - using 2 columns: Node+Progress merged, and Value
@@ -248,9 +248,9 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
   const footerSpan = document.createElement("span")
   footerSpan.textContent =
     `${borders.bottom()}\n` +
-    `\nServers: ${existingNodes.length}/25 | Total RAM: ${ns.formatRam(totalRam)} | Avg: ${ns.formatRam(avgRam)}\n` +
-    `Min: ${ns.formatRam(minRam)} | Max: ${ns.formatRam(maxNodeRam)} | System Max: ${ns.formatRam(maxRam)}\n` +
-    `Next: ${nextAction}\n` +
+    // `Servers: ${existingNodes.length}/25 | Total RAM: ${ns.formatRam(totalRam)} | Avg: ${ns.formatRam(avgRam)}\n` +
+    // `Min: ${ns.formatRam(minRam)} | Max: ${ns.formatRam(maxNodeRam)} | System Max: ${ns.formatRam(maxRam)}\n` +
+    `${nextAction}\n` +
     `${savingsInfo}`
   containerDiv.appendChild(footerSpan)
 }
