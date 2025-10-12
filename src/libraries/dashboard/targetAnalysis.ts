@@ -29,7 +29,7 @@ export function createTargetsWindow(ns: NS, primaryColor: string): TargetsWindow
   return { window, container: containerDiv }
 }
 
-export function updateTargetsView(ns: NS, containerDiv: HTMLElement, primaryColor: string): void {
+export async function updateTargetsView(ns: NS, containerDiv: HTMLElement, primaryColor: string): Promise<void> {
   // Get nodes for batching
   const nodes = getNodesForBatching(ns)
 
@@ -51,7 +51,7 @@ export function updateTargetsView(ns: NS, containerDiv: HTMLElement, primaryColo
   const batchCycles = 3
 
   // Analyze servers
-  const profitabilityData = analyzeAllServers(
+  const profitabilityData = await analyzeAllServers(
     ns,
     totalMaxRam,
     nodeRamLimit,

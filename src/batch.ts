@@ -1,6 +1,5 @@
 import { NS } from "@ns"
 import {
-  calculatePrepTime,
   copyRequiredScripts,
   killOtherInstances,
   prepareServerMultiNode,
@@ -75,7 +74,7 @@ export async function main(ns: NS) {
     const myCores = ns.getServer(nodes[0]).cpuCores
 
     // Find best target automatically (constrained by smallest node RAM)
-    const target = findBestTarget(ns, totalMaxRam, nodeRamLimit, myCores, batchDelay, nodes, playerHackLevel)
+    const target = await findBestTarget(ns, totalMaxRam, nodeRamLimit, myCores, batchDelay, nodes, playerHackLevel)
     const player = ns.getPlayer()
 
     ns.tprint(`Target: ${target.serverName}`)
@@ -94,7 +93,7 @@ export async function main(ns: NS) {
 
     // Calculate and show estimated prep time based on available RAM across all nodes
     const calcStartTime = Date.now()
-    const prepEstimate = calculatePrepTime(ns, nodes, target.serverName, debug) // Pass debug flag
+    const prepEstimate = await prepareServerMultiNode(ns, nodes, target.serverName, { dryRun: true, showVerbose: debug })
     const calcEndTime = Date.now()
     const calcDuration = calcEndTime - calcStartTime
 
@@ -111,7 +110,11 @@ export async function main(ns: NS) {
     // Use multi-node prep to distribute operations across all available nodes
     // Pass predicted iterations for comparison
     const prepStartTime = Date.now()
-    await prepareServerMultiNode(ns, nodes, target.serverName, prepEstimate.iterationDetails, debug)
+    await prepareServerMultiNode(ns, nodes, target.serverName, {
+      dryRun: false,
+      predictedIterations: prepEstimate.iterationDetails,
+      debug,
+    })
     const prepEndTime = Date.now()
     const actualPrepTime = prepEndTime - prepStartTime
 

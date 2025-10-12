@@ -2,10 +2,10 @@ import { NS } from "@ns"
 import {
   calculateGrowThreads,
   calculateHackThreads,
-  calculatePrepTime,
   calculateWeakThreads,
   growServerInstance,
   hackServerInstance,
+  prepareServerMultiNode,
   wkn1ServerInstance,
   wkn2ServerInstance,
 } from "./batchCalculations.js"
@@ -38,7 +38,7 @@ export interface ServerProfitability {
  * @param batchCycles - Number of batch cycles to weight against prep time (default: 3)
  * @returns Array of servers sorted by profitability (best first)
  */
-export function analyzeAllServers(
+export async function analyzeAllServers(
   ns: NS,
   totalMaxRam: number,
   nodeRamLimit: number,
@@ -47,7 +47,7 @@ export function analyzeAllServers(
   nodes: string[],
   playerHackLevel?: number,
   batchCycles: number = 20
-): ServerProfitability[] {
+): Promise<ServerProfitability[]> {
   // Get all servers
   const knownServers = new Set<string>()
   crawl(ns, knownServers)
@@ -70,7 +70,7 @@ export function analyzeAllServers(
 
   for (const targetName of hackableServers) {
     // Calculate accurate prep time using the same function as batch.ts
-    const prepTimeResult = calculatePrepTime(ns, nodes, targetName, false)
+    const prepTimeResult = await prepareServerMultiNode(ns, nodes, targetName, { dryRun: true, showVerbose: false })
     const prepTime = prepTimeResult.totalTime
 
     // Simulate prepared server
@@ -233,7 +233,7 @@ export function analyzeAllServers(
   return profitabilityData
 }
 
-export function findBestTarget(
+export async function findBestTarget(
   ns: NS,
   totalMaxRam: number,
   nodeRamLimit: number,
@@ -242,9 +242,9 @@ export function findBestTarget(
   nodes: string[],
   playerHackLevel?: number,
   batchCycles: number = 3
-): BestTargetResult {
+): Promise<BestTargetResult> {
   // Use the analysis function to get all server profitability data
-  const profitabilityData = analyzeAllServers(
+  const profitabilityData = await analyzeAllServers(
     ns,
     totalMaxRam,
     nodeRamLimit,
