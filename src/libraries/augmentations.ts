@@ -73,68 +73,108 @@ export function getAugmentData(ns: NS, playerFactions: string[]): AugmentData {
     }
   }
 
-  // Get all augments as array and sort by price
-  const allAugs = Array.from(augmentMap.values()).sort((a, b) => a.price - b.price)
-
-  // Get faction reputations
+  // Get player stats
+  const playerMoney = ns.getPlayer().money
   const factionReps = new Map<string, number>()
   for (const faction of playerFactions) {
     factionReps.set(faction, ns.singularity.getFactionRep(faction))
   }
 
-  const playerMoney = ns.getPlayer().money
-
-  // Find max reputation the player has across all factions (for a given augment's factions)
-  function getMaxRepForAugment(aug: AugmentInfo): number {
-    return Math.max(...aug.factions.map((f) => factionReps.get(f) ?? 0))
-  }
-
-  // Check if all prerequisites are owned
-  function hasAllPrereqs(aug: AugmentInfo): boolean {
-    return aug.prereqs.every((prereqName) => {
-      const prereq = augmentMap.get(prereqName)
-      return prereq?.owned ?? false
-    })
-  }
-
-  const AUGMENT_PRICE_MULT = 1.9
-
-  // Categorize augmentations
-  const affordable: AugmentInfo[] = []
-  const tooExpensiveCumulative: AugmentInfo[] = []
+  // Filter out owned augmentations and check rep requirements
+  const potentiallyAffordable: AugmentInfo[] = []
   const unaffordable: AugmentInfo[] = []
 
-  let cumulativeCost = 0
+  for (const aug of augmentMap.values()) {
+    // Skip owned augmentations entirely
+    if (aug.owned) continue
 
-  for (let i = 0; i < allAugs.length; i++) {
-    const aug = allAugs[i]
+    // Check if we have enough rep in ANY of the factions that offer this augment
+    const hasEnoughRep = aug.factions.some((faction) => (factionReps.get(faction) ?? 0) >= aug.repReq)
 
-    // Skip already owned augmentations
-    if (aug.owned) {
-      continue
-    }
-
-    const adjustedPrice = aug.price * Math.pow(AUGMENT_PRICE_MULT, i)
-    cumulativeCost += adjustedPrice
-
-    const maxFactionRep = getMaxRepForAugment(aug)
-    const hasRep = maxFactionRep >= aug.repReq
-    const hasPrereqs = hasAllPrereqs(aug)
-
-    // Check affordability and prerequisites
-    if (hasRep && hasPrereqs) {
-      if (cumulativeCost <= playerMoney) {
-        affordable.push(aug)
-      } else {
-        tooExpensiveCumulative.push(aug)
-      }
+    if (hasEnoughRep) {
+      potentiallyAffordable.push(aug)
     } else {
       unaffordable.push(aug)
     }
   }
 
-  // Sort affordable by price (already sorted from parent array)
+  // Topological sort optimized for minimum total cost
+  // Strategy: Buy expensive augments first (to minimize 1.9x price inflation),
+  // but ensure prerequisites are purchased before their dependents
+  function topologicalSort(augs: AugmentInfo[]): AugmentInfo[] {
+    const augsByName = new Map(augs.map((aug) => [aug.name, aug]))
+    const visited = new Set<string>()
+    const result: AugmentInfo[] = []
+
+    // Build dependency graph: for each aug, track what depends on it
+    const dependents = new Map<string, Set<string>>()
+    const prereqCount = new Map<string, number>()
+
+    for (const aug of augs) {
+      prereqCount.set(aug.name, aug.prereqs.filter((p) => augsByName.has(p)).length)
+
+      for (const prereqName of aug.prereqs) {
+        if (augsByName.has(prereqName)) {
+          if (!dependents.has(prereqName)) {
+            dependents.set(prereqName, new Set())
+          }
+          dependents.get(prereqName)!.add(aug.name)
+        }
+      }
+    }
+
+    // Process augments by price (most expensive first), respecting dependencies
+    while (result.length < augs.length) {
+      // Find all augments with no remaining prerequisites
+      const available = augs.filter((aug) => !visited.has(aug.name) && (prereqCount.get(aug.name) ?? 0) === 0)
+
+      if (available.length === 0) break // Circular dependency or error
+
+      // Among available augments, pick the most expensive one
+      const next = available.reduce((max, aug) => (aug.price > max.price ? aug : max))
+
+      visited.add(next.name)
+      result.push(next)
+
+      // Update prereq counts for dependents
+      const deps = dependents.get(next.name)
+      if (deps) {
+        for (const depName of deps) {
+          prereqCount.set(depName, (prereqCount.get(depName) ?? 0) - 1)
+        }
+      }
+    }
+
+    return result
+  }
+
+  // Sort all potentially affordable augments for optimal purchase order (expensive first, respecting prereqs)
+  const optimallySorted = topologicalSort(potentiallyAffordable)
+
+  // Now split into truly affordable (based on cumulative adjusted cost) and too expensive
+  const AUGMENT_PRICE_MULT = 1.9
+  let cumulativeCost = 0
+  const affordable: AugmentInfo[] = []
+  const tooExpensiveCumulative: AugmentInfo[] = []
+
+  for (let i = 0; i < optimallySorted.length; i++) {
+    const adjustedPrice = optimallySorted[i].price * Math.pow(AUGMENT_PRICE_MULT, i)
+    cumulativeCost += adjustedPrice
+
+    if (cumulativeCost <= playerMoney) {
+      affordable.push(optimallySorted[i])
+    } else {
+      // This and all subsequent augments are unaffordable due to cumulative cost
+      tooExpensiveCumulative.push(...optimallySorted.slice(i))
+      break
+    }
+  }
+
+  // Sort unaffordable by price (most expensive first)
+  unaffordable.sort((a, b) => b.price - a.price)
+
   const affordableSorted = affordable
+  const allAugs = [...affordableSorted, ...tooExpensiveCumulative, ...unaffordable]
 
   return {
     affordableSorted,
@@ -178,29 +218,21 @@ export async function purchaseAugmentations(ns: NS, buyFlux: boolean, dryRun = f
   let purchaseCount = 0
   let totalSpent = 0
 
-  // Calculate cumulative costs to determine affordability
   const AUGMENT_PRICE_MULT = 1.9
-  let cumulativeCost = 0
-  const affordableWithBudget: typeof affordableSorted = []
 
+  // Calculate total cost for display (affordableSorted already contains the correct augments)
+  let totalCost = 0
   for (let i = 0; i < affordableSorted.length; i++) {
-    const adjustedPrice = affordableSorted[i].price * Math.pow(AUGMENT_PRICE_MULT, i)
-    cumulativeCost += adjustedPrice
-
-    if (cumulativeCost <= playerMoney) {
-      affordableWithBudget.push(affordableSorted[i])
-    } else {
-      break
-    }
+    totalCost += affordableSorted[i].price * Math.pow(AUGMENT_PRICE_MULT, i)
   }
 
-  // Purchase augmentations we can actually afford
-  if (affordableWithBudget.length > 0) {
-    ns.tprint(
-      `Can afford ${affordableWithBudget.length} of ${affordableSorted.length} augmentations (total cost: ${ns.formatNumber(cumulativeCost > playerMoney ? playerMoney : cumulativeCost)})`
-    )
+  // Purchase augmentations
+  if (affordableSorted.length > 0) {
+    ns.tprint(`Purchasing ${affordableSorted.length} augmentations (total cost: ${ns.formatNumber(totalCost)})`)
 
-    for (const aug of affordableWithBudget) {
+    for (let i = 0; i < affordableSorted.length; i++) {
+      const aug = affordableSorted[i]
+      const adjustedPrice = aug.price * Math.pow(AUGMENT_PRICE_MULT, i)
       const validFaction = aug.factions.find((f) => (factionReps.get(f) ?? 0) >= aug.repReq)
 
       if (!validFaction) {
@@ -209,24 +241,22 @@ export async function purchaseAugmentations(ns: NS, buyFlux: boolean, dryRun = f
       }
 
       if (dryRun) {
-        ns.tprint(`Would purchase: ${aug.name} from ${validFaction} for ${ns.formatNumber(aug.price)}`)
+        ns.tprint(`Would purchase: ${aug.name} from ${validFaction} for ${ns.formatNumber(adjustedPrice)}`)
         purchaseCount++
-        totalSpent += aug.price
+        totalSpent += adjustedPrice
       } else {
         const success = ns.singularity.purchaseAugmentation(validFaction, aug.name)
         if (success) {
-          ns.tprint(`Purchased: ${aug.name} from ${validFaction} for ${ns.formatNumber(aug.price)}`)
+          ns.tprint(`Purchased: ${aug.name} from ${validFaction} for ${ns.formatNumber(adjustedPrice)}`)
           purchaseCount++
-          totalSpent += aug.price
+          totalSpent += adjustedPrice
         } else {
           ns.tprint(`Failed to purchase: ${aug.name} from ${validFaction}`)
         }
       }
     }
-  } else if (affordableSorted.length > 0) {
-    ns.tprint(
-      `Cannot afford any augmentations. Cheapest would cost ${ns.formatNumber(affordableSorted[0].price)}, you have ${ns.formatNumber(playerMoney)}`
-    )
+  } else {
+    ns.tprint(`No augmentations are currently affordable.`)
   }
 
   // If buyFlux is true, top up with NeuroFlux Governor
