@@ -108,9 +108,12 @@ function generateLinearProgressBar(value: number, maxValue: number): string {
 }
 
 export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor: string): void {
-  const maxRam = ns.getPurchasedServerMaxRam()
+  const maxNodeRam = ns.getPurchasedServerMaxRam()
+
+  const minHomeRam = 8
   const maxHomeRam = Math.pow(2, 30)
-  const maxCores = 16 // Maximum cores for home server
+  const maxHomeCores = 16 // Maximum cores for home server
+
   const nodes: NodeInfo[] = []
 
   const digits = 3
@@ -130,32 +133,29 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
       exists,
       ram,
       ramFormatted: exists ? ns.formatRam(ram, digits) : "-",
-      progressBar: generateProgressBar(ram, maxRam),
+      progressBar: generateProgressBar(ram, maxNodeRam),
     })
   }
 
   // Calculate stats
   const existingNodes = nodes.filter((n) => n.exists)
   const totalRam = existingNodes.reduce((sum, n) => sum + n.ram, 0)
-  const avgRam = existingNodes.length > 0 ? totalRam / existingNodes.length : 0
-  const minRam = existingNodes.length > 0 ? Math.min(...existingNodes.map((n) => n.ram)) : 0
-  const maxNodeRam = existingNodes.length > 0 ? Math.max(...existingNodes.map((n) => n.ram)) : 0
 
   // Calculate target RAM and cost
   const money = ns.getPlayer().money
   const bestRam = existingNodes.length > 0 ? Math.max(...existingNodes.map((n) => n.ram)) : 0
 
   // Target is always double the best (or 1 if no servers), capped at maxRam
-  const targetRam = bestRam > 0 ? Math.min(bestRam * 2, maxRam) : 1
+  const targetRam = bestRam > 0 ? Math.min(bestRam * 2, maxNodeRam) : 1
   const cost = ns.getPurchasedServerCost(targetRam)
 
   // Determine next action
   let nextAction = "Save money"
   let savingsInfo = ""
 
-  if (bestRam >= maxRam) {
-    nextAction = `All servers maxed at ${ns.formatRam(maxRam, digits)}`
-    savingsInfo = `Max server RAM reached (${ns.formatRam(maxRam, digits)}) - Cost to purchase: ${ns.formatNumber(cost)}`
+  if (bestRam >= maxNodeRam) {
+    nextAction = `All servers maxed at ${ns.formatRam(maxNodeRam, digits)}`
+    savingsInfo = `Max server RAM reached (${ns.formatRam(maxNodeRam, digits)}) - Cost to purchase: ${ns.formatNumber(cost)}`
   } else if (money >= cost) {
     if (existingNodes.length < 25) {
       nextAction = `Buy ${ns.formatRam(targetRam, digits)} server (${ns.formatNumber(cost)})`
@@ -179,8 +179,8 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
 
   // Calculate column widths - using 2 columns: Node+Progress merged, and Value
   // Calculate the length needed for node name + progress bar
-  const ramProgressLen = Math.log2(maxRam) + 1
-  const homeRamProgressLen = Math.log2(maxHomeRam) + 1 // This is the longest progress bar
+  const ramProgressLen = Math.log2(maxNodeRam) + 1
+  const homeRamProgressLen = Math.log2(maxHomeRam / minHomeRam) + 1 // This is the longest progress bar
 
   // Node column width is the max of node names
   let maxNodeNameLen = 0
@@ -217,8 +217,8 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
 
   // Add home server rows (without "home" label to save space)
   const homeSpan = document.createElement("span")
-  const homeRamProgressBar = generateProgressBar(homeRam, maxHomeRam)
-  const homeCoresProgressBar = generateLinearProgressBar(homeCores, maxCores)
+  const homeRamProgressBar = generateProgressBar(homeRam / minHomeRam, maxHomeRam / minHomeRam)
+  const homeCoresProgressBar = generateLinearProgressBar(homeCores, maxHomeCores)
   homeSpan.textContent =
     formatTableRow([
       homeRamProgressBar.padStart(nodeProgressLen), // Right-align to end of column
