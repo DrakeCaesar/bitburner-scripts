@@ -150,8 +150,9 @@ export function getAugmentData(ns: NS, playerFactions: string[]): AugmentData {
 /**
  * Purchase augmentations in optimal order
  * @param buyFlux If true, top up remaining money with NeuroFlux Governor
+ * @param dryRun If true, only show what would be purchased without actually buying
  */
-export async function purchaseAugmentations(ns: NS, buyFlux: boolean): Promise<void> {
+export async function purchaseAugmentations(ns: NS, buyFlux: boolean, dryRun = false): Promise<void> {
   const player = ns.getPlayer()
   const playerFactions = player.factions
 
@@ -164,9 +165,13 @@ export async function purchaseAugmentations(ns: NS, buyFlux: boolean): Promise<v
 
   ns.tprint("\n" + "=".repeat(120))
   ns.tprint(
-    buyFlux
-      ? "PURCHASING AUGMENTATIONS + TOPPING UP WITH NEUROFLUX"
-      : "PURCHASING AUGMENTATIONS (optimal order, within budget)"
+    dryRun
+      ? buyFlux
+        ? "[DRY RUN] WOULD PURCHASE AUGMENTATIONS + TOP UP WITH NEUROFLUX"
+        : "[DRY RUN] WOULD PURCHASE AUGMENTATIONS (optimal order, within budget)"
+      : buyFlux
+        ? "PURCHASING AUGMENTATIONS + TOPPING UP WITH NEUROFLUX"
+        : "PURCHASING AUGMENTATIONS (optimal order, within budget)"
   )
   ns.tprint("=".repeat(120))
 
@@ -203,13 +208,19 @@ export async function purchaseAugmentations(ns: NS, buyFlux: boolean): Promise<v
         continue
       }
 
-      const success = ns.singularity.purchaseAugmentation(validFaction, aug.name)
-      if (success) {
-        ns.tprint(`Purchased: ${aug.name} from ${validFaction} for ${ns.formatNumber(aug.price)}`)
+      if (dryRun) {
+        ns.tprint(`Would purchase: ${aug.name} from ${validFaction} for ${ns.formatNumber(aug.price)}`)
         purchaseCount++
         totalSpent += aug.price
       } else {
-        ns.tprint(`Failed to purchase: ${aug.name} from ${validFaction}`)
+        const success = ns.singularity.purchaseAugmentation(validFaction, aug.name)
+        if (success) {
+          ns.tprint(`Purchased: ${aug.name} from ${validFaction} for ${ns.formatNumber(aug.price)}`)
+          purchaseCount++
+          totalSpent += aug.price
+        } else {
+          ns.tprint(`Failed to purchase: ${aug.name} from ${validFaction}`)
+        }
       }
     }
   } else if (affordableSorted.length > 0) {
@@ -220,7 +231,7 @@ export async function purchaseAugmentations(ns: NS, buyFlux: boolean): Promise<v
 
   // If buyFlux is true, top up with NeuroFlux Governor
   if (buyFlux && neuroFluxInfo) {
-    const remainingMoney = ns.getPlayer().money
+    const remainingMoney = dryRun ? ns.getPlayer().money - totalSpent : ns.getPlayer().money
     const validFaction = neuroFluxInfo.factions.find((f) => (factionReps.get(f) ?? 0) >= neuroFluxInfo.repReq)
 
     if (!validFaction) {
@@ -230,26 +241,38 @@ export async function purchaseAugmentations(ns: NS, buyFlux: boolean): Promise<v
       let currentMoney = remainingMoney
 
       while (currentMoney >= currentPrice) {
-        const success = ns.singularity.purchaseAugmentation(validFaction, neuroFluxInfo.name)
-        if (success) {
-          ns.tprint(`Purchased: ${neuroFluxInfo.name} from ${validFaction} for ${ns.formatNumber(currentPrice)}`)
+        if (dryRun) {
+          ns.tprint(`Would purchase: ${neuroFluxInfo.name} from ${validFaction} for ${ns.formatNumber(currentPrice)}`)
           purchaseCount++
           totalSpent += currentPrice
           currentMoney -= currentPrice
           currentPrice *= AUGMENT_PRICE_MULT
         } else {
-          ns.tprint(`Failed to purchase: ${neuroFluxInfo.name} from ${validFaction}`)
-          break
+          const success = ns.singularity.purchaseAugmentation(validFaction, neuroFluxInfo.name)
+          if (success) {
+            ns.tprint(`Purchased: ${neuroFluxInfo.name} from ${validFaction} for ${ns.formatNumber(currentPrice)}`)
+            purchaseCount++
+            totalSpent += currentPrice
+            currentMoney -= currentPrice
+            currentPrice *= AUGMENT_PRICE_MULT
+          } else {
+            ns.tprint(`Failed to purchase: ${neuroFluxInfo.name} from ${validFaction}`)
+            break
+          }
         }
       }
     }
   }
 
   ns.tprint("=".repeat(120))
-  ns.tprint(`Purchased ${purchaseCount} augmentations for ${ns.formatNumber(totalSpent)}`)
+  ns.tprint(
+    dryRun
+      ? `Would purchase ${purchaseCount} augmentations for ${ns.formatNumber(totalSpent)}`
+      : `Purchased ${purchaseCount} augmentations for ${ns.formatNumber(totalSpent)}`
+  )
   ns.tprint("=".repeat(120))
 
-  if (purchaseCount > 0) {
+  if (purchaseCount > 0 && !dryRun) {
     const installNow = await ns.prompt("Install augmentations now and restart?")
     if (installNow) {
       ns.singularity.installAugmentations("/batch.js")
