@@ -113,6 +113,8 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
   const maxCores = 16 // Maximum cores for home server
   const nodes: NodeInfo[] = []
 
+  const digits = 3
+
   // Get home server info
   const homeRam = ns.getServerMaxRam("home")
   const homeCores = ns.getServer("home").cpuCores
@@ -127,7 +129,7 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
       name: nodeName,
       exists,
       ram,
-      ramFormatted: exists ? ns.formatRam(ram) : "-",
+      ramFormatted: exists ? ns.formatRam(ram, digits) : "-",
       progressBar: generateProgressBar(ram, maxRam),
     })
   }
@@ -152,14 +154,14 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
   let savingsInfo = ""
 
   if (bestRam >= maxRam) {
-    nextAction = `All servers maxed at ${ns.formatRam(maxRam)}`
-    savingsInfo = `Max server RAM reached (${ns.formatRam(maxRam)}) - Cost to purchase: ${ns.formatNumber(cost)}`
+    nextAction = `All servers maxed at ${ns.formatRam(maxRam, digits)}`
+    savingsInfo = `Max server RAM reached (${ns.formatRam(maxRam, digits)}) - Cost to purchase: ${ns.formatNumber(cost)}`
   } else if (money >= cost) {
     if (existingNodes.length < 25) {
-      nextAction = `Buy ${ns.formatRam(targetRam)} server (${ns.formatNumber(cost)})`
+      nextAction = `Buy ${ns.formatRam(targetRam, digits)} server (${ns.formatNumber(cost)})`
     } else {
       const worstNode = existingNodes.reduce((min, n) => (n.ram < min.ram ? n : min))
-      nextAction = `Upgrade ${worstNode.name} to ${ns.formatRam(targetRam)} (${ns.formatNumber(cost)})`
+      nextAction = `Upgrade ${worstNode.name} to ${ns.formatRam(targetRam, digits)} (${ns.formatNumber(cost, digits)})`
     }
     savingsInfo = `Ready to purchase!`
   } else {
@@ -167,10 +169,10 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
     const percentSaved = (money / cost) * 100
 
     if (existingNodes.length < 25) {
-      nextAction = `Saving for ${ns.formatRam(targetRam)} server`
+      nextAction = `Saving for ${ns.formatRam(targetRam, digits)} server`
     } else {
       const worstNode = existingNodes.reduce((min, n) => (n.ram < min.ram ? n : min))
-      nextAction = `Save to upgrade ${worstNode.name} to ${ns.formatRam(targetRam)}`
+      nextAction = `Save to upgrade ${worstNode.name} to ${ns.formatRam(targetRam, digits)}`
     }
     savingsInfo = `${ns.formatNumber(money)} / ${ns.formatNumber(cost)} (${percentSaved.toFixed(1)}%) - Need ${ns.formatNumber(needed)} more`
   }
@@ -196,7 +198,7 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
 
   // Value column width
   let valueLen = 0
-  valueLen = Math.max(valueLen, ns.formatRam(homeRam).length, homeCores.toString().length)
+  valueLen = Math.max(valueLen, ns.formatRam(homeRam, digits).length, homeCores.toString().length)
   for (const node of nodes) {
     valueLen = Math.max(valueLen, node.ramFormatted.length)
   }
@@ -220,12 +222,12 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
   homeSpan.textContent =
     formatTableRow([
       homeRamProgressBar.padStart(nodeProgressLen), // Right-align to end of column
-      ns.formatRam(homeRam).padEnd(valueLen),
+      ns.formatRam(homeRam, digits).padStart(valueLen), // Right-align value
     ]) +
     "\n" +
     formatTableRow([
       homeCoresProgressBar.padStart(nodeProgressLen), // Right-align to end of column
-      (homeCores.toString() + (homeCores == 1 ? " Core" : " Cores")).padEnd(valueLen),
+      (homeCores.toString() + (homeCores == 1 ? "  Core" : " Cores")).padStart(valueLen), // Right-align value
     ]) +
     "\n" +
     borders.header() +
@@ -236,10 +238,11 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
   for (const node of nodes) {
     const rowSpan = document.createElement("span")
     // Format: "node00 ████████" with padding before progress bar to right-align with home bars
-    const nodeAndProgress = `${node.name.padEnd(nodeProgressLen - ramProgressLen - 1)} ${node.progressBar}`.padStart(
-      nodeProgressLen
-    )
-    rowSpan.textContent = formatTableRow([nodeAndProgress, node.ramFormatted.padEnd(valueLen)])
+    const nodeAndProgress = `${node.name} ${node.progressBar}`.padStart(nodeProgressLen)
+    rowSpan.textContent = formatTableRow([
+      nodeAndProgress,
+      node.ramFormatted.padStart(valueLen), // Right-align value
+    ])
     rowSpan.textContent += "\n"
     containerDiv.appendChild(rowSpan)
   }
