@@ -3,8 +3,8 @@ interface FloatingWindowOptions {
   content?: string | HTMLElement
   x?: number
   y?: number
-  width?: number
-  height?: number
+  width?: number | string
+  height?: number | string
   draggable?: boolean
   collapsible?: boolean
   closable?: boolean
@@ -98,8 +98,8 @@ export class FloatingWindow {
   private content: string | HTMLElement
   private x: number
   private y: number
-  private width: number
-  private height: number
+  private width: number | string = "auto"
+  private height: number | string = "auto"
   private isVisible: boolean
   private hasCustomPosition: boolean
   private options: Required<Omit<FloatingWindowOptions, "attachTo" | "id">> & {
@@ -120,8 +120,8 @@ export class FloatingWindow {
     this.hasCustomPosition = options.x !== undefined && options.y !== undefined
     this.x = options.x ?? 100
     this.y = options.y ?? 100
-    this.width = options.width || 300
-    this.height = options.height || 200
+    this.width = options.width || "auto"
+    this.height = options.height || "auto"
     this.isVisible = options.isVisible !== false
     this.isCollapsed = options.isCollapsed || false
     this.options = {

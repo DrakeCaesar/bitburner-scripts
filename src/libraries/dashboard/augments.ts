@@ -23,8 +23,6 @@ export function createAugmentsWindow(
   const window = new FloatingWindow({
     title: "Augmentations",
     content: containerDiv,
-    width: 1000,
-    height: 600,
     id: "augments-window",
     x: position?.x ?? 1000,
     y: position?.y ?? 700,

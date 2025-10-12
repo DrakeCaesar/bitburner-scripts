@@ -26,8 +26,6 @@ export function createNodesWindow(
   const window = new FloatingWindow({
     title: "Purchased Servers",
     content: containerDiv,
-    width: 600,
-    height: 700,
     id: "nodes-window",
     x: position?.x ?? 900,
     y: position?.y ?? 50,
@@ -77,7 +75,12 @@ function generateProgressBar(ram: number, maxRam: number): string {
 
 export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor: string): void {
   const maxRam = ns.getPurchasedServerMaxRam()
+  const maxCores = 8 // Maximum cores for home server
   const nodes: NodeInfo[] = []
+
+  // Get home server info
+  const homeRam = ns.getServerMaxRam("home")
+  const homeCores = ns.getServer("home").cpuCores
 
   // Collect all node information
   for (let i = 0; i < 25; i++) {
@@ -139,23 +142,25 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
 
   // Calculate column widths
   const nameCol = "Node"
-  const ramCol = "RAM"
+  const valueCol = "Value"
   const progressCol = "Progress"
 
-  let nameLen = nameCol.length
-  let ramLen = ramCol.length
-  const progressLen = Math.log2(maxRam) + 1
+  let nameLen = Math.max(nameCol.length, "home".length, "RAM".length, "Cores".length)
+  let valueLen = Math.max(valueCol.length, ns.formatRam(homeRam).length, homeCores.toString().length)
+  const ramProgressLen = Math.log2(maxRam) + 1
+  const coresProgressLen = Math.log2(maxCores) + 1
+  const progressLen = Math.max(ramProgressLen, coresProgressLen)
 
   for (const node of nodes) {
     nameLen = Math.max(nameLen, node.name.length)
-    ramLen = Math.max(ramLen, node.ramFormatted.length)
+    valueLen = Math.max(valueLen, node.ramFormatted.length)
   }
 
   // Build table
-  const colWidths = [nameLen, ramLen, progressLen]
+  const colWidths = [nameLen, valueLen, progressLen]
   const borders = getTableBorders(colWidths)
 
-  const headerCells = [nameCol.padEnd(nameLen), ramCol.padEnd(ramLen), progressCol.padEnd(progressLen)]
+  const headerCells = [nameCol.padEnd(nameLen), valueCol.padEnd(valueLen), progressCol.padEnd(progressLen)]
 
   // Clear and rebuild container
   containerDiv.innerHTML = ""
@@ -165,13 +170,33 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
   headerSpan.textContent = `${borders.top()}\n${formatTableRow(headerCells)}\n${borders.header()}\n`
   containerDiv.appendChild(headerSpan)
 
-  // Add rows
+  // Add home server rows
+  const homeSpan = document.createElement("span")
+  const homeRamProgressBar = generateProgressBar(homeRam, maxRam)
+  const homeCoresProgressBar = generateProgressBar(homeCores, maxCores)
+  homeSpan.textContent =
+    formatTableRow([
+      "home".padEnd(nameLen),
+      ns.formatRam(homeRam).padEnd(valueLen),
+      homeRamProgressBar.padEnd(progressLen),
+    ]) +
+    "\n" +
+    formatTableRow([
+      "Cores".padEnd(nameLen),
+      homeCores.toString().padEnd(valueLen),
+      homeCoresProgressBar.padEnd(progressLen),
+    ]) +
+    "\n" +
+    borders.header() +
+    "\n"
+  containerDiv.appendChild(homeSpan)
+
+  // Add purchased server rows
   for (const node of nodes) {
-    const status = node.exists ? "✓" : " "
     const rowSpan = document.createElement("span")
     rowSpan.textContent = formatTableRow([
       node.name.padEnd(nameLen),
-      node.ramFormatted.padEnd(ramLen),
+      node.ramFormatted.padEnd(valueLen),
       node.progressBar.padEnd(progressLen),
     ])
     rowSpan.textContent += "\n"

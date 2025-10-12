@@ -21,8 +21,6 @@ export function createTargetsWindow(ns: NS, primaryColor: string): TargetsWindow
   const window = new FloatingWindow({
     title: "Target Analysis",
     content: containerDiv,
-    width: 900,
-    height: 600,
     id: "target-analysis-window",
     x: 50,
     y: 700,

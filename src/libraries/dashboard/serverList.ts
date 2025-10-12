@@ -19,8 +19,6 @@ export function createServerListWindow(
   const window = new FloatingWindow({
     title: "Server List",
     content: containerDiv,
-    width: 800,
-    height: 600,
     id: "server-list-window",
     x: position?.x ?? 50,
     y: position?.y ?? 50,
