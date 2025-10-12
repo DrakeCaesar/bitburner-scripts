@@ -3,9 +3,9 @@ import { copyRequiredScripts, killOtherInstances, prepareServerMultiNode } from 
 // import { initBatchVisualiser, logBatchOperation } from "./batchVisualiser.js"
 import { autoNuke } from "./autoNuke.js"
 import { calculateBatchThreads, calculateBatchTimings, executeBatches } from "./libraries/batchExecution.js"
-import { upgradeServer } from "./libraries/buyServer.js"
 import { findBestTarget } from "./libraries/findBestTarget.js"
 import { purchasePrograms, purchaseTorRouter } from "./libraries/purchasePrograms.js"
+import { purchaseServers } from "./libraries/purchaseServer.js"
 import { getNodesForBatching } from "./libraries/serverManagement.js"
 import { buildKeyValueTable, buildThreeColumnTable } from "./libraries/tableBuilder.js"
 
@@ -25,7 +25,7 @@ export async function main(ns: NS) {
     await autoNuke(ns)
 
     // Try to purchase or upgrade servers
-    const wasUpgraded = upgradeServer(ns)
+    const wasUpgraded = purchaseServers(ns)
     if (wasUpgraded) {
       ns.tprint("Server was purchased/upgraded, restarting batch cycle...")
     }

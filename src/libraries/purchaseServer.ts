@@ -1,7 +1,7 @@
 import { NS } from "@ns"
 
 export async function main(ns: NS): Promise<void> {
-  upgradeServer(ns)
+  purchaseServers(ns)
 }
 
 interface ServerInfo {
@@ -18,7 +18,7 @@ interface ServerInfo {
  * @param ns - Netscript API
  * @returns true if a server was purchased or upgraded
  */
-export function upgradeServer(ns: NS): boolean {
+export function purchaseServers(ns: NS): boolean {
   const maxRam = ns.getPurchasedServerMaxRam()
   let purchasedAny = false
 
