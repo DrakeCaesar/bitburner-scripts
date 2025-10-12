@@ -85,7 +85,7 @@ export async function main(ns: NS) {
     server.moneyAvailable = server.moneyMax
 
     // Debug flag - set to true for verbose prep output
-    const debug = false
+    const debug = true
 
     // Calculate and show estimated prep time based on available RAM across all nodes
     const calcStartTime = Date.now()
