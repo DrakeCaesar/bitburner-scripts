@@ -653,10 +653,10 @@ export async function prepareServerMultiNode(
       `\n[Prep Sim] Complete - ${iterations} iterations, estimated time: ${ns.tFormat(totalTime)}, final player level: ${player.skills.hacking}`
     )
 
-    // Display verbose output if requested
-    if (showVerbose) {
-      ns.tprint(verboseOutput)
-    }
+    // // Display verbose output if requested
+    // if (showVerbose) {
+    //   ns.tprint(verboseOutput)
+    // }
 
     return { totalTime, iterationDetails, moneyMax, baseSecurity, secTolerance, myCores }
   } else {
