@@ -40,11 +40,27 @@ export function purchaseServers(ns: NS): boolean {
     const bestRam = existingServers.length > 0 ? Math.max(...existingServers.map((s) => s.ram)) : 0
 
     // Calculate target RAM - double the best, or 1 if no servers, capped at maxRam
-    const targetRam = bestRam > 0 ? Math.min(bestRam * 2, maxRam) : 1
+    // const targetRam = bestRam > 0 ? Math.min(bestRam * 2, maxRam) : 1
+    const money = ns.getPlayer().money
+
+    let targetRam = 0
+    if (bestRam < 128) {
+      targetRam = bestRam > 0 ? Math.min(bestRam * 2, maxRam) : 1
+    } else {
+      for (let i = 0; i <= 20; i++) {
+        const ram = Math.pow(2, i)
+        const cost = ns.getPurchasedServerCost(ram)
+        if (money > cost && ram >= 128) {
+          targetRam = ram
+        }
+      }
+    }
+    ns.tprint("TARGET RAM " + targetRam)
+
     const cost = ns.getPurchasedServerCost(targetRam)
 
     // Check if we can afford the target
-    if (ns.getPlayer().money < cost) {
+    if (ns.getPlayer().money < cost || targetRam == 0) {
       break // Can't afford, exit loop
     }
 
