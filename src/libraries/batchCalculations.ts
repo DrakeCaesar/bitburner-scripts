@@ -1,6 +1,7 @@
 import { NS, Person, Player, Server } from "@ns"
 import { crawl } from "./crawl.js"
 import { buildTable } from "./tableBuilder.js"
+import { getEffectiveMaxRam } from "./ramUtils.js"
 /**
  * Calculate XP gained from a hacking operation (hack/grow/weaken)
  * Based on ns.formulas.hacking.hackExp()
@@ -420,7 +421,7 @@ export async function prepareServerMultiNode(
     let remainingWeaken = weakenThreadsTarget
 
     for (const node of nodes) {
-      const totalRam = ns.getServerMaxRam(node)
+      const totalRam = getEffectiveMaxRam(ns, node)
       const usedRam = ns.getServerUsedRam(node)
       const availRam = totalRam - usedRam
       let nodeGrowThreads = 0
@@ -662,7 +663,7 @@ export async function prepareServerMultiNode(
   } else {
     // ========== EXECUTION MODE ==========
     const totalAvailableRam = nodes.reduce((sum, node) => {
-      return sum + (ns.getServerMaxRam(node) - ns.getServerUsedRam(node))
+      return sum + (getEffectiveMaxRam(ns, node) - ns.getServerUsedRam(node))
     }, 0)
 
     if (debug) {
@@ -828,7 +829,7 @@ export async function prepareServer(ns: NS, host: string, target: string) {
 
   const growScriptRam = ns.getScriptRam("/hacking/grow.js")
   const weakenScriptRam = ns.getScriptRam("/hacking/weaken.js")
-  const availableRam = ns.getServerMaxRam(host) - ns.getServerUsedRam(host)
+  const availableRam = getEffectiveMaxRam(ns, host) - ns.getServerUsedRam(host)
 
   ns.tprint(`Prep: Starting preparation with ${ns.formatRam(availableRam)} available RAM`)
 
@@ -848,7 +849,7 @@ export async function prepareServer(ns: NS, host: string, target: string) {
       break
     }
 
-    const currentAvailableRam = ns.getServerMaxRam(host) - ns.getServerUsedRam(host)
+    const currentAvailableRam = getEffectiveMaxRam(ns, host) - ns.getServerUsedRam(host)
 
     let growThreads = 0
     let weakenThreads = 0

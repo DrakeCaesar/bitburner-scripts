@@ -1,5 +1,6 @@
 import { NS } from "@ns"
 import { crawl } from "./libraries/crawl"
+import { getEffectiveMaxRam } from "./libraries/ramUtils"
 
 export async function main(ns: NS): Promise<void> {
   const scriptPath = "libraries/shareRam.js"
@@ -89,7 +90,7 @@ export async function main(ns: NS): Promise<void> {
       if (!ns.hasRootAccess(server)) continue
 
       const scriptRam = ns.getScriptRam(scriptPath)
-      const currentAvailableRam = ns.getServerMaxRam(server) - ns.getServerUsedRam(server)
+      const currentAvailableRam = getEffectiveMaxRam(ns, server) - ns.getServerUsedRam(server)
       const additionalThreads = Math.floor(currentAvailableRam / scriptRam)
 
       if (additionalThreads > 0) {

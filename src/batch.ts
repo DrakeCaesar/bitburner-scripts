@@ -8,6 +8,7 @@ import { purchasePrograms, purchaseTorRouter } from "./libraries/purchaseProgram
 import { purchaseServers } from "./libraries/purchaseServer.js"
 import { getNodesForBatching } from "./libraries/serverManagement.js"
 import { buildKeyValueTable, buildThreeColumnTable } from "./libraries/tableBuilder.js"
+import { getEffectiveMaxRam } from "./libraries/ramUtils.js"
 
 export async function main(ns: NS) {
   const playerHackLevel = ns.args[0] ? Number(ns.args[0]) : undefined
@@ -53,13 +54,13 @@ export async function main(ns: NS) {
     // For home, subtract used RAM since this script is running there
     const totalMaxRam = nodes.reduce((sum, node) => {
       if (node === "home") {
-        return sum + (ns.getServerMaxRam(node) - ns.getServerUsedRam(node))
+        return sum + (getEffectiveMaxRam(ns, node) - ns.getServerUsedRam(node))
       }
-      return sum + ns.getServerMaxRam(node)
+      return sum + getEffectiveMaxRam(ns, node)
     }, 0)
 
     // Use median of available servers
-    const nodeRamValues = nodes.map((node) => ns.getServerMaxRam(node)).sort((a, b) => a - b)
+    const nodeRamValues = nodes.map((node) => getEffectiveMaxRam(ns, node)).sort((a, b) => a - b)
     const middle = Math.floor(nodeRamValues.length / 2)
     let nodeRamLimit =
       nodeRamValues.length % 2 === 0 ? (nodeRamValues[middle - 1] + nodeRamValues[middle]) / 2 : nodeRamValues[middle]

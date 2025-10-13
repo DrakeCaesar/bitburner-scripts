@@ -1,5 +1,6 @@
 import { NS } from "@ns"
 import { crawl } from "./crawl"
+import { getEffectiveMaxRam } from "./ramUtils.js"
 
 export function getAllNodes(ns: NS): string[] {
   const nodes: string[] = []
@@ -41,9 +42,9 @@ export function getNodesForBatching(ns: NS): string[] {
   }
 
   // Calculate total RAM for each group
-  const purchasedTotalRam = purchasedServers.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
-  const nukedTotalRam = nukedServers.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
-  const homeRemainingRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home")
+  const purchasedTotalRam = purchasedServers.reduce((sum, node) => sum + getEffectiveMaxRam(ns, node), 0)
+  const nukedTotalRam = nukedServers.reduce((sum, node) => sum + getEffectiveMaxRam(ns, node), 0)
+  const homeRemainingRam = getEffectiveMaxRam(ns, "home") - ns.getServerUsedRam("home")
 
   let nodes: string[] = []
   nodes = ["home", ...purchasedServers, ...nukedServers]
@@ -55,7 +56,7 @@ export function purchaseAdditionalServers(ns: NS): number {
   if (!ns.serverExists("node00")) return 0
 
   const maxRam = ns.getPurchasedServerMaxRam()
-  const currentRam = ns.getServerMaxRam("node00")
+  const currentRam = getEffectiveMaxRam(ns, "node00")
 
   if (currentRam < maxRam) return 0
 
@@ -72,7 +73,7 @@ export function purchaseAdditionalServers(ns: NS): number {
       ns.tprint(`Bought new maxed server: ${nodeName} (${maxRam} GB)`)
       money -= cost
       purchaseCount++
-    } else if (ns.serverExists(nodeName) && ns.getServerMaxRam(nodeName) < maxRam && money >= cost) {
+    } else if (ns.serverExists(nodeName) && getEffectiveMaxRam(ns, nodeName) < maxRam && money >= cost) {
       ns.killall(nodeName)
       ns.deleteServer(nodeName)
       ns.purchaseServer(nodeName, maxRam)
@@ -87,7 +88,7 @@ export function purchaseAdditionalServers(ns: NS): number {
 
 export function findNodeWithRam(ns: NS, nodes: string[], requiredRam: number): string | null {
   for (const node of nodes) {
-    const availableRam = ns.getServerMaxRam(node) - ns.getServerUsedRam(node)
+    const availableRam = getEffectiveMaxRam(ns, node) - ns.getServerUsedRam(node)
     // ns.tprint(`Node ${node} has ${availableRam.toFixed(2)} GB available RAM (requires ${requiredRam.toFixed(2)} GB)`)
     if (availableRam >= requiredRam) {
       return node
@@ -116,7 +117,7 @@ export function distributeBatchesAcrossNodes(
   // Get available RAM for each node
   const nodeCapacity = nodes.map((node) => ({
     name: node,
-    available: ns.getServerMaxRam(node) - ns.getServerUsedRam(node),
+    available: getEffectiveMaxRam(ns, node) - ns.getServerUsedRam(node),
   }))
 
   // Sort nodes by available RAM (descending) for greedy allocation

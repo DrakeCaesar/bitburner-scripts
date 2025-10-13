@@ -3,6 +3,7 @@ import { analyzeAllServers } from "./libraries/findBestTarget.js"
 import { FloatingWindow } from "./libraries/floatingWindow.js"
 import { getNodesForBatching } from "./libraries/serverManagement.js"
 import { buildTable } from "./libraries/tableBuilder.js"
+import { getEffectiveMaxRam } from "./libraries/ramUtils.js"
 
 export async function main(ns: NS) {
   const playerHackLevel = ns.args[0] ? Number(ns.args[0]) : undefined
@@ -24,11 +25,11 @@ export async function main(ns: NS) {
 
   const totalMaxRam = nodes.reduce((sum: number, node: string) => {
     if (node === "home") {
-      return sum + (ns.getServerMaxRam(node) - ns.getServerUsedRam(node))
+      return sum + (getEffectiveMaxRam(ns, node) - ns.getServerUsedRam(node))
     }
-    return sum + ns.getServerMaxRam(node)
+    return sum + getEffectiveMaxRam(ns, node)
   }, 0)
-  const nodeRamLimit = Math.min(...nodes.map((node: string) => ns.getServerMaxRam(node)))
+  const nodeRamLimit = Math.min(...nodes.map((node: string) => getEffectiveMaxRam(ns, node)))
   const myCores = ns.getServer(nodes[0]).cpuCores
   const batchDelay = 50
 

@@ -12,6 +12,7 @@ import {
 import { crawl } from "./crawl.js"
 import { distributeBatchesAcrossNodes, getAllNodes } from "./serverManagement.js"
 import { buildTable } from "./tableBuilder.js"
+import { getEffectiveMaxRam } from "./ramUtils.js"
 
 export interface BestTargetResult {
   serverName: string
@@ -304,8 +305,8 @@ export async function main(ns: NS) {
     nodes.push("home")
   }
 
-  const totalMaxRam = nodes.reduce((sum, node) => sum + ns.getServerMaxRam(node), 0)
-  const nodeRamLimit = Math.min(...nodes.map((node) => ns.getServerMaxRam(node)))
+  const totalMaxRam = nodes.reduce((sum, node) => sum + getEffectiveMaxRam(ns, node), 0)
+  const nodeRamLimit = Math.min(...nodes.map((node) => getEffectiveMaxRam(ns, node)))
   const myCores = ns.getServer(nodes[0]).cpuCores
 
   findBestTarget(ns, totalMaxRam, nodeRamLimit, myCores, 20, nodes, playerHackLevel)
