@@ -269,19 +269,22 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
   // Pre-calculate NeuroFlux count for order column width
   let neuroFluxCount = 0
   if (neuroFluxInfo) {
-    const NEUROFLUX_MULT = 1.14
+    const NEUROFLUX_PRICE_MULT = 1.4 * 1.7 // 2.38
+    const NEUROFLUX_REP_MULT = 1.4
     const lastAffordableCost = affordableSorted.length > 0 ? cumulativeCosts[affordableSorted.length - 1] : 0
     let remainingMoney = playerMoney - lastAffordableCost
     const positionOffset = affordableSorted.length
-    let currentPrice = neuroFluxInfo.price * Math.pow(AUGMENT_PRICE_MULT, positionOffset)
+    let currentBasePrice = neuroFluxInfo.price
+    let currentPrice = currentBasePrice * Math.pow(AUGMENT_PRICE_MULT, positionOffset)
     let currentRepReq = neuroFluxInfo.repReq
     const maxFactionRep = Math.max(...neuroFluxInfo.factions.map((f) => factionReps.get(f) ?? 0))
 
     while (remainingMoney >= currentPrice && maxFactionRep >= currentRepReq) {
       neuroFluxCount++
       remainingMoney -= currentPrice
-      currentPrice *= AUGMENT_PRICE_MULT * NEUROFLUX_MULT
-      currentRepReq *= NEUROFLUX_MULT
+      currentBasePrice *= NEUROFLUX_PRICE_MULT
+      currentPrice = currentBasePrice * Math.pow(AUGMENT_PRICE_MULT, positionOffset + neuroFluxCount)
+      currentRepReq *= NEUROFLUX_REP_MULT
     }
   }
 
@@ -403,7 +406,8 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
 
   // NeuroFlux section - expand to show individual purchases after all affordable regular augments
   if (neuroFluxInfo) {
-    const NEUROFLUX_MULT = 1.14
+    const NEUROFLUX_PRICE_MULT = 1.4 * 1.7 // 2.38 - NeuroFlux base price escalation
+    const NEUROFLUX_REP_MULT = 1.4 // NeuroFlux rep requirement escalation
 
     // Start from the money remaining after purchasing affordable regular augments only
     const lastAffordableCost = affordableSorted.length > 0 ? cumulativeCosts[affordableSorted.length - 1] : 0
@@ -411,7 +415,8 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
 
     // Calculate position offset (number of affordable augments purchased affects price multiplier)
     const positionOffset = affordableSorted.length
-    let currentPrice = neuroFluxInfo.price * Math.pow(AUGMENT_PRICE_MULT, positionOffset)
+    let currentBasePrice = neuroFluxInfo.price // Track the escalating base price
+    let currentPrice = currentBasePrice * Math.pow(AUGMENT_PRICE_MULT, positionOffset)
     let currentRepReq = neuroFluxInfo.repReq
     let neuroFluxCumulative = lastAffordableCost
     let neuroFluxIndex = 0
@@ -427,8 +432,8 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
         order: orderNum.toString().padStart(orderLen),
         name: neuroFluxInfo.name.padEnd(nameLen),
         faction: formatFactionText(neuroFluxInfo.factions, factionLen).padEnd(factionLen),
-        price: ns.formatNumber(neuroFluxInfo.price).padStart(priceLen),
-        priceRed: playerMoney < neuroFluxInfo.price,
+        price: ns.formatNumber(currentBasePrice).padStart(priceLen),
+        priceRed: playerMoney < currentBasePrice,
         adjusted: ns.formatNumber(currentPrice).padStart(adjustedLen),
         adjustedRed: false,
         cumulative: ns.formatNumber(neuroFluxCumulative).padStart(cumulativeLen),
@@ -440,16 +445,18 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
       })
 
       remainingMoney -= currentPrice
-      currentPrice *= AUGMENT_PRICE_MULT * NEUROFLUX_MULT
-      currentRepReq *= NEUROFLUX_MULT
+      currentBasePrice *= NEUROFLUX_PRICE_MULT
+      currentPrice = currentBasePrice * Math.pow(AUGMENT_PRICE_MULT, positionOffset + neuroFluxIndex + 1)
+      currentRepReq *= NEUROFLUX_REP_MULT
       neuroFluxIndex++
       orderNum++
     }
 
     // If we can't afford even one, or don't have rep, show one row indicating unavailability
     if (neuroFluxIndex === 0) {
-      const basePrice = neuroFluxInfo.price * Math.pow(AUGMENT_PRICE_MULT, positionOffset)
-      const canAffordMoney = remainingMoney >= basePrice
+      const basePrice = currentBasePrice
+      const adjustedPrice = currentPrice
+      const canAffordMoney = remainingMoney >= adjustedPrice
       const hasEnoughRep = maxFactionRep >= currentRepReq
 
       let statusSymbol = "X"
@@ -461,9 +468,9 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
         order: " ".repeat(orderLen),
         name: neuroFluxInfo.name.padEnd(nameLen),
         faction: formatFactionText(neuroFluxInfo.factions, factionLen).padEnd(factionLen),
-        price: ns.formatNumber(neuroFluxInfo.price).padStart(priceLen),
+        price: ns.formatNumber(basePrice).padStart(priceLen),
         priceRed: !canAffordMoney,
-        adjusted: ns.formatNumber(basePrice).padStart(adjustedLen),
+        adjusted: ns.formatNumber(adjustedPrice).padStart(adjustedLen),
         adjustedRed: !canAffordMoney,
         cumulative: " ".repeat(cumulativeLen),
         cumulativeRed: false,

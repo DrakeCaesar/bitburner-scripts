@@ -3,6 +3,7 @@ import { analyzeAllServers } from "../findBestTarget"
 import { FloatingWindow } from "../floatingWindow"
 import { getNodesForBatching } from "../serverManagement"
 import { formatTableRow, getTableBorders } from "../tableBuilder"
+import { getEffectiveMaxRam } from "../ramUtils.js"
 
 interface TargetsWindow {
   window: any
@@ -40,12 +41,12 @@ export async function updateTargetsView(ns: NS, containerDiv: HTMLElement, prima
 
   const totalMaxRam = nodes.reduce((sum: number, node: string) => {
     if (node === "home") {
-      return sum + (ns.getServerMaxRam(node) - ns.getServerUsedRam(node))
+      return sum + (getEffectiveMaxRam(ns, node) - ns.getServerUsedRam(node))
     }
-    return sum + ns.getServerMaxRam(node)
+    return sum + getEffectiveMaxRam(ns, node)
   }, 0)
 
-  const nodeRamLimit = Math.min(...nodes.map((node: string) => ns.getServerMaxRam(node)))
+  const nodeRamLimit = Math.min(...nodes.map((node: string) => getEffectiveMaxRam(ns, node)))
   const myCores = ns.getServer(nodes[0]).cpuCores
   const batchDelay = 50
   const batchCycles = 3

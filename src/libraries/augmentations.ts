@@ -261,30 +261,44 @@ export async function purchaseAugmentations(ns: NS, buyFlux: boolean, dryRun = f
 
   // If buyFlux is true, top up with NeuroFlux Governor
   if (buyFlux && neuroFluxInfo) {
+    const NEUROFLUX_PRICE_MULT = 1.4 * 1.7 // 2.38 - NeuroFlux base price escalation
+    const NEUROFLUX_REP_MULT = 1.4 // NeuroFlux rep requirement escalation
+
     const remainingMoney = dryRun ? ns.getPlayer().money - totalSpent : ns.getPlayer().money
-    const validFaction = neuroFluxInfo.factions.find((f) => (factionReps.get(f) ?? 0) >= neuroFluxInfo.repReq)
+    let currentRepReq = neuroFluxInfo.repReq
+    const validFaction = neuroFluxInfo.factions.find((f) => (factionReps.get(f) ?? 0) >= currentRepReq)
 
     if (!validFaction) {
       ns.tprint(`No valid faction found for: ${neuroFluxInfo.name}`)
     } else {
-      let currentPrice = neuroFluxInfo.price
+      const positionOffset = affordableSorted.length
+      let currentBasePrice = neuroFluxInfo.price
+      let currentPrice = currentBasePrice * Math.pow(AUGMENT_PRICE_MULT, positionOffset)
       let currentMoney = remainingMoney
+      let neuroFluxIndex = 0
+      const maxFactionRep = Math.max(...neuroFluxInfo.factions.map((f) => factionReps.get(f) ?? 0))
 
-      while (currentMoney >= currentPrice) {
+      while (currentMoney >= currentPrice && maxFactionRep >= currentRepReq) {
         if (dryRun) {
-          ns.tprint(`Would purchase: ${neuroFluxInfo.name} from ${validFaction} for ${ns.formatNumber(currentPrice)}`)
+          ns.tprint(`Would purchase: ${neuroFluxInfo.name} from ${validFaction} for ${ns.formatNumber(currentPrice)} (base: ${ns.formatNumber(currentBasePrice)}, rep: ${ns.formatNumber(currentRepReq)})`)
           purchaseCount++
           totalSpent += currentPrice
           currentMoney -= currentPrice
-          currentPrice *= AUGMENT_PRICE_MULT
+          currentBasePrice *= NEUROFLUX_PRICE_MULT
+          currentPrice = currentBasePrice * Math.pow(AUGMENT_PRICE_MULT, positionOffset + neuroFluxIndex + 1)
+          currentRepReq *= NEUROFLUX_REP_MULT
+          neuroFluxIndex++
         } else {
           const success = ns.singularity.purchaseAugmentation(validFaction, neuroFluxInfo.name)
           if (success) {
-            ns.tprint(`Purchased: ${neuroFluxInfo.name} from ${validFaction} for ${ns.formatNumber(currentPrice)}`)
+            ns.tprint(`Purchased: ${neuroFluxInfo.name} from ${validFaction} for ${ns.formatNumber(currentPrice)} (base: ${ns.formatNumber(currentBasePrice)}, rep: ${ns.formatNumber(currentRepReq)})`)
             purchaseCount++
             totalSpent += currentPrice
             currentMoney -= currentPrice
-            currentPrice *= AUGMENT_PRICE_MULT
+            currentBasePrice *= NEUROFLUX_PRICE_MULT
+            currentPrice = currentBasePrice * Math.pow(AUGMENT_PRICE_MULT, positionOffset + neuroFluxIndex + 1)
+            currentRepReq *= NEUROFLUX_REP_MULT
+            neuroFluxIndex++
           } else {
             ns.tprint(`Failed to purchase: ${neuroFluxInfo.name} from ${validFaction}`)
             break
