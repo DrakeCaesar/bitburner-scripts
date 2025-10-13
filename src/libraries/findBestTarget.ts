@@ -30,6 +30,10 @@ export interface ServerProfitability {
   batches: number
 }
 
+// Configuration constants for optimization fallback
+const MAX_BATCHES_FOR_SIMULATION = 1000
+const MAX_RAM_FOR_SIMULATION = Math.pow(2, 20) // 1,048,576 GB
+
 /**
  * Analyze all hackable servers and return detailed profitability data
  * @param totalMaxRam - Total RAM across all nodes (for calculating total batches)
@@ -137,26 +141,39 @@ export async function analyzeAllServers(
       // Use knapsack algorithm to determine realistic batch count
       // This accounts for RAM fragmentation and distribution inefficiencies
       const estimatedBatches = Math.floor(totalMaxRam / totalBatchRam)
-      const testOperations: Array<{
-        ram: number
-        scriptPath: string
-        args: any[]
-        threads: number
-        batchIndex: number
-      }> = []
 
-      // Create mock operations for estimated batches
-      for (let b = 0; b < estimatedBatches; b++) {
-        testOperations.push(
-          { ram: hackRam, scriptPath: "/hacking/hack.js", args: [], threads: hackThreads, batchIndex: b },
-          { ram: wkn1Ram, scriptPath: "/hacking/weaken.js", args: [], threads: wkn1Threads, batchIndex: b },
-          { ram: growRam, scriptPath: "/hacking/grow.js", args: [], threads: growThreads, batchIndex: b },
-          { ram: wkn2Ram, scriptPath: "/hacking/weaken.js", args: [], threads: wkn2Threads, batchIndex: b }
-        )
+      let batches: number
+
+      // Optimization: For large RAM allocations, use simple calculation instead of simulation
+      // This avoids the computational overhead of the greedy knapsack algorithm
+      if (estimatedBatches > MAX_BATCHES_FOR_SIMULATION || totalMaxRam > MAX_RAM_FOR_SIMULATION) {
+        // Fallback: Simple calculation - just divide total RAM by batch RAM
+        // This is less accurate but much faster for large allocations
+        batches = estimatedBatches
+      } else {
+        // Standard path: Use accurate knapsack simulation for smaller allocations
+        const testOperations: Array<{
+          ram: number
+          scriptPath: string
+          args: any[]
+          threads: number
+          batchIndex: number
+        }> = []
+
+        // Create mock operations for estimated batches
+        for (let b = 0; b < estimatedBatches; b++) {
+          testOperations.push(
+            { ram: hackRam, scriptPath: "/hacking/hack.js", args: [], threads: hackThreads, batchIndex: b },
+            { ram: wkn1Ram, scriptPath: "/hacking/weaken.js", args: [], threads: wkn1Threads, batchIndex: b },
+            { ram: growRam, scriptPath: "/hacking/grow.js", args: [], threads: growThreads, batchIndex: b },
+            { ram: wkn2Ram, scriptPath: "/hacking/weaken.js", args: [], threads: wkn2Threads, batchIndex: b }
+          )
+        }
+
+        // Simulate knapsack distribution to get realistic batch count
+        const { completeBatches } = distributeBatchesAcrossNodes(ns, nodes, testOperations)
+        batches = completeBatches
       }
-
-      // Simulate knapsack distribution to get realistic batch count
-      const { completeBatches: batches } = distributeBatchesAcrossNodes(ns, nodes, testOperations)
 
       // Calculate total money per cycle
       const moneyPerBatch = moneyMax * (1 - testThreshold)
