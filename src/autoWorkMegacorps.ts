@@ -43,6 +43,22 @@ export async function main(ns: NS) {
     while (true) {
       const currentRep = ns.singularity.getCompanyRep(target.company)
 
+      const currentCharisma = ns.getPlayer().skills.charisma
+      const currentCity = ns.getPlayer().city
+      const uniCity = ns.enums.CityName.Aevum
+      const uniClass = ns.enums.UniversityClassType.leadership
+      const uni = ns.enums.LocationName.AevumSummitUniversity
+
+      if (currentCharisma < 500) {
+        if (currentCity != uniCity) {
+          ns.singularity.travelToCity(uniCity)
+        }
+
+        ns.singularity.universityCourse(uni, uniClass, false)
+        await ns.sleep(checkInterval)
+        continue
+      }
+
       // Check if we've reached the target
       if (currentRep >= target.requiredRep) {
         ns.tprint(
