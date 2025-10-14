@@ -1,7 +1,7 @@
 import { NS } from "@ns"
 import { createStandardContainer, FloatingWindow } from "../floatingWindow"
-import { formatTableRow, getTableBorders } from "../tableBuilder"
 import { getEffectiveMaxRam } from "../ramUtils.js"
+import { formatTableRow, getTableBorders } from "../tableBuilder"
 
 interface NodesWindow {
   window: any
@@ -113,7 +113,7 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
 
   const minHomeRam = 8
   const maxHomeRam = Math.pow(2, 30)
-  const maxHomeCores = 16 // Maximum cores for home server
+  const maxHomeCores = 8 // Maximum cores for home server
 
   const nodes: NodeInfo[] = []
 
