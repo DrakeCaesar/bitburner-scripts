@@ -47,7 +47,7 @@ export function getNodesForBatching(ns: NS): string[] {
   const homeRemainingRam = getEffectiveMaxRam(ns, "home") - ns.getServerUsedRam("home")
 
   let nodes: string[] = []
-  nodes = ["home", ...purchasedServers, ...nukedServers]
+  nodes = [...purchasedServers, ...nukedServers]
 
   return nodes
 }

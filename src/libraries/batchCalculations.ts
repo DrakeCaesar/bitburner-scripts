@@ -1,7 +1,7 @@
 import { NS, Person, Player, Server } from "@ns"
 import { crawl } from "./crawl.js"
-import { buildTable } from "./tableBuilder.js"
 import { getEffectiveMaxRam } from "./ramUtils.js"
+import { buildTable } from "./tableBuilder.js"
 /**
  * Calculate XP gained from a hacking operation (hack/grow/weaken)
  * Based on ns.formulas.hacking.hackExp()

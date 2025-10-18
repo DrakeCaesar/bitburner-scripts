@@ -1,6 +1,5 @@
 import { NS } from "@ns"
 import { createStandardContainer, FloatingWindow } from "../floatingWindow"
-import { getEffectiveMaxRam } from "../ramUtils.js"
 import { formatTableRow, getTableBorders } from "../tableBuilder"
 
 interface NodesWindow {
@@ -120,14 +119,14 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
   const digits = 3
 
   // Get home server info
-  const homeRam = getEffectiveMaxRam(ns, "home")
+  const homeRam = ns.getServerMaxRam("home")
   const homeCores = ns.getServer("home").cpuCores
 
   // Collect all node information
   for (let i = 0; i < 25; i++) {
     const nodeName = "node" + String(i).padStart(2, "0")
     const exists = ns.serverExists(nodeName)
-    const ram = exists ? getEffectiveMaxRam(ns, nodeName) : 0
+    const ram = exists ? ns.getServerMaxRam(nodeName) : 0
 
     nodes.push({
       name: nodeName,

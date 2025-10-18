@@ -41,10 +41,10 @@ export function purchaseServers(ns: NS): boolean {
 
     // Calculate target RAM - double the best, or 1 if no servers, capped at maxRam
     // const targetRam = bestRam > 0 ? Math.min(bestRam * 2, maxRam) : 1
-    const money = ns.getPlayer().money
+    const money = ns.getPlayer().money * 0.5
 
     let targetRam = 0
-    if (bestRam < 128) {
+    if (bestRam < Math.pow(2, 20)) {
       targetRam = bestRam > 0 ? Math.min(bestRam * 2, maxRam) : 1
     } else {
       for (let i = 0; i <= 20; i++) {
@@ -60,7 +60,7 @@ export function purchaseServers(ns: NS): boolean {
     const cost = ns.getPurchasedServerCost(targetRam)
 
     // Check if we can afford the target
-    if (ns.getPlayer().money < cost || targetRam == 0) {
+    if (money < cost || targetRam == 0) {
       break // Can't afford, exit loop
     }
 
@@ -84,9 +84,12 @@ export function purchaseServers(ns: NS): boolean {
     if (existingServers.length >= 25) {
       existingServers.sort((a, b) => a.ram - b.ram)
       const worstServer = existingServers[0]
+      if (worstServer.ram == maxRam) {
+        break
+      }
 
       // Only upgrade if the target RAM is better than what we're replacing
-      if (targetRam > worstServer.ram) {
+      if (targetRam == maxRam || targetRam >= worstServer.ram * 1024) {
         ns.killall(worstServer.name)
         ns.deleteServer(worstServer.name)
         ns.purchaseServer(worstServer.name, targetRam)

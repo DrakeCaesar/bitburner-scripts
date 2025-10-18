@@ -11,10 +11,11 @@ import { NS } from "@ns"
  */
 export function getEffectiveMaxRam(ns: NS, server: string): number {
   const maxRam = ns.getServerMaxRam(server)
-
+  const usedRam = ns.getServerUsedRam(server)
   if (server === "home") {
     const tenPercent = maxRam * 0.1
-    const reservation = Math.max(tenPercent, 100)
+    const reservation = Math.max(tenPercent, Math.min(maxRam, 100))
+
     return Math.max(0, maxRam - reservation)
   }
 

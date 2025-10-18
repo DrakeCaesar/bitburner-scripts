@@ -6,9 +6,9 @@ import { calculateBatchThreads, calculateBatchTimings, executeBatches } from "./
 import { findBestTarget } from "./libraries/findBestTarget.js"
 import { purchasePrograms, purchaseTorRouter } from "./libraries/purchasePrograms.js"
 import { purchaseServers } from "./libraries/purchaseServer.js"
+import { getEffectiveMaxRam } from "./libraries/ramUtils.js"
 import { getNodesForBatching } from "./libraries/serverManagement.js"
 import { buildKeyValueTable, buildThreeColumnTable } from "./libraries/tableBuilder.js"
-import { getEffectiveMaxRam } from "./libraries/ramUtils.js"
 
 export async function main(ns: NS) {
   const playerHackLevel = ns.args[0] ? Number(ns.args[0]) : undefined
@@ -71,7 +71,7 @@ export async function main(ns: NS) {
     const myCores = ns.getServer(nodes[0]).cpuCores
 
     // Find best target automatically (constrained by smallest node RAM)
-    const target = await findBestTarget(ns, totalMaxRam, nodeRamLimit, myCores, batchDelay, nodes, playerHackLevel)
+    const target = await findBestTarget(ns, totalMaxRam, nodeRamLimit, myCores, batchDelay, nodes, playerHackLevel, 10)
     const player = ns.getPlayer()
 
     ns.tprint(`Target: ${target.serverName}`)
