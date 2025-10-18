@@ -3,28 +3,20 @@ import type { CompanyName, JobField } from "@ns"
 import { NS } from "@ns"
 import { killOtherInstances } from "./libraries/batchCalculations"
 
-interface MegacorpTarget {
-  company: CompanyName
-  requiredRep: number
-  factionName: string
-}
+const REQUIRED_REP = 300000
 
 export async function main(ns: NS) {
-  const megacorps: MegacorpTarget[] = [
-    { company: "ECorp" as CompanyName, requiredRep: 400000, factionName: "ECorp" },
-    { company: "MegaCorp" as CompanyName, requiredRep: 400000, factionName: "MegaCorp" },
-    { company: "Four Sigma" as CompanyName, requiredRep: 400000, factionName: "Four Sigma" },
-    { company: "KuaiGong International" as CompanyName, requiredRep: 400000, factionName: "KuaiGong International" },
-    { company: "NWO" as CompanyName, requiredRep: 400000, factionName: "NWO" },
-    { company: "Blade Industries" as CompanyName, requiredRep: 400000, factionName: "Blade Industries" },
-    { company: "OmniTek Incorporated" as CompanyName, requiredRep: 400000, factionName: "OmniTek Incorporated" },
-    { company: "Bachman & Associates" as CompanyName, requiredRep: 400000, factionName: "Bachman & Associates" },
-    { company: "Clarke Incorporated" as CompanyName, requiredRep: 400000, factionName: "Clarke Incorporated" },
-    {
-      company: "Fulcrum Technologies" as CompanyName,
-      requiredRep: 400000,
-      factionName: "Fulcrum Secret Technologies",
-    },
+  const megacorps: CompanyName[] = [
+    ns.enums.CompanyName.ECorp,
+    ns.enums.CompanyName.MegaCorp,
+    ns.enums.CompanyName.FourSigma,
+    ns.enums.CompanyName.KuaiGongInternational,
+    ns.enums.CompanyName.NWO,
+    ns.enums.CompanyName.BladeIndustries,
+    ns.enums.CompanyName.OmniTekIncorporated,
+    ns.enums.CompanyName.BachmanAndAssociates,
+    ns.enums.CompanyName.ClarkeIncorporated,
+    ns.enums.CompanyName.FulcrumTechnologies,
   ]
 
   const checkInterval = 1000
@@ -33,15 +25,18 @@ export async function main(ns: NS) {
 
   ns.tprint("Starting megacorp reputation grind...")
 
-  for (const target of megacorps) {
+  for (const company of megacorps) {
+    // Map company to faction name (most are the same, except Fulcrum)
+    const factionName = company === ns.enums.CompanyName.FulcrumTechnologies ? "Fulcrum Secret Technologies" : company
+
     ns.tprint(`\n${"=".repeat(60)}`)
-    ns.tprint(`Target: ${target.company} (${target.factionName})`)
-    ns.tprint(`Required Reputation: ${ns.formatNumber(target.requiredRep)}`)
+    ns.tprint(`Target: ${company} (${factionName})`)
+    ns.tprint(`Required Reputation: ${ns.formatNumber(REQUIRED_REP)}`)
     ns.tprint(`${"=".repeat(60)}`)
 
     // Work at this company until we reach the required reputation
     while (true) {
-      const currentRep = ns.singularity.getCompanyRep(target.company)
+      const currentRep = ns.singularity.getCompanyRep(company)
 
       const currentCharisma = ns.getPlayer().skills.charisma
       const currentCity = ns.getPlayer().city
@@ -60,28 +55,28 @@ export async function main(ns: NS) {
       }
 
       // Check if we've reached the target
-      if (currentRep >= target.requiredRep) {
+      if (currentRep >= REQUIRED_REP) {
         ns.tprint(
-          `✓ Reached target reputation for ${target.company}: ${ns.formatNumber(currentRep)}/${ns.formatNumber(target.requiredRep)}`
+          `✓ Reached target reputation for ${company}: ${ns.formatNumber(currentRep)}/${ns.formatNumber(REQUIRED_REP)}`
         )
 
         // Check if we can join the faction
         const invitations = ns.singularity.checkFactionInvitations()
-        if (invitations.includes(target.factionName)) {
-          ns.tprint(`✓ Faction invitation received: ${target.factionName}`)
-          ns.singularity.joinFaction(target.factionName)
-          ns.tprint(`✓ Joined faction: ${target.factionName}`)
+        if (invitations.includes(factionName)) {
+          ns.tprint(`✓ Faction invitation received: ${factionName}`)
+          ns.singularity.joinFaction(factionName)
+          ns.tprint(`✓ Joined faction: ${factionName}`)
         } else {
-          ns.tprint(`⚠ Waiting for faction invitation from ${target.factionName}...`)
+          ns.tprint(`⚠ Waiting for faction invitation from ${factionName}...`)
         }
         break
       }
 
       // Get all available positions at this company
-      const positions = ns.singularity.getCompanyPositions(target.company)
+      const positions = ns.singularity.getCompanyPositions(company)
 
       if (positions.length === 0) {
-        ns.tprint(`ERROR: No positions available at ${target.company}`)
+        ns.tprint(`ERROR: No positions available at ${company}`)
         return
       }
 
@@ -91,7 +86,7 @@ export async function main(ns: NS) {
       let bestSkillSum = -1
 
       for (const position of positions) {
-        const posInfo = ns.singularity.getCompanyPositionInfo(target.company, position)
+        const posInfo = ns.singularity.getCompanyPositionInfo(company, position)
         const skills = posInfo.requiredSkills
         const player = ns.getPlayer()
 
@@ -123,24 +118,24 @@ export async function main(ns: NS) {
       }
 
       if (!bestField) {
-        ns.tprint(`ERROR: Could not find best position at ${target.company}`)
+        ns.tprint(`ERROR: Could not find best position at ${company}`)
         return
       }
 
       // Apply for a job in the best field (this will get us the highest position we qualify for in that field)
-      const jobName = ns.singularity.applyToCompany(target.company, bestField)
+      const jobName = ns.singularity.applyToCompany(company, bestField)
       if (jobName) {
-        ns.tprint(`Applied to ${target.company} in field: ${bestField}, got position: ${jobName}`)
+        ns.tprint(`Applied to ${company} in field: ${bestField}, got position: ${jobName}`)
       }
 
-      const working = ns.singularity.workForCompany(target.company, false)
+      const working = ns.singularity.workForCompany(company, false)
       if (!working) {
-        ns.tprint(`ERROR: Failed to work at ${target.company}`)
+        ns.tprint(`ERROR: Failed to work at ${company}`)
         return
       }
 
       ns.print(
-        `Working: ${jobName || bestPositionName} (skill req: ${bestSkillSum}) | Current: ${ns.formatNumber(currentRep)}/${ns.formatNumber(target.requiredRep)}`
+        `Working: ${jobName || bestPositionName} (skill req: ${bestSkillSum}) | Current: ${ns.formatNumber(currentRep)}/${ns.formatNumber(REQUIRED_REP)}`
       )
 
       // Wait before checking again
