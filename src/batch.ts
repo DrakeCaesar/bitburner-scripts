@@ -16,6 +16,14 @@ export async function main(ns: NS) {
   await killOtherInstances(ns)
 
   while (true) {
+    const invitations = ns.singularity.checkFactionInvitations()
+    for (const inv of invitations) {
+      ns.singularity.joinFaction(inv)
+    }
+
+    ns.scriptKill("autoWorkFactions.js", "home")
+    ns.exec("autoWorkFactions.js", "home")
+
     // initBatchVisualiser()
 
     // Purchase TOR router and programs
@@ -44,6 +52,8 @@ export async function main(ns: NS) {
       ns.scriptKill("hacking/hack.js", node)
       ns.scriptKill("hacking/grow.js", node)
       ns.scriptKill("hacking/weaken.js", node)
+      ns.scriptKill("libraries/shareRam.js", node)
+
       await copyRequiredScripts(ns, node)
     }
 

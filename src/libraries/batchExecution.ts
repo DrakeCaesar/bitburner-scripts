@@ -12,6 +12,7 @@ import {
   wkn1ServerInstance,
   wkn2ServerInstance,
 } from "./batchCalculations.js"
+import { getEffectiveMaxRam } from "./ramUtils.js"
 import { distributeBatchesAcrossNodes } from "./serverManagement.js"
 
 export interface BatchConfig {
@@ -263,7 +264,6 @@ export async function executeBatches(
       `INFO: Could only fit ${completeBatches} complete batches out of ${batches} requested (${assignments.length} operations)`
     )
   }
-
   // Execute all assigned operations
   let lastPid = 0
   for (let i = 0; i < assignments.length; i++) {
@@ -275,9 +275,28 @@ export async function executeBatches(
   }
 
   // Wait for the last script to finish
+  const scriptPath = "libraries/shareRam.js"
+  const scriptRam = ns.getScriptRam(scriptPath)
+
   if (lastPid > 0) {
     while (ns.isRunning(lastPid)) {
-      await ns.sleep(100)
+      for (const node of nodes) {
+        // Skip if we can't write to this server
+        if (!ns.hasRootAccess(node)) continue
+
+        // Copy the script if needed
+        if (!ns.fileExists(scriptPath, node)) {
+          ns.scp(scriptPath, node)
+        }
+
+        const availableRam = getEffectiveMaxRam(ns, node) - ns.getServerUsedRam(node)
+        const threads = Math.floor(availableRam / scriptRam)
+
+        if (threads > 0) {
+          ns.exec(scriptPath, node, threads)
+        }
+      }
+      await ns.sleep(1000)
     }
   }
 
