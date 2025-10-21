@@ -261,8 +261,8 @@ export async function purchaseAugmentations(ns: NS, buyFlux: boolean, dryRun = f
 
   // If buyFlux is true, top up with NeuroFlux Governor
   if (buyFlux && neuroFluxInfo) {
-    const NEUROFLUX_PRICE_MULT = 1.4 * 1.7 // 2.38 - NeuroFlux base price escalation
-    const NEUROFLUX_REP_MULT = 1.4 // NeuroFlux rep requirement escalation
+    const NEUROFLUX_PRICE_MULT = 1.14 * 1.9 // 2.38 - NeuroFlux base price escalation
+    const NEUROFLUX_REP_MULT = 1.14 // NeuroFlux rep requirement escalation
 
     const remainingMoney = dryRun ? ns.getPlayer().money - totalSpent : ns.getPlayer().money
     let currentRepReq = neuroFluxInfo.repReq
