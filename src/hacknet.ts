@@ -1,11 +1,19 @@
-/** @param {import("..").NS } ns */
-export async function main(ns) {
+import { NS } from "@ns"
+import { killOtherInstances } from "./libraries/batchCalculations"
+export async function main(ns: NS) {
   ns.disableLog("sleep")
+  await killOtherInstances(ns)
 
   for (;;) {
-    var index
+    var index = 0
     var item = "NODE"
     var best = 0
+    const maxHashes = ns.hacknet.hashCapacity()
+    const hashes = ns.hacknet.numHashes()
+    const mon = ns.hacknet.getHashUpgrades()[0]
+
+    // ns.tprint(hashes)
+    // ns.tprint(mon)
 
     for (var i = 0; i < ns.hacknet.numNodes(); i++) {
       let node = ns.hacknet.getNodeStats(i)
@@ -14,27 +22,18 @@ export async function main(ns) {
       let node_ram = ramUpgradeProfit(ns, node.level, node.ram, node.cores)
       let node_cpu = coreUpgradeProfit(ns, node.level, node.ram, node.cores)
 
-      if (
-        node_lvl / ns.hacknet.getLevelUpgradeCost(i, 1) > best &&
-        node.level < 200
-      ) {
+      if (node_lvl / ns.hacknet.getLevelUpgradeCost(i, 1) > best && node.level < 200) {
         ns.hacknet.upgradeRam
         best = node_lvl / ns.hacknet.getLevelUpgradeCost(i, 1)
         index = i
         item = "LVL"
       }
-      if (
-        node_ram / ns.hacknet.getRamUpgradeCost(i, 1) > best &&
-        node.ram < 64
-      ) {
+      if (node_ram / ns.hacknet.getRamUpgradeCost(i, 1) > best && node.ram < 64) {
         best = node_ram / ns.hacknet.getRamUpgradeCost(i, 1)
         index = i
         item = "RAM"
       }
-      if (
-        node_cpu / ns.hacknet.getCoreUpgradeCost(i, 1) > best &&
-        node.cores < 16
-      ) {
+      if (node_cpu / ns.hacknet.getCoreUpgradeCost(i, 1) > best && node.cores < 16) {
         best = node_cpu / ns.hacknet.getCoreUpgradeCost(i, 1)
         index = i
         item = "CPU"
@@ -80,31 +79,21 @@ export async function main(ns) {
 
       if (purchased == -1 && !upgraded) {
         await ns.sleep(1000)
+
+        while (ns.hacknet.numHashes() >= ns.hacknet.hashCapacity() * 0.9) {
+          ns.hacknet.spendHashes(mon)
+        }
       }
     }
   }
 }
 
-export function levelUpgradeProfit(
-  ns,
-  currentLevel,
-  currentRam,
-  currentLevelCore
-) {
+export function levelUpgradeProfit(ns: NS, currentLevel: number, currentRam: number, currentLevelCore: number) {
   return (
-    1 *
-    1.5 *
-    Math.pow(1.035, currentRam - 1) *
-    ((currentLevelCore + 5) / 6) *
-    ns.getHacknetMultipliers().production
+    1 * 1.5 * Math.pow(1.035, currentRam - 1) * ((currentLevelCore + 5) / 6) * ns.getHacknetMultipliers().production
   )
 }
-export function ramUpgradeProfit(
-  ns,
-  currentLevel,
-  currentRam,
-  currentLevelCore
-) {
+export function ramUpgradeProfit(ns: NS, currentLevel: number, currentRam: number, currentLevelCore: number) {
   return (
     currentLevel *
     1.5 *
@@ -113,12 +102,6 @@ export function ramUpgradeProfit(
     ns.getHacknetMultipliers().production
   )
 }
-export function coreUpgradeProfit(ns, currentLevel, currentRam) {
-  return (
-    currentLevel *
-    1.5 *
-    Math.pow(1.035, currentRam - 1) *
-    (1 / 6) *
-    ns.getHacknetMultipliers().production
-  )
+export function coreUpgradeProfit(ns: NS, currentLevel: number, currentRam: number, currentLevelCore: number) {
+  return currentLevel * 1.5 * Math.pow(1.035, currentRam - 1) * (1 / 6) * ns.getHacknetMultipliers().production
 }
