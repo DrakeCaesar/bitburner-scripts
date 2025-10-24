@@ -29,6 +29,12 @@ async function spendHashes(ns: NS): Promise<void> {
   const hashes = ns.hacknet.numHashes()
   const mon = ns.hacknet.getHashUpgrades()[0]
 
+  if (ns.hacknet.hashCapacity() == 0) return
+
+  while (ns.hacknet.numHashes() >= 4) {
+    ns.hacknet.spendHashes(mon)
+  }
+
   while (ns.hacknet.numHashes() >= ns.hacknet.hashCapacity() * 0.9) {
     ns.hacknet.spendHashes(mon)
   }
@@ -60,14 +66,12 @@ async function handlePurchasing(ns: NS): Promise<void> {
       index = i
       item = "CPU"
     }
-      //ns.tprint(node_lvl)
-      //ns.tprint(node_ram)
-      //ns.tprint(node_cpu)
+    //ns.tprint(node_lvl)
+    //ns.tprint(node_ram)
+    //ns.tprint(node_cpu)
   }
 
-  ns.print(item)
-  ns.print(index)
-  ns.print("")
+  ns.print(`hacknet-server-${index} ${item}`)
 
   let purchaseCost = ns.hacknet.getPurchaseNodeCost()
   let purchased = -1
