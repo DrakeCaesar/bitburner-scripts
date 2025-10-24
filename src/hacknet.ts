@@ -54,82 +54,110 @@ async function spendHashes(ns: NS): Promise<void> {
 }
 
 async function handlePurchasing(ns: NS): Promise<void> {
-  let index = 0
-  let item = "NODE"
-  let best = 0
+  interface UpgradeOption {
+    nodeIndex: number
+    type: string
+    cost: number
+    efficiency: number
+  }
 
-  // Check if we should buy a new node first
+  const upgradeOptions: UpgradeOption[] = []
+
+  // Check if we should buy a new node
   if (ns.hacknet.numNodes() < ns.hacknet.maxNumNodes()) {
     const newNodeProfit = calculateNewNodeProfitRate(ns)
     const newNodeCost = ns.hacknet.getPurchaseNodeCost()
     const newNodeRatio = newNodeProfit / newNodeCost
     
-    if (newNodeRatio > best) {
-      best = newNodeRatio
-      item = "NODE"
-    }
+    upgradeOptions.push({
+      nodeIndex: -1,
+      type: "NODE",
+      cost: newNodeCost,
+      efficiency: newNodeRatio
+    })
   }
 
+  // For each node, find its most profitable upgrade type
   for (let i = 0; i < ns.hacknet.numNodes(); i++) {
-    let node = ns.hacknet.getNodeStats(i)
+    const node = ns.hacknet.getNodeStats(i)
     
-    // Calculate profit increase for each upgrade type
-    let levelProfitIncrease = calculateLevelUpgradeProfit(ns, i)
-    let ramProfitIncrease = calculateRamUpgradeProfit(ns, i)
-    let coreProfitIncrease = calculateCoreUpgradeProfit(ns, i)
-
-    // Get actual costs from API
-    let levelCost = ns.hacknet.getLevelUpgradeCost(i, 1)
-    let ramCost = ns.hacknet.getRamUpgradeCost(i, 1)
-    let coreCost = ns.hacknet.getCoreUpgradeCost(i, 1)
-
-    // Calculate efficiency ratios (profit increase per dollar spent)
-    if (levelProfitIncrease / levelCost > best && node.level < 200) {
-      best = levelProfitIncrease / levelCost
-      index = i
-      item = "LVL"
+    const upgrades = []
+    
+    // Level upgrade
+    if (node.level < 200) {
+      const profit = calculateLevelUpgradeProfit(ns, i)
+      const cost = ns.hacknet.getLevelUpgradeCost(i, 1)
+      upgrades.push({ type: "LVL", cost, efficiency: profit / cost })
     }
-    if (ramProfitIncrease / ramCost > best && node.ram < Math.pow(2, 20)) {
-      best = ramProfitIncrease / ramCost
-      index = i
-      item = "RAM"
+    
+    // RAM upgrade
+    if (node.ram < Math.pow(2, 20)) {
+      const profit = calculateRamUpgradeProfit(ns, i)
+      const cost = ns.hacknet.getRamUpgradeCost(i, 1)
+      upgrades.push({ type: "RAM", cost, efficiency: profit / cost })
     }
-    if (coreProfitIncrease / coreCost > best && node.cores < 16) {
-      best = coreProfitIncrease / coreCost
-      index = i
-      item = "CPU"
+    
+    // Core upgrade
+    if (node.cores < 16) {
+      const profit = calculateCoreUpgradeProfit(ns, i)
+      const cost = ns.hacknet.getCoreUpgradeCost(i, 1)
+      upgrades.push({ type: "CPU", cost, efficiency: profit / cost })
+    }
+    
+    // Find the best upgrade for this node
+    if (upgrades.length > 0) {
+      const bestUpgrade = upgrades.reduce((best, current) => 
+        current.efficiency > best.efficiency ? current : best
+      )
+      
+      upgradeOptions.push({
+        nodeIndex: i,
+        type: bestUpgrade.type,
+        cost: bestUpgrade.cost,
+        efficiency: bestUpgrade.efficiency
+      })
     }
   }
 
-  if (best <= 0) {
+  if (upgradeOptions.length === 0) {
+    ns.print("No upgrade options available")
+    return
+  }
+
+  // Sort by cost (cheapest first) among profitable options
+  const profitableOptions = upgradeOptions.filter(option => option.efficiency > 0)
+  if (profitableOptions.length === 0) {
     ns.print("No profitable upgrades available")
     return
   }
 
-  ns.print(`Best option: hacknet-server-${index} ${item} (efficiency: ${best.toFixed(6)})`)
+  profitableOptions.sort((a, b) => a.cost - b.cost)
+  const cheapestOption = profitableOptions[0]
+
+  ns.print(`Cheapest profitable option: hacknet-server-${cheapestOption.nodeIndex} ${cheapestOption.type} (cost: $${ns.formatNumber(cheapestOption.cost)}, efficiency: ${cheapestOption.efficiency.toFixed(6)})`)
 
   let purchased = -1
   let upgraded = false
 
-  if (item == "NODE") {
+  if (cheapestOption.type == "NODE") {
     purchased = ns.hacknet.purchaseNode()
     if (purchased >= 0) {
       ns.print(`Purchased new hacknet node: hacknet-server-${purchased}`)
     }
-  } else if (item == "LVL") {
-    upgraded = ns.hacknet.upgradeLevel(index, 1)
+  } else if (cheapestOption.type == "LVL") {
+    upgraded = ns.hacknet.upgradeLevel(cheapestOption.nodeIndex, 1)
     if (upgraded) {
-      ns.print(`Upgraded level of hacknet-server-${index}`)
+      ns.print(`Upgraded level of hacknet-server-${cheapestOption.nodeIndex}`)
     }
-  } else if (item == "RAM") {
-    upgraded = ns.hacknet.upgradeRam(index, 1)
+  } else if (cheapestOption.type == "RAM") {
+    upgraded = ns.hacknet.upgradeRam(cheapestOption.nodeIndex, 1)
     if (upgraded) {
-      ns.print(`Upgraded RAM of hacknet-server-${index}`)
+      ns.print(`Upgraded RAM of hacknet-server-${cheapestOption.nodeIndex}`)
     }
-  } else if (item == "CPU") {
-    upgraded = ns.hacknet.upgradeCore(index, 1)
+  } else if (cheapestOption.type == "CPU") {
+    upgraded = ns.hacknet.upgradeCore(cheapestOption.nodeIndex, 1)
     if (upgraded) {
-      ns.print(`Upgraded cores of hacknet-server-${index}`)
+      ns.print(`Upgraded cores of hacknet-server-${cheapestOption.nodeIndex}`)
     }
   }
 
