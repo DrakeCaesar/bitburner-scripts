@@ -266,7 +266,12 @@ export async function purchaseAugmentations(ns: NS, buyFlux: boolean, dryRun = f
 
     const remainingMoney = dryRun ? ns.getPlayer().money - totalSpent : ns.getPlayer().money
     let currentRepReq = neuroFluxInfo.repReq
-    const validFaction = neuroFluxInfo.factions.find((f) => (factionReps.get(f) ?? 0) >= currentRepReq)
+    const validFactions = neuroFluxInfo.factions.filter((f) => (factionReps.get(f) ?? 0) >= currentRepReq)
+    const validFaction = validFactions.length > 0 
+      ? validFactions.reduce((best, current) => 
+          ((factionReps.get(current) ?? 0) > (factionReps.get(best) ?? 0)) ? current : best
+        )
+      : undefined
 
     if (!validFaction) {
       ns.tprint(`No valid faction found for: ${neuroFluxInfo.name}`)
