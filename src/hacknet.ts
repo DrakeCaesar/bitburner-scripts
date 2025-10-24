@@ -20,23 +20,36 @@ export async function main(ns: NS) {
       await handlePurchasing(ns)
     }
 
-    await ns.sleep(1000)
+    await ns.sleep(10)
   }
 }
 
 async function spendHashes(ns: NS): Promise<void> {
-  const maxHashes = ns.hacknet.hashCapacity()
-  const hashes = ns.hacknet.numHashes()
-  const mon = ns.hacknet.getHashUpgrades()[0]
-
   if (ns.hacknet.hashCapacity() == 0) return
 
-  while (ns.hacknet.numHashes() >= 4) {
-    ns.hacknet.spendHashes(mon)
-  }
+  const hashes = ns.hacknet.numHashes()
+  const capacity = ns.hacknet.hashCapacity()
+  const upgrades = ns.hacknet.getHashUpgrades()
+  
+  // Default to "Sell for Money" if available
+  const moneyUpgrade = upgrades.find(upgrade => upgrade === "Sell for Money") || upgrades[0]
+  
+  if (!moneyUpgrade) return
 
-  while (ns.hacknet.numHashes() >= ns.hacknet.hashCapacity() * 0.9) {
-    ns.hacknet.spendHashes(mon)
+  // Spend hashes when we're at 90% capacity or have at least 4 hashes
+  const hashThreshold = Math.max(4, capacity * 0.9)
+  
+  while (ns.hacknet.numHashes() >= hashThreshold) {
+    const cost = ns.hacknet.hashCost(moneyUpgrade)
+    if (ns.hacknet.numHashes() >= cost) {
+      const success = ns.hacknet.spendHashes(moneyUpgrade)
+      if (!success) {
+        ns.print(`Failed to spend hashes on ${moneyUpgrade}`)
+        break
+      }
+    } else {
+      break
+    }
   }
 }
 
@@ -45,84 +58,112 @@ async function handlePurchasing(ns: NS): Promise<void> {
   let item = "NODE"
   let best = 0
 
+  // Check if we should buy a new node first
+  if (ns.hacknet.numNodes() < ns.hacknet.maxNumNodes()) {
+    const newNodeProfit = calculateNewNodeProfitRate(ns)
+    const newNodeCost = ns.hacknet.getPurchaseNodeCost()
+    const newNodeRatio = newNodeProfit / newNodeCost
+    
+    if (newNodeRatio > best) {
+      best = newNodeRatio
+      item = "NODE"
+    }
+  }
+
   for (let i = 0; i < ns.hacknet.numNodes(); i++) {
     let node = ns.hacknet.getNodeStats(i)
-    let node_lvl = levelUpgradeProfit(ns, node.level, node.ram, node.cores)
-    let node_ram = ramUpgradeProfit(ns, node.level, node.ram, node.cores)
-    let node_cpu = coreUpgradeProfit(ns, node.level, node.ram, node.cores)
+    
+    // Calculate profit increase for each upgrade type
+    let levelProfitIncrease = calculateLevelUpgradeProfit(ns, i)
+    let ramProfitIncrease = calculateRamUpgradeProfit(ns, i)
+    let coreProfitIncrease = calculateCoreUpgradeProfit(ns, i)
 
-    if (node_lvl / ns.hacknet.getLevelUpgradeCost(i, 1) > best && node.level < 200) {
-      best = node_lvl / ns.hacknet.getLevelUpgradeCost(i, 1)
+    // Get actual costs from API
+    let levelCost = ns.hacknet.getLevelUpgradeCost(i, 1)
+    let ramCost = ns.hacknet.getRamUpgradeCost(i, 1)
+    let coreCost = ns.hacknet.getCoreUpgradeCost(i, 1)
+
+    // Calculate efficiency ratios (profit increase per dollar spent)
+    if (levelProfitIncrease / levelCost > best && node.level < 200) {
+      best = levelProfitIncrease / levelCost
       index = i
       item = "LVL"
     }
-    if (node_ram / ns.hacknet.getRamUpgradeCost(i, 1) > best && node.ram < 64) {
-      best = node_ram / ns.hacknet.getRamUpgradeCost(i, 1)
+    if (ramProfitIncrease / ramCost > best && node.ram < Math.pow(2, 20)) {
+      best = ramProfitIncrease / ramCost
       index = i
       item = "RAM"
     }
-    if (node_cpu / ns.hacknet.getCoreUpgradeCost(i, 1) > best && node.cores < 16) {
-      best = node_cpu / ns.hacknet.getCoreUpgradeCost(i, 1)
+    if (coreProfitIncrease / coreCost > best && node.cores < 16) {
+      best = coreProfitIncrease / coreCost
       index = i
       item = "CPU"
     }
-    //ns.tprint(node_lvl)
-    //ns.tprint(node_ram)
-    //ns.tprint(node_cpu)
   }
 
-  ns.print(`hacknet-server-${index} ${item}`)
+  if (best <= 0) {
+    ns.print("No profitable upgrades available")
+    return
+  }
 
-  let purchaseCost = ns.hacknet.getPurchaseNodeCost()
+  ns.print(`Best option: hacknet-server-${index} ${item} (efficiency: ${best.toFixed(6)})`)
+
   let purchased = -1
   let upgraded = false
 
   if (item == "NODE") {
     purchased = ns.hacknet.purchaseNode()
+    if (purchased >= 0) {
+      ns.print(`Purchased new hacknet node: hacknet-server-${purchased}`)
+    }
   } else if (item == "LVL") {
-    let upgradeCost = ns.hacknet.getLevelUpgradeCost(index, 1)
-    if (upgradeCost > purchaseCost) {
-      purchased = ns.hacknet.purchaseNode()
-    } else {
-      upgraded = ns.hacknet.upgradeLevel(index, 1)
+    upgraded = ns.hacknet.upgradeLevel(index, 1)
+    if (upgraded) {
+      ns.print(`Upgraded level of hacknet-server-${index}`)
     }
   } else if (item == "RAM") {
-    let upgradeCost = ns.hacknet.getRamUpgradeCost(index, 1)
-    if (upgradeCost > purchaseCost) {
-      purchased = ns.hacknet.purchaseNode()
-    } else {
-      upgraded = ns.hacknet.upgradeRam(index, 1)
+    upgraded = ns.hacknet.upgradeRam(index, 1)
+    if (upgraded) {
+      ns.print(`Upgraded RAM of hacknet-server-${index}`)
     }
   } else if (item == "CPU") {
-    let upgradeCost = ns.hacknet.getCoreUpgradeCost(index, 1)
-    if (upgradeCost > purchaseCost) {
-      purchased = ns.hacknet.purchaseNode()
-    } else {
-      upgraded = ns.hacknet.upgradeCore(index, 1)
+    upgraded = ns.hacknet.upgradeCore(index, 1)
+    if (upgraded) {
+      ns.print(`Upgraded cores of hacknet-server-${index}`)
     }
   }
 
   if (purchased == -1 && !upgraded) {
-    await ns.sleep(1000)
+    ns.print("Could not afford the upgrade")
+    await ns.sleep(10) // Wait longer if we can't afford anything
   }
 }
 
-export function levelUpgradeProfit(ns: NS, currentLevel: number, currentRam: number, currentLevelCore: number) {
-  return (
-    1 * 1.5 * Math.pow(1.035, currentRam - 1) * ((currentLevelCore + 5) / 6) * ns.getHacknetMultipliers().production
-  )
+function calculateNewNodeProfitRate(ns: NS): number {
+  // New nodes start at level 1, ram 1, cores 1
+  return ns.formulas.hacknetNodes.moneyGainRate(1, 1, 1, ns.getHacknetMultipliers().production)
 }
 
-export function ramUpgradeProfit(ns: NS, currentLevel: number, currentRam: number, currentLevelCore: number) {
-  return (
-    currentLevel *
-    1.5 *
-    (Math.pow(1.035, 2 * currentRam - 1) - Math.pow(1.035, currentRam - 1)) *
-    ((currentLevelCore + 5) / 6) *
-    ns.getHacknetMultipliers().production
-  )
+function calculateLevelUpgradeProfit(ns: NS, nodeIndex: number): number {
+  const node = ns.hacknet.getNodeStats(nodeIndex)
+  const mult = ns.getHacknetMultipliers().production
+  const currentProduction = ns.formulas.hacknetNodes.moneyGainRate(node.level, node.ram, node.cores, mult)
+  const upgradedProduction = ns.formulas.hacknetNodes.moneyGainRate(node.level + 1, node.ram, node.cores, mult)
+  return upgradedProduction - currentProduction
 }
 
-export function coreUpgradeProfit(ns: NS, currentLevel: number, currentRam: number, currentLevelCore: number) {
-  return currentLevel * 1.5 * Math.pow(1.035, currentRam - 1) * (1 / 6) * ns.getHacknetMultipliers().production
+function calculateRamUpgradeProfit(ns: NS, nodeIndex: number): number {
+  const node = ns.hacknet.getNodeStats(nodeIndex)
+  const mult = ns.getHacknetMultipliers().production
+  const currentProduction = ns.formulas.hacknetNodes.moneyGainRate(node.level, node.ram, node.cores, mult)
+  const upgradedProduction = ns.formulas.hacknetNodes.moneyGainRate(node.level, node.ram * 2, node.cores, mult)
+  return upgradedProduction - currentProduction
+}
+
+function calculateCoreUpgradeProfit(ns: NS, nodeIndex: number): number {
+  const node = ns.hacknet.getNodeStats(nodeIndex)
+  const mult = ns.getHacknetMultipliers().production
+  const currentProduction = ns.formulas.hacknetNodes.moneyGainRate(node.level, node.ram, node.cores, mult)
+  const upgradedProduction = ns.formulas.hacknetNodes.moneyGainRate(node.level, node.ram, node.cores + 1, mult)
+  return upgradedProduction - currentProduction
 }
