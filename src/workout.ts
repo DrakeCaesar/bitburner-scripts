@@ -26,20 +26,13 @@ export async function main(ns: NS): Promise<void> {
     const lowestSkill = skills.reduce((min, skill) => {
       if (skill.value < min.value) {
         return skill
-      } else if (
-        skill.value === min.value &&
-        orderPreference[skill.name] < orderPreference[min.name]
-      ) {
+      } else if (skill.value === min.value && orderPreference[skill.name] < orderPreference[min.name]) {
         return skill
       }
       return min
     })
 
-    ns.singularity.gymWorkout(
-      "Powerhouse Gym",
-      lowestSkill.name as GymType,
-      focus
-    )
+    ns.singularity.gymWorkout("Powerhouse Gym", lowestSkill.name as GymType, focus)
     await ns.sleep(250)
   }
 }

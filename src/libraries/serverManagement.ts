@@ -11,6 +11,12 @@ export function getAllNodes(ns: NS): string[] {
       nodes.push(nodeName)
     }
   }
+  for (let i = 0; i < 25; i++) {
+    const nodeName = "hacknet-server-" + String(i)
+    if (ns.serverExists(nodeName)) {
+      nodes.push(nodeName)
+    }
+  }
   return nodes
 }
 
@@ -32,7 +38,7 @@ export function getNodesForBatching(ns: NS): string[] {
   for (const serverName of knownServers) {
     const server = ns.getServer(serverName)
     // Skip home and purchased servers
-    if (serverName === "home" || purchasedServers.includes(serverName)) {
+    if (serverName === "home" || purchasedServers.includes(serverName) || serverName.startsWith("hacknet")) {
       continue
     }
     // Add servers that are nuked and have RAM
@@ -47,8 +53,11 @@ export function getNodesForBatching(ns: NS): string[] {
   const homeRemainingRam = getEffectiveMaxRam(ns, "home") - ns.getServerUsedRam("home")
 
   let nodes: string[] = []
+  nodes = ["home", ...purchasedServers, ...nukedServers]
+  // nodes = ["home"]
   nodes = [...purchasedServers, ...nukedServers]
-
+  nodes = ["home", ...nukedServers]
+  ns.tprint(nodes)
   return nodes
 }
 

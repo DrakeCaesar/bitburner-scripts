@@ -96,11 +96,7 @@ export async function main(ns: NS): Promise<void> {
           // ns.tprint(`Attempts Remaining: ${attempt}`)
 
           if (solve && current.answer != null) {
-            ns.codingcontract.attempt(
-              current.answer,
-              current.name,
-              current.server
-            )
+            ns.codingcontract.attempt(current.answer, current.name, current.server)
           }
         }
 
@@ -129,11 +125,7 @@ export async function main(ns: NS): Promise<void> {
   })).filter((item) => !unsolvedTypes.has(item.type))
 
   // Sort by average execution time descending
-  implArr.sort(
-    (a, b) =>
-      b.list.totalTime / b.list.contracts.length -
-      a.list.totalTime / a.list.contracts.length
-  )
+  implArr.sort((a, b) => b.list.totalTime / b.list.contracts.length - a.list.totalTime / a.list.contracts.length)
 
   // Build table rows
   const tableRows: string[][] = []
@@ -174,10 +166,7 @@ export async function main(ns: NS): Promise<void> {
       const c = list?.contracts.find((c) => c.answer == null)
       if (c) {
         const description = ns.codingcontract.getDescription(c.name, c.server)
-        const attempts = ns.codingcontract.getNumTriesRemaining(
-          c.name,
-          c.server
-        )
+        const attempts = ns.codingcontract.getNumTriesRemaining(c.name, c.server)
         fullOutput += `${type}\n\n`
         fullOutput += `${description}\n\n`
         fullOutput += `Attempts Remaining:\n${attempts}\n\n`

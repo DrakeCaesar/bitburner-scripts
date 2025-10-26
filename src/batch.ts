@@ -21,8 +21,12 @@ export async function main(ns: NS) {
       ns.singularity.joinFaction(inv)
     }
 
+    ns.scriptKill("autoWorkMegacorps.js", "home")
     ns.scriptKill("autoWorkFactions.js", "home")
-    ns.exec("autoWorkFactions.js", "home")
+
+    ns.exec("contractSolver.js", "home", 1, "solve")
+    // ns.exec("autoWorkFactions.js", "home")
+    // ns.exec("autoWorkMegacorps.js", "home")
 
     // initBatchVisualiser()
 
@@ -44,7 +48,8 @@ export async function main(ns: NS) {
 
     if (nodes.length === 0) {
       ns.tprint("ERROR: No nodes with root access found")
-      return
+      await ns.sleep(1000)
+      continue
     }
 
     // Kill all scripts on all nodes and copy required scripts
@@ -265,7 +270,8 @@ export async function main(ns: NS) {
     const completedBatches = await executeBatches(ns, batchConfig, threads, timings, batches)
     if (completedBatches == 0) {
       ns.tprint("ERROR: No batches were executed. Exiting.")
-      return
+      await ns.sleep(1000)
+      continue
     }
 
     const batchEndTime = Date.now()
