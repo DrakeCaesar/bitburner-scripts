@@ -19,6 +19,8 @@ interface ServerInfo {
  * @returns true if a server was purchased or upgraded
  */
 export function purchaseServers(ns: NS): boolean {
+  return false
+
   const maxRam = ns.getPurchasedServerMaxRam()
   let purchasedAny = false
 

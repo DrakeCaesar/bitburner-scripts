@@ -41,7 +41,7 @@ async function spendHashes(ns: NS): Promise<void> {
   if (!moneyUpgrade) return
 
   // Spend hashes when we're at 90% capacity or have at least 4 hashes
-  const hashThreshold = Math.min(4, capacity * 0.9)
+  const hashThreshold = Math.max(4, capacity * 0.9)
 
   while (ns.hacknet.numHashes() >= hashThreshold) {
     const cost = ns.hacknet.hashCost(moneyUpgrade)

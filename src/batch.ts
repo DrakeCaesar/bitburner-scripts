@@ -21,7 +21,7 @@ export async function main(ns: NS) {
       ns.singularity.joinFaction(inv)
     }
 
-    ns.scriptKill("autoWorkMegacorps.js", "home")
+    // ns.scriptKill("autoWorkMegacorps.js", "home")
     ns.scriptKill("autoWorkFactions.js", "home")
 
     ns.exec("contractSolver.js", "home", 1, "solve")
