@@ -242,10 +242,10 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
   let orderLen = orderCol.length
   let nameLen = nameCol.length
   let factionLen = factionCol.length
-  let priceLen = priceCol.length
-  let adjustedLen = adjustedCol.length
-  let cumulativeLen = cumulativeCol.length
-  let repLen = repCol.length
+  let priceLen = Math.max(priceCol.length, 8)
+  let adjustedLen = Math.max(adjustedCol.length, 8)
+  let cumulativeLen = Math.max(cumulativeCol.length, 8)
+  let repLen = Math.max(repCol.length, 8)
   let ownedLen = ownedCol.length
   let statusLen = statusCol.length
 

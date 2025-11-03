@@ -13,8 +13,8 @@ export async function main(ns: NS) {
   const config: HacknetConfig = {
     enablePurchasing: true,
     // moneyReserve: 160_000_000_000,
-    moneyReserve: 2_005_000_000_000,
-    // moneyReserve: 0,
+    // moneyReserve: 200_005_000_000_000,
+    moneyReserve: 0,
   }
 
   for (;;) {
@@ -28,32 +28,33 @@ export async function main(ns: NS) {
   }
 }
 
-async function spendHashes(ns: NS): Promise<void> {
-  if (ns.hacknet.hashCapacity() == 0) return
+export async function spendHashes(ns: NS): Promise<void> {
+  if (ns.hacknet.hashCapacity() === 0) return
 
-  const hashes = ns.hacknet.numHashes()
   const capacity = ns.hacknet.hashCapacity()
-  const upgrades = ns.hacknet.getHashUpgrades()
 
-  // Default to "Sell for Money" if available
-  const moneyUpgrade = upgrades.find((upgrade) => upgrade === "Sell for Money") || upgrades[0]
+  // Define upgrade priority order
+  const upgradePriority = ["Improve Studying", "Sell for Money"]
 
-  if (!moneyUpgrade) return
-
-  // Spend hashes when we're at 90% capacity or have at least 4 hashes
-  const hashThreshold = Math.max(4, capacity * 0.9)
+  // Spend when near capacity or at least a few hashes stored
+  const hashThreshold = capacity > 1000 ? Math.max(4, capacity * 0.9) : Math.min(4, capacity * 0.9)
 
   while (ns.hacknet.numHashes() >= hashThreshold) {
-    const cost = ns.hacknet.hashCost(moneyUpgrade)
-    if (ns.hacknet.numHashes() >= cost) {
-      const success = ns.hacknet.spendHashes(moneyUpgrade)
-      if (!success) {
-        ns.print(`Failed to spend hashes on ${moneyUpgrade}`)
-        break
+    let spent = false
+
+    for (const upgrade of upgradePriority) {
+      const cost = ns.hacknet.hashCost(upgrade)
+      if (ns.hacknet.numHashes() >= cost) {
+        if (ns.hacknet.spendHashes(upgrade)) {
+          spent = true
+          break
+        }
       }
-    } else {
-      break
     }
+
+    if (!spent) break
+
+    await ns.sleep(100)
   }
 }
 
