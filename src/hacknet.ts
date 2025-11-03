@@ -28,34 +28,37 @@ export async function main(ns: NS) {
   }
 }
 
-export async function spendHashes(ns: NS): Promise<void> {
-  if (ns.hacknet.hashCapacity() === 0) return
+async function spendHashes(ns: NS): Promise<void> {
+  if (ns.hacknet.hashCapacity() == 0) return
 
+  const hashes = ns.hacknet.numHashes()
   const capacity = ns.hacknet.hashCapacity()
+  const upgrades = ns.hacknet.getHashUpgrades()
 
-  // Define upgrade priority order
-  const upgradePriority = []
-  // upgradePriority.push("Improve Studying")
-  upgradePriority.push("Sell for Money")
-  // Spend when near capacity or at least a few hashes stored
-  const hashThreshold = capacity > 1000 ? Math.max(4, capacity * 0.9) : Math.min(4, capacity * 0.9)
+  // Default to "Sell for Money" if available
+  const moneyUpgrade = upgrades.find((upgrade) => upgrade === "Sell for Money") || upgrades[0]
+
+  if (!moneyUpgrade) return
+
+  // Spend hashes when we're at 90% capacity or have at least 4 hashes
+  let hashThreshold: number
+  if (ns.hacknet.hashCapacity() > 1000) {
+    hashThreshold = Math.max(4, capacity * 0.9)
+  } else {
+    hashThreshold = Math.min(4, capacity * 0.9)
+  }
 
   while (ns.hacknet.numHashes() >= hashThreshold) {
-    let spent = false
-
-    for (const upgrade of upgradePriority) {
-      const cost = ns.hacknet.hashCost(upgrade)
-      if (ns.hacknet.numHashes() >= cost) {
-        if (ns.hacknet.spendHashes(upgrade)) {
-          spent = true
-          break
-        }
+    const cost = ns.hacknet.hashCost(moneyUpgrade)
+    if (ns.hacknet.numHashes() >= cost) {
+      const success = ns.hacknet.spendHashes(moneyUpgrade)
+      if (!success) {
+        ns.print(`Failed to spend hashes on ${moneyUpgrade}`)
+        break
       }
+    } else {
+      break
     }
-
-    if (!spent) break
-
-    await ns.sleep(100)
   }
 }
 
@@ -112,7 +115,7 @@ async function handlePurchasing(ns: NS, config: HacknetConfig): Promise<void> {
     }
 
     // Core upgrade
-    if (node.cores < 16) {
+    if (node.cores < 32) {
       const profit = calculateCoreUpgradeProfit(ns, i)
       const cost = ns.hacknet.getCoreUpgradeCost(i, 1)
       upgradeOptions.push({
