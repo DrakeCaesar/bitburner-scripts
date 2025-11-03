@@ -189,8 +189,59 @@ async function handlePurchasing(ns: NS, config: HacknetConfig): Promise<void> {
 }
 
 function calculateNewNodeProfitRate(ns: NS): number {
-  // New nodes start at level 1, ram 1, cores 1
-  return ns.formulas.hacknetServers.hashGainRate(1, 0, 1, 1, ns.getHacknetMultipliers().production)
+  if (ns.hacknet.numNodes() === 0) {
+    // If no nodes exist, just return basic profit rate
+    return ns.formulas.hacknetServers.hashGainRate(1, 0, 1, 1, ns.getHacknetMultipliers().production)
+  }
+
+  // Find the worst node's stats to use as upgrade target
+  let worstNode = {
+    level: Number.MAX_VALUE,
+    ram: Number.MAX_VALUE,
+    cores: Number.MAX_VALUE,
+  }
+
+  for (let i = 0; i < ns.hacknet.numNodes(); i++) {
+    const node = ns.hacknet.getNodeStats(i)
+    worstNode.level = Math.min(worstNode.level, node.level)
+    worstNode.ram = Math.min(worstNode.ram, node.ram)
+    worstNode.cores = Math.min(worstNode.cores, node.cores)
+  }
+
+  // Calculate total upgrade costs to match worst node
+  let totalCost = ns.hacknet.getPurchaseNodeCost()
+
+  // Use node 0 as reference for cost calculations
+  // The costs are the same for all nodes at the same level
+  const referenceNode = 0
+
+  // Calculate level upgrade cost
+  if (worstNode.level > 1) {
+    totalCost += ns.hacknet.getLevelUpgradeCost(referenceNode, worstNode.level - 1)
+  }
+
+  // Calculate RAM upgrade cost (RAM upgrades double each time)
+  let ramUpgrades = Math.log2(worstNode.ram)
+  if (ramUpgrades > 0) {
+    totalCost += ns.hacknet.getRamUpgradeCost(referenceNode, ramUpgrades)
+  }
+
+  // Calculate core upgrade cost
+  if (worstNode.cores > 1) {
+    totalCost += ns.hacknet.getCoreUpgradeCost(referenceNode, worstNode.cores - 1)
+  }
+
+  // Calculate profit rate at upgraded state
+  const upgradedProfit = ns.formulas.hacknetServers.hashGainRate(
+    worstNode.level,
+    0,
+    worstNode.ram,
+    worstNode.cores,
+    ns.getHacknetMultipliers().production
+  )
+
+  // Return profit per cost ratio considering total investment needed
+  return upgradedProfit / totalCost
 }
 
 function calculateLevelUpgradeProfit(ns: NS, nodeIndex: number): number {
