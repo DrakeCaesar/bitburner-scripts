@@ -34,8 +34,9 @@ export async function spendHashes(ns: NS): Promise<void> {
   const capacity = ns.hacknet.hashCapacity()
 
   // Define upgrade priority order
-  const upgradePriority = ["Improve Studying", "Sell for Money"]
-
+  const upgradePriority = []
+  // upgradePriority.push("Improve Studying")
+  upgradePriority.push("Sell for Money")
   // Spend when near capacity or at least a few hashes stored
   const hashThreshold = capacity > 1000 ? Math.max(4, capacity * 0.9) : Math.min(4, capacity * 0.9)
 
