@@ -55,8 +55,10 @@ export function getNodesForBatching(ns: NS): string[] {
   let nodes: string[] = []
   nodes = ["home", ...purchasedServers, ...nukedServers]
   // nodes = ["home"]
-  nodes = [...purchasedServers, ...nukedServers]
-  nodes = ["home", ...nukedServers]
+  // nodes = [...purchasedServers, ...nukedServers]
+  // nodes = ["home", ...nukedServers]
+  nodes = [...purchasedServers]
+
   ns.tprint(nodes)
   return nodes
 }

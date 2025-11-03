@@ -80,7 +80,7 @@ export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor
   // Build server data with nuking
   let items = new Map<string, { level: number; server: any }>()
   for (const key of knownServers) {
-    if (!key.includes("node") && key !== "home" && key !== "darkweb") {
+    if (!key.includes("node") && !key.includes("hacknet") && key !== "home" && key !== "darkweb") {
       const level = ns.getServerRequiredHackingLevel(key)
       items.set(key, { level, server: ns.getServer(key) })
     }
