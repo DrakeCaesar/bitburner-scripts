@@ -3,7 +3,16 @@ import type { CompanyName, JobField } from "@ns"
 import { NS } from "@ns"
 import { killOtherInstances } from "./libraries/batchCalculations"
 
-const REQUIRED_REP = 300000
+// Default required reputation for most megacorporations
+const DEFAULT_REQUIRED_REP = 400000
+
+// Per-company overrides. Use the company enum string as the key.
+// Example: MegaCorp requires 300,000 rep while others use the default.
+const REQUIRED_REP_OVERRIDES: Record<string, number> = {
+  MegaCorp: 300000,
+  // Add other overrides here if needed, e.g.
+  // "ECorp": 500000,
+}
 
 export async function main(ns: NS) {
   const megacorps: CompanyName[] = [
@@ -31,7 +40,8 @@ export async function main(ns: NS) {
 
     ns.tprint(`\n${"=".repeat(60)}`)
     ns.tprint(`Target: ${company} (${factionName})`)
-    ns.tprint(`Required Reputation: ${ns.formatNumber(REQUIRED_REP)}`)
+    const requiredRep = REQUIRED_REP_OVERRIDES[company] ?? DEFAULT_REQUIRED_REP
+    ns.tprint(`Required Reputation: ${ns.formatNumber(requiredRep)}`)
     ns.tprint(`${"=".repeat(60)}`)
 
     // Work at this company until we reach the required reputation
@@ -55,9 +65,9 @@ export async function main(ns: NS) {
       }
 
       // Check if we've reached the target
-      if (currentRep >= REQUIRED_REP) {
+      if (currentRep >= requiredRep) {
         ns.tprint(
-          `✓ Reached target reputation for ${company}: ${ns.formatNumber(currentRep)}/${ns.formatNumber(REQUIRED_REP)}`
+          `✓ Reached target reputation for ${company}: ${ns.formatNumber(currentRep)}/${ns.formatNumber(requiredRep)}`
         )
 
         // Check if we can join the faction
@@ -135,7 +145,7 @@ export async function main(ns: NS) {
       }
 
       ns.print(
-        `Working: ${jobName || bestPositionName} (skill req: ${bestSkillSum}) | Current: ${ns.formatNumber(currentRep)}/${ns.formatNumber(REQUIRED_REP)}`
+        `Working: ${jobName || bestPositionName} (skill req: ${bestSkillSum}) | Current: ${ns.formatNumber(currentRep)}/${ns.formatNumber(requiredRep)}`
       )
 
       // Wait before checking again
@@ -144,4 +154,5 @@ export async function main(ns: NS) {
   }
 
   ns.tprint("\n✓ All megacorp factions completed!")
+  ns.exec("autoWorkFactions.js", "home")
 }

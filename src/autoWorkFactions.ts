@@ -6,7 +6,13 @@ interface AugmentTarget {
   currentRep: number
   requiredRep: number
   repGap: number
+  favor: number // Current faction favor
+  favorGain: number // Favor gain on reset
+  predictedFavor: number // favor + favorGain
 }
+
+// Constant for favor grinding target
+const TARGET_FAVOR = 75
 
 export async function main(ns: NS) {
   ns.disableLog("ALL")
@@ -29,7 +35,7 @@ export async function main(ns: NS) {
     const targets = findBestAugmentTarget(ns, playerFactions)
 
     if (targets.length === 0) {
-      ns.tprint("✓ You have enough reputation for all available augments!")
+      ns.tprint("✓ You have enough reputation for all available augments and all factions have target favor!")
       return
     }
 
@@ -41,11 +47,27 @@ export async function main(ns: NS) {
     if (targetKey !== currentTargetKey) {
       currentTargetKey = targetKey
       ns.print(`\n${"=".repeat(60)}`)
-      ns.print(`Target Augment: ${bestTarget.augmentName}`)
-      ns.print(`Faction: ${bestTarget.faction}`)
-      ns.print(`Current Rep: ${ns.formatNumber(bestTarget.currentRep)}`)
-      ns.print(`Required Rep: ${ns.formatNumber(bestTarget.requiredRep)}`)
-      ns.print(`Gap: ${ns.formatNumber(bestTarget.repGap)}`)
+
+      const favorGain = ns.singularity.getFactionFavorGain(bestTarget.faction)
+      const totalFavorAfterReset = bestTarget.favor + favorGain
+      const favorGap = TARGET_FAVOR - totalFavorAfterReset
+      const isFavorGrinding = totalFavorAfterReset < TARGET_FAVOR
+
+      if (isFavorGrinding) {
+        ns.print(`Target: Grinding Favor for ${bestTarget.faction}`)
+        ns.print(`Current Favor: ${ns.formatNumber(bestTarget.favor)}`)
+        ns.print(`Favor Gain on Reset: +${ns.formatNumber(favorGain)}`)
+        ns.print(`Total Favor After Reset: ${ns.formatNumber(totalFavorAfterReset)}`)
+        ns.print(`Target Favor: ${TARGET_FAVOR}`)
+        ns.print(`Favor Gap: ${ns.formatNumber(favorGap)}`)
+      } else {
+        ns.print(`Target Augment: ${bestTarget.augmentName}`)
+        ns.print(`Faction: ${bestTarget.faction}`)
+        ns.print(`Current Rep: ${ns.formatNumber(bestTarget.currentRep)}`)
+        ns.print(`Required Rep: ${ns.formatNumber(bestTarget.requiredRep)}`)
+        ns.print(`Gap: ${ns.formatNumber(bestTarget.repGap)}`)
+      }
+
       ns.print(`${"=".repeat(60)}`)
     }
 
@@ -115,6 +137,9 @@ function findBestAugmentTarget(ns: NS, playerFactions: string[]): AugmentTarget[
       if (augmentsWithEnoughRep.has(augName)) continue
 
       const requiredRep = ns.singularity.getAugmentationRepReq(augName)
+      const favor = ns.singularity.getFactionFavor(faction)
+      const favorGain = ns.singularity.getFactionFavorGain(faction)
+      const predictedFavor = favor + favorGain
 
       // Only consider augments we don't have enough rep for
       if (currentRep < requiredRep) {
@@ -124,13 +149,24 @@ function findBestAugmentTarget(ns: NS, playerFactions: string[]): AugmentTarget[
           currentRep: currentRep,
           requiredRep: requiredRep,
           repGap: requiredRep - currentRep,
+          favor: favor,
+          favorGain: favorGain,
+          predictedFavor: predictedFavor,
         })
       }
     }
   }
 
-  // Sort by smallest rep gap first (closest to achieving)
-  targets.sort((a, b) => a.repGap - b.repGap)
+  // Find targets that need favor grinding
+  const favorTargets = targets.filter((t) => t.predictedFavor < TARGET_FAVOR)
 
+  if (favorTargets.length > 0) {
+    // Sort by smallest predicted favor gap
+    favorTargets.sort((a, b) => TARGET_FAVOR - a.predictedFavor - (TARGET_FAVOR - b.predictedFavor))
+    return favorTargets
+  }
+
+  // Otherwise sort by smallest rep gap for augments
+  targets.sort((a, b) => a.repGap - b.repGap)
   return targets
 }
