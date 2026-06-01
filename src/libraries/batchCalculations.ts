@@ -544,7 +544,21 @@ export async function prepareServerMultiNode(
     }
   }
 
+  const capacityDistributionKey = (nodeCapacities: NodeCapacity[]): string =>
+    nodeCapacities.map((nc) => `${nc.name}:${nc.growThreads}:${nc.weakenThreads}`).join("|")
+
+  let lastCapacityTableKey: string | null = null
+
   const emitCapacityTable = (nodeCapacities: NodeCapacity[], iteration: number) => {
+    const distributionKey = capacityDistributionKey(nodeCapacities)
+    const scriptInfo = `Grow: ${ns.format.ram(growScriptRam)}/t, Weaken: ${ns.format.ram(weakenScriptRam)}/t`
+
+    if (distributionKey === lastCapacityTableKey) {
+      emit(`=== Iteration ${iteration} - ${scriptInfo} (same as above) ===`)
+      return
+    }
+
+    lastCapacityTableKey = distributionKey
     const tableConfig = buildCapacityTableConfig(nodeCapacities, iteration)
     if (logTable) {
       logTable(tableConfig)
