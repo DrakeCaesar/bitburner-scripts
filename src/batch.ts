@@ -17,6 +17,7 @@ import { getNodesForBatching } from "./libraries/serverManagement.js"
 
 const BATCH_LAYOUT: Partial<TableLayout> = {
   tableWidthPx: 720,
+  fontSizePx: 14,
 }
 
 const BATCH_TABS: TabDefinition[] = [
