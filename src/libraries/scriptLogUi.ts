@@ -11,8 +11,10 @@ export interface TableLayout {
   bodyRowHeightPx: number
   tableWidthPx: number
   tailTitleBarPx: number
-  /** Total tail window height from `resizeTail` — used to top-align content in the log viewport. */
+  /** Minimum total tail window height; content taller than this triggers auto-resize. */
   tailHeightPx?: number
+  /** Cap for auto-resized tail height; defaults to ~92% of the game window. */
+  tailMaxHeightPx?: number
   sectionGapPx: number
 }
 
@@ -48,31 +50,108 @@ export function mergeLayout(partial?: Partial<TableLayout>): TableLayout {
   return { ...DEFAULT_LAYOUT, ...partial }
 }
 
-function contentViewportMinHeight(layout: TableLayout): number | undefined {
-  if (layout.tailHeightPx == null) return undefined
+function contentViewportMinHeight(layout: TableLayout): number {
+  if (layout.tailHeightPx == null) return 0
   return Math.max(0, layout.tailHeightPx - layout.tailTitleBarPx)
 }
 
-function buildViewportShell(content: ReactNode, layout: TableLayout): ReactNode {
-  const minHeightPx = contentViewportMinHeight(layout)
-  if (minHeightPx == null) return content
+function findScrollParent(el: HTMLElement): HTMLElement | null {
+  const win = eval("window") as Window
+  let node: HTMLElement | null = el.parentElement
+  while (node) {
+    const style = win.getComputedStyle(node)
+    if (style.overflowY === "scroll" || style.overflowY === "auto") {
+      return node
+    }
+    node = node.parentElement
+  }
+  return null
+}
 
+interface ViewportShellProps {
+  layout: TableLayout
+  children: ReactNode
+  onContentHeight?: (contentHeightPx: number) => void
+}
+
+/** Fills the tail log viewport so Bitburner's column-reverse log layout keeps content at the top. */
+function ViewportShell(props: ViewportShellProps): ReactNode {
   const React = getReact()
+  const { layout, children, onContentHeight } = props
+  const fallbackMinHeightPx = contentViewportMinHeight(layout)
+  const [minHeightPx, setMinHeightPx] = React.useState(fallbackMinHeightPx)
+  const [containerEl, setContainerEl] = React.useState<HTMLElement | null>(null)
+
+  React.useEffect(() => {
+    if (!containerEl) return
+
+    let lastReportedContentHeight = -1
+
+    const sync = () => {
+      const scrollParent = findScrollParent(containerEl)
+      const viewportHeight = scrollParent?.clientHeight ?? 0
+      const contentHeight = containerEl.scrollHeight
+      setMinHeightPx(Math.max(viewportHeight, contentHeight, fallbackMinHeightPx))
+
+      if (onContentHeight && contentHeight !== lastReportedContentHeight) {
+        lastReportedContentHeight = contentHeight
+        onContentHeight(contentHeight)
+      }
+
+      if (scrollParent) scrollParent.scrollTop = 0
+    }
+
+    sync()
+
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(sync)
+      observer.observe(containerEl)
+      const scrollParent = findScrollParent(containerEl)
+      if (scrollParent) observer.observe(scrollParent)
+      return () => observer.disconnect()
+    }
+
+    const win = eval("window") as Window
+    win.addEventListener("resize", sync)
+    return () => win.removeEventListener("resize", sync)
+  }, [containerEl, fallbackMinHeightPx, onContentHeight])
+
   return React.createElement(
     "div",
     {
+      ref: (node: unknown) => {
+        const el = node as HTMLElement | null
+        setContainerEl((prev) => (prev === el ? prev : el))
+      },
       style: {
         display: "flex",
         flexDirection: "column",
         justifyContent: "flex-start",
         alignItems: "flex-start",
-        minHeight: `${minHeightPx}px`,
+        minHeight: minHeightPx > 0 ? `${minHeightPx}px` : undefined,
         width: "100%",
         boxSizing: "border-box",
       },
     },
-    content
+    children
   )
+}
+
+function buildViewportShell(
+  content: ReactNode,
+  layout: TableLayout,
+  onContentHeight?: (contentHeightPx: number) => void
+): ReactNode {
+  const React = getReact()
+  return React.createElement(ViewportShell, { layout, children: content, onContentHeight })
+}
+
+function resolveTailHeight(contentHeightPx: number, layout: TableLayout): number {
+  const win = eval("window") as Window
+  const minHeight = layout.tailHeightPx ?? 150
+  const maxHeight = layout.tailMaxHeightPx ?? Math.floor(win.innerHeight * 0.92)
+  const totalHeight = Math.ceil(contentHeightPx + layout.tailTitleBarPx)
+  return Math.min(maxHeight, Math.max(minHeight, totalHeight))
 }
 
 export interface CellStyleState {
@@ -492,8 +571,17 @@ export class TabbedScriptLogBuilder {
 
 export function renderScriptLog(ns: NS, content: ReactNode, layout?: Partial<TableLayout>): void {
   const merged = mergeLayout(layout)
+  let lastTailHeight = 0
+
+  const onContentHeight = (contentHeightPx: number) => {
+    const nextHeight = resolveTailHeight(contentHeightPx, merged)
+    if (nextHeight === lastTailHeight) return
+    lastTailHeight = nextHeight
+    ns.ui.resizeTail(merged.tableWidthPx, nextHeight)
+  }
+
   ns.clearLog()
-  ns.printRaw(buildViewportShell(content, merged))
+  ns.printRaw(buildViewportShell(content, merged, onContentHeight))
   ns.ui.renderTail()
 }
 
