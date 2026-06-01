@@ -96,15 +96,18 @@ export function headerCellStyle(layout: TableLayout, activeHeader = false): Reco
   }
 }
 
+/** Extra width (in char units) for one space of inset on each side of cell text. */
+const COLUMN_WIDTH_PAD_CHARS = 2
+
 function computeColumnWidths(config: TableConfig, columnWidths?: number[]): number[] {
   if (columnWidths) return columnWidths
 
   return config.columns.map((col, colIdx) => {
-    let maxWidth = col.header.length
+    let maxChars = col.header.length
     for (const row of config.rows) {
-      if (row[colIdx]) maxWidth = Math.max(maxWidth, row[colIdx].length)
+      if (row[colIdx]) maxChars = Math.max(maxChars, row[colIdx].length)
     }
-    return Math.max(maxWidth, col.minWidth ?? 0)
+    return Math.max(maxChars, col.minWidth ?? 0) + COLUMN_WIDTH_PAD_CHARS
   })
 }
 
@@ -122,7 +125,9 @@ export function buildReactTable(config: ReactTableConfig): ReactNode {
   const layout = mergeLayout(config.layout)
   const { columns, rows, title, separatorAfter = [] } = config
   const colWidths = computeColumnWidths(config, config.columnWidths)
-  const tableWidth = config.tableWidth ?? layout.tableWidthPx
+  const sumColWidths = colWidths.reduce((sum, width) => sum + width, 0)
+  const tableWidth =
+    config.tableWidth != null ? Math.max(config.tableWidth, sumColWidths) : Math.max(sumColWidths, layout.tableWidthPx)
   const alignments = columns.map((col, idx) => col.align ?? (idx === 0 ? "left" : "right"))
 
   const headerCells = columns.map((col, idx) =>
