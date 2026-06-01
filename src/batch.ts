@@ -65,7 +65,7 @@ export async function main(ns: NS) {
       tabbedLog.tab("setup").text(`Joined factions: ${joinedFactions.join(", ")}`)
     }
 
-    ns.scriptKill("autoWorkFactions.js", "home")
+    // ns.scriptKill("autoWorkFactions.js", "home") — batch does not start it; leave faction work running if launched elsewhere
     ns.scriptKill("contractSolver.js", "home")
     ns.exec("contractSolver.js", "home", 1, "solve", "quiet")
 
