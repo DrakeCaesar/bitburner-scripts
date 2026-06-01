@@ -72,17 +72,14 @@ async function handlePurchasing(ns: NS, config: HacknetConfig): Promise<void> {
 
   const upgradeOptions: UpgradeOption[] = []
 
-  // Check if we should buy a new node
+  // Check if we should buy a new node (same metric as upgrades: marginal hash/s per dollar)
   if (ns.hacknet.numNodes() < ns.hacknet.maxNumNodes()) {
-    const newNodeProfit = calculateNewNodeProfitRate(ns)
     const newNodeCost = ns.hacknet.getPurchaseNodeCost()
-    const newNodeRatio = newNodeProfit / newNodeCost
-
     upgradeOptions.push({
       nodeIndex: -1,
       type: "NODE",
       cost: newNodeCost,
-      efficiency: newNodeRatio,
+      efficiency: calculateNewNodeEfficiency(ns),
     })
   }
 
@@ -142,8 +139,10 @@ async function handlePurchasing(ns: NS, config: HacknetConfig): Promise<void> {
   profitableOptions.sort((a, b) => b.efficiency - a.efficiency)
   const bestOption = profitableOptions[0]
 
+  const targetLabel =
+    bestOption.type === "NODE" ? "new hacknet node" : `hacknet-server-${bestOption.nodeIndex}`
   ns.print(
-    `Best efficiency option: hacknet-server-${bestOption.nodeIndex} ${bestOption.type} (cost: $${ns.format.number(bestOption.cost)}, efficiency: ${bestOption.efficiency.toFixed(6)})`
+    `Best efficiency option: ${targetLabel} ${bestOption.type} (cost: $${ns.format.number(bestOption.cost)}, efficiency: ${bestOption.efficiency.toFixed(6)})`
   )
 
   // Check if we have enough money after keeping the reserve
@@ -188,60 +187,17 @@ async function handlePurchasing(ns: NS, config: HacknetConfig): Promise<void> {
   }
 }
 
-function calculateNewNodeProfitRate(ns: NS): number {
-  if (ns.hacknet.numNodes() === 0) {
-    // If no nodes exist, just return basic profit rate
-    return ns.formulas.hacknetServers.hashGainRate(1, 0, 1, 1, ns.getHacknetMultipliers().production)
-  }
+/** Hash/s from a new node at default stats (level 1, 1GB RAM, 1 core). */
+function calculateNewNodeMarginalHashRate(ns: NS): number {
+  const mult = ns.getHacknetMultipliers().production
+  return ns.formulas.hacknetServers.hashGainRate(1, 0, 1, 1, mult)
+}
 
-  // Find the worst node's stats to use as upgrade target
-  let worstNode = {
-    level: Number.MAX_VALUE,
-    ram: Number.MAX_VALUE,
-    cores: Number.MAX_VALUE,
-  }
-
-  for (let i = 0; i < ns.hacknet.numNodes(); i++) {
-    const node = ns.hacknet.getNodeStats(i)
-    worstNode.level = Math.min(worstNode.level, node.level)
-    worstNode.ram = Math.min(worstNode.ram, node.ram)
-    worstNode.cores = Math.min(worstNode.cores, node.cores)
-  }
-
-  // Calculate total upgrade costs to match worst node
-  let totalCost = ns.hacknet.getPurchaseNodeCost()
-
-  // Use node 0 as reference for cost calculations
-  // The costs are the same for all nodes at the same level
-  const referenceNode = 0
-
-  // Calculate level upgrade cost
-  if (worstNode.level > 1) {
-    totalCost += ns.hacknet.getLevelUpgradeCost(referenceNode, worstNode.level - 1)
-  }
-
-  // Calculate RAM upgrade cost (RAM upgrades double each time)
-  let ramUpgrades = Math.log2(worstNode.ram)
-  if (ramUpgrades > 0) {
-    totalCost += ns.hacknet.getRamUpgradeCost(referenceNode, ramUpgrades)
-  }
-
-  // Calculate core upgrade cost
-  if (worstNode.cores > 1) {
-    totalCost += ns.hacknet.getCoreUpgradeCost(referenceNode, worstNode.cores - 1)
-  }
-
-  // Calculate profit rate at upgraded state
-  const upgradedProfit = ns.formulas.hacknetServers.hashGainRate(
-    worstNode.level,
-    0,
-    worstNode.ram,
-    worstNode.cores,
-    ns.getHacknetMultipliers().production
-  )
-
-  // Return profit per cost ratio considering total investment needed
-  return upgradedProfit / totalCost
+/** Marginal hash/s per dollar for purchasing another node (comparable to upgrade delta/cost). */
+function calculateNewNodeEfficiency(ns: NS): number {
+  const cost = ns.hacknet.getPurchaseNodeCost()
+  if (cost <= 0) return 0
+  return calculateNewNodeMarginalHashRate(ns) / cost
 }
 
 function calculateLevelUpgradeProfit(ns: NS, nodeIndex: number): number {
@@ -270,34 +226,3 @@ function calculateCoreUpgradeProfit(ns: NS, nodeIndex: number): number {
   return upgradedProduction - currentProduction
 }
 
-function calculateHacknetNewNodeProfitRate(ns: NS): number {
-  // New nodes start at level 1, ram 1, cores 1
-  return ns.formulas.hacknetNodes.moneyGainRate(1, 1, 1, ns.getHacknetMultipliers().production)
-}
-
-function calculateHacknetLevelUpgradeProfit(ns: NS, nodeIndex: number): number {
-  const node = ns.hacknet.getNodeStats(nodeIndex)
-  const mult = ns.getHacknetMultipliers().production
-  const currentProduction = ns.formulas.hacknetNodes.moneyGainRate(node.level, node.ram, node.cores, mult)
-  const upgradedProduction = ns.formulas.hacknetNodes.moneyGainRate(node.level + 1, node.ram, node.cores, mult)
-  return upgradedProduction - currentProduction
-}
-
-function calculateHacknetRamUpgradeProfit(ns: NS, nodeIndex: number): number {
-  const node = ns.hacknet.getNodeStats(nodeIndex)
-  const mult = ns.getHacknetMultipliers().production
-  const currentProduction = ns.formulas.hacknetNodes.moneyGainRate(node.level, node.ram, node.cores, mult)
-  const upgradedProduction = ns.formulas.hacknetNodes.moneyGainRate(node.level, node.ram * 2, node.cores, mult)
-  ns.tprint(node.ram)
-  ns.tprint(`mult: ${mult} current: ${currentProduction}, upgraded: ${upgradedProduction}`)
-
-  return upgradedProduction - currentProduction
-}
-
-function calculateHacknetCoreUpgradeProfit(ns: NS, nodeIndex: number): number {
-  const node = ns.hacknet.getNodeStats(nodeIndex)
-  const mult = ns.getHacknetMultipliers().production
-  const currentProduction = ns.formulas.hacknetNodes.moneyGainRate(node.level, node.ram, node.cores, mult)
-  const upgradedProduction = ns.formulas.hacknetNodes.moneyGainRate(node.level, node.ram, node.cores + 1, mult)
-  return upgradedProduction - currentProduction
-}
