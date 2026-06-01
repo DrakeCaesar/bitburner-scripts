@@ -50,17 +50,16 @@ export function getNodesForBatching(ns: NS): string[] {
   // Calculate total RAM for each group
   const purchasedTotalRam = purchasedServers.reduce((sum, node) => sum + getEffectiveMaxRam(ns, node), 0)
   const nukedTotalRam = nukedServers.reduce((sum, node) => sum + getEffectiveMaxRam(ns, node), 0)
-  const homeRemainingRam = getEffectiveMaxRam(ns, "home") - ns.getServerUsedRam("home")
 
-  let nodes: string[] = []
-  nodes = ["home", ...purchasedServers, ...nukedServers]
-  // nodes = ["home"]
-  // nodes = [...purchasedServers, ...nukedServers]
-  // nodes = ["home", ...nukedServers]
-  nodes = [...purchasedServers]
+  if (purchasedServers.length === 0) {
+    return ["home", ...nukedServers]
+  }
 
-  ns.tprint(nodes)
-  return nodes
+  if (purchasedTotalRam > nukedTotalRam) {
+    return ["home", ...purchasedServers]
+  }
+
+  return ["home", ...nukedServers]
 }
 
 export function purchaseAdditionalServers(ns: NS): number {

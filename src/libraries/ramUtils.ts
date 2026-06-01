@@ -11,7 +11,6 @@ import { NS } from "@ns"
  */
 export function getEffectiveMaxRam(ns: NS, server: string): number {
   const maxRam = ns.getServerMaxRam(server)
-  const usedRam = ns.getServerUsedRam(server)
   if (server === "home") {
     const tenPercent = maxRam * 0.1
     const reservation = Math.max(tenPercent, Math.min(maxRam, 100))
@@ -20,4 +19,12 @@ export function getEffectiveMaxRam(ns: NS, server: string): number {
   }
 
   return maxRam
+}
+
+/**
+ * RAM currently free for launching scripts on a server.
+ * Clamps to zero — home may already exceed its batch budget when batch.js and other scripts are running.
+ */
+export function getAvailableRam(ns: NS, server: string): number {
+  return Math.max(0, getEffectiveMaxRam(ns, server) - ns.getServerUsedRam(server))
 }

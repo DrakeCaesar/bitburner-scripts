@@ -6,7 +6,7 @@ import { calculateBatchThreads, calculateBatchTimings, executeBatches } from "./
 import { findBestTarget } from "./libraries/findBestTarget.js"
 import { purchasePrograms, purchaseTorRouter } from "./libraries/purchasePrograms.js"
 import { purchaseServers } from "./libraries/purchaseServer.js"
-import { getEffectiveMaxRam } from "./libraries/ramUtils.js"
+import { getAvailableRam, getEffectiveMaxRam } from "./libraries/ramUtils.js"
 import { getNodesForBatching } from "./libraries/serverManagement.js"
 import { buildKeyValueTable, buildThreeColumnTable } from "./libraries/tableBuilder.js"
 
@@ -69,7 +69,7 @@ export async function main(ns: NS) {
     // For home, subtract used RAM since this script is running there
     const totalMaxRam = nodes.reduce((sum, node) => {
       if (node === "home") {
-        return sum + (getEffectiveMaxRam(ns, node) - ns.getServerUsedRam(node))
+        return sum + getAvailableRam(ns, node)
       }
       return sum + getEffectiveMaxRam(ns, node)
     }, 0)
