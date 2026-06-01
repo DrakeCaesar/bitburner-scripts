@@ -120,8 +120,14 @@ function buildCrimeTable(ns: NS, crimeInfos: CrimeInfo[], mode: CrimeMode, selec
   })
 }
 
-function renderCrimeTable(ns: NS, crimeInfos: CrimeInfo[], mode: CrimeMode, selected: CrimeInfo, tailHeightPx?: number): void {
-  renderScriptLog(ns, buildCrimeTable(ns, crimeInfos, mode, selected), { ...CRIME_LAYOUT, tailHeightPx })
+async function renderCrimeTable(
+  ns: NS,
+  crimeInfos: CrimeInfo[],
+  mode: CrimeMode,
+  selected: CrimeInfo,
+  tailHeightPx?: number
+): Promise<void> {
+  await renderScriptLog(ns, buildCrimeTable(ns, crimeInfos, mode, selected), { ...CRIME_LAYOUT, tailHeightPx })
 }
 
 function parseMode(ns: NS): CrimeMode {
@@ -149,7 +155,7 @@ export async function main(ns: NS): Promise<void> {
       tailHeightPx = height
     }
 
-    renderCrimeTable(ns, crimeInfos, mode, bestCrime, tailHeightPx)
+    await renderCrimeTable(ns, crimeInfos, mode, bestCrime, tailHeightPx)
 
     const crimeTime = ns.singularity.commitCrime(bestCrime.name, false)
     await ns.sleep(crimeTime + 10)

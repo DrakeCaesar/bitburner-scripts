@@ -68,16 +68,17 @@ function findScrollParent(el: HTMLElement): HTMLElement | null {
   return null
 }
 
+const SCRIPT_LOG_VIEWPORT_ATTR = "data-script-log-viewport"
+
 interface ViewportShellProps {
   layout: TableLayout
   children: ReactNode
-  onContentHeight?: (contentHeightPx: number) => void
 }
 
 /** Fills the tail log viewport so Bitburner's column-reverse log layout keeps content at the top. */
 function ViewportShell(props: ViewportShellProps): ReactNode {
   const React = getReact()
-  const { layout, children, onContentHeight } = props
+  const { layout, children } = props
   const fallbackMinHeightPx = contentViewportMinHeight(layout)
   const [minHeightPx, setMinHeightPx] = React.useState(fallbackMinHeightPx)
   const [containerEl, setContainerEl] = React.useState<HTMLElement | null>(null)
@@ -85,19 +86,11 @@ function ViewportShell(props: ViewportShellProps): ReactNode {
   React.useEffect(() => {
     if (!containerEl) return
 
-    let lastReportedContentHeight = -1
-
     const sync = () => {
       const scrollParent = findScrollParent(containerEl)
       const viewportHeight = scrollParent?.clientHeight ?? 0
       const contentHeight = containerEl.scrollHeight
       setMinHeightPx(Math.max(viewportHeight, contentHeight, fallbackMinHeightPx))
-
-      if (onContentHeight && contentHeight !== lastReportedContentHeight) {
-        lastReportedContentHeight = contentHeight
-        onContentHeight(contentHeight)
-      }
-
       if (scrollParent) scrollParent.scrollTop = 0
     }
 
@@ -114,11 +107,12 @@ function ViewportShell(props: ViewportShellProps): ReactNode {
     const win = eval("window") as Window
     win.addEventListener("resize", sync)
     return () => win.removeEventListener("resize", sync)
-  }, [containerEl, fallbackMinHeightPx, onContentHeight])
+  }, [containerEl, fallbackMinHeightPx])
 
   return React.createElement(
     "div",
     {
+      [SCRIPT_LOG_VIEWPORT_ATTR]: "",
       ref: (node: unknown) => {
         const el = node as HTMLElement | null
         setContainerEl((prev) => (prev === el ? prev : el))
@@ -137,13 +131,15 @@ function ViewportShell(props: ViewportShellProps): ReactNode {
   )
 }
 
-function buildViewportShell(
-  content: ReactNode,
-  layout: TableLayout,
-  onContentHeight?: (contentHeightPx: number) => void
-): ReactNode {
+function buildViewportShell(content: ReactNode, layout: TableLayout): ReactNode {
   const React = getReact()
-  return React.createElement(ViewportShell, { layout, children: content, onContentHeight })
+  return React.createElement(ViewportShell, { layout, children: content })
+}
+
+function measureTailContentHeightPx(): number | null {
+  const doc = eval("document") as Document
+  const el = doc.querySelector(`[${SCRIPT_LOG_VIEWPORT_ATTR}]`) as HTMLElement | null
+  return el?.scrollHeight ?? null
 }
 
 function resolveTailHeight(contentHeightPx: number, layout: TableLayout): number {
@@ -439,8 +435,8 @@ export class ScriptLogBuilder {
     return this.sections.length === 0
   }
 
-  render(ns: NS): void {
-    renderScriptLog(ns, this.build(), this.layout)
+  render(ns: NS): Promise<void> {
+    return renderScriptLog(ns, this.build(), this.layout)
   }
 }
 
@@ -564,25 +560,28 @@ export class TabbedScriptLogBuilder {
     })
   }
 
-  render(ns: NS): void {
-    renderScriptLog(ns, this.build(), this.layout)
+  render(ns: NS): Promise<void> {
+    return renderScriptLog(ns, this.build(), this.layout)
   }
 }
 
-export function renderScriptLog(ns: NS, content: ReactNode, layout?: Partial<TableLayout>): void {
-  const merged = mergeLayout(layout)
-  let lastTailHeight = 0
+let lastTailHeightPx = 0
 
-  const onContentHeight = (contentHeightPx: number) => {
-    const nextHeight = resolveTailHeight(contentHeightPx, merged)
-    if (nextHeight === lastTailHeight) return
-    lastTailHeight = nextHeight
-    ns.ui.resizeTail(merged.tableWidthPx, nextHeight)
-  }
+export async function renderScriptLog(ns: NS, content: ReactNode, layout?: Partial<TableLayout>): Promise<void> {
+  const merged = mergeLayout(layout)
 
   ns.clearLog()
-  ns.printRaw(buildViewportShell(content, merged, onContentHeight))
+  ns.printRaw(buildViewportShell(content, merged))
   ns.ui.renderTail()
+  await ns.sleep(50)
+
+  const contentHeight = measureTailContentHeightPx()
+  if (contentHeight == null) return
+
+  const nextHeight = resolveTailHeight(contentHeight, merged)
+  if (nextHeight === lastTailHeightPx) return
+  lastTailHeightPx = nextHeight
+  ns.ui.resizeTail(merged.tableWidthPx, nextHeight)
 }
 
 export function initScriptLogTail(ns: NS, title: string, layout?: Partial<TableLayout>): void {

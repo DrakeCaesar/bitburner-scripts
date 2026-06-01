@@ -41,7 +41,6 @@ export async function main(ns: NS) {
 
   const logSetup = (message: string) => {
     tabbedLog.setActiveTab("setup").tab("setup").text(message)
-    renderLog()
   }
 
   // Append only during prep sim — re-render at phase boundaries so React tab clicks are not reset every line
@@ -56,7 +55,6 @@ export async function main(ns: NS) {
 
   const logBatch = (message: string) => {
     tabbedLog.setActiveTab("batch").tab("batch").text(message)
-    renderLog()
   }
 
   await killOtherInstances(ns)
@@ -76,18 +74,19 @@ export async function main(ns: NS) {
     purchaseTorRouter(ns, logSetup)
     purchasePrograms(ns, logSetup)
     await autoNuke(ns, logSetup)
+    await renderLog()
 
     const wasUpgraded = purchaseServers(ns)
     if (wasUpgraded) {
       tabbedLog.tab("setup").text("Server was purchased/upgraded, restarting batch cycle...")
-      renderLog()
+      await renderLog()
     }
 
     const nodes = getNodesForBatching(ns)
 
     if (nodes.length === 0) {
       tabbedLog.tab("setup").text("ERROR: No nodes with root access found")
-      renderLog()
+      await renderLog()
       await ns.sleep(1000)
       continue
     }
@@ -146,7 +145,7 @@ export async function main(ns: NS) {
       tableWidth: BATCH_LAYOUT.tableWidthPx,
       selectedRowIndex: 0,
     })
-    renderLog()
+    await renderLog()
 
     const server = ns.getServer(target.serverName)
     server.hackDifficulty = server.minDifficulty
@@ -173,7 +172,7 @@ export async function main(ns: NS) {
     } else {
       tabbedLog.tab("prep").text(`${target.serverName} is already prepared!`)
     }
-    renderLog()
+    await renderLog()
 
     const prepStartTime = Date.now()
     await prepareServerMultiNode(ns, nodes, target.serverName, {
@@ -195,7 +194,7 @@ export async function main(ns: NS) {
           `Difference: ${Math.abs(timeDiff).toFixed(0)}ms (${percentDiff}%)`
       )
     }
-    renderLog()
+    await renderLog()
 
     const batchConfigStartTime = Date.now()
     const batchConfig = {
@@ -311,13 +310,13 @@ export async function main(ns: NS) {
       tabbedLog.tab("batch").text(`WARNING: ${target.serverName} security above minimum by ${securityDiff.toFixed(2)}`)
     }
 
-    renderLog()
+    await renderLog()
 
     const batchStartTime = Date.now()
     const completedBatches = await executeBatches(ns, batchConfig, threads, timings, batches)
     if (completedBatches == 0) {
       tabbedLog.setActiveTab("results").tab("results").text("ERROR: No batches were executed. Exiting.")
-      renderLog()
+      await renderLog()
       await ns.sleep(1000)
       continue
     }
@@ -360,6 +359,6 @@ export async function main(ns: NS) {
       )
     }
 
-    renderLog()
+    await renderLog()
   }
 }

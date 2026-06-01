@@ -1,10 +1,6 @@
 import { NS } from "@ns"
 import { connect } from "./libraries/connect.js"
-import { crawl } from "./libraries/crawl.js"
-
-function isHackableNetworkServer(hostname: string): boolean {
-  return !hostname.startsWith("hacknet") && hostname !== "darkweb"
-}
+import { crawl, isHackableNetworkServer } from "./libraries/crawl.js"
 
 export async function main(ns: NS): Promise<void> {
   await autoNuke(ns)
