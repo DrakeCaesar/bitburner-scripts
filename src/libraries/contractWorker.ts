@@ -88,6 +88,12 @@ onmessage = (event) => {
     case "Square Root":
       answer = squareRoot(data)
       break
+    case "Largest Rectangle in a Matrix":
+      answer = largestRectangleInMatrix(data)
+      break
+    case "Total Number of Primes":
+      answer = totalNumberOfPrimes(data)
+      break
     default:
       answer = null
       break
@@ -1068,4 +1074,62 @@ function squareRoot(data: string): string {
   }
 
   return result.toString()
+}
+
+function largestRectangleInMatrix(matrix: number[][]): number[][] {
+  const rows = matrix.length
+  if (rows === 0) return [
+    [0, 0],
+    [0, 0],
+  ]
+  const cols = matrix[0].length
+  const heights = new Array<number>(cols).fill(0)
+  let maxArea = 0
+  let topLeft: [number, number] = [0, 0]
+  let bottomRight: [number, number] = [0, 0]
+
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      heights[col] = matrix[row][col] === 0 ? heights[col] + 1 : 0
+    }
+
+    const stack: number[] = []
+    for (let col = 0; col <= cols; col++) {
+      const height = col === cols ? 0 : heights[col]
+      while (stack.length > 0 && heights[stack[stack.length - 1]] > height) {
+        const index = stack.pop()!
+        const barHeight = heights[index]
+        const left = stack.length === 0 ? 0 : stack[stack.length - 1] + 1
+        const right = col - 1
+        const area = barHeight * (right - left + 1)
+        if (area > maxArea) {
+          maxArea = area
+          topLeft = [row - barHeight + 1, left]
+          bottomRight = [row, right]
+        }
+      }
+      if (col < cols) stack.push(col)
+    }
+  }
+
+  return [topLeft, bottomRight]
+}
+
+function totalNumberOfPrimes([low, high]: [number, number]): number {
+  if (high < 2) return 0
+
+  const isComposite = new Uint8Array(high + 1)
+  for (let i = 2; i * i <= high; i++) {
+    if (isComposite[i]) continue
+    for (let j = i * i; j <= high; j += i) {
+      isComposite[j] = 1
+    }
+  }
+
+  let count = 0
+  const start = Math.max(2, low)
+  for (let n = start; n <= high; n++) {
+    if (!isComposite[n]) count++
+  }
+  return count
 }
