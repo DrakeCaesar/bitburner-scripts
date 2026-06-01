@@ -60,11 +60,11 @@ export async function main(ns: NS) {
     rows: profitabilityData.map((data) => [
       data.serverName,
       data.hackLevel.toString(),
-      ns.formatNumber(data.moneyMax),
-      ns.tFormat(data.weakenTime),
+      ns.format.number(data.moneyMax),
+      ns.format.time(data.weakenTime),
       `${(data.optimalThreshold * 100).toFixed(1)}%`,
-      ns.formatNumber(data.moneyPerSecond),
-      ns.formatRam(data.batchRam),
+      ns.format.number(data.moneyPerSecond),
+      ns.format.ram(data.batchRam),
       data.batches.toString(),
     ]),
   })
@@ -96,7 +96,7 @@ export async function main(ns: NS) {
 
   // Create floating window
   new FloatingWindow({
-    title: `Target Profitability Analysis (${profitabilityData.length} servers, ${ns.formatRam(totalMaxRam)} RAM)`,
+    title: `Target Profitability Analysis (${profitabilityData.length} servers, ${ns.format.ram(totalMaxRam)} RAM)`,
     content: pre,
     width: contentWidth,
     height: 600,

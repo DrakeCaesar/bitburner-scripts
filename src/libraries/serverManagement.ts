@@ -66,12 +66,12 @@ export function getNodesForBatching(ns: NS): string[] {
 export function purchaseAdditionalServers(ns: NS): number {
   if (!ns.serverExists("node00")) return 0
 
-  const maxRam = ns.getPurchasedServerMaxRam()
+  const maxRam = ns.cloud.getRamLimit()
   const currentRam = getEffectiveMaxRam(ns, "node00")
 
   if (currentRam < maxRam) return 0
 
-  const cost = ns.getPurchasedServerCost(maxRam)
+  const cost = ns.cloud.getServerCost(maxRam)
   let money = ns.getPlayer().money
   let purchaseCount = 0
 
@@ -80,14 +80,14 @@ export function purchaseAdditionalServers(ns: NS): number {
     const nodeName = "node" + String(i).padStart(2, "0")
 
     if (!ns.serverExists(nodeName) && money >= cost) {
-      ns.purchaseServer(nodeName, maxRam)
+      ns.cloud.purchaseServer(nodeName, maxRam)
       ns.tprint(`Bought new maxed server: ${nodeName} (${maxRam} GB)`)
       money -= cost
       purchaseCount++
     } else if (ns.serverExists(nodeName) && getEffectiveMaxRam(ns, nodeName) < maxRam && money >= cost) {
       ns.killall(nodeName)
-      ns.deleteServer(nodeName)
-      ns.purchaseServer(nodeName, maxRam)
+      ns.cloud.deleteServer(nodeName)
+      ns.cloud.purchaseServer(nodeName, maxRam)
       ns.tprint(`Upgraded ${nodeName} to max RAM (${maxRam} GB)`)
       money -= cost
       purchaseCount++

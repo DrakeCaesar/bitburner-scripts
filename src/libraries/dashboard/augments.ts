@@ -2,7 +2,7 @@
 // AUGMENTATIONS
 // ============================================================================
 
-import { NS } from "@ns"
+import { FactionName, NS } from "@ns"
 import { AugmentInfo } from "../augmentations"
 import { createStandardContainer, FloatingWindow } from "../floatingWindow"
 import { formatTableRow, getTableBorders } from "../tableBuilder"
@@ -45,7 +45,7 @@ function formatFactionText(factions: string[], maxWidth: number): string {
 }
 
 // Get augmentation data with display-specific optimizations (topological sort)
-function getAugmentDataForDisplay(ns: NS, playerFactions: string[]) {
+function getAugmentDataForDisplay(ns: NS, playerFactions: FactionName[]) {
   const augmentMap = new Map<string, AugmentInfo>()
   let neuroFluxInfo: AugmentInfo | null = null
 
@@ -297,14 +297,14 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
     const validFactions = aug.factions.filter((f) => (factionReps.get(f) ?? 0) >= aug.repReq)
     const factionText = (validFactions.length > 0 ? validFactions : aug.factions).join(", ")
     factionLen = Math.max(factionLen, Math.min(factionText.length, 30))
-    priceLen = Math.max(priceLen, ns.formatNumber(aug.price).length)
-    repLen = Math.max(repLen, ns.formatNumber(aug.repReq).length)
+    priceLen = Math.max(priceLen, ns.format.number(aug.price).length)
+    repLen = Math.max(repLen, ns.format.number(aug.repReq).length)
   }
 
   // Update adjusted and cumulative column widths based on calculated costs
   for (let i = 0; i < adjustedPrices.length; i++) {
-    adjustedLen = Math.max(adjustedLen, ns.formatNumber(adjustedPrices[i]).length)
-    cumulativeLen = Math.max(cumulativeLen, ns.formatNumber(cumulativeCosts[i]).length)
+    adjustedLen = Math.max(adjustedLen, ns.format.number(adjustedPrices[i]).length)
+    cumulativeLen = Math.max(cumulativeLen, ns.format.number(cumulativeCosts[i]).length)
   }
 
   // Build table with HTML spans for coloring
@@ -335,13 +335,13 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
       order: orderNum.toString().padStart(orderLen),
       name: aug.name.padEnd(nameLen),
       faction: formatFactionText(validFactions, factionLen).padEnd(factionLen),
-      price: ns.formatNumber(aug.price).padStart(priceLen),
+      price: ns.format.number(aug.price).padStart(priceLen),
       priceRed: playerMoney < aug.price,
-      adjusted: ns.formatNumber(adjustedPrices[i]).padStart(adjustedLen),
+      adjusted: ns.format.number(adjustedPrices[i]).padStart(adjustedLen),
       adjustedRed: false,
-      cumulative: ns.formatNumber(cumulativeCosts[i]).padStart(cumulativeLen),
+      cumulative: ns.format.number(cumulativeCosts[i]).padStart(cumulativeLen),
       cumulativeRed: playerMoney < cumulativeCosts[i],
-      rep: ns.formatNumber(aug.repReq).padStart(repLen),
+      rep: ns.format.number(aug.repReq).padStart(repLen),
       repRed: false,
       owned: (aug.owned ? "Y" : " ").padStart(ownedLen),
       status: "Y".padStart(statusLen),
@@ -359,13 +359,13 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
       order: " ".repeat(orderLen),
       name: aug.name.padEnd(nameLen),
       faction: formatFactionText(validFactions, factionLen).padEnd(factionLen),
-      price: ns.formatNumber(aug.price).padStart(priceLen),
+      price: ns.format.number(aug.price).padStart(priceLen),
       priceRed: playerMoney < aug.price,
-      adjusted: ns.formatNumber(adjustedPrices[adjustedIdx]).padStart(adjustedLen),
+      adjusted: ns.format.number(adjustedPrices[adjustedIdx]).padStart(adjustedLen),
       adjustedRed: true,
-      cumulative: ns.formatNumber(cumulativeCosts[adjustedIdx]).padStart(cumulativeLen),
+      cumulative: ns.format.number(cumulativeCosts[adjustedIdx]).padStart(cumulativeLen),
       cumulativeRed: true,
-      rep: ns.formatNumber(aug.repReq).padStart(repLen),
+      rep: ns.format.number(aug.repReq).padStart(repLen),
       repRed: false,
       owned: (aug.owned ? "Y" : " ").padStart(ownedLen),
       status: "X$".padStart(statusLen),
@@ -391,13 +391,13 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
       order: " ".repeat(orderLen),
       name: aug.name.padEnd(nameLen),
       faction: formatFactionText(factionList, factionLen).padEnd(factionLen),
-      price: ns.formatNumber(aug.price).padStart(priceLen),
+      price: ns.format.number(aug.price).padStart(priceLen),
       priceRed: !hasEnoughMoney,
       adjusted: " ".repeat(adjustedLen),
       adjustedRed: false,
       cumulative: " ".repeat(cumulativeLen),
       cumulativeRed: false,
-      rep: ns.formatNumber(aug.repReq).padStart(repLen),
+      rep: ns.format.number(aug.repReq).padStart(repLen),
       repRed: !hasEnoughRep,
       owned: (aug.owned ? "Y" : " ").padStart(ownedLen),
       status: statusSymbol.padStart(statusLen),
@@ -432,13 +432,13 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
         order: orderNum.toString().padStart(orderLen),
         name: neuroFluxInfo.name.padEnd(nameLen),
         faction: formatFactionText(neuroFluxInfo.factions, factionLen).padEnd(factionLen),
-        price: ns.formatNumber(currentBasePrice).padStart(priceLen),
+        price: ns.format.number(currentBasePrice).padStart(priceLen),
         priceRed: playerMoney < currentBasePrice,
-        adjusted: ns.formatNumber(currentPrice).padStart(adjustedLen),
+        adjusted: ns.format.number(currentPrice).padStart(adjustedLen),
         adjustedRed: false,
-        cumulative: ns.formatNumber(neuroFluxCumulative).padStart(cumulativeLen),
+        cumulative: ns.format.number(neuroFluxCumulative).padStart(cumulativeLen),
         cumulativeRed: false,
-        rep: ns.formatNumber(currentRepReq).padStart(repLen),
+        rep: ns.format.number(currentRepReq).padStart(repLen),
         repRed: false,
         owned: (neuroFluxInfo.owned ? "Y" : " ").padStart(ownedLen),
         status: "~".padStart(statusLen),
@@ -468,13 +468,13 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
         order: " ".repeat(orderLen),
         name: neuroFluxInfo.name.padEnd(nameLen),
         faction: formatFactionText(neuroFluxInfo.factions, factionLen).padEnd(factionLen),
-        price: ns.formatNumber(basePrice).padStart(priceLen),
+        price: ns.format.number(basePrice).padStart(priceLen),
         priceRed: !canAffordMoney,
-        adjusted: ns.formatNumber(adjustedPrice).padStart(adjustedLen),
+        adjusted: ns.format.number(adjustedPrice).padStart(adjustedLen),
         adjustedRed: !canAffordMoney,
         cumulative: " ".repeat(cumulativeLen),
         cumulativeRed: false,
-        rep: ns.formatNumber(currentRepReq).padStart(repLen),
+        rep: ns.format.number(currentRepReq).padStart(repLen),
         repRed: !hasEnoughRep,
         owned: (neuroFluxInfo.owned ? "Y" : " ").padStart(ownedLen),
         status: statusSymbol.padStart(statusLen),
@@ -503,7 +503,7 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
   const tableFooter =
     `${borders.bottom()}\n` +
     `\nAffordable: ${affordableSorted.length} | Too expensive (cumulative): ${tooExpensiveCumulative.length} | No rep: ${unaffordable.length} | Total: ${allAugs.length}\n` +
-    `Current money: ${ns.formatNumber(playerMoney)}`
+    `Current money: ${ns.format.number(playerMoney)}`
 
   // Clear and rebuild container
   containerDiv.innerHTML = ""

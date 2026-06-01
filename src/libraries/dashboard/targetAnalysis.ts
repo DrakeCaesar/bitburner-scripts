@@ -88,11 +88,11 @@ export async function updateTargetsView(ns: NS, containerDiv: HTMLElement, prima
   for (const data of topServers) {
     serverLen = Math.max(serverLen, data.serverName.length)
     lvlLen = Math.max(lvlLen, data.hackLevel.toString().length)
-    moneyLen = Math.max(moneyLen, ns.formatNumber(data.moneyMax).length)
-    timeLen = Math.max(timeLen, ns.tFormat(data.weakenTime).length)
+    moneyLen = Math.max(moneyLen, ns.format.number(data.moneyMax).length)
+    timeLen = Math.max(timeLen, ns.format.time(data.weakenTime).length)
     thresholdLen = Math.max(thresholdLen, `${(data.optimalThreshold * 100).toFixed(1)}%`.length)
-    incomeLen = Math.max(incomeLen, ns.formatNumber(data.moneyPerSecond).length)
-    ramLen = Math.max(ramLen, ns.formatRam(data.batchRam).length)
+    incomeLen = Math.max(incomeLen, ns.format.number(data.moneyPerSecond).length)
+    ramLen = Math.max(ramLen, ns.format.ram(data.batchRam).length)
     batchesLen = Math.max(batchesLen, data.batches.toString().length)
   }
 
@@ -125,11 +125,11 @@ export async function updateTargetsView(ns: NS, containerDiv: HTMLElement, prima
     rowSpan.textContent = formatTableRow([
       data.serverName.padEnd(serverLen),
       data.hackLevel.toString().padStart(lvlLen),
-      ns.formatNumber(data.moneyMax).padStart(moneyLen),
-      ns.tFormat(data.weakenTime).padStart(timeLen),
+      ns.format.number(data.moneyMax).padStart(moneyLen),
+      ns.format.time(data.weakenTime).padStart(timeLen),
       `${(data.optimalThreshold * 100).toFixed(1)}%`.padStart(thresholdLen),
-      ns.formatNumber(data.moneyPerSecond).padStart(incomeLen),
-      ns.formatRam(data.batchRam).padStart(ramLen),
+      ns.format.number(data.moneyPerSecond).padStart(incomeLen),
+      ns.format.ram(data.batchRam).padStart(ramLen),
       data.batches.toString().padStart(batchesLen),
     ])
     rowSpan.textContent += "\n"
@@ -138,6 +138,6 @@ export async function updateTargetsView(ns: NS, containerDiv: HTMLElement, prima
 
   // Add footer
   const footerSpan = document.createElement("span")
-  footerSpan.textContent = `${borders.bottom()}\n\nShowing top 20 of ${profitabilityData.length} servers | Total RAM: ${ns.formatRam(totalMaxRam)}`
+  footerSpan.textContent = `${borders.bottom()}\n\nShowing top 20 of ${profitabilityData.length} servers | Total RAM: ${ns.format.ram(totalMaxRam)}`
   containerDiv.appendChild(footerSpan)
 }

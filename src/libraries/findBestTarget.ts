@@ -213,7 +213,7 @@ export async function analyzeAllServers(
 
     // Print table for this server using the table builder
     const serverTable = buildTable({
-      title: `${targetName} (Level ${server.requiredHackingSkill}, Max: ${ns.formatNumber(moneyMax)})`,
+      title: `${targetName} (Level ${server.requiredHackingSkill}, Max: ${ns.format.number(moneyMax)})`,
       columns: [
         { header: "Threshold", align: "right" },
         { header: "Cycle Time", align: "right" },
@@ -225,9 +225,9 @@ export async function analyzeAllServers(
         .filter((_, i) => i % 10 === 0) // Print every 10th result to keep output manageable
         .map((result) => [
           `${(result.threshold * 100).toFixed(2)}%`,
-          ns.tFormat(result.cycleTime),
-          ns.formatNumber(result.moneyPerCycle),
-          ns.formatNumber(result.moneyPerSecond),
+          ns.format.time(result.cycleTime),
+          ns.format.number(result.moneyPerCycle),
+          ns.format.number(result.moneyPerSecond),
           result.batches.toString(),
         ]),
     })
@@ -286,7 +286,7 @@ export async function findBestTarget(
   ns.tprint("=".repeat(60))
   ns.tprint(`Best target: ${best.serverName}`)
   ns.tprint(`Optimal hack threshold: ${(best.optimalThreshold * 100).toFixed(2)}%`)
-  ns.tprint(`Expected income: ${ns.formatNumber(best.moneyPerSecond)}/sec`)
+  ns.tprint(`Expected income: ${ns.format.number(best.moneyPerSecond)}/sec`)
   ns.tprint("=".repeat(60))
 
   return {

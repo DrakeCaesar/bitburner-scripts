@@ -12,14 +12,14 @@ export async function main(ns: NS): Promise<void> {
   // ns.tprint(`Agent: ${agent}`)
 
   for (let i = 0; i <= 20; i++) {
-    const maxRam = ns.getPurchasedServerMaxRam()
-    const minCost = ns.getPurchasedServerCost(1)
-    const maxCost = ns.getPurchasedServerCost(maxRam)
+    const maxRam = ns.cloud.getRamLimit()
+    const minCost = ns.cloud.getServerCost(1)
+    const maxCost = ns.cloud.getServerCost(maxRam)
 
     const targetRam = Math.pow(2, i)
     const targetRamString = targetRam.toString().padEnd(maxRam.toString().length)
 
-    const cost = Math.round(ns.getPurchasedServerCost(targetRam))
+    const cost = Math.round(ns.cloud.getServerCost(targetRam))
     const costString = cost.toString().padEnd(maxCost.toString().length)
 
     let ratio = cost / targetRam / minCost

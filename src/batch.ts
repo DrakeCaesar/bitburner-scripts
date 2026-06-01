@@ -82,7 +82,7 @@ export async function main(ns: NS) {
     nodeRamLimit *= 1.0 // DEBUG: Adjust to test different scenarios
     nodeRamLimit = Infinity
 
-    ns.tprint(`Minimum node RAM: ${ns.formatRam(nodeRamLimit)}`)
+    ns.tprint(`Minimum node RAM: ${ns.format.ram(nodeRamLimit)}`)
     const myCores = ns.getServer(nodes[0]).cpuCores
 
     // Find best target automatically (constrained by smallest node RAM)
@@ -90,9 +90,9 @@ export async function main(ns: NS) {
     const player = ns.getPlayer()
 
     ns.tprint(`Target: ${target.serverName}`)
-    ns.tprint(`Using ${nodes.length} node(s) with ${ns.formatRam(totalMaxRam)} total RAM`)
+    ns.tprint(`Using ${nodes.length} node(s) with ${ns.format.ram(totalMaxRam)} total RAM`)
     ns.tprint(
-      `Using optimal hack threshold: ${(target.hackThreshold * 100).toFixed(2)}% (${ns.formatNumber(target.moneyPerSecond)}/sec)`
+      `Using optimal hack threshold: ${(target.hackThreshold * 100).toFixed(2)}% (${ns.format.number(target.moneyPerSecond)}/sec)`
     )
 
     // Create a simulated prepared server (min security, max money)
@@ -117,7 +117,7 @@ export async function main(ns: NS) {
     }
 
     if (prepEstimate.totalTime > 0) {
-      ns.tprint(`Preparing ${target.serverName}... (estimated time: ${ns.tFormat(prepEstimate.totalTime)})`)
+      ns.tprint(`Preparing ${target.serverName}... (estimated time: ${ns.format.time(prepEstimate.totalTime)})`)
     } else {
       ns.tprint(`${target.serverName} is already prepared!`)
     }
@@ -139,8 +139,8 @@ export async function main(ns: NS) {
     if (debug) {
       ns.tprint(
         `\n=== TOTAL PREP TIME ===\n` +
-          `Estimated: ${ns.tFormat(prepEstimate.totalTime)}\n` +
-          `Actual: ${ns.tFormat(actualPrepTime)}\n` +
+          `Estimated: ${ns.format.time(prepEstimate.totalTime)}\n` +
+          `Actual: ${ns.format.time(actualPrepTime)}\n` +
           `Difference: ${Math.abs(timeDiff).toFixed(0)}ms (${percentDiff}%)`
       )
     }
@@ -184,13 +184,13 @@ export async function main(ns: NS) {
     const configRows = [
       { label: "Target Server", value: target.serverName },
       { label: "Hack Threshold", value: `${(threads.actualThreshold * 100).toFixed(2)}%` },
-      { label: "Max Money", value: ns.formatNumber(targetMaxMoney) },
-      { label: "Money/Batch", value: ns.formatNumber(moneyPerBatch) },
-      { label: "Money/Cycle", value: ns.formatNumber(totalMoneyPerCycle) },
-      { label: "Money/Second", value: `${ns.formatNumber(moneyPerSecond)}/s` },
+      { label: "Max Money", value: ns.format.number(targetMaxMoney) },
+      { label: "Money/Batch", value: ns.format.number(moneyPerBatch) },
+      { label: "Money/Cycle", value: ns.format.number(totalMoneyPerCycle) },
+      { label: "Money/Second", value: `${ns.format.number(moneyPerSecond)}/s` },
       { label: "Parallel Batches", value: batches.toString() },
       { label: "Total Nodes", value: nodes.length.toString() },
-      { label: "Total RAM", value: ns.formatRam(totalMaxRam) },
+      { label: "Total RAM", value: ns.format.ram(totalMaxRam) },
     ]
 
     if (threads.actualThreshold !== target.hackThreshold) {
@@ -215,32 +215,32 @@ export async function main(ns: NS) {
         [
           "Hack Threads",
           threads.hackThreads.toString(),
-          ns.formatRam(ns.getScriptRam("/hacking/hack.js") * threads.hackThreads),
+          ns.format.ram(ns.getScriptRam("/hacking/hack.js") * threads.hackThreads),
         ],
         [
           "Weaken 1 Threads",
           threads.wkn1Threads.toString(),
-          ns.formatRam(ns.getScriptRam("/hacking/weaken.js") * threads.wkn1Threads),
+          ns.format.ram(ns.getScriptRam("/hacking/weaken.js") * threads.wkn1Threads),
         ],
         [
           "Grow Threads",
           threads.growThreads.toString(),
-          ns.formatRam(ns.getScriptRam("/hacking/grow.js") * threads.growThreads),
+          ns.format.ram(ns.getScriptRam("/hacking/grow.js") * threads.growThreads),
         ],
         [
           "Weaken 2 Threads",
           threads.wkn2Threads.toString(),
-          ns.formatRam(ns.getScriptRam("/hacking/weaken.js") * threads.wkn2Threads),
+          ns.format.ram(ns.getScriptRam("/hacking/weaken.js") * threads.wkn2Threads),
         ],
-        ["Total Batch RAM", "", ns.formatRam(threads.totalBatchRam)],
-        ["Weaken Time", ns.tFormat(timings.weakenTime), ""],
+        ["Total Batch RAM", "", ns.format.ram(threads.totalBatchRam)],
+        ["Weaken Time", ns.format.time(timings.weakenTime), ""],
         [
           "Batch Delay",
-          ns.tFormat(timings.effectiveBatchDelay),
+          ns.format.time(timings.effectiveBatchDelay),
           timings.effectiveBatchDelay !== batchDelay ? "(adjusted)" : "",
         ],
-        ["Batch Interval", ns.tFormat(timings.effectiveBatchDelay * 4), ""],
-        ["Cycle Time", ns.tFormat(predictedBatchCycleTime), ""],
+        ["Batch Interval", ns.format.time(timings.effectiveBatchDelay * 4), ""],
+        ["Cycle Time", ns.format.time(predictedBatchCycleTime), ""],
       ],
       separatorAfter: [4], // Separator after Total Batch RAM
       align: ["left", "right", "right"],
@@ -251,7 +251,7 @@ export async function main(ns: NS) {
       ns.tprint(
         `\n[Timing Debug]\n` +
           `  Prep calculation: ${calcDuration}ms\n` +
-          `  Prep execution: ${ns.tFormat(actualPrepTime)}\n` +
+          `  Prep execution: ${ns.format.time(actualPrepTime)}\n` +
           `  Prep→Batch gap: ${prepToBatchGap}ms\n` +
           `  Batch config: ${batchConfigDuration}ms`
       )
@@ -291,13 +291,13 @@ export async function main(ns: NS) {
     ns.tprint(
       `Security: ${finalSecurity.toFixed(2)} / ${minSecurity.toFixed(2)} (+${(finalSecurity - minSecurity).toFixed(2)})`
     )
-    ns.tprint(`Money: ${moneyPercent.toFixed(2)}% (${ns.formatNumber(currentMoney)} / ${ns.formatNumber(maxMoney)})`)
+    ns.tprint(`Money: ${moneyPercent.toFixed(2)}% (${ns.format.number(currentMoney)} / ${ns.format.number(maxMoney)})`)
 
     if (debug) {
       ns.tprint(
         `\n=== BATCH CYCLE TIME ===\n` +
-          `Predicted: ${ns.tFormat(predictedBatchCycleTime)}\n` +
-          `Actual: ${ns.tFormat(actualBatchCycleTime)}\n` +
+          `Predicted: ${ns.format.time(predictedBatchCycleTime)}\n` +
+          `Actual: ${ns.format.time(actualBatchCycleTime)}\n` +
           `Difference: ${Math.abs(batchTimeDiff).toFixed(0)}ms (${batchPercentDiff}%)`
       )
     }

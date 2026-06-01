@@ -78,7 +78,7 @@ export async function main(ns: NS): Promise<void> {
 
       if (threads > 0) {
         ns.exec(scriptPath, server, threads)
-        // ns.tprint(`Started ${threads} share threads on ${server} (${ns.formatRam(threads * scriptRam)})`)
+        // ns.tprint(`Started ${threads} share threads on ${server} (${ns.format.ram(threads * scriptRam)})`)
       }
     }
 

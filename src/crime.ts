@@ -87,20 +87,20 @@ export async function main(ns: NS): Promise<void> {
 
     ns.print(`Best crime: ${bestCrime.name}`)
     ns.print(`  Chance: ${(bestCrime.chance * 100).toFixed(2)}%`)
-    ns.print(`  Money: $${ns.formatNumber(bestCrime.stats.money)}`)
-    ns.print(`  Time: ${ns.tFormat(bestCrime.stats.time)}`)
-    ns.print(`  Profit/s: $${ns.formatNumber(bestCrime.profitPerMs * 1000)}/s`)
-    ns.print(`  Expected profit/s: $${ns.formatNumber(bestCrime.expectedProfitPerMs * 1000)}/s`)
+    ns.print(`  Money: $${ns.format.number(bestCrime.stats.money)}`)
+    ns.print(`  Time: ${ns.format.time(bestCrime.stats.time)}`)
+    ns.print(`  Profit/s: $${ns.format.number(bestCrime.profitPerMs * 1000)}/s`)
+    ns.print(`  Expected profit/s: $${ns.format.number(bestCrime.expectedProfitPerMs * 1000)}/s`)
 
     if (mode === "karma") {
       ns.print(`  Karma: ${bestCrime.stats.karma.toFixed(2)}`)
       ns.print(`  Karma/s: ${(bestCrime.karmaPerMs * 1000).toFixed(2)}/s`)
       ns.print(`  Expected karma/s: ${(bestCrime.expectedKarmaPerMs * 1000).toFixed(2)}/s`)
     } else if (mode === "xp") {
-      ns.print(`  Total XP/s: ${ns.formatNumber(bestCrime.totalXpPerMs * 1000)}/s`)
-      ns.print(`  Hacking XP: ${ns.formatNumber(bestCrime.stats.hacking_exp)}`)
-      ns.print(`  Combat XP: ${ns.formatNumber(bestCrime.stats.strength_exp + bestCrime.stats.defense_exp + bestCrime.stats.dexterity_exp + bestCrime.stats.agility_exp)}`)
-      ns.print(`  Charisma XP: ${ns.formatNumber(bestCrime.stats.charisma_exp)}`)
+      ns.print(`  Total XP/s: ${ns.format.number(bestCrime.totalXpPerMs * 1000)}/s`)
+      ns.print(`  Hacking XP: ${ns.format.number(bestCrime.stats.hacking_exp)}`)
+      ns.print(`  Combat XP: ${ns.format.number(bestCrime.stats.strength_exp + bestCrime.stats.defense_exp + bestCrime.stats.dexterity_exp + bestCrime.stats.agility_exp)}`)
+      ns.print(`  Charisma XP: ${ns.format.number(bestCrime.stats.charisma_exp)}`)
     }
 
     // Commit the crime

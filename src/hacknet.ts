@@ -143,7 +143,7 @@ async function handlePurchasing(ns: NS, config: HacknetConfig): Promise<void> {
   const bestOption = profitableOptions[0]
 
   ns.print(
-    `Best efficiency option: hacknet-server-${bestOption.nodeIndex} ${bestOption.type} (cost: $${ns.formatNumber(bestOption.cost)}, efficiency: ${bestOption.efficiency.toFixed(6)})`
+    `Best efficiency option: hacknet-server-${bestOption.nodeIndex} ${bestOption.type} (cost: $${ns.format.number(bestOption.cost)}, efficiency: ${bestOption.efficiency.toFixed(6)})`
   )
 
   // Check if we have enough money after keeping the reserve
@@ -152,7 +152,7 @@ async function handlePurchasing(ns: NS, config: HacknetConfig): Promise<void> {
 
   if (availableMoney < bestOption.cost) {
     ns.print(
-      `Not enough money for upgrade. Available: $${ns.formatNumber(availableMoney)}, Cost: $${ns.formatNumber(bestOption.cost)}, Reserve: $${ns.formatNumber(config.moneyReserve)}`
+      `Not enough money for upgrade. Available: $${ns.format.number(availableMoney)}, Cost: $${ns.format.number(bestOption.cost)}, Reserve: $${ns.format.number(config.moneyReserve)}`
     )
     return
   }

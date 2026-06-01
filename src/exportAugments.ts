@@ -1,10 +1,10 @@
-import { NS } from "@ns"
+import { FactionName, NS } from "@ns"
 
 export async function main(ns: NS) {
   const outputFile = ns.args[0] ? String(ns.args[0]) : "augments-export.txt"
 
   // All factions in the game
-  const allFactions = [
+  const allFactions: FactionName[] = [
     "Illuminati",
     "Daedalus",
     "The Covenant",

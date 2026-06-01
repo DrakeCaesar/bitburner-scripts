@@ -161,7 +161,7 @@ export function calculateOptimalDelta(maxWeakenTime: number, maxConcurrentBatche
 
 export async function killOtherInstances(ns: NS) {
   const currentScript = ns.getScriptName()
-  const allServers = ns.getPurchasedServers().concat(["home"])
+  const allServers = ns.cloud.getServerNames().concat(["home"])
 
   for (const server of allServers) {
     const runningScripts = ns.ps(server)
@@ -503,7 +503,7 @@ export async function prepareServerMultiNode(
   // Helper to build table from node capacities
   const buildCapacityTable = (nodeCapacities: NodeCapacity[], iteration: number): string => {
     // Add script cost info
-    const scriptInfo = `Grow: ${ns.formatRam(growScriptRam)}/t, Weaken: ${ns.formatRam(weakenScriptRam)}/t`
+    const scriptInfo = `Grow: ${ns.format.ram(growScriptRam)}/t, Weaken: ${ns.format.ram(weakenScriptRam)}/t`
 
     const fullTable = buildTable({
       title: `Iteration ${iteration} ═══ ${scriptInfo}`,
@@ -523,12 +523,12 @@ export async function prepareServerMultiNode(
 
         return [
           nc.name,
-          ns.formatRam(nc.availRam),
+          ns.format.ram(nc.availRam),
           nc.growThreads.toString(),
-          ns.formatRam(growRam),
+          ns.format.ram(growRam),
           nc.weakenThreads.toString(),
-          ns.formatRam(weakenRam),
-          ns.formatRam(remaining),
+          ns.format.ram(weakenRam),
+          ns.format.ram(remaining),
         ]
       }),
     })
@@ -559,7 +559,7 @@ export async function prepareServerMultiNode(
     }> = []
 
     log(
-      `[Prep Sim] Starting simulation - Money: ${ns.formatNumber(simMoney)}/${ns.formatNumber(moneyMax)} (${((simMoney / moneyMax) * 100).toFixed(1)}%), Security: ${simSec.toFixed(2)}/${baseSecurity.toFixed(2)} (+${(simSec - baseSecurity).toFixed(2)}), Player Level: ${player.skills.hacking}`
+      `[Prep Sim] Starting simulation - Money: ${ns.format.number(simMoney)}/${ns.format.number(moneyMax)} (${((simMoney / moneyMax) * 100).toFixed(1)}%), Security: ${simSec.toFixed(2)}/${baseSecurity.toFixed(2)} (+${(simSec - baseSecurity).toFixed(2)}), Player Level: ${player.skills.hacking}`
     )
 
     while (
@@ -578,7 +578,7 @@ export async function prepareServerMultiNode(
       const iterationTime = ns.formulas.hacking.weakenTime(iterationStartServer, player)
 
       log(
-        `\n[Prep Sim] Iteration ${iterations} - Money: ${ns.formatNumber(simMoney)}/${ns.formatNumber(moneyMax)} (${((simMoney / moneyMax) * 100).toFixed(1)}%), Security: ${simSec.toFixed(2)}/${baseSecurity.toFixed(2)} (+${(simSec - baseSecurity).toFixed(2)}), Player Level: ${player.skills.hacking}`
+        `\n[Prep Sim] Iteration ${iterations} - Money: ${ns.format.number(simMoney)}/${ns.format.number(moneyMax)} (${((simMoney / moneyMax) * 100).toFixed(1)}%), Security: ${simSec.toFixed(2)}/${baseSecurity.toFixed(2)} (+${(simSec - baseSecurity).toFixed(2)}), Player Level: ${player.skills.hacking}`
       )
 
       // Calculate threads using distribution-aware helper
@@ -651,7 +651,7 @@ export async function prepareServerMultiNode(
     }
 
     log(
-      `\n[Prep Sim] Complete - ${iterations} iterations, estimated time: ${ns.tFormat(totalTime)}, final player level: ${player.skills.hacking}`
+      `\n[Prep Sim] Complete - ${iterations} iterations, estimated time: ${ns.format.time(totalTime)}, final player level: ${player.skills.hacking}`
     )
 
     // // Display verbose output if requested
@@ -668,7 +668,7 @@ export async function prepareServerMultiNode(
 
     if (debug) {
       ns.tprint(
-        `Prep: Starting multi-node preparation with ${ns.formatRam(totalAvailableRam)} total available RAM across ${nodes.length} nodes`
+        `Prep: Starting multi-node preparation with ${ns.format.ram(totalAvailableRam)} total available RAM across ${nodes.length} nodes`
       )
     }
 
@@ -695,7 +695,7 @@ export async function prepareServerMultiNode(
       if (currentMoneyActual >= moneyMax * moneyTolerance && currentSecActual <= baseSecurity + secTolerance) {
         if (debug) {
           ns.tprint(
-            `Prep: Complete - Money: ${ns.formatNumber(currentMoneyActual)}/${ns.formatNumber(moneyMax)}, Security: ${currentSecActual.toFixed(2)}/${baseSecurity}`
+            `Prep: Complete - Money: ${ns.format.number(currentMoneyActual)}/${ns.format.number(moneyMax)}, Security: ${currentSecActual.toFixed(2)}/${baseSecurity}`
           )
         }
         break
@@ -776,11 +776,11 @@ export async function prepareServerMultiNode(
           if (debug) {
             ns.tprint(
               `\n[Iteration ${iterationCount}/${predictedIterations.length}] Actual vs Predicted:\n` +
-                `  Time: ${ns.tFormat(actualIterationTime)} vs ${ns.tFormat(predicted.time)} (diff: ${Math.abs(timeDiff).toFixed(0)}ms)\n` +
-                `  Money: ${ns.formatNumber(newMoney)} vs ${ns.formatNumber(predicted.moneyAfter)} (diff: ${ns.formatNumber(Math.abs(moneyDiff))})\n` +
+                `  Time: ${ns.format.time(actualIterationTime)} vs ${ns.format.time(predicted.time)} (diff: ${Math.abs(timeDiff).toFixed(0)}ms)\n` +
+                `  Money: ${ns.format.number(newMoney)} vs ${ns.format.number(predicted.moneyAfter)} (diff: ${ns.format.number(Math.abs(moneyDiff))})\n` +
                 `  Sec: ${newSec.toFixed(2)} vs ${predicted.secAfter.toFixed(2)} (diff: ${Math.abs(secDiff).toFixed(2)})\n` +
                 `  Level: ${newPlayerLevel} vs ${predicted.playerLevel} (diff: ${Math.abs(levelDiff)})\n` +
-                `  Estimated time remaining: ${ns.tFormat(estimatedTimeRemaining)} (${remainingIterations} iterations left)`
+                `  Estimated time remaining: ${ns.format.time(estimatedTimeRemaining)} (${remainingIterations} iterations left)`
             )
           }
         }
@@ -831,7 +831,7 @@ export async function prepareServer(ns: NS, host: string, target: string) {
   const weakenScriptRam = ns.getScriptRam("/hacking/weaken.js")
   const availableRam = getEffectiveMaxRam(ns, host) - ns.getServerUsedRam(host)
 
-  ns.tprint(`Prep: Starting preparation with ${ns.formatRam(availableRam)} available RAM`)
+  ns.tprint(`Prep: Starting preparation with ${ns.format.ram(availableRam)} available RAM`)
 
   // Loop until server is prepared
   while (true) {
@@ -844,7 +844,7 @@ export async function prepareServer(ns: NS, host: string, target: string) {
     // Check if preparation is complete
     if (currentMoney >= moneyMax * moneyTolerance && currentSec <= baseSecurity + secTolerance) {
       ns.tprint(
-        `Prep: Complete - Money: ${ns.formatNumber(currentMoney)}/${ns.formatNumber(moneyMax)}, Security: ${currentSec.toFixed(2)}/${baseSecurity}`
+        `Prep: Complete - Money: ${ns.format.number(currentMoney)}/${ns.format.number(moneyMax)}, Security: ${currentSec.toFixed(2)}/${baseSecurity}`
       )
       break
     }

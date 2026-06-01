@@ -1,7 +1,8 @@
+import type { ProgramName } from "@ns"
 import { NS } from "@ns"
 
 interface Program {
-  name: string
+  name: ProgramName
   cost: number
 }
 

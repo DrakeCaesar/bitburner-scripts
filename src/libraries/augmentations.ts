@@ -1,4 +1,4 @@
-import { NS } from "@ns"
+import { FactionName, NS } from "@ns"
 
 /**
  * Augmentations Library
@@ -8,7 +8,7 @@ import { NS } from "@ns"
 
 export interface AugmentInfo {
   name: string
-  factions: string[] // All factions that offer this augment
+  factions: FactionName[] // All factions that offer this augment
   price: number
   repReq: number
   owned: boolean
@@ -28,7 +28,7 @@ export interface AugmentData {
 /**
  * Collect and organize augmentation data from all player factions
  */
-export function getAugmentData(ns: NS, playerFactions: string[]): AugmentData {
+export function getAugmentData(ns: NS, playerFactions: FactionName[]): AugmentData {
   const augmentMap = new Map<string, AugmentInfo>()
   let neuroFluxInfo: AugmentInfo | null = null
 
@@ -228,7 +228,7 @@ export async function purchaseAugmentations(ns: NS, buyFlux: boolean, dryRun = f
 
   // Purchase augmentations
   if (affordableSorted.length > 0) {
-    ns.tprint(`Purchasing ${affordableSorted.length} augmentations (total cost: ${ns.formatNumber(totalCost)})`)
+    ns.tprint(`Purchasing ${affordableSorted.length} augmentations (total cost: ${ns.format.number(totalCost)})`)
 
     for (let i = 0; i < affordableSorted.length; i++) {
       const aug = affordableSorted[i]
@@ -241,13 +241,13 @@ export async function purchaseAugmentations(ns: NS, buyFlux: boolean, dryRun = f
       }
 
       if (dryRun) {
-        ns.tprint(`Would purchase: ${aug.name} from ${validFaction} for ${ns.formatNumber(adjustedPrice)}`)
+        ns.tprint(`Would purchase: ${aug.name} from ${validFaction} for ${ns.format.number(adjustedPrice)}`)
         purchaseCount++
         totalSpent += adjustedPrice
       } else {
         const success = ns.singularity.purchaseAugmentation(validFaction, aug.name)
         if (success) {
-          ns.tprint(`Purchased: ${aug.name} from ${validFaction} for ${ns.formatNumber(adjustedPrice)}`)
+          ns.tprint(`Purchased: ${aug.name} from ${validFaction} for ${ns.format.number(adjustedPrice)}`)
           purchaseCount++
           totalSpent += adjustedPrice
         } else {
@@ -295,7 +295,7 @@ export async function purchaseAugmentations(ns: NS, buyFlux: boolean, dryRun = f
           break // No faction has enough reputation for this NeuroFlux level
         }
         if (dryRun) {
-          ns.tprint(`Would purchase: ${neuroFluxInfo.name} from ${currentValidFaction} for ${ns.formatNumber(currentPrice)} (base: ${ns.formatNumber(currentBasePrice)}, rep: ${ns.formatNumber(currentRepReq)})`)
+          ns.tprint(`Would purchase: ${neuroFluxInfo.name} from ${currentValidFaction} for ${ns.format.number(currentPrice)} (base: ${ns.format.number(currentBasePrice)}, rep: ${ns.format.number(currentRepReq)})`)
           purchaseCount++
           totalSpent += currentPrice
           currentMoney -= currentPrice
@@ -306,7 +306,7 @@ export async function purchaseAugmentations(ns: NS, buyFlux: boolean, dryRun = f
         } else {
           const success = ns.singularity.purchaseAugmentation(currentValidFaction, neuroFluxInfo.name)
           if (success) {
-            ns.tprint(`Purchased: ${neuroFluxInfo.name} from ${currentValidFaction} for ${ns.formatNumber(currentPrice)} (base: ${ns.formatNumber(currentBasePrice)}, rep: ${ns.formatNumber(currentRepReq)})`)
+            ns.tprint(`Purchased: ${neuroFluxInfo.name} from ${currentValidFaction} for ${ns.format.number(currentPrice)} (base: ${ns.format.number(currentBasePrice)}, rep: ${ns.format.number(currentRepReq)})`)
             purchaseCount++
             totalSpent += currentPrice
             currentMoney -= currentPrice
@@ -326,8 +326,8 @@ export async function purchaseAugmentations(ns: NS, buyFlux: boolean, dryRun = f
   ns.tprint("=".repeat(120))
   ns.tprint(
     dryRun
-      ? `Would purchase ${purchaseCount} augmentations for ${ns.formatNumber(totalSpent)}`
-      : `Purchased ${purchaseCount} augmentations for ${ns.formatNumber(totalSpent)}`
+      ? `Would purchase ${purchaseCount} augmentations for ${ns.format.number(totalSpent)}`
+      : `Purchased ${purchaseCount} augmentations for ${ns.format.number(totalSpent)}`
   )
   ns.tprint("=".repeat(120))
 

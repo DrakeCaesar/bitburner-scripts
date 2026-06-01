@@ -108,7 +108,7 @@ function generateLinearProgressBar(value: number, maxValue: number): string {
 }
 
 export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor: string): void {
-  const maxNodeRam = ns.getPurchasedServerMaxRam()
+  const maxNodeRam = ns.cloud.getRamLimit()
 
   const minHomeRam = 8
   const maxHomeRam = Math.pow(2, 30)
@@ -132,7 +132,7 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
       name: nodeName,
       exists,
       ram,
-      ramFormatted: exists ? ns.formatRam(ram, digits) : "-",
+      ramFormatted: exists ? ns.format.ram(ram, digits) : "-",
       progressBar: generateProgressBar(ram, maxNodeRam),
     })
   }
@@ -147,21 +147,21 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
 
   // Target is always double the best (or 1 if no servers), capped at maxRam
   const targetRam = bestRam > 0 ? Math.min(bestRam * 2, maxNodeRam) : 1
-  const cost = ns.getPurchasedServerCost(targetRam)
+  const cost = ns.cloud.getServerCost(targetRam)
 
   // Determine next action
   let nextAction = "Save money"
   let savingsInfo = ""
 
   if (bestRam >= maxNodeRam) {
-    nextAction = `All servers maxed at ${ns.formatRam(maxNodeRam, digits)}`
-    savingsInfo = `Max server RAM reached (${ns.formatRam(maxNodeRam, digits)}) - Cost to purchase: ${ns.formatNumber(cost)}`
+    nextAction = `All servers maxed at ${ns.format.ram(maxNodeRam, digits)}`
+    savingsInfo = `Max server RAM reached (${ns.format.ram(maxNodeRam, digits)}) - Cost to purchase: ${ns.format.number(cost)}`
   } else if (money >= cost) {
     if (existingNodes.length < 25) {
-      nextAction = `Buy ${ns.formatRam(targetRam, digits)} server (${ns.formatNumber(cost)})`
+      nextAction = `Buy ${ns.format.ram(targetRam, digits)} server (${ns.format.number(cost)})`
     } else {
       const worstNode = existingNodes.reduce((min, n) => (n.ram < min.ram ? n : min))
-      nextAction = `Upgrade ${worstNode.name} to ${ns.formatRam(targetRam, digits)} (${ns.formatNumber(cost, digits)})`
+      nextAction = `Upgrade ${worstNode.name} to ${ns.format.ram(targetRam, digits)} (${ns.format.number(cost, digits)})`
     }
     savingsInfo = `Ready to purchase!`
   } else {
@@ -169,12 +169,12 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
     const percentSaved = (money / cost) * 100
 
     if (existingNodes.length < 25) {
-      nextAction = `Saving for ${ns.formatRam(targetRam, digits)} server`
+      nextAction = `Saving for ${ns.format.ram(targetRam, digits)} server`
     } else {
       const worstNode = existingNodes.reduce((min, n) => (n.ram < min.ram ? n : min))
-      nextAction = `Save to upgrade ${worstNode.name} to ${ns.formatRam(targetRam, digits)}`
+      nextAction = `Save to upgrade ${worstNode.name} to ${ns.format.ram(targetRam, digits)}`
     }
-    savingsInfo = `${ns.formatNumber(money)} / ${ns.formatNumber(cost)} (${percentSaved.toFixed(1)}%) - ${ns.formatNumber(needed)}`
+    savingsInfo = `${ns.format.number(money)} / ${ns.format.number(cost)} (${percentSaved.toFixed(1)}%) - ${ns.format.number(needed)}`
   }
 
   // Calculate column widths - using 2 columns: Node+Progress merged, and Value
@@ -198,7 +198,7 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
 
   // Value column width
   let valueLen = 0
-  valueLen = Math.max(valueLen, ns.formatRam(homeRam, digits).length, homeCores.toString().length)
+  valueLen = Math.max(valueLen, ns.format.ram(homeRam, digits).length, homeCores.toString().length)
   for (const node of nodes) {
     valueLen = Math.max(valueLen, node.ramFormatted.length)
   }
@@ -222,7 +222,7 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
   homeSpan.textContent =
     formatTableRow([
       homeRamProgressBar.padStart(nodeProgressLen), // Right-align to end of column
-      ns.formatRam(homeRam, digits).padStart(valueLen), // Right-align value
+      ns.format.ram(homeRam, digits).padStart(valueLen), // Right-align value
     ]) +
     "\n" +
     formatTableRow([
@@ -251,8 +251,8 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
   const footerSpan = document.createElement("span")
   footerSpan.textContent =
     `${borders.bottom()}\n` +
-    // `Servers: ${existingNodes.length}/25 | Total RAM: ${ns.formatRam(totalRam)} | Avg: ${ns.formatRam(avgRam)}\n` +
-    // `Min: ${ns.formatRam(minRam)} | Max: ${ns.formatRam(maxNodeRam)} | System Max: ${ns.formatRam(maxRam)}\n` +
+    // `Servers: ${existingNodes.length}/25 | Total RAM: ${ns.format.ram(totalRam)} | Avg: ${ns.format.ram(avgRam)}\n` +
+    // `Min: ${ns.format.ram(minRam)} | Max: ${ns.format.ram(maxNodeRam)} | System Max: ${ns.format.ram(maxRam)}\n` +
     `${nextAction}\n` +
     `${savingsInfo}`
   containerDiv.appendChild(footerSpan)

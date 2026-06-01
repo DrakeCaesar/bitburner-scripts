@@ -1,4 +1,4 @@
-import type { CompanyName, JobField } from "@ns"
+import type { CompanyName, FactionName, JobField } from "@ns"
 
 import { NS } from "@ns"
 import { killOtherInstances } from "./libraries/batchCalculations"
@@ -36,12 +36,13 @@ export async function main(ns: NS) {
 
   for (const company of megacorps) {
     // Map company to faction name (most are the same, except Fulcrum)
-    const factionName = company === ns.enums.CompanyName.FulcrumTechnologies ? "Fulcrum Secret Technologies" : company
+    const factionName: FactionName =
+      company === ns.enums.CompanyName.FulcrumTechnologies ? "Fulcrum Secret Technologies" : (company as FactionName)
 
     ns.tprint(`\n${"=".repeat(60)}`)
     ns.tprint(`Target: ${company} (${factionName})`)
     const requiredRep = REQUIRED_REP_OVERRIDES[company] ?? DEFAULT_REQUIRED_REP
-    ns.tprint(`Required Reputation: ${ns.formatNumber(requiredRep)}`)
+    ns.tprint(`Required Reputation: ${ns.format.number(requiredRep)}`)
     ns.tprint(`${"=".repeat(60)}`)
 
     // Work at this company until we reach the required reputation
@@ -67,7 +68,7 @@ export async function main(ns: NS) {
       // Check if we've reached the target
       if (currentRep >= requiredRep) {
         ns.tprint(
-          `✓ Reached target reputation for ${company}: ${ns.formatNumber(currentRep)}/${ns.formatNumber(requiredRep)}`
+          `✓ Reached target reputation for ${company}: ${ns.format.number(currentRep)}/${ns.format.number(requiredRep)}`
         )
 
         // Check if we can join the faction
@@ -145,7 +146,7 @@ export async function main(ns: NS) {
       }
 
       ns.print(
-        `Working: ${jobName || bestPositionName} (skill req: ${bestSkillSum}) | Current: ${ns.formatNumber(currentRep)}/${ns.formatNumber(requiredRep)}`
+        `Working: ${jobName || bestPositionName} (skill req: ${bestSkillSum}) | Current: ${ns.format.number(currentRep)}/${ns.format.number(requiredRep)}`
       )
 
       // Wait before checking again

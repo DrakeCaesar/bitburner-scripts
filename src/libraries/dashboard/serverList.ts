@@ -33,7 +33,7 @@ export function createServerListWindow(
 }
 
 function formatNumber(ns: NS, num: number = 0): string {
-  return num < 1000 ? ns.formatNumber(num) + " " : ns.formatNumber(num)
+  return num < 1000 ? ns.format.number(num) + " " : ns.format.number(num)
 }
 
 function tFormat(time: number = 0): { html: string; length: number } {
@@ -114,7 +114,7 @@ export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor
     rootLen = Math.max(rootLen, 1)
     backdoorLen = Math.max(backdoorLen, 1)
     secLen = Math.max(secLen, ((server.hackDifficulty ?? 0) - (server.minDifficulty ?? 0)).toFixed(2).length)
-    ramLen = Math.max(ramLen, ns.formatRam(server.maxRam, 0).length)
+    ramLen = Math.max(ramLen, ns.format.ram(server.maxRam, 0).length)
     moneyLen = Math.max(moneyLen, formatNumber(ns, server.moneyMax).length)
     timeLen = Math.max(timeLen, 8) // tFormat always returns 8 characters visually
   }
@@ -148,7 +148,7 @@ export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor
     const hasRoot = server.hasAdminRights ? " " : "X"
     const hasBackdoor = server.backdoorInstalled ? " " : "X"
     const secDiff = ((server.hackDifficulty ?? 0) - (server.minDifficulty ?? 0)).toFixed(2)
-    const ram = ns.formatRam(server.maxRam, 0)
+    const ram = ns.format.ram(server.maxRam, 0)
     const money = formatNumber(ns, server.moneyMax ?? 0)
     const timeFormatted = tFormat(ns.getWeakenTime(target))
 

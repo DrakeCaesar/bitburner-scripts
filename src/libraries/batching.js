@@ -106,7 +106,7 @@ function growPercent(ns, host, threads = 1, cores = 1, opts = {}) {
     hackDifficulty = ns.getServerSecurityLevel(host),
   } = opts
   const growth = ns.getServerGrowth(host) / 100
-  const multiplier = ns.getPlayer().hacking_grow_mult
+  const multiplier = ns.getPlayer().mults.hacking_grow
   const base = Math.min(1 + 0.03 / hackDifficulty, 1.0035)
   const power = growth * ServerGrowthRate * multiplier * ((cores + 15) / 16)
   return base ** (power * threads)

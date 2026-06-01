@@ -21,7 +21,7 @@ interface ServerInfo {
 export function purchaseServers(ns: NS): boolean {
   return false
 
-  const maxRam = ns.getPurchasedServerMaxRam()
+  const maxRam = ns.cloud.getRamLimit()
   let purchasedAny = false
 
   // Keep trying to buy/upgrade while we can afford it
@@ -51,7 +51,7 @@ export function purchaseServers(ns: NS): boolean {
     } else {
       for (let i = 0; i <= 20; i++) {
         const ram = Math.pow(2, i)
-        const cost = ns.getPurchasedServerCost(ram)
+        const cost = ns.cloud.getServerCost(ram)
         if (money > cost && ram >= 128) {
           targetRam = ram
         }
@@ -59,7 +59,7 @@ export function purchaseServers(ns: NS): boolean {
     }
     ns.tprint("TARGET RAM " + targetRam)
 
-    const cost = ns.getPurchasedServerCost(targetRam)
+    const cost = ns.cloud.getServerCost(targetRam)
 
     // Check if we can afford the target
     if (money < cost || targetRam == 0) {
@@ -72,7 +72,7 @@ export function purchaseServers(ns: NS): boolean {
       for (let i = 0; i < 25; i++) {
         const nodeName = "node" + String(i).padStart(2, "0")
         if (!ns.serverExists(nodeName)) {
-          ns.purchaseServer(nodeName, targetRam)
+          ns.cloud.purchaseServer(nodeName, targetRam)
           ns.tprint(`Purchased ${nodeName} with ${format(targetRam)} GB RAM (cost: ${format(cost)})`)
           purchasedAny = true
           purchased = true
@@ -93,8 +93,8 @@ export function purchaseServers(ns: NS): boolean {
       // Only upgrade if the target RAM is better than what we're replacing
       if (targetRam == maxRam || targetRam >= worstServer.ram * 1024) {
         ns.killall(worstServer.name)
-        ns.deleteServer(worstServer.name)
-        ns.purchaseServer(worstServer.name, targetRam)
+        ns.cloud.deleteServer(worstServer.name)
+        ns.cloud.purchaseServer(worstServer.name, targetRam)
         ns.tprint(
           `Upgraded ${worstServer.name} from ${format(worstServer.ram)} to ${format(targetRam)} GB (cost: ${format(cost)})`
         )

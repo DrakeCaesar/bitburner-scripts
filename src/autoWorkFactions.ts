@@ -1,8 +1,8 @@
-import { NS } from "@ns"
+import { FactionName, NS } from "@ns"
 
 interface AugmentTarget {
   augmentName: string
-  faction: string
+  faction: FactionName
   currentRep: number
   requiredRep: number
   repGap: number
@@ -12,7 +12,7 @@ interface AugmentTarget {
 }
 
 // Constant for favor grinding target
-const TARGET_FAVOR = 75
+const TARGET_FAVOR = 150
 
 export async function main(ns: NS) {
   ns.disableLog("ALL")
@@ -55,17 +55,17 @@ export async function main(ns: NS) {
 
       if (isFavorGrinding) {
         ns.print(`Target: Grinding Favor for ${bestTarget.faction}`)
-        ns.print(`Current Favor: ${ns.formatNumber(bestTarget.favor)}`)
-        ns.print(`Favor Gain on Reset: +${ns.formatNumber(favorGain)}`)
-        ns.print(`Total Favor After Reset: ${ns.formatNumber(totalFavorAfterReset)}`)
+        ns.print(`Current Favor: ${ns.format.number(bestTarget.favor)}`)
+        ns.print(`Favor Gain on Reset: +${ns.format.number(favorGain)}`)
+        ns.print(`Total Favor After Reset: ${ns.format.number(totalFavorAfterReset)}`)
         ns.print(`Target Favor: ${TARGET_FAVOR}`)
-        ns.print(`Favor Gap: ${ns.formatNumber(favorGap)}`)
+        ns.print(`Favor Gap: ${ns.format.number(favorGap)}`)
       } else {
         ns.print(`Target Augment: ${bestTarget.augmentName}`)
         ns.print(`Faction: ${bestTarget.faction}`)
-        ns.print(`Current Rep: ${ns.formatNumber(bestTarget.currentRep)}`)
-        ns.print(`Required Rep: ${ns.formatNumber(bestTarget.requiredRep)}`)
-        ns.print(`Gap: ${ns.formatNumber(bestTarget.repGap)}`)
+        ns.print(`Current Rep: ${ns.format.number(bestTarget.currentRep)}`)
+        ns.print(`Required Rep: ${ns.format.number(bestTarget.requiredRep)}`)
+        ns.print(`Gap: ${ns.format.number(bestTarget.repGap)}`)
       }
 
       ns.print(`${"=".repeat(60)}`)
@@ -76,7 +76,7 @@ export async function main(ns: NS) {
     // Check if we've reached the target
     if (currentRep >= bestTarget.requiredRep) {
       ns.print(
-        `✓ Reached target reputation for ${bestTarget.augmentName} in ${bestTarget.faction}: ${ns.formatNumber(currentRep)}/${ns.formatNumber(bestTarget.requiredRep)}`
+        `✓ Reached target reputation for ${bestTarget.augmentName} in ${bestTarget.faction}: ${ns.format.number(currentRep)}/${ns.format.number(bestTarget.requiredRep)}`
       )
       // Continue to next iteration to pick new target
       continue
@@ -98,7 +98,7 @@ export async function main(ns: NS) {
   }
 }
 
-function findBestAugmentTarget(ns: NS, playerFactions: string[]): AugmentTarget[] {
+function findBestAugmentTarget(ns: NS, playerFactions: FactionName[]): AugmentTarget[] {
   const ownedAugments = new Set(ns.singularity.getOwnedAugmentations(true))
   const targets: AugmentTarget[] = []
   const augmentsWithEnoughRep = new Set<string>()
