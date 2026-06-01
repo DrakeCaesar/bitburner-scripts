@@ -13,6 +13,7 @@ import {
   wkn2ServerInstance,
 } from "./batchCalculations.js"
 import { getEffectiveMaxRam } from "./ramUtils.js"
+import type { LogFn } from "./scriptLogUi.js"
 import { distributeBatchesAcrossNodes } from "./serverManagement.js"
 
 export interface BatchConfig {
@@ -26,6 +27,7 @@ export interface BatchConfig {
   totalMaxRam: number
   ramThreshold: number
   nodeRamLimit: number
+  logMessage?: LogFn
 }
 
 export function calculateBatchThreads(ns: NS, config: BatchConfig) {
@@ -121,7 +123,8 @@ export async function executeBatches(
   timings: ReturnType<typeof calculateBatchTimings>,
   batchLimit?: number
 ) {
-  const { target, server, player, batchDelay, nodes, totalMaxRam, ramThreshold, myCores } = config
+  const { target, server, player, batchDelay, nodes, totalMaxRam, ramThreshold, myCores, logMessage } = config
+  const log = logMessage ?? (() => {})
   const { totalBatchRam, actualThreshold } = threads
   const { hackAdditionalMsec, wkn1AdditionalMsec, growAdditionalMsec, wkn2AdditionalMsec, effectiveBatchDelay } =
     timings
@@ -135,7 +138,7 @@ export async function executeBatches(
 
   // Warn if batch delay was adjusted
   if (effectiveBatchDelay !== batchDelay) {
-    ns.tprint(`WARNING: Batch delay adjusted from ${batchDelay}ms to ${effectiveBatchDelay}ms due to low weaken time`)
+    log(`WARNING: Batch delay adjusted from ${batchDelay}ms to ${effectiveBatchDelay}ms due to low weaken time`)
   }
 
   let currentPlayer = { ...player }
@@ -260,9 +263,7 @@ export async function executeBatches(
   const { assignments, completeBatches } = distributeBatchesAcrossNodes(ns, nodes, allOperations)
 
   if (completeBatches < batches) {
-    ns.tprint(
-      `INFO: Could only fit ${completeBatches} complete batches out of ${batches} requested (${assignments.length} operations)`
-    )
+    log(`INFO: Could only fit ${completeBatches} complete batches out of ${batches} requested (${assignments.length} operations)`)
   }
   // Execute all assigned operations
   let lastPid = 0

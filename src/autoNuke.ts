@@ -6,7 +6,8 @@ export async function main(ns: NS): Promise<void> {
   await autoNuke(ns)
 }
 
-export async function autoNuke(ns: NS): Promise<void> {
+export async function autoNuke(ns: NS, logMessage?: (message: string) => void): Promise<void> {
+  const log = logMessage ?? (() => {})
   const backdoorAll = ns.args[0] === "all"
   const knownServers: Set<string> = new Set<string>()
   crawl(ns, knownServers)
@@ -83,7 +84,7 @@ export async function autoNuke(ns: NS): Promise<void> {
       const server = ns.getServer(serverName)
       if (!server.hasAdminRights) {
         ns.nuke(serverName)
-        ns.tprint(`Nuked ${serverName}`)
+        log(`Nuked ${serverName}`)
       }
       // and servername does not start with "node"
 
@@ -107,7 +108,7 @@ export async function autoNuke(ns: NS): Promise<void> {
         connect(ns, serverName)
         await ns.singularity.installBackdoor()
         // connect(ns, "home")
-        ns.tprint(`Installed backdoor on ${serverName}`)
+        log(`Installed backdoor on ${serverName}`)
       }
     }
   }

@@ -259,9 +259,9 @@ export async function findBestTarget(
   batchDelay: number,
   nodes: string[],
   playerHackLevel?: number,
-  batchCycles: number = 3
+  batchCycles: number = 3,
+  logMessage?: (message: string) => void
 ): Promise<BestTargetResult> {
-  // Use the analysis function to get all server profitability data
   const profitabilityData = await analyzeAllServers(
     ns,
     totalMaxRam,
@@ -273,21 +273,22 @@ export async function findBestTarget(
     batchCycles
   )
 
-  ns.tprint(`Found ${profitabilityData.length} hackable servers, analyzing profitability...`)
+  const log = logMessage ?? (() => {})
 
-  // Best server is the first one (already sorted by profitability)
+  log(`Found ${profitabilityData.length} hackable servers, analyzing profitability...`)
+
   const best = profitabilityData[0]
 
   if (!best) {
     throw new Error("No hackable servers found!")
   }
 
-  ns.tprint("")
-  ns.tprint("=".repeat(60))
-  ns.tprint(`Best target: ${best.serverName}`)
-  ns.tprint(`Optimal hack threshold: ${(best.optimalThreshold * 100).toFixed(2)}%`)
-  ns.tprint(`Expected income: ${ns.format.number(best.moneyPerSecond)}/sec`)
-  ns.tprint("=".repeat(60))
+  log("")
+  log("=".repeat(60))
+  log(`Best target: ${best.serverName}`)
+  log(`Optimal hack threshold: ${(best.optimalThreshold * 100).toFixed(2)}%`)
+  log(`Expected income: ${ns.format.number(best.moneyPerSecond)}/sec`)
+  log("=".repeat(60))
 
   return {
     serverName: best.serverName,
@@ -309,7 +310,7 @@ export async function main(ns: NS) {
   const nodeRamLimit = Math.min(...nodes.map((node) => getEffectiveMaxRam(ns, node)))
   const myCores = ns.getServer(nodes[0]).cpuCores
 
-  findBestTarget(ns, totalMaxRam, nodeRamLimit, myCores, 20, nodes, playerHackLevel)
+  findBestTarget(ns, totalMaxRam, nodeRamLimit, myCores, 20, nodes, playerHackLevel, 3, (msg) => ns.tprint(msg))
 
   ns.tprint("")
   ns.tprint(`To start batching: run batch.js`)

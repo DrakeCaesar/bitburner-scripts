@@ -1,7 +1,7 @@
 import { NS, Person, Player, Server } from "@ns"
 import { crawl } from "./crawl.js"
 import { getAvailableRam, getEffectiveMaxRam } from "./ramUtils.js"
-import { buildTable } from "./tableBuilder.js"
+import { buildTable, type TableConfig } from "./tableBuilder.js"
 /**
  * Calculate XP gained from a hacking operation (hack/grow/weaken)
  * Based on ns.formulas.hacking.hackExp()
@@ -215,6 +215,8 @@ export async function prepareServerMultiNode(
       playerLevel: number
     }>
     debug?: boolean
+    logMessage?: (message: string) => void
+    logTable?: (config: TableConfig) => void
   } = {}
 ): Promise<{
   totalTime: number
@@ -232,7 +234,7 @@ export async function prepareServerMultiNode(
   secTolerance?: number
   myCores?: number
 }> {
-  const { dryRun = false, showVerbose = false, predictedIterations, debug = false } = options
+  const { dryRun = false, showVerbose = false, predictedIterations, debug = false, logMessage, logTable } = options
   const server = ns.getServer(target)
   let player = ns.getPlayer()
   const moneyMax = server.moneyMax ?? 0
@@ -244,7 +246,6 @@ export async function prepareServerMultiNode(
   const currentSec = server.hackDifficulty ?? 0
   const currentMoney = server.moneyAvailable ?? 0
   if (currentMoney >= moneyMax * moneyTolerance && currentSec <= baseSecurity + secTolerance) {
-    ns.tprint(`[Prep Sim] Server already prepped!`)
     return { totalTime: 0, iterationDetails: [] }
   }
 
@@ -254,9 +255,19 @@ export async function prepareServerMultiNode(
 
   // Accumulate verbose output
   let verboseOutput = ""
-  const log = (msg: string) => {
+  const emit = (msg: string) => {
     verboseOutput += msg + "\n"
-    if (showVerbose) {
+    if (logMessage) {
+      logMessage(msg)
+    } else if (showVerbose) {
+      ns.tprint(msg)
+    }
+  }
+
+  const debugLog = (msg: string) => {
+    if (logMessage) {
+      logMessage(msg)
+    } else if (debug) {
       ns.tprint(msg)
     }
   }
@@ -501,12 +512,11 @@ export async function prepareServerMultiNode(
   }
 
   // Helper to build table from node capacities
-  const buildCapacityTable = (nodeCapacities: NodeCapacity[], iteration: number): string => {
-    // Add script cost info
+  const buildCapacityTableConfig = (nodeCapacities: NodeCapacity[], iteration: number): TableConfig => {
     const scriptInfo = `Grow: ${ns.format.ram(growScriptRam)}/t, Weaken: ${ns.format.ram(weakenScriptRam)}/t`
 
-    const fullTable = buildTable({
-      title: `Iteration ${iteration} ═══ ${scriptInfo}`,
+    return {
+      title: `Iteration ${iteration} - ${scriptInfo}`,
       columns: [
         { header: "Server", align: "left" },
         { header: "Avail", align: "right" },
@@ -531,9 +541,16 @@ export async function prepareServerMultiNode(
           ns.format.ram(remaining),
         ]
       }),
-    })
+    }
+  }
 
-    return fullTable
+  const emitCapacityTable = (nodeCapacities: NodeCapacity[], iteration: number) => {
+    const tableConfig = buildCapacityTableConfig(nodeCapacities, iteration)
+    if (logTable) {
+      logTable(tableConfig)
+    } else {
+      emit(buildTable(tableConfig))
+    }
   }
 
   // Branch based on dryRun mode
@@ -558,7 +575,7 @@ export async function prepareServerMultiNode(
       playerLevel: number
     }> = []
 
-    log(
+    emit(
       `[Prep Sim] Starting simulation - Money: ${ns.format.number(simMoney)}/${ns.format.number(moneyMax)} (${((simMoney / moneyMax) * 100).toFixed(1)}%), Security: ${simSec.toFixed(2)}/${baseSecurity.toFixed(2)} (+${(simSec - baseSecurity).toFixed(2)}), Player Level: ${player.skills.hacking}`
     )
 
@@ -577,7 +594,7 @@ export async function prepareServerMultiNode(
       const iterationStartServer = { ...server, hackDifficulty: simSec, moneyAvailable: simMoney }
       const iterationTime = ns.formulas.hacking.weakenTime(iterationStartServer, player)
 
-      log(
+      emit(
         `\n[Prep Sim] Iteration ${iterations} - Money: ${ns.format.number(simMoney)}/${ns.format.number(moneyMax)} (${((simMoney / moneyMax) * 100).toFixed(1)}%), Security: ${simSec.toFixed(2)}/${baseSecurity.toFixed(2)} (+${(simSec - baseSecurity).toFixed(2)}), Player Level: ${player.skills.hacking}`
       )
 
@@ -592,16 +609,15 @@ export async function prepareServerMultiNode(
 
       // If we can't make progress, break
       if (growThreads === 0 && weakenThreads === 0) {
-        log(`[Prep Sim] ERROR: No progress possible - insufficient RAM`)
+        emit(`[Prep Sim] ERROR: No progress possible - insufficient RAM`)
         break
       }
 
       const actualGrowThreads = growThreads
       const actualWeakenThreads = weakenThreads
 
-      // Build and log capacity table
-      const table = buildCapacityTable(nodeCapacities, iterations)
-      log(table)
+      // Build and emit capacity table
+      emitCapacityTable(nodeCapacities, iterations)
 
       // Update simulated state with actual distributed threads
       if (actualGrowThreads > 0) {
@@ -632,7 +648,7 @@ export async function prepareServerMultiNode(
       // const previousLevel = player.skills.hacking
       // player = updatePlayerWithKahanXp(player, xpKahan, ns)
       // if (player.skills.hacking > previousLevel) {
-      //   log(`  Player leveled up! ${previousLevel} -> ${player.skills.hacking}`)
+      //   emit(`  Player leveled up! ${previousLevel} -> ${player.skills.hacking}`)
       // }
 
       // Add iteration time to total (calculated at start of iteration)
@@ -650,7 +666,7 @@ export async function prepareServerMultiNode(
       })
     }
 
-    log(
+    emit(
       `\n[Prep Sim] Complete - ${iterations} iterations, estimated time: ${ns.format.time(totalTime)}, final player level: ${player.skills.hacking}`
     )
 
@@ -666,11 +682,9 @@ export async function prepareServerMultiNode(
       return sum + getAvailableRam(ns, node)
     }, 0)
 
-    if (debug) {
-      ns.tprint(
-        `Prep: Starting multi-node preparation with ${ns.format.ram(totalAvailableRam)} total available RAM across ${nodes.length} nodes`
-      )
-    }
+    debugLog(
+      `Prep: Starting multi-node preparation with ${ns.format.ram(totalAvailableRam)} total available RAM across ${nodes.length} nodes`
+    )
 
     // Track iterations for comparison
     let iterationCount = 0
@@ -693,11 +707,9 @@ export async function prepareServerMultiNode(
 
       // Check if preparation is complete
       if (currentMoneyActual >= moneyMax * moneyTolerance && currentSecActual <= baseSecurity + secTolerance) {
-        if (debug) {
-          ns.tprint(
-            `Prep: Complete - Money: ${ns.format.number(currentMoneyActual)}/${ns.format.number(moneyMax)}, Security: ${currentSecActual.toFixed(2)}/${baseSecurity}`
-          )
-        }
+        debugLog(
+          `Prep: Complete - Money: ${ns.format.number(currentMoneyActual)}/${ns.format.number(moneyMax)}, Security: ${currentSecActual.toFixed(2)}/${baseSecurity}`
+        )
         break
       }
 
@@ -773,16 +785,14 @@ export async function prepareServerMultiNode(
             .slice(iterationCount)
             .reduce((sum, iter) => sum + iter.time, 0)
 
-          if (debug) {
-            ns.tprint(
-              `\n[Iteration ${iterationCount}/${predictedIterations.length}] Actual vs Predicted:\n` +
-                `  Time: ${ns.format.time(actualIterationTime)} vs ${ns.format.time(predicted.time)} (diff: ${Math.abs(timeDiff).toFixed(0)}ms)\n` +
-                `  Money: ${ns.format.number(newMoney)} vs ${ns.format.number(predicted.moneyAfter)} (diff: ${ns.format.number(Math.abs(moneyDiff))})\n` +
-                `  Sec: ${newSec.toFixed(2)} vs ${predicted.secAfter.toFixed(2)} (diff: ${Math.abs(secDiff).toFixed(2)})\n` +
-                `  Level: ${newPlayerLevel} vs ${predicted.playerLevel} (diff: ${Math.abs(levelDiff)})\n` +
-                `  Estimated time remaining: ${ns.format.time(estimatedTimeRemaining)} (${remainingIterations} iterations left)`
-            )
-          }
+          debugLog(
+            `\n[Iteration ${iterationCount}/${predictedIterations.length}] Actual vs Predicted:\n` +
+              `  Time: ${ns.format.time(actualIterationTime)} vs ${ns.format.time(predicted.time)} (diff: ${Math.abs(timeDiff).toFixed(0)}ms)\n` +
+              `  Money: ${ns.format.number(newMoney)} vs ${ns.format.number(predicted.moneyAfter)} (diff: ${ns.format.number(Math.abs(moneyDiff))})\n` +
+              `  Sec: ${newSec.toFixed(2)} vs ${predicted.secAfter.toFixed(2)} (diff: ${Math.abs(secDiff).toFixed(2)})\n` +
+              `  Level: ${newPlayerLevel} vs ${predicted.playerLevel} (diff: ${Math.abs(levelDiff)})\n` +
+              `  Estimated time remaining: ${ns.format.time(estimatedTimeRemaining)} (${remainingIterations} iterations left)`
+          )
         }
       }
     }

@@ -18,20 +18,22 @@ const PROGRAMS: Program[] = [
   { name: "AutoLink.exe", cost: 1000000 },
 ]
 
-export function purchaseTorRouter(ns: NS): boolean {
+import type { LogFn } from "./scriptLogUi.js"
+
+export function purchaseTorRouter(ns: NS, logMessage?: LogFn): boolean {
   if (ns.hasTorRouter()) return false
 
   const torCost = 200000
   if (ns.getPlayer().money >= torCost) {
     if (ns.singularity.purchaseTor()) {
-      ns.tprint("Purchased TOR router")
+      logMessage?.("Purchased TOR router")
       return true
     }
   }
   return false
 }
 
-export function purchasePrograms(ns: NS): string[] {
+export function purchasePrograms(ns: NS, logMessage?: LogFn): string[] {
   if (!ns.hasTorRouter()) return []
 
   const purchased: string[] = []
@@ -41,7 +43,7 @@ export function purchasePrograms(ns: NS): string[] {
     if (!ns.fileExists(program.name, "home")) {
       if (playerMoney >= program.cost) {
         if (ns.singularity.purchaseProgram(program.name)) {
-          ns.tprint(`Purchased ${program.name}`)
+          logMessage?.(`Purchased ${program.name}`)
           purchased.push(program.name)
         }
       }

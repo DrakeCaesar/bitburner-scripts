@@ -1,4 +1,11 @@
-import { CrimeType, NS, ReactNode } from "@ns"
+import { CrimeType, NS } from "@ns"
+import {
+  buildReactTable,
+  initScriptLogTail,
+  renderScriptLog,
+  tailSizeForTable,
+  type TableLayout,
+} from "./libraries/scriptLogUi.js"
 
 type CrimeMode = "money" | "karma" | "xp"
 
@@ -10,26 +17,11 @@ interface CrimeInfo {
   totalXpPerMs: number
 }
 
-const React = eval("window.React") as {
-  createElement(type: string, props?: Record<string, unknown> | null, ...children: unknown[]): ReactNode
+const CRIME_LAYOUT: Partial<TableLayout> = {
+  tableWidthPx: 640,
 }
 
-const LAYOUT = {
-  fontSizePx: 12,
-  paddingXPx: 8,
-  borderPx: 1,
-  headerRowHeightPx: 26,
-  bodyRowHeightPx: 22,
-  tableWidthPx: 640,
-  tailTitleBarPx: 33,
-  colCrimePx: 160,
-  colSuccessPx: 72,
-  colMetricPx: 136,
-} as const
-
-const HIGHLIGHT_BG = "rgba(0, 255, 0, 0.18)"
-const SELECTED_ROW_BG = "rgba(255, 255, 255, 0.06)"
-const ACTIVE_HEADER_BG = "rgba(0, 255, 0, 0.12)"
+const COL_WIDTHS = [160, 72, 136, 136, 136]
 
 function getCrimeInfos(ns: NS): CrimeInfo[] {
   return Object.values(ns.enums.CrimeType).map((crime) => {
@@ -86,139 +78,50 @@ function formatXpRate(ns: NS, ratePerMs: number): string {
   return `${ns.format.number(ratePerMs * 1000)}/s`
 }
 
-function baseCellStyle(
-  rowHeightPx: number,
-  highlight: boolean,
-  selectedRow: boolean,
-  borderColor: string
-): Record<string, string> {
-  return {
-    boxSizing: "border-box",
-    height: `${rowHeightPx}px`,
-    lineHeight: `${LAYOUT.fontSizePx}px`,
-    padding: `0 ${LAYOUT.paddingXPx}px`,
-    border: `${LAYOUT.borderPx}px solid ${borderColor}`,
-    fontSize: `${LAYOUT.fontSizePx}px`,
-    verticalAlign: "middle",
-    backgroundColor: highlight ? HIGHLIGHT_BG : selectedRow ? SELECTED_ROW_BG : "transparent",
-    whiteSpace: "nowrap",
-  }
-}
-
-function cellStyle(highlight: boolean, selectedRow: boolean): Record<string, string> {
-  return baseCellStyle(LAYOUT.bodyRowHeightPx, highlight, selectedRow, "rgba(255, 255, 255, 0.08)")
-}
-
-function headerStyle(activeMode: boolean): Record<string, string> {
-  return {
-    ...baseCellStyle(LAYOUT.headerRowHeightPx, false, false, "rgba(255, 255, 255, 0.15)"),
-    fontWeight: "bold",
-    backgroundColor: activeMode ? ACTIVE_HEADER_BG : "rgba(255, 255, 255, 0.04)",
-  }
-}
-
-function buildCrimeTable(ns: NS, crimeInfos: CrimeInfo[], mode: CrimeMode, selected: CrimeInfo): ReactNode {
+function buildCrimeTable(ns: NS, crimeInfos: CrimeInfo[], mode: CrimeMode, selected: CrimeInfo) {
   const bestByColumn = getBestCrimesByColumn(crimeInfos)
   const rows = [...crimeInfos].sort((a, b) => compareCrimesByMode(a, b, mode))
+  const highlightCells = new Set<string>()
+  const activeHeaderColumns = new Set<number>()
 
-  return React.createElement(
-    "div",
-    { style: { display: "block", margin: "0", padding: "0" } },
-    React.createElement(
-      "table",
-      {
-        style: {
-          borderCollapse: "collapse",
-          tableLayout: "fixed",
-          width: `${LAYOUT.tableWidthPx}px`,
-          margin: "0",
-          fontFamily: "monospace",
-          fontSize: `${LAYOUT.fontSizePx}px`,
-        },
-      },
-      React.createElement(
-        "colgroup",
-        null,
-        React.createElement("col", { style: { width: `${LAYOUT.colCrimePx}px` } }),
-        React.createElement("col", { style: { width: `${LAYOUT.colSuccessPx}px` } }),
-        React.createElement("col", { style: { width: `${LAYOUT.colMetricPx}px` } }),
-        React.createElement("col", { style: { width: `${LAYOUT.colMetricPx}px` } }),
-        React.createElement("col", { style: { width: `${LAYOUT.colMetricPx}px` } })
-      ),
-      React.createElement(
-        "thead",
-        null,
-        React.createElement(
-          "tr",
-          null,
-          React.createElement("th", { style: headerStyle(false) }, "Crime"),
-          React.createElement("th", { style: headerStyle(false) }, "Success"),
-          React.createElement("th", { style: headerStyle(mode === "karma") }, "Karma"),
-          React.createElement("th", { style: headerStyle(mode === "money") }, "Money"),
-          React.createElement("th", { style: headerStyle(mode === "xp") }, "XP")
-        )
-      ),
-      React.createElement(
-        "tbody",
-        null,
-        ...rows.map((crime) => {
-          const selectedRow = crime.name === selected.name
+  if (mode === "karma") activeHeaderColumns.add(2)
+  if (mode === "money") activeHeaderColumns.add(3)
+  if (mode === "xp") activeHeaderColumns.add(4)
 
-          return React.createElement(
-            "tr",
-            { key: crime.name },
-            React.createElement("td", { style: cellStyle(false, selectedRow) }, crime.name),
-            React.createElement(
-              "td",
-              { style: { ...cellStyle(false, selectedRow), textAlign: "right" } },
-              `${(crime.chance * 100).toFixed(1)}%`
-            ),
-            React.createElement(
-              "td",
-              {
-                style: {
-                  ...cellStyle(crime.name === bestByColumn.karma, selectedRow),
-                  textAlign: "right",
-                },
-              },
-              formatKarmaRate(crime.expectedKarmaPerMs)
-            ),
-            React.createElement(
-              "td",
-              {
-                style: {
-                  ...cellStyle(crime.name === bestByColumn.money, selectedRow),
-                  textAlign: "right",
-                },
-              },
-              formatMoneyRate(ns, crime.expectedProfitPerMs)
-            ),
-            React.createElement(
-              "td",
-              {
-                style: { ...cellStyle(crime.name === bestByColumn.xp, selectedRow), textAlign: "right" },
-              },
-              formatXpRate(ns, crime.totalXpPerMs)
-            )
-          )
-        })
-      )
-    )
-  )
-}
+  rows.forEach((crime, rowIdx) => {
+    if (crime.name === bestByColumn.karma) highlightCells.add(`${rowIdx},2`)
+    if (crime.name === bestByColumn.money) highlightCells.add(`${rowIdx},3`)
+    if (crime.name === bestByColumn.xp) highlightCells.add(`${rowIdx},4`)
+  })
 
-function tailSizeForTable(crimeRowCount: number): { width: number; height: number } {
-  const tableHeightPx = LAYOUT.headerRowHeightPx + crimeRowCount * LAYOUT.bodyRowHeightPx
-  return {
-    width: LAYOUT.tableWidthPx,
-    height: tableHeightPx + LAYOUT.tailTitleBarPx,
-  }
+  const selectedRowIndex = rows.findIndex((crime) => crime.name === selected.name)
+
+  return buildReactTable({
+    layout: CRIME_LAYOUT,
+    tableWidth: CRIME_LAYOUT.tableWidthPx,
+    columnWidths: COL_WIDTHS,
+    columns: [
+      { header: "Crime", align: "left" },
+      { header: "Success", align: "right" },
+      { header: "Karma", align: "right" },
+      { header: "Money", align: "right" },
+      { header: "XP", align: "right" },
+    ],
+    rows: rows.map((crime) => [
+      crime.name,
+      `${(crime.chance * 100).toFixed(1)}%`,
+      formatKarmaRate(crime.expectedKarmaPerMs),
+      formatMoneyRate(ns, crime.expectedProfitPerMs),
+      formatXpRate(ns, crime.totalXpPerMs),
+    ]),
+    selectedRowIndex,
+    highlightCells,
+    activeHeaderColumns,
+  })
 }
 
 function renderCrimeTable(ns: NS, crimeInfos: CrimeInfo[], mode: CrimeMode, selected: CrimeInfo): void {
-  ns.clearLog()
-  ns.printRaw(buildCrimeTable(ns, crimeInfos, mode, selected))
-  ns.ui.renderTail()
+  renderScriptLog(ns, buildCrimeTable(ns, crimeInfos, mode, selected))
 }
 
 function parseMode(ns: NS): CrimeMode {
@@ -230,12 +133,9 @@ function parseMode(ns: NS): CrimeMode {
 }
 
 export async function main(ns: NS): Promise<void> {
-  ns.disableLog("ALL")
   const mode = parseMode(ns)
 
-  ns.ui.openTail()
-  ns.ui.setTailTitle(`Crime - ${mode}`)
-  ns.ui.setTailFontSize(LAYOUT.fontSizePx)
+  initScriptLogTail(ns, `Crime - ${mode}`, CRIME_LAYOUT)
 
   let tailSized = false
 
@@ -246,7 +146,7 @@ export async function main(ns: NS): Promise<void> {
     renderCrimeTable(ns, crimeInfos, mode, bestCrime)
 
     if (!tailSized) {
-      const { width, height } = tailSizeForTable(crimeInfos.length)
+      const { width, height } = tailSizeForTable(crimeInfos.length, CRIME_LAYOUT)
       ns.ui.resizeTail(width, height)
       tailSized = true
     }

@@ -1,58 +1,70 @@
 import { NS } from "@ns"
 import { copyRequiredScripts, killOtherInstances, prepareServerMultiNode } from "./libraries/batchCalculations.js"
-// import { initBatchVisualiser, logBatchOperation } from "./batchVisualiser.js"
 import { autoNuke } from "./autoNuke.js"
 import { calculateBatchThreads, calculateBatchTimings, executeBatches } from "./libraries/batchExecution.js"
 import { findBestTarget } from "./libraries/findBestTarget.js"
 import { purchasePrograms, purchaseTorRouter } from "./libraries/purchasePrograms.js"
 import { purchaseServers } from "./libraries/purchaseServer.js"
 import { getAvailableRam, getEffectiveMaxRam } from "./libraries/ramUtils.js"
+import { ScriptLogBuilder, initScriptLogTail, type ReactTableConfig, type TableLayout } from "./libraries/scriptLogUi.js"
 import { getNodesForBatching } from "./libraries/serverManagement.js"
-import { buildKeyValueTable, buildThreeColumnTable } from "./libraries/tableBuilder.js"
+
+const BATCH_LAYOUT: Partial<TableLayout> = {
+  tableWidthPx: 720,
+}
 
 export async function main(ns: NS) {
   const playerHackLevel = ns.args[0] ? Number(ns.args[0]) : undefined
 
+  initScriptLogTail(ns, "Batch", BATCH_LAYOUT)
+  ns.ui.resizeTail(BATCH_LAYOUT.tableWidthPx ?? 720, 640)
+
+  const scriptLog = new ScriptLogBuilder(BATCH_LAYOUT)
+  const flushLog = () => scriptLog.render(ns)
+  const logMessage = (message: string) => {
+    scriptLog.text(message)
+    flushLog()
+  }
+  const prepLogOptions = {
+    logMessage,
+    logTable: (config: ReactTableConfig) => {
+      scriptLog.table({ tableWidth: BATCH_LAYOUT.tableWidthPx, ...config })
+      flushLog()
+    },
+  }
+
   await killOtherInstances(ns)
 
   while (true) {
+    scriptLog.reset()
+
     const invitations = ns.singularity.checkFactionInvitations()
     for (const inv of invitations) {
       ns.singularity.joinFaction(inv)
     }
 
-    // ns.scriptKill("autoWorkMegacorps.js", "home")
     ns.scriptKill("autoWorkFactions.js", "home")
-
     ns.exec("contractSolver.js", "home", 1, "solve")
-    // ns.exec("autoWorkFactions.js", "home")
-    // ns.exec("autoWorkMegacorps.js", "home")
 
-    // initBatchVisualiser()
+    purchaseTorRouter(ns, logMessage)
+    purchasePrograms(ns, logMessage)
+    await autoNuke(ns, logMessage)
 
-    // Purchase TOR router and programs
-    purchaseTorRouter(ns)
-    purchasePrograms(ns)
-
-    // Run autoNuke to gain access to new servers
-    await autoNuke(ns)
-
-    // Try to purchase or upgrade servers
     const wasUpgraded = purchaseServers(ns)
     if (wasUpgraded) {
-      ns.tprint("Server was purchased/upgraded, restarting batch cycle...")
+      scriptLog.text("Server was purchased/upgraded, restarting batch cycle...")
+      flushLog()
     }
 
-    // Get nodes for batching (purchased servers or all nuked servers)
     const nodes = getNodesForBatching(ns)
 
     if (nodes.length === 0) {
-      ns.tprint("ERROR: No nodes with root access found")
+      scriptLog.text("ERROR: No nodes with root access found")
+      flushLog()
       await ns.sleep(1000)
       continue
     }
 
-    // Kill all scripts on all nodes and copy required scripts
     for (const node of nodes) {
       ns.scriptKill("hacking/hack.js", node)
       ns.scriptKill("hacking/grow.js", node)
@@ -65,8 +77,6 @@ export async function main(ns: NS) {
     const batchDelay = 5
     const ramThreshold = 1
 
-    // Calculate total RAM across all nodes and find minimum node RAM
-    // For home, subtract used RAM since this script is running there
     const totalMaxRam = nodes.reduce((sum, node) => {
       if (node === "home") {
         return sum + getAvailableRam(ns, node)
@@ -74,80 +84,91 @@ export async function main(ns: NS) {
       return sum + getEffectiveMaxRam(ns, node)
     }, 0)
 
-    // Use median of available servers
     const nodeRamValues = nodes.map((node) => getEffectiveMaxRam(ns, node)).sort((a, b) => a - b)
     const middle = Math.floor(nodeRamValues.length / 2)
     let nodeRamLimit =
       nodeRamValues.length % 2 === 0 ? (nodeRamValues[middle - 1] + nodeRamValues[middle]) / 2 : nodeRamValues[middle]
-    nodeRamLimit *= 1.0 // DEBUG: Adjust to test different scenarios
+    nodeRamLimit *= 1.0
     nodeRamLimit = Infinity
 
-    ns.tprint(`Minimum node RAM: ${ns.format.ram(nodeRamLimit)}`)
     const myCores = ns.getServer(nodes[0]).cpuCores
-
-    // Find best target automatically (constrained by smallest node RAM)
-    const target = await findBestTarget(ns, totalMaxRam, nodeRamLimit, myCores, batchDelay, nodes, playerHackLevel, 10)
+    const target = await findBestTarget(
+      ns,
+      totalMaxRam,
+      nodeRamLimit,
+      myCores,
+      batchDelay,
+      nodes,
+      playerHackLevel,
+      10,
+      logMessage
+    )
     const player = ns.getPlayer()
 
-    ns.tprint(`Target: ${target.serverName}`)
-    ns.tprint(`Using ${nodes.length} node(s) with ${ns.format.ram(totalMaxRam)} total RAM`)
-    ns.tprint(
-      `Using optimal hack threshold: ${(target.hackThreshold * 100).toFixed(2)}% (${ns.format.number(target.moneyPerSecond)}/sec)`
-    )
+    scriptLog.section("Target")
+    scriptLog
+      .keyValueTable({
+        tableWidth: BATCH_LAYOUT.tableWidthPx,
+        rows: [
+          { label: "Server", value: target.serverName },
+          { label: "Min Node RAM", value: ns.format.ram(nodeRamLimit) },
+          { label: "Nodes", value: nodes.length.toString() },
+          { label: "Total RAM", value: ns.format.ram(totalMaxRam) },
+          {
+            label: "Hack Threshold",
+            value: `${(target.hackThreshold * 100).toFixed(2)}% (${ns.format.number(target.moneyPerSecond)}/sec)`,
+          },
+        ],
+      })
+      .render(ns)
 
-    // Create a simulated prepared server (min security, max money)
     const server = ns.getServer(target.serverName)
     server.hackDifficulty = server.minDifficulty
     server.moneyAvailable = server.moneyMax
 
-    // Debug flag - set to true for verbose prep output
     const debug = true
 
-    // Calculate and show estimated prep time based on available RAM across all nodes
     const calcStartTime = Date.now()
     const prepEstimate = await prepareServerMultiNode(ns, nodes, target.serverName, {
       dryRun: true,
       showVerbose: debug,
+      ...prepLogOptions,
     })
     const calcEndTime = Date.now()
     const calcDuration = calcEndTime - calcStartTime
 
     if (debug) {
-      ns.tprint(`Prep calculation took: ${calcDuration}ms`)
+      scriptLog.text(`Prep calculation took: ${calcDuration}ms`)
     }
 
     if (prepEstimate.totalTime > 0) {
-      ns.tprint(`Preparing ${target.serverName}... (estimated time: ${ns.format.time(prepEstimate.totalTime)})`)
+      scriptLog.text(`Preparing ${target.serverName}... (estimated time: ${ns.format.time(prepEstimate.totalTime)})`)
     } else {
-      ns.tprint(`${target.serverName} is already prepared!`)
+      scriptLog.text(`${target.serverName} is already prepared!`)
     }
+    flushLog()
 
-    // Use multi-node prep to distribute operations across all available nodes
-    // Pass predicted iterations for comparison
     const prepStartTime = Date.now()
     await prepareServerMultiNode(ns, nodes, target.serverName, {
       dryRun: false,
       predictedIterations: prepEstimate.iterationDetails,
       debug,
+      ...prepLogOptions,
     })
     const prepEndTime = Date.now()
     const actualPrepTime = prepEndTime - prepStartTime
 
-    // Print timing comparison
     const timeDiff = actualPrepTime - prepEstimate.totalTime
-    const percentDiff = ((timeDiff / prepEstimate.totalTime) * 100).toFixed(1)
+    const percentDiff = prepEstimate.totalTime > 0 ? ((timeDiff / prepEstimate.totalTime) * 100).toFixed(1) : "0.0"
     if (debug) {
-      ns.tprint(
-        `\n=== TOTAL PREP TIME ===\n` +
+      scriptLog.text(
+        `=== TOTAL PREP TIME ===\n` +
           `Estimated: ${ns.format.time(prepEstimate.totalTime)}\n` +
           `Actual: ${ns.format.time(actualPrepTime)}\n` +
           `Difference: ${Math.abs(timeDiff).toFixed(0)}ms (${percentDiff}%)`
       )
     }
 
-    // return //debug
-
-    // Calculate batch configuration
     const batchConfigStartTime = Date.now()
     const batchConfig = {
       target: target.serverName,
@@ -160,6 +181,7 @@ export async function main(ns: NS) {
       totalMaxRam,
       ramThreshold,
       nodeRamLimit,
+      logMessage,
     }
 
     const threads = calculateBatchThreads(ns, batchConfig)
@@ -171,7 +193,6 @@ export async function main(ns: NS) {
     const maxBatches = Math.floor((totalMaxRam / threads.totalBatchRam) * ramThreshold)
     const batches = maxBatches
 
-    // Calculate predicted batch cycle time and money
     const lastBatchOffset = (batches - 1) * timings.effectiveBatchDelay * 4
     const lastOperationFinishTime = timings.weakenTime + 2 * timings.effectiveBatchDelay + lastBatchOffset
     const predictedBatchCycleTime = lastOperationFinishTime
@@ -180,7 +201,6 @@ export async function main(ns: NS) {
     const totalMoneyPerCycle = moneyPerBatch * batches
     const moneyPerSecond = predictedBatchCycleTime > 0 ? (totalMoneyPerCycle / predictedBatchCycleTime) * 1000 : 0
 
-    // Table 1: Batch Configuration
     const configRows = [
       { label: "Target Server", value: target.serverName },
       { label: "Hack Threshold", value: `${(threads.actualThreshold * 100).toFixed(2)}%` },
@@ -200,16 +220,16 @@ export async function main(ns: NS) {
       })
     }
 
-    const configTable = buildKeyValueTable({
-      title: "Batch Configuration",
+    scriptLog.section("Batch Configuration")
+    scriptLog.keyValueTable({
+      tableWidth: BATCH_LAYOUT.tableWidthPx,
       rows: configRows,
-      separatorAfter: [5], // Separator after Money/Second
+      separatorAfter: [5],
     })
-    ns.tprint(configTable)
 
-    // Table 2: Thread Distribution & Timing
-    const timingTable = buildThreeColumnTable({
-      title: "Thread Distribution & Timing",
+    scriptLog.section("Thread Distribution & Timing")
+    scriptLog.threeColumnTable({
+      tableWidth: BATCH_LAYOUT.tableWidthPx,
       headers: ["Operation", "Threads", "RAM"],
       rows: [
         [
@@ -242,34 +262,34 @@ export async function main(ns: NS) {
         ["Batch Interval", ns.format.time(timings.effectiveBatchDelay * 4), ""],
         ["Cycle Time", ns.format.time(predictedBatchCycleTime), ""],
       ],
-      separatorAfter: [4], // Separator after Total Batch RAM
+      separatorAfter: [4],
       align: ["left", "right", "right"],
     })
-    ns.tprint(timingTable)
 
     if (debug) {
-      ns.tprint(
-        `\n[Timing Debug]\n` +
+      scriptLog.text(
+        `[Timing Debug]\n` +
           `  Prep calculation: ${calcDuration}ms\n` +
           `  Prep execution: ${ns.format.time(actualPrepTime)}\n` +
-          `  Prep→Batch gap: ${prepToBatchGap}ms\n` +
+          `  Prep->Batch gap: ${prepToBatchGap}ms\n` +
           `  Batch config: ${batchConfigDuration}ms`
       )
     }
 
-    // Security checks
     const minSecurity = ns.getServerMinSecurityLevel(target.serverName)
     const currentSecurity = ns.getServerSecurityLevel(target.serverName)
     const securityDiff = currentSecurity - minSecurity
     if (securityDiff > 0) {
-      ns.tprint(`WARNING: ${target.serverName} security above minimum by ${securityDiff.toFixed(2)}`)
+      scriptLog.text(`WARNING: ${target.serverName} security above minimum by ${securityDiff.toFixed(2)}`)
     }
 
-    // Execute batches with timing measurement
+    flushLog()
+
     const batchStartTime = Date.now()
     const completedBatches = await executeBatches(ns, batchConfig, threads, timings, batches)
     if (completedBatches == 0) {
-      ns.tprint("ERROR: No batches were executed. Exiting.")
+      scriptLog.text("ERROR: No batches were executed. Exiting.")
+      flushLog()
       await ns.sleep(1000)
       continue
     }
@@ -282,25 +302,36 @@ export async function main(ns: NS) {
     const maxMoney = ns.getServerMaxMoney(target.serverName)
     const moneyPercent = (currentMoney / maxMoney) * 100
 
-    // Print batch timing comparison
     const batchTimeDiff = actualBatchCycleTime - predictedBatchCycleTime
-    const batchPercentDiff = ((batchTimeDiff / predictedBatchCycleTime) * 100).toFixed(1)
+    const batchPercentDiff =
+      predictedBatchCycleTime > 0 ? ((batchTimeDiff / predictedBatchCycleTime) * 100).toFixed(1) : "0.0"
 
-    ns.tprint("\n=== BATCH EXECUTION RESULTS ===")
-    ns.tprint("SUCCESS: All batches completed")
-    ns.tprint(
-      `Security: ${finalSecurity.toFixed(2)} / ${minSecurity.toFixed(2)} (+${(finalSecurity - minSecurity).toFixed(2)})`
-    )
-    ns.tprint(`Money: ${moneyPercent.toFixed(2)}% (${ns.format.number(currentMoney)} / ${ns.format.number(maxMoney)})`)
+    scriptLog.section("Batch Execution Results")
+    scriptLog
+      .keyValueTable({
+        tableWidth: BATCH_LAYOUT.tableWidthPx,
+        rows: [
+          { label: "Status", value: "All batches completed" },
+          {
+            label: "Security",
+            value: `${finalSecurity.toFixed(2)} / ${minSecurity.toFixed(2)} (+${(finalSecurity - minSecurity).toFixed(2)})`,
+          },
+          {
+            label: "Money",
+            value: `${moneyPercent.toFixed(2)}% (${ns.format.number(currentMoney)} / ${ns.format.number(maxMoney)})`,
+          },
+        ],
+      })
 
     if (debug) {
-      ns.tprint(
-        `\n=== BATCH CYCLE TIME ===\n` +
+      scriptLog.text(
+        `=== BATCH CYCLE TIME ===\n` +
           `Predicted: ${ns.format.time(predictedBatchCycleTime)}\n` +
           `Actual: ${ns.format.time(actualBatchCycleTime)}\n` +
           `Difference: ${Math.abs(batchTimeDiff).toFixed(0)}ms (${batchPercentDiff}%)`
       )
     }
-    // break
+
+    flushLog()
   }
 }
