@@ -2,16 +2,30 @@ import { NS } from "@ns"
 import { copyRequiredScripts, killOtherInstances, prepareServerMultiNode } from "./libraries/batchCalculations.js"
 import { autoNuke } from "./autoNuke.js"
 import { calculateBatchThreads, calculateBatchTimings, executeBatches } from "./libraries/batchExecution.js"
-import { findBestTarget } from "./libraries/findBestTarget.js"
+import { buildProfitabilityTableConfig, findBestTarget } from "./libraries/findBestTarget.js"
 import { purchasePrograms, purchaseTorRouter } from "./libraries/purchasePrograms.js"
 import { purchaseServers } from "./libraries/purchaseServer.js"
 import { getAvailableRam, getEffectiveMaxRam } from "./libraries/ramUtils.js"
-import { ScriptLogBuilder, initScriptLogTail, type ReactTableConfig, type TableLayout } from "./libraries/scriptLogUi.js"
+import {
+  TabbedScriptLogBuilder,
+  initScriptLogTail,
+  type ReactTableConfig,
+  type TabDefinition,
+  type TableLayout,
+} from "./libraries/scriptLogUi.js"
 import { getNodesForBatching } from "./libraries/serverManagement.js"
 
 const BATCH_LAYOUT: Partial<TableLayout> = {
   tableWidthPx: 720,
 }
+
+const BATCH_TABS: TabDefinition[] = [
+  { id: "setup", label: "Setup" },
+  { id: "targets", label: "Targets" },
+  { id: "prep", label: "Prep" },
+  { id: "batch", label: "Batch" },
+  { id: "results", label: "Results" },
+]
 
 export async function main(ns: NS) {
   const playerHackLevel = ns.args[0] ? Number(ns.args[0]) : undefined
@@ -19,24 +33,33 @@ export async function main(ns: NS) {
   initScriptLogTail(ns, "Batch", BATCH_LAYOUT)
   ns.ui.resizeTail(BATCH_LAYOUT.tableWidthPx ?? 720, 640)
 
-  const scriptLog = new ScriptLogBuilder(BATCH_LAYOUT)
-  const flushLog = () => scriptLog.render(ns)
-  const logMessage = (message: string) => {
-    scriptLog.text(message)
-    flushLog()
+  const tabbedLog = new TabbedScriptLogBuilder(BATCH_TABS, BATCH_LAYOUT)
+  const renderLog = () => tabbedLog.render(ns)
+
+  const logSetup = (message: string) => {
+    tabbedLog.setActiveTab("setup").tab("setup").text(message)
+    renderLog()
   }
+
+  // Append only during prep sim — re-render at phase boundaries so React tab clicks are not reset every line
   const prepLogOptions = {
-    logMessage,
-    logTable: (config: ReactTableConfig) => {
-      scriptLog.table({ tableWidth: BATCH_LAYOUT.tableWidthPx, ...config })
-      flushLog()
+    logMessage: (message: string) => {
+      tabbedLog.setActiveTab("prep").tab("prep").text(message)
     },
+    logTable: (config: ReactTableConfig) => {
+      tabbedLog.setActiveTab("prep").tab("prep").table({ tableWidth: BATCH_LAYOUT.tableWidthPx, ...config })
+    },
+  }
+
+  const logBatch = (message: string) => {
+    tabbedLog.setActiveTab("batch").tab("batch").text(message)
+    renderLog()
   }
 
   await killOtherInstances(ns)
 
   while (true) {
-    scriptLog.reset()
+    tabbedLog.reset()
 
     const invitations = ns.singularity.checkFactionInvitations()
     for (const inv of invitations) {
@@ -46,21 +69,22 @@ export async function main(ns: NS) {
     ns.scriptKill("autoWorkFactions.js", "home")
     ns.exec("contractSolver.js", "home", 1, "solve")
 
-    purchaseTorRouter(ns, logMessage)
-    purchasePrograms(ns, logMessage)
-    await autoNuke(ns, logMessage)
+    tabbedLog.setActiveTab("setup")
+    purchaseTorRouter(ns, logSetup)
+    purchasePrograms(ns, logSetup)
+    await autoNuke(ns, logSetup)
 
     const wasUpgraded = purchaseServers(ns)
     if (wasUpgraded) {
-      scriptLog.text("Server was purchased/upgraded, restarting batch cycle...")
-      flushLog()
+      tabbedLog.tab("setup").text("Server was purchased/upgraded, restarting batch cycle...")
+      renderLog()
     }
 
     const nodes = getNodesForBatching(ns)
 
     if (nodes.length === 0) {
-      scriptLog.text("ERROR: No nodes with root access found")
-      flushLog()
+      tabbedLog.tab("setup").text("ERROR: No nodes with root access found")
+      renderLog()
       await ns.sleep(1000)
       continue
     }
@@ -100,27 +124,26 @@ export async function main(ns: NS) {
       batchDelay,
       nodes,
       playerHackLevel,
-      10,
-      logMessage
+      10
     )
     const player = ns.getPlayer()
 
-    scriptLog.section("Target")
-    scriptLog
-      .keyValueTable({
-        tableWidth: BATCH_LAYOUT.tableWidthPx,
-        rows: [
-          { label: "Server", value: target.serverName },
-          { label: "Min Node RAM", value: ns.format.ram(nodeRamLimit) },
-          { label: "Nodes", value: nodes.length.toString() },
-          { label: "Total RAM", value: ns.format.ram(totalMaxRam) },
-          {
-            label: "Hack Threshold",
-            value: `${(target.hackThreshold * 100).toFixed(2)}% (${ns.format.number(target.moneyPerSecond)}/sec)`,
-          },
-        ],
-      })
-      .render(ns)
+    tabbedLog.setActiveTab("targets")
+    tabbedLog.tab("targets").keyValueTable({
+      tableWidth: BATCH_LAYOUT.tableWidthPx,
+      title: "Batch Nodes",
+      rows: [
+        { label: "Worker Nodes", value: nodes.length.toString() },
+        { label: "Total RAM", value: ns.format.ram(totalMaxRam) },
+        { label: "Min Node RAM", value: ns.format.ram(nodeRamLimit) },
+      ],
+    })
+    tabbedLog.tab("targets").table({
+      ...buildProfitabilityTableConfig(ns, target.servers),
+      tableWidth: BATCH_LAYOUT.tableWidthPx,
+      selectedRowIndex: 0,
+    })
+    renderLog()
 
     const server = ns.getServer(target.serverName)
     server.hackDifficulty = server.minDifficulty
@@ -128,6 +151,7 @@ export async function main(ns: NS) {
 
     const debug = true
 
+    tabbedLog.setActiveTab("prep")
     const calcStartTime = Date.now()
     const prepEstimate = await prepareServerMultiNode(ns, nodes, target.serverName, {
       dryRun: true,
@@ -138,15 +162,15 @@ export async function main(ns: NS) {
     const calcDuration = calcEndTime - calcStartTime
 
     if (debug) {
-      scriptLog.text(`Prep calculation took: ${calcDuration}ms`)
+      tabbedLog.tab("prep").text(`Prep calculation took: ${calcDuration}ms`)
     }
 
     if (prepEstimate.totalTime > 0) {
-      scriptLog.text(`Preparing ${target.serverName}... (estimated time: ${ns.format.time(prepEstimate.totalTime)})`)
+      tabbedLog.tab("prep").text(`Preparing ${target.serverName}... (estimated time: ${ns.format.time(prepEstimate.totalTime)})`)
     } else {
-      scriptLog.text(`${target.serverName} is already prepared!`)
+      tabbedLog.tab("prep").text(`${target.serverName} is already prepared!`)
     }
-    flushLog()
+    renderLog()
 
     const prepStartTime = Date.now()
     await prepareServerMultiNode(ns, nodes, target.serverName, {
@@ -161,13 +185,14 @@ export async function main(ns: NS) {
     const timeDiff = actualPrepTime - prepEstimate.totalTime
     const percentDiff = prepEstimate.totalTime > 0 ? ((timeDiff / prepEstimate.totalTime) * 100).toFixed(1) : "0.0"
     if (debug) {
-      scriptLog.text(
+      tabbedLog.tab("prep").text(
         `=== TOTAL PREP TIME ===\n` +
           `Estimated: ${ns.format.time(prepEstimate.totalTime)}\n` +
           `Actual: ${ns.format.time(actualPrepTime)}\n` +
           `Difference: ${Math.abs(timeDiff).toFixed(0)}ms (${percentDiff}%)`
       )
     }
+    renderLog()
 
     const batchConfigStartTime = Date.now()
     const batchConfig = {
@@ -181,7 +206,7 @@ export async function main(ns: NS) {
       totalMaxRam,
       ramThreshold,
       nodeRamLimit,
-      logMessage,
+      logMessage: logBatch,
     }
 
     const threads = calculateBatchThreads(ns, batchConfig)
@@ -220,16 +245,16 @@ export async function main(ns: NS) {
       })
     }
 
-    scriptLog.section("Batch Configuration")
-    scriptLog.keyValueTable({
+    tabbedLog.setActiveTab("batch")
+    tabbedLog.tab("batch").keyValueTable({
       tableWidth: BATCH_LAYOUT.tableWidthPx,
+      title: "Batch Configuration",
       rows: configRows,
       separatorAfter: [5],
     })
-
-    scriptLog.section("Thread Distribution & Timing")
-    scriptLog.threeColumnTable({
+    tabbedLog.tab("batch").threeColumnTable({
       tableWidth: BATCH_LAYOUT.tableWidthPx,
+      title: "Thread Distribution & Timing",
       headers: ["Operation", "Threads", "RAM"],
       rows: [
         [
@@ -267,7 +292,7 @@ export async function main(ns: NS) {
     })
 
     if (debug) {
-      scriptLog.text(
+      tabbedLog.tab("batch").text(
         `[Timing Debug]\n` +
           `  Prep calculation: ${calcDuration}ms\n` +
           `  Prep execution: ${ns.format.time(actualPrepTime)}\n` +
@@ -280,16 +305,16 @@ export async function main(ns: NS) {
     const currentSecurity = ns.getServerSecurityLevel(target.serverName)
     const securityDiff = currentSecurity - minSecurity
     if (securityDiff > 0) {
-      scriptLog.text(`WARNING: ${target.serverName} security above minimum by ${securityDiff.toFixed(2)}`)
+      tabbedLog.tab("batch").text(`WARNING: ${target.serverName} security above minimum by ${securityDiff.toFixed(2)}`)
     }
 
-    flushLog()
+    renderLog()
 
     const batchStartTime = Date.now()
     const completedBatches = await executeBatches(ns, batchConfig, threads, timings, batches)
     if (completedBatches == 0) {
-      scriptLog.text("ERROR: No batches were executed. Exiting.")
-      flushLog()
+      tabbedLog.setActiveTab("results").tab("results").text("ERROR: No batches were executed. Exiting.")
+      renderLog()
       await ns.sleep(1000)
       continue
     }
@@ -306,25 +331,25 @@ export async function main(ns: NS) {
     const batchPercentDiff =
       predictedBatchCycleTime > 0 ? ((batchTimeDiff / predictedBatchCycleTime) * 100).toFixed(1) : "0.0"
 
-    scriptLog.section("Batch Execution Results")
-    scriptLog
-      .keyValueTable({
-        tableWidth: BATCH_LAYOUT.tableWidthPx,
-        rows: [
-          { label: "Status", value: "All batches completed" },
-          {
-            label: "Security",
-            value: `${finalSecurity.toFixed(2)} / ${minSecurity.toFixed(2)} (+${(finalSecurity - minSecurity).toFixed(2)})`,
-          },
-          {
-            label: "Money",
-            value: `${moneyPercent.toFixed(2)}% (${ns.format.number(currentMoney)} / ${ns.format.number(maxMoney)})`,
-          },
-        ],
-      })
+    tabbedLog.setActiveTab("results")
+    tabbedLog.tab("results").keyValueTable({
+      tableWidth: BATCH_LAYOUT.tableWidthPx,
+      title: "Batch Execution Results",
+      rows: [
+        { label: "Status", value: "All batches completed" },
+        {
+          label: "Security",
+          value: `${finalSecurity.toFixed(2)} / ${minSecurity.toFixed(2)} (+${(finalSecurity - minSecurity).toFixed(2)})`,
+        },
+        {
+          label: "Money",
+          value: `${moneyPercent.toFixed(2)}% (${ns.format.number(currentMoney)} / ${ns.format.number(maxMoney)})`,
+        },
+      ],
+    })
 
     if (debug) {
-      scriptLog.text(
+      tabbedLog.tab("results").text(
         `=== BATCH CYCLE TIME ===\n` +
           `Predicted: ${ns.format.time(predictedBatchCycleTime)}\n` +
           `Actual: ${ns.format.time(actualBatchCycleTime)}\n` +
@@ -332,6 +357,6 @@ export async function main(ns: NS) {
       )
     }
 
-    flushLog()
+    renderLog()
   }
 }

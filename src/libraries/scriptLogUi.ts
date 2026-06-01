@@ -34,6 +34,8 @@ const HEADER_BG = "rgba(255, 255, 255, 0.04)"
 
 export type ReactRef = {
   createElement(type: string, props?: Record<string, unknown> | null, ...children: unknown[]): ReactNode
+  useState: <T>(initial: T) => [T, (value: T) => void]
+  useEffect: (effect: () => void | (() => void), deps?: unknown[]) => void
 }
 
 export function getReact(): ReactRef {
@@ -318,6 +320,135 @@ export class ScriptLogBuilder {
 
   build(): ReactNode {
     return buildStack(this.sections, this.layout)
+  }
+
+  isEmpty(): boolean {
+    return this.sections.length === 0
+  }
+
+  render(ns: NS): void {
+    renderScriptLog(ns, this.build())
+  }
+}
+
+export interface TabDefinition {
+  id: string
+  label: string
+}
+
+interface TabbedLogViewProps {
+  tabOrder: TabDefinition[]
+  panels: Record<string, ReactNode>
+  programmaticActiveId: string
+  layout: TableLayout
+}
+
+/** Stateful tab UI — uses React hooks (no document/window DOM). Clicks may not work in all game versions. */
+function TabbedLogView(props: TabbedLogViewProps): ReactNode {
+  const React = getReact()
+  const { tabOrder, panels, programmaticActiveId, layout } = props
+  const [activeId, setActiveId] = React.useState(programmaticActiveId)
+
+  React.useEffect(() => {
+    setActiveId(programmaticActiveId)
+  }, [programmaticActiveId])
+
+  const tabBar = React.createElement(
+    "div",
+    {
+      style: {
+        display: "flex",
+        flexWrap: "wrap",
+        gap: "2px",
+        marginBottom: `${layout.sectionGapPx}px`,
+      },
+    },
+    ...tabOrder.map(({ id, label }) => {
+      const isActive = id === activeId
+      const hasContent = panels[id] != null
+      return React.createElement(
+        "div",
+        {
+          key: id,
+          onClick: () => setActiveId(id),
+          style: {
+            padding: `4px ${layout.paddingXPx}px`,
+            fontFamily: "monospace",
+            fontSize: `${layout.fontSizePx}px`,
+            fontWeight: isActive ? "bold" : "normal",
+            backgroundColor: isActive ? ACTIVE_HEADER_BG : hasContent ? "rgba(255, 255, 255, 0.06)" : "transparent",
+            border: `${layout.borderPx}px solid ${HEADER_BORDER}`,
+            opacity: hasContent || isActive ? 1 : 0.45,
+            cursor: "pointer",
+            userSelect: "none",
+          },
+        },
+        label
+      )
+    })
+  )
+
+  const panelContent = panels[activeId] ?? buildTextBlock("(no content yet)", layout)
+
+  return React.createElement(
+    "div",
+    { style: { display: "block", margin: "0", padding: "0" } },
+    tabBar,
+    panelContent
+  )
+}
+
+export class TabbedScriptLogBuilder {
+  private builders = new Map<string, ScriptLogBuilder>()
+  private activeTabId: string
+  private layout?: Partial<TableLayout>
+
+  constructor(
+    private tabOrder: TabDefinition[],
+    layout?: Partial<TableLayout>
+  ) {
+    this.layout = layout
+    this.activeTabId = tabOrder[0]?.id ?? ""
+  }
+
+  reset(): this {
+    this.builders.clear()
+    this.activeTabId = this.tabOrder[0]?.id ?? ""
+    return this
+  }
+
+  setActiveTab(tabId: string): this {
+    this.activeTabId = tabId
+    return this
+  }
+
+  tab(tabId: string): ScriptLogBuilder {
+    let builder = this.builders.get(tabId)
+    if (!builder) {
+      builder = new ScriptLogBuilder(this.layout)
+      this.builders.set(tabId, builder)
+    }
+    return builder
+  }
+
+  build(): ReactNode {
+    const React = getReact()
+    const layout = mergeLayout(this.layout)
+    const panels: Record<string, ReactNode> = {}
+
+    for (const { id } of this.tabOrder) {
+      const builder = this.builders.get(id)
+      if (builder && !builder.isEmpty()) {
+        panels[id] = builder.build()
+      }
+    }
+
+    return React.createElement(TabbedLogView, {
+      tabOrder: this.tabOrder,
+      panels,
+      programmaticActiveId: this.activeTabId,
+      layout,
+    })
   }
 
   render(ns: NS): void {

@@ -11,13 +11,51 @@ import {
 } from "./batchCalculations.js"
 import { crawl } from "./crawl.js"
 import { distributeBatchesAcrossNodes, getAllNodes } from "./serverManagement.js"
-import { buildTable } from "./tableBuilder.js"
+import { buildTable, type TableConfig } from "./tableBuilder.js"
 import { getEffectiveMaxRam } from "./ramUtils.js"
+
+const DEFAULT_PROFITABILITY_TABLE_ROWS = 20
+
+export function buildProfitabilityTableConfig(
+  ns: NS,
+  servers: ServerProfitability[],
+  maxRows = DEFAULT_PROFITABILITY_TABLE_ROWS
+): TableConfig {
+  const shown = servers.slice(0, maxRows)
+
+  return {
+    title:
+      servers.length > maxRows
+        ? `Targets (top ${maxRows} of ${servers.length} hackable)`
+        : `Targets (${servers.length} hackable)`,
+    columns: [
+      { header: "Server", align: "left", minWidth: 14 },
+      { header: "Lvl", align: "right" },
+      { header: "Max Money", align: "right" },
+      { header: "Threshold", align: "right" },
+      { header: "$/sec", align: "right" },
+      { header: "Weaken", align: "right" },
+      { header: "Batch RAM", align: "right" },
+      { header: "Batches", align: "right" },
+    ],
+    rows: shown.map((server) => [
+      server.serverName,
+      server.hackLevel.toString(),
+      ns.format.number(server.moneyMax),
+      `${(server.optimalThreshold * 100).toFixed(2)}%`,
+      `${ns.format.number(server.moneyPerSecond)}/s`,
+      ns.format.time(server.weakenTime),
+      ns.format.ram(server.batchRam),
+      server.batches.toString(),
+    ]),
+  }
+}
 
 export interface BestTargetResult {
   serverName: string
   hackThreshold: number
   moneyPerSecond: number
+  servers: ServerProfitability[]
 }
 
 export interface ServerProfitability {
@@ -273,9 +311,7 @@ export async function findBestTarget(
     batchCycles
   )
 
-  const log = logMessage ?? (() => {})
-
-  log(`Found ${profitabilityData.length} hackable servers, analyzing profitability...`)
+  logMessage?.(`Analyzed ${profitabilityData.length} hackable servers`)
 
   const best = profitabilityData[0]
 
@@ -283,17 +319,11 @@ export async function findBestTarget(
     throw new Error("No hackable servers found!")
   }
 
-  log("")
-  log("=".repeat(60))
-  log(`Best target: ${best.serverName}`)
-  log(`Optimal hack threshold: ${(best.optimalThreshold * 100).toFixed(2)}%`)
-  log(`Expected income: ${ns.format.number(best.moneyPerSecond)}/sec`)
-  log("=".repeat(60))
-
   return {
     serverName: best.serverName,
     hackThreshold: best.optimalThreshold,
     moneyPerSecond: best.moneyPerSecond,
+    servers: profitabilityData,
   }
 }
 
@@ -310,8 +340,10 @@ export async function main(ns: NS) {
   const nodeRamLimit = Math.min(...nodes.map((node) => getEffectiveMaxRam(ns, node)))
   const myCores = ns.getServer(nodes[0]).cpuCores
 
-  findBestTarget(ns, totalMaxRam, nodeRamLimit, myCores, 20, nodes, playerHackLevel, 3, (msg) => ns.tprint(msg))
+  const result = await findBestTarget(ns, totalMaxRam, nodeRamLimit, myCores, 20, nodes, playerHackLevel, 3)
 
+  ns.tprint(buildTable(buildProfitabilityTableConfig(ns, result.servers)))
   ns.tprint("")
+  ns.tprint(`Best target: ${result.serverName} (${(result.hackThreshold * 100).toFixed(2)}%, ${ns.format.number(result.moneyPerSecond)}/s)`)
   ns.tprint(`To start batching: run batch.js`)
 }
