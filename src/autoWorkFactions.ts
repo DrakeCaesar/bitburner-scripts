@@ -4,7 +4,9 @@ import {
   buildFactionWorkTableConfig,
   gatherAugmentTargets,
   getTargetFavor,
+  parseFactionWorkPriority,
   prioritizeTargets,
+  type FactionWorkPriority,
 } from "./libraries/factionWork.js"
 import {
   applyTailSize,
@@ -23,14 +25,14 @@ const FACTION_WORK_LAYOUT: Partial<TableLayout> = {
   fontSizePx: 12,
 }
 
-async function renderFactionWorkTable(ns: NS): Promise<void> {
+async function renderFactionWorkTable(ns: NS, priority: FactionWorkPriority): Promise<void> {
   const player = ns.getPlayer()
   const targetFavor = getTargetFavor(ns)
   const allTargets = gatherAugmentTargets(ns, player.factions)
-  const prioritized = prioritizeTargets(allTargets, targetFavor)
+  const prioritized = prioritizeTargets(allTargets, targetFavor, priority)
   const best = prioritized[0] ?? null
-  const rows = buildFactionWorkRows(ns, player.factions, allTargets, prioritized, best)
-  const table = buildFactionWorkTableConfig(ns, rows, best)
+  const rows = buildFactionWorkRows(ns, player.factions, allTargets, prioritized, best, priority)
+  const table = buildFactionWorkTableConfig(ns, rows, best, priority)
 
   const tableConfig = { layout: FACTION_WORK_LAYOUT, ...table }
   const renderLayout = {
@@ -44,7 +46,9 @@ async function renderFactionWorkTable(ns: NS): Promise<void> {
 
 export async function main(ns: NS) {
   ns.disableLog("ALL")
-  initScriptLogTail(ns, "Faction Work", FACTION_WORK_LAYOUT)
+  const priority = parseFactionWorkPriority(ns)
+  const tailTitle = priority === "augments" ? "Faction Work (augments)" : "Faction Work"
+  initScriptLogTail(ns, tailTitle, FACTION_WORK_LAYOUT)
 
   while (true) {
     const player = ns.getPlayer()
@@ -58,10 +62,10 @@ export async function main(ns: NS) {
 
     const targetFavor = getTargetFavor(ns)
     const allTargets = gatherAugmentTargets(ns, player.factions)
-    const prioritized = prioritizeTargets(allTargets, targetFavor)
+    const prioritized = prioritizeTargets(allTargets, targetFavor, priority)
     const bestTarget = prioritized[0]
 
-    await renderFactionWorkTable(ns)
+    await renderFactionWorkTable(ns, priority)
 
     if (!bestTarget) {
       return
