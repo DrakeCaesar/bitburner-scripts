@@ -1,112 +1,257 @@
-import { CrimeStats, CrimeType, NS } from "@ns"
+import { CrimeType, NS, ReactNode } from "@ns"
+
+type CrimeMode = "money" | "karma" | "xp"
 
 interface CrimeInfo {
   name: CrimeType
   chance: number
-  stats: CrimeStats
-  profitPerMs: number
   expectedProfitPerMs: number
-  karmaPerMs: number
   expectedKarmaPerMs: number
   totalXpPerMs: number
 }
 
-function getBestCrime(ns: NS, mode: "money" | "karma" | "xp"): CrimeInfo {
-  const crimes = Object.values(ns.enums.CrimeType)
+const React = eval("window.React") as {
+  createElement(type: string, props?: Record<string, unknown> | null, ...children: unknown[]): ReactNode
+}
 
-  const crimeInfos: CrimeInfo[] = crimes.map((crime) => {
+const LAYOUT = {
+  fontSizePx: 12,
+  paddingXPx: 8,
+  borderPx: 1,
+  headerRowHeightPx: 26,
+  bodyRowHeightPx: 22,
+  tableWidthPx: 640,
+  tailTitleBarPx: 33,
+  colCrimePx: 160,
+  colSuccessPx: 72,
+  colMetricPx: 136,
+} as const
+
+const HIGHLIGHT_BG = "rgba(0, 255, 0, 0.18)"
+const SELECTED_ROW_BG = "rgba(255, 255, 255, 0.06)"
+const ACTIVE_HEADER_BG = "rgba(0, 255, 0, 0.12)"
+
+function getCrimeInfos(ns: NS): CrimeInfo[] {
+  return Object.values(ns.enums.CrimeType).map((crime) => {
     const stats = ns.singularity.getCrimeStats(crime)
     const chance = ns.singularity.getCrimeChance(crime)
-
-    // Calculate profit per millisecond
     const profitPerMs = stats.money / stats.time
-
-    // Expected profit accounts for success chance
-    const expectedProfitPerMs = profitPerMs * chance
-
-    // Calculate karma loss per millisecond (karma is negative, so we use absolute value)
     const karmaPerMs = Math.abs(stats.karma) / stats.time
-
-    // Expected karma loss accounts for success chance
-    const expectedKarmaPerMs = karmaPerMs * chance
-
-    // Calculate total XP per millisecond (all stat gains combined, no chance dependency)
-    const totalXpPerMs = (stats.hacking_exp + stats.strength_exp + stats.defense_exp + 
-                         stats.dexterity_exp + stats.agility_exp + stats.charisma_exp) / stats.time
+    const totalXpPerMs =
+      (stats.hacking_exp +
+        stats.strength_exp +
+        stats.defense_exp +
+        stats.dexterity_exp +
+        stats.agility_exp +
+        stats.charisma_exp) /
+      stats.time
 
     return {
       name: crime,
       chance,
-      stats,
-      profitPerMs,
-      expectedProfitPerMs,
-      karmaPerMs,
-      expectedKarmaPerMs,
+      expectedProfitPerMs: profitPerMs * chance,
+      expectedKarmaPerMs: karmaPerMs * chance,
       totalXpPerMs,
     }
   })
+}
 
-  if (mode === "karma") {
-    // Sort by expected karma loss per millisecond (descending)
-    crimeInfos.sort((a, b) => b.expectedKarmaPerMs - a.expectedKarmaPerMs)
-  } else if (mode === "xp") {
-    // Sort by total XP per millisecond (descending, no chance dependency)
-    crimeInfos.sort((a, b) => b.totalXpPerMs - a.totalXpPerMs)
-  } else {
-    // Sort by expected profit per millisecond (descending)
-    crimeInfos.sort((a, b) => b.expectedProfitPerMs - a.expectedProfitPerMs)
+function compareCrimesByMode(a: CrimeInfo, b: CrimeInfo, mode: CrimeMode): number {
+  if (mode === "karma") return b.expectedKarmaPerMs - a.expectedKarmaPerMs
+  if (mode === "money") return b.expectedProfitPerMs - a.expectedProfitPerMs
+  return b.totalXpPerMs - a.totalXpPerMs
+}
+
+function pickBestCrime(crimeInfos: CrimeInfo[], mode: CrimeMode): CrimeInfo {
+  return [...crimeInfos].sort((a, b) => compareCrimesByMode(a, b, mode))[0]
+}
+
+function getBestCrimesByColumn(crimeInfos: CrimeInfo[]): Record<CrimeMode, CrimeType> {
+  return {
+    karma: pickBestCrime(crimeInfos, "karma").name,
+    money: pickBestCrime(crimeInfos, "money").name,
+    xp: pickBestCrime(crimeInfos, "xp").name,
   }
+}
 
-  return crimeInfos[0]
+function formatKarmaRate(ratePerMs: number): string {
+  return `${(ratePerMs * 1000).toFixed(2)}/s`
+}
+
+function formatMoneyRate(ns: NS, ratePerMs: number): string {
+  return `$${ns.format.number(ratePerMs * 1000)}/s`
+}
+
+function formatXpRate(ns: NS, ratePerMs: number): string {
+  return `${ns.format.number(ratePerMs * 1000)}/s`
+}
+
+function baseCellStyle(
+  rowHeightPx: number,
+  highlight: boolean,
+  selectedRow: boolean,
+  borderColor: string
+): Record<string, string> {
+  return {
+    boxSizing: "border-box",
+    height: `${rowHeightPx}px`,
+    lineHeight: `${LAYOUT.fontSizePx}px`,
+    padding: `0 ${LAYOUT.paddingXPx}px`,
+    border: `${LAYOUT.borderPx}px solid ${borderColor}`,
+    fontSize: `${LAYOUT.fontSizePx}px`,
+    verticalAlign: "middle",
+    backgroundColor: highlight ? HIGHLIGHT_BG : selectedRow ? SELECTED_ROW_BG : "transparent",
+    whiteSpace: "nowrap",
+  }
+}
+
+function cellStyle(highlight: boolean, selectedRow: boolean): Record<string, string> {
+  return baseCellStyle(LAYOUT.bodyRowHeightPx, highlight, selectedRow, "rgba(255, 255, 255, 0.08)")
+}
+
+function headerStyle(activeMode: boolean): Record<string, string> {
+  return {
+    ...baseCellStyle(LAYOUT.headerRowHeightPx, false, false, "rgba(255, 255, 255, 0.15)"),
+    fontWeight: "bold",
+    backgroundColor: activeMode ? ACTIVE_HEADER_BG : "rgba(255, 255, 255, 0.04)",
+  }
+}
+
+function buildCrimeTable(ns: NS, crimeInfos: CrimeInfo[], mode: CrimeMode, selected: CrimeInfo): ReactNode {
+  const bestByColumn = getBestCrimesByColumn(crimeInfos)
+  const rows = [...crimeInfos].sort((a, b) => compareCrimesByMode(a, b, mode))
+
+  return React.createElement(
+    "div",
+    { style: { display: "block", margin: "0", padding: "0" } },
+    React.createElement(
+      "table",
+      {
+        style: {
+          borderCollapse: "collapse",
+          tableLayout: "fixed",
+          width: `${LAYOUT.tableWidthPx}px`,
+          margin: "0",
+          fontFamily: "monospace",
+          fontSize: `${LAYOUT.fontSizePx}px`,
+        },
+      },
+      React.createElement(
+        "colgroup",
+        null,
+        React.createElement("col", { style: { width: `${LAYOUT.colCrimePx}px` } }),
+        React.createElement("col", { style: { width: `${LAYOUT.colSuccessPx}px` } }),
+        React.createElement("col", { style: { width: `${LAYOUT.colMetricPx}px` } }),
+        React.createElement("col", { style: { width: `${LAYOUT.colMetricPx}px` } }),
+        React.createElement("col", { style: { width: `${LAYOUT.colMetricPx}px` } })
+      ),
+      React.createElement(
+        "thead",
+        null,
+        React.createElement(
+          "tr",
+          null,
+          React.createElement("th", { style: headerStyle(false) }, "Crime"),
+          React.createElement("th", { style: headerStyle(false) }, "Success"),
+          React.createElement("th", { style: headerStyle(mode === "karma") }, "Karma"),
+          React.createElement("th", { style: headerStyle(mode === "money") }, "Money"),
+          React.createElement("th", { style: headerStyle(mode === "xp") }, "XP")
+        )
+      ),
+      React.createElement(
+        "tbody",
+        null,
+        ...rows.map((crime) => {
+          const selectedRow = crime.name === selected.name
+
+          return React.createElement(
+            "tr",
+            { key: crime.name },
+            React.createElement("td", { style: cellStyle(false, selectedRow) }, crime.name),
+            React.createElement(
+              "td",
+              { style: { ...cellStyle(false, selectedRow), textAlign: "right" } },
+              `${(crime.chance * 100).toFixed(1)}%`
+            ),
+            React.createElement(
+              "td",
+              {
+                style: {
+                  ...cellStyle(crime.name === bestByColumn.karma, selectedRow),
+                  textAlign: "right",
+                },
+              },
+              formatKarmaRate(crime.expectedKarmaPerMs)
+            ),
+            React.createElement(
+              "td",
+              {
+                style: {
+                  ...cellStyle(crime.name === bestByColumn.money, selectedRow),
+                  textAlign: "right",
+                },
+              },
+              formatMoneyRate(ns, crime.expectedProfitPerMs)
+            ),
+            React.createElement(
+              "td",
+              {
+                style: { ...cellStyle(crime.name === bestByColumn.xp, selectedRow), textAlign: "right" },
+              },
+              formatXpRate(ns, crime.totalXpPerMs)
+            )
+          )
+        })
+      )
+    )
+  )
+}
+
+function tailSizeForTable(crimeRowCount: number): { width: number; height: number } {
+  const tableHeightPx = LAYOUT.headerRowHeightPx + crimeRowCount * LAYOUT.bodyRowHeightPx
+  return {
+    width: LAYOUT.tableWidthPx,
+    height: tableHeightPx + LAYOUT.tailTitleBarPx,
+  }
+}
+
+function renderCrimeTable(ns: NS, crimeInfos: CrimeInfo[], mode: CrimeMode, selected: CrimeInfo): void {
+  ns.clearLog()
+  ns.printRaw(buildCrimeTable(ns, crimeInfos, mode, selected))
+  ns.ui.renderTail()
+}
+
+function parseMode(ns: NS): CrimeMode {
+  const arg = String(ns.args[0] ?? "")
+  if (arg === "karma" || arg === "k") return "karma"
+  if (arg === "money" || arg === "m") return "money"
+  if (arg === "xp" || arg === "x") return "xp"
+  return "xp"
 }
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL")
+  const mode = parseMode(ns)
 
-  // Determine mode based on command line argument
-  let mode: "money" | "karma" | "xp" = "xp" // default
-  
-  if (ns.args[0] === "karma" || ns.args[0] === "k") {
-    mode = "karma"
-  } else if (ns.args[0] === "xp" || ns.args[0] === "x") {
-    mode = "xp"
-  }
+  ns.ui.openTail()
+  ns.ui.setTailTitle(`Crime - ${mode}`)
+  ns.ui.setTailFontSize(LAYOUT.fontSizePx)
 
-  if (mode === "karma") {
-    ns.print("Running in KARMA mode - prioritizing karma loss rate")
-  } else if (mode === "xp") {
-    ns.print("Running in XP mode - prioritizing total experience gain rate")
-  } else {
-    ns.print("Running in MONEY mode - prioritizing profit rate")
-  }
+  let tailSized = false
 
   for (;;) {
-    await ns.sleep(10)
-    // Get the best crime based on selected mode
-    const bestCrime = getBestCrime(ns, mode)
+    const crimeInfos = getCrimeInfos(ns)
+    const bestCrime = pickBestCrime(crimeInfos, mode)
 
-    ns.print(`Best crime: ${bestCrime.name}`)
-    ns.print(`  Chance: ${(bestCrime.chance * 100).toFixed(2)}%`)
-    ns.print(`  Money: $${ns.format.number(bestCrime.stats.money)}`)
-    ns.print(`  Time: ${ns.format.time(bestCrime.stats.time)}`)
-    ns.print(`  Profit/s: $${ns.format.number(bestCrime.profitPerMs * 1000)}/s`)
-    ns.print(`  Expected profit/s: $${ns.format.number(bestCrime.expectedProfitPerMs * 1000)}/s`)
+    renderCrimeTable(ns, crimeInfos, mode, bestCrime)
 
-    if (mode === "karma") {
-      ns.print(`  Karma: ${bestCrime.stats.karma.toFixed(2)}`)
-      ns.print(`  Karma/s: ${(bestCrime.karmaPerMs * 1000).toFixed(2)}/s`)
-      ns.print(`  Expected karma/s: ${(bestCrime.expectedKarmaPerMs * 1000).toFixed(2)}/s`)
-    } else if (mode === "xp") {
-      ns.print(`  Total XP/s: ${ns.format.number(bestCrime.totalXpPerMs * 1000)}/s`)
-      ns.print(`  Hacking XP: ${ns.format.number(bestCrime.stats.hacking_exp)}`)
-      ns.print(`  Combat XP: ${ns.format.number(bestCrime.stats.strength_exp + bestCrime.stats.defense_exp + bestCrime.stats.dexterity_exp + bestCrime.stats.agility_exp)}`)
-      ns.print(`  Charisma XP: ${ns.format.number(bestCrime.stats.charisma_exp)}`)
+    if (!tailSized) {
+      const { width, height } = tailSizeForTable(crimeInfos.length)
+      ns.ui.resizeTail(width, height)
+      tailSized = true
     }
 
-    // Commit the crime
     const crimeTime = ns.singularity.commitCrime(bestCrime.name, false)
-
-    // Wait for the crime to complete
     await ns.sleep(crimeTime + 10)
   }
 }

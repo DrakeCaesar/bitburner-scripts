@@ -12,7 +12,7 @@ interface AugmentTarget {
 }
 
 // Constant for favor grinding target
-const TARGET_FAVOR = 150
+const TARGET_FAVOR = 75
 
 export async function main(ns: NS) {
   ns.disableLog("ALL")

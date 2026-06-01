@@ -96,6 +96,14 @@ For Netscript API work, prefer `NetscriptDefinitions.d.ts` first — it matches 
 - Real-time file syncing enables rapid development iteration
 - Visual modification scripts use extensive DOM manipulation and CSS injection
 
+### In-game UI text
+
+Scripts that render in the game (tail logs, `printRaw`, terminal output, floating windows) should match the game's visual language:
+
+- Use plain ASCII for labels and status text (letters, numbers, basic punctuation)
+- Do not use decorative Unicode (arrows, bullets, emoji, box-drawing, fancy dashes, etc.) — they clash with the game's monospace UI
+- Prefer styling (background color, font weight) over symbols to indicate state
+
 ## Instructions for agents
 
 - **Always consult `NetscriptDefinitions.d.ts` when working with NS API functions** — it contains complete documentation, RAM costs, and type signatures
