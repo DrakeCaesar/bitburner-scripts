@@ -11,6 +11,8 @@ export interface TableLayout {
   bodyRowHeightPx: number
   tableWidthPx: number
   tailTitleBarPx: number
+  /** Total tail window height from `resizeTail` — used to top-align content in the log viewport. */
+  tailHeightPx?: number
   sectionGapPx: number
 }
 
@@ -44,6 +46,33 @@ export function getReact(): ReactRef {
 
 export function mergeLayout(partial?: Partial<TableLayout>): TableLayout {
   return { ...DEFAULT_LAYOUT, ...partial }
+}
+
+function contentViewportMinHeight(layout: TableLayout): number | undefined {
+  if (layout.tailHeightPx == null) return undefined
+  return Math.max(0, layout.tailHeightPx - layout.tailTitleBarPx)
+}
+
+function buildViewportShell(content: ReactNode, layout: TableLayout): ReactNode {
+  const minHeightPx = contentViewportMinHeight(layout)
+  if (minHeightPx == null) return content
+
+  const React = getReact()
+  return React.createElement(
+    "div",
+    {
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "flex-start",
+        alignItems: "flex-start",
+        minHeight: `${minHeightPx}px`,
+        width: "100%",
+        boxSizing: "border-box",
+      },
+    },
+    content
+  )
 }
 
 export interface CellStyleState {
@@ -332,7 +361,7 @@ export class ScriptLogBuilder {
   }
 
   render(ns: NS): void {
-    renderScriptLog(ns, this.build())
+    renderScriptLog(ns, this.build(), this.layout)
   }
 }
 
@@ -457,13 +486,14 @@ export class TabbedScriptLogBuilder {
   }
 
   render(ns: NS): void {
-    renderScriptLog(ns, this.build())
+    renderScriptLog(ns, this.build(), this.layout)
   }
 }
 
-export function renderScriptLog(ns: NS, content: ReactNode): void {
+export function renderScriptLog(ns: NS, content: ReactNode, layout?: Partial<TableLayout>): void {
+  const merged = mergeLayout(layout)
   ns.clearLog()
-  ns.printRaw(content)
+  ns.printRaw(buildViewportShell(content, merged))
   ns.ui.renderTail()
 }
 

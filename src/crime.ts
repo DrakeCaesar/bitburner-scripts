@@ -120,8 +120,8 @@ function buildCrimeTable(ns: NS, crimeInfos: CrimeInfo[], mode: CrimeMode, selec
   })
 }
 
-function renderCrimeTable(ns: NS, crimeInfos: CrimeInfo[], mode: CrimeMode, selected: CrimeInfo): void {
-  renderScriptLog(ns, buildCrimeTable(ns, crimeInfos, mode, selected))
+function renderCrimeTable(ns: NS, crimeInfos: CrimeInfo[], mode: CrimeMode, selected: CrimeInfo, tailHeightPx?: number): void {
+  renderScriptLog(ns, buildCrimeTable(ns, crimeInfos, mode, selected), { ...CRIME_LAYOUT, tailHeightPx })
 }
 
 function parseMode(ns: NS): CrimeMode {
@@ -137,19 +137,19 @@ export async function main(ns: NS): Promise<void> {
 
   initScriptLogTail(ns, `Crime - ${mode}`, CRIME_LAYOUT)
 
-  let tailSized = false
+  let tailHeightPx: number | undefined
 
   for (;;) {
     const crimeInfos = getCrimeInfos(ns)
     const bestCrime = pickBestCrime(crimeInfos, mode)
 
-    renderCrimeTable(ns, crimeInfos, mode, bestCrime)
-
-    if (!tailSized) {
+    if (tailHeightPx == null) {
       const { width, height } = tailSizeForTable(crimeInfos.length, CRIME_LAYOUT)
       ns.ui.resizeTail(width, height)
-      tailSized = true
+      tailHeightPx = height
     }
+
+    renderCrimeTable(ns, crimeInfos, mode, bestCrime, tailHeightPx)
 
     const crimeTime = ns.singularity.commitCrime(bestCrime.name, false)
     await ns.sleep(crimeTime + 10)

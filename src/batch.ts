@@ -15,9 +15,12 @@ import {
 } from "./libraries/scriptLogUi.js"
 import { getNodesForBatching } from "./libraries/serverManagement.js"
 
+const BATCH_TAIL_HEIGHT_PX = 640
+
 const BATCH_LAYOUT: Partial<TableLayout> = {
   tableWidthPx: 720,
   fontSizePx: 14,
+  tailHeightPx: BATCH_TAIL_HEIGHT_PX,
 }
 
 const BATCH_TABS: TabDefinition[] = [
@@ -32,7 +35,7 @@ export async function main(ns: NS) {
   const playerHackLevel = ns.args[0] ? Number(ns.args[0]) : undefined
 
   initScriptLogTail(ns, "Batch", BATCH_LAYOUT)
-  ns.ui.resizeTail(BATCH_LAYOUT.tableWidthPx ?? 720, 640)
+  ns.ui.resizeTail(BATCH_LAYOUT.tableWidthPx ?? 720, BATCH_TAIL_HEIGHT_PX)
 
   const tabbedLog = new TabbedScriptLogBuilder(BATCH_TABS, BATCH_LAYOUT)
   const renderLog = () => tabbedLog.render(ns)
