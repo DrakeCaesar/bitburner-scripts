@@ -12,16 +12,42 @@ import {
 import { crawl } from "./crawl.js"
 import { distributeBatchesAcrossNodes, getAllNodes } from "./serverManagement.js"
 import { buildTable, type TableConfig } from "./tableBuilder.js"
+import type { ReactTableConfig } from "./scriptLogUi.js"
 import { getEffectiveMaxRam } from "./ramUtils.js"
 
 const DEFAULT_PROFITABILITY_TABLE_ROWS = 20
+
+const PROFIT_WITH_PREP_COL = 4
+const PROFIT_PREPPED_COL = 5
 
 export function buildProfitabilityTableConfig(
   ns: NS,
   servers: ServerProfitability[],
   maxRows = DEFAULT_PROFITABILITY_TABLE_ROWS
-): TableConfig {
+): ReactTableConfig {
   const shown = servers.slice(0, maxRows)
+
+  let bestWithPrep = -1
+  let bestPrepped = -1
+  let bestWithPrepServer = ""
+  let bestPreppedServer = ""
+  for (const server of shown) {
+    if (server.moneyPerSecond > bestWithPrep) {
+      bestWithPrep = server.moneyPerSecond
+      bestWithPrepServer = server.serverName
+    }
+    if (server.moneyPerSecondPrepped > bestPrepped) {
+      bestPrepped = server.moneyPerSecondPrepped
+      bestPreppedServer = server.serverName
+    }
+  }
+
+  const highlightCells = new Set<string>()
+  const activeHeaderColumns = new Set([PROFIT_WITH_PREP_COL, PROFIT_PREPPED_COL])
+  shown.forEach((server, rowIdx) => {
+    if (server.serverName === bestWithPrepServer) highlightCells.add(`${rowIdx},${PROFIT_WITH_PREP_COL}`)
+    if (server.serverName === bestPreppedServer) highlightCells.add(`${rowIdx},${PROFIT_PREPPED_COL}`)
+  })
 
   return {
     title:
@@ -34,6 +60,7 @@ export function buildProfitabilityTableConfig(
       { header: "Max Money", align: "right" },
       { header: "Threshold", align: "right" },
       { header: "$/sec", align: "right" },
+      { header: "Prepped $/s", align: "right" },
       { header: "Weaken", align: "right" },
       { header: "Batch RAM", align: "right" },
       { header: "Batches", align: "right" },
@@ -44,10 +71,13 @@ export function buildProfitabilityTableConfig(
       ns.format.number(server.moneyMax),
       `${(server.optimalThreshold * 100).toFixed(2)}%`,
       `${ns.format.number(server.moneyPerSecond)}/s`,
+      `${ns.format.number(server.moneyPerSecondPrepped)}/s`,
       ns.format.time(server.weakenTime),
       ns.format.ram(server.batchRam),
       server.batches.toString(),
     ]),
+    highlightCells,
+    activeHeaderColumns,
   }
 }
 
@@ -64,7 +94,10 @@ export interface ServerProfitability {
   moneyMax: number
   weakenTime: number
   optimalThreshold: number
+  /** $/s amortizing one prep over batchCycles */
   moneyPerSecond: number
+  /** $/s if the server is already prepped (no prep time in denominator) */
+  moneyPerSecondPrepped: number
   batchRam: number
   batches: number
 }
@@ -126,6 +159,7 @@ export async function analyzeAllServers(
 
     // Test different thresholds for this server
     let serverBestMoneyPerSecond = 0
+    let serverBestMoneyPerSecondPrepped = 0
     let serverBestThreshold = 0.5
     let serverBestBatchRam = 0
     let serverBestBatches = 0
@@ -229,7 +263,9 @@ export async function analyzeAllServers(
       // Total money = totalMoneyPerCycle * batchCycles
       const totalTime = prepTime + batchCycleTime * batchCycles
       const totalMoney = totalMoneyPerCycle * batchCycles
+      const batchRunTime = batchCycleTime * batchCycles
       const moneyPerSecond = totalTime > 0 ? (totalMoney / totalTime) * 1000 : 0
+      const moneyPerSecondPrepped = batchRunTime > 0 ? (totalMoney / batchRunTime) * 1000 : 0
 
       // Store result for this threshold
       thresholdResults.push({
@@ -246,6 +282,10 @@ export async function analyzeAllServers(
         serverBestThreshold = testThreshold
         serverBestBatchRam = totalBatchRam
         serverBestBatches = batches
+      }
+
+      if (moneyPerSecondPrepped > serverBestMoneyPerSecondPrepped) {
+        serverBestMoneyPerSecondPrepped = moneyPerSecondPrepped
       }
     }
 
@@ -278,6 +318,7 @@ export async function analyzeAllServers(
       weakenTime: weakenTime,
       optimalThreshold: serverBestThreshold,
       moneyPerSecond: serverBestMoneyPerSecond,
+      moneyPerSecondPrepped: serverBestMoneyPerSecondPrepped,
       batchRam: serverBestBatchRam,
       batches: serverBestBatches,
     })

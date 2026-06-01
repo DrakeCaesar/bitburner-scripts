@@ -50,7 +50,7 @@ export async function main(ns: NS) {
       tabbedLog.setActiveTab("prep").tab("prep").text(message)
     },
     logTable: (config: ReactTableConfig) => {
-      tabbedLog.setActiveTab("prep").tab("prep").table({ tableWidth: BATCH_LAYOUT.tableWidthPx, ...config })
+      tabbedLog.setActiveTab("prep").tab("prep").table(config)
     },
   }
 
@@ -134,7 +134,6 @@ export async function main(ns: NS) {
 
     tabbedLog.setActiveTab("targets")
     tabbedLog.tab("targets").keyValueTable({
-      tableWidth: BATCH_LAYOUT.tableWidthPx,
       title: "Batch Nodes",
       rows: [
         { label: "Worker Nodes", value: nodes.length.toString() },
@@ -144,7 +143,6 @@ export async function main(ns: NS) {
     })
     tabbedLog.tab("targets").table({
       ...buildProfitabilityTableConfig(ns, target.servers),
-      tableWidth: BATCH_LAYOUT.tableWidthPx,
       selectedRowIndex: 0,
     })
     await renderLog()
@@ -251,13 +249,11 @@ export async function main(ns: NS) {
 
     tabbedLog.setActiveTab("batch")
     tabbedLog.tab("batch").keyValueTable({
-      tableWidth: BATCH_LAYOUT.tableWidthPx,
       title: "Batch Configuration",
       rows: configRows,
       separatorAfter: [5],
     })
     tabbedLog.tab("batch").threeColumnTable({
-      tableWidth: BATCH_LAYOUT.tableWidthPx,
       title: "Thread Distribution & Timing",
       headers: ["Operation", "Threads", "RAM"],
       rows: [
@@ -337,7 +333,6 @@ export async function main(ns: NS) {
 
     tabbedLog.setActiveTab("results")
     tabbedLog.tab("results").keyValueTable({
-      tableWidth: BATCH_LAYOUT.tableWidthPx,
       title: "Batch Execution Results",
       rows: [
         { label: "Status", value: "All batches completed" },

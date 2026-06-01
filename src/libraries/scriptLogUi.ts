@@ -11,8 +11,14 @@ export interface TableLayout {
   bodyRowHeightPx: number
   tableWidthPx: number
   tailTitleBarPx: number
+  /** Widest table in a tabbed log; used for resizeTail only, not per-table width. */
+  tailTableWidthPx?: number
+  /** Minimum tail window width (defaults to tableWidthPx). */
+  tailWidthPx?: number
   /** Minimum total tail window height; content taller than this triggers auto-resize. */
   tailHeightPx?: number
+  /** Cap for auto-resized tail width; defaults to ~95% of the game window. */
+  tailMaxWidthPx?: number
   /** Cap for auto-resized tail height; defaults to ~92% of the game window. */
   tailMaxHeightPx?: number
   sectionGapPx: number
@@ -138,8 +144,18 @@ function buildViewportShell(content: ReactNode, layout: TableLayout): ReactNode 
 
 function measureTailContentHeightPx(): number | null {
   const doc = eval("document") as Document
-  const el = doc.querySelector(`[${SCRIPT_LOG_VIEWPORT_ATTR}]`) as HTMLElement | null
-  return el?.scrollHeight ?? null
+  const viewport = doc.querySelector(`[${SCRIPT_LOG_VIEWPORT_ATTR}]`) as HTMLElement | null
+  if (!viewport) return null
+  return viewport.scrollHeight
+}
+
+function resolveTailWidth(layout: TableLayout): number {
+  const win = eval("window") as Window
+  const contentWidth = layout.tailTableWidthPx ?? layout.tableWidthPx
+  const minWidth = layout.tailWidthPx ?? layout.tableWidthPx
+  const maxWidth = layout.tailMaxWidthPx ?? Math.floor(win.innerWidth * 0.95)
+  const padded = Math.ceil(contentWidth + layout.sectionGapPx)
+  return Math.min(maxWidth, Math.max(minWidth, padded))
 }
 
 function resolveTailHeight(contentHeightPx: number, layout: TableLayout): number {
@@ -202,17 +218,66 @@ export function headerCellStyle(layout: TableLayout, activeHeader = false): Reco
 
 /** Extra width (in char units) for one space of inset on each side of cell text. */
 const COLUMN_WIDTH_PAD_CHARS = 2
+/** Monospace advance width relative to font size (~1ch in browsers). */
+const CHAR_WIDTH_TO_FONT_RATIO = 0.6
 
-function computeColumnWidths(config: TableConfig, columnWidths?: number[]): number[] {
+function computeColumnWidthsPx(config: TableConfig, layout: TableLayout, columnWidths?: number[]): number[] {
   if (columnWidths) return columnWidths
 
+  const charPx = layout.fontSizePx * CHAR_WIDTH_TO_FONT_RATIO
+  const cellPaddingPx = layout.paddingXPx * 2
   return config.columns.map((col, colIdx) => {
     let maxChars = col.header.length
     for (const row of config.rows) {
       if (row[colIdx]) maxChars = Math.max(maxChars, row[colIdx].length)
     }
-    return Math.max(maxChars, col.minWidth ?? 0) + COLUMN_WIDTH_PAD_CHARS
+    const charWidth = Math.max(maxChars, col.minWidth ?? 0) + COLUMN_WIDTH_PAD_CHARS
+    return Math.ceil(charWidth * charPx + cellPaddingPx)
   })
+}
+
+/** Pixel width a table needs (same rules as buildReactTable). */
+export function estimateReactTableWidthPx(config: ReactTableConfig, layout?: Partial<TableLayout>): number {
+  const merged = mergeLayout(config.layout ?? layout)
+  const colWidths = computeColumnWidthsPx(config, merged, config.columnWidths)
+  const sumColWidths = colWidths.reduce((sum, width) => sum + width, 0)
+  if (config.tableWidth != null) return Math.max(config.tableWidth, sumColWidths)
+  return Math.max(sumColWidths, merged.tableWidthPx)
+}
+
+function keyValueToReactTableConfig(
+  config: KeyValueTableConfig & Pick<ReactTableConfig, "tableWidth" | "columnWidths">
+): ReactTableConfig {
+  const { rows, title, separatorAfter = [], valueAlign = "right" } = config
+  return {
+    title,
+    tableWidth: config.tableWidth,
+    columnWidths: config.columnWidths,
+    columns: [
+      { header: "", align: "left" },
+      { header: "", align: valueAlign },
+    ],
+    rows: rows.map((r) => [r.label, r.value]),
+    separatorAfter,
+  }
+}
+
+function threeColumnToReactTableConfig(
+  config: ThreeColumnTableConfig & Pick<ReactTableConfig, "tableWidth" | "columnWidths">
+): ReactTableConfig {
+  const { headers, rows, title, separatorAfter = [], align = ["left", "right", "right"] } = config
+  return {
+    title,
+    tableWidth: config.tableWidth,
+    columnWidths: config.columnWidths,
+    columns: [
+      { header: headers[0], align: align[0] },
+      { header: headers[1], align: align[1] },
+      { header: headers[2], align: align[2] },
+    ],
+    rows,
+    separatorAfter,
+  }
 }
 
 export interface ReactTableConfig extends TableConfig {
@@ -228,10 +293,9 @@ export function buildReactTable(config: ReactTableConfig): ReactNode {
   const React = getReact()
   const layout = mergeLayout(config.layout)
   const { columns, rows, title, separatorAfter = [] } = config
-  const colWidths = computeColumnWidths(config, config.columnWidths)
+  const colWidths = computeColumnWidthsPx(config, layout, config.columnWidths)
   const sumColWidths = colWidths.reduce((sum, width) => sum + width, 0)
-  const tableWidth =
-    config.tableWidth != null ? Math.max(config.tableWidth, sumColWidths) : Math.max(sumColWidths, layout.tableWidthPx)
+  const tableWidth = config.tableWidth != null ? Math.max(config.tableWidth, sumColWidths) : sumColWidths
   const alignments = columns.map((col, idx) => col.align ?? (idx === 0 ? "left" : "right"))
 
   const headerCells = columns.map((col, idx) =>
@@ -312,36 +376,13 @@ export function buildReactTable(config: ReactTableConfig): ReactNode {
 }
 
 export function buildReactKeyValueTable(config: KeyValueTableConfig & Pick<ReactTableConfig, "layout" | "tableWidth">): ReactNode {
-  const { rows, title, separatorAfter = [], valueAlign = "right" } = config
-  return buildReactTable({
-    title,
-    layout: config.layout,
-    tableWidth: config.tableWidth,
-    columns: [
-      { header: "", align: "left" },
-      { header: "", align: valueAlign },
-    ],
-    rows: rows.map((r) => [r.label, r.value]),
-    separatorAfter,
-  })
+  return buildReactTable({ layout: config.layout, ...keyValueToReactTableConfig(config) })
 }
 
 export function buildReactThreeColumnTable(
   config: ThreeColumnTableConfig & Pick<ReactTableConfig, "layout" | "tableWidth">
 ): ReactNode {
-  const { headers, rows, title, separatorAfter = [], align = ["left", "right", "right"] } = config
-  return buildReactTable({
-    title,
-    layout: config.layout,
-    tableWidth: config.tableWidth,
-    columns: [
-      { header: headers[0], align: align[0] },
-      { header: headers[1], align: align[1] },
-      { header: headers[2], align: align[2] },
-    ],
-    rows,
-    separatorAfter,
-  })
+  return buildReactTable({ layout: config.layout, ...threeColumnToReactTableConfig(config) })
 }
 
 export function buildSectionHeader(title: string, layout?: Partial<TableLayout>): ReactNode {
@@ -389,8 +430,28 @@ export function buildStack(children: ReactNode[], layout?: Partial<TableLayout>)
   )
 }
 
+type LogSection =
+  | { kind: "text"; message: string }
+  | { kind: "section"; title: string }
+  | { kind: "table"; config: ReactTableConfig }
+  | { kind: "keyValue"; config: KeyValueTableConfig & Pick<ReactTableConfig, "tableWidth" | "columnWidths"> }
+  | { kind: "threeColumn"; config: ThreeColumnTableConfig & Pick<ReactTableConfig, "tableWidth" | "columnWidths"> }
+
+function logSectionToReactTableConfig(section: LogSection): ReactTableConfig | null {
+  switch (section.kind) {
+    case "table":
+      return section.config
+    case "keyValue":
+      return keyValueToReactTableConfig(section.config)
+    case "threeColumn":
+      return threeColumnToReactTableConfig(section.config)
+    default:
+      return null
+  }
+}
+
 export class ScriptLogBuilder {
-  private sections: ReactNode[] = []
+  private sections: LogSection[] = []
   private layout?: Partial<TableLayout>
 
   constructor(layout?: Partial<TableLayout>) {
@@ -403,32 +464,57 @@ export class ScriptLogBuilder {
   }
 
   text(message: string): this {
-    this.sections.push(buildTextBlock(message, this.layout))
+    this.sections.push({ kind: "text", message })
     return this
   }
 
   section(title: string): this {
-    this.sections.push(buildSectionHeader(title, this.layout))
+    this.sections.push({ kind: "section", title })
     return this
   }
 
   table(config: ReactTableConfig): this {
-    this.sections.push(buildReactTable({ layout: this.layout, ...config }))
+    this.sections.push({ kind: "table", config })
     return this
   }
 
   keyValueTable(config: KeyValueTableConfig & Pick<ReactTableConfig, "tableWidth" | "columnWidths">): this {
-    this.sections.push(buildReactKeyValueTable({ layout: this.layout, ...config }))
+    this.sections.push({ kind: "keyValue", config })
     return this
   }
 
   threeColumnTable(config: ThreeColumnTableConfig & Pick<ReactTableConfig, "tableWidth" | "columnWidths">): this {
-    this.sections.push(buildReactThreeColumnTable({ layout: this.layout, ...config }))
+    this.sections.push({ kind: "threeColumn", config })
     return this
   }
 
-  build(): ReactNode {
-    return buildStack(this.sections, this.layout)
+  /** Widest table width this builder's sections need (char-based estimate). */
+  estimateMaxTableWidthPx(): number {
+    let max = mergeLayout(this.layout).tableWidthPx
+    for (const section of this.sections) {
+      const tableConfig = logSectionToReactTableConfig(section)
+      if (tableConfig) max = Math.max(max, estimateReactTableWidthPx(tableConfig, this.layout))
+    }
+    return max
+  }
+
+  build(resolvedLayout?: TableLayout): ReactNode {
+    const layout = resolvedLayout ?? mergeLayout(this.layout)
+    const nodes = this.sections.map((section) => {
+      switch (section.kind) {
+        case "text":
+          return buildTextBlock(section.message, layout)
+        case "section":
+          return buildSectionHeader(section.title, layout)
+        case "table":
+          return buildReactTable({ layout, ...section.config })
+        case "keyValue":
+          return buildReactKeyValueTable({ layout, ...section.config })
+        case "threeColumn":
+          return buildReactThreeColumnTable({ layout, ...section.config })
+      }
+    })
+    return buildStack(nodes, layout)
   }
 
   isEmpty(): boolean {
@@ -436,7 +522,11 @@ export class ScriptLogBuilder {
   }
 
   render(ns: NS): Promise<void> {
-    return renderScriptLog(ns, this.build(), this.layout)
+    const layout = mergeLayout(this.layout)
+    return renderScriptLog(ns, this.build(layout), {
+      ...layout,
+      tailTableWidthPx: this.estimateMaxTableWidthPx(),
+    })
   }
 }
 
@@ -540,6 +630,14 @@ export class TabbedScriptLogBuilder {
     return builder
   }
 
+  private resolveTailTableWidthPx(): number {
+    let maxWidth = mergeLayout(this.layout).tableWidthPx
+    for (const builder of this.builders.values()) {
+      maxWidth = Math.max(maxWidth, builder.estimateMaxTableWidthPx())
+    }
+    return maxWidth
+  }
+
   build(): ReactNode {
     const React = getReact()
     const layout = mergeLayout(this.layout)
@@ -548,7 +646,7 @@ export class TabbedScriptLogBuilder {
     for (const { id } of this.tabOrder) {
       const builder = this.builders.get(id)
       if (builder && !builder.isEmpty()) {
-        panels[id] = builder.build()
+        panels[id] = builder.build(layout)
       }
     }
 
@@ -561,10 +659,15 @@ export class TabbedScriptLogBuilder {
   }
 
   render(ns: NS): Promise<void> {
-    return renderScriptLog(ns, this.build(), this.layout)
+    const layout = mergeLayout(this.layout)
+    return renderScriptLog(ns, this.build(), {
+      ...layout,
+      tailTableWidthPx: this.resolveTailTableWidthPx(),
+    })
   }
 }
 
+let lastTailWidthPx = 0
 let lastTailHeightPx = 0
 
 export async function renderScriptLog(ns: NS, content: ReactNode, layout?: Partial<TableLayout>): Promise<void> {
@@ -575,13 +678,15 @@ export async function renderScriptLog(ns: NS, content: ReactNode, layout?: Parti
   ns.ui.renderTail()
   await ns.sleep(50)
 
-  const contentHeight = measureTailContentHeightPx()
-  if (contentHeight == null) return
+  const contentHeightPx = measureTailContentHeightPx()
+  if (contentHeightPx == null) return
 
-  const nextHeight = resolveTailHeight(contentHeight, merged)
-  if (nextHeight === lastTailHeightPx) return
+  const nextWidth = resolveTailWidth(merged)
+  const nextHeight = resolveTailHeight(contentHeightPx, merged)
+  if (nextWidth === lastTailWidthPx && nextHeight === lastTailHeightPx) return
+  lastTailWidthPx = nextWidth
   lastTailHeightPx = nextHeight
-  ns.ui.resizeTail(merged.tableWidthPx, nextHeight)
+  ns.ui.resizeTail(nextWidth, nextHeight)
 }
 
 export function initScriptLogTail(ns: NS, title: string, layout?: Partial<TableLayout>): void {
