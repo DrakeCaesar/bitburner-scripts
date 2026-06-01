@@ -1,6 +1,6 @@
 import { NS } from "@ns"
-import { crawl } from "/src/libraries/crawl.js"
-import { buildTable } from "/src/libraries/tableBuilder.js"
+import { crawl } from "./libraries/crawl.js"
+import { buildTable } from "./libraries/tableBuilder.js"
 
 type ContractTypeMap = Map<
   string,
@@ -17,6 +17,7 @@ type ContractTypeMap = Map<
 
 export async function main(ns: NS): Promise<void> {
   const solve: boolean = ns.args.length > 0 && ns.args[0] === "solve"
+  const quiet = ns.args.includes("quiet") || ns.args.includes("batch")
   const knownServers = crawl(ns)
   const contractMap: ContractTypeMap = new Map()
 
@@ -34,6 +35,11 @@ export async function main(ns: NS): Promise<void> {
       contractMap.get(type)?.contracts?.push({ server, name: contract, data })
     }
   }
+
+  if (contractMap.size === 0) {
+    return
+  }
+
   const url = URL.createObjectURL(
     new Blob([`${ns.read("libraries/contractWorker.js")}`], {
       type: "text/javascript",
@@ -173,5 +179,7 @@ export async function main(ns: NS): Promise<void> {
       }
     }
   }
-  ns.tprint(fullOutput)
+  if (!quiet && tableRows.length > 0) {
+    ns.tprint(fullOutput)
+  }
 }

@@ -69,7 +69,8 @@ export async function main(ns: NS) {
     }
 
     ns.scriptKill("autoWorkFactions.js", "home")
-    ns.exec("contractSolver.js", "home", 1, "solve")
+    ns.scriptKill("contractSolver.js", "home")
+    ns.exec("contractSolver.js", "home", 1, "solve", "quiet")
 
     tabbedLog.setActiveTab("setup")
     purchaseTorRouter(ns, logSetup)
