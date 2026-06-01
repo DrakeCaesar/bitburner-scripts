@@ -14,6 +14,7 @@ import {
   type TableLayout,
 } from "./libraries/scriptLogUi.js"
 import { getNodesForBatching } from "./libraries/serverManagement.js"
+import { joinWorthyFactionInvitations } from "./libraries/factionInvites.js"
 
 const BATCH_TAIL_MIN_HEIGHT_PX = 640
 
@@ -62,9 +63,9 @@ export async function main(ns: NS) {
   while (true) {
     tabbedLog.reset()
 
-    const invitations = ns.singularity.checkFactionInvitations()
-    for (const inv of invitations) {
-      ns.singularity.joinFaction(inv)
+    const joinedFactions = joinWorthyFactionInvitations(ns)
+    if (joinedFactions.length > 0) {
+      tabbedLog.tab("setup").text(`Joined factions: ${joinedFactions.join(", ")}`)
     }
 
     ns.scriptKill("autoWorkFactions.js", "home")
