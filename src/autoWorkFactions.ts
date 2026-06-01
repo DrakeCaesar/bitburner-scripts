@@ -1,172 +1,83 @@
-import { FactionName, NS } from "@ns"
+import { NS } from "@ns"
+import {
+  buildFactionWorkRows,
+  buildFactionWorkTableConfig,
+  gatherAugmentTargets,
+  getTargetFavor,
+  prioritizeTargets,
+} from "./libraries/factionWork.js"
+import {
+  applyTailSize,
+  buildReactTable,
+  estimateReactTableHeightPx,
+  estimateReactTableWidthPx,
+  initScriptLogTail,
+  renderScriptLog,
+  type TableLayout,
+} from "./libraries/scriptLogUi.js"
 
-interface AugmentTarget {
-  augmentName: string
-  faction: FactionName
-  currentRep: number
-  requiredRep: number
-  repGap: number
-  favor: number // Current faction favor
-  favorGain: number // Favor gain on reset
-  predictedFavor: number // favor + favorGain
+const CHECK_INTERVAL_MS = 10_000
+
+const FACTION_WORK_LAYOUT: Partial<TableLayout> = {
+  tableWidthPx: 720,
+  fontSizePx: 12,
 }
 
-// Constant for favor grinding target
-const TARGET_FAVOR = 75
+async function renderFactionWorkTable(ns: NS): Promise<void> {
+  const player = ns.getPlayer()
+  const targetFavor = getTargetFavor(ns)
+  const allTargets = gatherAugmentTargets(ns, player.factions)
+  const prioritized = prioritizeTargets(allTargets, targetFavor)
+  const best = prioritized[0] ?? null
+  const rows = buildFactionWorkRows(ns, player.factions, allTargets, prioritized, best)
+  const table = buildFactionWorkTableConfig(ns, rows, best)
+
+  const tableConfig = { layout: FACTION_WORK_LAYOUT, ...table }
+  const renderLayout = {
+    ...FACTION_WORK_LAYOUT,
+    tailTableWidthPx: estimateReactTableWidthPx(tableConfig),
+    tailContentHeightPx: estimateReactTableHeightPx(tableConfig),
+  }
+  applyTailSize(ns, renderLayout)
+  await renderScriptLog(ns, buildReactTable(tableConfig), renderLayout)
+}
 
 export async function main(ns: NS) {
   ns.disableLog("ALL")
-  const checkInterval = 10000 // Check every 10 seconds
-
-  ns.tprint("Starting faction hacking contract automation...")
-
-  let currentTargetKey = ""
+  initScriptLogTail(ns, "Faction Work", FACTION_WORK_LAYOUT)
 
   while (true) {
     const player = ns.getPlayer()
-    const playerFactions = player.factions
 
-    if (playerFactions.length === 0) {
-      ns.tprint("ERROR: You are not in any factions yet!")
-      return
+    if (player.factions.length === 0) {
+      ns.clearLog()
+      ns.print("ERROR: You are not in any factions yet!")
+      await ns.sleep(CHECK_INTERVAL_MS)
+      continue
     }
 
-    // Find all augments we don't have enough rep for
-    const targets = findBestAugmentTarget(ns, playerFactions)
+    const targetFavor = getTargetFavor(ns)
+    const allTargets = gatherAugmentTargets(ns, player.factions)
+    const prioritized = prioritizeTargets(allTargets, targetFavor)
+    const bestTarget = prioritized[0]
 
-    if (targets.length === 0) {
-      ns.tprint("✓ You have enough reputation for all available augments and all factions have target favor!")
+    await renderFactionWorkTable(ns)
+
+    if (!bestTarget) {
       return
-    }
-
-    // Pick the target where we're closest to fulfilling requirements
-    const bestTarget = targets[0]
-    const targetKey = `${bestTarget.faction}:${bestTarget.augmentName}`
-
-    // Only print when target changes
-    if (targetKey !== currentTargetKey) {
-      currentTargetKey = targetKey
-      ns.print(`\n${"=".repeat(60)}`)
-
-      const favorGain = ns.singularity.getFactionFavorGain(bestTarget.faction)
-      const totalFavorAfterReset = bestTarget.favor + favorGain
-      const favorGap = TARGET_FAVOR - totalFavorAfterReset
-      const isFavorGrinding = totalFavorAfterReset < TARGET_FAVOR
-
-      if (isFavorGrinding) {
-        ns.print(`Target: Grinding Favor for ${bestTarget.faction}`)
-        ns.print(`Current Favor: ${ns.format.number(bestTarget.favor)}`)
-        ns.print(`Favor Gain on Reset: +${ns.format.number(favorGain)}`)
-        ns.print(`Total Favor After Reset: ${ns.format.number(totalFavorAfterReset)}`)
-        ns.print(`Target Favor: ${TARGET_FAVOR}`)
-        ns.print(`Favor Gap: ${ns.format.number(favorGap)}`)
-      } else {
-        ns.print(`Target Augment: ${bestTarget.augmentName}`)
-        ns.print(`Faction: ${bestTarget.faction}`)
-        ns.print(`Current Rep: ${ns.format.number(bestTarget.currentRep)}`)
-        ns.print(`Required Rep: ${ns.format.number(bestTarget.requiredRep)}`)
-        ns.print(`Gap: ${ns.format.number(bestTarget.repGap)}`)
-      }
-
-      ns.print(`${"=".repeat(60)}`)
     }
 
     const currentRep = ns.singularity.getFactionRep(bestTarget.faction)
-
-    // Check if we've reached the target
     if (currentRep >= bestTarget.requiredRep) {
-      ns.print(
-        `✓ Reached target reputation for ${bestTarget.augmentName} in ${bestTarget.faction}: ${ns.format.number(currentRep)}/${ns.format.number(bestTarget.requiredRep)}`
-      )
-      // Continue to next iteration to pick new target
       continue
     }
 
-    // Start hacking contract work for the faction
     const focus = ns.singularity.isFocused()
     const working = ns.singularity.workForFaction(bestTarget.faction, "hacking", focus)
-
     if (!working) {
       ns.print(`ERROR: Failed to work for ${bestTarget.faction}. Faction may not offer hacking contracts.`)
-      // Sleep and try again (maybe work type will become available)
-      await ns.sleep(checkInterval)
-      continue
     }
 
-    // Wait before checking again
-    await ns.sleep(checkInterval)
+    await ns.sleep(CHECK_INTERVAL_MS)
   }
-}
-
-function findBestAugmentTarget(ns: NS, playerFactions: FactionName[]): AugmentTarget[] {
-  const ownedAugments = new Set(ns.singularity.getOwnedAugmentations(true))
-  const targets: AugmentTarget[] = []
-  const augmentsWithEnoughRep = new Set<string>()
-
-  // First pass: identify which augments we already have enough rep for in ANY faction
-  for (const faction of playerFactions) {
-    const augments = ns.singularity.getAugmentationsFromFaction(faction)
-    const currentRep = ns.singularity.getFactionRep(faction)
-
-    for (const augName of augments) {
-      if (ownedAugments.has(augName)) continue
-      if (augName.startsWith("NeuroFlux Governor")) continue
-
-      const requiredRep = ns.singularity.getAugmentationRepReq(augName)
-
-      // If we have enough rep in this faction, mark the augment as satisfied
-      if (currentRep >= requiredRep) {
-        augmentsWithEnoughRep.add(augName)
-      }
-    }
-  }
-
-  // Second pass: collect augments we still need to work for
-  for (const faction of playerFactions) {
-    const augments = ns.singularity.getAugmentationsFromFaction(faction)
-    const currentRep = ns.singularity.getFactionRep(faction)
-
-    for (const augName of augments) {
-      // Skip owned augments
-      if (ownedAugments.has(augName)) continue
-
-      // Skip NeuroFlux Governor (it's special)
-      if (augName.startsWith("NeuroFlux Governor")) continue
-
-      // Skip augments we already have enough rep for in another faction
-      if (augmentsWithEnoughRep.has(augName)) continue
-
-      const requiredRep = ns.singularity.getAugmentationRepReq(augName)
-      const favor = ns.singularity.getFactionFavor(faction)
-      const favorGain = ns.singularity.getFactionFavorGain(faction)
-      const predictedFavor = favor + favorGain
-
-      // Only consider augments we don't have enough rep for
-      if (currentRep < requiredRep) {
-        targets.push({
-          augmentName: augName,
-          faction: faction,
-          currentRep: currentRep,
-          requiredRep: requiredRep,
-          repGap: requiredRep - currentRep,
-          favor: favor,
-          favorGain: favorGain,
-          predictedFavor: predictedFavor,
-        })
-      }
-    }
-  }
-
-  // Find targets that need favor grinding
-  const favorTargets = targets.filter((t) => t.predictedFavor < TARGET_FAVOR)
-
-  if (favorTargets.length > 0) {
-    // Sort by smallest predicted favor gap
-    favorTargets.sort((a, b) => TARGET_FAVOR - a.predictedFavor - (TARGET_FAVOR - b.predictedFavor))
-    return favorTargets
-  }
-
-  // Otherwise sort by smallest rep gap for augments
-  targets.sort((a, b) => a.repGap - b.repGap)
-  return targets
 }

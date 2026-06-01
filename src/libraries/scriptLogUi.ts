@@ -13,14 +13,14 @@ export interface TableLayout {
   tailTitleBarPx: number
   /** Widest table in a tabbed log; used for resizeTail only, not per-table width. */
   tailTableWidthPx?: number
+  /** Estimated content height in px (excludes title bar); used with resolveTailSize. */
+  tailContentHeightPx?: number
   /** Minimum tail window width (defaults to tableWidthPx). */
   tailWidthPx?: number
-  /** Minimum total tail window height; content taller than this triggers auto-resize. */
+  /** Optional fixed total tail height; overrides tailContentHeightPx when set. */
   tailHeightPx?: number
-  /** Cap for auto-resized tail width; defaults to ~95% of the game window. */
+  /** Cap for tail width; defaults to ~95% of the game window. */
   tailMaxWidthPx?: number
-  /** Cap for auto-resized tail height; defaults to ~92% of the game window. */
-  tailMaxHeightPx?: number
   sectionGapPx: number
 }
 
@@ -56,11 +56,6 @@ export function mergeLayout(partial?: Partial<TableLayout>): TableLayout {
   return { ...DEFAULT_LAYOUT, ...partial }
 }
 
-function contentViewportMinHeight(layout: TableLayout): number {
-  if (layout.tailHeightPx == null) return 0
-  return Math.max(0, layout.tailHeightPx - layout.tailTitleBarPx)
-}
-
 function findScrollParent(el: HTMLElement): HTMLElement | null {
   const win = eval("window") as Window
   let node: HTMLElement | null = el.parentElement
@@ -81,39 +76,17 @@ interface ViewportShellProps {
   children: ReactNode
 }
 
-/** Fills the tail log viewport so Bitburner's column-reverse log layout keeps content at the top. */
+/** Pins tail log scroll to top (Bitburner uses column-reverse on the log container). */
 function ViewportShell(props: ViewportShellProps): ReactNode {
   const React = getReact()
-  const { layout, children } = props
-  const fallbackMinHeightPx = contentViewportMinHeight(layout)
-  const [minHeightPx, setMinHeightPx] = React.useState(fallbackMinHeightPx)
+  const { children } = props
   const [containerEl, setContainerEl] = React.useState<HTMLElement | null>(null)
 
   React.useEffect(() => {
     if (!containerEl) return
-
-    const sync = () => {
-      const scrollParent = findScrollParent(containerEl)
-      const viewportHeight = scrollParent?.clientHeight ?? 0
-      const contentHeight = containerEl.scrollHeight
-      setMinHeightPx(Math.max(viewportHeight, contentHeight, fallbackMinHeightPx))
-      if (scrollParent) scrollParent.scrollTop = 0
-    }
-
-    sync()
-
-    if (typeof ResizeObserver !== "undefined") {
-      const observer = new ResizeObserver(sync)
-      observer.observe(containerEl)
-      const scrollParent = findScrollParent(containerEl)
-      if (scrollParent) observer.observe(scrollParent)
-      return () => observer.disconnect()
-    }
-
-    const win = eval("window") as Window
-    win.addEventListener("resize", sync)
-    return () => win.removeEventListener("resize", sync)
-  }, [containerEl, fallbackMinHeightPx])
+    const scrollParent = findScrollParent(containerEl)
+    if (scrollParent) scrollParent.scrollTop = 0
+  }, [containerEl])
 
   return React.createElement(
     "div",
@@ -124,11 +97,9 @@ function ViewportShell(props: ViewportShellProps): ReactNode {
         setContainerEl((prev) => (prev === el ? prev : el))
       },
       style: {
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "flex-start",
-        alignItems: "flex-start",
-        minHeight: minHeightPx > 0 ? `${minHeightPx}px` : undefined,
+        display: "block",
+        margin: "0",
+        padding: "0",
         width: "100%",
         boxSizing: "border-box",
       },
@@ -142,13 +113,6 @@ function buildViewportShell(content: ReactNode, layout: TableLayout): ReactNode 
   return React.createElement(ViewportShell, { layout, children: content })
 }
 
-function measureTailContentHeightPx(): number | null {
-  const doc = eval("document") as Document
-  const viewport = doc.querySelector(`[${SCRIPT_LOG_VIEWPORT_ATTR}]`) as HTMLElement | null
-  if (!viewport) return null
-  return viewport.scrollHeight
-}
-
 function resolveTailWidth(layout: TableLayout): number {
   const win = eval("window") as Window
   const contentWidth = layout.tailTableWidthPx ?? layout.tableWidthPx
@@ -158,12 +122,20 @@ function resolveTailWidth(layout: TableLayout): number {
   return Math.min(maxWidth, Math.max(minWidth, padded))
 }
 
-function resolveTailHeight(contentHeightPx: number, layout: TableLayout): number {
-  const win = eval("window") as Window
-  const minHeight = layout.tailHeightPx ?? 150
-  const maxHeight = layout.tailMaxHeightPx ?? Math.floor(win.innerHeight * 0.92)
-  const totalHeight = Math.ceil(contentHeightPx + layout.tailTitleBarPx)
-  return Math.min(maxHeight, Math.max(minHeight, totalHeight))
+/** Total tail window size from layout estimates (call applyTailSize before renderScriptLog). */
+export function resolveTailSize(layout?: Partial<TableLayout>): { width: number; height: number } {
+  const merged = mergeLayout(layout)
+  const contentHeight = merged.tailContentHeightPx ?? 0
+  const height = merged.tailHeightPx ?? merged.tailTitleBarPx + contentHeight
+  return {
+    width: resolveTailWidth(merged),
+    height: Math.max(merged.tailTitleBarPx + 40, height),
+  }
+}
+
+export function applyTailSize(ns: NS, layout?: Partial<TableLayout>): void {
+  const { width, height } = resolveTailSize(layout)
+  ns.ui.resizeTail(width, height)
 }
 
 export interface CellStyleState {
@@ -244,6 +216,20 @@ export function estimateReactTableWidthPx(config: ReactTableConfig, layout?: Par
   if (config.tableWidth != null) return Math.max(config.tableWidth, sumColWidths)
   return Math.max(sumColWidths, merged.tableWidthPx)
 }
+
+export function estimateReactTableHeightPx(config: ReactTableConfig, layout?: Partial<TableLayout>): number {
+  const merged = mergeLayout(config.layout ?? layout)
+  let height = merged.headerRowHeightPx + config.rows.length * merged.bodyRowHeightPx
+  if (config.title) height += merged.fontSizePx + 4 + merged.sectionGapPx
+  return height + merged.sectionGapPx
+}
+
+function estimateTextHeightPx(message: string, layout: TableLayout): number {
+  const lines = message.split("\n").length
+  return lines * (layout.fontSizePx + 4) + layout.sectionGapPx
+}
+
+const TAB_BAR_HEIGHT_PX = 36
 
 function keyValueToReactTableConfig(
   config: KeyValueTableConfig & Pick<ReactTableConfig, "tableWidth" | "columnWidths">
@@ -498,6 +484,38 @@ export class ScriptLogBuilder {
     return max
   }
 
+  /** Tallest stacked content height in px (tables, text, section headers). */
+  estimateContentHeightPx(): number {
+    const merged = mergeLayout(this.layout)
+    let height = 0
+    for (const section of this.sections) {
+      switch (section.kind) {
+        case "text":
+          height += estimateTextHeightPx(section.message, merged)
+          break
+        case "section":
+          height += merged.sectionGapPx + merged.fontSizePx + 4
+          break
+        case "table":
+          height += estimateReactTableHeightPx({ layout: merged, ...section.config }, merged)
+          break
+        case "keyValue":
+          height += estimateReactTableHeightPx(
+            { layout: merged, ...keyValueToReactTableConfig(section.config) },
+            merged
+          )
+          break
+        case "threeColumn":
+          height += estimateReactTableHeightPx(
+            { layout: merged, ...threeColumnToReactTableConfig(section.config) },
+            merged
+          )
+          break
+      }
+    }
+    return height
+  }
+
   build(resolvedLayout?: TableLayout): ReactNode {
     const layout = resolvedLayout ?? mergeLayout(this.layout)
     const nodes = this.sections.map((section) => {
@@ -522,11 +540,13 @@ export class ScriptLogBuilder {
   }
 
   render(ns: NS): Promise<void> {
-    const layout = mergeLayout(this.layout)
-    return renderScriptLog(ns, this.build(layout), {
-      ...layout,
+    const renderLayout = mergeLayout({
+      ...this.layout,
       tailTableWidthPx: this.estimateMaxTableWidthPx(),
+      tailContentHeightPx: this.estimateContentHeightPx(),
     })
+    applyTailSize(ns, renderLayout)
+    return renderScriptLog(ns, this.build(renderLayout), renderLayout)
   }
 }
 
@@ -638,6 +658,22 @@ export class TabbedScriptLogBuilder {
     return maxWidth
   }
 
+  private resolveTailContentHeightPx(): number {
+    let maxHeight = 0
+    for (const builder of this.builders.values()) {
+      if (!builder.isEmpty()) maxHeight = Math.max(maxHeight, builder.estimateContentHeightPx())
+    }
+    return maxHeight + TAB_BAR_HEIGHT_PX
+  }
+
+  private resolveRenderLayout(): TableLayout {
+    return mergeLayout({
+      ...this.layout,
+      tailTableWidthPx: this.resolveTailTableWidthPx(),
+      tailContentHeightPx: this.resolveTailContentHeightPx(),
+    })
+  }
+
   build(): ReactNode {
     const React = getReact()
     const layout = mergeLayout(this.layout)
@@ -659,34 +695,17 @@ export class TabbedScriptLogBuilder {
   }
 
   render(ns: NS): Promise<void> {
-    const layout = mergeLayout(this.layout)
-    return renderScriptLog(ns, this.build(), {
-      ...layout,
-      tailTableWidthPx: this.resolveTailTableWidthPx(),
-    })
+    const renderLayout = this.resolveRenderLayout()
+    applyTailSize(ns, renderLayout)
+    return renderScriptLog(ns, this.build(), renderLayout)
   }
 }
 
-let lastTailWidthPx = 0
-let lastTailHeightPx = 0
-
 export async function renderScriptLog(ns: NS, content: ReactNode, layout?: Partial<TableLayout>): Promise<void> {
   const merged = mergeLayout(layout)
-
   ns.clearLog()
   ns.printRaw(buildViewportShell(content, merged))
   ns.ui.renderTail()
-  await ns.sleep(50)
-
-  const contentHeightPx = measureTailContentHeightPx()
-  if (contentHeightPx == null) return
-
-  const nextWidth = resolveTailWidth(merged)
-  const nextHeight = resolveTailHeight(contentHeightPx, merged)
-  if (nextWidth === lastTailWidthPx && nextHeight === lastTailHeightPx) return
-  lastTailWidthPx = nextWidth
-  lastTailHeightPx = nextHeight
-  ns.ui.resizeTail(nextWidth, nextHeight)
 }
 
 export function initScriptLogTail(ns: NS, title: string, layout?: Partial<TableLayout>): void {
@@ -705,10 +724,11 @@ export function tailSizeForTable(
   const merged = mergeLayout(layout)
   const tableHeightPx = merged.headerRowHeightPx + bodyRowCount * merged.bodyRowHeightPx
   const sectionHeight = extraSections * (merged.sectionGapPx + merged.fontSizePx * 2)
-  return {
-    width: merged.tableWidthPx,
-    height: tableHeightPx + merged.tailTitleBarPx + sectionHeight,
-  }
+  return resolveTailSize({
+    ...layout,
+    tailTableWidthPx: merged.tailTableWidthPx ?? merged.tableWidthPx,
+    tailContentHeightPx: tableHeightPx + sectionHeight,
+  })
 }
 
 export function estimateStackHeight(sectionCount: number, totalTableRows: number, layout?: Partial<TableLayout>): number {

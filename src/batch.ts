@@ -16,12 +16,9 @@ import {
 import { getNodesForBatching } from "./libraries/serverManagement.js"
 import { joinWorthyFactionInvitations } from "./libraries/factionInvites.js"
 
-const BATCH_TAIL_MIN_HEIGHT_PX = 640
-
 const BATCH_LAYOUT: Partial<TableLayout> = {
   tableWidthPx: 720,
   fontSizePx: 14,
-  tailHeightPx: BATCH_TAIL_MIN_HEIGHT_PX,
 }
 
 const BATCH_TABS: TabDefinition[] = [

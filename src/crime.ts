@@ -1,9 +1,12 @@
 import { CrimeType, NS } from "@ns"
 import {
+  applyTailSize,
   buildReactTable,
+  estimateReactTableHeightPx,
+  estimateReactTableWidthPx,
   initScriptLogTail,
   renderScriptLog,
-  tailSizeForTable,
+  type ReactTableConfig,
   type TableLayout,
 } from "./libraries/scriptLogUi.js"
 
@@ -78,7 +81,7 @@ function formatXpRate(ns: NS, ratePerMs: number): string {
   return `${ns.format.number(ratePerMs * 1000)}/s`
 }
 
-function buildCrimeTable(ns: NS, crimeInfos: CrimeInfo[], mode: CrimeMode, selected: CrimeInfo) {
+function buildCrimeTableConfig(ns: NS, crimeInfos: CrimeInfo[], mode: CrimeMode, selected: CrimeInfo): ReactTableConfig {
   const bestByColumn = getBestCrimesByColumn(crimeInfos)
   const rows = [...crimeInfos].sort((a, b) => compareCrimesByMode(a, b, mode))
   const highlightCells = new Set<string>()
@@ -96,7 +99,7 @@ function buildCrimeTable(ns: NS, crimeInfos: CrimeInfo[], mode: CrimeMode, selec
 
   const selectedRowIndex = rows.findIndex((crime) => crime.name === selected.name)
 
-  return buildReactTable({
+  return {
     layout: CRIME_LAYOUT,
     tableWidth: CRIME_LAYOUT.tableWidthPx,
     columnWidths: COL_WIDTHS,
@@ -117,17 +120,23 @@ function buildCrimeTable(ns: NS, crimeInfos: CrimeInfo[], mode: CrimeMode, selec
     selectedRowIndex,
     highlightCells,
     activeHeaderColumns,
-  })
+  }
 }
 
 async function renderCrimeTable(
   ns: NS,
   crimeInfos: CrimeInfo[],
   mode: CrimeMode,
-  selected: CrimeInfo,
-  tailHeightPx?: number
+  selected: CrimeInfo
 ): Promise<void> {
-  await renderScriptLog(ns, buildCrimeTable(ns, crimeInfos, mode, selected), { ...CRIME_LAYOUT, tailHeightPx })
+  const tableConfig = buildCrimeTableConfig(ns, crimeInfos, mode, selected)
+  const renderLayout = {
+    ...CRIME_LAYOUT,
+    tailTableWidthPx: estimateReactTableWidthPx(tableConfig),
+    tailContentHeightPx: estimateReactTableHeightPx(tableConfig),
+  }
+  applyTailSize(ns, renderLayout)
+  await renderScriptLog(ns, buildReactTable(tableConfig), renderLayout)
 }
 
 function parseMode(ns: NS): CrimeMode {
@@ -143,19 +152,11 @@ export async function main(ns: NS): Promise<void> {
 
   initScriptLogTail(ns, `Crime - ${mode}`, CRIME_LAYOUT)
 
-  let tailHeightPx: number | undefined
-
   for (;;) {
     const crimeInfos = getCrimeInfos(ns)
     const bestCrime = pickBestCrime(crimeInfos, mode)
 
-    if (tailHeightPx == null) {
-      const { width, height } = tailSizeForTable(crimeInfos.length, CRIME_LAYOUT)
-      ns.ui.resizeTail(width, height)
-      tailHeightPx = height
-    }
-
-    await renderCrimeTable(ns, crimeInfos, mode, bestCrime, tailHeightPx)
+    await renderCrimeTable(ns, crimeInfos, mode, bestCrime)
 
     const crimeTime = ns.singularity.commitCrime(bestCrime.name, false)
     await ns.sleep(crimeTime + 10)
