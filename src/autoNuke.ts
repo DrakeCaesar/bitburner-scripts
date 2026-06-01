@@ -1,6 +1,6 @@
 import { NS } from "@ns"
 import { connect } from "./libraries/connect.js"
-import { crawl } from "./libraries/crawl.js"
+import { crawl, isHackableNetworkServer } from "./libraries/crawl.js"
 
 export async function main(ns: NS): Promise<void> {
   await autoNuke(ns)
@@ -11,6 +11,9 @@ export async function autoNuke(ns: NS, logMessage?: (message: string) => void): 
   const backdoorAll = ns.args[0] === "all"
   const knownServers: Set<string> = new Set<string>()
   crawl(ns, knownServers)
+  for (const key of [...knownServers]) {
+    if (!isHackableNetworkServer(key)) knownServers.delete(key)
+  }
 
   let paddingServers = 0
   let paddingLevels = 0
