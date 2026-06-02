@@ -6,6 +6,7 @@ import {
   getTargetFavor,
   parseFactionWorkPriority,
   prioritizeTargets,
+  startFactionWork,
   type FactionWorkPriority,
 } from "./libraries/factionWork.js"
 import {
@@ -18,7 +19,7 @@ import {
   type TableLayout,
 } from "./libraries/scriptLogUi.js"
 
-const CHECK_INTERVAL_MS = 10_000
+const CHECK_INTERVAL_MS = 1_000
 
 const FACTION_WORK_LAYOUT: Partial<TableLayout> = {
   tableWidthPx: 720,
@@ -77,9 +78,14 @@ export async function main(ns: NS) {
     }
 
     const focus = ns.singularity.isFocused()
-    const working = ns.singularity.workForFaction(bestTarget.faction, "hacking", focus)
-    if (!working) {
-      ns.print(`ERROR: Failed to work for ${bestTarget.faction}. Faction may not offer hacking contracts.`)
+    const { ok, workType } = startFactionWork(ns, bestTarget.faction, focus)
+    if (!ok) {
+      const types = ns.singularity.getFactionWorkTypes(bestTarget.faction)
+      const tried = workType ?? types[0]
+      ns.print(
+        `ERROR: Failed to work for ${bestTarget.faction}` +
+          (tried != null ? ` (${tried})` : types.length > 0 ? ` (offered: ${types.join(", ")})` : " (no work)")
+      )
     }
 
     await ns.sleep(CHECK_INTERVAL_MS)

@@ -1,4 +1,4 @@
-import { FactionName, NS } from "@ns"
+import { FactionName, FactionWorkType, NS } from "@ns"
 import type { ReactTableConfig } from "./scriptLogUi.js"
 
 /** Matches in-game BaseFavorToDonate (see bitburner-src Constants.ts). */
@@ -36,6 +36,8 @@ export function parseFactionWorkPriority(ns: NS): FactionWorkPriority {
 export interface FactionWorkRow {
   faction: FactionName
   mode: FactionWorkMode
+  /** Best rep/s job this faction offers (for display and ETAs). */
+  job: string
   augmentName: string
   currentRep: number
   requiredRep: number
@@ -76,14 +78,59 @@ export function repNeededForTargetFavor(
   }
 }
 
-function hackingRepPerSecond(ns: NS, faction: FactionName, favor: number): number | null {
+export function formatFactionWorkType(workType: FactionWorkType): string {
+  if (workType === "hacking") return "Hack"
+  if (workType === "field") return "Field"
+  return "Sec"
+}
+
+function focusMultiplier(ns: NS): number {
+  return ns.singularity.isFocused() ? 1 : UNFOCUSED_FOCUS_MULT
+}
+
+export function factionRepPerSecond(
+  ns: NS,
+  workType: FactionWorkType,
+  favor: number
+): number | null {
   try {
-    const gains = ns.formulas.work.factionGains(ns.getPlayer(), "hacking", favor)
-    const focusMult = ns.singularity.isFocused() ? 1 : UNFOCUSED_FOCUS_MULT
-    return gains.reputation * CYCLES_PER_SECOND * focusMult
+    const gains = ns.formulas.work.factionGains(ns.getPlayer(), workType, favor)
+    return gains.reputation * CYCLES_PER_SECOND * focusMultiplier(ns)
   } catch {
     return null
   }
+}
+
+/** Highest rep/s work type this faction offers. */
+export function getBestFactionWorkType(ns: NS, faction: FactionName): FactionWorkType | null {
+  const types = ns.singularity.getFactionWorkTypes(faction)
+  if (types.length === 0) return null
+
+  const favor = ns.singularity.getFactionFavor(faction)
+  let bestType: FactionWorkType | null = null
+  let bestRep = -1
+
+  for (const workType of types) {
+    const rep = factionRepPerSecond(ns, workType, favor)
+    if (rep != null && rep > bestRep) {
+      bestRep = rep
+      bestType = workType
+    }
+  }
+
+  return bestType
+}
+
+export function startFactionWork(
+  ns: NS,
+  faction: FactionName,
+  focus?: boolean
+): { ok: boolean; workType: FactionWorkType | null } {
+  const workType = getBestFactionWorkType(ns, faction)
+  if (workType == null) return { ok: false, workType: null }
+
+  const ok = ns.singularity.workForFaction(faction, workType, focus ?? ns.singularity.isFocused())
+  return { ok, workType }
 }
 
 /** ETA to reach augment rep target via hacking contracts (assumes continuous work). */
@@ -97,7 +144,8 @@ export function estimateAugmentRepEta(
     return { durationMs: 0, durationLabel: "done", atLabel: "—" }
   }
 
-  const repPerSecond = hackingRepPerSecond(ns, faction, favor)
+  const workType = getBestFactionWorkType(ns, faction)
+  const repPerSecond = workType != null ? factionRepPerSecond(ns, workType, favor) : null
   if (repPerSecond == null || repPerSecond <= 0) {
     return { durationMs: null, durationLabel: "—", atLabel: "—" }
   }
@@ -110,7 +158,7 @@ export function estimateAugmentRepEta(
   }
 }
 
-/** ETA to reach donation favor target via hacking contracts (assumes continuous work). */
+/** ETA to reach donation favor target (assumes continuous work on best job). */
 export function estimateFavorTargetEta(
   ns: NS,
   faction: FactionName,
@@ -132,7 +180,8 @@ export function estimateFavorTargetEta(
     return { durationMs: 0, durationLabel: "now", atLabel: "—" }
   }
 
-  const repPerSecond = hackingRepPerSecond(ns, faction, favor)
+  const workType = getBestFactionWorkType(ns, faction)
+  const repPerSecond = workType != null ? factionRepPerSecond(ns, workType, favor) : null
   if (repPerSecond == null || repPerSecond <= 0) {
     return { durationMs: null, durationLabel: "—", atLabel: "—" }
   }
@@ -143,6 +192,11 @@ export function estimateFavorTargetEta(
     durationLabel: ns.format.time(durationMs),
     atLabel: new Date(Date.now() + durationMs).toLocaleString(),
   }
+}
+
+function jobLabelForFaction(ns: NS, faction: FactionName): string {
+  const workType = getBestFactionWorkType(ns, faction)
+  return workType != null ? formatFactionWorkType(workType) : "—"
 }
 
 export function gatherAugmentTargets(ns: NS, playerFactions: readonly FactionName[]): AugmentTarget[] {
@@ -261,7 +315,8 @@ function buildReason(
   best: AugmentTarget,
   globalFavorGrind: boolean,
   targetFavor: number,
-  priority: FactionWorkPriority
+  priority: FactionWorkPriority,
+  bestJob: string
 ): string {
   if (row.mode === "idle") {
     if (globalFavorGrind && row.predictedFavor >= targetFavor) {
@@ -272,11 +327,11 @@ function buildReason(
 
   if (row.isSelected) {
     if (priority === "augments") {
-      return "Smallest rep gap — next augment unlock"
+      return `Smallest rep gap — ${bestJob} work`
     }
     return globalFavorGrind
-      ? `Lowest favor gap to ${targetFavor} (hacking contracts)`
-      : "Lowest rep gap — working toward augment"
+      ? `Lowest favor gap to ${targetFavor} (${bestJob})`
+      : `Lowest rep gap — ${bestJob} work`
   }
 
   if (priority === "augments" && row.predictedFavor < targetFavor) {
@@ -322,6 +377,7 @@ export function buildFactionWorkRows(
       rows.push({
         faction,
         mode: "idle",
+        job: jobLabelForFaction(ns, faction),
         augmentName: "—",
         currentRep: ns.singularity.getFactionRep(faction),
         requiredRep: 0,
@@ -360,9 +416,11 @@ export function buildFactionWorkRows(
       primary.repGap,
       true
     )
+    const job = jobLabelForFaction(ns, faction)
     const row: FactionWorkRow = {
       faction,
       mode,
+      job,
       augmentName: primary.augmentName,
       currentRep: primary.currentRep,
       requiredRep: primary.requiredRep,
@@ -376,7 +434,7 @@ export function buildFactionWorkRows(
       isSelected,
     }
     row.reason = best
-      ? buildReason(ns, row, best, globalFavorGrind, targetFavor, priority)
+      ? buildReason(ns, row, best, globalFavorGrind, targetFavor, priority, job)
       : idleReason(ns, faction)
     rows.push(row)
   }
@@ -443,6 +501,7 @@ export function buildFactionWorkTableConfig(
       columns: [
         { header: "Faction", align: "left", minWidth: 12 },
         { header: "Work", align: "center", minWidth: 4 },
+        { header: "Job", align: "left", minWidth: 5 },
         { header: "Augment", align: "left", minWidth: 16 },
         { header: "Rep", align: "right" },
         { header: "Required", align: "right" },
@@ -459,6 +518,7 @@ export function buildFactionWorkTableConfig(
         return [
           row.faction,
           row.isSelected ? "→" : "",
+          row.job,
           row.augmentName,
           hasAugment ? ns.format.number(row.currentRep) : "—",
           hasAugment ? ns.format.number(row.requiredRep) : "—",
@@ -481,6 +541,7 @@ export function buildFactionWorkTableConfig(
     columns: [
       { header: "Faction", align: "left", minWidth: 12 },
       { header: "Work", align: "center", minWidth: 4 },
+      { header: "Job", align: "left", minWidth: 5 },
       { header: "Mode", align: "left", minWidth: 6 },
       { header: "Augment", align: "left", minWidth: 16 },
       { header: "Rep", align: "right" },
@@ -498,6 +559,7 @@ export function buildFactionWorkTableConfig(
       return [
         row.faction,
         row.isSelected ? "→" : "",
+        row.job,
         row.mode === "favor" ? "Favor" : row.mode === "rep" ? "Rep" : "—",
         row.augmentName,
         hasAugment ? ns.format.number(row.currentRep) : "—",
