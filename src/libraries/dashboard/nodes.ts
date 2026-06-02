@@ -108,73 +108,115 @@ function generateLinearProgressBar(value: number, maxValue: number): string {
 }
 
 export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor: string): void {
-  const maxNodeRam = ns.cloud.getRamLimit()
+  const resetInfo = ns.getResetInfo()
+  const useHacknet =
+    !resetInfo.bitNodeOptions.disableHacknetServer &&
+    (resetInfo.currentNode === 9 || (resetInfo.ownedSF.get(9) ?? 0) >= 1)
 
   const minHomeRam = 8
   const maxHomeRam = Math.pow(2, 30)
   const maxHomeCores = 8 // Maximum cores for home server
 
   const nodes: NodeInfo[] = []
-
   const digits = 3
 
-  // Get home server info
   const homeRam = ns.getServerMaxRam("home")
   const homeCores = ns.getServer("home").cpuCores
 
-  // Collect all node information
-  for (let i = 0; i < 25; i++) {
-    const nodeName = "node" + String(i).padStart(2, "0")
-    const exists = ns.serverExists(nodeName)
-    const ram = exists ? ns.getServerMaxRam(nodeName) : 0
+  let maxNodeRam: number
+  let nextAction: string
+  let savingsInfo: string
 
-    nodes.push({
-      name: nodeName,
-      exists,
-      ram,
-      ramFormatted: exists ? ns.format.ram(ram, digits) : "-",
-      progressBar: generateProgressBar(ram, maxNodeRam),
-    })
-  }
+  if (useHacknet) {
+    const maxNodes = ns.hacknet.maxNumNodes()
+    const numNodes = ns.hacknet.numNodes()
+    maxNodeRam = 1
 
-  // Calculate stats
-  const existingNodes = nodes.filter((n) => n.exists)
-  const totalRam = existingNodes.reduce((sum, n) => sum + n.ram, 0)
-
-  // Calculate target RAM and cost
-  const money = ns.getPlayer().money
-  const bestRam = existingNodes.length > 0 ? Math.max(...existingNodes.map((n) => n.ram)) : 0
-
-  // Target is always double the best (or 1 if no servers), capped at maxRam
-  const targetRam = bestRam > 0 ? Math.min(bestRam * 2, maxNodeRam) : 1
-  const cost = ns.cloud.getServerCost(targetRam)
-
-  // Determine next action
-  let nextAction = "Save money"
-  let savingsInfo = ""
-
-  if (bestRam >= maxNodeRam) {
-    nextAction = `All servers maxed at ${ns.format.ram(maxNodeRam, digits)}`
-    savingsInfo = `Max server RAM reached (${ns.format.ram(maxNodeRam, digits)}) - Cost to purchase: ${ns.format.number(cost)}`
-  } else if (money >= cost) {
-    if (existingNodes.length < 25) {
-      nextAction = `Buy ${ns.format.ram(targetRam, digits)} server (${ns.format.number(cost)})`
-    } else {
-      const worstNode = existingNodes.reduce((min, n) => (n.ram < min.ram ? n : min))
-      nextAction = `Upgrade ${worstNode.name} to ${ns.format.ram(targetRam, digits)} (${ns.format.number(cost, digits)})`
+    for (let i = 0; i < numNodes; i++) {
+      maxNodeRam = Math.max(maxNodeRam, ns.hacknet.getNodeStats(i).ram)
     }
-    savingsInfo = `Ready to purchase!`
+
+    for (let i = 0; i < maxNodes; i++) {
+      const nodeName = `hacknet-server-${i}`
+      const exists = i < numNodes
+      const ram = exists ? ns.hacknet.getNodeStats(i).ram : 0
+
+      nodes.push({
+        name: nodeName,
+        exists,
+        ram,
+        ramFormatted: exists ? ns.format.ram(ram, digits) : "-",
+        progressBar: generateProgressBar(ram, maxNodeRam),
+      })
+    }
+
+    const money = ns.getPlayer().money
+    const hashes = ns.hacknet.numHashes()
+    const hashCapacity = ns.hacknet.hashCapacity()
+    nextAction = "Save money"
+    savingsInfo = `Hashes: ${ns.format.number(hashes)} / ${ns.format.number(hashCapacity)}`
+
+    if (numNodes < maxNodes) {
+      const cost = ns.hacknet.getPurchaseNodeCost()
+      if (money >= cost) {
+        nextAction = `Buy hacknet-server-${numNodes} (${ns.format.number(cost)})`
+        savingsInfo += " | Ready to purchase!"
+      } else {
+        nextAction = `Saving for hacknet-server-${numNodes}`
+        savingsInfo += ` | ${ns.format.number(money)} / ${ns.format.number(cost)} (${((money / cost) * 100).toFixed(1)}%)`
+      }
+    } else {
+      nextAction = `All ${maxNodes} hacknet servers owned`
+    }
   } else {
-    const needed = cost - money
-    const percentSaved = (money / cost) * 100
+    maxNodeRam = ns.cloud.getRamLimit()
 
-    if (existingNodes.length < 25) {
-      nextAction = `Saving for ${ns.format.ram(targetRam, digits)} server`
-    } else {
-      const worstNode = existingNodes.reduce((min, n) => (n.ram < min.ram ? n : min))
-      nextAction = `Save to upgrade ${worstNode.name} to ${ns.format.ram(targetRam, digits)}`
+    for (let i = 0; i < 25; i++) {
+      const nodeName = "node" + String(i).padStart(2, "0")
+      const exists = ns.serverExists(nodeName)
+      const ram = exists ? ns.getServerMaxRam(nodeName) : 0
+
+      nodes.push({
+        name: nodeName,
+        exists,
+        ram,
+        ramFormatted: exists ? ns.format.ram(ram, digits) : "-",
+        progressBar: generateProgressBar(ram, maxNodeRam),
+      })
     }
-    savingsInfo = `${ns.format.number(money)} / ${ns.format.number(cost)} (${percentSaved.toFixed(1)}%) - ${ns.format.number(needed)}`
+
+    const existingNodes = nodes.filter((n) => n.exists)
+    const money = ns.getPlayer().money
+    const bestRam = existingNodes.length > 0 ? Math.max(...existingNodes.map((n) => n.ram)) : 0
+    const targetRam = bestRam > 0 ? Math.min(bestRam * 2, maxNodeRam) : 1
+    const cost = ns.cloud.getServerCost(targetRam)
+
+    nextAction = "Save money"
+    savingsInfo = ""
+
+    if (bestRam >= maxNodeRam) {
+      nextAction = `All servers maxed at ${ns.format.ram(maxNodeRam, digits)}`
+      savingsInfo = `Max server RAM reached (${ns.format.ram(maxNodeRam, digits)}) - Cost to purchase: ${ns.format.number(cost)}`
+    } else if (money >= cost) {
+      if (existingNodes.length < 25) {
+        nextAction = `Buy ${ns.format.ram(targetRam, digits)} server (${ns.format.number(cost)})`
+      } else {
+        const worstNode = existingNodes.reduce((min, n) => (n.ram < min.ram ? n : min))
+        nextAction = `Upgrade ${worstNode.name} to ${ns.format.ram(targetRam, digits)} (${ns.format.number(cost, digits)})`
+      }
+      savingsInfo = `Ready to purchase!`
+    } else {
+      const needed = cost - money
+      const percentSaved = (money / cost) * 100
+
+      if (existingNodes.length < 25) {
+        nextAction = `Saving for ${ns.format.ram(targetRam, digits)} server`
+      } else {
+        const worstNode = existingNodes.reduce((min, n) => (n.ram < min.ram ? n : min))
+        nextAction = `Save to upgrade ${worstNode.name} to ${ns.format.ram(targetRam, digits)}`
+      }
+      savingsInfo = `${ns.format.number(money)} / ${ns.format.number(cost)} (${percentSaved.toFixed(1)}%) - ${ns.format.number(needed)}`
+    }
   }
 
   // Calculate column widths - using 2 columns: Node+Progress merged, and Value
@@ -251,8 +293,6 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
   const footerSpan = document.createElement("span")
   footerSpan.textContent =
     `${borders.bottom()}\n` +
-    // `Servers: ${existingNodes.length}/25 | Total RAM: ${ns.format.ram(totalRam)} | Avg: ${ns.format.ram(avgRam)}\n` +
-    // `Min: ${ns.format.ram(minRam)} | Max: ${ns.format.ram(maxNodeRam)} | System Max: ${ns.format.ram(maxRam)}\n` +
     `${nextAction}\n` +
     `${savingsInfo}`
   containerDiv.appendChild(footerSpan)
