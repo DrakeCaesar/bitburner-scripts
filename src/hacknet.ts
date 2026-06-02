@@ -4,6 +4,8 @@ import { killOtherInstances } from "./libraries/batchCalculations"
 interface HacknetConfig {
   enablePurchasing: boolean
   moneyReserve: number
+  /** Max fraction of (home cash − reserve) spent on a single purchase. */
+  spendCapFraction: number
 }
 
 export async function main(ns: NS) {
@@ -15,6 +17,7 @@ export async function main(ns: NS) {
     // moneyReserve: 160_000_000_000,
     // moneyReserve: 200_005_000_000_000,
     moneyReserve: 0,
+    spendCapFraction: 0.1,
   }
 
   for (;;) {
@@ -136,25 +139,26 @@ async function handlePurchasing(ns: NS, config: HacknetConfig): Promise<void> {
     return
   }
 
-  profitableOptions.sort((a, b) => b.efficiency - a.efficiency)
-  const bestOption = profitableOptions[0]
+  const currentMoney = ns.getServerMoneyAvailable("home")
+  const availableMoney = Math.max(0, currentMoney - config.moneyReserve)
+  const spendCap = availableMoney * config.spendCapFraction
+
+  const affordableOptions = profitableOptions.filter((option) => option.cost <= spendCap)
+  if (affordableOptions.length === 0) {
+    ns.print(
+      `No purchase ≤ ${(config.spendCapFraction * 100).toFixed(0)}% of available cash ($${ns.format.number(spendCap)} of $${ns.format.number(availableMoney)})`
+    )
+    return
+  }
+
+  affordableOptions.sort((a, b) => b.efficiency - a.efficiency)
+  const bestOption = affordableOptions[0]
 
   const targetLabel =
     bestOption.type === "NODE" ? "new hacknet node" : `hacknet-server-${bestOption.nodeIndex}`
   ns.print(
-    `Best efficiency option: ${targetLabel} ${bestOption.type} (cost: $${ns.format.number(bestOption.cost)}, efficiency: ${bestOption.efficiency.toFixed(6)})`
+    `Best efficiency option: ${targetLabel} ${bestOption.type} (cost: $${ns.format.number(bestOption.cost)}, cap: $${ns.format.number(spendCap)}, efficiency: ${bestOption.efficiency.toFixed(6)})`
   )
-
-  // Check if we have enough money after keeping the reserve
-  const currentMoney = ns.getServerMoneyAvailable("home")
-  const availableMoney = currentMoney - config.moneyReserve
-
-  if (availableMoney < bestOption.cost) {
-    ns.print(
-      `Not enough money for upgrade. Available: $${ns.format.number(availableMoney)}, Cost: $${ns.format.number(bestOption.cost)}, Reserve: $${ns.format.number(config.moneyReserve)}`
-    )
-    return
-  }
 
   let purchased = -1
   let upgraded = false
