@@ -1,28 +1,20 @@
 import {
   CityName,
-  CorpEmployeePosition,
   CorpIndustryData,
   CorpIndustryName,
   CorpMaterialName,
   CorpUnlockName,
   NS,
 } from "@ns"
+import { maintainOfficeStaff, OFFICE_FUND_BUFFER } from "./office.js"
+import { sellDivisionProduce } from "./operations.js"
 
 const CORP_NAME = "dracorp"
 const START_INDUSTRY: CorpIndustryName = "Agriculture"
 const START_DIVISION = "Farmland"
 const START_CITY: CityName = "Sector-12"
 
-const CORE_JOBS: Exclude<CorpEmployeePosition, "Unassigned">[] = [
-  "Operations",
-  "Engineer",
-  "Business",
-  "Management",
-  "Research & Development",
-]
-
 const SMART_SUPPLY: CorpUnlockName = "Smart Supply"
-const OFFICE_FUND_BUFFER = 5e6
 const ADVERT_FUND_BUFFER = 2e7
 
 /** Create dracorp on start when affordable and none exists yet. */
@@ -137,55 +129,16 @@ function maintainOffice(
   lines: string[]
 ): void {
   const corp = ns.corporation
+
+  maintainOfficeStaff(ns, divisionName, city, funds, lines)
+
   const office = corp.getOffice(divisionName, city)
-
-  if (office.numEmployees < office.size && funds > OFFICE_FUND_BUFFER) {
-    if (corp.hireEmployee(divisionName, city)) {
-      lines.push(`${divisionName}/${city}: hired (${office.numEmployees + 1}/${office.size})`)
-    }
-  }
-
   const upgradeCost = corp.getOfficeSizeUpgradeCost(divisionName, city, 3)
   if (office.numEmployees >= office.size && funds > upgradeCost + OFFICE_FUND_BUFFER) {
     corp.upgradeOfficeSize(divisionName, city, 3)
-    lines.push(`${divisionName}/${city}: office +3 (${office.size} → ${office.size + 3})`)
+    const updated = corp.getOffice(divisionName, city)
+    lines.push(`${divisionName}/${city}: office +3 (size ${updated.size})`)
   }
-
-  balanceJobs(ns, divisionName, city)
-
-  if (office.avgMorale < 50 || office.avgEnergy < 50) {
-    corp.buyTea(divisionName, city)
-  }
-}
-
-function balanceJobs(ns: NS, divisionName: string, city: CityName): void {
-  const corp = ns.corporation
-  const office = corp.getOffice(divisionName, city)
-  const n = office.numEmployees
-  if (n === 0) return
-
-  const internTarget = n >= 9 ? Math.floor(n / 9) : n > 5 ? 1 : 0
-  let remaining = n - internTarget
-  const targets: Record<Exclude<CorpEmployeePosition, "Unassigned">, number> = {
-    Operations: 0,
-    Engineer: 0,
-    Business: 0,
-    Management: 0,
-    "Research & Development": 0,
-    Intern: internTarget,
-  }
-
-  for (const job of CORE_JOBS) {
-    if (remaining <= 0) break
-    targets[job] = 1
-    remaining--
-  }
-  targets.Operations += remaining
-
-  for (const job of CORE_JOBS) {
-    corp.setJobAssignment(divisionName, city, job, targets[job])
-  }
-  corp.setJobAssignment(divisionName, city, "Intern", targets.Intern)
 }
 
 function maintainWarehouse(
@@ -193,7 +146,7 @@ function maintainWarehouse(
   divisionName: string,
   city: CityName,
   industry: CorpIndustryData,
-  _lines: string[]
+  lines: string[]
 ): void {
   const corp = ns.corporation
   if (!corp.hasWarehouse(divisionName, city)) return
@@ -205,6 +158,8 @@ function maintainWarehouse(
     }
   }
 
+  sellDivisionProduce(ns, divisionName, city, industry, lines)
+
   for (const materialName of industry.producedMaterials ?? []) {
     const name = materialName as CorpMaterialName
     try {
@@ -212,7 +167,6 @@ function maintainWarehouse(
     } catch {
       continue
     }
-    corp.sellMaterial(divisionName, city, name, "MAX", "MP")
     corp.setMaterialMarketTA1(divisionName, city, name, true)
     corp.setMaterialMarketTA2(divisionName, city, name, true)
   }

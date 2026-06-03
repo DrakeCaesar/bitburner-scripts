@@ -1,6 +1,7 @@
 import { NS } from "@ns"
 import { ensureCorporationCreated } from "./libraries/corporation/manager.js"
 import { CORP_LOG_LAYOUT, ensureFarmlandDivision, renderCorporationDashboard } from "./libraries/corporation/display.js"
+import { manageFarmlandOperations } from "./libraries/corporation/operations.js"
 import { manageFarmlandSupplies } from "./libraries/corporation/supplies.js"
 import { initScriptLogTail } from "./libraries/scriptLogUi.js"
 
@@ -19,7 +20,13 @@ export async function main(ns: NS): Promise<void> {
   while (true) {
     try {
       const { lines: supplyLines, supplies } = manageFarmlandSupplies(ns)
-      const statusLines = [...ensureCorporationCreated(ns), ...ensureFarmlandDivision(ns), ...supplyLines]
+      const operationLines = manageFarmlandOperations(ns)
+      const statusLines = [
+        ...ensureCorporationCreated(ns),
+        ...ensureFarmlandDivision(ns),
+        ...supplyLines,
+        ...operationLines,
+      ]
       await renderCorporationDashboard(ns, statusLines, supplies)
     } catch (err) {
       ns.clearLog()

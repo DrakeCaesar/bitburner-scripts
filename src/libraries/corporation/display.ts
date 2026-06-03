@@ -262,7 +262,7 @@ function buildOfficeTable(rows: string[][]): ReactTableConfig {
 
 function buildMaterialTable(rows: string[][]): ReactTableConfig {
   return {
-    title: "Outputs & other materials",
+    title: "Produce (sell MAX @ MP)",
     columns: [
       { header: "City", align: "left", minWidth: 12 },
       { header: "Material", align: "left", minWidth: 10 },
