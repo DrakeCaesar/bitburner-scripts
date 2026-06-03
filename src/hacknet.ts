@@ -4,9 +4,13 @@ import { killOtherInstances } from "./libraries/batchCalculations"
 interface HacknetConfig {
   enablePurchasing: boolean
   moneyReserve: number
-  /** Max fraction of (home cash − reserve) spent on a single purchase. */
+  /** Max fraction of (home cash − reserve) spent on a single production purchase. */
   spendCapFraction: number
+  /** Max fraction of cash for one cache upgrade (hash capacity only, not production). */
+  cacheCapFraction: number
 }
+
+const MAX_CACHE_LEVEL = 15
 
 export async function main(ns: NS) {
   ns.disableLog("sleep")
@@ -18,12 +22,14 @@ export async function main(ns: NS) {
     // moneyReserve: 200_005_000_000_000,
     moneyReserve: 0,
     spendCapFraction: 0.01,
+    cacheCapFraction: 0.001,
   }
 
   for (;;) {
     await spendHashes(ns)
 
     if (config.enablePurchasing) {
+      await handleCacheUpgrades(ns, config)
       await handlePurchasing(ns, config)
     }
 
@@ -45,7 +51,7 @@ async function spendHashes(ns: NS): Promise<void> {
 
   // Spend hashes when we're at 90% capacity or have at least 4 hashes
   let hashThreshold: number
-  if (ns.hacknet.hashCapacity() > 1000) {
+  if (ns.hacknet.hashCapacity() > 100) {
     hashThreshold = Math.max(4, capacity * 0.9)
   } else {
     hashThreshold = Math.min(4, capacity * 0.9)
@@ -62,6 +68,36 @@ async function spendHashes(ns: NS): Promise<void> {
     } else {
       break
     }
+  }
+}
+
+async function handleCacheUpgrades(ns: NS, config: HacknetConfig): Promise<void> {
+  if (ns.hacknet.hashCapacity() === 0) return
+
+  const availableMoney = Math.max(0, ns.getServerMoneyAvailable("home") - config.moneyReserve)
+  const cacheSpendCap = availableMoney * config.cacheCapFraction
+
+  const affordable: { nodeIndex: number; cost: number }[] = []
+
+  for (let i = 0; i < ns.hacknet.numNodes(); i++) {
+    const cache = ns.hacknet.getNodeStats(i).cache ?? 0
+    if (cache >= MAX_CACHE_LEVEL) continue
+
+    const cost = ns.hacknet.getCacheUpgradeCost(i, 1)
+    if (!Number.isFinite(cost) || cost <= 0 || cost > cacheSpendCap) continue
+
+    affordable.push({ nodeIndex: i, cost })
+  }
+
+  if (affordable.length === 0) return
+
+  affordable.sort((a, b) => a.cost - b.cost)
+  const pick = affordable[0]
+
+  if (ns.hacknet.upgradeCache(pick.nodeIndex, 1)) {
+    ns.print(
+      `Upgraded cache on hacknet-server-${pick.nodeIndex} (cost: $${ns.format.number(pick.cost)}, cap: $${ns.format.number(cacheSpendCap)})`
+    )
   }
 }
 

@@ -1,7 +1,10 @@
-import type { CompanyName, FactionName, JobField } from "@ns"
+import type { CompanyName, FactionName, JobField, JobName, Player } from "@ns"
 
 import { NS } from "@ns"
 import { killOtherInstances } from "./libraries/batchCalculations"
+
+const CYCLES_PER_SECOND = 1000 / 200
+const UNFOCUSED_FOCUS_MULT = 0.8
 
 // Default required reputation for most megacorporations
 const DEFAULT_REQUIRED_REP = 400000
@@ -91,47 +94,16 @@ export async function main(ns: NS) {
         return
       }
 
-      // Find the position with the highest sum of required skills (proxy for rep gain)
-      let bestField: JobField | null = null
-      let bestPositionName = ""
-      let bestSkillSum = -1
+      const player = ns.getPlayer()
+      const favor = player.factions.includes(factionName) ? ns.singularity.getFactionFavor(factionName) : 0
+      const best = pickBestCompanyPosition(ns, company, positions, player, favor)
 
-      for (const position of positions) {
-        const posInfo = ns.singularity.getCompanyPositionInfo(company, position)
-        const skills = posInfo.requiredSkills
-        const player = ns.getPlayer()
-
-        if (skills.defense != 0) continue
-
-        if (skills.hacking > player.skills.hacking) continue
-        if (skills.strength > player.skills.strength) continue
-        if (skills.defense > player.skills.defense) continue
-        if (skills.dexterity > player.skills.dexterity) continue
-        if (skills.agility > player.skills.agility) continue
-        if (skills.charisma > player.skills.charisma) continue
-        if (skills.intelligence > player.skills.intelligence) continue
-
-        // Calculate sum of all skill requirements as a proxy for reputation gain
-        const skillSum =
-          skills.hacking +
-          skills.strength +
-          skills.defense +
-          skills.dexterity +
-          skills.agility +
-          skills.charisma +
-          skills.intelligence
-
-        if (skillSum > bestSkillSum) {
-          bestSkillSum = skillSum
-          bestField = posInfo.field
-          bestPositionName = position
-        }
-      }
-
-      if (!bestField) {
+      if (!best) {
         ns.tprint(`ERROR: Could not find best position at ${company}`)
         return
       }
+
+      const { field: bestField, positionName: bestPositionName, repPerSecond } = best
 
       // Apply for a job in the best field (this will get us the highest position we qualify for in that field)
       const jobName = ns.singularity.applyToCompany(company, bestField)
@@ -146,7 +118,7 @@ export async function main(ns: NS) {
       }
 
       ns.print(
-        `Working: ${jobName || bestPositionName} (skill req: ${bestSkillSum}) | Current: ${ns.format.number(currentRep)}/${ns.format.number(requiredRep)}`
+        `Working: ${jobName || bestPositionName} (${ns.format.number(repPerSecond, "0.00")} rep/s) | Current: ${ns.format.number(currentRep)}/${ns.format.number(requiredRep)}`
       )
 
       // Wait before checking again
@@ -156,4 +128,59 @@ export async function main(ns: NS) {
 
   ns.tprint("\n✓ All megacorp factions completed!")
   ns.exec("autoWorkFactions.js", "home")
+}
+
+function focusMultiplier(ns: NS): number {
+  return ns.singularity.isFocused() ? 1 : UNFOCUSED_FOCUS_MULT
+}
+
+function meetsPositionRequirements(player: Player, position: JobName, company: CompanyName, ns: NS): boolean {
+  const skills = ns.singularity.getCompanyPositionInfo(company, position).requiredSkills
+
+  if (skills.defense !== 0) return false
+  if (skills.hacking > player.skills.hacking) return false
+  if (skills.strength > player.skills.strength) return false
+  if (skills.defense > player.skills.defense) return false
+  if (skills.dexterity > player.skills.dexterity) return false
+  if (skills.agility > player.skills.agility) return false
+  if (skills.charisma > player.skills.charisma) return false
+  if (skills.intelligence > player.skills.intelligence) return false
+
+  return true
+}
+
+function companyRepPerSecond(ns: NS, company: CompanyName, position: JobName, favor: number): number | null {
+  try {
+    const gains = ns.formulas.work.companyGains(ns.getPlayer(), company, position, favor)
+    return gains.reputation * CYCLES_PER_SECOND * focusMultiplier(ns)
+  } catch {
+    return null
+  }
+}
+
+function pickBestCompanyPosition(
+  ns: NS,
+  company: CompanyName,
+  positions: JobName[],
+  player: Player,
+  favor: number
+): { field: JobField; positionName: JobName; repPerSecond: number } | null {
+  let bestField: JobField | null = null
+  let bestPositionName: JobName | null = null
+  let bestRepPerSecond = -1
+
+  for (const position of positions) {
+    if (!meetsPositionRequirements(player, position, company, ns)) continue
+
+    const repPerSecond = companyRepPerSecond(ns, company, position, favor)
+    if (repPerSecond == null || repPerSecond <= bestRepPerSecond) continue
+
+    bestRepPerSecond = repPerSecond
+    bestField = ns.singularity.getCompanyPositionInfo(company, position).field
+    bestPositionName = position
+  }
+
+  if (bestField == null || bestPositionName == null) return null
+
+  return { field: bestField, positionName: bestPositionName, repPerSecond: bestRepPerSecond }
 }
