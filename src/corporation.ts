@@ -1,6 +1,7 @@
 import { NS } from "@ns"
 import { ensureCorporationCreated } from "./libraries/corporation/manager.js"
 import { CORP_LOG_LAYOUT, ensureFarmlandDivision, renderCorporationDashboard } from "./libraries/corporation/display.js"
+import { manageFarmlandSupplies } from "./libraries/corporation/supplies.js"
 import { initScriptLogTail } from "./libraries/scriptLogUi.js"
 
 const TICK_MS = 5000
@@ -17,8 +18,9 @@ export async function main(ns: NS): Promise<void> {
 
   while (true) {
     try {
-      const statusLines = [...ensureCorporationCreated(ns), ...ensureFarmlandDivision(ns)]
-      await renderCorporationDashboard(ns, statusLines)
+      const { lines: supplyLines, supplies } = manageFarmlandSupplies(ns)
+      const statusLines = [...ensureCorporationCreated(ns), ...ensureFarmlandDivision(ns), ...supplyLines]
+      await renderCorporationDashboard(ns, statusLines, supplies)
     } catch (err) {
       ns.clearLog()
       ns.print(`ERROR: ${String(err)}`)

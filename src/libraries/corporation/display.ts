@@ -1,5 +1,6 @@
 import { CityName, CorpIndustryName, CorpMaterialName, NS } from "@ns"
 import { ScriptLogBuilder, type ReactTableConfig, type TableLayout } from "../scriptLogUi.js"
+import { type ManagedSupply } from "./supplies.js"
 
 export const FARMLAND_DIVISION = "Farmland"
 export const FARMLAND_INDUSTRY: CorpIndustryName = "Agriculture"
@@ -83,7 +84,12 @@ export function ensureFarmlandDivision(ns: NS): string[] {
   return lines
 }
 
-function populateCorporationLog(ns: NS, builder: ScriptLogBuilder, statusLines: string[]): void {
+function populateCorporationLog(
+  ns: NS,
+  builder: ScriptLogBuilder,
+  statusLines: string[],
+  managedSupplies: ManagedSupply[] = []
+): void {
   const corp = ns.corporation
 
   if (!corp.hasCorporation()) {
@@ -155,11 +161,21 @@ function populateCorporationLog(ns: NS, builder: ScriptLogBuilder, statusLines: 
     builder.table(buildOfficeTable(officeRows))
   }
 
+  const supplyRows: string[][] = managedSupplies.map((s) => [
+    s.city,
+    s.material,
+    ns.format.number(s.stored, 1),
+    s.consumptionPerSec.toFixed(2),
+    s.buyPerSec.toFixed(2),
+    s.tier,
+  ])
+
+  if (supplyRows.length > 0) {
+    builder.table(buildSupplyTable(supplyRows))
+  }
+
   const materialRows: string[][] = []
   const materialNames = new Set<CorpMaterialName>()
-  for (const name of Object.keys(industry.requiredMaterials ?? {}) as CorpMaterialName[]) {
-    materialNames.add(name)
-  }
   for (const name of industry.producedMaterials ?? []) {
     materialNames.add(name as CorpMaterialName)
   }
@@ -178,7 +194,7 @@ function populateCorporationLog(ns: NS, builder: ScriptLogBuilder, statusLines: 
           city,
           materialName,
           ns.format.number(mat.stored, 1),
-          ns.format.number(mat.productionAmount, 1),
+          ns.format.number(mat.productionAmount, 2),
           String(mat.quality),
           formatMoney(ns, mat.marketPrice),
           `${sellAmt} @ ${sell}`,
@@ -189,6 +205,7 @@ function populateCorporationLog(ns: NS, builder: ScriptLogBuilder, statusLines: 
         // material not present in this warehouse yet
       }
     }
+
   }
 
   if (materialRows.length > 0) {
@@ -203,10 +220,29 @@ function populateCorporationLog(ns: NS, builder: ScriptLogBuilder, statusLines: 
 
 }
 
-export async function renderCorporationDashboard(ns: NS, statusLines: string[]): Promise<void> {
+export async function renderCorporationDashboard(
+  ns: NS,
+  statusLines: string[],
+  managedSupplies: ManagedSupply[] = []
+): Promise<void> {
   const builder = new ScriptLogBuilder(CORP_LOG_LAYOUT)
-  populateCorporationLog(ns, builder, statusLines)
+  populateCorporationLog(ns, builder, statusLines, managedSupplies)
   await builder.render(ns)
+}
+
+function buildSupplyTable(rows: string[][]): ReactTableConfig {
+  return {
+    title: "Input supplies (Water, Chemicals)",
+    columns: [
+      { header: "City", align: "left", minWidth: 12 },
+      { header: "Material", align: "left", minWidth: 10 },
+      { header: "Stored", align: "right", minWidth: 8 },
+      { header: "Use/s", align: "right", minWidth: 8 },
+      { header: "Buy/s", align: "right", minWidth: 8 },
+      { header: "Tier", align: "left", minWidth: 6 },
+    ],
+    rows,
+  }
 }
 
 function buildOfficeTable(rows: string[][]): ReactTableConfig {
@@ -226,12 +262,12 @@ function buildOfficeTable(rows: string[][]): ReactTableConfig {
 
 function buildMaterialTable(rows: string[][]): ReactTableConfig {
   return {
-    title: "Materials",
+    title: "Outputs & other materials",
     columns: [
       { header: "City", align: "left", minWidth: 12 },
       { header: "Material", align: "left", minWidth: 10 },
       { header: "Stored", align: "right", minWidth: 8 },
-      { header: "Prod (last)", align: "right", minWidth: 10 },
+      { header: "Rate/s", align: "right", minWidth: 8 },
       { header: "Qual", align: "right", minWidth: 5 },
       { header: "Mkt $", align: "right", minWidth: 8 },
       { header: "Sell", align: "left", minWidth: 14 },
