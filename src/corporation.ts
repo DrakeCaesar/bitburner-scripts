@@ -2,9 +2,15 @@ import { NS } from "@ns"
 import { ensureCorporationCreated } from "@/libraries/corporation/manager.js"
 import { CORP_LOG_LAYOUT, CORP_TABS, renderCorporationDashboard } from "@/libraries/corporation/display.js"
 import { ensureFarmlandDivision } from "@/libraries/corporation/expansion.js"
-import { buildFarmlandHeadcountPlanTables } from "@/libraries/corporation/office.js"
+import { ensurePlantsExportToTobacco } from "@/libraries/corporation/materialExports.js"
+import { buildDivisionHeadcountPlanTables } from "@/libraries/corporation/office.js"
+import { FARMLAND_DIVISION } from "@/libraries/corporation/farmland.js"
+import { TOBACCO_DIVISION } from "@/libraries/corporation/tobacco.js"
 import { manageFarmlandOperations } from "@/libraries/corporation/operations.js"
 import { manageFarmlandSupplies } from "@/libraries/corporation/supplies.js"
+import { ensureTobaccoDivision } from "@/libraries/corporation/tobaccoSetup.js"
+import { manageTobaccoOperations } from "@/libraries/corporation/tobaccoOperations.js"
+import { manageTobaccoPlantsSupply } from "@/libraries/corporation/tobaccoSupplies.js"
 import { captureCorporationSnapshot } from "@/libraries/corporation/simulation/snapshot.js"
 import { validateCorpStage, type ValidationRun } from "@/libraries/corporation/simulation/validate.js"
 import { TabbedScriptLogBuilder, initScriptLogTail } from "@/libraries/scriptLogUi.js"
@@ -33,11 +39,16 @@ export async function main(ns: NS): Promise<void> {
       const statusLines = [
         ...asStringLines(ensureCorporationCreated(ns)),
         ...asStringLines(ensureFarmlandDivision(ns)),
+        ...asStringLines(ensureTobaccoDivision(ns)),
+        ...asStringLines(ensurePlantsExportToTobacco(ns)),
       ]
 
       const { lines: supplyLines, supplies } = manageFarmlandSupplies(ns)
+      statusLines.push(...asStringLines(manageTobaccoPlantsSupply(ns)), ...asStringLines(supplyLines))
+
       const operationLines = await manageFarmlandOperations(ns)
-      statusLines.push(...asStringLines(supplyLines), ...asStringLines(operationLines))
+      const tobaccoLines = await manageTobaccoOperations(ns)
+      statusLines.push(...asStringLines(operationLines), ...asStringLines(tobaccoLines))
 
       const beforeStage = captureCorporationSnapshot(ns)
 
@@ -54,7 +65,10 @@ export async function main(ns: NS): Promise<void> {
         await ns.sleep(5000)
       }
 
-      const headcountPlans = buildFarmlandHeadcountPlanTables(ns)
+      const headcountPlans = [
+        ...buildDivisionHeadcountPlanTables(ns, FARMLAND_DIVISION),
+        ...buildDivisionHeadcountPlanTables(ns, TOBACCO_DIVISION),
+      ]
       if (simRun && !simRun.result.allOk) {
         tabbedLog.setActiveTab("sim")
       }

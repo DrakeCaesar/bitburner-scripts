@@ -1,15 +1,17 @@
 import { CorpMaterialName, NS } from "@ns"
 import {
+  ScriptLogBuilder,
   TabbedScriptLogBuilder,
   type ReactTableConfig,
   type TabDefinition,
   type TableLayout,
 } from "@/libraries/scriptLogUi.js"
 import { FARMLAND_DIVISION } from "@/libraries/corporation/farmland.js"
+import { TOBACCO_DIVISION } from "@/libraries/corporation/tobacco.js"
 import { buildSimContext } from "@/libraries/corporation/simulation/context.js"
 import type { FieldComparison } from "@/libraries/corporation/simulation/types.js"
 import type { ValidationRun } from "@/libraries/corporation/simulation/validate.js"
-import { type HeadcountPlanTable } from "@/libraries/corporation/office.js"
+import { buildDivisionHeadcountPlanTables, type HeadcountPlanTable } from "@/libraries/corporation/office.js"
 import { asCorpMaterialList } from "@/libraries/corporation/simulation/officeJobs.js"
 import { type ManagedSupply } from "@/libraries/corporation/supplies.js"
 
@@ -66,22 +68,33 @@ function populateOverviewTab(ns: NS, tabbedLog: TabbedScriptLogBuilder, managedS
     ],
   })
 
-  if (!info.divisions.includes(FARMLAND_DIVISION)) {
-    return
+  if (info.divisions.includes(FARMLAND_DIVISION)) {
+    appendDivisionOverview(ns, builder, FARMLAND_DIVISION)
+    if (managedSupplies.length === 0) {
+      builder.text("See Warehouse tab for Farmland supplies and produce.")
+    }
   }
 
-  const division = corp.getDivision(FARMLAND_DIVISION)
+  if (info.divisions.includes(TOBACCO_DIVISION)) {
+    appendDivisionOverview(ns, builder, TOBACCO_DIVISION)
+  }
+}
+
+function appendDivisionOverview(ns: NS, builder: ScriptLogBuilder, divisionName: string): void {
+  const corp = ns.corporation
+  const division = corp.getDivision(divisionName)
   const profitLast = division.lastCycleRevenue - division.lastCycleExpenses
   const profitThis = division.thisCycleRevenue - division.thisCycleExpenses
 
   builder.keyValueTable({
-    title: `${FARMLAND_DIVISION} (${division.industry})`,
+    title: `${divisionName} (${division.industry})`,
     rows: [
       { label: "Awareness", value: division.awareness.toFixed(2) },
       { label: "Popularity", value: division.popularity.toFixed(2) },
       { label: "Production mult", value: division.productionMult.toFixed(3) },
       { label: "Research", value: ns.format.number(division.researchPoints) },
       { label: "Ad campaigns", value: String(division.numAdVerts) },
+      { label: "Products", value: division.products.length > 0 ? division.products.join(", ") : "—" },
       { label: "Revenue/s (last)", value: formatMoney(ns, division.lastCycleRevenue) },
       { label: "Expenses/s (last)", value: formatMoney(ns, division.lastCycleExpenses) },
       { label: "Profit/s (last)", value: formatMoney(ns, profitLast) },
@@ -94,24 +107,52 @@ function populateOverviewTab(ns: NS, tabbedLog: TabbedScriptLogBuilder, managedS
 
   const officeRows: string[][] = []
   for (const city of division.cities) {
-    const office = corp.getOffice(FARMLAND_DIVISION, city)
-    officeRows.push([
-      city,
-      `${office.numEmployees}/${office.size}`,
-      `${office.avgMorale.toFixed(0)}%`,
-      `${office.avgEnergy.toFixed(0)}%`,
-      formatJobs(office.employeeJobs),
-      ns.format.number(office.totalExperience, 0),
-    ])
+    try {
+      const office = corp.getOffice(divisionName, city)
+      officeRows.push([
+        city,
+        `${office.numEmployees}/${office.size}`,
+        `${office.avgMorale.toFixed(0)}%`,
+        `${office.avgEnergy.toFixed(0)}%`,
+        formatJobs(office.employeeJobs),
+        ns.format.number(office.totalExperience, 0),
+      ])
+    } catch {
+      officeRows.push([city, "—", "—", "—", "no office", "—"])
+    }
   }
 
   if (officeRows.length > 0) {
-    builder.table(buildOfficeTable(officeRows))
+    builder.table(buildOfficeTable(`${divisionName} offices`, officeRows))
+  }
+}
+
+function collectOfficeSnapshotRows(ns: NS): string[][] {
+  const corp = ns.corporation
+  const rows: string[][] = []
+  if (!corp.hasCorporation()) return rows
+
+  for (const divisionName of corp.getCorporation().divisions) {
+    const division = corp.getDivision(divisionName)
+    for (const city of division.cities) {
+      try {
+        const office = corp.getOffice(divisionName, city)
+        rows.push([
+          divisionName,
+          city,
+          `${office.numEmployees}/${office.size}`,
+          `${office.avgMorale.toFixed(0)}%`,
+          `${office.avgEnergy.toFixed(0)}%`,
+          formatJobs(office.employeeJobs),
+          ns.format.number(office.totalExperience, 0),
+        ])
+      } catch {
+        rows.push([divisionName, city, "—", "—", "—", "no office", "—"])
+      }
+    }
   }
 
-  if (managedSupplies.length === 0 && division.cities.length > 0) {
-    builder.text("See Warehouse tab for supplies and produce.")
-  }
+  return rows
 }
 
 function populateWarehouseTab(ns: NS, tabbedLog: TabbedScriptLogBuilder, managedSupplies: ManagedSupply[]): void {
@@ -261,11 +302,28 @@ function populateSimulationTab(
   }
 }
 
-function populateStaffTab(tabbedLog: TabbedScriptLogBuilder, tables: HeadcountPlanTable[]): void {
+function populateStaffTab(ns: NS, tabbedLog: TabbedScriptLogBuilder, tables: HeadcountPlanTable[]): void {
   const builder = tabbedLog.tab("staff")
 
+  const officeRows = collectOfficeSnapshotRows(ns)
+  if (officeRows.length > 0) {
+    builder.table({
+      title: "Offices (all divisions)",
+      columns: [
+        { header: "Division", align: "left", minWidth: 10 },
+        { header: "City", align: "left", minWidth: 12 },
+        { header: "Staff", align: "right", minWidth: 8 },
+        { header: "Morale", align: "right", minWidth: 7 },
+        { header: "Energy", align: "right", minWidth: 7 },
+        { header: "Jobs", align: "left", minWidth: 22 },
+        { header: "XP", align: "right", minWidth: 8 },
+      ],
+      rows: officeRows,
+    })
+  }
+
   if (tables.length === 0) {
-    builder.text("No staff plan tables yet.")
+    builder.text("No headcount plan tables yet (need warehouse + office per city).")
     return
   }
 
@@ -273,7 +331,7 @@ function populateStaffTab(tabbedLog: TabbedScriptLogBuilder, tables: HeadcountPl
     const gameProfitK = (plan.gameProfitPerSec / 1e3).toFixed(1)
     builder.table({
       title:
-        `Staff plan ${plan.city} (${plan.currentEmployees}/${plan.officeSize}, ` +
+        `Staff plan ${plan.divisionName}/${plan.city} (${plan.currentEmployees}/${plan.officeSize}, ` +
         `optimal ${plan.optimalEmployees}) — $/s · cycle ${plan.secondsPerMarketCycle}s · ` +
         `game $${gameProfitK}k/s · Est PnL = (rev-inputs)-payroll · * best · < current`,
       columns: [
@@ -315,7 +373,7 @@ export async function renderCorporationDashboard(
   tabbedLog.clearPanels()
   populateOverviewTab(ns, tabbedLog, managedSupplies)
   populateWarehouseTab(ns, tabbedLog, managedSupplies)
-  populateStaffTab(tabbedLog, headcountPlans)
+  populateStaffTab(ns, tabbedLog, headcountPlans)
   populateSimulationTab(ns, tabbedLog, simRun, simHistory)
   populateLogTab(tabbedLog, statusLines)
   await tabbedLog.render(ns)
@@ -336,9 +394,9 @@ function buildSupplyTable(rows: string[][]): ReactTableConfig {
   }
 }
 
-function buildOfficeTable(rows: string[][]): ReactTableConfig {
+function buildOfficeTable(title: string, rows: string[][]): ReactTableConfig {
   return {
-    title: "Offices",
+    title,
     columns: [
       { header: "City", align: "left", minWidth: 12 },
       { header: "Staff", align: "right", minWidth: 8 },

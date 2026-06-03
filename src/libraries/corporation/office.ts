@@ -35,6 +35,7 @@ export const USE_EXHAUSTIVE_OFFICE_JOB_SEARCH = false
 export const EXHAUSTIVE_OFFICE_JOB_SIM_CYCLES = 5
 
 export interface HeadcountPlanTable {
+  divisionName: string
   city: CityName
   officeSize: number
   currentEmployees: number
@@ -46,28 +47,28 @@ export interface HeadcountPlanTable {
 }
 
 /** Per-city headcount sweep for the dashboard (1..office size). */
-export function buildFarmlandHeadcountPlanTables(ns: NS): HeadcountPlanTable[] {
+export function buildDivisionHeadcountPlanTables(ns: NS, divisionName: string): HeadcountPlanTable[] {
   const corp = ns.corporation
   if (!corp.hasCorporation()) return []
 
   const info = corp.getCorporation()
-  if (!info.divisions.includes(FARMLAND_DIVISION)) return []
+  if (!info.divisions.includes(divisionName)) return []
 
   const tables: HeadcountPlanTable[] = []
-  const division = corp.getDivision(FARMLAND_DIVISION)
+  const division = corp.getDivision(divisionName)
   const gameProfitPerSec = division.lastCycleRevenue - division.lastCycleExpenses
 
   for (const city of division.cities) {
     try {
-      corp.getOffice(FARMLAND_DIVISION, city)
+      corp.getOffice(divisionName, city)
     } catch {
       continue
     }
 
-    const profitContext = buildFarmlandProfitContext(ns, FARMLAND_DIVISION, city)
+    const profitContext = buildFarmlandProfitContext(ns, divisionName, city)
     if (!profitContext) continue
 
-    const office = corp.getOffice(FARMLAND_DIVISION, city)
+    const office = corp.getOffice(divisionName, city)
     const jobInput: OfficeJobOptimizeInput = {
       numEmployees: office.numEmployees,
       employeeJobs: { ...office.employeeJobs },
@@ -89,6 +90,7 @@ export function buildFarmlandHeadcountPlanTables(ns: NS): HeadcountPlanTable[] {
     const optimalEmployees = optimal.targetHeadcount
 
     tables.push({
+      divisionName,
       city,
       officeSize: office.size,
       currentEmployees: office.numEmployees,
@@ -107,6 +109,10 @@ export function buildFarmlandHeadcountPlanTables(ns: NS): HeadcountPlanTable[] {
   }
 
   return tables
+}
+
+export function buildFarmlandHeadcountPlanTables(ns: NS): HeadcountPlanTable[] {
+  return buildDivisionHeadcountPlanTables(ns, FARMLAND_DIVISION)
 }
 /** Require projected net/cycle to improve by more than this before hire or size upgrade. */
 const MIN_NET_PROFIT_GAIN_PER_CYCLE = 0
@@ -247,6 +253,32 @@ export function buildFarmlandProfitContext(ns: NS, divisionName: string, city: C
       })
     } catch {
       // material missing
+    }
+  }
+
+  for (const productName of division.products) {
+    try {
+      const product = corp.getProduct(divisionName, city, productName)
+      const prodRate = Math.abs(product.productionAmount)
+      if (prodRate > observedProductionPerSecond) observedProductionPerSecond = prodRate
+
+      const demand = product.demand ?? 50
+      const competition = product.competition ?? 50
+
+      products.push({
+        name: productName,
+        marketPrice: product.productionCost > 0 ? product.productionCost : 1,
+        quality: product.effectiveRating > 0 ? product.effectiveRating : product.rating,
+        baseMarkup: 1,
+        demand,
+        competition,
+        desiredSellAmount: product.desiredSellAmount,
+        desiredSellPrice: product.desiredSellPrice,
+        productionLimit: null,
+        actualSellAmount: product.actualSellAmount,
+      })
+    } catch {
+      // product not in this city yet
     }
   }
 

@@ -107,6 +107,18 @@ export function getInputConsumptionPerSec(
     }
   }
 
+  const division = corp.getDivision(divisionName)
+  for (const productName of division.products) {
+    try {
+      const product = corp.getProduct(divisionName, city, productName)
+      if (product.productionAmount > 0) {
+        return product.productionAmount * ratio
+      }
+    } catch {
+      // product not in this city yet
+    }
+  }
+
   const estimatedProd = estimateProducedUnitsPerSec(ns, divisionName, city, industry)
   if (estimatedProd > 0) return estimatedProd * ratio
 
