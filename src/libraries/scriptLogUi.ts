@@ -590,17 +590,14 @@ interface TabbedLogViewProps {
   panels: Record<string, ReactNode>
   programmaticActiveId: string
   layout: TableLayout
+  onTabChange?: (tabId: string) => void
 }
 
 /** Stateful tab UI — uses React hooks (no document/window DOM). Clicks may not work in all game versions. */
 function TabbedLogView(props: TabbedLogViewProps): ReactNode {
   const React = getReact()
-  const { tabOrder, panels, programmaticActiveId, layout } = props
+  const { tabOrder, panels, programmaticActiveId, layout, onTabChange } = props
   const [activeId, setActiveId] = React.useState(programmaticActiveId)
-
-  React.useEffect(() => {
-    setActiveId(programmaticActiveId)
-  }, [programmaticActiveId])
 
   const tabBar = React.createElement(
     "div",
@@ -619,7 +616,10 @@ function TabbedLogView(props: TabbedLogViewProps): ReactNode {
         "div",
         {
           key: id,
-          onClick: () => setActiveId(id),
+          onClick: () => {
+            setActiveId(id)
+            onTabChange?.(id)
+          },
           style: {
             padding: `4px ${layout.paddingXPx}px`,
             fontFamily: "monospace",
@@ -649,7 +649,8 @@ function TabbedLogView(props: TabbedLogViewProps): ReactNode {
 
 export class TabbedScriptLogBuilder {
   private builders = new Map<string, ScriptLogBuilder>()
-  private activeTabId: string
+  /** Tab shown in the UI; kept across re-renders when the user picks a tab. */
+  private displayTabId: string
   private layout?: Partial<TableLayout>
 
   constructor(
@@ -657,17 +658,23 @@ export class TabbedScriptLogBuilder {
     layout?: Partial<TableLayout>
   ) {
     this.layout = layout
-    this.activeTabId = tabOrder[0]?.id ?? ""
+    this.displayTabId = tabOrder[0]?.id ?? ""
   }
 
   reset(): this {
     this.builders.clear()
-    this.activeTabId = this.tabOrder[0]?.id ?? ""
+    this.displayTabId = this.tabOrder[0]?.id ?? ""
+    return this
+  }
+
+  /** Clear tab panel content without changing the selected tab (for live-update loops). */
+  clearPanels(): this {
+    this.builders.clear()
     return this
   }
 
   setActiveTab(tabId: string): this {
-    this.activeTabId = tabId
+    this.displayTabId = tabId
     return this
   }
 
@@ -689,11 +696,9 @@ export class TabbedScriptLogBuilder {
   }
 
   private resolveTailContentHeightPx(): number {
-    let maxHeight = 0
-    for (const builder of this.builders.values()) {
-      if (!builder.isEmpty()) maxHeight = Math.max(maxHeight, builder.estimateContentHeightPx())
-    }
-    return maxHeight + TAB_BAR_HEIGHT_PX
+    const active = this.builders.get(this.displayTabId)
+    const panelHeight = active && !active.isEmpty() ? active.estimateContentHeightPx() : 0
+    return panelHeight + TAB_BAR_HEIGHT_PX
   }
 
   private resolveRenderLayout(): TableLayout {
@@ -719,8 +724,11 @@ export class TabbedScriptLogBuilder {
     return React.createElement(TabbedLogView, {
       tabOrder: this.tabOrder,
       panels,
-      programmaticActiveId: this.activeTabId,
+      programmaticActiveId: this.displayTabId,
       layout,
+      onTabChange: (tabId: string) => {
+        this.displayTabId = tabId
+      },
     })
   }
 

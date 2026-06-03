@@ -1,5 +1,10 @@
 import { CorpMaterialName, NS } from "@ns"
-import { ScriptLogBuilder, type ReactTableConfig, type TableLayout } from "@/libraries/scriptLogUi.js"
+import {
+  TabbedScriptLogBuilder,
+  type ReactTableConfig,
+  type TabDefinition,
+  type TableLayout,
+} from "@/libraries/scriptLogUi.js"
 import { FARMLAND_DIVISION } from "@/libraries/corporation/farmland.js"
 import { buildSimContext } from "@/libraries/corporation/simulation/context.js"
 import type { FieldComparison } from "@/libraries/corporation/simulation/types.js"
@@ -12,6 +17,14 @@ export const CORP_LOG_LAYOUT: Partial<TableLayout> = {
   tableWidthPx: 880,
   fontSizePx: 12,
 }
+
+export const CORP_TABS: TabDefinition[] = [
+  { id: "overview", label: "Overview" },
+  { id: "warehouse", label: "Warehouse" },
+  { id: "staff", label: "Staff" },
+  { id: "sim", label: "Sim" },
+  { id: "log", label: "Log" },
+]
 
 function formatMoney(ns: NS, value: number): string {
   return `$${ns.format.number(value)}`
@@ -29,7 +42,8 @@ function formatJobs(jobs: Record<string, number>): string {
   return parts.length > 0 ? parts.join(" ") : "—"
 }
 
-function populateCorporationLog(ns: NS, builder: ScriptLogBuilder, managedSupplies: ManagedSupply[] = []): void {
+function populateOverviewTab(ns: NS, tabbedLog: TabbedScriptLogBuilder, managedSupplies: ManagedSupply[]): void {
+  const builder = tabbedLog.tab("overview")
   const corp = ns.corporation
 
   if (!corp.hasCorporation()) {
@@ -57,7 +71,6 @@ function populateCorporationLog(ns: NS, builder: ScriptLogBuilder, managedSuppli
   }
 
   const division = corp.getDivision(FARMLAND_DIVISION)
-  const industry = corp.getIndustryData(division.industry)
   const profitLast = division.lastCycleRevenue - division.lastCycleExpenses
   const profitThis = division.thisCycleRevenue - division.thisCycleExpenses
 
@@ -96,6 +109,23 @@ function populateCorporationLog(ns: NS, builder: ScriptLogBuilder, managedSuppli
     builder.table(buildOfficeTable(officeRows))
   }
 
+  if (managedSupplies.length === 0 && division.cities.length > 0) {
+    builder.text("See Warehouse tab for supplies and produce.")
+  }
+}
+
+function populateWarehouseTab(ns: NS, tabbedLog: TabbedScriptLogBuilder, managedSupplies: ManagedSupply[]): void {
+  const builder = tabbedLog.tab("warehouse")
+  const corp = ns.corporation
+
+  if (!corp.hasCorporation() || !corp.getCorporation().divisions.includes(FARMLAND_DIVISION)) {
+    builder.text("No Farmland division yet.")
+    return
+  }
+
+  const division = corp.getDivision(FARMLAND_DIVISION)
+  const industry = corp.getIndustryData(division.industry)
+
   const supplyRows: string[][] = managedSupplies.map((s) => [
     s.city,
     s.material,
@@ -107,6 +137,8 @@ function populateCorporationLog(ns: NS, builder: ScriptLogBuilder, managedSuppli
 
   if (supplyRows.length > 0) {
     builder.table(buildSupplyTable(supplyRows))
+  } else {
+    builder.text("No input supply data yet.")
   }
 
   const materialRows: string[][] = []
@@ -140,7 +172,6 @@ function populateCorporationLog(ns: NS, builder: ScriptLogBuilder, managedSuppli
         // material not present in this warehouse yet
       }
     }
-
   }
 
   if (materialRows.length > 0) {
@@ -155,14 +186,26 @@ function formatSimPct(rel: number | null): string {
   return `${(rel * 100).toFixed(1)}%`
 }
 
-function appendSimulationLog(builder: ScriptLogBuilder, ns: NS, run: ValidationRun, history: ValidationRun[]): void {
-  const div = run.before.divisions.find((d) => d.name === FARMLAND_DIVISION)
+function populateSimulationTab(
+  ns: NS,
+  tabbedLog: TabbedScriptLogBuilder,
+  simRun: ValidationRun | null,
+  simHistory: ValidationRun[]
+): void {
+  const builder = tabbedLog.tab("sim")
+
+  if (!simRun) {
+    builder.text("Waiting for first corp cycle validation…")
+    return
+  }
+
+  const div = simRun.before.divisions.find((d) => d.name === FARMLAND_DIVISION)
   const ctx = buildSimContext(ns, div?.advertisingFactor ?? 0.04)
   const info = ns.corporation.getCorporation()
 
   builder.text(
     [
-      `Simulation (${run.result.allOk ? "PASS" : "FAIL"}): stage ${run.stage}`,
+      `Simulation (${simRun.result.allOk ? "PASS" : "FAIL"}): stage ${simRun.stage}`,
       `Corp cycle: ${info.prevState} → ${info.nextState} | corpProductionMult=${ctx.corpProductionMult}`,
     ].join("\n")
   )
@@ -174,10 +217,10 @@ function appendSimulationLog(builder: ScriptLogBuilder, ns: NS, run: ValidationR
       { header: "Match", align: "center" },
       { header: "Notes", align: "left", minWidth: 48 },
     ],
-    rows: [[`${run.result.city}`, run.result.allOk ? "PASS" : "FAIL", run.result.notes.join(" · ") || "—"]],
+    rows: [[`${simRun.result.city}`, simRun.result.allOk ? "PASS" : "FAIL", simRun.result.notes.join(" · ") || "—"]],
   })
 
-  if (run.result.comparisons.length > 0) {
+  if (simRun.result.comparisons.length > 0) {
     builder.table({
       title: "Sim: predicted vs actual",
       columns: [
@@ -188,18 +231,18 @@ function appendSimulationLog(builder: ScriptLogBuilder, ns: NS, run: ValidationR
         { header: "Err%", align: "right", minWidth: 8 },
         { header: "OK", align: "center", minWidth: 4 },
       ],
-      rows: run.result.comparisons.map((c: FieldComparison) => [
+      rows: simRun.result.comparisons.map((c: FieldComparison) => [
         c.path,
         Number.isFinite(c.predicted) ? c.predicted.toFixed(3) : "—",
         Number.isFinite(c.actual) ? c.actual.toFixed(3) : "—",
         Number.isFinite(c.delta) ? c.delta.toFixed(3) : "—",
         formatSimPct(c.relError),
-        c.ok ? "✓" : "✗",
+        c.ok ? "Y" : "N",
       ]),
     })
   }
 
-  if (history.length > 1) {
+  if (simHistory.length > 1) {
     builder.table({
       title: "Sim: recent stages",
       columns: [
@@ -208,9 +251,9 @@ function appendSimulationLog(builder: ScriptLogBuilder, ns: NS, run: ValidationR
         { header: "Fails", align: "right", minWidth: 6 },
         { header: "Notes", align: "left", minWidth: 36 },
       ],
-      rows: history.map((h) => [
+      rows: simHistory.map((h) => [
         h.stage,
-        h.result.allOk ? "✓" : "✗",
+        h.result.allOk ? "Y" : "N",
         String(h.result.comparisons.filter((c) => !c.ok).length),
         h.result.notes.join("; ") || "—",
       ]),
@@ -218,14 +261,21 @@ function appendSimulationLog(builder: ScriptLogBuilder, ns: NS, run: ValidationR
   }
 }
 
-function appendHeadcountPlanTables(builder: ScriptLogBuilder, tables: HeadcountPlanTable[]): void {
+function populateStaffTab(tabbedLog: TabbedScriptLogBuilder, tables: HeadcountPlanTable[]): void {
+  const builder = tabbedLog.tab("staff")
+
+  if (tables.length === 0) {
+    builder.text("No staff plan tables yet.")
+    return
+  }
+
   for (const plan of tables) {
     const gameProfitK = (plan.gameProfitPerSec / 1e3).toFixed(1)
     builder.table({
       title:
         `Staff plan ${plan.city} (${plan.currentEmployees}/${plan.officeSize}, ` +
         `optimal ${plan.optimalEmployees}) — $/s · cycle ${plan.secondsPerMarketCycle}s · ` +
-        `game $${gameProfitK}k/s · Est PnL = (rev−inputs)−payroll · ★ best · ◀ current`,
+        `game $${gameProfitK}k/s · Est PnL = (rev-inputs)-payroll · * best · < current`,
       columns: [
         { header: "N", align: "right", minWidth: 3 },
         { header: "Ops", align: "right", minWidth: 3 },
@@ -244,26 +294,31 @@ function appendHeadcountPlanTables(builder: ScriptLogBuilder, tables: HeadcountP
   }
 }
 
+function populateLogTab(tabbedLog: TabbedScriptLogBuilder, statusLines: string[]): void {
+  const builder = tabbedLog.tab("log")
+  if (statusLines.length > 0) {
+    builder.text(statusLines.join("\n"))
+  } else {
+    builder.text("(no log lines this cycle)")
+  }
+}
+
 export async function renderCorporationDashboard(
   ns: NS,
+  tabbedLog: TabbedScriptLogBuilder,
   statusLines: string[],
   managedSupplies: ManagedSupply[] = [],
   simRun: ValidationRun | null = null,
   simHistory: ValidationRun[] = [],
   headcountPlans: HeadcountPlanTable[] = []
 ): Promise<void> {
-  const builder = new ScriptLogBuilder(CORP_LOG_LAYOUT)
-  populateCorporationLog(ns, builder, managedSupplies)
-  if (headcountPlans.length > 0) {
-    appendHeadcountPlanTables(builder, headcountPlans)
-  }
-  if (simRun) {
-    appendSimulationLog(builder, ns, simRun, simHistory)
-  }
-  if (statusLines.length > 0) {
-    builder.text(statusLines.join("\n"))
-  }
-  await builder.render(ns)
+  tabbedLog.clearPanels()
+  populateOverviewTab(ns, tabbedLog, managedSupplies)
+  populateWarehouseTab(ns, tabbedLog, managedSupplies)
+  populateStaffTab(tabbedLog, headcountPlans)
+  populateSimulationTab(ns, tabbedLog, simRun, simHistory)
+  populateLogTab(tabbedLog, statusLines)
+  await tabbedLog.render(ns)
 }
 
 function buildSupplyTable(rows: string[][]): ReactTableConfig {

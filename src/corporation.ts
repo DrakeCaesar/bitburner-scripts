@@ -1,13 +1,13 @@
 import { NS } from "@ns"
 import { ensureCorporationCreated } from "@/libraries/corporation/manager.js"
-import { CORP_LOG_LAYOUT, renderCorporationDashboard } from "@/libraries/corporation/display.js"
+import { CORP_LOG_LAYOUT, CORP_TABS, renderCorporationDashboard } from "@/libraries/corporation/display.js"
 import { ensureFarmlandDivision } from "@/libraries/corporation/expansion.js"
 import { buildFarmlandHeadcountPlanTables } from "@/libraries/corporation/office.js"
 import { manageFarmlandOperations } from "@/libraries/corporation/operations.js"
 import { manageFarmlandSupplies } from "@/libraries/corporation/supplies.js"
 import { captureCorporationSnapshot } from "@/libraries/corporation/simulation/snapshot.js"
 import { validateCorpStage, type ValidationRun } from "@/libraries/corporation/simulation/validate.js"
-import { initScriptLogTail } from "@/libraries/scriptLogUi.js"
+import { TabbedScriptLogBuilder, initScriptLogTail } from "@/libraries/scriptLogUi.js"
 
 const SIM_HISTORY_MAX = 12
 
@@ -25,6 +25,7 @@ export async function main(ns: NS): Promise<void> {
 
   initScriptLogTail(ns, "dracorp", CORP_LOG_LAYOUT)
 
+  const tabbedLog = new TabbedScriptLogBuilder(CORP_TABS, CORP_LOG_LAYOUT)
   const simHistory: ValidationRun[] = []
 
   while (true) {
@@ -54,7 +55,10 @@ export async function main(ns: NS): Promise<void> {
       }
 
       const headcountPlans = buildFarmlandHeadcountPlanTables(ns)
-      await renderCorporationDashboard(ns, statusLines, supplies, simRun, simHistory, headcountPlans)
+      if (simRun && !simRun.result.allOk) {
+        tabbedLog.setActiveTab("sim")
+      }
+      await renderCorporationDashboard(ns, tabbedLog, statusLines, supplies, simRun, simHistory, headcountPlans)
 
       if (simRun && !simRun.result.allOk) {
         const failed = simRun.result.comparisons.filter((c) => !c.ok)
