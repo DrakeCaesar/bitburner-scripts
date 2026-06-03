@@ -36,9 +36,62 @@ This repository contains scripts for the Bitburner programming game. Scripts run
 ### Module system
 
 - **Netscript import**: Use `import { NS } from "@ns"` for Bitburner API types
-- **Local modules**: Use relative paths like `"./libraries/connect.js"` or `"/src/libraries/connect.js"`
-- **Path aliases**: `@/*` and `/src/*` resolve to `./src/*`
+- **Local modules**: Prefer the `@/` alias (e.g. `"@/libraries/connect.js"`) or relative `./` paths. Both are valid in source; see [Viteburner import paths](#viteburner-import-paths) below.
+- **Path aliases**: `@/*` and `/src/*` in `vite.config.ts` / `tsconfig.json` resolve to `./src/*` for Vite and TypeScript only. They are **not** game paths.
+- **Template reference**: Upstream [viteburner-template](viteburner-template/) files are copied at repo root and in `viteburner-template/`
 - **Import extensions**: Imports use `.js` extensions even when importing from `.ts` files (TypeScript compilation requirement). When editing files referenced in imports with `.js` extensions, check for corresponding `.ts` source files first.
+
+#### Viteburner import paths
+
+This section documents a real failure mode: RAM calculation (and runtime imports) breaking with paths like `"/src/libraries/corporation/farmland.ts" does not exist on server: home`.
+
+**Two different roots**
+
+| Context | Root | Example |
+|---------|------|---------|
+| Repo / Vite / TypeScript | `src/` folder on disk | `src/libraries/corporation/farmland.ts` |
+| Bitburner `home` server | No `src/` prefix | `/libraries/corporation/farmland.js` |
+
+`src/` exists only in the repository. viteburner uploads `src/foo.ts` to `@home:/foo.js` (strips the `src/` prefix and `.ts` → `.js`). Anything still pointing at `/src/...` or `*.ts` in **synced** script text is wrong for the game.
+
+**What the pipeline does**
+
+1. You write imports in source (e.g. `@/libraries/foo.js` or `./foo.js`).
+2. Vite transforms modules and often emits absolute paths such as `from "/src/libraries/foo.ts"` (`.ts` extension, `/src/` prefix).
+3. On upload, viteburner runs `fixImportPath` ([docs](https://github.com/Tanimodori/viteburner/blob/main/docs/guide/transform.md)), which rewrites **only top-level** `import { } from "..."` declarations to game paths like `"/libraries/foo.js"`.
+4. It does **not** rewrite:
+   - `export { x } from "..."` (re-exports)
+   - `export * from "..."`
+   - Dynamic `import("...")`
+5. Inline sourcemaps (`sourcemap: "inline"`) can also reference original `.ts` paths; RAM calculation may follow those and fail similarly.
+
+**Do not**
+
+- Put `"/src/libraries/..."` in import strings — that is not a path on `home`.
+- Rely on path rewrites fixing `export { } from "..."` — use a direct import and export, or import from the module consumers need.
+- Assume renaming a source file fixes game errors without a full resync (`u` in viteburner) — stale `.js` on `home` may still reference old paths.
+- Use `sourcemap: "inline"` for synced scripts unless you have a specific reason (this repo uses `sourcemap: false` in `viteburner` config).
+
+**Do**
+
+- Use `@/` or relative `./` imports with a `.js` extension in TypeScript source.
+- Import constants from the defining module (e.g. `OFFICE_FUND_BUFFER` from `farmland.js`) instead of re-exporting through another file unless necessary.
+- Keep dynamic `import()` relative when possible; the `bitburnerImportPaths` plugin in `vite.config.ts` still normalizes `/src/libraries/` → `/libraries/` and `.ts` → `.js` in emitted code for cases viteburner does not fix.
+- After changing `vite.config.ts`, **restart** `pnpm run dev`, then press **`u`** for a full upload.
+- If debugging, check synced files on `home` (e.g. `libraries/corporation/office.js`) for leftover `/src/` or `.ts` in import/export strings. Remove a stray `home/src/` folder if created during experiments.
+
+**Repo safeguards** (`vite.config.ts`)
+
+- `bitburnerImportPaths` Vite plugin (post-transform): `/src/libraries/` → `/libraries/`, `.ts` → `.js` in module path strings.
+- `viteburner.sourcemap: false` to avoid inline maps pointing at `.ts` files during RAM calc.
+
+**Example error**
+
+```
+Cannot calculate RAM usage of corporation.js. Reason: "/src/libraries/corporation/farmland.ts" does not exist on server: home
+```
+
+Typical causes: unrewritten `export { } from "/src/.../farmland.ts"` in uploaded JS, or dynamic `import("/src/.../farmland.ts")`, often after switching to `@/` without the Vite plugin or before removing re-exports.
 
 ### Script entry points
 
