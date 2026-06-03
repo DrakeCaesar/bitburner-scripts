@@ -15,6 +15,9 @@ interface NodeInfo {
   progressBar: string
 }
 
+/** Hacknet-server RAM cap (GB); progress bars always use this scale, not best-owned. */
+const HACKNET_SERVER_MAX_RAM_GB = 8192
+
 export function createNodesWindow(
   ns: NS,
   primaryColor: string,
@@ -123,18 +126,16 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
   const homeRam = ns.getServerMaxRam("home")
   const homeCores = ns.getServer("home").cpuCores
 
-  let maxNodeRam: number
+  let maxPurchasableRam: number
+  let barScaleMaxRam: number
   let nextAction: string
   let savingsInfo: string
 
   if (useHacknet) {
     const maxNodes = ns.hacknet.maxNumNodes()
     const numNodes = ns.hacknet.numNodes()
-    maxNodeRam = 1
-
-    for (let i = 0; i < numNodes; i++) {
-      maxNodeRam = Math.max(maxNodeRam, ns.hacknet.getNodeStats(i).ram)
-    }
+    maxPurchasableRam = HACKNET_SERVER_MAX_RAM_GB
+    barScaleMaxRam = HACKNET_SERVER_MAX_RAM_GB
 
     for (let i = 0; i < maxNodes; i++) {
       const nodeName = `hacknet-server-${i}`
@@ -146,7 +147,7 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
         exists,
         ram,
         ramFormatted: exists ? ns.format.ram(ram, digits) : "-",
-        progressBar: generateProgressBar(ram, maxNodeRam),
+        progressBar: generateProgressBar(ram, barScaleMaxRam),
       })
     }
 
@@ -169,7 +170,8 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
       nextAction = `All ${maxNodes} hacknet servers owned`
     }
   } else {
-    maxNodeRam = ns.cloud.getRamLimit()
+    maxPurchasableRam = ns.cloud.getRamLimit()
+    barScaleMaxRam = maxPurchasableRam
 
     for (let i = 0; i < 25; i++) {
       const nodeName = "node" + String(i).padStart(2, "0")
@@ -181,22 +183,22 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
         exists,
         ram,
         ramFormatted: exists ? ns.format.ram(ram, digits) : "-",
-        progressBar: generateProgressBar(ram, maxNodeRam),
+        progressBar: generateProgressBar(ram, barScaleMaxRam),
       })
     }
 
     const existingNodes = nodes.filter((n) => n.exists)
     const money = ns.getPlayer().money
     const bestRam = existingNodes.length > 0 ? Math.max(...existingNodes.map((n) => n.ram)) : 0
-    const targetRam = bestRam > 0 ? Math.min(bestRam * 2, maxNodeRam) : 1
+    const targetRam = bestRam > 0 ? Math.min(bestRam * 2, maxPurchasableRam) : 1
     const cost = ns.cloud.getServerCost(targetRam)
 
     nextAction = "Save money"
     savingsInfo = ""
 
-    if (bestRam >= maxNodeRam) {
-      nextAction = `All servers maxed at ${ns.format.ram(maxNodeRam, digits)}`
-      savingsInfo = `Max server RAM reached (${ns.format.ram(maxNodeRam, digits)}) - Cost to purchase: ${ns.format.number(cost)}`
+    if (bestRam >= maxPurchasableRam) {
+      nextAction = `All servers maxed at ${ns.format.ram(maxPurchasableRam, digits)}`
+      savingsInfo = `Max server RAM reached (${ns.format.ram(maxPurchasableRam, digits)}) - Cost to purchase: ${ns.format.number(cost)}`
     } else if (money >= cost) {
       if (existingNodes.length < 25) {
         nextAction = `Buy ${ns.format.ram(targetRam, digits)} server (${ns.format.number(cost)})`
@@ -221,7 +223,7 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
 
   // Calculate column widths - using 2 columns: Node+Progress merged, and Value
   // Calculate the length needed for node name + progress bar
-  const ramProgressLen = Math.log2(maxNodeRam) + 1
+  const ramProgressLen = Math.log2(barScaleMaxRam) + 1
   const homeRamProgressLen = Math.log2(maxHomeRam / minHomeRam) + 1 // This is the longest progress bar
 
   // Node column width is the max of node names

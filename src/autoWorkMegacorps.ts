@@ -50,6 +50,7 @@ export async function main(ns: NS) {
 
     // Work at this company until we reach the required reputation
     while (true) {
+      const focus = ns.singularity.isFocused()
       const currentRep = ns.singularity.getCompanyRep(company)
 
       const currentCharisma = ns.getPlayer().skills.charisma
@@ -63,7 +64,7 @@ export async function main(ns: NS) {
           ns.singularity.travelToCity(uniCity)
         }
 
-        ns.singularity.universityCourse(uni, uniClass, false)
+        ns.singularity.universityCourse(uni, uniClass, focus)
         await ns.sleep(checkInterval)
         continue
       }
@@ -95,30 +96,35 @@ export async function main(ns: NS) {
       }
 
       const player = ns.getPlayer()
-      const favor = player.factions.includes(factionName) ? ns.singularity.getFactionFavor(factionName) : 0
-      const best = pickBestCompanyPosition(ns, company, positions, player, favor)
+      const companyFavor = ns.singularity.getCompanyFavor(company)
+      const best = pickBestCompanyField(ns, company, positions, player, companyFavor, focus)
 
       if (!best) {
         ns.tprint(`ERROR: Could not find best position at ${company}`)
         return
       }
 
-      const { field: bestField, positionName: bestPositionName, repPerSecond } = best
+      const { field: bestField, positionName: targetPosition, repPerSecond } = best
+      const currentJob = player.jobs[company]
 
-      // Apply for a job in the best field (this will get us the highest position we qualify for in that field)
-      const jobName = ns.singularity.applyToCompany(company, bestField)
-      if (jobName) {
-        ns.tprint(`Applied to ${company} in field: ${bestField}, got position: ${jobName}`)
+      if (currentJob !== targetPosition) {
+        const jobName = ns.singularity.applyToCompany(company, bestField)
+        if (jobName && jobName !== targetPosition) {
+          ns.print(`Applied ${bestField}: got ${jobName} (wanted ${targetPosition} @ ${repPerSecond.toFixed(2)} rep/s)`)
+        } else if (!jobName) {
+          ns.print(`Could not apply for ${bestField} (${targetPosition}); still on ${currentJob ?? "none"}`)
+        }
       }
 
-      const working = ns.singularity.workForCompany(company, false)
+      const working = ns.singularity.workForCompany(company, focus)
       if (!working) {
         ns.tprint(`ERROR: Failed to work at ${company}`)
         return
       }
 
+      const activeJob = ns.getPlayer().jobs[company] ?? targetPosition
       ns.print(
-        `Working: ${jobName || bestPositionName} (${ns.format.number(repPerSecond, "0.00")} rep/s) | Current: ${ns.format.number(currentRep)}/${ns.format.number(requiredRep)}`
+        `Working: ${activeJob} (${repPerSecond.toFixed(2)} rep/s target) | ${ns.format.number(currentRep)}/${ns.format.number(requiredRep)}`
       )
 
       // Wait before checking again
@@ -130,8 +136,8 @@ export async function main(ns: NS) {
   ns.exec("autoWorkFactions.js", "home")
 }
 
-function focusMultiplier(ns: NS): number {
-  return ns.singularity.isFocused() ? 1 : UNFOCUSED_FOCUS_MULT
+function focusMultiplier(focused: boolean): number {
+  return focused ? 1 : UNFOCUSED_FOCUS_MULT
 }
 
 function meetsPositionRequirements(player: Player, position: JobName, company: CompanyName, ns: NS): boolean {
@@ -149,34 +155,101 @@ function meetsPositionRequirements(player: Player, position: JobName, company: C
   return true
 }
 
-function companyRepPerSecond(ns: NS, company: CompanyName, position: JobName, favor: number): number | null {
+function companyRepPerSecond(
+  ns: NS,
+  company: CompanyName,
+  position: JobName,
+  companyFavor: number,
+  focused: boolean
+): number | null {
   try {
-    const gains = ns.formulas.work.companyGains(ns.getPlayer(), company, position, favor)
-    return gains.reputation * CYCLES_PER_SECOND * focusMultiplier(ns)
+    const gains = ns.formulas.work.companyGains(ns.getPlayer(), company, position, companyFavor)
+    return gains.reputation * CYCLES_PER_SECOND * focusMultiplier(focused)
   } catch {
     return null
   }
 }
 
-function pickBestCompanyPosition(
+/** Group company positions by job field. */
+function positionsByField(
+  ns: NS,
+  company: CompanyName,
+  positions: JobName[]
+): Map<JobField, JobName[]> {
+  const byField = new Map<JobField, JobName[]>()
+
+  for (const position of positions) {
+    const field = ns.singularity.getCompanyPositionInfo(company, position).field
+    const list = byField.get(field) ?? []
+    list.push(position)
+    byField.set(field, list)
+  }
+
+  return byField
+}
+
+/**
+ * Highest job in a field's promotion ladder you qualify for (same logic as applyToCompany).
+ */
+function highestQualifiedInField(
+  ns: NS,
+  company: CompanyName,
+  fieldPositions: JobName[],
+  player: Player
+): JobName | null {
+  if (fieldPositions.length === 0) return null
+
+  let entry = fieldPositions[0]
+  let minRep = ns.singularity.getCompanyPositionInfo(company, entry).requiredReputation
+
+  for (const position of fieldPositions) {
+    const req = ns.singularity.getCompanyPositionInfo(company, position).requiredReputation
+    if (req < minRep) {
+      minRep = req
+      entry = position
+    }
+  }
+
+  if (!meetsPositionRequirements(player, entry, company, ns)) {
+    return null
+  }
+
+  let current = entry
+  for (;;) {
+    const next = ns.singularity.getCompanyPositionInfo(company, current).nextPosition
+    if (next == null || !fieldPositions.includes(next)) break
+    if (!meetsPositionRequirements(player, next, company, ns)) break
+    current = next
+  }
+
+  return current
+}
+
+/**
+ * Pick the field whose promotion-track job has the best rep/s.
+ * applyToCompany(company, field) always assigns that track's highest qualified job, not an arbitrary listing.
+ */
+function pickBestCompanyField(
   ns: NS,
   company: CompanyName,
   positions: JobName[],
   player: Player,
-  favor: number
+  companyFavor: number,
+  focused: boolean
 ): { field: JobField; positionName: JobName; repPerSecond: number } | null {
   let bestField: JobField | null = null
   let bestPositionName: JobName | null = null
   let bestRepPerSecond = -1
 
-  for (const position of positions) {
-    if (!meetsPositionRequirements(player, position, company, ns)) continue
+  for (const [field, fieldPositions] of positionsByField(ns, company, positions)) {
+    const position = highestQualifiedInField(ns, company, fieldPositions, player)
+    if (position == null) continue
 
-    const repPerSecond = companyRepPerSecond(ns, company, position, favor)
+    const repPerSecond = companyRepPerSecond(ns, company, position, companyFavor, focused)
     if (repPerSecond == null || repPerSecond <= bestRepPerSecond) continue
 
     bestRepPerSecond = repPerSecond
-    bestField = ns.singularity.getCompanyPositionInfo(company, position).field
+    bestField = field
     bestPositionName = position
   }
 
