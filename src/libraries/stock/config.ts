@@ -33,3 +33,28 @@ export const DEFAULT_STOCK_TRADER_CONFIG: StockTraderConfig = {
   maxVolatility: 0.05,
   enableShorts: true,
 }
+
+function finiteOrDefault(value: unknown, fallback: number): number {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : fallback
+}
+
+/** Merge partial config and fill any missing/stale fields from defaults. */
+export function mergeStockTraderConfig(partial?: Partial<StockTraderConfig>): StockTraderConfig {
+  const d = DEFAULT_STOCK_TRADER_CONFIG
+  const merged = { ...d, ...partial }
+  return {
+    moneyKeep: finiteOrDefault(merged.moneyKeep, d.moneyKeep),
+    maxShareFraction: finiteOrDefault(merged.maxShareFraction, d.maxShareFraction),
+    portfolioFractionPerSymbol: finiteOrDefault(merged.portfolioFractionPerSymbol, d.portfolioFractionPerSymbol),
+    trimFractionPerTick: finiteOrDefault(merged.trimFractionPerTick, d.trimFractionPerTick),
+    budgetFractionPerSymbol: finiteOrDefault(merged.budgetFractionPerSymbol, d.budgetFractionPerSymbol),
+    minShares: finiteOrDefault(merged.minShares, d.minShares),
+    longBuyForecast: finiteOrDefault(merged.longBuyForecast, d.longBuyForecast),
+    longSellForecast: finiteOrDefault(merged.longSellForecast, d.longSellForecast),
+    shortBuyForecast: finiteOrDefault(merged.shortBuyForecast, d.shortBuyForecast),
+    shortSellForecast: finiteOrDefault(merged.shortSellForecast, d.shortSellForecast),
+    maxVolatility: finiteOrDefault(merged.maxVolatility, d.maxVolatility),
+    enableShorts: merged.enableShorts ?? d.enableShorts,
+  }
+}

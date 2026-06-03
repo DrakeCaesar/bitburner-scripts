@@ -1,6 +1,6 @@
 import { NS } from "@ns"
 import { killOtherInstances } from "@/libraries/batchCalculations.js"
-import { DEFAULT_STOCK_TRADER_CONFIG, type StockTraderConfig } from "@/libraries/stock/config.js"
+import { mergeStockTraderConfig, type StockTraderConfig } from "@/libraries/stock/config.js"
 import { STOCK_LOG_LAYOUT, STOCK_TABS, renderStockTraderDashboard } from "@/libraries/stock/display.js"
 import {
   collectTraderSnapshot,
@@ -11,13 +11,17 @@ import { TabbedScriptLogBuilder, initScriptLogTail } from "@/libraries/scriptLog
 
 /** Optional args: [moneyKeep] [enableShorts 0|1] */
 function configFromArgs(ns: NS): StockTraderConfig {
-  const config = { ...DEFAULT_STOCK_TRADER_CONFIG }
-  const keep = Number(ns.args[0])
-  if (Number.isFinite(keep) && keep >= 0) config.moneyKeep = keep
-  const shorts = Number(ns.args[1])
-  if (shorts === 0) config.enableShorts = false
-  if (shorts === 1) config.enableShorts = true
-  return config
+  const overrides: Partial<StockTraderConfig> = {}
+  if (ns.args.length > 0 && ns.args[0] !== "") {
+    const keep = Number(ns.args[0])
+    if (Number.isFinite(keep) && keep >= 0) overrides.moneyKeep = keep
+  }
+  if (ns.args.length > 1 && ns.args[1] !== "") {
+    const shorts = Number(ns.args[1])
+    if (shorts === 0) overrides.enableShorts = false
+    if (shorts === 1) overrides.enableShorts = true
+  }
+  return mergeStockTraderConfig(overrides)
 }
 
 export async function main(ns: NS): Promise<void> {

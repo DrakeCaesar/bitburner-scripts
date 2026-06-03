@@ -1,5 +1,5 @@
 import { NS } from "@ns"
-import { DEFAULT_STOCK_TRADER_CONFIG, type StockTraderConfig } from "@/libraries/stock/config.js"
+import { DEFAULT_STOCK_TRADER_CONFIG, mergeStockTraderConfig, type StockTraderConfig } from "@/libraries/stock/config.js"
 import type { StockPositionSide, StockSymbolSnapshot, StockTraderSnapshot } from "@/libraries/stock/types.js"
 
 const POS_LONG: StockPositionSide = "L"
@@ -26,7 +26,8 @@ function signalForSnapshot(
     "longShares" | "shortShares" | "forecast" | "volatility" | "price"
   >,
   config: StockTraderConfig,
-  totalNetWorth: number
+  totalNetWorth: number,
+  allowShorts: boolean
 ): string {
   const volOk = snap.volatility <= config.maxVolatility
   const parts: string[] = []
@@ -45,7 +46,7 @@ function signalForSnapshot(
   } else if (volOk && snap.forecast >= config.longBuyForecast) {
     parts.push("buy long")
   }
-  if (config.enableShorts) {
+  if (allowShorts) {
     const shortValue = snap.shortShares * snap.price
     const shortOverweight =
       snap.shortShares > 0 && shortValue > totalNetWorth * config.portfolioFractionPerSymbol
@@ -69,7 +70,8 @@ function collectSymbolSnapshot(
   symbol: string,
   config: StockTraderConfig,
   portfolioValue: number,
-  totalNetWorth: number
+  totalNetWorth: number,
+  allowShorts: boolean
 ): StockSymbolSnapshot {
   const [longShares, avgLongPrice, shortShares, avgShortPrice] = ns.stock.getPosition(symbol)
   const forecast = ns.stock.getForecast(symbol)
@@ -90,7 +92,7 @@ function collectSymbolSnapshot(
     shortUnrealized: shortShares > 0 ? ns.stock.getSaleGain(symbol, shortShares, POS_SHORT) : 0,
     signal: "",
   }
-  snap.signal = signalForSnapshot(snap, config, totalNetWorth)
+  snap.signal = signalForSnapshot(snap, config, totalNetWorth, allowShorts)
   return snap
 }
 
@@ -98,13 +100,32 @@ export function hasRequiredStockAccess(ns: NS): boolean {
   return ns.stock.hasTixApiAccess() && ns.stock.has4SDataTixApi()
 }
 
-export function buildConfigSummary(config: StockTraderConfig): string {
-  const short = config.enableShorts ? "on" : "off"
+/** Shorts need BitNode 8 or Source-File 8 level 2+. */
+export function canUseStockShorts(ns: NS): boolean {
+  const reset = ns.getResetInfo()
+  if (reset.currentNode === 8) return true
+  return (reset.ownedSF.get(8) ?? 0) >= 2
+}
+
+export function shortsActive(ns: NS, config: StockTraderConfig): boolean {
+  return mergeStockTraderConfig(config).enableShorts && canUseStockShorts(ns)
+}
+
+export function buildConfigSummary(ns: NS, config: StockTraderConfig): string {
+  const cfg = mergeStockTraderConfig(config)
+  let shortLabel: string
+  if (!cfg.enableShorts) {
+    shortLabel = "off"
+  } else if (!canUseStockShorts(ns)) {
+    shortLabel = "locked (need BN8 or SF8 L2)"
+  } else {
+    shortLabel = "on"
+  }
   return (
-    `long ${config.longBuyForecast}/${config.longSellForecast}, ` +
-    `short ${config.shortBuyForecast}/${config.shortSellForecast}, ` +
-    `vol<=${config.maxVolatility}, max ${(config.maxShareFraction * 100).toFixed(0)}% sh, ` +
-    `port ${(config.portfolioFractionPerSymbol * 100).toFixed(0)}%/sym, shorts ${short}`
+    `long ${cfg.longBuyForecast}/${cfg.longSellForecast}, ` +
+    `short ${cfg.shortBuyForecast}/${cfg.shortSellForecast}, ` +
+    `vol<=${cfg.maxVolatility}, max ${(cfg.maxShareFraction * 100).toFixed(0)}% sh, ` +
+    `port ${(cfg.portfolioFractionPerSymbol * 100).toFixed(0)}%/sym, shorts ${shortLabel}`
   )
 }
 
@@ -115,19 +136,21 @@ export function collectTraderSnapshot(
   tickCount: number,
   lastTickActions: string[]
 ): StockTraderSnapshot {
+  const cfg = mergeStockTraderConfig(config)
+  const allowShorts = shortsActive(ns, cfg)
   const symbolNames = ns.stock.getSymbols()
   const homeCash = ns.getServerMoneyAvailable("home")
   const portfolio = portfolioValue(ns, symbolNames)
   const totalNetWorth = homeCash + portfolio
   const symbols = symbolNames.map((sym) =>
-    collectSymbolSnapshot(ns, sym, config, portfolio, totalNetWorth)
+    collectSymbolSnapshot(ns, sym, cfg, portfolio, totalNetWorth, allowShorts)
   )
 
   return {
     symbols,
     homeCash,
-    moneyKeep: config.moneyKeep,
-    investableCash: Math.max(0, homeCash - config.moneyKeep),
+    moneyKeep: cfg.moneyKeep,
+    investableCash: Math.max(0, homeCash - cfg.moneyKeep),
     portfolioValue: portfolio,
     totalNetWorth,
     sessionStartNetWorth,
@@ -135,7 +158,7 @@ export function collectTraderSnapshot(
     commission: ns.stock.getConstants().StockMarketCommission,
     tickCount,
     lastTickActions,
-    configSummary: buildConfigSummary(config),
+    configSummary: buildConfigSummary(ns, cfg),
   }
 }
 
@@ -296,7 +319,12 @@ function tryBuyCandidate(
 }
 
 /** One market tick: exit weak positions, trim overweight, then enter strong ones. */
-export function runStockTradingTick(ns: NS, config: StockTraderConfig = DEFAULT_STOCK_TRADER_CONFIG): string[] {
+export function runStockTradingTick(
+  ns: NS,
+  config: StockTraderConfig = DEFAULT_STOCK_TRADER_CONFIG
+): string[] {
+  const cfg = mergeStockTraderConfig(config)
+  const allowShorts = shortsActive(ns, cfg)
   const actions: string[] = []
   const symbols = ns.stock.getSymbols()
   const homeCash = ns.getServerMoneyAvailable("home")
@@ -307,20 +335,20 @@ export function runStockTradingTick(ns: NS, config: StockTraderConfig = DEFAULT_
     const [longShares, , shortShares] = ns.stock.getPosition(sym)
     const forecast = ns.stock.getForecast(sym)
 
-    if (longShares > 0 && forecast < config.longSellForecast) {
+    if (longShares > 0 && forecast < cfg.longSellForecast) {
       sellPartial(ns, sym, longShares, POS_LONG, actions, "SELL")
-    } else if (longShares > 0 && forecast >= config.longSellForecast) {
-      trimOverweightLong(ns, sym, config, totalNetWorth, actions)
+    } else if (longShares > 0 && forecast >= cfg.longSellForecast) {
+      trimOverweightLong(ns, sym, cfg, totalNetWorth, actions)
     }
 
-    if (config.enableShorts && shortShares > 0 && forecast > config.shortSellForecast) {
+    if (allowShorts && shortShares > 0 && forecast > cfg.shortSellForecast) {
       sellPartial(ns, sym, shortShares, POS_SHORT, actions, "COVER")
-    } else if (config.enableShorts && shortShares > 0 && forecast <= config.shortSellForecast) {
-      trimOverweightShort(ns, sym, config, totalNetWorth, actions)
+    } else if (allowShorts && shortShares > 0 && forecast <= cfg.shortSellForecast) {
+      trimOverweightShort(ns, sym, cfg, totalNetWorth, actions)
     }
   }
 
-  const budget = { total: Math.max(0, ns.getServerMoneyAvailable("home") - config.moneyKeep), remaining: 0 }
+  const budget = { total: Math.max(0, ns.getServerMoneyAvailable("home") - cfg.moneyKeep), remaining: 0 }
   budget.remaining = budget.total
 
   const longCandidates: TradeCandidate[] = []
@@ -330,18 +358,18 @@ export function runStockTradingTick(ns: NS, config: StockTraderConfig = DEFAULT_
     const [longShares, , shortShares] = ns.stock.getPosition(sym)
     const forecast = ns.stock.getForecast(sym)
     const vol = ns.stock.getVolatility(sym)
-    if (vol > config.maxVolatility) continue
+    if (vol > cfg.maxVolatility) continue
 
-    if (forecast >= config.longBuyForecast) {
-      const maxShares = maxBuyableShares(ns, sym, POS_LONG, config.maxShareFraction, longShares)
-      if (maxShares >= config.minShares) {
+    if (forecast >= cfg.longBuyForecast) {
+      const maxShares = maxBuyableShares(ns, sym, POS_LONG, cfg.maxShareFraction, longShares)
+      if (maxShares >= cfg.minShares) {
         longCandidates.push({ symbol: sym, forecast, side: POS_LONG, held: longShares })
       }
     }
 
-    if (config.enableShorts && forecast <= config.shortBuyForecast) {
-      const maxShares = maxBuyableShares(ns, sym, POS_SHORT, config.maxShareFraction, shortShares)
-      if (maxShares >= config.minShares) {
+    if (allowShorts && forecast <= cfg.shortBuyForecast) {
+      const maxShares = maxBuyableShares(ns, sym, POS_SHORT, cfg.maxShareFraction, shortShares)
+      if (maxShares >= cfg.minShares) {
         shortCandidates.push({ symbol: sym, forecast, side: POS_SHORT, held: shortShares })
       }
     }
@@ -352,16 +380,22 @@ export function runStockTradingTick(ns: NS, config: StockTraderConfig = DEFAULT_
 
   for (const candidate of longCandidates) {
     if (budget.remaining <= 0) break
-    tryBuyCandidate(ns, candidate, config, budget, actions)
+    tryBuyCandidate(ns, candidate, cfg, budget, actions)
   }
 
   for (const candidate of shortCandidates) {
     if (budget.remaining <= 0) break
-    tryBuyCandidate(ns, candidate, config, budget, actions)
+    tryBuyCandidate(ns, candidate, cfg, budget, actions)
   }
 
   if (actions.length === 0) {
-    actions.push("(no trades)")
+    if (budget.total <= 0) {
+      actions.push("(no trades: no investable cash above reserve)")
+    } else if (longCandidates.length === 0 && shortCandidates.length === 0) {
+      actions.push("(no trades: no symbols pass forecast/vol filters)")
+    } else {
+      actions.push("(no trades: budget or share caps blocked all orders)")
+    }
   }
 
   return actions
