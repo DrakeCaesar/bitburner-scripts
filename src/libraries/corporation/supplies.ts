@@ -1,13 +1,15 @@
 import { CityName, CorpIndustryData, CorpMaterialName, NS } from "@ns"
 import { FARMLAND_DIVISION } from "@/libraries/corporation/farmland.js"
 import { asCorpMaterialList } from "@/libraries/corporation/simulation/officeJobs.js"
+import { getCorpProductionMultiplier } from "@/libraries/corporation/simulation/context.js"
+import { getOfficeProductivity } from "@/libraries/corporation/simulation/math.js"
 
 /** Inputs for Agriculture (Farmland). */
 export const FARMLAND_INPUT_MATERIALS: CorpMaterialName[] = ["Water", "Chemicals"]
 
 const STOCK_LOW = 100
 const STOCK_HIGH = 150
-const LOW_MULTIPLIER = 1.1
+const LOW_MULTIPLIER = 2.0
 const HOLD_MULTIPLIER = 1.0
 
 export type SupplyTier = "low" | "hold" | "pause"
@@ -42,6 +44,37 @@ function formatTier(tier: SupplyTier): string {
   return `>${STOCK_HIGH} (off)`
 }
 
+/** Expected produced units/s from office jobs (used when warehouse rates are still zero). */
+function estimateProducedUnitsPerSec(ns: NS, divisionName: string, city: CityName, industry: CorpIndustryData): number {
+  const corp = ns.corporation
+  try {
+    const office = corp.getOffice(divisionName, city)
+    if (office.numEmployees <= 0) return 0
+
+    const division = corp.getDivision(divisionName)
+    let prodPerSec =
+      getOfficeProductivity(office.employeeProductionByJob) *
+      division.productionMult *
+      getCorpProductionMultiplier(ns)
+
+    for (const producedName of asCorpMaterialList(industry.producedMaterials)) {
+      try {
+        const produced = corp.getMaterial(divisionName, city, producedName as CorpMaterialName)
+        if (produced.productionLimit != null) {
+          prodPerSec = Math.min(prodPerSec, produced.productionLimit)
+        }
+        break
+      } catch {
+        // produced material not in warehouse yet
+      }
+    }
+
+    return prodPerSec
+  } catch {
+    return 0
+  }
+}
+
 /** Consumption per second for an input material (from Plants production rate × industry ratio). */
 export function getInputConsumptionPerSec(
   ns: NS,
@@ -73,6 +106,9 @@ export function getInputConsumptionPerSec(
       // produced material not tracked yet
     }
   }
+
+  const estimatedProd = estimateProducedUnitsPerSec(ns, divisionName, city, industry)
+  if (estimatedProd > 0) return estimatedProd * ratio
 
   return 0
 }

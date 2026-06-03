@@ -34,11 +34,11 @@ export async function main(ns: NS): Promise<void> {
         ...asStringLines(ensureFarmlandDivision(ns)),
       ]
 
-      const beforeStage = captureCorporationSnapshot(ns)
-
       const { lines: supplyLines, supplies } = manageFarmlandSupplies(ns)
       const operationLines = await manageFarmlandOperations(ns)
       statusLines.push(...asStringLines(supplyLines), ...asStringLines(operationLines))
+
+      const beforeStage = captureCorporationSnapshot(ns)
 
       let simRun: ValidationRun | null = null
       if (beforeStage) {
