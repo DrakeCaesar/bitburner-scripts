@@ -74,7 +74,7 @@ export function getCorporationStatus(ns: NS): string[] {
 }
 
 /** One tick of full corp automation. Returns log lines for the tail window. */
-export function maintainCorporation(ns: NS): string[] {
+export async function maintainCorporation(ns: NS): Promise<string[]> {
   const corp = ns.corporation
   const lines: string[] = []
 
@@ -100,7 +100,7 @@ export function maintainCorporation(ns: NS): string[] {
     lines.push(`${divisionName} (${division.industry}) | awareness ${division.awareness.toFixed(1)} | popularity ${division.popularity.toFixed(1)}`)
 
     for (const city of division.cities) {
-      maintainOffice(ns, divisionName, city, info.funds, lines)
+      await maintainOffice(ns, divisionName, city, info.funds, lines)
       maintainWarehouse(ns, divisionName, city, industry, lines)
     }
 
@@ -121,16 +121,16 @@ function tryPurchaseUnlock(ns: NS, unlock: CorpUnlockName, lines: string[]): voi
   lines.push(`Purchased unlock: ${unlock}`)
 }
 
-function maintainOffice(
+async function maintainOffice(
   ns: NS,
   divisionName: string,
   city: CityName,
   funds: number,
   lines: string[]
-): void {
+): Promise<void> {
   const corp = ns.corporation
 
-  maintainOfficeStaff(ns, divisionName, city, funds, lines)
+  await maintainOfficeStaff(ns, divisionName, city, funds, lines)
 
   const office = corp.getOffice(divisionName, city)
   const upgradeCost = corp.getOfficeSizeUpgradeCost(divisionName, city, 3)

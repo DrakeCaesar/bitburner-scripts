@@ -53,6 +53,36 @@ export function getMarketFactor(demand: number, competition: number): number {
   return Math.max(0.1, (demand * (100 - competition)) / 100)
 }
 
+/** Max sell rate (/s) for one material at MAX @ MP (Division.processSaleState). */
+export function estimateMaterialMaxSellPerSecond(
+  quality: number,
+  baseMarkup: number,
+  marketPrice: number,
+  demand: number,
+  competition: number,
+  desiredSellPrice: string | number,
+  employeeProductionByJob: Record<string, number>,
+  awareness: number,
+  popularity: number,
+  ctx: SimContext
+): number {
+  const markupLimit = getMaterialMarkupLimit(quality, baseMarkup)
+  const sCost = parseSellPrice(desiredSellPrice, marketPrice, false, false, markupLimit)
+  if (sCost == null) return 0
+
+  const businessFactor = getBusinessFactor(employeeProductionByJob)
+  const advertisingFactor = getAdvertisingFactors(awareness, popularity, ctx.industryAdvertisingFactor)[0]
+  return (
+    (quality + 0.001) *
+    getMarketFactor(demand, competition) *
+    calculateMarkupMultiplier(sCost, marketPrice, markupLimit) *
+    businessFactor *
+    ctx.corpSalesMult *
+    advertisingFactor *
+    ctx.divisionSalesMult
+  )
+}
+
 /** Material.getMarkupLimit — quality / baseMarkup. */
 export function getMaterialMarkupLimit(quality: number, baseMarkup: number): number {
   if (baseMarkup <= 0) return quality

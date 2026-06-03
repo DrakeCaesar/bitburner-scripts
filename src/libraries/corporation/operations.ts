@@ -36,7 +36,7 @@ export function sellDivisionProduce(
 }
 
 /** Staff offices and configure produce sales for Farmland. */
-export function manageFarmlandOperations(ns: NS): string[] {
+export async function manageFarmlandOperations(ns: NS): Promise<string[]> {
   const corp = ns.corporation
   const lines: string[] = []
 
@@ -55,7 +55,7 @@ export function manageFarmlandOperations(ns: NS): string[] {
       continue
     }
 
-    maintainOfficeStaff(ns, FARMLAND_DIVISION, city, info.funds, lines)
+    await maintainOfficeStaff(ns, FARMLAND_DIVISION, city, info.funds, lines)
     sellDivisionProduce(ns, FARMLAND_DIVISION, city, industry, lines)
   }
 

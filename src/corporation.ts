@@ -28,7 +28,7 @@ export async function main(ns: NS): Promise<void> {
       const beforeStage = captureCorporationSnapshot(ns)
 
       const { lines: supplyLines, supplies } = manageFarmlandSupplies(ns)
-      const operationLines = manageFarmlandOperations(ns)
+      const operationLines = await manageFarmlandOperations(ns)
       statusLines.push(...supplyLines, ...operationLines)
 
       let simRun: ValidationRun | null = null
