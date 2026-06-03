@@ -7,12 +7,14 @@ import {
   asCorpMaterialList,
   buildOptimizeResultFromSimBest,
   countsMatchCurrent,
+  economicsPerSecond,
   enumerateHeadcountEconomics,
   evaluateHeadcountEconomics,
   extractPerEmployeeRates,
   findOptimalHeadcount,
   formatHeadcountEconomics,
   headcountEconomicsToTableRow,
+  officeJobCountsFromEmployeeJobs,
   formatJobCounts,
   MAX_OFFICE_EMPLOYEES_FOR_OPTIMIZE,
   optimizeMaterialJobCounts,
@@ -37,6 +39,9 @@ export interface HeadcountPlanTable {
   officeSize: number
   currentEmployees: number
   optimalEmployees: number
+  /** Game `lastCycleRevenue - lastCycleExpenses` for the division ($/s). */
+  gameProfitPerSec: number
+  secondsPerMarketCycle: number
   rows: string[][]
 }
 
@@ -49,8 +54,10 @@ export function buildFarmlandHeadcountPlanTables(ns: NS): HeadcountPlanTable[] {
   if (!info.divisions.includes(FARMLAND_DIVISION)) return []
 
   const tables: HeadcountPlanTable[] = []
+  const division = corp.getDivision(FARMLAND_DIVISION)
+  const gameProfitPerSec = division.lastCycleRevenue - division.lastCycleExpenses
 
-  for (const city of corp.getDivision(FARMLAND_DIVISION).cities) {
+  for (const city of division.cities) {
     try {
       corp.getOffice(FARMLAND_DIVISION, city)
     } catch {
@@ -86,8 +93,15 @@ export function buildFarmlandHeadcountPlanTables(ns: NS): HeadcountPlanTable[] {
       officeSize: office.size,
       currentEmployees: office.numEmployees,
       optimalEmployees,
+      gameProfitPerSec,
+      secondsPerMarketCycle: profitContext.secondsPerMarketCycle,
       rows: economics.map((econ) =>
-        headcountEconomicsToTableRow(econ, office.numEmployees, optimalEmployees)
+        headcountEconomicsToTableRow(
+          econ,
+          office.numEmployees,
+          optimalEmployees,
+          profitContext.secondsPerMarketCycle
+        )
       ),
     })
   }
@@ -174,6 +188,7 @@ export function buildFarmlandProfitContext(ns: NS, divisionName: string, city: C
   }
 
   const products: FarmlandProfitContext["products"] = []
+  let observedProductionPerSecond = 0
   for (const materialName of asCorpMaterialList(industry.producedMaterials)) {
     const name = materialName as CorpMaterialName
     try {
@@ -215,6 +230,9 @@ export function buildFarmlandProfitContext(ns: NS, divisionName: string, city: C
         if (inferred != null) demand = inferred
       }
 
+      const prodRate = Math.abs(mat.productionAmount)
+      if (prodRate > observedProductionPerSecond) observedProductionPerSecond = prodRate
+
       products.push({
         name,
         marketPrice: mat.marketPrice,
@@ -224,6 +242,8 @@ export function buildFarmlandProfitContext(ns: NS, divisionName: string, city: C
         competition,
         desiredSellAmount: mat.desiredSellAmount,
         desiredSellPrice: mat.desiredSellPrice,
+        productionLimit: mat.productionLimit,
+        actualSellAmount: mat.actualSellAmount,
       })
     } catch {
       // material missing
@@ -231,16 +251,25 @@ export function buildFarmlandProfitContext(ns: NS, divisionName: string, city: C
   }
 
   const inputRatios: FarmlandProfitContext["inputRatios"] = []
+  let observedMaterialExpensePerSecond = 0
   for (const [material, ratio] of Object.entries(industry.requiredMaterials ?? {})) {
     if (!ratio) continue
     try {
       const mat = corp.getMaterial(divisionName, city, material as CorpMaterialName)
       inputRatios.push({ material, ratio, marketPrice: mat.marketPrice })
+      observedMaterialExpensePerSecond += mat.buyAmount * mat.marketPrice
     } catch {
       const data = corp.getMaterialData(material as CorpMaterialName)
       inputRatios.push({ material, ratio, marketPrice: data.baseCost })
     }
   }
+
+  const observedDivisionRevenuePerSecond = division.lastCycleRevenue
+  const observedDivisionExpensePerSecond = division.lastCycleExpenses
+  const observedSalaryPerSecond = Math.max(
+    0,
+    observedDivisionExpensePerSecond - observedMaterialExpensePerSecond
+  )
 
   return {
     sim,
@@ -250,6 +279,15 @@ export function buildFarmlandProfitContext(ns: NS, divisionName: string, city: C
     popularity: division.popularity,
     products,
     inputRatios,
+    liveEmployeeProductionByJob: { ...office.employeeProductionByJob },
+    baselineJobCounts: officeJobCountsFromEmployeeJobs(office.employeeJobs),
+    observedProductionPerSecond:
+      observedProductionPerSecond > 0 ? observedProductionPerSecond : undefined,
+    observedDivisionRevenuePerSecond,
+    observedDivisionExpensePerSecond,
+    observedMaterialExpensePerSecond,
+    observedSalaryPerSecond,
+    baselineEmployees: office.numEmployees,
   }
 }
 
@@ -339,25 +377,32 @@ function tryUpgradeOfficeSize(
 
     if (!optimal || !currentEcon) return
 
+    const spc = profitContext.secondsPerMarketCycle
+    const optNet = economicsPerSecond(optimal.economics, spc).net
+    const curNet = economicsPerSecond(currentEcon, spc).net
+
     if (optimal.targetHeadcount <= office.size) {
       lines.push(
         `${divisionName}/${city}: skip office +${increase} (optimal ${optimal.targetHeadcount}/${office.size} staff, ` +
-          `net $${(optimal.economics.netProfit / 1e3).toFixed(1)}k/cyc)`
+          `net $${(optNet / 1e3).toFixed(1)}k/s)`
       )
       return
     }
 
-    if (optimal.economics.netProfit <= currentEcon.netProfit + MIN_NET_PROFIT_GAIN_PER_CYCLE) {
+    if (
+      optimal.economics.netProfit <=
+      currentEcon.netProfit + MIN_NET_PROFIT_GAIN_PER_CYCLE * spc
+    ) {
       lines.push(
-        `${divisionName}/${city}: skip office +${increase} (net $${(currentEcon.netProfit / 1e3).toFixed(1)}k→` +
-          `$${(optimal.economics.netProfit / 1e3).toFixed(1)}k at ${optimal.targetHeadcount} staff)`
+        `${divisionName}/${city}: skip office +${increase} (net $${(curNet / 1e3).toFixed(1)}k/s→` +
+          `$${(optNet / 1e3).toFixed(1)}k/s at ${optimal.targetHeadcount} staff)`
       )
       return
     }
 
     lines.push(
       `${divisionName}/${city}: plan ${optimal.targetHeadcount} staff (size ${targetSize}) — ` +
-        `${formatHeadcountEconomics(optimal.economics)}`
+        `${formatHeadcountEconomics(optimal.economics, spc)}`
     )
   }
 
@@ -401,9 +446,13 @@ export async function maintainOfficeStaff(
         optimalStaff = optimal.targetHeadcount
         allowHire = office.numEmployees < optimalStaff
         if (!allowHire && office.numEmployees < office.size) {
+          const netPerSec = economicsPerSecond(
+            optimal.economics,
+            profitContext.secondsPerMarketCycle
+          ).net
           lines.push(
             `${divisionName}/${city}: staff ${office.numEmployees}/${office.size} ` +
-              `(optimal ${optimalStaff}, net $${(optimal.economics.netProfit / 1e3).toFixed(1)}k/cyc) — not hiring`
+              `(optimal ${optimalStaff}, net $${(netPerSec / 1e3).toFixed(1)}k/s) — not hiring`
           )
         }
       } else if (!allowHire) {

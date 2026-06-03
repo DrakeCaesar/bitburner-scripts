@@ -129,9 +129,9 @@ function populateCorporationLog(ns: NS, builder: ScriptLogBuilder, managedSuppli
       { label: "Production mult", value: division.productionMult.toFixed(3) },
       { label: "Research", value: ns.format.number(division.researchPoints) },
       { label: "Ad campaigns", value: String(division.numAdVerts) },
-      { label: "Last cycle rev", value: formatMoney(ns, division.lastCycleRevenue) },
-      { label: "Last cycle exp", value: formatMoney(ns, division.lastCycleExpenses) },
-      { label: "Last cycle profit", value: formatMoney(ns, profitLast) },
+      { label: "Revenue/s (last)", value: formatMoney(ns, division.lastCycleRevenue) },
+      { label: "Expenses/s (last)", value: formatMoney(ns, division.lastCycleExpenses) },
+      { label: "Profit/s (last)", value: formatMoney(ns, profitLast) },
       { label: "This cycle rev", value: formatMoney(ns, division.thisCycleRevenue) },
       { label: "This cycle exp", value: formatMoney(ns, division.thisCycleExpenses) },
       { label: "This cycle profit", value: formatMoney(ns, profitThis) },
@@ -280,10 +280,12 @@ function appendSimulationLog(builder: ScriptLogBuilder, ns: NS, run: ValidationR
 
 function appendHeadcountPlanTables(builder: ScriptLogBuilder, tables: HeadcountPlanTable[]): void {
   for (const plan of tables) {
+    const gameProfitK = (plan.gameProfitPerSec / 1e3).toFixed(1)
     builder.table({
       title:
         `Staff plan ${plan.city} (${plan.currentEmployees}/${plan.officeSize}, ` +
-        `optimal ${plan.optimalEmployees}) — ★ best net · ◀ current`,
+        `optimal ${plan.optimalEmployees}) — $/s · cycle ${plan.secondsPerMarketCycle}s · ` +
+        `game $${gameProfitK}k/s · Est PnL = (rev−inputs)−payroll · ★ best · ◀ current`,
       columns: [
         { header: "N", align: "right", minWidth: 3 },
         { header: "Ops", align: "right", minWidth: 3 },
@@ -292,9 +294,9 @@ function appendHeadcountPlanTables(builder: ScriptLogBuilder, tables: HeadcountP
         { header: "Mgmt", align: "right", minWidth: 4 },
         { header: "R&D", align: "right", minWidth: 3 },
         { header: "Int", align: "right", minWidth: 3 },
-        { header: "Gross", align: "right", minWidth: 7 },
-        { header: "Salary", align: "right", minWidth: 7 },
-        { header: "Net", align: "right", minWidth: 7 },
+        { header: "Gross/s", align: "right", minWidth: 8 },
+        { header: "Pay/s", align: "right", minWidth: 8 },
+        { header: "Est/s", align: "right", minWidth: 8 },
         { header: "", align: "center", minWidth: 3 },
       ],
       rows: plan.rows,

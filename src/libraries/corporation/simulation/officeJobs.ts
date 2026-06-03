@@ -84,6 +84,10 @@ export interface FarmlandProductProfitInput {
   competition: number
   desiredSellAmount: string | number
   desiredSellPrice: string | number
+  /** Per-second cap from limitMaterialProduction (first produced material in game). */
+  productionLimit: number | null
+  /** Last cycle sell rate (/s); used to detect production-limited sales. */
+  actualSellAmount?: number
 }
 
 /** Live warehouse + division data for one-cycle profit estimate. */
@@ -96,6 +100,22 @@ export interface FarmlandProfitContext {
   products: FarmlandProductProfitInput[]
   /** Industry requiredMaterials ratios (e.g. Water 0.5, Chemicals 0.2). */
   inputRatios: Array<{ material: string; ratio: number; marketPrice: number }>
+  /** Live office totals (includes corp/industry employee mults). */
+  liveEmployeeProductionByJob?: Record<string, number>
+  /** Job layout when live production was sampled. */
+  baselineJobCounts?: OfficeJobCounts
+  /** Max |productionAmount|/s across produced materials (anchors to game UI). */
+  observedProductionPerSecond?: number
+  /** Division lastCycleRevenue ($/s) — game sales rate. */
+  observedDivisionRevenuePerSecond?: number
+  /** Division lastCycleExpenses ($/s) — salary + buys + other. */
+  observedDivisionExpensePerSecond?: number
+  /** Sum of input material buyAmount×price ($/s) at snapshot time. */
+  observedMaterialExpensePerSecond?: number
+  /** lastCycleExpenses − material buys; payroll share of $/s. */
+  observedSalaryPerSecond?: number
+  /** Staff count when division $/s rates were sampled. */
+  baselineEmployees?: number
 }
 
 export interface OfficeJobOptimizeResult {
@@ -218,6 +238,63 @@ export interface HeadcountEconomics {
   netProfit: number
 }
 
+/** Input purchase $/s at `prodPerSec` (requiredMaterials × market price). */
+export function estimateInputCostPerSecond(prodPerSec: number, ctx: FarmlandProfitContext): number {
+  let cost = 0
+  for (const input of ctx.inputRatios) {
+    cost += input.ratio * prodPerSec * input.marketPrice
+  }
+  return cost
+}
+
+/**
+ * Scale formula economics to match division last-cycle $/s at current staff,
+ * then scale production and payroll with headcount / job layout.
+ */
+export function applyDivisionEconomicsCalibration(
+  numEmployees: number,
+  counts: OfficeJobCounts,
+  rates: PerEmployeeRates,
+  ctx: FarmlandProfitContext,
+  formulaGrossProfit: number,
+  formulaSalaryPerCycle: number
+): { grossProfit: number; salaryPerCycle: number; netProfit: number } {
+  const spc = ctx.secondsPerMarketCycle
+  const baselineN = ctx.baselineEmployees ?? numEmployees
+  const baselineCounts = ctx.baselineJobCounts
+
+  if (
+    !baselineCounts ||
+    !ctx.observedProductionPerSecond ||
+    ctx.observedDivisionRevenuePerSecond == null ||
+    ctx.observedSalaryPerSecond == null
+  ) {
+    return {
+      grossProfit: formulaGrossProfit,
+      salaryPerCycle: formulaSalaryPerCycle,
+      netProfit: formulaGrossProfit - formulaSalaryPerCycle,
+    }
+  }
+
+  const hypoProd = estimateMaterialProductionPerSecond(counts, rates, ctx)
+  const baseProd = estimateMaterialProductionPerSecond(baselineCounts, rates, ctx)
+  const prodScale = baseProd > 0 ? hypoProd / baseProd : numEmployees / Math.max(1, baselineN)
+
+  const baseInputPerSec = estimateInputCostPerSecond(ctx.observedProductionPerSecond, ctx)
+  const baseGrossPerSec = ctx.observedDivisionRevenuePerSecond - baseInputPerSec
+  const hypoGrossPerSec = baseGrossPerSec * prodScale
+  const grossProfit = hypoGrossPerSec * spc
+
+  const salaryPerCycle =
+    ctx.observedSalaryPerSecond * spc * (numEmployees / Math.max(1, baselineN))
+
+  return {
+    grossProfit,
+    salaryPerCycle,
+    netProfit: grossProfit - salaryPerCycle,
+  }
+}
+
 /** Best job split at `numEmployees` with gross profit minus projected salary. */
 export function evaluateHeadcountEconomics(
   numEmployees: number,
@@ -230,18 +307,27 @@ export function evaluateHeadcountEconomics(
   const optimal = optimizeMaterialJobCounts(numEmployees, rates, { profitContext: profitCtx })
   if (!optimal) return null
 
-  const salaryPerCycle = estimateOfficeSalaryPerCycle(
+  const formulaSalary = estimateOfficeSalaryPerCycle(
     { ...salaryOffice, numEmployees },
     profitCtx.sim.employeeSalaryMultiplier,
     profitCtx.sim.marketCycles
   )
 
+  const calibrated = applyDivisionEconomicsCalibration(
+    numEmployees,
+    optimal.counts,
+    rates,
+    profitCtx,
+    optimal.estimatedCycleProfit,
+    formulaSalary
+  )
+
   return {
     numEmployees,
     counts: optimal.counts,
-    grossProfit: optimal.estimatedCycleProfit,
-    salaryPerCycle,
-    netProfit: optimal.estimatedCycleProfit - salaryPerCycle,
+    grossProfit: calibrated.grossProfit,
+    salaryPerCycle: calibrated.salaryPerCycle,
+    netProfit: calibrated.netProfit,
   }
 }
 
@@ -302,12 +388,135 @@ function formatMoneyK(value: number): string {
   return `$${(value / 1e3).toFixed(1)}k`
 }
 
-/** One dashboard row; ★ = best net, ◀ = current headcount. */
+/** Game UI reports $/s; economics are computed per market cycle. */
+export function economicsPerSecond(econ: HeadcountEconomics, secondsPerMarketCycle: number): {
+  gross: number
+  salary: number
+  net: number
+} {
+  const spc = Math.max(1, secondsPerMarketCycle)
+  return {
+    gross: econ.grossProfit / spc,
+    salary: econ.salaryPerCycle / spc,
+    net: econ.netProfit / spc,
+  }
+}
+
+function productionCapPerSecond(ctx: FarmlandProfitContext): number | null {
+  const first = ctx.products[0]
+  if (!first || first.productionLimit == null) return null
+  return first.productionLimit
+}
+
+const PRODUCTION_JOBS_FOR_SCALE = [
+  "Operations",
+  "Engineer",
+  "Management",
+  "Business",
+  "Research & Development",
+] as const
+
+/** Map getOffice().employeeJobs to OfficeJobCounts. */
+export function officeJobCountsFromEmployeeJobs(
+  employeeJobs: Record<string, number | undefined>
+): OfficeJobCounts {
+  return {
+    Operations: employeeJobs.Operations ?? 0,
+    Engineer: employeeJobs.Engineer ?? 0,
+    Management: employeeJobs.Management ?? 0,
+    Business: employeeJobs.Business ?? 0,
+    "Research & Development": employeeJobs["Research & Development"] ?? 0,
+    Intern: employeeJobs.Intern ?? 0,
+  }
+}
+
+/** Scale live per-job production to a hypothetical job split (linear per role). */
+export function scaleEmployeeProductionByJob(
+  live: Record<string, number>,
+  baseline: OfficeJobCounts,
+  target: OfficeJobCounts
+): Record<string, number> {
+  const out: Record<string, number> = {
+    Operations: 0,
+    Engineer: 0,
+    Management: 0,
+    Business: 0,
+    "Research & Development": 0,
+    Intern: 0,
+    Unassigned: 0,
+    total: 0,
+  }
+
+  for (const job of PRODUCTION_JOBS_FOR_SCALE) {
+    const baseCount = baseline[job]
+    const targetCount = target[job]
+    const liveProd = live[job] ?? 0
+    out[job] = baseCount > 0 ? (liveProd / baseCount) * targetCount : 0
+    out.total += out[job]
+  }
+
+  return out
+}
+
+function resolveEmployeeProductionByJob(
+  counts: OfficeJobCounts,
+  rates: PerEmployeeRates,
+  ctx: FarmlandProfitContext
+): Record<string, number> {
+  if (ctx.liveEmployeeProductionByJob && ctx.baselineJobCounts) {
+    return scaleEmployeeProductionByJob(ctx.liveEmployeeProductionByJob, ctx.baselineJobCounts, counts)
+  }
+  return buildEmployeeProductionByJob(counts, rates)
+}
+
+/** Material units/s after division mults, optional limit, and live-production calibration. */
+export function estimateMaterialProductionPerSecond(
+  counts: OfficeJobCounts,
+  rates: PerEmployeeRates,
+  ctx: FarmlandProfitContext
+): number {
+  const employeeProductionByJob = resolveEmployeeProductionByJob(counts, rates, ctx)
+  let prodPerSec =
+    getOfficeProductivity(employeeProductionByJob) *
+    ctx.productionMult *
+    ctx.sim.corpProductionMult *
+    ctx.sim.divisionResearchProductionMult
+
+  const cap = productionCapPerSecond(ctx)
+  if (cap != null) prodPerSec = Math.min(prodPerSec, cap)
+
+  const observed = ctx.observedProductionPerSecond
+  if (
+    observed != null &&
+    observed > 0 &&
+    ctx.liveEmployeeProductionByJob &&
+    ctx.baselineJobCounts
+  ) {
+    const baselineProdByJob = scaleEmployeeProductionByJob(
+      ctx.liveEmployeeProductionByJob,
+      ctx.baselineJobCounts,
+      ctx.baselineJobCounts
+    )
+    let baselinePerSec =
+      getOfficeProductivity(baselineProdByJob) *
+      ctx.productionMult *
+      ctx.sim.corpProductionMult *
+      ctx.sim.divisionResearchProductionMult
+    if (cap != null) baselinePerSec = Math.min(baselinePerSec, cap)
+    if (baselinePerSec > 0) prodPerSec = observed * (prodPerSec / baselinePerSec)
+  }
+
+  return prodPerSec
+}
+
+/** One dashboard row; ★ = best net, ◀ = current headcount. Values are $/s. */
 export function headcountEconomicsToTableRow(
   econ: HeadcountEconomics,
   currentEmployees: number,
-  optimalEmployees: number
+  optimalEmployees: number,
+  secondsPerMarketCycle: number
 ): string[] {
+  const perSec = economicsPerSecond(econ, secondsPerMarketCycle)
   const c = econ.counts
   const marks: string[] = []
   if (econ.numEmployees === optimalEmployees) marks.push("★")
@@ -321,9 +530,9 @@ export function headcountEconomicsToTableRow(
     String(c.Management),
     String(c["Research & Development"]),
     String(c.Intern),
-    formatMoneyK(econ.grossProfit),
-    formatMoneyK(econ.salaryPerCycle),
-    formatMoneyK(econ.netProfit),
+    formatMoneyK(perSec.gross),
+    formatMoneyK(perSec.salary),
+    formatMoneyK(perSec.net),
     marks.join(""),
   ]
 }
@@ -337,13 +546,8 @@ export function estimateFarmlandCycleProfit(
   rates: PerEmployeeRates,
   ctx: FarmlandProfitContext
 ): number {
-  const employeeProductionByJob = buildEmployeeProductionByJob(counts, rates)
-  const prodPerSec =
-    getOfficeProductivity(employeeProductionByJob) *
-    ctx.productionMult *
-    ctx.sim.corpProductionMult *
-    ctx.sim.divisionResearchProductionMult
-
+  const employeeProductionByJob = resolveEmployeeProductionByJob(counts, rates, ctx)
+  const prodPerSec = estimateMaterialProductionPerSecond(counts, rates, ctx)
   const spc = ctx.secondsPerMarketCycle
   const prodPerCycle = prodPerSec * spc
 
@@ -361,8 +565,20 @@ export function estimateFarmlandCycleProfit(
       ctx.popularity,
       ctx.sim
     )
-    const soldPerCycle = Math.min(prodPerCycle, maxSell * spc)
-    revenue += soldPerCycle * product.marketPrice
+    let soldPerCycle = Math.min(prodPerCycle, maxSell * spc)
+    const prodPerSec = prodPerCycle / spc
+    if (
+      product.actualSellAmount != null &&
+      product.actualSellAmount > 0 &&
+      product.actualSellAmount >= prodPerSec * 0.95
+    ) {
+      soldPerCycle = prodPerCycle
+    }
+    const markupLimit = getMaterialMarkupLimit(product.quality, product.baseMarkup)
+    const sellPrice =
+      parseSellPrice(product.desiredSellPrice, product.marketPrice, false, false, markupLimit) ??
+      product.marketPrice
+    revenue += soldPerCycle * sellPrice
   }
 
   let inputCost = 0
@@ -521,10 +737,11 @@ export function formatJobCounts(
   return parts.join(" ")
 }
 
-export function formatHeadcountEconomics(econ: HeadcountEconomics): string {
+export function formatHeadcountEconomics(econ: HeadcountEconomics, secondsPerMarketCycle: number): string {
+  const perSec = economicsPerSecond(econ, secondsPerMarketCycle)
   return (
     `${formatJobCounts(econ.counts, econ.grossProfit)} ` +
-    `sal=$${(econ.salaryPerCycle / 1e3).toFixed(1)}k net=$${(econ.netProfit / 1e3).toFixed(1)}k/cyc`
+    `sal=$${(perSec.salary / 1e3).toFixed(1)}k/s net=$${(perSec.net / 1e3).toFixed(1)}k/s`
   )
 }
 
