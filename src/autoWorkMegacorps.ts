@@ -31,9 +31,11 @@ export async function main(ns: NS) {
     ns.enums.CompanyName.FulcrumTechnologies,
   ]
 
-  const checkInterval = 1000
+  const activeIntervalMs = 1000
+  const stableIntervalMs = 5000
 
   await killOtherInstances(ns)
+  ns.disableLog("ALL")
 
   ns.tprint("Starting megacorp reputation grind...")
 
@@ -65,7 +67,7 @@ export async function main(ns: NS) {
         }
 
         ns.singularity.universityCourse(uni, uniClass, focus)
-        await ns.sleep(checkInterval)
+        await ns.sleep(activeIntervalMs)
         continue
       }
 
@@ -106,29 +108,43 @@ export async function main(ns: NS) {
 
       const { field: bestField, positionName: targetPosition, repPerSecond } = best
       const currentJob = player.jobs[company]
+      const currentField = currentJob
+        ? ns.singularity.getCompanyPositionInfo(company, currentJob).field
+        : null
+      const alreadyWorking = isWorkingAtCompany(ns, company)
+      // Only apply when unemployed or switching field — not every tick for in-track promotions
+      const needsApply = currentJob == null || currentField !== bestField
 
-      if (currentJob !== targetPosition) {
+      if (needsApply) {
         const jobName = ns.singularity.applyToCompany(company, bestField)
-        if (jobName && jobName !== targetPosition) {
-          ns.print(`Applied ${bestField}: got ${jobName} (wanted ${targetPosition} @ ${repPerSecond.toFixed(2)} rep/s)`)
-        } else if (!jobName) {
-          ns.print(`Could not apply for ${bestField} (${targetPosition}); still on ${currentJob ?? "none"}`)
+        if (jobName) {
+          ns.print(`Applied ${bestField}: ${jobName}`)
+        } else if (currentJob) {
+          ns.print(`Could not switch to ${bestField}; still ${currentJob}`)
         }
       }
 
-      const working = ns.singularity.workForCompany(company, focus)
-      if (!working) {
-        ns.tprint(`ERROR: Failed to work at ${company}`)
-        return
+      if (!alreadyWorking) {
+        const working = ns.singularity.workForCompany(company, focus)
+        if (!working) {
+          ns.tprint(`ERROR: Failed to work at ${company}`)
+          return
+        }
       }
 
-      const activeJob = ns.getPlayer().jobs[company] ?? targetPosition
-      ns.print(
-        `Working: ${activeJob} (${repPerSecond.toFixed(2)} rep/s target) | ${ns.format.number(currentRep)}/${ns.format.number(requiredRep)}`
-      )
+      if (needsApply || !alreadyWorking) {
+        const activeJob = ns.getPlayer().jobs[company] ?? targetPosition
+        const activeRepPerSecond =
+          activeJob != null ? companyRepPerSecond(ns, company, activeJob, companyFavor, focus) : null
+        const repLabel =
+          activeRepPerSecond != null ? activeRepPerSecond.toFixed(2) : repPerSecond.toFixed(2)
+        ns.print(
+          `Working: ${activeJob} (${repLabel} rep/s) | ${ns.format.number(currentRep)}/${ns.format.number(requiredRep)}`
+        )
+      }
 
-      // Wait before checking again
-      await ns.sleep(checkInterval)
+      const interval = alreadyWorking && !needsApply ? stableIntervalMs : activeIntervalMs
+      await ns.sleep(interval)
     }
   }
 
@@ -138,6 +154,12 @@ export async function main(ns: NS) {
 
 function focusMultiplier(focused: boolean): number {
   return focused ? 1 : UNFOCUSED_FOCUS_MULT
+}
+
+/** workForCompany always calls startWork() and resets the timer — skip if already on this company. */
+function isWorkingAtCompany(ns: NS, company: CompanyName): boolean {
+  const work = ns.singularity.getCurrentWork()
+  return work != null && work.type === "COMPANY" && work.companyName === company
 }
 
 function meetsPositionRequirements(player: Player, position: JobName, company: CompanyName, ns: NS): boolean {
