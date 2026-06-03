@@ -8,8 +8,10 @@ type ContractTypeMap = Map<
     contracts: Array<{
       server: string
       name: string
+      type: string
       data: any
       answer?: any
+      reward?: string
     }>
     totalTime: number
   }
@@ -32,7 +34,7 @@ export async function main(ns: NS): Promise<void> {
       if (!contractMap.has(type)) {
         contractMap.set(type, { contracts: [], totalTime: 0 })
       }
-      contractMap.get(type)?.contracts?.push({ server, name: contract, data })
+      contractMap.get(type)?.contracts?.push({ server, name: contract, type, data })
     }
   }
 
@@ -102,7 +104,10 @@ export async function main(ns: NS): Promise<void> {
           // ns.tprint(`Attempts Remaining: ${attempt}`)
 
           if (solve && current.answer != null) {
-            ns.codingcontract.attempt(current.answer, current.name, current.server)
+            const reward = ns.codingcontract.attempt(current.answer, current.name, current.server)
+            if (reward) {
+              current.reward = reward
+            }
           }
         }
 
@@ -165,6 +170,36 @@ export async function main(ns: NS): Promise<void> {
       separatorAfter: separatorAfter,
     }) +
     "\n"
+  if (solve) {
+    const solvedRows: string[][] = []
+    for (const [, list] of contractMap) {
+      for (const c of list.contracts) {
+        if (c.answer == null) continue
+        if (c.reward) {
+          solvedRows.push([c.server, c.name, c.type, c.reward])
+        } else {
+          solvedRows.push([c.server, c.name, c.type, "(attempt failed)"])
+        }
+      }
+    }
+    solvedRows.sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]))
+    if (solvedRows.length > 0) {
+      fullOutput +=
+        "\n" +
+        buildTable({
+          title: "Solved Contracts",
+          columns: [
+            { header: "Server", align: "left" },
+            { header: "Contract", align: "left" },
+            { header: "Type", align: "left" },
+            { header: "Reward", align: "left" },
+          ],
+          rows: solvedRows,
+        }) +
+        "\n"
+    }
+  }
+
   // Combine with details of first unimplemented contracts
   if (unsolvedTypes.size > 0) {
     for (const type of unsolvedTypes.keys()) {
