@@ -1,5 +1,6 @@
-import { CityName, CorpIndustryName, CorpMaterialName, NS } from "@ns"
+import { CorpMaterialName, NS } from "@ns"
 import { ScriptLogBuilder, type ReactTableConfig, type TableLayout } from "../scriptLogUi.js"
+import { FARMLAND_DIVISION } from "./farmland.js"
 import { buildSimContext } from "./simulation/context.js"
 import type { FieldComparison } from "./simulation/types.js"
 import type { ValidationRun } from "./simulation/validate.js"
@@ -7,9 +8,7 @@ import { type HeadcountPlanTable } from "./office.js"
 import { asCorpMaterialList } from "./simulation/officeJobs.js"
 import { type ManagedSupply } from "./supplies.js"
 
-export const FARMLAND_DIVISION = "Farmland"
-export const FARMLAND_INDUSTRY: CorpIndustryName = "Agriculture"
-export const FARMLAND_START_CITY: CityName = "Sector-12"
+export { FARMLAND_CITIES, FARMLAND_DIVISION, FARMLAND_INDUSTRY, FARMLAND_START_CITY } from "./farmland.js"
 
 export const CORP_LOG_LAYOUT: Partial<TableLayout> = {
   tableWidthPx: 880,
@@ -30,63 +29,6 @@ function formatJobs(jobs: Record<string, number>): string {
   const unassigned = jobs.Unassigned ?? 0
   if (unassigned > 0) parts.push(`Un:${unassigned}`)
   return parts.length > 0 ? parts.join(" ") : "—"
-}
-
-function tryCorpAction(action: () => void): string | null {
-  try {
-    action()
-    return null
-  } catch (err) {
-    return String(err)
-  }
-}
-
-/** Create Farmland (Agriculture) and open Sector-12 office + warehouse when affordable. */
-export function ensureFarmlandDivision(ns: NS): string[] {
-  const corp = ns.corporation
-  const lines: string[] = []
-
-  if (!corp.hasCorporation()) return lines
-
-  const info = corp.getCorporation()
-
-  if (!info.divisions.includes(FARMLAND_DIVISION)) {
-    const industry = corp.getIndustryData(FARMLAND_INDUSTRY)
-    if (info.funds < industry.startingCost) {
-      lines.push(
-        `Waiting for funds to create ${FARMLAND_DIVISION} (need ${formatMoney(ns, industry.startingCost)})`
-      )
-      return lines
-    }
-    const err = tryCorpAction(() => corp.expandIndustry(FARMLAND_INDUSTRY, FARMLAND_DIVISION))
-    if (err) {
-      lines.push(`Farmland: ${err}`)
-      return lines
-    }
-    lines.push(`Created division ${FARMLAND_DIVISION} (${FARMLAND_INDUSTRY})`)
-  }
-
-  const division = corp.getDivision(FARMLAND_DIVISION)
-
-  if (!division.cities.includes(FARMLAND_START_CITY)) {
-    const err = tryCorpAction(() => corp.expandCity(FARMLAND_DIVISION, FARMLAND_START_CITY))
-    if (err) {
-      lines.push(`Farmland/${FARMLAND_START_CITY} office: ${err}`)
-      return lines
-    }
-    lines.push(`Opened office: ${FARMLAND_DIVISION} @ ${FARMLAND_START_CITY}`)
-  }
-
-  if (!corp.hasWarehouse(FARMLAND_DIVISION, FARMLAND_START_CITY)) {
-    const err = tryCorpAction(() => corp.purchaseWarehouse(FARMLAND_DIVISION, FARMLAND_START_CITY))
-    if (err) {
-      lines.push(`Farmland warehouse: ${err}`)
-      return lines
-    }
-    lines.push(`Purchased warehouse: ${FARMLAND_DIVISION} @ ${FARMLAND_START_CITY}`)
-  }
-
-  return lines
 }
 
 function populateCorporationLog(ns: NS, builder: ScriptLogBuilder, managedSupplies: ManagedSupply[] = []): void {

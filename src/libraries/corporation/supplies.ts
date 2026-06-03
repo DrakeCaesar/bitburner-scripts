@@ -1,5 +1,5 @@
 import { CityName, CorpIndustryData, CorpMaterialName, NS } from "@ns"
-import { FARMLAND_DIVISION } from "./display.js"
+import { FARMLAND_DIVISION } from "./farmland.js"
 import { asCorpMaterialList } from "./simulation/officeJobs.js"
 
 /** Inputs for Agriculture (Farmland). */

@@ -5,9 +5,9 @@ import { simulateStage } from "./simulate.js"
 import { captureCorporationSnapshot } from "./snapshot.js"
 import type { CorporationSnapshot, StageValidationResult } from "./types.js"
 
-/** Match display.ts — inlined so sim modules do not import a separate constants module (breaks RAM calc). */
+/** Primary city for stage sim — inlined so sim modules do not import farmland.ts (RAM calc). */
 const FARMLAND_DIVISION = "Farmland"
-const FARMLAND_START_CITY = "Sector-12" as CityName
+const FARMLAND_SIM_CITY = "Sector-12" as CityName
 
 export interface ValidationRun {
   stage: string
@@ -34,7 +34,7 @@ export async function validateCorpStage(ns: NS, before: CorporationSnapshot): Pr
   const result = compareStageSnapshots(
     stage,
     FARMLAND_DIVISION,
-    FARMLAND_START_CITY,
+    FARMLAND_SIM_CITY,
     before,
     predicted,
     after

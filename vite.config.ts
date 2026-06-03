@@ -1,7 +1,9 @@
 /* eslint-env node */
+import { bitburnerRelativeImports } from "./build/bitburnerRelativeImports.js"
 import { defineConfig } from "viteburner"
 
 export default defineConfig({
+  plugins: [bitburnerRelativeImports(process.cwd())],
   resolve: {
     alias: {
       "@": "./src",

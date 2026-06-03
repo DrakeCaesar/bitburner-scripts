@@ -1,5 +1,5 @@
 import { CityName, CorpMaterialName, NS, type Office } from "@ns"
-import { FARMLAND_DIVISION } from "./display.js"
+import { FARMLAND_DIVISION, OFFICE_FUND_BUFFER } from "./farmland.js"
 import { buildSimContext } from "./simulation/context.js"
 import { inferDemandFromSellRate } from "./simulation/math.js"
 import { captureCorporationSnapshot } from "./simulation/snapshot.js"
@@ -25,7 +25,8 @@ import {
   type OfficeSalaryInput,
 } from "./simulation/officeJobs.js"
 
-export const OFFICE_FUND_BUFFER = 5e6
+export { OFFICE_FUND_BUFFER } from "./farmland.js"
+
 /** Cap hiring / office size / job optimizer search (brute force grows with headcount). */
 export const MAX_OFFICE_EMPLOYEES = MAX_OFFICE_EMPLOYEES_FOR_OPTIMIZE
 /**
