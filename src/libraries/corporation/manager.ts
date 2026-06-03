@@ -8,9 +8,9 @@ import {
   NS,
 } from "@ns"
 
-const CORP_NAME = "Dracorp"
+const CORP_NAME = "dracorp"
 const START_INDUSTRY: CorpIndustryName = "Agriculture"
-const START_DIVISION = "Agriculture"
+const START_DIVISION = "Farmland"
 const START_CITY: CityName = "Sector-12"
 
 const CORE_JOBS: Exclude<CorpEmployeePosition, "Unassigned">[] = [
@@ -25,7 +25,63 @@ const SMART_SUPPLY: CorpUnlockName = "Smart Supply"
 const OFFICE_FUND_BUFFER = 5e6
 const ADVERT_FUND_BUFFER = 2e7
 
-/** One tick of corp automation. Returns log lines for the tail window. */
+/** Create dracorp on start when affordable and none exists yet. */
+export function ensureCorporationCreated(ns: NS): string[] {
+  const corp = ns.corporation
+  const lines: string[] = []
+  const reset = ns.getResetInfo()
+
+  if (reset.bitNodeOptions.disableCorporation) {
+    lines.push("Corporation disabled on this BitNode.")
+    return lines
+  }
+
+  const selfCheck = corp.canCreateCorporation(true)
+  if (selfCheck === "Success") {
+    corp.createCorporation(CORP_NAME, true)
+    lines.push(`Created ${CORP_NAME} (self-funded).`)
+    return lines
+  }
+
+  if (reset.currentNode === 3) {
+    const seedCheck = corp.canCreateCorporation(false)
+    if (seedCheck === "Success") {
+      corp.createCorporation(CORP_NAME, false)
+      lines.push(`Created ${CORP_NAME} (government seed money).`)
+      return lines
+    }
+    lines.push(`Cannot create corp (seed): ${seedCheck}`)
+    return lines
+  }
+
+  lines.push(`Waiting to self-fund corporation: ${selfCheck}`)
+  return lines
+}
+
+/** Status lines for the tail window (no automation — manual play for now). */
+export function getCorporationStatus(ns: NS): string[] {
+  const corp = ns.corporation
+  const lines: string[] = []
+
+  if (!corp.hasCorporation()) {
+    lines.push(...ensureCorporationCreated(ns))
+    return lines
+  }
+
+  const info = corp.getCorporation()
+  lines.push(`${info.name} | funds ${ns.format.number(info.funds)} | val ${ns.format.number(info.valuation)}`)
+
+  for (const divisionName of info.divisions) {
+    const division = corp.getDivision(divisionName)
+    lines.push(
+      `${divisionName} (${division.industry}) | awareness ${division.awareness.toFixed(1)} | popularity ${division.popularity.toFixed(1)}`
+    )
+  }
+
+  return lines
+}
+
+/** One tick of full corp automation. Returns log lines for the tail window. */
 export function maintainCorporation(ns: NS): string[] {
   const corp = ns.corporation
   const lines: string[] = []
@@ -62,38 +118,6 @@ export function maintainCorporation(ns: NS): string[] {
   return lines
 }
 
-function ensureCorporationCreated(ns: NS): string[] {
-  const corp = ns.corporation
-  const lines: string[] = []
-  const reset = ns.getResetInfo()
-
-  if (reset.bitNodeOptions.disableCorporation) {
-    lines.push("Corporation disabled on this BitNode.")
-    return lines
-  }
-
-  const selfCheck = corp.canCreateCorporation(true)
-  if (selfCheck === "Success") {
-    corp.createCorporation(CORP_NAME, true)
-    lines.push(`Created ${CORP_NAME} (self-funded).`)
-    return lines
-  }
-
-  if (reset.currentNode === 3) {
-    const seedCheck = corp.canCreateCorporation(false)
-    if (seedCheck === "Success") {
-      corp.createCorporation(CORP_NAME, false)
-      lines.push(`Created ${CORP_NAME} (government seed money).`)
-      return lines
-    }
-    lines.push(`Cannot create corp (seed): ${seedCheck}`)
-    return lines
-  }
-
-  lines.push(`Waiting to self-fund corporation: ${selfCheck}`)
-  return lines
-}
-
 function tryPurchaseUnlock(ns: NS, unlock: CorpUnlockName, lines: string[]): void {
   const corp = ns.corporation
   if (corp.hasUnlock(unlock)) return
@@ -115,16 +139,16 @@ function maintainOffice(
   const corp = ns.corporation
   const office = corp.getOffice(divisionName, city)
 
-  if (office.numEmployees < office.maxEmployees && funds > OFFICE_FUND_BUFFER) {
+  if (office.numEmployees < office.size && funds > OFFICE_FUND_BUFFER) {
     if (corp.hireEmployee(divisionName, city)) {
-      lines.push(`${divisionName}/${city}: hired (${office.numEmployees + 1}/${office.maxEmployees})`)
+      lines.push(`${divisionName}/${city}: hired (${office.numEmployees + 1}/${office.size})`)
     }
   }
 
   const upgradeCost = corp.getOfficeSizeUpgradeCost(divisionName, city, 3)
-  if (office.numEmployees >= office.maxEmployees && funds > upgradeCost + OFFICE_FUND_BUFFER) {
+  if (office.numEmployees >= office.size && funds > upgradeCost + OFFICE_FUND_BUFFER) {
     corp.upgradeOfficeSize(divisionName, city, 3)
-    lines.push(`${divisionName}/${city}: office +3 (${office.maxEmployees} → ${office.maxEmployees + 3})`)
+    lines.push(`${divisionName}/${city}: office +3 (${office.size} → ${office.size + 3})`)
   }
 
   balanceJobs(ns, divisionName, city)
