@@ -1,8 +1,8 @@
 import type { CityName, CorpMaterialName } from "@ns"
-import { cloneSnapshot } from "./math.js"
-import { getDivisionWarehouse } from "./snapshot.js"
-import { simulateStage } from "./simulate.js"
-import type { CorporationSnapshot, CorpStage, SimContext, WarehouseSnapshot } from "./types.js"
+import { cloneSnapshot } from "@/libraries/corporation/simulation/math.js"
+import { getDivisionWarehouse } from "@/libraries/corporation/simulation/snapshot.js"
+import { simulateStage } from "@/libraries/corporation/simulation/simulate.js"
+import type { CorporationSnapshot, CorpStage, SimContext, WarehouseSnapshot } from "@/libraries/corporation/simulation/types.js"
 
 /** Mirrors officeJobs.OfficeJobCounts — kept here to avoid importing officeJobs (circular deps). */
 export interface JobCountSplit {

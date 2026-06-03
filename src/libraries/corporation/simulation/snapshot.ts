@@ -1,7 +1,7 @@
 import { CityName, CorpMaterialName, NS } from "@ns"
-import { warehouseSizeUsed } from "./math.js"
-import { asCorpMaterialList } from "./officeJobs.js"
-import type { CorporationSnapshot, DivisionSnapshot, MaterialSnapshot, OfficeSnapshot, WarehouseSnapshot } from "./types.js"
+import { warehouseSizeUsed } from "@/libraries/corporation/simulation/math.js"
+import { asCorpMaterialList } from "@/libraries/corporation/simulation/officeJobs.js"
+import type { CorporationSnapshot, DivisionSnapshot, MaterialSnapshot, OfficeSnapshot, WarehouseSnapshot } from "@/libraries/corporation/simulation/types.js"
 
 /** Match display.ts — inlined so sim modules do not import a separate constants module (breaks RAM calc). */
 const FARMLAND_DIVISION = "Farmland"

@@ -7,8 +7,8 @@ import {
   getMaterialMarkupLimit,
   getOfficeProductivity,
   parseSellPrice,
-} from "./math.js"
-import type { SimContext } from "./types.js"
+} from "@/libraries/corporation/simulation/math.js"
+import type { SimContext } from "@/libraries/corporation/simulation/types.js"
 
 /** Inlined here — importing `estimateMaterialMaxSellPerSecond` from math.js breaks viteburner module init. */
 function maxMaterialSellPerSecond(

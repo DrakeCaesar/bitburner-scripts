@@ -1,4 +1,4 @@
-import type { DivisionSnapshot, MaterialSnapshot, OfficeSnapshot, SimContext, WarehouseSnapshot } from "../types.js"
+import type { DivisionSnapshot, MaterialSnapshot, OfficeSnapshot, SimContext, WarehouseSnapshot } from "@/libraries/corporation/simulation/types.js"
 import {
   calculateMarkupMultiplier,
   getAdvertisingFactors,
@@ -8,8 +8,8 @@ import {
   inferDemandFromSellRate,
   parseSellAmount,
   parseSellPrice,
-} from "../math.js"
-import { recomputeWarehouseSizeUsed } from "../snapshot.js"
+} from "@/libraries/corporation/simulation/math.js"
+import { recomputeWarehouseSizeUsed } from "@/libraries/corporation/simulation/snapshot.js"
 
 /** SALE: sell materials (MAX @ MP, no Market-TA). */
 export function simulateSaleStage(

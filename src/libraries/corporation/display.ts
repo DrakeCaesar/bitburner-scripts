@@ -1,14 +1,12 @@
 import { CorpMaterialName, NS } from "@ns"
-import { ScriptLogBuilder, type ReactTableConfig, type TableLayout } from "../scriptLogUi.js"
-import { FARMLAND_DIVISION } from "./farmland.js"
-import { buildSimContext } from "./simulation/context.js"
-import type { FieldComparison } from "./simulation/types.js"
-import type { ValidationRun } from "./simulation/validate.js"
-import { type HeadcountPlanTable } from "./office.js"
-import { asCorpMaterialList } from "./simulation/officeJobs.js"
-import { type ManagedSupply } from "./supplies.js"
-
-export { FARMLAND_CITIES, FARMLAND_DIVISION, FARMLAND_INDUSTRY, FARMLAND_START_CITY } from "./farmland.js"
+import { ScriptLogBuilder, type ReactTableConfig, type TableLayout } from "@/libraries/scriptLogUi.js"
+import { FARMLAND_DIVISION } from "@/libraries/corporation/farmland.js"
+import { buildSimContext } from "@/libraries/corporation/simulation/context.js"
+import type { FieldComparison } from "@/libraries/corporation/simulation/types.js"
+import type { ValidationRun } from "@/libraries/corporation/simulation/validate.js"
+import { type HeadcountPlanTable } from "@/libraries/corporation/office.js"
+import { asCorpMaterialList } from "@/libraries/corporation/simulation/officeJobs.js"
+import { type ManagedSupply } from "@/libraries/corporation/supplies.js"
 
 export const CORP_LOG_LAYOUT: Partial<TableLayout> = {
   tableWidthPx: 880,

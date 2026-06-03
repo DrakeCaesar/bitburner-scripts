@@ -1,7 +1,8 @@
 import { CityName, CorpIndustryData, CorpMaterialName, NS } from "@ns"
-import { FARMLAND_DIVISION } from "./farmland.js"
-import { asCorpMaterialList } from "./simulation/officeJobs.js"
-import { maintainOfficeStaff, OFFICE_FUND_BUFFER } from "./office.js"
+import { FARMLAND_DIVISION } from "@/libraries/corporation/farmland.js"
+import { asCorpMaterialList } from "@/libraries/corporation/simulation/officeJobs.js"
+import { OFFICE_FUND_BUFFER } from "@/libraries/corporation/farmland.js"
+import { maintainOfficeStaff } from "@/libraries/corporation/office.js"
 
 const SELL_AMOUNT = "MAX"
 const SELL_PRICE = "MP"

@@ -1,6 +1,6 @@
 import { CityName, CorpIndustryData, CorpMaterialName, NS } from "@ns"
-import { FARMLAND_DIVISION } from "./farmland.js"
-import { asCorpMaterialList } from "./simulation/officeJobs.js"
+import { FARMLAND_DIVISION } from "@/libraries/corporation/farmland.js"
+import { asCorpMaterialList } from "@/libraries/corporation/simulation/officeJobs.js"
 
 /** Inputs for Agriculture (Farmland). */
 export const FARMLAND_INPUT_MATERIALS: CorpMaterialName[] = ["Water", "Chemicals"]

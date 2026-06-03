@@ -1,13 +1,13 @@
 import { NS } from "@ns"
-import { ensureCorporationCreated } from "./libraries/corporation/manager.js"
-import { CORP_LOG_LAYOUT, renderCorporationDashboard } from "./libraries/corporation/display.js"
-import { ensureFarmlandDivision } from "./libraries/corporation/expansion.js"
-import { buildFarmlandHeadcountPlanTables } from "./libraries/corporation/office.js"
-import { manageFarmlandOperations } from "./libraries/corporation/operations.js"
-import { manageFarmlandSupplies } from "./libraries/corporation/supplies.js"
-import { captureCorporationSnapshot } from "./libraries/corporation/simulation/snapshot.js"
-import { validateCorpStage, type ValidationRun } from "./libraries/corporation/simulation/validate.js"
-import { initScriptLogTail } from "./libraries/scriptLogUi.js"
+import { ensureCorporationCreated } from "@/libraries/corporation/manager.js"
+import { CORP_LOG_LAYOUT, renderCorporationDashboard } from "@/libraries/corporation/display.js"
+import { ensureFarmlandDivision } from "@/libraries/corporation/expansion.js"
+import { buildFarmlandHeadcountPlanTables } from "@/libraries/corporation/office.js"
+import { manageFarmlandOperations } from "@/libraries/corporation/operations.js"
+import { manageFarmlandSupplies } from "@/libraries/corporation/supplies.js"
+import { captureCorporationSnapshot } from "@/libraries/corporation/simulation/snapshot.js"
+import { validateCorpStage, type ValidationRun } from "@/libraries/corporation/simulation/validate.js"
+import { initScriptLogTail } from "@/libraries/scriptLogUi.js"
 
 const SIM_HISTORY_MAX = 12
 

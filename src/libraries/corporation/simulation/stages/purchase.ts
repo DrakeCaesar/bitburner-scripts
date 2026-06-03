@@ -1,5 +1,5 @@
-import type { DivisionSnapshot, SimContext, WarehouseSnapshot } from "../types.js"
-import { recomputeWarehouseSizeUsed } from "../snapshot.js"
+import type { DivisionSnapshot, SimContext, WarehouseSnapshot } from "@/libraries/corporation/simulation/types.js"
+import { recomputeWarehouseSizeUsed } from "@/libraries/corporation/simulation/snapshot.js"
 
 /** PURCHASE: buy materials from market (non–Smart Supply). */
 export function simulatePurchaseStage(division: DivisionSnapshot, warehouse: WarehouseSnapshot, ctx: SimContext): void {

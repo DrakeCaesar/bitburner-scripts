@@ -1,4 +1,4 @@
-import type { DivisionSnapshot, MaterialSnapshot, OfficeSnapshot, SimContext } from "./types.js"
+import type { DivisionSnapshot, MaterialSnapshot, OfficeSnapshot, SimContext } from "@/libraries/corporation/simulation/types.js"
 
 /** Mirrors src/utils/calculateEffectWithFactors.ts */
 export function calculateEffectWithFactors(n: number, expFac: number, linearFac: number): number {

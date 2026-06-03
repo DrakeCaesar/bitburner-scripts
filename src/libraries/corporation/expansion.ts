@@ -1,5 +1,5 @@
 import { CityName, NS } from "@ns"
-import { FARMLAND_CITIES, FARMLAND_DIVISION, FARMLAND_INDUSTRY, OFFICE_FUND_BUFFER } from "./farmland.js"
+import { FARMLAND_CITIES, FARMLAND_DIVISION, FARMLAND_INDUSTRY, OFFICE_FUND_BUFFER } from "@/libraries/corporation/farmland.js"
 
 function tryCorpAction(action: () => void): string | null {
   try {

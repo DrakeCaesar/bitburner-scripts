@@ -1,9 +1,9 @@
 import { CityName, NS } from "@ns"
-import { buildSimContext } from "./context.js"
-import { compareStageSnapshots } from "./compare.js"
-import { simulateStage } from "./simulate.js"
-import { captureCorporationSnapshot } from "./snapshot.js"
-import type { CorporationSnapshot, StageValidationResult } from "./types.js"
+import { buildSimContext } from "@/libraries/corporation/simulation/context.js"
+import { compareStageSnapshots } from "@/libraries/corporation/simulation/compare.js"
+import { simulateStage } from "@/libraries/corporation/simulation/simulate.js"
+import { captureCorporationSnapshot } from "@/libraries/corporation/simulation/snapshot.js"
+import type { CorporationSnapshot, StageValidationResult } from "@/libraries/corporation/simulation/types.js"
 
 /** Primary city for stage sim — inlined so sim modules do not import farmland.ts (RAM calc). */
 const FARMLAND_DIVISION = "Farmland"

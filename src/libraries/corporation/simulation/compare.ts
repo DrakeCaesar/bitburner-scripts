@@ -1,12 +1,12 @@
 import { CityName, CorpMaterialName } from "@ns"
-import { numbersClose } from "./math.js"
+import { numbersClose } from "@/libraries/corporation/simulation/math.js"
 import type {
   CorporationSnapshot,
   CorpStage,
   FieldComparison,
   MaterialSnapshot,
   StageValidationResult,
-} from "./types.js"
+} from "@/libraries/corporation/simulation/types.js"
 
 const TRACKED_FIELDS: (keyof MaterialSnapshot)[] = ["stored", "productionAmount", "actualSellAmount", "buyAmount"]
 

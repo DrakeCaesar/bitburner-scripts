@@ -1,4 +1,4 @@
-import type { DivisionSnapshot, SimContext } from "../types.js"
+import type { DivisionSnapshot, SimContext } from "@/libraries/corporation/simulation/types.js"
 
 /** START: roll last-cycle stats and decay popularity (per division). */
 export function simulateStartStage(division: DivisionSnapshot, ctx: SimContext): void {

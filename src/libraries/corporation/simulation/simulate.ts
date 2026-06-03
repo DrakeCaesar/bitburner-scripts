@@ -1,10 +1,10 @@
 import { CityName } from "@ns"
-import { cloneSnapshot } from "./math.js"
-import { simulateProductionStage } from "./stages/production.js"
-import { simulatePurchaseStage } from "./stages/purchase.js"
-import { simulateSaleStage } from "./stages/sale.js"
-import { simulateStartStage } from "./stages/start.js"
-import type { CorporationSnapshot, CorpStage, SimContext } from "./types.js"
+import { cloneSnapshot } from "@/libraries/corporation/simulation/math.js"
+import { simulateProductionStage } from "@/libraries/corporation/simulation/stages/production.js"
+import { simulatePurchaseStage } from "@/libraries/corporation/simulation/stages/purchase.js"
+import { simulateSaleStage } from "@/libraries/corporation/simulation/stages/sale.js"
+import { simulateStartStage } from "@/libraries/corporation/simulation/stages/start.js"
+import type { CorporationSnapshot, CorpStage, SimContext } from "@/libraries/corporation/simulation/types.js"
 
 function getOffice(division: CorporationSnapshot["divisions"][0], city: CityName) {
   return division.offices.find((o) => o.city === city)

@@ -1,5 +1,5 @@
 import { NS } from "@ns"
-import type { SimContext } from "./types.js"
+import type { SimContext } from "@/libraries/corporation/simulation/types.js"
 
 const ABC_SALES_BOTS = "ABC SalesBots"
 const ABC_SALES_BENEFIT = 0.01

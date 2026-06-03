@@ -6,8 +6,9 @@ import {
   CorpUnlockName,
   NS,
 } from "@ns"
-import { maintainOfficeStaff, OFFICE_FUND_BUFFER } from "./office.js"
-import { sellDivisionProduce } from "./operations.js"
+import { OFFICE_FUND_BUFFER } from "@/libraries/corporation/farmland.js"
+import { maintainOfficeStaff } from "@/libraries/corporation/office.js"
+import { sellDivisionProduce } from "@/libraries/corporation/operations.js"
 
 const CORP_NAME = "dracorp"
 const START_INDUSTRY: CorpIndustryName = "Agriculture"

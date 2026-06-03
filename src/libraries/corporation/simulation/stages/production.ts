@@ -1,7 +1,7 @@
 import { CorpMaterialName } from "@ns"
-import type { DivisionSnapshot, MaterialSnapshot, OfficeSnapshot, SimContext, WarehouseSnapshot } from "../types.js"
-import { getOfficeProductivity } from "../math.js"
-import { recomputeWarehouseSizeUsed } from "../snapshot.js"
+import type { DivisionSnapshot, MaterialSnapshot, OfficeSnapshot, SimContext, WarehouseSnapshot } from "@/libraries/corporation/simulation/types.js"
+import { getOfficeProductivity } from "@/libraries/corporation/simulation/math.js"
+import { recomputeWarehouseSizeUsed } from "@/libraries/corporation/simulation/snapshot.js"
 
 /** PRODUCTION: consume inputs and produce Plants (material industries). */
 export function simulateProductionStage(
