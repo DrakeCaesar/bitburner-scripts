@@ -40,7 +40,8 @@ function buildEmployeeProductionByJob(
   }
 }
 
-function* enumerateAllJobCounts(numEmployees: number): Generator<JobCountSplit> {
+function listAllJobCounts(numEmployees: number): JobCountSplit[] {
+  const out: JobCountSplit[] = []
   const n = numEmployees
   for (let ops = 0; ops <= n; ops++) {
     for (let engr = 0; engr <= n - ops; engr++) {
@@ -48,19 +49,20 @@ function* enumerateAllJobCounts(numEmployees: number): Generator<JobCountSplit> 
         for (let bus = 0; bus <= n - ops - engr - mgmt; bus++) {
           for (let rnd = 0; rnd <= n - ops - engr - mgmt - bus; rnd++) {
             const intern = n - ops - engr - mgmt - bus - rnd
-            yield {
+            out.push({
               Operations: ops,
               Engineer: engr,
               Management: mgmt,
               Business: bus,
               "Research & Development": rnd,
               Intern: intern,
-            }
+            })
           }
         }
       }
     }
   }
+  return out
 }
 
 function scoreJobCountsOverSimCycles(
@@ -139,7 +141,9 @@ export function findBestJobCountsBySimCycles(
 
   let best: { counts: JobCountSplit; score: number } | null = null
 
-  for (const counts of enumerateAllJobCounts(numEmployees)) {
+  const allCounts = listAllJobCounts(numEmployees)
+  for (let i = 0; i < allCounts.length; i++) {
+    const counts = allCounts[i]
     const score = scoreJobCountsOverSimCycles(baseSnapshot, ctx, divisionName, city, counts, rates, cycles)
     if (!best || score > best.score) {
       best = { counts, score }

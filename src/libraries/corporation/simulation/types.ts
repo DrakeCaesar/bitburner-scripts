@@ -84,6 +84,8 @@ export interface SimContext {
   corpSalesMult: number
   advertisingFactor: number
   industryAdvertisingFactor: number
+  /** From corp constants — office salary per market cycle. */
+  employeeSalaryMultiplier: number
 }
 
 export interface FieldComparison {

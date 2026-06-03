@@ -21,6 +21,10 @@ export interface TableLayout {
   tailHeightPx?: number
   /** Cap for tail width; defaults to ~95% of the game window. */
   tailMaxWidthPx?: number
+  /** Cap for total tail height; defaults to ~92% of the game window. */
+  tailMaxHeightPx?: number
+  /** Scrollable content area inside the tail (set when sizing before render). */
+  tailViewportMaxHeightPx?: number
   sectionGapPx: number
 }
 
@@ -88,6 +92,7 @@ function ViewportShell(props: ViewportShellProps): ReactNode {
     if (scrollParent) scrollParent.scrollTop = 0
   }, [containerEl])
 
+  const viewportMax = props.layout.tailViewportMaxHeightPx
   return React.createElement(
     "div",
     {
@@ -102,6 +107,9 @@ function ViewportShell(props: ViewportShellProps): ReactNode {
         padding: "0",
         width: "100%",
         boxSizing: "border-box",
+        ...(viewportMax != null
+          ? { maxHeight: `${viewportMax}px`, overflowY: "auto", overflowX: "hidden" }
+          : {}),
       },
     },
     children
@@ -122,15 +130,39 @@ function resolveTailWidth(layout: TableLayout): number {
   return Math.min(maxWidth, Math.max(minWidth, padded))
 }
 
+function resolveTailMaxHeight(layout: TableLayout): number {
+  const win = eval("window") as Window
+  return layout.tailMaxHeightPx ?? Math.floor(win.innerHeight * 0.92)
+}
+
 /** Total tail window size from layout estimates (call applyTailSize before renderScriptLog). */
-export function resolveTailSize(layout?: Partial<TableLayout>): { width: number; height: number } {
+export function resolveTailSize(layout?: Partial<TableLayout>): {
+  width: number
+  height: number
+  viewportMaxHeightPx: number
+} {
   const merged = mergeLayout(layout)
   const contentHeight = merged.tailContentHeightPx ?? 0
-  const height = merged.tailHeightPx ?? merged.tailTitleBarPx + contentHeight
+  let height = merged.tailHeightPx ?? merged.tailTitleBarPx + contentHeight
+  height = Math.max(merged.tailTitleBarPx + 40, height)
+  height = Math.min(height, resolveTailMaxHeight(merged))
+  const viewportMaxHeightPx = Math.max(40, height - merged.tailTitleBarPx)
   return {
     width: resolveTailWidth(merged),
-    height: Math.max(merged.tailTitleBarPx + 40, height),
+    height,
+    viewportMaxHeightPx,
   }
+}
+
+/** Merge capped tail dimensions for resizeTail + scrollable viewport. */
+export function layoutForTailRender(layout?: Partial<TableLayout>): TableLayout {
+  const base = mergeLayout(layout)
+  const sized = resolveTailSize(base)
+  return mergeLayout({
+    ...base,
+    tailHeightPx: sized.height,
+    tailViewportMaxHeightPx: sized.viewportMaxHeightPx,
+  })
 }
 
 export function applyTailSize(ns: NS, layout?: Partial<TableLayout>): void {
@@ -540,13 +572,11 @@ export class ScriptLogBuilder {
   }
 
   render(ns: NS): Promise<void> {
-    const renderLayout = mergeLayout({
+    return renderScriptLog(ns, this.build(), {
       ...this.layout,
       tailTableWidthPx: this.estimateMaxTableWidthPx(),
       tailContentHeightPx: this.estimateContentHeightPx(),
     })
-    applyTailSize(ns, renderLayout)
-    return renderScriptLog(ns, this.build(renderLayout), renderLayout)
   }
 }
 
@@ -695,16 +725,15 @@ export class TabbedScriptLogBuilder {
   }
 
   render(ns: NS): Promise<void> {
-    const renderLayout = this.resolveRenderLayout()
-    applyTailSize(ns, renderLayout)
-    return renderScriptLog(ns, this.build(), renderLayout)
+    return renderScriptLog(ns, this.build(), this.resolveRenderLayout())
   }
 }
 
 export async function renderScriptLog(ns: NS, content: ReactNode, layout?: Partial<TableLayout>): Promise<void> {
-  const merged = mergeLayout(layout)
+  const renderLayout = layoutForTailRender(layout)
+  applyTailSize(ns, renderLayout)
   ns.clearLog()
-  ns.printRaw(buildViewportShell(content, merged))
+  ns.printRaw(buildViewportShell(content, renderLayout))
   ns.ui.renderTail()
 }
 

@@ -3,6 +3,8 @@ import { ScriptLogBuilder, type ReactTableConfig, type TableLayout } from "../sc
 import { buildSimContext } from "./simulation/context.js"
 import type { FieldComparison } from "./simulation/types.js"
 import type { ValidationRun } from "./simulation/validate.js"
+import { type HeadcountPlanTable } from "./office.js"
+import { asCorpMaterialList } from "./simulation/officeJobs.js"
 import { type ManagedSupply } from "./supplies.js"
 
 export const FARMLAND_DIVISION = "Farmland"
@@ -169,7 +171,7 @@ function populateCorporationLog(ns: NS, builder: ScriptLogBuilder, managedSuppli
 
   const materialRows: string[][] = []
   const materialNames = new Set<CorpMaterialName>()
-  for (const name of industry.producedMaterials ?? []) {
+  for (const name of asCorpMaterialList(industry.producedMaterials)) {
     materialNames.add(name as CorpMaterialName)
   }
 
@@ -276,15 +278,43 @@ function appendSimulationLog(builder: ScriptLogBuilder, ns: NS, run: ValidationR
   }
 }
 
+function appendHeadcountPlanTables(builder: ScriptLogBuilder, tables: HeadcountPlanTable[]): void {
+  for (const plan of tables) {
+    builder.table({
+      title:
+        `Staff plan ${plan.city} (${plan.currentEmployees}/${plan.officeSize}, ` +
+        `optimal ${plan.optimalEmployees}) — ★ best net · ◀ current`,
+      columns: [
+        { header: "N", align: "right", minWidth: 3 },
+        { header: "Ops", align: "right", minWidth: 3 },
+        { header: "Eng", align: "right", minWidth: 3 },
+        { header: "Bus", align: "right", minWidth: 3 },
+        { header: "Mgmt", align: "right", minWidth: 4 },
+        { header: "R&D", align: "right", minWidth: 3 },
+        { header: "Int", align: "right", minWidth: 3 },
+        { header: "Gross", align: "right", minWidth: 7 },
+        { header: "Salary", align: "right", minWidth: 7 },
+        { header: "Net", align: "right", minWidth: 7 },
+        { header: "", align: "center", minWidth: 3 },
+      ],
+      rows: plan.rows,
+    })
+  }
+}
+
 export async function renderCorporationDashboard(
   ns: NS,
   statusLines: string[],
   managedSupplies: ManagedSupply[] = [],
   simRun: ValidationRun | null = null,
-  simHistory: ValidationRun[] = []
+  simHistory: ValidationRun[] = [],
+  headcountPlans: HeadcountPlanTable[] = []
 ): Promise<void> {
   const builder = new ScriptLogBuilder(CORP_LOG_LAYOUT)
   populateCorporationLog(ns, builder, managedSupplies)
+  if (headcountPlans.length > 0) {
+    appendHeadcountPlanTables(builder, headcountPlans)
+  }
   if (simRun) {
     appendSimulationLog(builder, ns, simRun, simHistory)
   }

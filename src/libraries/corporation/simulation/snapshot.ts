@@ -1,5 +1,6 @@
 import { CityName, CorpMaterialName, NS } from "@ns"
 import { warehouseSizeUsed } from "./math.js"
+import { asCorpMaterialList } from "./officeJobs.js"
 import type { CorporationSnapshot, DivisionSnapshot, MaterialSnapshot, OfficeSnapshot, WarehouseSnapshot } from "./types.js"
 
 /** Match display.ts — inlined so sim modules do not import a separate constants module (breaks RAM calc). */
@@ -79,7 +80,7 @@ function captureDivision(ns: NS, divisionName: string): DivisionSnapshot {
     thisCycleRevenue: division.thisCycleRevenue,
     thisCycleExpenses: division.thisCycleExpenses,
     requiredMaterials: { ...(industry.requiredMaterials ?? {}) },
-    producedMaterials: [...(industry.producedMaterials ?? [])] as CorpMaterialName[],
+    producedMaterials: asCorpMaterialList(industry.producedMaterials),
     researchFactor: industry.scienceFactor ?? 0.1,
     aiCoreFactor: industry.aiCoreFactor ?? 0.05,
     advertisingFactor: industry.advertisingFactor ?? 0.04,

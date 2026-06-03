@@ -1,6 +1,7 @@
 import { NS } from "@ns"
 import { ensureCorporationCreated } from "./libraries/corporation/manager.js"
 import { CORP_LOG_LAYOUT, ensureFarmlandDivision, renderCorporationDashboard } from "./libraries/corporation/display.js"
+import { buildFarmlandHeadcountPlanTables } from "./libraries/corporation/office.js"
 import { manageFarmlandOperations } from "./libraries/corporation/operations.js"
 import { manageFarmlandSupplies } from "./libraries/corporation/supplies.js"
 import { captureCorporationSnapshot } from "./libraries/corporation/simulation/snapshot.js"
@@ -8,6 +9,10 @@ import { validateCorpStage, type ValidationRun } from "./libraries/corporation/s
 import { initScriptLogTail } from "./libraries/scriptLogUi.js"
 
 const SIM_HISTORY_MAX = 12
+
+function asStringLines(value: unknown): string[] {
+  return Array.isArray(value) ? value : []
+}
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL")
@@ -23,13 +28,16 @@ export async function main(ns: NS): Promise<void> {
 
   while (true) {
     try {
-      const statusLines = [...ensureCorporationCreated(ns), ...ensureFarmlandDivision(ns)]
+      const statusLines = [
+        ...asStringLines(ensureCorporationCreated(ns)),
+        ...asStringLines(ensureFarmlandDivision(ns)),
+      ]
 
       const beforeStage = captureCorporationSnapshot(ns)
 
       const { lines: supplyLines, supplies } = manageFarmlandSupplies(ns)
       const operationLines = await manageFarmlandOperations(ns)
-      statusLines.push(...supplyLines, ...operationLines)
+      statusLines.push(...asStringLines(supplyLines), ...asStringLines(operationLines))
 
       let simRun: ValidationRun | null = null
       if (beforeStage) {
@@ -44,7 +52,8 @@ export async function main(ns: NS): Promise<void> {
         await ns.sleep(5000)
       }
 
-      await renderCorporationDashboard(ns, statusLines, supplies, simRun, simHistory)
+      const headcountPlans = buildFarmlandHeadcountPlanTables(ns)
+      await renderCorporationDashboard(ns, statusLines, supplies, simRun, simHistory, headcountPlans)
 
       if (simRun && !simRun.result.allOk) {
         const failed = simRun.result.comparisons.filter((c) => !c.ok)

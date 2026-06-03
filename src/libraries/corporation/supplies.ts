@@ -1,5 +1,6 @@
 import { CityName, CorpIndustryData, CorpMaterialName, NS } from "@ns"
 import { FARMLAND_DIVISION } from "./display.js"
+import { asCorpMaterialList } from "./simulation/officeJobs.js"
 
 /** Inputs for Agriculture (Farmland). */
 export const FARMLAND_INPUT_MATERIALS: CorpMaterialName[] = ["Water", "Chemicals"]
@@ -62,7 +63,7 @@ export function getInputConsumptionPerSec(
     // not in warehouse yet
   }
 
-  for (const producedName of industry.producedMaterials ?? []) {
+  for (const producedName of asCorpMaterialList(industry.producedMaterials)) {
     try {
       const produced = corp.getMaterial(divisionName, city, producedName as CorpMaterialName)
       if (produced.productionAmount > 0) {

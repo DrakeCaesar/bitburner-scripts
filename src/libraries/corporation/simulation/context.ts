@@ -28,5 +28,6 @@ export function buildSimContext(ns: NS, industryAdvertisingFactor = 0.04): SimCo
     corpSalesMult,
     advertisingFactor: industryAdvertisingFactor,
     industryAdvertisingFactor,
+    employeeSalaryMultiplier: constants.employeeSalaryMultiplier ?? 1,
   }
 }

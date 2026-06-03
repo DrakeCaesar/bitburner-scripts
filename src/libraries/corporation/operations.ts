@@ -1,5 +1,6 @@
 import { CityName, CorpIndustryData, CorpMaterialName, NS } from "@ns"
 import { FARMLAND_DIVISION } from "./display.js"
+import { asCorpMaterialList } from "./simulation/officeJobs.js"
 import { maintainOfficeStaff, OFFICE_FUND_BUFFER } from "./office.js"
 
 const SELL_AMOUNT = "MAX"
@@ -20,7 +21,7 @@ export function sellDivisionProduce(
   const corp = ns.corporation
   if (!corp.hasWarehouse(divisionName, city)) return
 
-  for (const materialName of industry.producedMaterials ?? []) {
+  for (const materialName of asCorpMaterialList(industry.producedMaterials)) {
     const name = materialName as CorpMaterialName
     try {
       const mat = corp.getMaterial(divisionName, city, name)
