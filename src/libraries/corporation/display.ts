@@ -344,27 +344,34 @@ function populateStaffTab(ns: NS, tabbedLog: TabbedScriptLogBuilder, tables: Hea
   }
 
   for (const plan of tables) {
+    const isDev = plan.mode === "development"
     const gameProfitK = (plan.gameProfitPerSec / 1e3).toFixed(1)
-    builder.table({
-      title:
-        `Staff plan ${plan.divisionName}/${plan.city} (${plan.currentEmployees}/${plan.officeSize}, ` +
-        `optimal ${plan.optimalEmployees}) — $/s · cycle ${plan.secondsPerMarketCycle}s · ` +
-        `game $${gameProfitK}k/s · Est PnL = (rev-inputs)-payroll · * best · < current`,
-      columns: [
-        { header: "N", align: "right", minWidth: 3 },
-        { header: "Ops", align: "right", minWidth: 3 },
-        { header: "Eng", align: "right", minWidth: 3 },
-        { header: "Bus", align: "right", minWidth: 3 },
-        { header: "Mgmt", align: "right", minWidth: 4 },
-        { header: "R&D", align: "right", minWidth: 3 },
-        { header: "Int", align: "right", minWidth: 3 },
-        { header: "Gross/s", align: "right", minWidth: 8 },
-        { header: "Pay/s", align: "right", minWidth: 8 },
-        { header: "Est/s", align: "right", minWidth: 8 },
-        { header: "", align: "center", minWidth: 3 },
-      ],
-      rows: plan.rows,
-    })
+    const staffLabel = `${plan.currentEmployees}/${plan.officeSize}`
+    const devProgress =
+      plan.devProgressLabel != null && plan.devProgressLabel.length > 0 ? ` · ${plan.devProgressLabel}` : ""
+    const title = isDev
+      ? `Product dev ${plan.divisionName}/${plan.city} (${staffLabel} staff, office -> ${plan.optimalEmployees})${devProgress} — ` +
+        `cycle ${plan.secondsPerMarketCycle}s · ETA from sim Dev/c`
+      : `Staff plan ${plan.divisionName}/${plan.city} (${staffLabel}, optimal ${plan.optimalEmployees}) — ` +
+        `$ /s · cycle ${plan.secondsPerMarketCycle}s · game $${gameProfitK}k/s · ` +
+        `Est PnL = (rev-inputs)-payroll · * best · < current`
+    const columns: ReactTableConfig["columns"] = [
+      { header: "N", align: "right", minWidth: 3 },
+      { header: "Ops", align: "right", minWidth: 3 },
+      { header: "Eng", align: "right", minWidth: 3 },
+      { header: "Bus", align: "right", minWidth: 3 },
+      { header: "Mgmt", align: "right", minWidth: 4 },
+      { header: "R&D", align: "right", minWidth: 3 },
+      { header: "Int", align: "right", minWidth: 3 },
+      { header: isDev ? "—" : "Gross/s", align: "right", minWidth: 8 },
+      { header: isDev ? "—" : "Pay/s", align: "right", minWidth: 8 },
+      { header: isDev ? "Dev/c" : "Est/s", align: "right", minWidth: 8 },
+    ]
+    if (isDev) {
+      columns.push({ header: "ETA", align: "right", minWidth: 7 })
+    }
+    columns.push({ header: "", align: "center", minWidth: 5 })
+    builder.table({ title, columns, rows: plan.rows })
   }
 }
 

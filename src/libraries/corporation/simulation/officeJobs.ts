@@ -686,6 +686,12 @@ export const MAX_OFFICE_EMPLOYEES_FOR_OPTIMIZE = 24
 const MAX_BUSINESS_SEARCH = 8
 
 /** Generators are not reliably iterable in the game runtime — return a plain array. */
+/** Valid job layouts (1 Business, optional intern, optional R&D reserve). */
+export function enumerateConstrainedJobCounts(numEmployees: number, reserveRnD = 0): OfficeJobCounts[] {
+  if (numEmployees <= 0) return []
+  return listConstrainedJobCounts(numEmployees, internCount(numEmployees), reserveRnD)
+}
+
 function listConstrainedJobCounts(numEmployees: number, intern: number, reserveRnD: number): OfficeJobCounts[] {
   const out: OfficeJobCounts[] = []
   const maxBusiness = Math.min(MAX_BUSINESS_SEARCH, Math.max(1, numEmployees - intern - reserveRnD))

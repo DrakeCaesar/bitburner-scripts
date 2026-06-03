@@ -5,6 +5,7 @@ import { inferDemandFromSellRate } from "@/libraries/corporation/simulation/math
 import { captureCorporationSnapshot } from "@/libraries/corporation/simulation/snapshot.js"
 import {
   asCorpMaterialList,
+  buildEmployeeProductionByJob,
   buildOptimizeResultFromSimBest,
   countsMatchCurrent,
   economicsPerSecond,
@@ -23,9 +24,15 @@ import {
   type OfficeJobCounts,
   type OfficeJobOptimizeInput,
   type OfficeSalaryInput,
+  type PerEmployeeRates,
 } from "@/libraries/corporation/simulation/officeJobs.js"
 import {
+  cityIsDevelopingProduct,
   divisionIsDevelopingProduct,
+  estimateDevelopmentEtaSeconds,
+  estimateDevelopmentProgressPerCycle,
+  findFastestDevelopmentJobCounts,
+  formatDevelopmentEta,
   getProductDevelopmentStatuses,
   jobCountsForProductDevelopment,
   PRODUCT_DEVELOPMENT_TARGET_STAFF,
@@ -49,7 +56,39 @@ export interface HeadcountPlanTable {
   /** Game `lastCycleRevenue - lastCycleExpenses` for the division ($/s). */
   gameProfitPerSec: number
   secondsPerMarketCycle: number
+  /** Product R&D plan (not profit optimizer). */
+  mode?: "development"
+  /** e.g. "Smoke 42%" for table title */
+  devProgressLabel?: string
   rows: string[][]
+}
+
+function devHeadcountPlanRow(
+  n: number,
+  counts: OfficeJobCounts,
+  rates: PerEmployeeRates,
+  progressPercent: number,
+  secondsPerMarketCycle: number,
+  mark: string,
+  liveProductionByJob?: Record<string, number>
+): string[] {
+  const prodByJob = liveProductionByJob ?? buildEmployeeProductionByJob(counts, rates)
+  const progPerCycle = estimateDevelopmentProgressPerCycle(prodByJob, 1)
+  const etaSec = estimateDevelopmentEtaSeconds(progressPercent, progPerCycle, secondsPerMarketCycle)
+  return [
+    String(n),
+    String(counts.Operations),
+    String(counts.Engineer),
+    String(counts.Business),
+    String(counts.Management),
+    String(counts["Research & Development"]),
+    String(counts.Intern),
+    "—",
+    "—",
+    `~${progPerCycle.toFixed(2)}%/c`,
+    formatDevelopmentEta(etaSec),
+    mark,
+  ]
 }
 
 /** Per-city headcount sweep for the dashboard (1..office size). */
@@ -73,34 +112,56 @@ export function buildDivisionHeadcountPlanTables(ns: NS, divisionName: string): 
 
     const office = corp.getOffice(divisionName, city)
 
-    if (divisionIsDevelopingProduct(ns, divisionName)) {
-      const devStatuses = getProductDevelopmentStatuses(ns, divisionName)
+    if (cityIsDevelopingProduct(ns, divisionName, city)) {
+      const devStatuses = getProductDevelopmentStatuses(ns, divisionName).filter((d) => d.city === city)
       const devLabel = devStatuses.map((d) => `${d.name} ${d.progress.toFixed(0)}%`).join(", ")
-      const devCounts = jobCountsForProductDevelopment(office.numEmployees)
+      const progressPercent =
+        devStatuses.length > 0 ? Math.min(...devStatuses.map((d) => d.progress)) : 0
+      const jobInput: OfficeJobOptimizeInput = {
+        numEmployees: office.numEmployees,
+        employeeJobs: { ...office.employeeJobs },
+        employeeProductionByJob: { ...office.employeeProductionByJob },
+      }
+      const rates = extractPerEmployeeRates(jobInput)
+      const currentN = office.numEmployees
+      const targetN = PRODUCT_DEVELOPMENT_TARGET_STAFF
+      const currentCounts =
+        findFastestDevelopmentJobCounts(currentN, rates) ??
+        jobCountsForProductDevelopment(currentN, rates)
+      const targetCounts =
+        findFastestDevelopmentJobCounts(targetN, rates) ?? jobCountsForProductDevelopment(targetN, rates)
       const spc = corp.getConstants().secondsPerMarketCycle
+      const rows = [
+        devHeadcountPlanRow(
+          currentN,
+          currentCounts,
+          rates,
+          progressPercent,
+          spc,
+          "now",
+          office.employeeProductionByJob
+        ),
+      ]
+      if (currentN !== targetN) {
+        rows.push(devHeadcountPlanRow(targetN, targetCounts, rates, progressPercent, spc, "goal"))
+      } else if (
+        !countsMatchCurrent(targetCounts, office.employeeJobs) ||
+        estimateDevelopmentProgressPerCycle(office.employeeProductionByJob, 1) <
+          estimateDevelopmentProgressPerCycle(buildEmployeeProductionByJob(targetCounts, rates), 1) - 1e-9
+      ) {
+        rows.push(devHeadcountPlanRow(targetN, targetCounts, rates, progressPercent, spc, "goal"))
+      }
       tables.push({
         divisionName,
         city,
         officeSize: office.size,
         currentEmployees: office.numEmployees,
-        optimalEmployees: Math.min(office.size, PRODUCT_DEVELOPMENT_TARGET_STAFF),
+        optimalEmployees: PRODUCT_DEVELOPMENT_TARGET_STAFF,
         gameProfitPerSec,
         secondsPerMarketCycle: spc,
-        rows: [
-          [
-            String(Math.min(office.size, PRODUCT_DEVELOPMENT_TARGET_STAFF)),
-            String(devCounts.Operations),
-            String(devCounts.Engineer),
-            String(devCounts.Business),
-            String(devCounts.Management),
-            String(devCounts["Research & Development"]),
-            String(devCounts.Intern),
-            "—",
-            "—",
-            "—",
-            `dev: ${devLabel}`,
-          ],
-        ],
+        mode: "development",
+        devProgressLabel: devLabel,
+        rows,
       })
       continue
     }
@@ -378,13 +439,6 @@ export async function balanceJobs(ns: NS, divisionName: string, city: CityName):
   const n = office.numEmployees
   if (n === 0) return null
 
-  if (divisionIsDevelopingProduct(ns, divisionName)) {
-    const devCounts = jobCountsForProductDevelopment(n)
-    if (countsMatchCurrent(devCounts, office.employeeJobs)) return null
-    applyJobCounts(ns, divisionName, city, devCounts)
-    return formatJobCounts(devCounts, 0, undefined, undefined)
-  }
-
   const input: OfficeJobOptimizeInput = {
     numEmployees: n,
     employeeJobs: { ...office.employeeJobs },
@@ -392,6 +446,15 @@ export async function balanceJobs(ns: NS, divisionName: string, city: CityName):
   }
 
   const rates = extractPerEmployeeRates(input)
+
+  if (cityIsDevelopingProduct(ns, divisionName, city)) {
+    const devCounts = findFastestDevelopmentJobCounts(n, rates)
+    if (!devCounts || countsMatchCurrent(devCounts, office.employeeJobs)) return null
+    applyJobCounts(ns, divisionName, city, devCounts)
+    const prodByJob = buildEmployeeProductionByJob(devCounts, rates)
+    const progPerCycle = estimateDevelopmentProgressPerCycle(prodByJob, 1)
+    return `${formatJobCounts(devCounts, 0, undefined, undefined)} ~${progPerCycle.toFixed(2)}%/cycle`
+  }
   const profitContext = buildFarmlandProfitContext(ns, divisionName, city)
   const simSnapshot = USE_EXHAUSTIVE_OFFICE_JOB_SEARCH
     ? captureCorporationSnapshot(ns, divisionName)
@@ -446,13 +509,54 @@ function tryUpgradeOfficeSize(
   const office = corp.getOffice(divisionName, city)
   if (office.numEmployees < office.size || office.size >= MAX_OFFICE_EMPLOYEES) return
 
-  const increase = Math.min(OFFICE_SIZE_INCREASE, MAX_OFFICE_EMPLOYEES - office.size)
+  const developingProduct = cityIsDevelopingProduct(ns, divisionName, city)
+  const sizeCap = developingProduct
+    ? Math.min(PRODUCT_DEVELOPMENT_TARGET_STAFF, MAX_OFFICE_EMPLOYEES)
+    : MAX_OFFICE_EMPLOYEES
+  if (office.size >= sizeCap) return
+
+  const increase = Math.min(OFFICE_SIZE_INCREASE, sizeCap - office.size)
   if (increase <= 0) return
+
+  const targetSize = office.size + increase
+
+  if (developingProduct) {
+    for (let inc = increase; inc >= 1; inc--) {
+      const upgradeCost = corp.getOfficeSizeUpgradeCost(divisionName, city, inc)
+      if (funds < upgradeCost) {
+        if (inc === increase) {
+          lines.push(
+            `${divisionName}/${city}: waiting for office +${inc} ` +
+              `(need $${(upgradeCost / 1e6).toFixed(1)}M, have $${(funds / 1e6).toFixed(1)}M)`
+          )
+        }
+        continue
+      }
+      const sizeBefore = office.size
+      try {
+        corp.upgradeOfficeSize(divisionName, city, inc)
+        const updated = corp.getOffice(divisionName, city)
+        if (updated.size > sizeBefore) {
+          lines.push(
+            `${divisionName}/${city}: office +${inc} for product dev ` +
+              `(size ${updated.size}/${sizeCap}, staff target ${PRODUCT_DEVELOPMENT_TARGET_STAFF})`
+          )
+        } else {
+          lines.push(
+            `${divisionName}/${city}: office +${inc} not applied ` +
+              `(need $${(upgradeCost / 1e6).toFixed(1)}M, have $${(funds / 1e6).toFixed(1)}M)`
+          )
+        }
+      } catch (err) {
+        lines.push(`${divisionName}/${city}: office +${inc} failed: ${String(err)}`)
+      }
+      return
+    }
+    return
+  }
 
   const upgradeCost = corp.getOfficeSizeUpgradeCost(divisionName, city, increase)
   if (funds <= upgradeCost + OFFICE_FUND_BUFFER) return
-
-  const targetSize = office.size + increase
 
   if (profitContext && jobInput) {
     const rates = extractPerEmployeeRates(jobInput)
@@ -513,7 +617,7 @@ export async function maintainOfficeStaff(
     employeeProductionByJob: { ...office.employeeProductionByJob },
   }
   const profitContext = buildFarmlandProfitContext(ns, divisionName, city)
-  const developingProduct = divisionIsDevelopingProduct(ns, divisionName)
+  const developingProduct = cityIsDevelopingProduct(ns, divisionName, city)
 
   if (
     office.numEmployees < office.size &&
