@@ -1,17 +1,18 @@
-import { CorpMaterialName, NS } from "@ns"
-import { ScriptLogBuilder, type ReactTableConfig } from "../scriptLogUi.js"
-import {
-  CORP_LOG_LAYOUT,
-  FARMLAND_DIVISION,
-  FARMLAND_INDUSTRY,
-  FARMLAND_START_CITY,
-} from "./constants.js"
+import { CityName, CorpIndustryName, CorpMaterialName, NS } from "@ns"
+import { ScriptLogBuilder, type ReactTableConfig, type TableLayout } from "../scriptLogUi.js"
 import { buildSimContext } from "./simulation/context.js"
 import type { FieldComparison } from "./simulation/types.js"
 import type { ValidationRun } from "./simulation/validate.js"
 import { type ManagedSupply } from "./supplies.js"
 
-export { CORP_LOG_LAYOUT, FARMLAND_DIVISION, FARMLAND_INDUSTRY, FARMLAND_START_CITY } from "./constants.js"
+export const FARMLAND_DIVISION = "Farmland"
+export const FARMLAND_INDUSTRY: CorpIndustryName = "Agriculture"
+export const FARMLAND_START_CITY: CityName = "Sector-12"
+
+export const CORP_LOG_LAYOUT: Partial<TableLayout> = {
+  tableWidthPx: 880,
+  fontSizePx: 12,
+}
 
 function formatMoney(ns: NS, value: number): string {
   return `$${ns.format.number(value)}`

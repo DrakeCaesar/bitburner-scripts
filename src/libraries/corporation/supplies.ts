@@ -1,5 +1,5 @@
 import { CityName, CorpIndustryData, CorpMaterialName, NS } from "@ns"
-import { FARMLAND_DIVISION } from "./constants.js"
+import { FARMLAND_DIVISION } from "./display.js"
 
 /** Inputs for Agriculture (Farmland). */
 export const FARMLAND_INPUT_MATERIALS: CorpMaterialName[] = ["Water", "Chemicals"]

@@ -1,10 +1,13 @@
-import { NS } from "@ns"
-import { FARMLAND_DIVISION, FARMLAND_START_CITY } from "../constants.js"
+import { CityName, NS } from "@ns"
 import { buildSimContext } from "./context.js"
 import { compareStageSnapshots } from "./compare.js"
 import { simulateStage } from "./simulate.js"
 import { captureCorporationSnapshot } from "./snapshot.js"
 import type { CorporationSnapshot, StageValidationResult } from "./types.js"
+
+/** Match display.ts — inlined so sim modules do not import a separate constants module (breaks RAM calc). */
+const FARMLAND_DIVISION = "Farmland"
+const FARMLAND_START_CITY = "Sector-12" as CityName
 
 export interface ValidationRun {
   stage: string

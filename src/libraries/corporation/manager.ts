@@ -9,12 +9,10 @@ import {
 import { maintainOfficeStaff, OFFICE_FUND_BUFFER } from "./office.js"
 import { sellDivisionProduce } from "./operations.js"
 
-import {
-  CORP_NAME,
-  FARMLAND_DIVISION as START_DIVISION,
-  FARMLAND_INDUSTRY as START_INDUSTRY,
-  FARMLAND_START_CITY as START_CITY,
-} from "./constants.js"
+const CORP_NAME = "dracorp"
+const START_INDUSTRY: CorpIndustryName = "Agriculture"
+const START_DIVISION = "Farmland"
+const START_CITY: CityName = "Sector-12"
 
 const SMART_SUPPLY: CorpUnlockName = "Smart Supply"
 const ADVERT_FUND_BUFFER = 2e7

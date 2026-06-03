@@ -1,7 +1,9 @@
 import { CityName, CorpMaterialName, NS } from "@ns"
-import { FARMLAND_DIVISION } from "../constants.js"
 import { warehouseSizeUsed } from "./math.js"
 import type { CorporationSnapshot, DivisionSnapshot, MaterialSnapshot, OfficeSnapshot, WarehouseSnapshot } from "./types.js"
+
+/** Match display.ts — inlined so sim modules do not import a separate constants module (breaks RAM calc). */
+const FARMLAND_DIVISION = "Farmland"
 
 function captureMaterial(ns: NS, division: string, city: CityName, name: CorpMaterialName): MaterialSnapshot | null {
   const corp = ns.corporation
