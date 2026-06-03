@@ -1,15 +1,17 @@
-import { CityName, CorpIndustryName, CorpMaterialName, NS } from "@ns"
-import { ScriptLogBuilder, type ReactTableConfig, type TableLayout } from "../scriptLogUi.js"
+import { CorpMaterialName, NS } from "@ns"
+import { ScriptLogBuilder, type ReactTableConfig } from "../scriptLogUi.js"
+import {
+  CORP_LOG_LAYOUT,
+  FARMLAND_DIVISION,
+  FARMLAND_INDUSTRY,
+  FARMLAND_START_CITY,
+} from "./constants.js"
+import { buildSimContext } from "./simulation/context.js"
+import type { FieldComparison } from "./simulation/types.js"
+import type { ValidationRun } from "./simulation/validate.js"
 import { type ManagedSupply } from "./supplies.js"
 
-export const FARMLAND_DIVISION = "Farmland"
-export const FARMLAND_INDUSTRY: CorpIndustryName = "Agriculture"
-export const FARMLAND_START_CITY: CityName = "Sector-12"
-
-export const CORP_LOG_LAYOUT: Partial<TableLayout> = {
-  tableWidthPx: 880,
-  fontSizePx: 12,
-}
+export { CORP_LOG_LAYOUT, FARMLAND_DIVISION, FARMLAND_INDUSTRY, FARMLAND_START_CITY } from "./constants.js"
 
 function formatMoney(ns: NS, value: number): string {
   return `$${ns.format.number(value)}`
@@ -84,20 +86,11 @@ export function ensureFarmlandDivision(ns: NS): string[] {
   return lines
 }
 
-function populateCorporationLog(
-  ns: NS,
-  builder: ScriptLogBuilder,
-  statusLines: string[],
-  managedSupplies: ManagedSupply[] = []
-): void {
+function populateCorporationLog(ns: NS, builder: ScriptLogBuilder, managedSupplies: ManagedSupply[] = []): void {
   const corp = ns.corporation
 
   if (!corp.hasCorporation()) {
-    if (statusLines.length > 0) {
-      builder.text(statusLines.join("\n"))
-    } else {
-      builder.text("No corporation yet — waiting to create dracorp…")
-    }
+    builder.text("No corporation yet — waiting to create dracorp…")
     return
   }
 
@@ -117,7 +110,6 @@ function populateCorporationLog(
   })
 
   if (!info.divisions.includes(FARMLAND_DIVISION)) {
-    if (statusLines.length > 0) builder.text(statusLines.join("\n"))
     return
   }
 
@@ -213,20 +205,90 @@ function populateCorporationLog(
   } else if (division.cities.some((city) => corp.hasWarehouse(FARMLAND_DIVISION, city))) {
     builder.text("Warehouse open — no tracked materials in storage yet.")
   }
+}
 
-  if (statusLines.length > 0) {
-    builder.text(statusLines.join("\n"))
+function formatSimPct(rel: number | null): string {
+  if (rel == null) return "—"
+  return `${(rel * 100).toFixed(1)}%`
+}
+
+function appendSimulationLog(builder: ScriptLogBuilder, ns: NS, run: ValidationRun, history: ValidationRun[]): void {
+  const ctx = buildSimContext(ns)
+  const info = ns.corporation.getCorporation()
+
+  builder.text(
+    [
+      `Simulation (${run.result.allOk ? "PASS" : "FAIL"}): stage ${run.stage}`,
+      `Corp cycle: ${info.prevState} → ${info.nextState} | corpProductionMult=${ctx.corpProductionMult}`,
+    ].join("\n")
+  )
+
+  builder.table({
+    title: "Sim summary",
+    columns: [
+      { header: "City", align: "left" },
+      { header: "Match", align: "center" },
+      { header: "Notes", align: "left", minWidth: 48 },
+    ],
+    rows: [[`${run.result.city}`, run.result.allOk ? "PASS" : "FAIL", run.result.notes.join(" · ") || "—"]],
+  })
+
+  if (run.result.comparisons.length > 0) {
+    builder.table({
+      title: "Sim: predicted vs actual",
+      columns: [
+        { header: "Field", align: "left", minWidth: 22 },
+        { header: "Predicted", align: "right", minWidth: 12 },
+        { header: "Actual", align: "right", minWidth: 12 },
+        { header: "Δ", align: "right", minWidth: 10 },
+        { header: "Err%", align: "right", minWidth: 8 },
+        { header: "OK", align: "center", minWidth: 4 },
+      ],
+      rows: run.result.comparisons.map((c: FieldComparison) => [
+        c.path,
+        Number.isFinite(c.predicted) ? c.predicted.toFixed(3) : "—",
+        Number.isFinite(c.actual) ? c.actual.toFixed(3) : "—",
+        Number.isFinite(c.delta) ? c.delta.toFixed(3) : "—",
+        formatSimPct(c.relError),
+        c.ok ? "✓" : "✗",
+      ]),
+    })
   }
 
+  if (history.length > 1) {
+    builder.table({
+      title: "Sim: recent stages",
+      columns: [
+        { header: "Stage", align: "left", minWidth: 10 },
+        { header: "OK", align: "center", minWidth: 4 },
+        { header: "Fails", align: "right", minWidth: 6 },
+        { header: "Notes", align: "left", minWidth: 36 },
+      ],
+      rows: history.map((h) => [
+        h.stage,
+        h.result.allOk ? "✓" : "✗",
+        String(h.result.comparisons.filter((c) => !c.ok).length),
+        h.result.notes.join("; ") || "—",
+      ]),
+    })
+  }
 }
 
 export async function renderCorporationDashboard(
   ns: NS,
   statusLines: string[],
-  managedSupplies: ManagedSupply[] = []
+  managedSupplies: ManagedSupply[] = [],
+  simRun: ValidationRun | null = null,
+  simHistory: ValidationRun[] = []
 ): Promise<void> {
   const builder = new ScriptLogBuilder(CORP_LOG_LAYOUT)
-  populateCorporationLog(ns, builder, statusLines, managedSupplies)
+  populateCorporationLog(ns, builder, managedSupplies)
+  if (simRun) {
+    appendSimulationLog(builder, ns, simRun, simHistory)
+  }
+  if (statusLines.length > 0) {
+    builder.text(statusLines.join("\n"))
+  }
   await builder.render(ns)
 }
 

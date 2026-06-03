@@ -1,5 +1,5 @@
 import { CityName, CorpIndustryData, CorpMaterialName, NS } from "@ns"
-import { FARMLAND_DIVISION } from "./display.js"
+import { FARMLAND_DIVISION } from "./constants.js"
 import { maintainOfficeStaff, OFFICE_FUND_BUFFER } from "./office.js"
 
 const SELL_AMOUNT = "MAX"
