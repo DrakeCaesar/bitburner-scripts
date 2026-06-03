@@ -21,7 +21,7 @@ export async function main(ns: NS) {
     // moneyReserve: 160_000_000_000,
     // moneyReserve: 200_005_000_000_000,
     moneyReserve: 0,
-    spendCapFraction: 0.01,
+    spendCapFraction: 0.001,
     cacheCapFraction: 0.001,
   }
 
