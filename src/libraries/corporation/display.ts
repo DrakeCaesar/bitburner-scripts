@@ -7,7 +7,13 @@ import {
   type TableLayout,
 } from "@/libraries/scriptLogUi.js"
 import { FARMLAND_DIVISION } from "@/libraries/corporation/farmland.js"
-import { getProductDevelopmentStatuses } from "@/libraries/corporation/productDevelopment.js"
+import {
+  estimateDevelopmentEtaSeconds,
+  estimateDevelopmentProgressPerCycle,
+  formatDevelopmentDoneAt,
+  formatDevelopmentEta,
+  getProductDevelopmentStatuses,
+} from "@/libraries/corporation/productDevelopment.js"
 import { TOBACCO_DIVISION } from "@/libraries/corporation/tobacco.js"
 import { buildSimContext } from "@/libraries/corporation/simulation/context.js"
 import type { FieldComparison } from "@/libraries/corporation/simulation/types.js"
@@ -141,6 +147,73 @@ function appendDivisionOverview(ns: NS, builder: ScriptLogBuilder, divisionName:
   if (officeRows.length > 0) {
     builder.table(buildOfficeTable(`${divisionName} offices`, officeRows))
   }
+
+  const { developing, ready } = collectDivisionProductRows(ns, divisionName)
+  if (developing.length > 0) {
+    builder.table(buildProductDevelopingTable(`${divisionName} products`, developing))
+  }
+  if (ready.length > 0) {
+    builder.table(buildProductReadyTable(`${divisionName} products`, ready))
+  }
+}
+
+function collectDivisionProductRows(
+  ns: NS,
+  divisionName: string
+): { developing: string[][]; ready: string[][] } {
+  const corp = ns.corporation
+  const division = corp.getDivision(divisionName)
+  const spc = corp.getConstants().secondsPerMarketCycle
+  const developing: string[][] = []
+  const ready: string[][] = []
+
+  for (const city of division.cities) {
+    if (!corp.hasWarehouse(divisionName, city)) continue
+
+    for (const productName of division.products) {
+      try {
+        const product = corp.getProduct(divisionName, city, productName)
+        const progress = product.developmentProgress
+
+        if (progress < 100) {
+          let devPerCycle = "—"
+          let eta = "—"
+          let doneAt = "—"
+          try {
+            const office = corp.getOffice(divisionName, city)
+            const progPerCycle = estimateDevelopmentProgressPerCycle(office.employeeProductionByJob, 1)
+            const etaSec = estimateDevelopmentEtaSeconds(progress, progPerCycle, spc)
+            devPerCycle = `~${progPerCycle.toFixed(2)}%/c`
+            eta = formatDevelopmentEta(etaSec)
+            doneAt = formatDevelopmentDoneAt(etaSec)
+          } catch {
+            // office missing in this city
+          }
+          developing.push([city, productName, `${progress.toFixed(2)}%`, devPerCycle, eta, doneAt])
+        } else {
+          const sell =
+            typeof product.desiredSellPrice === "string"
+              ? product.desiredSellPrice
+              : formatMoney(ns, product.desiredSellPrice)
+          const sellAmt =
+            typeof product.desiredSellAmount === "string"
+              ? product.desiredSellAmount
+              : ns.format.number(product.desiredSellAmount)
+          ready.push([
+            city,
+            productName,
+            String(product.rating.toFixed(2)),
+            `${sellAmt} @ ${sell}`,
+            ns.format.number(product.stored, 1),
+          ])
+        }
+      } catch {
+        // product not tracked in this city yet
+      }
+    }
+  }
+
+  return { developing, ready }
 }
 
 function collectOfficeSnapshotRows(ns: NS): string[][] {
@@ -375,13 +448,44 @@ function populateStaffTab(ns: NS, tabbedLog: TabbedScriptLogBuilder, tables: Hea
   }
 }
 
-function populateLogTab(tabbedLog: TabbedScriptLogBuilder, statusLines: string[]): void {
-  const builder = tabbedLog.tab("log")
-  if (statusLines.length > 0) {
-    builder.text(statusLines.join("\n"))
-  } else {
-    builder.text("(no log lines this cycle)")
+function formatSimMismatchWarning(simRun: ValidationRun): string {
+  const failed = simRun.result.comparisons.filter((c) => !c.ok)
+  const lines = [
+    `SIM MISMATCH (automation continues): stage ${simRun.stage}, ${failed.length} field(s) off`,
+    `Division ${simRun.result.division} / ${simRun.result.city}`,
+  ]
+  for (const c of failed) {
+    lines.push(
+      `  ${c.path}: predicted ${Number.isFinite(c.predicted) ? c.predicted.toFixed(3) : "—"}, ` +
+        `actual ${Number.isFinite(c.actual) ? c.actual.toFixed(3) : "—"}`
+    )
   }
+  for (const note of simRun.result.notes) {
+    lines.push(`  note: ${note}`)
+  }
+  lines.push("See Sim tab for details. Warning clears when validation passes.")
+  return lines.join("\n")
+}
+
+function populateLogTab(
+  tabbedLog: TabbedScriptLogBuilder,
+  statusLines: string[],
+  simMismatchWarning: ValidationRun | null = null
+): void {
+  const builder = tabbedLog.tab("log")
+  const parts: string[] = []
+  if (simMismatchWarning) {
+    parts.push(formatSimMismatchWarning(simMismatchWarning))
+    parts.push("")
+    parts.push("--- cycle log ---")
+    parts.push("")
+  }
+  if (statusLines.length > 0) {
+    parts.push(statusLines.join("\n"))
+  } else if (!simMismatchWarning) {
+    parts.push("(no log lines this cycle)")
+  }
+  builder.text(parts.join("\n"))
 }
 
 export async function renderCorporationDashboard(
@@ -391,14 +495,15 @@ export async function renderCorporationDashboard(
   managedSupplies: ManagedSupply[] = [],
   simRun: ValidationRun | null = null,
   simHistory: ValidationRun[] = [],
-  headcountPlans: HeadcountPlanTable[] = []
+  headcountPlans: HeadcountPlanTable[] = [],
+  simMismatchWarning: ValidationRun | null = null
 ): Promise<void> {
   tabbedLog.clearPanels()
   populateOverviewTab(ns, tabbedLog, managedSupplies)
   populateWarehouseTab(ns, tabbedLog, managedSupplies)
   populateStaffTab(ns, tabbedLog, headcountPlans)
   populateSimulationTab(ns, tabbedLog, simRun, simHistory)
-  populateLogTab(tabbedLog, statusLines)
+  populateLogTab(tabbedLog, statusLines, simMismatchWarning)
   await tabbedLog.render(ns)
 }
 
@@ -427,6 +532,35 @@ function buildOfficeTable(title: string, rows: string[][]): ReactTableConfig {
       { header: "Energy", align: "right", minWidth: 7 },
       { header: "Jobs", align: "left", minWidth: 22 },
       { header: "XP", align: "right", minWidth: 8 },
+    ],
+    rows,
+  }
+}
+
+function buildProductDevelopingTable(title: string, rows: string[][]): ReactTableConfig {
+  return {
+    title: `${title} (designing; wall-clock ETA, ${rows.length} active)`,
+    columns: [
+      { header: "City", align: "left", minWidth: 12 },
+      { header: "Product", align: "left", minWidth: 10 },
+      { header: "Progress", align: "right", minWidth: 9 },
+      { header: "Dev/c", align: "right", minWidth: 8 },
+      { header: "ETA", align: "right", minWidth: 8 },
+      { header: "Done at", align: "right", minWidth: 8 },
+    ],
+    rows,
+  }
+}
+
+function buildProductReadyTable(title: string, rows: string[][]): ReactTableConfig {
+  return {
+    title: `${title} (ready)`,
+    columns: [
+      { header: "City", align: "left", minWidth: 12 },
+      { header: "Product", align: "left", minWidth: 10 },
+      { header: "Rating", align: "right", minWidth: 7 },
+      { header: "Sell", align: "left", minWidth: 14 },
+      { header: "Stored", align: "right", minWidth: 8 },
     ],
     rows,
   }

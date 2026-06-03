@@ -33,6 +33,7 @@ export async function main(ns: NS): Promise<void> {
 
   const tabbedLog = new TabbedScriptLogBuilder(CORP_TABS, CORP_LOG_LAYOUT)
   const simHistory: ValidationRun[] = []
+  let simMismatchWarning: ValidationRun | null = null
 
   while (true) {
     try {
@@ -69,25 +70,19 @@ export async function main(ns: NS): Promise<void> {
         ...buildDivisionHeadcountPlanTables(ns, FARMLAND_DIVISION),
         ...buildDivisionHeadcountPlanTables(ns, TOBACCO_DIVISION),
       ]
-      if (simRun && !simRun.result.allOk) {
-        tabbedLog.setActiveTab("sim")
+      if (simRun) {
+        simMismatchWarning = simRun.result.allOk ? null : simRun
       }
-      await renderCorporationDashboard(ns, tabbedLog, statusLines, supplies, simRun, simHistory, headcountPlans)
-
-      if (simRun && !simRun.result.allOk) {
-        const failed = simRun.result.comparisons.filter((c) => !c.ok)
-        ns.print(`SIM MISMATCH: stage ${simRun.stage} — stopping for debug (${failed.length} field(s) off)`)
-        for (const c of failed) {
-          ns.print(
-            `  ${c.path}: predicted ${Number.isFinite(c.predicted) ? c.predicted.toFixed(3) : "—"}, ` +
-              `actual ${Number.isFinite(c.actual) ? c.actual.toFixed(3) : "—"}`
-          )
-        }
-        for (const note of simRun.result.notes) {
-          ns.print(`  note: ${note}`)
-        }
-        return
-      }
+      await renderCorporationDashboard(
+        ns,
+        tabbedLog,
+        statusLines,
+        supplies,
+        simRun,
+        simHistory,
+        headcountPlans,
+        simMismatchWarning
+      )
     } catch (err) {
       ns.clearLog()
       ns.print(`ERROR: ${String(err)}`)

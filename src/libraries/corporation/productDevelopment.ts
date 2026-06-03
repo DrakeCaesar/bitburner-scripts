@@ -86,6 +86,15 @@ export function formatDevelopmentEta(seconds: number | null): string {
   return `~${(seconds / 86400).toFixed(1)}d`
 }
 
+/** Local wall-clock time when linear ETA elapses (browser real time). */
+export function formatDevelopmentDoneAt(etaSeconds: number | null): string {
+  if (etaSeconds == null || etaSeconds <= 0) return "—"
+  const done = new Date(Date.now() + etaSeconds * 1000)
+  const h = done.getHours()
+  const m = done.getMinutes()
+  return `${h}:${String(m).padStart(2, "0")}`
+}
+
 /** Brute-force job split that maximizes simulated development progress per market cycle. */
 export function findFastestDevelopmentJobCounts(
   numEmployees: number,
