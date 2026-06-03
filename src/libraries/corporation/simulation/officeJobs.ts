@@ -304,7 +304,10 @@ export function evaluateHeadcountEconomics(
 ): HeadcountEconomics | null {
   if (numEmployees <= 0) return null
 
-  const optimal = optimizeMaterialJobCounts(numEmployees, rates, { profitContext: profitCtx })
+  const optimal = optimizeMaterialJobCounts(numEmployees, rates, {
+    profitContext: profitCtx,
+    salaryOffice,
+  })
   if (!optimal) return null
 
   const formulaSalary = estimateOfficeSalaryPerCycle(
@@ -430,6 +433,49 @@ export function officeJobCountsFromEmployeeJobs(
   }
 }
 
+/**
+ * Baseline job layout for production scaling.
+ * If assignments show 0 Ops/Eng but live production still has those roles (pending START),
+ * infer a sane split from employeeProductionByJob shares.
+ */
+export function baselineJobCountsFromOffice(
+  numEmployees: number,
+  employeeJobs: Record<string, number | undefined>,
+  liveProd: Record<string, number>
+): OfficeJobCounts {
+  const jobs = officeJobCountsFromEmployeeJobs(employeeJobs)
+  const prodOps = liveProd.Operations ?? 0
+  const prodEng = liveProd.Engineer ?? 0
+  const prodMgmt = liveProd.Management ?? 0
+  const prodTotal = prodOps + prodEng + prodMgmt
+
+  if (prodTotal <= 0 || jobs.Operations + jobs.Engineer > 0) {
+    return jobs
+  }
+
+  const productionSlots =
+    numEmployees - jobs.Intern - jobs.Business - jobs["Research & Development"]
+  if (productionSlots < 1) {
+    return jobs
+  }
+
+  let ops = Math.max(1, Math.round((prodOps / prodTotal) * productionSlots))
+  let eng = Math.max(0, Math.round((prodEng / prodTotal) * productionSlots))
+  if (productionSlots >= 2 && eng === 0 && prodEng > 0) {
+    eng = 1
+  }
+  ops = Math.min(ops, productionSlots)
+  eng = Math.min(eng, Math.max(0, productionSlots - ops))
+  const mgmt = Math.max(0, productionSlots - ops - eng)
+
+  return {
+    ...jobs,
+    Operations: ops,
+    Engineer: eng,
+    Management: mgmt,
+  }
+}
+
 /** Scale live per-job production to a hypothetical job split (linear per role). */
 export function scaleEmployeeProductionByJob(
   live: Record<string, number>,
@@ -463,10 +509,32 @@ function resolveEmployeeProductionByJob(
   rates: PerEmployeeRates,
   ctx: FarmlandProfitContext
 ): Record<string, number> {
-  if (ctx.liveEmployeeProductionByJob && ctx.baselineJobCounts) {
-    return scaleEmployeeProductionByJob(ctx.liveEmployeeProductionByJob, ctx.baselineJobCounts, counts)
+  if (!ctx.liveEmployeeProductionByJob || !ctx.baselineJobCounts) {
+    return buildEmployeeProductionByJob(counts, rates)
   }
-  return buildEmployeeProductionByJob(counts, rates)
+
+  const scaled = scaleEmployeeProductionByJob(
+    ctx.liveEmployeeProductionByJob,
+    ctx.baselineJobCounts,
+    counts
+  )
+  const rebuilt = buildEmployeeProductionByJob(counts, rates)
+
+  for (const job of PRODUCTION_JOBS_FOR_SCALE) {
+    const baseCount = ctx.baselineJobCounts[job]
+    const targetCount = counts[job]
+    if (baseCount <= 0 && targetCount > 0) {
+      scaled[job] = rebuilt[job]
+    }
+  }
+
+  scaled.total =
+    scaled.Operations +
+    scaled.Engineer +
+    scaled.Management +
+    scaled.Business +
+    scaled["Research & Development"]
+  return scaled
 }
 
 /** Material units/s after division mults, optional limit, and live-production calibration. */
@@ -594,7 +662,9 @@ function scoreCounts(
   rates: PerEmployeeRates,
   profitCtx: FarmlandProfitContext | undefined
 ): Omit<OfficeJobOptimizeResult, "counts"> {
-  const employeeProductionByJob = buildEmployeeProductionByJob(counts, rates)
+  const employeeProductionByJob = profitCtx
+    ? resolveEmployeeProductionByJob(counts, rates, profitCtx)
+    : buildEmployeeProductionByJob(counts, rates)
   const productionScore = getOfficeProductivity(employeeProductionByJob)
   const businessFactor = getBusinessFactor(employeeProductionByJob)
 
@@ -624,8 +694,11 @@ function listConstrainedJobCounts(numEmployees: number, intern: number, reserveR
     const productionSlots = numEmployees - intern - business - reserveRnD
     if (productionSlots < 1) continue
 
-    for (let ops = 0; ops <= productionSlots; ops++) {
-      for (let engr = 0; engr <= productionSlots - ops; engr++) {
+    const minOps = 1
+    const minEng = productionSlots >= 2 ? 1 : 0
+
+    for (let ops = minOps; ops <= productionSlots - minEng; ops++) {
+      for (let engr = minEng; engr <= productionSlots - ops; engr++) {
         const mgmt = productionSlots - ops - engr
         out.push({
           Operations: ops,
@@ -645,13 +718,33 @@ function pickBestJobCounts(
   candidates: OfficeJobCounts[],
   rates: PerEmployeeRates,
   profitCtx: FarmlandProfitContext | undefined,
+  rankOptions: {
+    numEmployees: number
+    salaryOffice?: OfficeSalaryInput
+  },
   combinedScoreFor: (counts: OfficeJobCounts, formulaProfit: number) => { score: number; simScore?: number }
 ): OfficeJobOptimizeResult | null {
   let best: OfficeJobOptimizeResult | null = null
 
   for (const counts of candidates) {
     const scored = scoreCounts(counts, rates, profitCtx)
-    const ranked = combinedScoreFor(counts, scored.estimatedCycleProfit)
+    let rankProfit = scored.estimatedCycleProfit
+    if (profitCtx && rankOptions.salaryOffice) {
+      const formulaSalary = estimateOfficeSalaryPerCycle(
+        { ...rankOptions.salaryOffice, numEmployees: rankOptions.numEmployees },
+        profitCtx.sim.employeeSalaryMultiplier,
+        profitCtx.sim.marketCycles
+      )
+      rankProfit = applyDivisionEconomicsCalibration(
+        rankOptions.numEmployees,
+        counts,
+        rates,
+        profitCtx,
+        scored.estimatedCycleProfit,
+        formulaSalary
+      ).netProfit
+    }
+    const ranked = combinedScoreFor(counts, rankProfit)
     const candidate: OfficeJobOptimizeResult = {
       counts,
       ...scored,
@@ -674,6 +767,7 @@ export function optimizeMaterialJobCounts(
     profitContext?: FarmlandProfitContext
     maxEmployees?: number
     reserveRnD?: number
+    salaryOffice?: OfficeSalaryInput
   }
 ): OfficeJobOptimizeResult | null {
   const maxEmployees = options?.maxEmployees ?? MAX_OFFICE_EMPLOYEES_FOR_OPTIMIZE
@@ -688,7 +782,8 @@ export function optimizeMaterialJobCounts(
     listConstrainedJobCounts(numEmployees, intern, reserveRnD),
     rates,
     profitCtx,
-    (_counts, formulaProfit) => ({ score: formulaProfit })
+    { numEmployees, salaryOffice: options?.salaryOffice },
+    (_counts, rankScore) => ({ score: rankScore })
   )
 }
 

@@ -14,6 +14,7 @@ import {
   findOptimalHeadcount,
   formatHeadcountEconomics,
   headcountEconomicsToTableRow,
+  baselineJobCountsFromOffice,
   officeJobCountsFromEmployeeJobs,
   formatJobCounts,
   MAX_OFFICE_EMPLOYEES_FOR_OPTIMIZE,
@@ -280,7 +281,11 @@ export function buildFarmlandProfitContext(ns: NS, divisionName: string, city: C
     products,
     inputRatios,
     liveEmployeeProductionByJob: { ...office.employeeProductionByJob },
-    baselineJobCounts: officeJobCountsFromEmployeeJobs(office.employeeJobs),
+    baselineJobCounts: baselineJobCountsFromOffice(
+      office.numEmployees,
+      office.employeeJobs,
+      office.employeeProductionByJob
+    ),
     observedProductionPerSecond:
       observedProductionPerSecond > 0 ? observedProductionPerSecond : undefined,
     observedDivisionRevenuePerSecond,
@@ -331,7 +336,10 @@ export async function balanceJobs(ns: NS, divisionName: string, city: CityName):
       optimal = buildOptimizeResultFromSimBest(simBest.counts, rates, profitContext, simBest.score)
     }
   } else {
-    optimal = optimizeMaterialJobCounts(n, rates, { profitContext: profitContext ?? undefined })
+    optimal = optimizeMaterialJobCounts(n, rates, {
+      profitContext: profitContext ?? undefined,
+      salaryOffice: officeSalaryInput(office),
+    })
   }
   if (!optimal) return null
 
