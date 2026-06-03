@@ -24,6 +24,12 @@ import {
   type OfficeJobOptimizeInput,
   type OfficeSalaryInput,
 } from "@/libraries/corporation/simulation/officeJobs.js"
+import {
+  divisionIsDevelopingProduct,
+  getProductDevelopmentStatuses,
+  jobCountsForProductDevelopment,
+  PRODUCT_DEVELOPMENT_TARGET_STAFF,
+} from "@/libraries/corporation/productDevelopment.js"
 
 /** Cap hiring / office size / job optimizer search (brute force grows with headcount). */
 export const MAX_OFFICE_EMPLOYEES = MAX_OFFICE_EMPLOYEES_FOR_OPTIMIZE
@@ -65,10 +71,43 @@ export function buildDivisionHeadcountPlanTables(ns: NS, divisionName: string): 
       continue
     }
 
+    const office = corp.getOffice(divisionName, city)
+
+    if (divisionIsDevelopingProduct(ns, divisionName)) {
+      const devStatuses = getProductDevelopmentStatuses(ns, divisionName)
+      const devLabel = devStatuses.map((d) => `${d.name} ${d.progress.toFixed(0)}%`).join(", ")
+      const devCounts = jobCountsForProductDevelopment(office.numEmployees)
+      const spc = corp.getConstants().secondsPerMarketCycle
+      tables.push({
+        divisionName,
+        city,
+        officeSize: office.size,
+        currentEmployees: office.numEmployees,
+        optimalEmployees: Math.min(office.size, PRODUCT_DEVELOPMENT_TARGET_STAFF),
+        gameProfitPerSec,
+        secondsPerMarketCycle: spc,
+        rows: [
+          [
+            String(Math.min(office.size, PRODUCT_DEVELOPMENT_TARGET_STAFF)),
+            String(devCounts.Operations),
+            String(devCounts.Engineer),
+            String(devCounts.Business),
+            String(devCounts.Management),
+            String(devCounts["Research & Development"]),
+            String(devCounts.Intern),
+            "—",
+            "—",
+            "—",
+            `dev: ${devLabel}`,
+          ],
+        ],
+      })
+      continue
+    }
+
     const profitContext = buildFarmlandProfitContext(ns, divisionName, city)
     if (!profitContext) continue
 
-    const office = corp.getOffice(divisionName, city)
     const jobInput: OfficeJobOptimizeInput = {
       numEmployees: office.numEmployees,
       employeeJobs: { ...office.employeeJobs },
@@ -339,6 +378,13 @@ export async function balanceJobs(ns: NS, divisionName: string, city: CityName):
   const n = office.numEmployees
   if (n === 0) return null
 
+  if (divisionIsDevelopingProduct(ns, divisionName)) {
+    const devCounts = jobCountsForProductDevelopment(n)
+    if (countsMatchCurrent(devCounts, office.employeeJobs)) return null
+    applyJobCounts(ns, divisionName, city, devCounts)
+    return formatJobCounts(devCounts, 0, undefined, undefined)
+  }
+
   const input: OfficeJobOptimizeInput = {
     numEmployees: n,
     employeeJobs: { ...office.employeeJobs },
@@ -467,6 +513,7 @@ export async function maintainOfficeStaff(
     employeeProductionByJob: { ...office.employeeProductionByJob },
   }
   const profitContext = buildFarmlandProfitContext(ns, divisionName, city)
+  const developingProduct = divisionIsDevelopingProduct(ns, divisionName)
 
   if (
     office.numEmployees < office.size &&
@@ -476,7 +523,16 @@ export async function maintainOfficeStaff(
     let allowHire = office.numEmployees === 0
     let optimalStaff = office.size
 
-    if (profitContext) {
+    if (developingProduct) {
+      optimalStaff = Math.min(office.size, PRODUCT_DEVELOPMENT_TARGET_STAFF)
+      allowHire = office.numEmployees < optimalStaff
+      if (!allowHire && office.numEmployees < office.size) {
+        lines.push(
+          `${divisionName}/${city}: dev staff ${office.numEmployees}/${office.size} ` +
+            `(target ${optimalStaff} for product R&D)`
+        )
+      }
+    } else if (profitContext) {
       const rates = extractPerEmployeeRates(jobInput)
       const salaryBase = officeSalaryInput(office)
       const optimal = findOptimalHeadcount(office.size, office.numEmployees, rates, profitContext, salaryBase)

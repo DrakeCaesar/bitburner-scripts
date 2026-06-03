@@ -7,6 +7,7 @@ import {
   type TableLayout,
 } from "@/libraries/scriptLogUi.js"
 import { FARMLAND_DIVISION } from "@/libraries/corporation/farmland.js"
+import { getProductDevelopmentStatuses } from "@/libraries/corporation/productDevelopment.js"
 import { TOBACCO_DIVISION } from "@/libraries/corporation/tobacco.js"
 import { buildSimContext } from "@/libraries/corporation/simulation/context.js"
 import type { FieldComparison } from "@/libraries/corporation/simulation/types.js"
@@ -30,6 +31,18 @@ export const CORP_TABS: TabDefinition[] = [
 
 function formatMoney(ns: NS, value: number): string {
   return `$${ns.format.number(value)}`
+}
+
+function formatDivisionProducts(ns: NS, divisionName: string, productNames: string[]): string {
+  if (productNames.length === 0) return "—"
+
+  const developing = getProductDevelopmentStatuses(ns, divisionName)
+  if (developing.length === 0) return productNames.join(", ")
+
+  const parts = developing.map((d) => `${d.name} @ ${d.city} ${d.progress.toFixed(1)}%`)
+  const finished = productNames.filter((name) => !developing.some((d) => d.name === name))
+  if (finished.length > 0) parts.push(`ready: ${finished.join(", ")}`)
+  return parts.join(" | ")
 }
 
 function formatJobs(jobs: Record<string, number>): string {
@@ -94,7 +107,10 @@ function appendDivisionOverview(ns: NS, builder: ScriptLogBuilder, divisionName:
       { label: "Production mult", value: division.productionMult.toFixed(3) },
       { label: "Research", value: ns.format.number(division.researchPoints) },
       { label: "Ad campaigns", value: String(division.numAdVerts) },
-      { label: "Products", value: division.products.length > 0 ? division.products.join(", ") : "—" },
+      {
+        label: "Products",
+        value: formatDivisionProducts(ns, divisionName, division.products),
+      },
       { label: "Revenue/s (last)", value: formatMoney(ns, division.lastCycleRevenue) },
       { label: "Expenses/s (last)", value: formatMoney(ns, division.lastCycleExpenses) },
       { label: "Profit/s (last)", value: formatMoney(ns, profitLast) },
