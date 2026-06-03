@@ -7,7 +7,7 @@ import {
 } from "@/libraries/corporation/simulation/officeJobs.js"
 
 /** Staff target while any product has developmentProgress < 100. */
-export const PRODUCT_DEVELOPMENT_TARGET_STAFF = 9
+export const PRODUCT_DEVELOPMENT_TARGET_STAFF = 12
 
 export interface ProductDevelopmentStatus {
   name: string
