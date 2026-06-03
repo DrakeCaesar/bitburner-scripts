@@ -46,9 +46,16 @@ const BODY_BORDER = "rgba(255, 255, 255, 0.08)"
 const HEADER_BORDER = "rgba(255, 255, 255, 0.15)"
 const HEADER_BG = "rgba(255, 255, 255, 0.04)"
 
+type ReactComponent<P = Record<string, unknown>> = (props: P) => ReactNode
+
 export type ReactRef = {
   createElement(type: string, props?: Record<string, unknown> | null, ...children: unknown[]): ReactNode
-  useState: <T>(initial: T) => [T, (value: T) => void]
+  createElement<P extends Record<string, unknown>>(
+    type: ReactComponent<P>,
+    props?: P | null,
+    ...children: unknown[]
+  ): ReactNode
+  useState: <T>(initial: T) => [T, (value: T | ((prev: T) => T)) => void]
   useEffect: (effect: () => void | (() => void), deps?: unknown[]) => void
 }
 

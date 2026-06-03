@@ -23,6 +23,7 @@
     "src/**/*.ts",
     "src/**/*.js",
     "NetscriptDefinitions.d.ts",
+    "stockApi.d.ts",
     "global.d.ts",
     "viteburner.d.ts",
     "vite.config.ts",
