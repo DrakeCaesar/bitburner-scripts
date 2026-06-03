@@ -1,3 +1,5 @@
+import type { DivisionSnapshot, MaterialSnapshot, OfficeSnapshot, SimContext } from "./types.js"
+
 /** Mirrors src/utils/calculateEffectWithFactors.ts */
 export function calculateEffectWithFactors(n: number, expFac: number, linearFac: number): number {
   return Math.pow(n, expFac) + n / linearFac
@@ -51,9 +53,52 @@ export function getMarketFactor(demand: number, competition: number): number {
   return Math.max(0.1, (demand * (100 - competition)) / 100)
 }
 
-/** Agriculture material markup cap (Material.getMarkupLimit). */
-export function getMaterialMarkupLimit(): number {
-  return 1
+/** Material.getMarkupLimit — quality / baseMarkup. */
+export function getMaterialMarkupLimit(quality: number, baseMarkup: number): number {
+  if (baseMarkup <= 0) return quality
+  return quality / baseMarkup
+}
+
+/** When market API is locked, back-solve demand from last cycle sell rate (MAX @ MP). */
+export function inferDemandFromSellRate(
+  mat: MaterialSnapshot,
+  division: DivisionSnapshot,
+  office: OfficeSnapshot,
+  ctx: SimContext,
+  competition: number,
+  spc: number,
+  mc: number
+): number | null {
+  const observed = mat.actualSellAmount
+  if (observed <= 0) return null
+
+  const markupLimit = getMaterialMarkupLimit(mat.quality, mat.baseMarkup)
+  const sCost = parseSellPrice(mat.desiredSellPrice, mat.marketPrice, mat.marketTa1, mat.marketTa2, markupLimit)
+  if (sCost == null) return null
+
+  const markupMultiplier = calculateMarkupMultiplier(sCost, mat.marketPrice, markupLimit)
+  const businessFactor = getBusinessFactor(office.employeeProductionByJob)
+  const advertisingFactor = getAdvertisingFactors(
+    division.awareness,
+    division.popularity,
+    ctx.industryAdvertisingFactor
+  )[0]
+
+  const sellCapPerSec =
+    (mat.quality + 0.001) *
+    markupMultiplier *
+    businessFactor *
+    ctx.corpSalesMult *
+    advertisingFactor *
+    ctx.divisionSalesMult
+
+  if (sellCapPerSec <= 0) return null
+
+  const maxRateByStored = mat.stored > 0 ? mat.stored / (spc * mc) : observed
+  const effectiveRate = Math.min(observed, maxRateByStored)
+  const marketFactor = effectiveRate / sellCapPerSec
+  const demand = (marketFactor * 100) / Math.max(1, 100 - competition)
+  return Math.max(0.1, demand)
 }
 
 export function parseSellAmount(
@@ -73,9 +118,15 @@ export function parseSellAmount(
   return sellAmt
 }
 
-export function parseSellPrice(desiredSellPrice: string | number, marketPrice: number, marketTa1: boolean, marketTa2: boolean): number | null {
+export function parseSellPrice(
+  desiredSellPrice: string | number,
+  marketPrice: number,
+  marketTa1: boolean,
+  marketTa2: boolean,
+  markupLimit: number
+): number | null {
   if (marketTa2) return null
-  if (marketTa1) return marketPrice + getMaterialMarkupLimit()
+  if (marketTa1) return marketPrice + markupLimit
   if (desiredSellPrice === "" || desiredSellPrice === 0) return null
   const temp = String(desiredSellPrice).replace(/MP/g, marketPrice.toString())
   const sCost = Number(eval(temp))

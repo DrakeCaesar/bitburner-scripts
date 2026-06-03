@@ -16,6 +16,9 @@ export interface MaterialSnapshot {
   marketTa2: boolean
   demand: number
   competition: number
+  /** False when getMaterial omits demand/competition until market unlocks. */
+  marketStatsKnown: boolean
+  baseMarkup: number
   actualSellAmount: number
   size: number
   productionLimit: number | null
@@ -52,6 +55,7 @@ export interface DivisionSnapshot {
   producedMaterials: CorpMaterialName[]
   researchFactor: number
   aiCoreFactor: number
+  advertisingFactor: number
   cities: CityName[]
   offices: OfficeSnapshot[]
   warehouses: WarehouseSnapshot[]

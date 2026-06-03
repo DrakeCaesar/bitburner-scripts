@@ -5,6 +5,7 @@ import {
   getBusinessFactor,
   getMarketFactor,
   getMaterialMarkupLimit,
+  inferDemandFromSellRate,
   parseSellAmount,
   parseSellPrice,
 } from "../math.js"
@@ -31,7 +32,7 @@ export function simulateSaleStage(
     if (!mat) continue
     if (!division.producedMaterials.includes(mat.name)) continue
 
-    simulateMaterialSale(mat, division, businessFactor, advertisingFactor, ctx, spc, mc)
+    simulateMaterialSale(mat, division, office, businessFactor, advertisingFactor, ctx, spc, mc)
   }
 
   recomputeWarehouseSizeUsed(warehouse)
@@ -40,6 +41,7 @@ export function simulateSaleStage(
 function simulateMaterialSale(
   mat: MaterialSnapshot,
   division: DivisionSnapshot,
+  office: OfficeSnapshot,
   businessFactor: number,
   advertisingFactor: number,
   ctx: SimContext,
@@ -55,15 +57,22 @@ function simulateMaterialSale(
     return
   }
 
-  const sCost = parseSellPrice(mat.desiredSellPrice, mat.marketPrice, mat.marketTa1, mat.marketTa2)
+  const markupLimit = getMaterialMarkupLimit(mat.quality, mat.baseMarkup)
+  const sCost = parseSellPrice(mat.desiredSellPrice, mat.marketPrice, mat.marketTa1, mat.marketTa2, markupLimit)
   if (sCost == null) {
     mat.actualSellAmount = 0
     return
   }
 
-  const markupLimit = getMaterialMarkupLimit()
+  let demand = mat.demand
+  let competition = mat.competition
+  if (!mat.marketStatsKnown) {
+    const inferred = inferDemandFromSellRate(mat, division, office, ctx, competition, spc, mc)
+    if (inferred != null) demand = inferred
+  }
+
   const qualityFactor = mat.quality + 0.001
-  const marketFactor = getMarketFactor(mat.demand, mat.competition)
+  const marketFactor = getMarketFactor(demand, competition)
   const markupMultiplier = calculateMarkupMultiplier(sCost, mat.marketPrice, markupLimit)
 
   let sellAmt = parseSellAmount(mat.desiredSellAmount, mat.stored, mat.productionAmount, spc, mc)

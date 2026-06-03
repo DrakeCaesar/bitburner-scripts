@@ -27,7 +27,8 @@ export async function validateCorpStage(ns: NS, before: CorporationSnapshot): Pr
   const after = captureCorporationSnapshot(ns, FARMLAND_DIVISION)
   if (!after) return null
 
-  const ctx = buildSimContext(ns)
+  const div = before.divisions.find((d) => d.name === FARMLAND_DIVISION)
+  const ctx = buildSimContext(ns, div?.advertisingFactor ?? 0.04)
   const predicted = simulateStage(before, stage, ctx)
 
   const result = compareStageSnapshots(

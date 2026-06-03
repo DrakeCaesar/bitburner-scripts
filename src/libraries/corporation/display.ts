@@ -214,7 +214,8 @@ function formatSimPct(rel: number | null): string {
 }
 
 function appendSimulationLog(builder: ScriptLogBuilder, ns: NS, run: ValidationRun, history: ValidationRun[]): void {
-  const ctx = buildSimContext(ns)
+  const div = run.before.divisions.find((d) => d.name === FARMLAND_DIVISION)
+  const ctx = buildSimContext(ns, div?.advertisingFactor ?? 0.04)
   const info = ns.corporation.getCorporation()
 
   builder.text(
