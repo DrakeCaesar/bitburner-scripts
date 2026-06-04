@@ -606,6 +606,10 @@ function TabbedLogView(props: TabbedLogViewProps): ReactNode {
   const { tabOrder, panels, programmaticActiveId, layout, onTabChange } = props
   const [activeId, setActiveId] = React.useState(programmaticActiveId)
 
+  React.useEffect(() => {
+    setActiveId(programmaticActiveId)
+  }, [programmaticActiveId])
+
   const tabBar = React.createElement(
     "div",
     {
@@ -680,6 +684,17 @@ export class TabbedScriptLogBuilder {
     return this
   }
 
+  /** Clear all tabs except the listed ids (e.g. keep "results" until the next cycle finishes). */
+  clearPanelsExcept(keepTabIds: readonly string[]): this {
+    const keep = new Set(keepTabIds)
+    for (const id of this.builders.keys()) {
+      if (!keep.has(id)) {
+        this.builders.delete(id)
+      }
+    }
+    return this
+  }
+
   setActiveTab(tabId: string): this {
     this.displayTabId = tabId
     return this
@@ -703,8 +718,12 @@ export class TabbedScriptLogBuilder {
   }
 
   private resolveTailContentHeightPx(): number {
-    const active = this.builders.get(this.displayTabId)
-    const panelHeight = active && !active.isEmpty() ? active.estimateContentHeightPx() : 0
+    let panelHeight = 0
+    for (const builder of this.builders.values()) {
+      if (!builder.isEmpty()) {
+        panelHeight = Math.max(panelHeight, builder.estimateContentHeightPx())
+      }
+    }
     return panelHeight + TAB_BAR_HEIGHT_PX
   }
 

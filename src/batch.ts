@@ -43,27 +43,27 @@ export async function main(ns: NS) {
   const renderLog = () => tabbedLog.render(ns)
 
   const logSetup = (message: string) => {
-    tabbedLog.setActiveTab("setup").tab("setup").text(message)
+    tabbedLog.tab("setup").text(message)
   }
 
   // Append only during prep sim — re-render at phase boundaries so React tab clicks are not reset every line
   const prepLogOptions = {
     logMessage: (message: string) => {
-      tabbedLog.setActiveTab("prep").tab("prep").text(message)
+      tabbedLog.tab("prep").text(message)
     },
     logTable: (config: ReactTableConfig) => {
-      tabbedLog.setActiveTab("prep").tab("prep").table(config)
+      tabbedLog.tab("prep").table(config)
     },
   }
 
   const logBatch = (message: string) => {
-    tabbedLog.setActiveTab("batch").tab("batch").text(message)
+    tabbedLog.tab("batch").text(message)
   }
 
   await killOtherInstances(ns)
 
   while (true) {
-    tabbedLog.reset()
+    tabbedLog.clearPanelsExcept(["results", "batch"])
 
     const joinedFactions = joinWorthyFactionInvitations(ns)
     if (joinedFactions.length > 0) {
@@ -74,7 +74,6 @@ export async function main(ns: NS) {
     ns.scriptKill("contractSolver.js", "home")
     ns.exec("contractSolver.js", "home", 1, "solve", "quiet")
 
-    tabbedLog.setActiveTab("setup")
     purchaseTorRouter(ns, logSetup)
     purchasePrograms(ns, logSetup)
     await autoNuke(ns, logSetup)
@@ -119,7 +118,6 @@ export async function main(ns: NS) {
     let totalMaxRam = sumBatchWorkerRam(ns, nodes)
     const player = ns.getPlayer()
 
-    tabbedLog.setActiveTab("targets")
     const workerModeLabel =
       batchOptions.workers === "auto"
         ? batchOptions.excludeHacknet
@@ -151,7 +149,6 @@ export async function main(ns: NS) {
 
     const debug = true
 
-    tabbedLog.setActiveTab("prep")
     const calcStartTime = Date.now()
     const prepEstimate = await prepareServerMultiNode(ns, nodes, target.serverName, {
       dryRun: true,
@@ -245,8 +242,7 @@ export async function main(ns: NS) {
       })
     }
 
-    tabbedLog.setActiveTab("batch")
-    tabbedLog.tab("batch").keyValueTable({
+    tabbedLog.tab("batch").reset().keyValueTable({
       title: "Batch Configuration",
       rows: configRows,
       separatorAfter: [5],
@@ -309,9 +305,9 @@ export async function main(ns: NS) {
     await renderLog()
 
     const batchStartTime = Date.now()
-    const completedBatches = await executeBatches(ns, batchConfig, threads, timings, batches)
-    if (completedBatches == 0) {
-      tabbedLog.setActiveTab("results").tab("results").text("ERROR: No batches were executed. Exiting.")
+    const { completeBatches, actualHackIncome } = await executeBatches(ns, batchConfig, threads, timings, batches)
+    if (completeBatches == 0) {
+      tabbedLog.tab("results").reset().text("ERROR: No batches were executed. Exiting.")
       await renderLog()
       await ns.sleep(1000)
       continue
@@ -319,19 +315,56 @@ export async function main(ns: NS) {
 
     const batchEndTime = Date.now()
     const actualBatchCycleTime = batchEndTime - batchStartTime
+    const actualCycleMoney = actualHackIncome
+
+    const predictedCycleMoney = moneyPerBatch * completeBatches
+    const moneyDelta = actualCycleMoney - predictedCycleMoney
+    const moneyPercentDiff =
+      predictedCycleMoney > 0 ? ((moneyDelta / predictedCycleMoney) * 100).toFixed(1) : "n/a"
+
+    const predictedMoneyPerSecond =
+      predictedBatchCycleTime > 0 ? (predictedCycleMoney / predictedBatchCycleTime) * 1000 : 0
+    const actualMoneyPerSecond = actualBatchCycleTime > 0 ? (actualCycleMoney / actualBatchCycleTime) * 1000 : 0
+    const moneyPerSecondDelta = actualMoneyPerSecond - predictedMoneyPerSecond
+    const moneyPerSecondPercentDiff =
+      predictedMoneyPerSecond > 0 ? ((moneyPerSecondDelta / predictedMoneyPerSecond) * 100).toFixed(1) : "n/a"
+
+    const batchTimeDiff = actualBatchCycleTime - predictedBatchCycleTime
+    const batchPercentDiff =
+      predictedBatchCycleTime > 0 ? ((batchTimeDiff / predictedBatchCycleTime) * 100).toFixed(1) : "n/a"
 
     const finalSecurity = ns.getServerSecurityLevel(target.serverName)
     const currentMoney = ns.getServerMoneyAvailable(target.serverName)
     const maxMoney = ns.getServerMaxMoney(target.serverName)
     const moneyPercent = (currentMoney / maxMoney) * 100
 
-    const batchTimeDiff = actualBatchCycleTime - predictedBatchCycleTime
-    const batchPercentDiff =
-      predictedBatchCycleTime > 0 ? ((batchTimeDiff / predictedBatchCycleTime) * 100).toFixed(1) : "0.0"
-
-    tabbedLog.setActiveTab("results")
+    tabbedLog.tab("results").reset().keyValueTable({
+      title: "Last Cycle — Predicted vs Actual",
+      rows: [
+        { label: "Batches", value: `${completeBatches} / ${batches} planned` },
+        { label: "Cycle time", value: `${ns.format.time(predictedBatchCycleTime)} / ${ns.format.time(actualBatchCycleTime)}` },
+        { label: "Cycle time Δ", value: `${batchTimeDiff >= 0 ? "+" : ""}${ns.format.time(Math.abs(batchTimeDiff))} (${batchPercentDiff}%)` },
+        {
+          label: "Hack $ / cycle",
+          value: `${ns.format.number(predictedCycleMoney)} / ${ns.format.number(actualCycleMoney)}`,
+        },
+        {
+          label: "Hack $ Δ",
+          value: `${moneyDelta >= 0 ? "+" : ""}${ns.format.number(moneyDelta)} (${moneyPercentDiff}%)`,
+        },
+        {
+          label: "$ / second",
+          value: `${ns.format.number(predictedMoneyPerSecond)}/s / ${ns.format.number(actualMoneyPerSecond)}/s`,
+        },
+        {
+          label: "$ / second Δ",
+          value: `${moneyPerSecondDelta >= 0 ? "+" : ""}${ns.format.number(moneyPerSecondDelta)}/s (${moneyPerSecondPercentDiff}%)`,
+        },
+      ],
+      separatorAfter: [6],
+    })
     tabbedLog.tab("results").keyValueTable({
-      title: "Batch Execution Results",
+      title: "Target State After Cycle",
       rows: [
         { label: "Status", value: "All batches completed" },
         {
@@ -339,18 +372,17 @@ export async function main(ns: NS) {
           value: `${finalSecurity.toFixed(2)} / ${minSecurity.toFixed(2)} (+${(finalSecurity - minSecurity).toFixed(2)})`,
         },
         {
-          label: "Money",
+          label: "Server money",
           value: `${moneyPercent.toFixed(2)}% (${ns.format.number(currentMoney)} / ${ns.format.number(maxMoney)})`,
         },
       ],
     })
 
     if (debug) {
+      const walletDelta = ns.getPlayer().money
       tabbedLog.tab("results").text(
-        `=== BATCH CYCLE TIME ===\n` +
-          `Predicted: ${ns.format.time(predictedBatchCycleTime)}\n` +
-          `Actual: ${ns.format.time(actualBatchCycleTime)}\n` +
-          `Difference: ${Math.abs(batchTimeDiff).toFixed(0)}ms (${batchPercentDiff}%)`
+        `[Debug] Hack income from port sum: ${ns.format.number(actualHackIncome)}\n` +
+          `(Wallet may differ if other income ran during the cycle.)`
       )
     }
 

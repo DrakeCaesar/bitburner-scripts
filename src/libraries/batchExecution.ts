@@ -16,6 +16,34 @@ import { getEffectiveMaxRam } from "./ramUtils.js"
 import type { LogFn } from "./scriptLogUi.js"
 import { distributeBatchesAcrossNodes } from "./serverManagement.js"
 
+/** Parent port for hack.js IPC (last arg to ns.exec); each hack writes stolen $ here. */
+export const BATCH_HACK_INCOME_PORT = 21
+
+const EMPTY_PORT_DATA = "NULL PORT DATA"
+
+function isPortEmpty(ns: NS, port: number): boolean {
+  return ns.peek(port) === EMPTY_PORT_DATA
+}
+
+export function clearHackIncomePort(ns: NS, port = BATCH_HACK_INCOME_PORT): void {
+  ns.clearPort(port)
+}
+
+export function drainHackIncomePort(ns: NS, port = BATCH_HACK_INCOME_PORT): number {
+  let total = 0
+  while (!isPortEmpty(ns, port)) {
+    const raw = ns.readPort(port)
+    if (raw === EMPTY_PORT_DATA) {
+      break
+    }
+    const value = Number(raw)
+    if (Number.isFinite(value)) {
+      total += value
+    }
+  }
+  return total
+}
+
 export interface BatchConfig {
   target: string
   server: Server
@@ -116,13 +144,18 @@ export function calculateBatchTimings(ns: NS, server: Server, player: Player, ba
   }
 }
 
+export interface BatchExecutionResult {
+  completeBatches: number
+  actualHackIncome: number
+}
+
 export async function executeBatches(
   ns: NS,
   config: BatchConfig,
   threads: ReturnType<typeof calculateBatchThreads>,
   timings: ReturnType<typeof calculateBatchTimings>,
   batchLimit?: number
-) {
+): Promise<BatchExecutionResult> {
   const { target, server, player, batchDelay, nodes, totalMaxRam, ramThreshold, myCores, logMessage } = config
   const log = logMessage ?? (() => {})
   const { totalBatchRam, actualThreshold } = threads
@@ -212,6 +245,7 @@ export async function executeBatches(
           0,
           playerAfterHack.skills.hacking,
           playerAfterHack.exp.hacking,
+          BATCH_HACK_INCOME_PORT,
         ],
         threads: hackThreads,
         batchIndex: batchCounter,
@@ -265,6 +299,9 @@ export async function executeBatches(
   if (completeBatches < batches) {
     log(`INFO: Could only fit ${completeBatches} complete batches out of ${batches} requested (${assignments.length} operations)`)
   }
+
+  clearHackIncomePort(ns)
+
   // Execute all assigned operations
   let lastPid = 0
   for (let i = 0; i < assignments.length; i++) {
@@ -301,5 +338,7 @@ export async function executeBatches(
     }
   }
 
-  return completeBatches
+  const actualHackIncome = drainHackIncomePort(ns)
+
+  return { completeBatches, actualHackIncome }
 }
