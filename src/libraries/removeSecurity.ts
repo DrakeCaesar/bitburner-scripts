@@ -20,7 +20,6 @@ const EXCLUDED_HOSTS = new Set([
 ])
 
 export const REMOVE_SECURITY_LAYOUT: Partial<TableLayout> = {
-  tableWidthPx: 720,
   fontSizePx: 12,
 }
 
@@ -31,14 +30,15 @@ const TABLE_COLUMNS = [
   { header: "Now", align: "right" as const },
   { header: "+Sec", align: "right" as const },
   { header: "Status", align: "left" as const },
+  { header: "Ends In", align: "right" as const },
   { header: "Detail", align: "left" as const },
 ]
-
-const COL_WIDTHS = [132, 40, 48, 48, 48, 72, 108]
 
 export interface RunningWeaken {
   host: string
   threads: number
+  /** Milliseconds until the current weaken.js run finishes (from process runtime). */
+  remainingMs: number
 }
 
 export interface ServerSecurityRow {
@@ -71,13 +71,32 @@ export function isAtMinSecurity(current: number, min: number): boolean {
   return current <= min + SECURITY_EPSILON
 }
 
+function estimateWeakenRemainingMs(ns: NS, proc: { pid: number; args: unknown[] }, target: string): number {
+  const weakenMs = ns.getWeakenTime(target)
+  const delayArg = proc.args[1]
+  const delayMs = delayArg != null && delayArg !== "" ? Number(delayArg) : 0
+  const totalMs = weakenMs + (Number.isFinite(delayMs) ? delayMs : 0)
+
+  const running = ns.getRunningScript(proc.pid)
+  if (running) {
+    const elapsedMs = running.onlineRunningTime * 1000
+    return Math.max(0, totalMs - elapsedMs)
+  }
+
+  return totalMs
+}
+
 export function findRunningWeaken(ns: NS, hosts: Iterable<string>, target: string): RunningWeaken | null {
   for (const host of hosts) {
     if (!ns.hasRootAccess(host)) continue
     for (const proc of ns.ps(host)) {
       if (!proc.filename.endsWith("weaken.js")) continue
       if (String(proc.args[0]) !== target) continue
-      return { host, threads: proc.threads }
+      return {
+        host,
+        threads: proc.threads,
+        remainingMs: estimateWeakenRemainingMs(ns, proc, target),
+      }
     }
   }
   return null
@@ -165,6 +184,13 @@ function rowStatus(row: ServerSecurityRow): RowStatus {
   return "pending"
 }
 
+function rowEndsIn(ns: NS, row: ServerSecurityRow, status: RowStatus): string {
+  if (status !== "running" || !row.running) return ""
+  const ms = row.running.remainingMs
+  if (!Number.isFinite(ms) || ms <= 0) return "done"
+  return ns.format.time(ms)
+}
+
 function rowDetail(ns: NS, state: RemoveSecurityState, row: ServerSecurityRow, status: RowStatus): string {
   if (status === "min") return ""
   if (status === "running") return `${row.running!.host} x${row.running!.threads}`
@@ -184,6 +210,7 @@ function buildAllServerRows(ns: NS, state: RemoveSecurityState): string[][] {
       row.currentSecurity.toFixed(2),
       row.securityGap.toFixed(2),
       status,
+      rowEndsIn(ns, row, status),
       rowDetail(ns, state, row, status),
     ]
   })
@@ -203,8 +230,6 @@ export function buildRemoveSecurityLog(ns: NS, state: RemoveSecurityState): Scri
   if (rows.length > 0) {
     log.table({
       layout: REMOVE_SECURITY_LAYOUT,
-      tableWidth: REMOVE_SECURITY_LAYOUT.tableWidthPx,
-      columnWidths: COL_WIDTHS,
       columns: TABLE_COLUMNS,
       rows,
     })
