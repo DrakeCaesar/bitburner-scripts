@@ -4,6 +4,7 @@ import { autoNuke } from "./autoNuke.js"
 import {
   calculateBatchThreads,
   calculateBatchTimings,
+  BATCH_HACK_INCOME_PORT,
   executeBatches,
   getBatchHackingScripts,
 } from "./libraries/batchExecution.js"
@@ -399,10 +400,8 @@ export async function main(ns: NS) {
     })
 
     if (debug) {
-      const walletDelta = ns.getPlayer().money
       tabbedLog.tab("results").text(
-        `[Debug] Hack income from port sum: ${ns.format.number(actualHackIncome)}\n` +
-          `(Wallet may differ if other income ran during the cycle.)`
+        `[Debug] Hack income from port (sum of ns.hack() per hack): ${ns.format.number(actualHackIncome)}\n`
       )
     }
 

@@ -16,31 +16,83 @@ import { getEffectiveMaxRam } from "./ramUtils.js"
 import type { LogFn } from "./scriptLogUi.js"
 import { distributeBatchesAcrossNodes } from "./serverManagement.js"
 
-/** Parent port for hack.js IPC (last arg to ns.exec); each hack writes stolen $ here. */
+/** Parent port: each hack.js writes ns.hack() return value here (exec cannot return to parent). */
 export const BATCH_HACK_INCOME_PORT = 21
+
+/** Bitburner port queue capacity; one hack completion = one write. */
+export const HACK_INCOME_PORT_CAPACITY = 50
 
 const EMPTY_PORT_DATA = "NULL PORT DATA"
 
-function isPortEmpty(ns: NS, port: number): boolean {
-  return ns.peek(port) === EMPTY_PORT_DATA
+/** Drain at half the time needed to fill the port (50 writes × batch interval). */
+export function getPortDrainIntervalMs(batchIntervalMs: number): number {
+  return Math.max(1, Math.floor(batchIntervalMs * HACK_INCOME_PORT_CAPACITY / 2))
 }
 
 export function clearHackIncomePort(ns: NS, port = BATCH_HACK_INCOME_PORT): void {
   ns.clearPort(port)
 }
 
-export function drainHackIncomePort(ns: NS, port = BATCH_HACK_INCOME_PORT): number {
+function parsePortMoney(raw: unknown): number {
+  const value = Number(raw)
+  return Number.isFinite(value) ? value : 0
+}
+
+export function drainHackIncomePort(
+  ns: NS,
+  port = BATCH_HACK_INCOME_PORT
+): { total: number; count: number } {
+  return drainHackIncomePortHandle(ns.getPortHandle(port))
+}
+
+function drainHackIncomePortHandle(handle: ReturnType<NS["getPortHandle"]>): { total: number; count: number } {
   let total = 0
-  while (!isPortEmpty(ns, port)) {
-    const raw = ns.readPort(port)
-    if (raw === EMPTY_PORT_DATA) {
-      break
-    }
-    const value = Number(raw)
-    if (Number.isFinite(value)) {
-      total += value
-    }
+  let count = 0
+  while (handle.peek() !== EMPTY_PORT_DATA) {
+    const raw = handle.read()
+    if (raw === EMPTY_PORT_DATA) break
+    total += parsePortMoney(raw)
+    count++
   }
+  return { total, count }
+}
+
+/** Poll-drain until all hack reports are in (or the cycle process has ended). */
+export async function collectHackIncomeWhileBatchRuns(
+  ns: NS,
+  expectedReports: number,
+  batchIntervalMs: number,
+  cycleStillRunning: () => boolean,
+  port = BATCH_HACK_INCOME_PORT,
+  onInterval?: () => void
+): Promise<number> {
+  if (expectedReports <= 0) return 0
+
+  const drainIntervalMs = getPortDrainIntervalMs(batchIntervalMs)
+  let total = 0
+  let received = 0
+
+  const pull = () => {
+    const drained = drainHackIncomePort(ns, port)
+    total += drained.total
+    received += drained.count
+  }
+
+  pull()
+  while (cycleStillRunning()) {
+    onInterval?.()
+    await ns.sleep(drainIntervalMs)
+    pull()
+  }
+
+  while (received < expectedReports) {
+    await ns.sleep(drainIntervalMs)
+    const before = received
+    pull()
+    if (received === before) break
+  }
+
+  pull()
   return total
 }
 
@@ -339,6 +391,8 @@ export async function executeBatches(
   }
 
   clearHackIncomePort(ns)
+  const expectedHackReports = assignments.filter((a) => a.operation.scriptPath === scripts.hack).length
+  const batchIntervalMs = effectiveBatchDelay * 4
 
   // Execute all assigned operations
   let lastPid = 0
@@ -350,36 +404,37 @@ export async function executeBatches(
     }
   }
 
+  const cycleStillRunning = () => lastPid > 0 && ns.isRunning(lastPid)
+
+  let actualHackIncome = 0
   if (lastPid > 0) {
-    if (shareLeftoverRamWhileBatching) {
-      const scriptPath = "libraries/shareRam.js"
-      const scriptRam = ns.getScriptRam(scriptPath)
-
-      while (ns.isRunning(lastPid)) {
-        for (const node of nodes) {
-          if (!ns.hasRootAccess(node)) continue
-
-          if (!ns.fileExists(scriptPath, node)) {
-            ns.scp(scriptPath, node)
-          }
-
-          const availableRam = getEffectiveMaxRam(ns, node) - ns.getServerUsedRam(node)
-          const threads = Math.floor(availableRam / scriptRam)
-
-          if (threads > 0) {
-            ns.exec(scriptPath, node, threads)
+    const shareLeftoverRam = shareLeftoverRamWhileBatching
+      ? () => {
+          const scriptPath = "libraries/shareRam.js"
+          const scriptRam = ns.getScriptRam(scriptPath)
+          for (const node of nodes) {
+            if (!ns.hasRootAccess(node)) continue
+            if (!ns.fileExists(scriptPath, node)) {
+              ns.scp(scriptPath, node)
+            }
+            const availableRam = getEffectiveMaxRam(ns, node) - ns.getServerUsedRam(node)
+            const threads = Math.floor(availableRam / scriptRam)
+            if (threads > 0) {
+              ns.exec(scriptPath, node, threads)
+            }
           }
         }
-        await ns.sleep(1000)
-      }
-    } else {
-      while (ns.isRunning(lastPid)) {
-        await ns.sleep(1000)
-      }
-    }
-  }
+      : undefined
 
-  const actualHackIncome = drainHackIncomePort(ns)
+    actualHackIncome = await collectHackIncomeWhileBatchRuns(
+      ns,
+      expectedHackReports,
+      batchIntervalMs,
+      cycleStillRunning,
+      BATCH_HACK_INCOME_PORT,
+      shareLeftoverRam
+    )
+  }
 
   return { completeBatches, actualHackIncome }
 }
