@@ -1,7 +1,15 @@
 import { NS } from "@ns"
 import { crawl } from "../crawl"
 import { createStandardContainer, FloatingWindow } from "../floatingWindow"
+import { isAtMinSecurity } from "../removeSecurity.js"
 import { formatTableRow, getTableBorders } from "../tableBuilder"
+
+function formatServerListSecurity(ns: NS, hostname: string): string {
+  const minSec = ns.getServerMinSecurityLevel(hostname)
+  const currentSec = ns.getServerSecurityLevel(hostname)
+  const value = currentSec.toFixed(2)
+  return isAtMinSecurity(currentSec, minSec) ? `M ${value}` : value
+}
 
 interface ServerListWindow {
   window: any
@@ -113,7 +121,7 @@ export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor
     lvlLen = Math.max(lvlLen, (level.toString() + " X").length)
     rootLen = Math.max(rootLen, 1)
     backdoorLen = Math.max(backdoorLen, 1)
-    secLen = Math.max(secLen, ((server.hackDifficulty ?? 0) - (server.minDifficulty ?? 0)).toFixed(2).length)
+    secLen = Math.max(secLen, formatServerListSecurity(ns, target).length)
     ramLen = Math.max(ramLen, ns.format.ram(server.maxRam, 0).length)
     moneyLen = Math.max(moneyLen, formatNumber(ns, server.moneyMax).length)
     timeLen = Math.max(timeLen, 8) // tFormat always returns 8 characters visually
@@ -147,7 +155,7 @@ export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor
     const hackable = level <= player.skills.hacking ? " " : "X"
     const hasRoot = server.hasAdminRights ? " " : "X"
     const hasBackdoor = server.backdoorInstalled ? " " : "X"
-    const secDiff = ((server.hackDifficulty ?? 0) - (server.minDifficulty ?? 0)).toFixed(2)
+    const secDisplay = formatServerListSecurity(ns, target)
     const ram = ns.format.ram(server.maxRam, 0)
     const money = formatNumber(ns, server.moneyMax ?? 0)
     const timeFormatted = tFormat(ns.getWeakenTime(target))
@@ -162,7 +170,7 @@ export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor
       `${level} ${hackable}`.padStart(lvlLen),
       hasRoot.padStart(rootLen),
       hasBackdoor.padStart(backdoorLen),
-      secDiff.padStart(secLen),
+      secDisplay.padStart(secLen),
       ram.padStart(ramLen),
       money.padStart(moneyLen),
       timePadded,
