@@ -47,6 +47,9 @@ export const MAX_OFFICE_EMPLOYEES = MAX_OFFICE_EMPLOYEES_FOR_OPTIMIZE
 export const USE_EXHAUSTIVE_OFFICE_JOB_SEARCH = false
 export const EXHAUSTIVE_OFFICE_JOB_SIM_CYCLES = 5
 
+/** When false, increase office size manually in the game (hiring still runs up to current size). */
+export const AUTO_UPGRADE_OFFICE_SIZE = false
+
 export interface HeadcountPlanTable {
   divisionName: string
   city: CityName
@@ -505,6 +508,8 @@ function tryUpgradeOfficeSize(
   profitContext: FarmlandProfitContext | null,
   jobInput: OfficeJobOptimizeInput | null
 ): void {
+  if (!AUTO_UPGRADE_OFFICE_SIZE) return
+
   const corp = ns.corporation
   const office = corp.getOffice(divisionName, city)
   if (office.numEmployees < office.size || office.size >= MAX_OFFICE_EMPLOYEES) return

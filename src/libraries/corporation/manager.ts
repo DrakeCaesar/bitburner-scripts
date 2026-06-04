@@ -7,7 +7,7 @@ import {
   NS,
 } from "@ns"
 import { OFFICE_FUND_BUFFER } from "@/libraries/corporation/farmland.js"
-import { maintainOfficeStaff } from "@/libraries/corporation/office.js"
+import { AUTO_UPGRADE_OFFICE_SIZE, maintainOfficeStaff } from "@/libraries/corporation/office.js"
 import { sellDivisionProduce } from "@/libraries/corporation/operations.js"
 
 const CORP_NAME = "dracorp"
@@ -133,12 +133,14 @@ async function maintainOffice(
 
   await maintainOfficeStaff(ns, divisionName, city, funds, lines)
 
-  const office = corp.getOffice(divisionName, city)
-  const upgradeCost = corp.getOfficeSizeUpgradeCost(divisionName, city, 3)
-  if (office.numEmployees >= office.size && funds > upgradeCost + OFFICE_FUND_BUFFER) {
-    corp.upgradeOfficeSize(divisionName, city, 3)
-    const updated = corp.getOffice(divisionName, city)
-    lines.push(`${divisionName}/${city}: office +3 (size ${updated.size})`)
+  if (AUTO_UPGRADE_OFFICE_SIZE) {
+    const office = corp.getOffice(divisionName, city)
+    const upgradeCost = corp.getOfficeSizeUpgradeCost(divisionName, city, 3)
+    if (office.numEmployees >= office.size && funds > upgradeCost + OFFICE_FUND_BUFFER) {
+      corp.upgradeOfficeSize(divisionName, city, 3)
+      const updated = corp.getOffice(divisionName, city)
+      lines.push(`${divisionName}/${city}: office +3 (size ${updated.size})`)
+    }
   }
 }
 
