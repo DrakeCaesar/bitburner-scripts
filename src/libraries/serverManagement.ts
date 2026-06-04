@@ -1,53 +1,113 @@
 import { NS } from "@ns"
-import { crawl } from "./crawl"
+import { crawl } from "./crawl.js"
 import { getEffectiveMaxRam } from "./ramUtils.js"
 
-export function getAllNodes(ns: NS): string[] {
+/** How batch/analyzeTargets choose worker hosts (args: home, nuked, purchased, no-hacknet, or a hack level number). */
+export type BatchWorkerMode = "auto" | "home" | "nuked" | "purchased"
+
+export interface BatchRunOptions {
+  playerHackLevel?: number
+  /** Second numeric arg (e.g. analyzeTargets batch cycle count). */
+  batchCycles?: number
+  workers: BatchWorkerMode
+  excludeHacknet: boolean
+}
+
+/**
+ * Parse batch script args in any order: numbers + keywords.
+ * Examples: `home`, `home 200`, `200 home`, `200`, `nuked 150`, `purchased no-hacknet`
+ */
+export function parseBatchArgs(args: (string | number | boolean)[]): BatchRunOptions {
+  const numbers: number[] = []
+  let workers: BatchWorkerMode = "auto"
+  let excludeHacknet = false
+
+  for (const raw of args) {
+    const token = String(raw).trim().toLowerCase()
+    if (token === "") continue
+
+    const asNum = Number(token)
+    if (Number.isFinite(asNum)) {
+      numbers.push(asNum)
+      continue
+    }
+
+    if (token === "home") workers = "home"
+    else if (token === "nuked") workers = "nuked"
+    else if (token === "purchased" || token === "nodes") workers = "purchased"
+    else if (token === "no-hacknet" || token === "nohacknet") excludeHacknet = true
+  }
+
+  return {
+    playerHackLevel: numbers[0],
+    batchCycles: numbers[1],
+    workers,
+    excludeHacknet,
+  }
+}
+
+export function getPurchasedNodes(ns: NS, excludeHacknet = false): string[] {
   const nodes: string[] = []
-  // return nodes //debug
   for (let i = 0; i < 25; i++) {
     const nodeName = "node" + String(i).padStart(2, "0")
     if (ns.serverExists(nodeName)) {
       nodes.push(nodeName)
     }
   }
-  for (let i = 0; i < 25; i++) {
-    const nodeName = "hacknet-server-" + String(i)
-    if (ns.serverExists(nodeName)) {
-      nodes.push(nodeName)
+  if (!excludeHacknet) {
+    for (let i = 0; i < 25; i++) {
+      const nodeName = "hacknet-server-" + String(i)
+      if (ns.serverExists(nodeName)) {
+        nodes.push(nodeName)
+      }
     }
   }
   return nodes
 }
 
-/**
- * Get all available nodes for batching:
- * - If purchased servers (node00+) have more total RAM than nuked servers, only use purchased servers
- * - Otherwise use all nuked servers
- * - Falls back to home if no purchased servers exist
- */
-export function getNodesForBatching(ns: NS): string[] {
-  // Get all purchased servers
-  const purchasedServers = getAllNodes(ns)
+export function getAllNodes(ns: NS): string[] {
+  return getPurchasedNodes(ns, false)
+}
 
-  // Get all nuked servers with RAM
+function getNukedServersForBatching(ns: NS, purchasedServers: string[]): string[] {
   const knownServers = new Set<string>()
   crawl(ns, knownServers)
 
   const nukedServers: string[] = []
   for (const serverName of knownServers) {
     const server = ns.getServer(serverName)
-    // Skip home and purchased servers
     if (serverName === "home" || purchasedServers.includes(serverName) || serverName.startsWith("hacknet")) {
       continue
     }
-    // Add servers that are nuked and have RAM
     if (server.hasAdminRights && server.maxRam > 0) {
       nukedServers.push(serverName)
     }
   }
+  return nukedServers
+}
 
-  // Calculate total RAM for each group
+/**
+ * Get worker hosts for batching.
+ * Default (auto): purchased pool if it beats nuked RAM, else nuked; always includes home except `home` mode.
+ */
+export function getNodesForBatching(ns: NS, options?: Partial<BatchRunOptions>): string[] {
+  const workers = options?.workers ?? "auto"
+  const excludeHacknet = options?.excludeHacknet ?? false
+  const purchasedServers = getPurchasedNodes(ns, excludeHacknet)
+  const nukedServers = getNukedServersForBatching(ns, purchasedServers)
+
+  if (workers === "home") {
+    return ["home"]
+  }
+
+  if (workers === "nuked") {
+    return ["home", ...nukedServers]
+  }
+
+  if (workers === "purchased") {
+    return purchasedServers.length > 0 ? ["home", ...purchasedServers] : ["home"]
+  }
+
   const purchasedTotalRam = purchasedServers.reduce((sum, node) => sum + getEffectiveMaxRam(ns, node), 0)
   const nukedTotalRam = nukedServers.reduce((sum, node) => sum + getEffectiveMaxRam(ns, node), 0)
 
@@ -60,6 +120,26 @@ export function getNodesForBatching(ns: NS): string[] {
   }
 
   return ["home", ...nukedServers]
+}
+
+const TARGETED_HACKING_SCRIPT_SUFFIXES = ["hack.js", "grow.js", "weaken.js"]
+
+function isTargetedHackingScript(filename: string): boolean {
+  return TARGETED_HACKING_SCRIPT_SUFFIXES.some((suffix) => filename.endsWith(suffix))
+}
+
+/** Kill hack/grow/weaken on worker hosts only when their first arg matches `target`. */
+export function killHackingScriptsForTarget(ns: NS, hosts: string[], target: string): number {
+  let killed = 0
+  for (const host of hosts) {
+    for (const proc of ns.ps(host)) {
+      if (!isTargetedHackingScript(proc.filename)) continue
+      if (String(proc.args[0]) !== target) continue
+      ns.kill(proc.pid)
+      killed++
+    }
+  }
+  return killed
 }
 
 export function purchaseAdditionalServers(ns: NS): number {

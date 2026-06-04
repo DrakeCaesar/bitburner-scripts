@@ -1,13 +1,14 @@
 import { NS } from "@ns"
 import { analyzeAllServers } from "./libraries/findBestTarget.js"
 import { FloatingWindow } from "./libraries/floatingWindow.js"
-import { getNodesForBatching } from "./libraries/serverManagement.js"
+import { getNodesForBatching, parseBatchArgs } from "./libraries/serverManagement.js"
 import { buildTable } from "./libraries/tableBuilder.js"
 import { getEffectiveMaxRam } from "./libraries/ramUtils.js"
 
 export async function main(ns: NS) {
-  const playerHackLevel = ns.args[0] ? Number(ns.args[0]) : undefined
-  const batchCycles = ns.args[1] ? Number(ns.args[1]) : 3
+  const batchOptions = parseBatchArgs(ns.args)
+  const playerHackLevel = batchOptions.playerHackLevel
+  const batchCycles = batchOptions.batchCycles ?? 3
 
   // Remove existing window if it exists
   const existingWindow = document.querySelector("#target-analysis-window")
@@ -16,7 +17,7 @@ export async function main(ns: NS) {
   }
 
   // Get nodes for batching (same logic as batch.ts)
-  const nodes = getNodesForBatching(ns)
+  const nodes = getNodesForBatching(ns, batchOptions)
 
   if (nodes.length === 0) {
     ns.tprint("ERROR: No nodes with root access found")

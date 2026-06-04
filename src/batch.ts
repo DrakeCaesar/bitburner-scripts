@@ -13,7 +13,11 @@ import {
   type TabDefinition,
   type TableLayout,
 } from "./libraries/scriptLogUi.js"
-import { getNodesForBatching } from "./libraries/serverManagement.js"
+import {
+  getNodesForBatching,
+  killHackingScriptsForTarget,
+  parseBatchArgs,
+} from "./libraries/serverManagement.js"
 import { joinWorthyFactionInvitations } from "./libraries/factionInvites.js"
 
 const BATCH_LAYOUT: Partial<TableLayout> = {
@@ -30,7 +34,8 @@ const BATCH_TABS: TabDefinition[] = [
 ]
 
 export async function main(ns: NS) {
-  const playerHackLevel = ns.args[0] ? Number(ns.args[0]) : undefined
+  const batchOptions = parseBatchArgs(ns.args)
+  const playerHackLevel = batchOptions.playerHackLevel
 
   initScriptLogTail(ns, "Batch", BATCH_LAYOUT)
 
@@ -81,7 +86,7 @@ export async function main(ns: NS) {
       await renderLog()
     }
 
-    const nodes = getNodesForBatching(ns)
+    const nodes = getNodesForBatching(ns, batchOptions)
 
     if (nodes.length === 0) {
       tabbedLog.tab("setup").text("ERROR: No nodes with root access found")
@@ -91,11 +96,7 @@ export async function main(ns: NS) {
     }
 
     for (const node of nodes) {
-      ns.scriptKill("hacking/hack.js", node)
-      ns.scriptKill("hacking/grow.js", node)
-      ns.scriptKill("hacking/weaken.js", node)
       ns.scriptKill("libraries/shareRam.js", node)
-
       await copyRequiredScripts(ns, node)
     }
 
@@ -127,15 +128,27 @@ export async function main(ns: NS) {
       playerHackLevel,
       10
     )
+    killHackingScriptsForTarget(ns, nodes, target.serverName)
     const player = ns.getPlayer()
 
     tabbedLog.setActiveTab("targets")
+    const workerModeLabel =
+      batchOptions.workers === "auto"
+        ? batchOptions.excludeHacknet
+          ? "auto (no hacknet)"
+          : "auto"
+        : batchOptions.excludeHacknet
+          ? `${batchOptions.workers} (no hacknet)`
+          : batchOptions.workers
+
     tabbedLog.tab("targets").keyValueTable({
       title: "Batch Nodes",
       rows: [
+        { label: "Workers", value: workerModeLabel },
         { label: "Worker Nodes", value: nodes.length.toString() },
         { label: "Total RAM", value: ns.format.ram(totalMaxRam) },
         { label: "Min Node RAM", value: ns.format.ram(nodeRamLimit) },
+        ...(playerHackLevel != null ? [{ label: "Hack Level Cap", value: String(playerHackLevel) }] : []),
       ],
     })
     tabbedLog.tab("targets").table({
