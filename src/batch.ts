@@ -25,6 +25,7 @@ import {
   parseBatchArgs,
 } from "./libraries/serverManagement.js"
 import { joinWorthyFactionInvitations } from "./libraries/factionInvites.js"
+import { formatGameTimeMs } from "./libraries/format.js"
 
 const BATCH_LAYOUT: Partial<TableLayout> = {
   tableWidthPx: 720,
@@ -51,6 +52,7 @@ export async function main(ns: NS) {
 
   const tabbedLog = new TabbedScriptLogBuilder(BATCH_TABS, BATCH_LAYOUT)
   const renderLog = () => tabbedLog.render(ns)
+  const fmtTime = (ms: number) => formatGameTimeMs(ms, (m) => ns.format.time(m))
 
   const logSetup = (message: string) => {
     tabbedLog.tab("setup").text(message)
@@ -292,14 +294,14 @@ export async function main(ns: NS) {
           ns.format.ram(ns.getScriptRam(hackingScripts.weaken) * threads.wkn2Threads),
         ],
         ["Total Batch RAM", "", ns.format.ram(threads.totalBatchRam)],
-        ["Weaken Time", ns.format.time(timings.weakenTime), ""],
+        ["Weaken Time", fmtTime(timings.weakenTime), ""],
         [
           "Batch Delay",
-          ns.format.time(timings.effectiveBatchDelay),
+          fmtTime(timings.effectiveBatchDelay),
           timings.effectiveBatchDelay !== batchDelay ? "(adjusted)" : "",
         ],
-        ["Batch Interval", ns.format.time(timings.effectiveBatchDelay * 4), ""],
-        ["Cycle Time", ns.format.time(predictedBatchCycleTime), ""],
+        ["Batch Interval", fmtTime(timings.effectiveBatchDelay * 4), ""],
+        ["Cycle Time", fmtTime(predictedBatchCycleTime), ""],
       ],
       separatorAfter: [4],
       align: ["left", "right", "right"],
@@ -363,8 +365,11 @@ export async function main(ns: NS) {
       title: "Last Cycle — Predicted vs Actual",
       rows: [
         { label: "Batches", value: `${completeBatches} / ${batches} planned` },
-        { label: "Cycle time", value: `${ns.format.time(predictedBatchCycleTime)} / ${ns.format.time(actualBatchCycleTime)}` },
-        { label: "Cycle time Δ", value: `${batchTimeDiff >= 0 ? "+" : ""}${ns.format.time(Math.abs(batchTimeDiff))} (${batchPercentDiff}%)` },
+        { label: "Cycle time", value: `${fmtTime(predictedBatchCycleTime)} / ${fmtTime(actualBatchCycleTime)}` },
+        {
+          label: "Cycle time Δ",
+          value: `${batchTimeDiff >= 0 ? "+" : ""}${fmtTime(Math.abs(batchTimeDiff))} (${batchPercentDiff}%)`,
+        },
         {
           label: "Hack $ / cycle",
           value: `${ns.format.number(predictedCycleMoney)} / ${ns.format.number(actualCycleMoney)}`,

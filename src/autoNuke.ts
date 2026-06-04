@@ -91,18 +91,20 @@ export async function autoNuke(ns: NS, logMessage?: (message: string) => void): 
       }
       // and servername does not start with "node"
 
+      const SKIP_BACKDOOR_SERVERS = ["w0r1d_d43m0n"]
+
       const BACKDOOR_SERVERS = [
         "CSEC",
         "avmnite-02h",
         "I.I.I.I",
         "run4theh111z",
         "The-Cave",
-        "w0r1d_d43m0n",
         "fulcrumassets",
         "megacorp",
       ]
 
       if (
+        !SKIP_BACKDOOR_SERVERS.includes(serverName) &&
         !server.backdoorInstalled &&
         !serverName.match("home") &&
         !serverName.startsWith("node") &&
