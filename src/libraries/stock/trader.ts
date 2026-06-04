@@ -162,6 +162,32 @@ export function collectTraderSnapshot(
   }
 }
 
+export function hasAnyStockPosition(ns: NS): boolean {
+  for (const sym of ns.stock.getSymbols()) {
+    const [longShares, , shortShares] = ns.stock.getPosition(sym)
+    if (longShares > 0 || shortShares > 0) return true
+  }
+  return false
+}
+
+/** Sell all longs and cover all shorts (one pass over every symbol). */
+export function liquidateAllPositions(ns: NS): string[] {
+  const actions: string[] = []
+  for (const sym of ns.stock.getSymbols()) {
+    const [longShares, , shortShares] = ns.stock.getPosition(sym)
+    if (longShares > 0) {
+      sellPartial(ns, sym, longShares, POS_LONG, actions, "SELL")
+    }
+    if (shortShares > 0) {
+      sellPartial(ns, sym, shortShares, POS_SHORT, actions, "COVER")
+    }
+  }
+  if (actions.length === 0) {
+    actions.push(hasAnyStockPosition(ns) ? "(no trades this pass)" : "(flat — no positions)")
+  }
+  return actions
+}
+
 function buyShares(
   ns: NS,
   symbol: string,

@@ -25,6 +25,25 @@ export interface AugmentData {
   playerMoney: number
 }
 
+export const AUGMENT_QUEUE_PRICE_MULT = 1.9
+export const NEUROFLUX_LEVEL_MULT = 1.14
+export const NEUROFLUX_PRICE_STEP_MULT = NEUROFLUX_LEVEL_MULT * AUGMENT_QUEUE_PRICE_MULT
+
+/** Simulated NeuroFlux price/rep when regular augs are not actually queued (dry run / dashboard). */
+export function neuroFluxPurchaseCost(
+  neuroFluxInfo: AugmentInfo,
+  regularAugmentsAhead: number,
+  neuroFluxIndex: number
+): { price: number; repReq: number } {
+  return {
+    price:
+      neuroFluxInfo.price *
+      Math.pow(AUGMENT_QUEUE_PRICE_MULT, regularAugmentsAhead) *
+      Math.pow(NEUROFLUX_PRICE_STEP_MULT, neuroFluxIndex),
+    repReq: neuroFluxInfo.repReq * Math.pow(NEUROFLUX_LEVEL_MULT, neuroFluxIndex),
+  }
+}
+
 /**
  * Collect and organize augmentation data from all player factions
  */
@@ -152,7 +171,7 @@ export function getAugmentData(ns: NS, playerFactions: FactionName[]): AugmentDa
   const optimallySorted = topologicalSort(potentiallyAffordable)
 
   // Now split into truly affordable (based on cumulative adjusted cost) and too expensive
-  const AUGMENT_PRICE_MULT = 1.9
+  const AUGMENT_PRICE_MULT = AUGMENT_QUEUE_PRICE_MULT
   let cumulativeCost = 0
   const affordable: AugmentInfo[] = []
   const tooExpensiveCumulative: AugmentInfo[] = []
@@ -218,7 +237,7 @@ export async function purchaseAugmentations(ns: NS, buyFlux: boolean, dryRun = f
   let purchaseCount = 0
   let totalSpent = 0
 
-  const AUGMENT_PRICE_MULT = 1.9
+  const AUGMENT_PRICE_MULT = AUGMENT_QUEUE_PRICE_MULT
 
   // Calculate total cost for display (affordableSorted already contains the correct augments)
   let totalCost = 0
@@ -261,63 +280,57 @@ export async function purchaseAugmentations(ns: NS, buyFlux: boolean, dryRun = f
 
   // If buyFlux is true, top up with NeuroFlux Governor
   if (buyFlux && neuroFluxInfo) {
-    const NEUROFLUX_PRICE_MULT = 1.14 * 1.9 // 2.38 - NeuroFlux base price escalation
-    const NEUROFLUX_REP_MULT = 1.14 // NeuroFlux rep requirement escalation
+    let currentMoney = dryRun ? ns.getPlayer().money - totalSpent : ns.getPlayer().money
+    let neuroFluxIndex = 0
+    let { price: currentPrice, repReq: currentRepReq } = dryRun
+      ? neuroFluxPurchaseCost(neuroFluxInfo, affordableSorted.length, neuroFluxIndex)
+      : {
+          price: ns.singularity.getAugmentationPrice(neuroFluxInfo.name),
+          repReq: ns.singularity.getAugmentationRepReq(neuroFluxInfo.name),
+        }
 
-    const remainingMoney = dryRun ? ns.getPlayer().money - totalSpent : ns.getPlayer().money
-    let currentRepReq = neuroFluxInfo.repReq
-    const validFactions = neuroFluxInfo.factions.filter((f) => (factionReps.get(f) ?? 0) >= currentRepReq)
-    const validFaction = validFactions.length > 0 
-      ? validFactions.reduce((best, current) => 
-          ((factionReps.get(current) ?? 0) > (factionReps.get(best) ?? 0)) ? current : best
-        )
-      : undefined
-
-    if (!validFaction) {
-      ns.tprint(`No valid faction found for: ${neuroFluxInfo.name}`)
-    } else {
-      const positionOffset = affordableSorted.length
-      let currentBasePrice = neuroFluxInfo.price
-      let currentPrice = currentBasePrice * Math.pow(AUGMENT_PRICE_MULT, positionOffset)
-      let currentMoney = remainingMoney
-      let neuroFluxIndex = 0
-
-      while (currentMoney >= currentPrice) {
-        // Recalculate valid faction for each NeuroFlux purchase as rep requirements increase
-        const currentValidFactions = neuroFluxInfo.factions.filter((f) => (factionReps.get(f) ?? 0) >= currentRepReq)
-        const currentValidFaction = currentValidFactions.length > 0 
-          ? currentValidFactions.reduce((best, current) => 
-              ((factionReps.get(current) ?? 0) > (factionReps.get(best) ?? 0)) ? current : best
+    while (currentMoney >= currentPrice) {
+      const currentValidFactions = neuroFluxInfo.factions.filter((f) => (factionReps.get(f) ?? 0) >= currentRepReq)
+      const currentValidFaction =
+        currentValidFactions.length > 0
+          ? currentValidFactions.reduce((best, current) =>
+              (factionReps.get(current) ?? 0) > (factionReps.get(best) ?? 0) ? current : best
             )
           : undefined
 
-        if (!currentValidFaction) {
-          break // No faction has enough reputation for this NeuroFlux level
-        }
-        if (dryRun) {
-          ns.tprint(`Would purchase: ${neuroFluxInfo.name} from ${currentValidFaction} for ${ns.format.number(currentPrice)} (base: ${ns.format.number(currentBasePrice)}, rep: ${ns.format.number(currentRepReq)})`)
+      if (!currentValidFaction) {
+        break
+      }
+
+      if (dryRun) {
+        ns.tprint(
+          `Would purchase: ${neuroFluxInfo.name} from ${currentValidFaction} for ${ns.format.number(currentPrice)} (rep: ${ns.format.number(currentRepReq)})`
+        )
+        purchaseCount++
+        totalSpent += currentPrice
+        currentMoney -= currentPrice
+        neuroFluxIndex++
+        ;({ price: currentPrice, repReq: currentRepReq } = neuroFluxPurchaseCost(
+          neuroFluxInfo,
+          affordableSorted.length,
+          neuroFluxIndex
+        ))
+      } else {
+        const success = ns.singularity.purchaseAugmentation(currentValidFaction, neuroFluxInfo.name)
+        if (success) {
+          ns.tprint(
+            `Purchased: ${neuroFluxInfo.name} from ${currentValidFaction} for ${ns.format.number(currentPrice)} (rep: ${ns.format.number(currentRepReq)})`
+          )
           purchaseCount++
           totalSpent += currentPrice
-          currentMoney -= currentPrice
-          currentBasePrice *= NEUROFLUX_PRICE_MULT
-          currentPrice = currentBasePrice * Math.pow(AUGMENT_PRICE_MULT, positionOffset + neuroFluxIndex + 1)
-          currentRepReq *= NEUROFLUX_REP_MULT
-          neuroFluxIndex++
+          currentMoney = ns.getPlayer().money
+          ;({ price: currentPrice, repReq: currentRepReq } = {
+            price: ns.singularity.getAugmentationPrice(neuroFluxInfo.name),
+            repReq: ns.singularity.getAugmentationRepReq(neuroFluxInfo.name),
+          })
         } else {
-          const success = ns.singularity.purchaseAugmentation(currentValidFaction, neuroFluxInfo.name)
-          if (success) {
-            ns.tprint(`Purchased: ${neuroFluxInfo.name} from ${currentValidFaction} for ${ns.format.number(currentPrice)} (base: ${ns.format.number(currentBasePrice)}, rep: ${ns.format.number(currentRepReq)})`)
-            purchaseCount++
-            totalSpent += currentPrice
-            currentMoney -= currentPrice
-            currentBasePrice *= NEUROFLUX_PRICE_MULT
-            currentPrice = currentBasePrice * Math.pow(AUGMENT_PRICE_MULT, positionOffset + neuroFluxIndex + 1)
-            currentRepReq *= NEUROFLUX_REP_MULT
-            neuroFluxIndex++
-          } else {
-            ns.tprint(`Failed to purchase: ${neuroFluxInfo.name} from ${currentValidFaction}`)
-            break
-          }
+          ns.tprint(`Failed to purchase: ${neuroFluxInfo.name} from ${currentValidFaction}`)
+          break
         }
       }
     }
