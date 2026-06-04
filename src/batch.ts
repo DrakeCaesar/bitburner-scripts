@@ -1,7 +1,12 @@
 import { NS } from "@ns"
 import { copyRequiredScripts, killOtherInstances, prepareServerMultiNode } from "./libraries/batchCalculations.js"
 import { autoNuke } from "./autoNuke.js"
-import { calculateBatchThreads, calculateBatchTimings, executeBatches } from "./libraries/batchExecution.js"
+import {
+  calculateBatchThreads,
+  calculateBatchTimings,
+  executeBatches,
+  getBatchHackingScripts,
+} from "./libraries/batchExecution.js"
 import { buildProfitabilityTableConfig, findBestTarget } from "./libraries/findBestTarget.js"
 import { purchasePrograms, purchaseTorRouter } from "./libraries/purchasePrograms.js"
 import { purchaseServers } from "./libraries/purchaseServer.js"
@@ -33,11 +38,15 @@ const BATCH_TABS: TabDefinition[] = [
   { id: "results", label: "Results" },
 ]
 
+/** While a batch cycle runs, exec shareRam on leftover worker RAM each second until the last op finishes. */
+const SHARE_LEFTOVER_RAM_WHILE_BATCHING = false
+
 export async function main(ns: NS) {
   const batchOptions = parseBatchArgs(ns.args)
   const playerHackLevel = batchOptions.playerHackLevel
+  const debug = batchOptions.debug
 
-  initScriptLogTail(ns, "Batch", BATCH_LAYOUT)
+  initScriptLogTail(ns, debug ? "Batch (debug)" : "Batch", BATCH_LAYOUT)
 
   const tabbedLog = new TabbedScriptLogBuilder(BATCH_TABS, BATCH_LAYOUT)
   const renderLog = () => tabbedLog.render(ns)
@@ -65,6 +74,12 @@ export async function main(ns: NS) {
   while (true) {
     tabbedLog.clearPanelsExcept(["results", "batch"])
 
+    if (debug) {
+      tabbedLog.tab("setup").text(
+        "Debug: single cycle, hackDebug/growDebug/weakenDebug scripts, prep iteration compare, timing logs"
+      )
+    }
+
     const joinedFactions = joinWorthyFactionInvitations(ns)
     if (joinedFactions.length > 0) {
       tabbedLog.tab("setup").text(`Joined factions: ${joinedFactions.join(", ")}`)
@@ -91,12 +106,15 @@ export async function main(ns: NS) {
       tabbedLog.tab("setup").text("ERROR: No nodes with root access found")
       await renderLog()
       await ns.sleep(1000)
+      if (debug) break
       continue
     }
 
     for (const node of nodes) {
-      ns.scriptKill("libraries/shareRam.js", node)
-      await copyRequiredScripts(ns, node)
+      if (SHARE_LEFTOVER_RAM_WHILE_BATCHING) {
+        ns.scriptKill("libraries/shareRam.js", node)
+      }
+      await copyRequiredScripts(ns, node, debug)
     }
 
     const batchDelay = 5
@@ -146,8 +164,6 @@ export async function main(ns: NS) {
     const server = ns.getServer(target.serverName)
     server.hackDifficulty = server.minDifficulty
     server.moneyAvailable = server.moneyMax
-
-    const debug = true
 
     const calcStartTime = Date.now()
     const prepEstimate = await prepareServerMultiNode(ns, nodes, target.serverName, {
@@ -204,8 +220,11 @@ export async function main(ns: NS) {
       ramThreshold,
       nodeRamLimit,
       logMessage: logBatch,
+      debug,
+      shareLeftoverRamWhileBatching: SHARE_LEFTOVER_RAM_WHILE_BATCHING,
     }
 
+    const hackingScripts = getBatchHackingScripts(debug)
     const threads = calculateBatchThreads(ns, batchConfig)
     const timings = calculateBatchTimings(ns, server, player, batchDelay)
     const batchConfigEndTime = Date.now()
@@ -243,7 +262,7 @@ export async function main(ns: NS) {
     }
 
     tabbedLog.tab("batch").reset().keyValueTable({
-      title: "Batch Configuration",
+      title: debug ? "Batch Configuration (debug scripts)" : "Batch Configuration",
       rows: configRows,
       separatorAfter: [5],
     })
@@ -254,22 +273,22 @@ export async function main(ns: NS) {
         [
           "Hack Threads",
           threads.hackThreads.toString(),
-          ns.format.ram(ns.getScriptRam("/hacking/hack.js") * threads.hackThreads),
+          ns.format.ram(ns.getScriptRam(hackingScripts.hack) * threads.hackThreads),
         ],
         [
           "Weaken 1 Threads",
           threads.wkn1Threads.toString(),
-          ns.format.ram(ns.getScriptRam("/hacking/weaken.js") * threads.wkn1Threads),
+          ns.format.ram(ns.getScriptRam(hackingScripts.weaken) * threads.wkn1Threads),
         ],
         [
           "Grow Threads",
           threads.growThreads.toString(),
-          ns.format.ram(ns.getScriptRam("/hacking/grow.js") * threads.growThreads),
+          ns.format.ram(ns.getScriptRam(hackingScripts.grow) * threads.growThreads),
         ],
         [
           "Weaken 2 Threads",
           threads.wkn2Threads.toString(),
-          ns.format.ram(ns.getScriptRam("/hacking/weaken.js") * threads.wkn2Threads),
+          ns.format.ram(ns.getScriptRam(hackingScripts.weaken) * threads.wkn2Threads),
         ],
         ["Total Batch RAM", "", ns.format.ram(threads.totalBatchRam)],
         ["Weaken Time", ns.format.time(timings.weakenTime), ""],
@@ -310,6 +329,7 @@ export async function main(ns: NS) {
       tabbedLog.tab("results").reset().text("ERROR: No batches were executed. Exiting.")
       await renderLog()
       await ns.sleep(1000)
+      if (debug) break
       continue
     }
 
@@ -387,5 +407,6 @@ export async function main(ns: NS) {
     }
 
     await renderLog()
+    if (debug) break
   }
 }

@@ -8,9 +8,12 @@ export async function main(ns: NS) {
   const expectedHackLevel = ns.args[3] !== undefined ? Number(ns.args[3]) : undefined
   const expectedHackXp = ns.args[4] !== undefined ? Number(ns.args[4]) : undefined
 
-  const start = Date.now()
-  await ns.hack(target as string, { additionalMsec: delay })
-  const end = Date.now()
+  const stolen = await ns.hack(target as string, { additionalMsec: delay })
+
+  const reportPort = ns.args.length >= 6 ? Number(ns.args[5]) : 0
+  if (Number.isInteger(reportPort) && reportPort > 0) {
+    ns.writePort(reportPort, stolen)
+  }
 
   // Validate expected hacking level and XP if provided
   if (expectedHackLevel !== undefined || expectedHackXp !== undefined) {

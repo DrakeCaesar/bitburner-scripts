@@ -11,16 +11,19 @@ export interface BatchRunOptions {
   batchCycles?: number
   workers: BatchWorkerMode
   excludeHacknet: boolean
+  /** Use *Debug hacking scripts and verbose prep/timing logs. */
+  debug: boolean
 }
 
 /**
  * Parse batch script args in any order: numbers + keywords.
- * Examples: `home`, `home 200`, `200 home`, `200`, `nuked 150`, `purchased no-hacknet`
+ * Examples: `home`, `home 200`, `200 home`, `nuked 150`, `purchased no-hacknet`, `debug`, `home debug`
  */
 export function parseBatchArgs(args: (string | number | boolean)[]): BatchRunOptions {
   const numbers: number[] = []
   let workers: BatchWorkerMode = "auto"
   let excludeHacknet = false
+  let debug = false
 
   for (const raw of args) {
     const token = String(raw).trim().toLowerCase()
@@ -36,6 +39,7 @@ export function parseBatchArgs(args: (string | number | boolean)[]): BatchRunOpt
     else if (token === "nuked") workers = "nuked"
     else if (token === "purchased" || token === "nodes") workers = "purchased"
     else if (token === "no-hacknet" || token === "nohacknet") excludeHacknet = true
+    else if (token === "debug") debug = true
   }
 
   return {
@@ -43,6 +47,7 @@ export function parseBatchArgs(args: (string | number | boolean)[]): BatchRunOpt
     batchCycles: numbers[1],
     workers,
     excludeHacknet,
+    debug,
   }
 }
 
@@ -122,7 +127,14 @@ export function getNodesForBatching(ns: NS, options?: Partial<BatchRunOptions>):
   return ["home", ...nukedServers]
 }
 
-const TARGETED_HACKING_SCRIPT_SUFFIXES = ["hack.js", "grow.js", "weaken.js"]
+const TARGETED_HACKING_SCRIPT_SUFFIXES = [
+  "hack.js",
+  "grow.js",
+  "weaken.js",
+  "hackDebug.js",
+  "growDebug.js",
+  "weakenDebug.js",
+]
 
 function isTargetedHackingScript(filename: string): boolean {
   return TARGETED_HACKING_SCRIPT_SUFFIXES.some((suffix) => filename.endsWith(suffix))

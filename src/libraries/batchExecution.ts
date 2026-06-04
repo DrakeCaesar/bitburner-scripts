@@ -44,6 +44,27 @@ export function drainHackIncomePort(ns: NS, port = BATCH_HACK_INCOME_PORT): numb
   return total
 }
 
+export interface BatchHackingScripts {
+  hack: string
+  grow: string
+  weaken: string
+}
+
+export function getBatchHackingScripts(debug: boolean): BatchHackingScripts {
+  if (debug) {
+    return {
+      hack: "/hacking/hackDebug.js",
+      grow: "/hacking/growDebug.js",
+      weaken: "/hacking/weakenDebug.js",
+    }
+  }
+  return {
+    hack: "/hacking/hack.js",
+    grow: "/hacking/grow.js",
+    weaken: "/hacking/weaken.js",
+  }
+}
+
 export interface BatchConfig {
   target: string
   server: Server
@@ -55,16 +76,20 @@ export interface BatchConfig {
   totalMaxRam: number
   ramThreshold: number
   nodeRamLimit: number
+  debug?: boolean
+  /** Exec shareRam on idle worker RAM while waiting for the batch cycle to finish. */
+  shareLeftoverRamWhileBatching?: boolean
   logMessage?: LogFn
 }
 
 export function calculateBatchThreads(ns: NS, config: BatchConfig) {
-  const { server, player, hackThreshold, myCores, nodeRamLimit } = config
+  const { server, player, hackThreshold, myCores, nodeRamLimit, debug = false } = config
   const moneyMax = server.moneyMax!
+  const scripts = getBatchHackingScripts(debug)
 
-  const hackScriptRam = ns.getScriptRam("/hacking/hack.js")
-  const weakenScriptRam = ns.getScriptRam("/hacking/weaken.js")
-  const growScriptRam = ns.getScriptRam("/hacking/grow.js")
+  const hackScriptRam = ns.getScriptRam(scripts.hack)
+  const weakenScriptRam = ns.getScriptRam(scripts.weaken)
+  const growScriptRam = ns.getScriptRam(scripts.grow)
 
   // Try progressively higher thresholds (steal less money) until operations fit in nodeRamLimit
   let actualThreshold = hackThreshold
@@ -156,18 +181,31 @@ export async function executeBatches(
   timings: ReturnType<typeof calculateBatchTimings>,
   batchLimit?: number
 ): Promise<BatchExecutionResult> {
-  const { target, server, player, batchDelay, nodes, totalMaxRam, ramThreshold, myCores, logMessage } = config
+  const {
+    target,
+    server,
+    player,
+    batchDelay,
+    nodes,
+    totalMaxRam,
+    ramThreshold,
+    myCores,
+    logMessage,
+    debug = false,
+    shareLeftoverRamWhileBatching = false,
+  } = config
   const log = logMessage ?? (() => {})
   const { totalBatchRam, actualThreshold } = threads
   const { hackAdditionalMsec, wkn1AdditionalMsec, growAdditionalMsec, wkn2AdditionalMsec, effectiveBatchDelay } =
     timings
+  const scripts = getBatchHackingScripts(debug)
 
   const maxBatches = Math.floor((totalMaxRam / totalBatchRam) * ramThreshold)
   const batches = batchLimit !== undefined ? Math.min(batchLimit, maxBatches) : maxBatches
 
-  const hackScriptRam = ns.getScriptRam("/hacking/hack.js")
-  const weakenScriptRam = ns.getScriptRam("/hacking/weaken.js")
-  const growScriptRam = ns.getScriptRam("/hacking/grow.js")
+  const hackScriptRam = ns.getScriptRam(scripts.hack)
+  const weakenScriptRam = ns.getScriptRam(scripts.weaken)
+  const growScriptRam = ns.getScriptRam(scripts.grow)
 
   // Warn if batch delay was adjusted
   if (effectiveBatchDelay !== batchDelay) {
@@ -238,7 +276,7 @@ export async function executeBatches(
     allOperations.push(
       {
         ram: hackTotalRam,
-        scriptPath: "/hacking/hack.js",
+        scriptPath: scripts.hack,
         args: [
           target,
           hackAdditionalMsec + batchOffset,
@@ -252,7 +290,7 @@ export async function executeBatches(
       },
       {
         ram: wkn1TotalRam,
-        scriptPath: "/hacking/weaken.js",
+        scriptPath: scripts.weaken,
         args: [
           target,
           wkn1AdditionalMsec + batchOffset,
@@ -265,7 +303,7 @@ export async function executeBatches(
       },
       {
         ram: growTotalRam,
-        scriptPath: "/hacking/grow.js",
+        scriptPath: scripts.grow,
         args: [
           target,
           growAdditionalMsec + batchOffset,
@@ -278,7 +316,7 @@ export async function executeBatches(
       },
       {
         ram: wkn2TotalRam,
-        scriptPath: "/hacking/weaken.js",
+        scriptPath: scripts.weaken,
         args: [
           target,
           wkn2AdditionalMsec + batchOffset,
@@ -312,29 +350,32 @@ export async function executeBatches(
     }
   }
 
-  // Wait for the last script to finish
-  const scriptPath = "libraries/shareRam.js"
-  const scriptRam = ns.getScriptRam(scriptPath)
-
   if (lastPid > 0) {
-    while (ns.isRunning(lastPid)) {
-      for (const node of nodes) {
-        // Skip if we can't write to this server
-        if (!ns.hasRootAccess(node)) continue
+    if (shareLeftoverRamWhileBatching) {
+      const scriptPath = "libraries/shareRam.js"
+      const scriptRam = ns.getScriptRam(scriptPath)
 
-        // Copy the script if needed
-        if (!ns.fileExists(scriptPath, node)) {
-          ns.scp(scriptPath, node)
+      while (ns.isRunning(lastPid)) {
+        for (const node of nodes) {
+          if (!ns.hasRootAccess(node)) continue
+
+          if (!ns.fileExists(scriptPath, node)) {
+            ns.scp(scriptPath, node)
+          }
+
+          const availableRam = getEffectiveMaxRam(ns, node) - ns.getServerUsedRam(node)
+          const threads = Math.floor(availableRam / scriptRam)
+
+          if (threads > 0) {
+            ns.exec(scriptPath, node, threads)
+          }
         }
-
-        const availableRam = getEffectiveMaxRam(ns, node) - ns.getServerUsedRam(node)
-        const threads = Math.floor(availableRam / scriptRam)
-
-        if (threads > 0) {
-          ns.exec(scriptPath, node, threads)
-        }
+        await ns.sleep(1000)
       }
-      await ns.sleep(1000)
+    } else {
+      while (ns.isRunning(lastPid)) {
+        await ns.sleep(1000)
+      }
     }
   }
 

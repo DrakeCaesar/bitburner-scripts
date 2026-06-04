@@ -173,10 +173,15 @@ export async function killOtherInstances(ns: NS) {
   }
 }
 
-export async function copyRequiredScripts(ns: NS, host: string) {
+export async function copyRequiredScripts(ns: NS, host: string, debug = false) {
   ns.scp("/hacking/hack.js", host)
   ns.scp("/hacking/grow.js", host)
   ns.scp("/hacking/weaken.js", host)
+  if (debug) {
+    ns.scp("/hacking/hackDebug.js", host)
+    ns.scp("/hacking/growDebug.js", host)
+    ns.scp("/hacking/weakenDebug.js", host)
+  }
   ns.scp("/prepareServer.js", host)
   ns.scp("/batchCalculations.js", host)
   ns.scp("/batchVisualizerStub.js", host)
