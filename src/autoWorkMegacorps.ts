@@ -6,6 +6,7 @@ import {
   getFactionName,
   getMegacorps,
   getRequiredRep,
+  isMegacorpFactionUnlocked,
   isWorkingAtCompany,
   pickBestCompanyField,
   type MegacorpWorkSnapshot,
@@ -50,6 +51,25 @@ export async function main(ns: NS): Promise<void> {
 
   for (const company of megacorps) {
     const factionName = getFactionName(company)
+
+    if (isMegacorpFactionUnlocked(ns, company)) {
+      completedCompanies.push(company)
+      const skipSnapshot: MegacorpWorkSnapshot = {
+        currentCompany: company,
+        completedCompanies,
+        charismaGrind: false,
+        focus: ns.singularity.isFocused(),
+        bestField: null,
+        bestPosition: null,
+        bestRepPerSecond: null,
+        alreadyWorking: false,
+        needsApply: false,
+        message: `Already in ${factionName} — skipping`,
+      }
+      await renderMegacorpTable(ns, skipSnapshot, megacorps)
+      continue
+    }
+
     const requiredRep = getRequiredRep(company)
 
     while (true) {

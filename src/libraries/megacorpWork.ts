@@ -34,6 +34,11 @@ export function getFactionName(company: CompanyName): FactionName {
   return company === "Fulcrum Technologies" ? "Fulcrum Secret Technologies" : (company as FactionName)
 }
 
+/** True if the player is already in this company's faction (no company rep grind needed). */
+export function isMegacorpFactionUnlocked(ns: NS, company: CompanyName): boolean {
+  return ns.getPlayer().factions.includes(getFactionName(company))
+}
+
 export interface MegacorpRow {
   company: CompanyName
   faction: FactionName
@@ -74,7 +79,9 @@ export function buildMegacorpRows(ns: NS, snapshot: MegacorpWorkSnapshot, megaco
     const field = job !== "—" ? ns.singularity.getCompanyPositionInfo(company, job).field : "—"
 
     let status = "Pending"
-    if (snapshot.completedCompanies.includes(company)) {
+    if (isMegacorpFactionUnlocked(ns, company)) {
+      status = "Joined"
+    } else if (snapshot.completedCompanies.includes(company)) {
       status = "Done"
     } else if (company === snapshot.currentCompany) {
       status = snapshot.charismaGrind ? "Charisma" : snapshot.alreadyWorking ? "Working" : "Setup"
