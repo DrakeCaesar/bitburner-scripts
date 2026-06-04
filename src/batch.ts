@@ -5,7 +5,7 @@ import { calculateBatchThreads, calculateBatchTimings, executeBatches } from "./
 import { buildProfitabilityTableConfig, findBestTarget } from "./libraries/findBestTarget.js"
 import { purchasePrograms, purchaseTorRouter } from "./libraries/purchasePrograms.js"
 import { purchaseServers } from "./libraries/purchaseServer.js"
-import { getAvailableRam, getEffectiveMaxRam } from "./libraries/ramUtils.js"
+import { sumBatchWorkerRam } from "./libraries/ramUtils.js"
 import {
   TabbedScriptLogBuilder,
   initScriptLogTail,
@@ -102,25 +102,12 @@ export async function main(ns: NS) {
 
     const batchDelay = 5
     const ramThreshold = 1
-
-    const totalMaxRam = nodes.reduce((sum, node) => {
-      if (node === "home") {
-        return sum + getAvailableRam(ns, node)
-      }
-      return sum + getEffectiveMaxRam(ns, node)
-    }, 0)
-
-    const nodeRamValues = nodes.map((node) => getEffectiveMaxRam(ns, node)).sort((a, b) => a - b)
-    const middle = Math.floor(nodeRamValues.length / 2)
-    let nodeRamLimit =
-      nodeRamValues.length % 2 === 0 ? (nodeRamValues[middle - 1] + nodeRamValues[middle]) / 2 : nodeRamValues[middle]
-    nodeRamLimit *= 1.0
-    nodeRamLimit = Infinity
+    const nodeRamLimit = Infinity
 
     const myCores = ns.getServer(nodes[0]).cpuCores
     const target = await findBestTarget(
       ns,
-      totalMaxRam,
+      sumBatchWorkerRam(ns, nodes),
       nodeRamLimit,
       myCores,
       batchDelay,
@@ -129,6 +116,7 @@ export async function main(ns: NS) {
       10
     )
     killHackingScriptsForTarget(ns, nodes, target.serverName)
+    let totalMaxRam = sumBatchWorkerRam(ns, nodes)
     const player = ns.getPlayer()
 
     tabbedLog.setActiveTab("targets")

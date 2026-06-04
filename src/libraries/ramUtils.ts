@@ -28,3 +28,8 @@ export function getEffectiveMaxRam(ns: NS, server: string): number {
 export function getAvailableRam(ns: NS, server: string): number {
   return Math.max(0, getEffectiveMaxRam(ns, server) - ns.getServerUsedRam(server))
 }
+
+/** Sum free RAM across batch worker hosts (uses getAvailableRam on each). */
+export function sumBatchWorkerRam(ns: NS, nodes: string[]): number {
+  return nodes.reduce((sum, node) => sum + getAvailableRam(ns, node), 0)
+}
