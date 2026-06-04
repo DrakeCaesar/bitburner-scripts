@@ -21,7 +21,7 @@ export interface TableLayout {
   tailHeightPx?: number
   /** Cap for tail width; defaults to ~95% of the game window. */
   tailMaxWidthPx?: number
-  /** Cap for total tail height; defaults to ~92% of the game window. */
+  /** Cap for total tail height; defaults to full game window height. */
   tailMaxHeightPx?: number
   /** Scrollable content area inside the tail (set when sizing before render). */
   tailViewportMaxHeightPx?: number
@@ -139,7 +139,7 @@ function resolveTailWidth(layout: TableLayout): number {
 
 function resolveTailMaxHeight(layout: TableLayout): number {
   const win = eval("window") as Window
-  return layout.tailMaxHeightPx ?? Math.floor(win.innerHeight * 0.92)
+  return layout.tailMaxHeightPx ?? win.innerHeight
 }
 
 /** Total tail window size from layout estimates (call applyTailSize before renderScriptLog). */
