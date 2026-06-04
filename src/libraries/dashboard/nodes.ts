@@ -247,8 +247,17 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
     valueLen = Math.max(valueLen, node.ramFormatted.length)
   }
 
+  const ownedNodes = nodes.filter((n) => n.exists)
+  const totalRam = ownedNodes.reduce((sum, n) => sum + n.ram, 0)
+  const totalRamFormatted = ns.format.ram(totalRam, digits)
+  const totalLabel = useHacknet
+    ? `Total (${ownedNodes.length}/${nodes.length})`
+    : `Total (${ownedNodes.length})`
+  valueLen = Math.max(valueLen, totalRamFormatted.length)
+  const nodeProgressLenWithTotal = Math.max(nodeProgressLen, totalLabel.length)
+
   // Build table with 2 columns
-  const colWidths = [nodeProgressLen, valueLen]
+  const colWidths = [nodeProgressLenWithTotal, valueLen]
   const borders = getTableBorders(colWidths)
 
   // Clear and rebuild container
@@ -265,12 +274,12 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
   const homeCoresProgressBar = generateLinearProgressBar(homeCores, maxHomeCores)
   homeSpan.textContent =
     formatTableRow([
-      homeRamProgressBar.padStart(nodeProgressLen), // Right-align to end of column
+      homeRamProgressBar.padStart(colWidths[0]), // Right-align to end of column
       ns.format.ram(homeRam, digits).padStart(valueLen), // Right-align value
     ]) +
     "\n" +
     formatTableRow([
-      homeCoresProgressBar.padStart(nodeProgressLen), // Right-align to end of column
+      homeCoresProgressBar.padStart(colWidths[0]), // Right-align to end of column
       (homeCores.toString() + (homeCores == 1 ? " Core " : " Cores")).padStart(valueLen), // Right-align value
     ]) +
     "\n" +
@@ -278,11 +287,16 @@ export function updateNodesView(ns: NS, containerDiv: HTMLElement, primaryColor:
     "\n"
   containerDiv.appendChild(homeSpan)
 
+  const totalSpan = document.createElement("span")
+  totalSpan.textContent =
+    formatTableRow([totalLabel.padStart(colWidths[0]), totalRamFormatted.padStart(valueLen)]) + "\n"
+  containerDiv.appendChild(totalSpan)
+
   // Add purchased server rows
   for (const node of nodes) {
     const rowSpan = document.createElement("span")
     // Format: "node00 ████████" with padding before progress bar to right-align with home bars
-    const nodeAndProgress = `${node.name} ${node.progressBar}`.padStart(nodeProgressLen)
+    const nodeAndProgress = `${node.name} ${node.progressBar}`.padStart(colWidths[0])
     rowSpan.textContent = formatTableRow([
       nodeAndProgress,
       node.ramFormatted.padStart(valueLen), // Right-align value
