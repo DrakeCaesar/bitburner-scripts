@@ -31,7 +31,6 @@ import {
   divisionIsDevelopingProduct,
   estimateDevelopmentEtaSeconds,
   estimateDevelopmentProgressPerCycle,
-  findFastestDevelopmentJobCounts,
   formatDevelopmentEta,
   getProductDevelopmentStatuses,
   jobCountsForProductDevelopment,
@@ -128,11 +127,8 @@ export function buildDivisionHeadcountPlanTables(ns: NS, divisionName: string): 
       const rates = extractPerEmployeeRates(jobInput)
       const currentN = office.numEmployees
       const targetN = PRODUCT_DEVELOPMENT_TARGET_STAFF
-      const currentCounts =
-        findFastestDevelopmentJobCounts(currentN, rates) ??
-        jobCountsForProductDevelopment(currentN, rates)
-      const targetCounts =
-        findFastestDevelopmentJobCounts(targetN, rates) ?? jobCountsForProductDevelopment(targetN, rates)
+      const currentCounts = jobCountsForProductDevelopment(currentN, rates)
+      const targetCounts = jobCountsForProductDevelopment(targetN, rates)
       const spc = corp.getConstants().secondsPerMarketCycle
       const rows = [
         devHeadcountPlanRow(
@@ -451,8 +447,8 @@ export async function balanceJobs(ns: NS, divisionName: string, city: CityName):
   const rates = extractPerEmployeeRates(input)
 
   if (cityIsDevelopingProduct(ns, divisionName, city)) {
-    const devCounts = findFastestDevelopmentJobCounts(n, rates)
-    if (!devCounts || countsMatchCurrent(devCounts, office.employeeJobs)) return null
+    const devCounts = jobCountsForProductDevelopment(n, rates)
+    if (countsMatchCurrent(devCounts, office.employeeJobs)) return null
     applyJobCounts(ns, divisionName, city, devCounts)
     const prodByJob = buildEmployeeProductionByJob(devCounts, rates)
     const progPerCycle = estimateDevelopmentProgressPerCycle(prodByJob, 1)

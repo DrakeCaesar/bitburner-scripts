@@ -1,4 +1,5 @@
 import { CityName, NS } from "@ns"
+import { type CorpPerfCollector, perfNow } from "@/libraries/corporation/perf.js"
 import { buildSimContext } from "@/libraries/corporation/simulation/context.js"
 import { compareStageSnapshots } from "@/libraries/corporation/simulation/compare.js"
 import { simulateStage } from "@/libraries/corporation/simulation/simulate.js"
@@ -18,19 +19,33 @@ export interface ValidationRun {
 }
 
 /** Wait for the next corp tick, then compare simulated vs actual for `before.nextState`. */
-export async function validateCorpStage(ns: NS, before: CorporationSnapshot): Promise<ValidationRun | null> {
+export async function validateCorpStage(
+  ns: NS,
+  before: CorporationSnapshot,
+  perf?: CorpPerfCollector
+): Promise<ValidationRun | null> {
   const corp = ns.corporation
   const stage = before.nextState
 
+  const waitStart = perfNow()
   await corp.nextUpdate()
+  perf?.add("sim nextUpdate (wait)", perfNow() - waitStart)
 
+  const captureStart = perfNow()
   const after = captureCorporationSnapshot(ns, FARMLAND_DIVISION)
+  perf?.add("sim capture after", perfNow() - captureStart)
   if (!after) return null
 
   const div = before.divisions.find((d) => d.name === FARMLAND_DIVISION)
+  const ctxStart = perfNow()
   const ctx = buildSimContext(ns, div?.advertisingFactor ?? 0.04)
-  const predicted = simulateStage(before, stage, ctx)
+  perf?.add("sim build context", perfNow() - ctxStart)
 
+  const simStart = perfNow()
+  const predicted = simulateStage(before, stage, ctx)
+  perf?.add("sim simulate stage", perfNow() - simStart)
+
+  const compareStart = perfNow()
   const result = compareStageSnapshots(
     stage,
     FARMLAND_DIVISION,
@@ -39,6 +54,7 @@ export async function validateCorpStage(ns: NS, before: CorporationSnapshot): Pr
     predicted,
     after
   )
+  perf?.add("sim compare snapshots", perfNow() - compareStart)
 
   return { stage, before, after, predicted, result }
 }

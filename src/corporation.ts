@@ -11,6 +11,7 @@ import { manageFarmlandSupplies } from "@/libraries/corporation/supplies.js"
 import { ensureTobaccoDivision } from "@/libraries/corporation/tobaccoSetup.js"
 import { manageTobaccoOperations } from "@/libraries/corporation/tobaccoOperations.js"
 import { manageTobaccoPlantsSupply } from "@/libraries/corporation/tobaccoSupplies.js"
+import { CorpPerfCollector, pushPerfHistory, type CorpPerfReport } from "@/libraries/corporation/perf.js"
 import { captureCorporationSnapshot } from "@/libraries/corporation/simulation/snapshot.js"
 import { validateCorpStage, type ValidationRun } from "@/libraries/corporation/simulation/validate.js"
 import { TabbedScriptLogBuilder, initScriptLogTail } from "@/libraries/scriptLogUi.js"
@@ -33,29 +34,41 @@ export async function main(ns: NS): Promise<void> {
 
   const tabbedLog = new TabbedScriptLogBuilder(CORP_TABS, CORP_LOG_LAYOUT)
   const simHistory: ValidationRun[] = []
+  const perfHistory: CorpPerfReport[] = []
   let simMismatchWarning: ValidationRun | null = null
+  let perfCycle = 0
 
   while (true) {
     try {
-      const statusLines = [
+      perfCycle += 1
+      const perf = new CorpPerfCollector()
+      perf.startLoop()
+
+      const statusLines = perf.measure("setup", () => [
         ...asStringLines(ensureCorporationCreated(ns)),
         ...asStringLines(ensureFarmlandDivision(ns)),
         ...asStringLines(ensureTobaccoDivision(ns)),
         ...asStringLines(ensurePlantsExportToTobacco(ns)),
-      ]
+      ])
 
-      const { lines: supplyLines, supplies } = manageFarmlandSupplies(ns)
-      statusLines.push(...asStringLines(manageTobaccoPlantsSupply(ns)), ...asStringLines(supplyLines))
+      const { lines: supplyLines, supplies } = perf.measure("supplies", () => {
+        const farmland = manageFarmlandSupplies(ns)
+        return {
+          lines: [...asStringLines(manageTobaccoPlantsSupply(ns)), ...asStringLines(farmland.lines)],
+          supplies: farmland.supplies,
+        }
+      })
+      statusLines.push(...supplyLines)
 
-      const operationLines = await manageFarmlandOperations(ns)
-      const tobaccoLines = await manageTobaccoOperations(ns)
+      const operationLines = await perf.measureAsync("ops Farmland", () => manageFarmlandOperations(ns))
+      const tobaccoLines = await perf.measureAsync("ops Tobacco", () => manageTobaccoOperations(ns))
       statusLines.push(...asStringLines(operationLines), ...asStringLines(tobaccoLines))
 
-      const beforeStage = captureCorporationSnapshot(ns)
+      const beforeStage = perf.measure("snapshot before", () => captureCorporationSnapshot(ns))
 
       let simRun: ValidationRun | null = null
       if (beforeStage) {
-        simRun = await validateCorpStage(ns, beforeStage)
+        simRun = await validateCorpStage(ns, beforeStage, perf)
         if (simRun) {
           simHistory.unshift(simRun)
           if (simHistory.length > SIM_HISTORY_MAX) {
@@ -67,13 +80,13 @@ export async function main(ns: NS): Promise<void> {
       }
 
       const headcountPlans = [
-        ...buildDivisionHeadcountPlanTables(ns, FARMLAND_DIVISION),
-        ...buildDivisionHeadcountPlanTables(ns, TOBACCO_DIVISION),
+        ...perf.measure("headcount Farmland", () => buildDivisionHeadcountPlanTables(ns, FARMLAND_DIVISION)),
+        ...perf.measure("headcount Tobacco", () => buildDivisionHeadcountPlanTables(ns, TOBACCO_DIVISION)),
       ]
       if (simRun) {
         simMismatchWarning = simRun.result.allOk ? null : simRun
       }
-      await renderCorporationDashboard(
+      const perfReport = await renderCorporationDashboard(
         ns,
         tabbedLog,
         statusLines,
@@ -81,8 +94,12 @@ export async function main(ns: NS): Promise<void> {
         simRun,
         simHistory,
         headcountPlans,
-        simMismatchWarning
+        simMismatchWarning,
+        perf,
+        perfCycle,
+        perfHistory
       )
+      pushPerfHistory(perfHistory, perfReport)
     } catch (err) {
       ns.clearLog()
       ns.print(`ERROR: ${String(err)}`)

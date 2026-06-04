@@ -1,7 +1,6 @@
 import { CityName, NS } from "@ns"
 import {
   buildEmployeeProductionByJob,
-  enumerateConstrainedJobCounts,
   type OfficeJobCounts,
   type PerEmployeeRates,
 } from "@/libraries/corporation/simulation/officeJobs.js"
@@ -95,41 +94,77 @@ export function formatDevelopmentDoneAt(etaSeconds: number | null): string {
   return `${h}:${String(m).padStart(2, "0")}`
 }
 
-/** Brute-force job split that maximizes simulated development progress per market cycle. */
-export function findFastestDevelopmentJobCounts(
-  numEmployees: number,
-  rates: PerEmployeeRates
-): OfficeJobCounts | null {
-  if (numEmployees <= 0) return null
-
-  const candidates = enumerateConstrainedJobCounts(numEmployees, 0)
-  let best: OfficeJobCounts | null = null
-  let bestProgress = -1
-
-  for (const counts of candidates) {
-    const prodByJob = buildEmployeeProductionByJob(counts, rates)
-    const progress = estimateDevelopmentProgressPerCycle(prodByJob, 1)
-    if (progress > bestProgress) {
-      bestProgress = progress
-      best = counts
-    }
-  }
-
-  return best
+/** Matches officeJobs intern rules (1 Business, no R&D while developing). */
+function internSlotsForDevelopment(numEmployees: number): number {
+  if (numEmployees >= 9) return Math.floor(numEmployees / 9)
+  if (numEmployees > 5) return 1
+  return 0
 }
 
+/**
+ * Fast dev job split: 1 Business + required interns, 1 Ops baseline, then greedy hires
+ * by marginal development progress (same formula as estimateDevelopmentProgressPerCycle).
+ */
 export function jobCountsForProductDevelopment(
   numEmployees: number,
   rates: PerEmployeeRates
 ): OfficeJobCounts {
-  return (
-    findFastestDevelopmentJobCounts(numEmployees, rates) ?? {
+  const empty: OfficeJobCounts = {
+    Operations: 0,
+    Engineer: 0,
+    Management: 0,
+    Business: 0,
+    "Research & Development": 0,
+    Intern: 0,
+  }
+  if (numEmployees <= 0) return empty
+
+  const intern = internSlotsForDevelopment(numEmployees)
+  const business = 1
+  let productionSlots = numEmployees - intern - business
+  if (productionSlots < 1) {
+    return {
+      ...empty,
       Operations: Math.min(1, numEmployees),
-      Engineer: 0,
-      Management: 0,
       Business: Math.min(1, numEmployees),
-      "Research & Development": 0,
-      Intern: 0,
+      Intern: intern,
     }
-  )
+  }
+
+  let ops = 1
+  let engr = 0
+  let mgmt = 0
+  productionSlots -= ops
+
+  const toCounts = (): OfficeJobCounts => ({
+    Operations: ops,
+    Engineer: engr,
+    Management: mgmt,
+    Business: business,
+    "Research & Development": 0,
+    Intern: intern,
+  })
+
+  while (productionSlots > 0) {
+    const base = toCounts()
+    const baseProg = estimateDevelopmentProgressPerCycle(buildEmployeeProductionByJob(base, rates), 1)
+    let bestJob: "Engineer" | "Management" | "Operations" | null = null
+    let bestGain = 0
+    for (const job of ["Engineer", "Management", "Operations"] as const) {
+      const trial = { ...base, [job]: base[job] + 1 }
+      const gain =
+        estimateDevelopmentProgressPerCycle(buildEmployeeProductionByJob(trial, rates), 1) - baseProg
+      if (gain > bestGain + 1e-12) {
+        bestGain = gain
+        bestJob = job
+      }
+    }
+    if (!bestJob) break
+    if (bestJob === "Engineer") engr++
+    else if (bestJob === "Management") mgmt++
+    else ops++
+    productionSlots--
+  }
+
+  return toCounts()
 }

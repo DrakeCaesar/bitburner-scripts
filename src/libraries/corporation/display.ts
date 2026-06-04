@@ -18,7 +18,14 @@ import { TOBACCO_DIVISION } from "@/libraries/corporation/tobacco.js"
 import { buildSimContext } from "@/libraries/corporation/simulation/context.js"
 import type { FieldComparison } from "@/libraries/corporation/simulation/types.js"
 import type { ValidationRun } from "@/libraries/corporation/simulation/validate.js"
-import { buildDivisionHeadcountPlanTables, type HeadcountPlanTable } from "@/libraries/corporation/office.js"
+import {
+  buildPerfHistoryRows,
+  CorpPerfCollector,
+  formatPerfMs,
+  type CorpPerfReport,
+  type CorpPerfSample,
+} from "@/libraries/corporation/perf.js"
+import { type HeadcountPlanTable } from "@/libraries/corporation/office.js"
 import { asCorpMaterialList } from "@/libraries/corporation/simulation/officeJobs.js"
 import { type ManagedSupply } from "@/libraries/corporation/supplies.js"
 
@@ -32,6 +39,7 @@ export const CORP_TABS: TabDefinition[] = [
   { id: "warehouse", label: "Warehouse" },
   { id: "staff", label: "Staff" },
   { id: "sim", label: "Sim" },
+  { id: "perf", label: "Perf" },
   { id: "log", label: "Log" },
 ]
 
@@ -467,6 +475,79 @@ function formatSimMismatchWarning(simRun: ValidationRun): string {
   return lines.join("\n")
 }
 
+function populatePerformanceTab(
+  tabbedLog: TabbedScriptLogBuilder,
+  report: CorpPerfReport,
+  history: CorpPerfReport[],
+  phase: "pre-render" | "final" = "final"
+): void {
+  const builder = tabbedLog.tab("perf")
+
+  const sorted = [...report.samples].sort((a, b) => b.ms - a.ms)
+  const historyRows = buildPerfHistoryRows(history)
+  const phaseNote = phase === "pre-render" ? " (excludes ui render)" : ""
+
+  builder.keyValueTable({
+    title: `Cycle ${report.cycle} timing${phaseNote}`,
+    rows: [
+      { label: "Loop total", value: `${formatPerfMs(report.loopTotalMs)} ms` },
+      { label: "Measured sum", value: `${formatPerfMs(report.measuredSumMs)} ms` },
+      { label: "Unmeasured", value: `${formatPerfMs(report.unmeasuredMs)} ms` },
+      {
+        label: "History",
+        value: history.length > 0 ? `${history.length} cycles (avg/max below)` : "building…",
+      },
+    ],
+  })
+
+  builder.table({
+    title: "Last cycle (sorted by ms)",
+    columns: [
+      { header: "Step", align: "left", minWidth: 28 },
+      { header: "ms", align: "right", minWidth: 8 },
+      { header: "% loop", align: "right", minWidth: 8 },
+      { header: "Note", align: "left", minWidth: 12 },
+    ],
+    rows: sorted.map((s: CorpPerfSample) => [
+      s.label,
+      formatPerfMs(s.ms),
+      report.loopTotalMs > 0 ? `${((s.ms / report.loopTotalMs) * 100).toFixed(1)}%` : "—",
+      s.note ?? "",
+    ]),
+  })
+
+  if (historyRows.length > 0) {
+    builder.table({
+      title: `Rolling stats (${history.length} cycles)`,
+      columns: [
+        { header: "Step", align: "left", minWidth: 28 },
+        { header: "Last", align: "right", minWidth: 8 },
+        { header: "Avg", align: "right", minWidth: 8 },
+        { header: "Max", align: "right", minWidth: 8 },
+      ],
+      rows: historyRows.map((r) => [
+        r.label,
+        formatPerfMs(r.lastMs),
+        formatPerfMs(r.avgMs),
+        formatPerfMs(r.maxMs),
+      ]),
+    })
+  }
+
+  builder.text(
+    [
+      "Wall-clock ms via performance.now (or Date.now).",
+      "sim nextUpdate is mostly waiting for the corp market tick, not CPU.",
+      "headcount * is enumerateHeadcountEconomics for profit offices; dev cities are cheap.",
+      phase === "pre-render"
+        ? "ui render React is recorded in history after this panel is built."
+        : "",
+    ]
+      .filter((line) => line.length > 0)
+      .join("\n")
+  )
+}
+
 function populateLogTab(
   tabbedLog: TabbedScriptLogBuilder,
   statusLines: string[],
@@ -496,15 +577,21 @@ export async function renderCorporationDashboard(
   simRun: ValidationRun | null = null,
   simHistory: ValidationRun[] = [],
   headcountPlans: HeadcountPlanTable[] = [],
-  simMismatchWarning: ValidationRun | null = null
-): Promise<void> {
+  simMismatchWarning: ValidationRun | null = null,
+  perf: CorpPerfCollector,
+  perfCycle: number,
+  perfHistory: CorpPerfReport[] = []
+): Promise<CorpPerfReport> {
   tabbedLog.clearPanels()
-  populateOverviewTab(ns, tabbedLog, managedSupplies)
-  populateWarehouseTab(ns, tabbedLog, managedSupplies)
-  populateStaffTab(ns, tabbedLog, headcountPlans)
-  populateSimulationTab(ns, tabbedLog, simRun, simHistory)
-  populateLogTab(tabbedLog, statusLines, simMismatchWarning)
-  await tabbedLog.render(ns)
+  perf.measure("ui tab Overview", () => populateOverviewTab(ns, tabbedLog, managedSupplies))
+  perf.measure("ui tab Warehouse", () => populateWarehouseTab(ns, tabbedLog, managedSupplies))
+  perf.measure("ui tab Staff", () => populateStaffTab(ns, tabbedLog, headcountPlans))
+  perf.measure("ui tab Sim", () => populateSimulationTab(ns, tabbedLog, simRun, simHistory))
+  perf.measure("ui tab Log", () => populateLogTab(tabbedLog, statusLines, simMismatchWarning))
+
+  populatePerformanceTab(tabbedLog, perf.peekReport(perfCycle), perfHistory, "pre-render")
+  await perf.measureAsync("ui render React", () => tabbedLog.render(ns))
+  return perf.finishLoop(perfCycle)
 }
 
 function buildSupplyTable(rows: string[][]): ReactTableConfig {
