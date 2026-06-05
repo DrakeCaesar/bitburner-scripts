@@ -52,7 +52,7 @@ export async function updateTargetsView(ns: NS, containerDiv: HTMLElement, prima
   const batchCycles = 3
 
   // Analyze servers
-  const profitabilityData = await analyzeAllServers(
+  const { servers: profitabilityData } = await analyzeAllServers(
     ns,
     totalMaxRam,
     nodeRamLimit,

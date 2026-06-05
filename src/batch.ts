@@ -8,7 +8,11 @@ import {
   executeBatches,
   getBatchHackingScripts,
 } from "./libraries/batchExecution.js"
-import { buildProfitabilityTableConfig, findBestTarget } from "./libraries/findBestTarget.js"
+import {
+  buildProfitabilityTableConfig,
+  buildThresholdComparisonTableConfig,
+  findBestTarget,
+} from "./libraries/findBestTarget.js"
 import { purchasePrograms, purchaseTorRouter } from "./libraries/purchasePrograms.js"
 import { purchaseServers } from "./libraries/purchaseServer.js"
 import { sumBatchWorkerRam } from "./libraries/ramUtils.js"
@@ -21,10 +25,11 @@ import {
 } from "./libraries/scriptLogUi.js"
 import {
   getNodesForBatching,
+  killAllHackingScriptsOnNodes,
   killHackingScriptsForTarget,
   parseBatchArgs,
 } from "./libraries/serverManagement.js"
-import { joinWorthyFactionInvitations } from "./libraries/factionInvites.js"
+// import { joinWorthyFactionInvitations } from "./libraries/factionInvites.js"
 import { formatGameTimeMs } from "./libraries/format.js"
 
 const BATCH_LAYOUT: Partial<TableLayout> = {
@@ -35,6 +40,7 @@ const BATCH_LAYOUT: Partial<TableLayout> = {
 const BATCH_TABS: TabDefinition[] = [
   { id: "setup", label: "Setup" },
   { id: "targets", label: "Targets" },
+  { id: "thresholds", label: "Thresholds" },
   { id: "prep", label: "Prep" },
   { id: "batch", label: "Batch" },
   { id: "results", label: "Results" },
@@ -83,10 +89,10 @@ export async function main(ns: NS) {
       )
     }
 
-    const joinedFactions = joinWorthyFactionInvitations(ns)
-    if (joinedFactions.length > 0) {
-      tabbedLog.tab("setup").text(`Joined factions: ${joinedFactions.join(", ")}`)
-    }
+    // const joinedFactions = joinWorthyFactionInvitations(ns)
+    // if (joinedFactions.length > 0) {
+    //   tabbedLog.tab("setup").text(`Joined factions: ${joinedFactions.join(", ")}`)
+    // }
 
     // ns.scriptKill("autoWorkFactions.js", "home") — batch does not start it; leave faction work running if launched elsewhere
     ns.scriptKill("contractSolver.js", "home")
@@ -125,6 +131,7 @@ export async function main(ns: NS) {
     const nodeRamLimit = Infinity
 
     const myCores = ns.getServer(nodes[0]).cpuCores
+    killAllHackingScriptsOnNodes(ns, nodes)
     const target = await findBestTarget(
       ns,
       sumBatchWorkerRam(ns, nodes),
@@ -162,6 +169,9 @@ export async function main(ns: NS) {
       ...buildProfitabilityTableConfig(ns, target.servers),
       selectedRowIndex: 0,
     })
+    tabbedLog.tab("thresholds").reset().table(
+      buildThresholdComparisonTableConfig(ns, target.serverName, target.thresholdComparison, target.hackThreshold)
+    )
     await renderLog()
 
     const server = ns.getServer(target.serverName)

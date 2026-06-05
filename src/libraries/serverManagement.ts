@@ -140,6 +140,19 @@ function isTargetedHackingScript(filename: string): boolean {
   return TARGETED_HACKING_SCRIPT_SUFFIXES.some((suffix) => filename.endsWith(suffix))
 }
 
+/** Kill all hack/grow/weaken scripts on worker hosts (any target). */
+export function killAllHackingScriptsOnNodes(ns: NS, hosts: string[]): number {
+  let killed = 0
+  for (const host of hosts) {
+    for (const proc of ns.ps(host)) {
+      if (!isTargetedHackingScript(proc.filename)) continue
+      ns.kill(proc.pid)
+      killed++
+    }
+  }
+  return killed
+}
+
 /** Kill hack/grow/weaken on worker hosts only when their first arg matches `target`. */
 export function killHackingScriptsForTarget(ns: NS, hosts: string[], target: string): number {
   let killed = 0

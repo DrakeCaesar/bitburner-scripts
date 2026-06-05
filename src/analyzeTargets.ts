@@ -35,7 +35,7 @@ export async function main(ns: NS) {
   const batchDelay = 50
 
   // Use the imported function to analyze servers
-  const profitabilityData = await analyzeAllServers(
+  const { servers: profitabilityData } = await analyzeAllServers(
     ns,
     totalMaxRam,
     nodeRamLimit,
