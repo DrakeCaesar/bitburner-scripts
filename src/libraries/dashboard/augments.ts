@@ -48,6 +48,28 @@ function formatFactionText(factions: string[], maxWidth: number): string {
   return joined.substring(0, maxWidth - 3) + "..."
 }
 
+function factionsMeetingRepReq(
+  factions: FactionName[],
+  factionReps: Map<string, number>,
+  repReq: number
+): FactionName[] {
+  return factions.filter((f) => (factionReps.get(f) ?? 0) >= repReq)
+}
+
+function bestFactionRep(
+  factions: FactionName[],
+  factionReps: Map<string, number>
+): { faction: FactionName; rep: number } | null {
+  let best: { faction: FactionName; rep: number } | null = null
+  for (const faction of factions) {
+    const rep = factionReps.get(faction) ?? 0
+    if (!best || rep > best.rep) {
+      best = { faction, rep }
+    }
+  }
+  return best
+}
+
 // Get augmentation data with display-specific optimizations (topological sort)
 function getAugmentDataForDisplay(ns: NS, playerFactions: FactionName[]) {
   const augmentMap = new Map<string, AugmentInfo>()
@@ -428,10 +450,12 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
       neuroFluxCumulative += currentPrice
       const levelBasePrice = currentPrice / Math.pow(AUGMENT_PRICE_MULT, positionOffset + neuroFluxIndex)
 
+      const nfFactionsAtLevel = factionsMeetingRepReq(neuroFluxInfo.factions, factionReps, currentRepReq)
+
       rows.push({
         order: orderNum.toString().padStart(orderLen),
         name: neuroFluxInfo.name.padEnd(nameLen),
-        faction: formatFactionText(neuroFluxInfo.factions, factionLen).padEnd(factionLen),
+        faction: formatFactionText(nfFactionsAtLevel, factionLen).padEnd(factionLen),
         price: ns.format.number(levelBasePrice).padStart(priceLen),
         priceRed: playerMoney < levelBasePrice,
         adjusted: ns.format.number(currentPrice).padStart(adjustedLen),
@@ -462,10 +486,15 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
       else if (!canAffordMoney) statusSymbol = "X$"
       else if (!hasEnoughRep) statusSymbol = "XR"
 
+      const nfFactionsAtLevel = factionsMeetingRepReq(neuroFluxInfo.factions, factionReps, currentRepReq)
+
       rows.push({
         order: " ".repeat(orderLen),
         name: neuroFluxInfo.name.padEnd(nameLen),
-        faction: formatFactionText(neuroFluxInfo.factions, factionLen).padEnd(factionLen),
+        faction: formatFactionText(
+          nfFactionsAtLevel.length > 0 ? nfFactionsAtLevel : neuroFluxInfo.factions,
+          factionLen
+        ).padEnd(factionLen),
         price: ns.format.number(basePrice).padStart(priceLen),
         priceRed: !canAffordMoney,
         adjusted: ns.format.number(adjustedPrice).padStart(adjustedLen),
@@ -498,10 +527,18 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
   ]
 
   const tableHeader = `${borders.top()}\n${formatTableRow(headerCells)}\n${borders.header()}\n`
+  let neuroFluxRepNote = ""
+  if (neuroFluxInfo) {
+    const best = bestFactionRep(neuroFluxInfo.factions, factionReps)
+    if (best) {
+      neuroFluxRepNote = `\nNeuroFlux rep check uses best faction: ${best.faction} (${ns.format.number(best.rep)})`
+    }
+  }
+
   const tableFooter =
     `${borders.bottom()}\n` +
     `\nAffordable: ${affordableSorted.length} | Too expensive (cumulative): ${tooExpensiveCumulative.length} | No rep: ${unaffordable.length} | Total: ${allAugs.length}\n` +
-    `Current money: ${ns.format.number(playerMoney)}`
+    `Current money: ${ns.format.number(playerMoney)}${neuroFluxRepNote}`
 
   // Clear and rebuild container
   containerDiv.innerHTML = ""
