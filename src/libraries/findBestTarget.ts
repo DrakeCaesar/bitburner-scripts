@@ -119,31 +119,46 @@ export interface ServerProfitability {
 const MAX_BATCHES_FOR_SIMULATION = 1000
 const MAX_RAM_FOR_SIMULATION = Math.pow(2, 20) // 1,048,576 GB
 const THRESHOLD_SWEEP_STEPS = 200
-/** >1 clusters samples toward 0% and 100%; middle stays sparse. */
-const THRESHOLD_WING_POWER = 1.5
+/** Fraction of money left after hack — edge bands [0, 1%] and [99%, 100%]. */
+const THRESHOLD_EDGE_BAND = 0.01
+const THRESHOLD_EDGE_SAMPLES = 80
+
+function linspaceThresholds(min: number, max: number, count: number): number[] {
+  if (count <= 0) return []
+  if (count === 1) return [(min + max) / 2]
+  const thresholds: number[] = []
+  for (let i = 0; i < count; i++) {
+    thresholds.push(min + (i / (count - 1)) * (max - min))
+  }
+  return thresholds
+}
 
 /**
- * U-shaped threshold samples: dense near 0% and 100%, sparse near 50%.
- * Lower wing maps [0, 0.5), upper wing maps (0.5, 1], both use t^wingPower.
+ * Most samples in 0–1% and 99–100%; the 1–99% range gets the remainder (sparse).
  */
-export function generateSweepThresholds(
-  count = THRESHOLD_SWEEP_STEPS - 1,
-  wingPower = THRESHOLD_WING_POWER
-): number[] {
-  const lowerCount = Math.floor(count / 2)
-  const upperCount = count - lowerCount
-  const thresholds: number[] = []
+export function generateSweepThresholds(count = THRESHOLD_SWEEP_STEPS - 1): number[] {
+  const edgeSamples = Math.min(
+    THRESHOLD_EDGE_SAMPLES,
+    Math.floor((count - 1) / 2)
+  )
+  const middleSamples = count - edgeSamples * 2
 
-  for (let j = 0; j < lowerCount; j++) {
-    const t = (j + 0.5) / lowerCount
-    thresholds.push(0.5 * Math.pow(t, wingPower))
-  }
-  for (let j = 0; j < upperCount; j++) {
-    const t = (j + 0.5) / upperCount
-    thresholds.push(0.5 + 0.5 * Math.pow(t, wingPower))
-  }
+  const lowMin = 0.001
+  const lowMax = THRESHOLD_EDGE_BAND
+  const highMin = 1 - THRESHOLD_EDGE_BAND
+  const highMax = 0.999
 
-  return thresholds.map((t) => Math.min(0.999, Math.max(0.001, t)))
+  const low = linspaceThresholds(lowMin, lowMax, edgeSamples)
+  const middle =
+    middleSamples > 0
+      ? Array.from({ length: middleSamples }, (_, j) => {
+          const t = (j + 1) / (middleSamples + 1)
+          return lowMax + t * (highMin - lowMax)
+        })
+      : []
+  const high = linspaceThresholds(highMin, highMax, edgeSamples)
+
+  return [...low, ...middle, ...high].map((t) => Math.min(0.999, Math.max(0.001, t)))
 }
 
 export interface AnalyzeServerThresholdsOptions {
