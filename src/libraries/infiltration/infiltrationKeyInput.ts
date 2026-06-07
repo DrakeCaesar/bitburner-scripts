@@ -36,7 +36,7 @@ export const INFILTRATION_KEY_DELAY_MS = 10
 
 const CANCEL_LABEL = "Cancel Infiltration"
 
-function isInfiltrationUiActive(): boolean {
+function isInfiltrationMinigameActive(): boolean {
   const buttons = document.querySelectorAll("button")
   for (let i = 0; i < buttons.length; i++) {
     const label = buttons[i].textContent?.replace(/\s+/g, " ").trim() ?? ""
@@ -48,7 +48,7 @@ function isInfiltrationUiActive(): boolean {
 }
 
 function isOnInfiltrationPage(): boolean {
-  if (isInfiltrationUiActive()) return true
+  if (isInfiltrationMinigameActive()) return true
 
   const headings = document.querySelectorAll("h4")
   for (let i = 0; i < headings.length; i++) {
@@ -376,19 +376,34 @@ export function clearInfiltrationKeyHandler(): void {
 }
 
 export function disableTrustedKeyInjection(): void {
-  const doc = document as DocumentWithKeyWrap
-  if (!doc._addEventListener) return
+  infiltrationKeyHandler = null
+  trustedKeyInjectionEnabled = false
 
-  doc.addEventListener = doc._addEventListener
-  delete doc._addEventListener
+  const doc = document as DocumentWithKeyWrap
+  if (doc._addEventListener) {
+    doc.addEventListener = doc._addEventListener
+    delete doc._addEventListener
+  }
 
   if (doc._dispatchEvent) {
     doc.dispatchEvent = doc._dispatchEvent
     delete doc._dispatchEvent
   }
+}
 
-  trustedKeyInjectionEnabled = false
-  infiltrationKeyHandler = null
+/** Force-restore document keyboard handling after script exit or kill. */
+export function restoreDocumentKeyboard(): void {
+  disableTrustedKeyInjection()
+}
+
+/** Enable patching only while a minigame is active; restore otherwise. */
+export function syncTrustedKeyInjection(): void {
+  if (isInfiltrationMinigameActive()) {
+    enableTrustedKeyInjection()
+    return
+  }
+
+  disableTrustedKeyInjection()
 }
 
 export function isTrustedKeyInjectionEnabled(): boolean {

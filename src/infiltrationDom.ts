@@ -1,4 +1,5 @@
 import { NS } from "@ns"
+import { disableTrustedKeyInjection } from "./libraries/infiltration/infiltrationKeyInput.js"
 import {
   getInfiltrationSolverPollMs,
   setupInfiltrationSolver,
@@ -8,6 +9,7 @@ import {
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("sleep")
+  ns.atExit(() => disableTrustedKeyInjection())
 
   const solver = setupInfiltrationSolver(ns)
 

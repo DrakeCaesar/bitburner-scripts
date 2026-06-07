@@ -10,13 +10,14 @@ import {
 import { clearRememberedMines } from "./infiltrationMinesweeper.js"
 import {
   pressInfiltrationKey,
-  enableTrustedKeyInjection,
   disableTrustedKeyInjection,
+  restoreDocumentKeyboard,
   clearInfiltrationKeyHandler,
   isInfiltrationKeyInputReady,
   getInfiltrationKeyInputMode,
   describeInfiltrationKeyInput,
   INFILTRATION_KEY_DELAY_MS,
+  syncTrustedKeyInjection,
 } from "./infiltrationKeyInput.js"
 import {
   formatSentKeySequence,
@@ -111,7 +112,7 @@ function getWindowCollapsedState(element: HTMLElement | null): boolean {
 }
 
 export function setupInfiltrationSolver(ns: NS): InfiltrationSolverState {
-  enableTrustedKeyInjection()
+  disableTrustedKeyInjection()
   ns.atExit(() => disableTrustedKeyInjection())
 
   const scriptName = ns.getScriptName()
@@ -144,13 +145,15 @@ export function shutdownInfiltrationSolver(state: InfiltrationSolverState): void
   clearInfiltrationKeyHandler()
   clearRememberedMines()
   state.window.window.close()
-  disableTrustedKeyInjection()
+  restoreDocumentKeyboard()
 }
 
 export function tickInfiltrationSolver(
   ns: NS,
   state: InfiltrationSolverState
 ): InfiltrationSolverTickResult {
+  syncTrustedKeyInjection()
+
   if (isInfiltrationVictoryScreen()) {
     if (!state.victoryHandled) {
       const reward = collectInfiltrationVictoryReward(ns)
@@ -158,9 +161,11 @@ export function tickInfiltrationSolver(
         state.victoryHandled = true
         setInfiltrationRunOutcome("victory")
         ns.print(`Victory reward: ${reward.detail}`)
+        restoreDocumentKeyboard()
         return "victory"
       }
     }
+    syncTrustedKeyInjection()
     return "continue"
   }
   state.victoryHandled = false
@@ -177,6 +182,7 @@ export function tickInfiltrationSolver(
     if (!isInfiltrationVictoryScreen() && peekInfiltrationRunOutcome() !== "victory") {
       setInfiltrationRunOutcome("cancelled")
       ns.print("Infiltration cancelled. Stopping script.")
+      restoreDocumentKeyboard()
       return "cancelled"
     }
 
@@ -210,6 +216,7 @@ export function tickInfiltrationSolver(
 
   if (state.session && phaseKey && state.session.nextKeyIndex < state.session.pendingKeys.length) {
     if (!isInfiltrationKeyInputReady()) {
+      syncTrustedKeyInjection()
       return "continue"
     }
 
@@ -225,6 +232,7 @@ export function tickInfiltrationSolver(
     )
   }
 
+  syncTrustedKeyInjection()
   return "continue"
 }
 

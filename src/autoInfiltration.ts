@@ -1,4 +1,5 @@
 import { NS } from "@ns"
+import { disableTrustedKeyInjection, syncTrustedKeyInjection } from "./libraries/infiltration/infiltrationKeyInput.js"
 import { isInfiltrationActive } from "./libraries/infiltration/infiltrationNavigation.js"
 import { runInfiltrationForTarget } from "./libraries/infiltration/infiltrationRun.js"
 import { setupInfiltrationSolver, shutdownInfiltrationSolver } from "./libraries/infiltration/infiltrationSolver.js"
@@ -25,6 +26,7 @@ function pickNextTarget(
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("sleep")
+  ns.atExit(() => disableTrustedKeyInjection())
   ns.ui.openTail()
   ns.ui.setTailTitle("Auto Infiltration")
 
@@ -44,6 +46,7 @@ export async function main(ns: NS): Promise<void> {
 
       if (!picked) {
         ns.print("No infiltration targets available. Waiting...")
+        syncTrustedKeyInjection()
         await ns.sleep(CHECK_INTERVAL_MS)
         continue
       }
@@ -80,6 +83,7 @@ export async function main(ns: NS): Promise<void> {
       }
 
       await ns.sleep(BETWEEN_RUNS_MS)
+      syncTrustedKeyInjection()
     }
   } finally {
     shutdownInfiltrationSolver(solver)
