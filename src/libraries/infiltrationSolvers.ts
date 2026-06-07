@@ -24,6 +24,7 @@ export function solveInfiltrationTask(taskTitle: string, state: InfiltrationDomS
       return solveMatchTheSymbols(state)
 
     case "Type it backward":
+    case "Type it":
       return solveTypeItBackward(assignment)
 
     case "Enter the Code!":
@@ -146,10 +147,10 @@ function solveCloseTheBrackets(openers: string): string[] {
   return keys
 }
 
-/** Type assignment characters in reverse order (DOM text is mirrored in the UI). */
+/** Type the answer left to right. The UI mirrors it with scaleX(-1) but the model expects forward text. */
 function solveTypeItBackward(text: string): string[] | null {
   if (!text) return null
-  return [...text].reverse()
+  return [...text]
 }
 
 function symbolGridCols(cellCount: number): number | null {

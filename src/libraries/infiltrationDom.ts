@@ -6,6 +6,7 @@ import {
   isSlashTaskRoot,
   isSlashTaskTitle,
   parseSlashStatus,
+  readSlashInstructions,
   SLASH_TASK_TITLE,
   type SlashPhase,
 } from "./infiltrationSlash.js"
@@ -127,6 +128,31 @@ function readCheatCodeTask(
   }
 }
 
+function isBackwardTaskTitle(taskTitle: string): boolean {
+  const title = taskTitle.trim()
+  return title === "Type it backward" || title === "Type it"
+}
+
+function readBackwardTask(
+  taskRoot: Element
+): Pick<InfiltrationDomState, "taskTitle" | "assignmentLines" | "assignmentMirrored"> {
+  const taskTitle = taskRoot.querySelector("h4")?.textContent?.trim() ?? ""
+
+  for (const paragraph of Array.from(taskRoot.querySelectorAll("p"))) {
+    if (!(paragraph instanceof HTMLElement)) continue
+    if (!paragraph.style.transform.includes("scaleX(-1)")) continue
+
+    const text = paragraph.textContent?.trim() ?? ""
+    return {
+      taskTitle,
+      assignmentLines: text ? [text] : [],
+      assignmentMirrored: true,
+    }
+  }
+
+  return { taskTitle, assignmentLines: [], assignmentMirrored: false }
+}
+
 function readBribeTask(
   taskRoot: Element
 ): Pick<InfiltrationDomState, "taskTitle" | "assignmentLines" | "assignmentMirrored"> {
@@ -194,17 +220,9 @@ function readWireCuttingTask(
 function readSlashTask(
   taskRoot: Element
 ): Pick<InfiltrationDomState, "taskTitle" | "assignmentLines" | "assignmentMirrored" | "slashStatus"> {
-  const assignmentLines: string[] = []
-
-  for (const paragraph of Array.from(taskRoot.querySelectorAll("p"))) {
-    const text = paragraph.textContent?.trim() ?? ""
-    if (!text) continue
-    assignmentLines.push(text)
-  }
-
   return {
     taskTitle: SLASH_TASK_TITLE,
-    assignmentLines,
+    assignmentLines: readSlashInstructions(taskRoot),
     assignmentMirrored: false,
     slashStatus: parseSlashStatus(taskRoot) ?? undefined,
   }
@@ -312,6 +330,10 @@ function readTaskArea(taskRoot: Element | null | undefined): Pick<
   }
   if (isEnterTheCodeTask(taskTitle)) {
     return readCheatCodeTask(taskRoot)
+  }
+
+  if (isBackwardTaskTitle(taskTitle)) {
+    return readBackwardTask(taskRoot)
   }
 
   const assignmentLines: string[] = []
