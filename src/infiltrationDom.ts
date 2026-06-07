@@ -15,7 +15,7 @@ export async function main(ns: NS): Promise<void> {
 
   while (true) {
     try {
-      const result = tickInfiltrationSolver(ns, solver)
+      const result = await tickInfiltrationSolver(ns, solver)
       if (result === "cancelled") {
         shutdownInfiltrationSolver(solver)
         return

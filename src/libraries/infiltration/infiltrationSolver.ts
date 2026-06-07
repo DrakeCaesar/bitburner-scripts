@@ -33,6 +33,7 @@ import {
   collectInfiltrationVictoryReward,
   isInfiltrationVictoryScreen,
 } from "./infiltrationVictory.js"
+import { waitForCityNavigationReady } from "./infiltrationNavigation.js"
 
 export type InfiltrationSolverTickResult = "continue" | "cancelled" | "victory"
 
@@ -148,15 +149,24 @@ export function shutdownInfiltrationSolver(state: InfiltrationSolverState): void
   restoreDocumentKeyboard()
 }
 
-export function tickInfiltrationSolver(
+export async function tickInfiltrationSolver(
   ns: NS,
   state: InfiltrationSolverState
-): InfiltrationSolverTickResult {
+): Promise<InfiltrationSolverTickResult> {
   syncTrustedKeyInjection()
 
   if (isInfiltrationVictoryScreen()) {
+    if (state.victoryHandled) {
+      if (await waitForCityNavigationReady(ns)) {
+        restoreDocumentKeyboard()
+        return "victory"
+      }
+      syncTrustedKeyInjection()
+      return "continue"
+    }
+
     if (!state.victoryHandled) {
-      const reward = collectInfiltrationVictoryReward(ns)
+      const reward = await collectInfiltrationVictoryReward(ns)
       if (reward.ok) {
         state.victoryHandled = true
         setInfiltrationRunOutcome("victory")

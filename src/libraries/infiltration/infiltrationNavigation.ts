@@ -3,8 +3,12 @@ import {
   invokeStartInfiltration,
   invokeTrustedClick,
 } from "./infiltrationGameBridge.js"
+import type { NS } from "@ns"
 
 const SIDEBAR_CITY_PAGE = "City"
+const VICTORY_TITLE = "Infiltration successful!"
+const NAV_READY_POLL_MS = 200
+const DEFAULT_NAV_READY_TIMEOUT_MS = 15000
 const INFILTRATE_BUTTON = "Infiltrate Company"
 const START_BUTTON = "Start"
 const CANCEL_INTRO_BUTTON = "Cancel"
@@ -141,6 +145,42 @@ export function isInfiltrationActive(): boolean {
     }
   }
   return false
+}
+
+export function isCitySidebarAvailable(): boolean {
+  return findSidebarPageLink(SIDEBAR_CITY_PAGE) !== null
+}
+
+function isInfiltrationVictoryScreenVisible(): boolean {
+  for (const heading of Array.from(document.querySelectorAll("h4"))) {
+    if (normalizeText(heading.textContent ?? "") === VICTORY_TITLE) {
+      return true
+    }
+  }
+  return false
+}
+
+export function isInfiltrationUiBlockingNavigation(): boolean {
+  return isInfiltrationVictoryScreenVisible() || isInfiltrationActive() || isOnAnyInfiltrationIntro()
+}
+
+/** Wait for victory/infiltration UI to close and the City sidebar to be usable again. */
+export async function waitForCityNavigationReady(
+  ns: NS,
+  timeoutMs = DEFAULT_NAV_READY_TIMEOUT_MS
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+
+  while (Date.now() < deadline) {
+    if (!isInfiltrationUiBlockingNavigation() && isCitySidebarAvailable()) {
+      openCityPage()
+      await ns.sleep(NAV_READY_POLL_MS)
+      return isCitySidebarAvailable()
+    }
+    await ns.sleep(NAV_READY_POLL_MS)
+  }
+
+  return !isInfiltrationUiBlockingNavigation() && isCitySidebarAvailable()
 }
 
 export interface VisitInfiltrationDomResult {

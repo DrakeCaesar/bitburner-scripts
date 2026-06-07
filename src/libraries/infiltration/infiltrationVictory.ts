@@ -1,7 +1,9 @@
 import type { NS } from "@ns"
 import { findButtonByTextPrefix, invokeTrustedClick } from "./infiltrationGameBridge.js"
+import { waitForCityNavigationReady } from "./infiltrationNavigation.js"
 
 const VICTORY_TITLE = "Infiltration successful!"
+const VICTORY_REWARD_CONFIRM_DELAY_MS = 1000
 
 function normalizeText(text: string): string {
   return text.replace(/\s+/g, " ").trim()
@@ -109,26 +111,56 @@ function clickVictoryButton(prefix: string): { ok: boolean; detail: string } {
   return { ok: true, detail: prefix }
 }
 
-export function collectInfiltrationVictoryReward(ns: NS): { ok: boolean; detail: string } {
+async function confirmVictoryReward(
+  ns: NS,
+  detail: string
+): Promise<{ ok: boolean; detail: string }> {
+  if (!(await waitForCityNavigationReady(ns))) {
+    return { ok: false, detail: `${detail} (UI did not close)` }
+  }
+  return { ok: true, detail }
+}
+
+export async function collectInfiltrationVictoryReward(
+  ns: NS
+): Promise<{ ok: boolean; detail: string }> {
   if (!isInfiltrationVictoryScreen()) {
     return { ok: false, detail: "not on victory screen" }
   }
 
   const faction = getCurrentFactionWorkTarget(ns)
+  let rewardAction = "sell for money"
+  if (faction) {
+    invokeVictorySelectChange(faction)
+    const selected = getSelectedVictoryFaction()
+    if (selected === faction && selected !== "none") {
+      rewardAction = `trade for ${faction} reputation`
+    } else {
+      ns.print(
+        `Victory reward: faction work is ${faction}, dropdown shows "${selected || "none"}"; will sell for money`
+      )
+    }
+  } else {
+    ns.print("Victory reward: no faction work active; will sell for money")
+  }
+
+  ns.print(`Victory reward: confirming in ${VICTORY_REWARD_CONFIRM_DELAY_MS / 1000}s (${rewardAction})`)
+  await ns.sleep(VICTORY_REWARD_CONFIRM_DELAY_MS)
+
   if (faction) {
     invokeVictorySelectChange(faction)
     const selected = getSelectedVictoryFaction()
     if (selected === faction && selected !== "none") {
       const traded = clickVictoryButton("Trade for")
       if (traded.ok) {
-        return { ok: true, detail: `traded for ${faction} reputation` }
+        return confirmVictoryReward(ns, `traded for ${faction} reputation`)
       }
     }
   }
 
   const sold = clickVictoryButton("Sell for")
   if (sold.ok) {
-    return { ok: true, detail: "sold for money" }
+    return confirmVictoryReward(ns, "sold for money")
   }
   return sold
 }

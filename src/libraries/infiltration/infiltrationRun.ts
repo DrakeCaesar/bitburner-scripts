@@ -4,6 +4,7 @@ import {
   isInfiltrationActive,
   isOnInfiltrationIntro,
   visitInfiltrationTargetDom,
+  waitForCityNavigationReady,
 } from "./infiltrationNavigation.js"
 import type { InfiltrationTarget } from "./infiltrationTargets.js"
 import {
@@ -59,11 +60,32 @@ export async function runInfiltrationForTarget(
   const stepTimeoutMs = options.stepTimeoutMs ?? DEFAULT_STEP_TIMEOUT_MS
   const runTimeoutMs = options.runTimeoutMs ?? DEFAULT_RUN_TIMEOUT_MS
 
+  async function finishVictory(): Promise<InfiltrationRunOutcome> {
+    if (await waitForCityNavigationReady(ns)) {
+      return "victory"
+    }
+    ns.print(`ERROR: Victory UI did not close in time at ${target.name}`)
+    return "timeout"
+  }
+
+  if (!(await waitForCityNavigationReady(ns))) {
+    ns.print(`Waiting for infiltration UI to close before visiting ${target.name}...`)
+    if (!(await waitForCityNavigationReady(ns))) {
+      ns.print("ERROR: Infiltration UI still blocking navigation")
+      return "visit_failed"
+    }
+  }
+
   if (isInfiltrationActive()) {
     ns.print(`Infiltration already active; waiting for ${target.name}`)
   } else if (!(await travelToInfiltrationCity(ns, target.city))) {
     ns.print(`ERROR: travelToCity(${target.city}) failed`)
     return "travel_failed"
+  }
+
+  if (!(await waitForCityNavigationReady(ns, 5000))) {
+    ns.print(`Waiting for city UI after travel to ${target.city}...`)
+    await waitForCityNavigationReady(ns)
   }
 
   const visitDeadline = Date.now() + stepTimeoutMs
@@ -75,15 +97,14 @@ export async function runInfiltrationForTarget(
 
   async function waitTick(): Promise<InfiltrationRunOutcome | null> {
     if (solver) {
-      const solverResult = tickInfiltrationSolver(ns, solver)
+      const solverResult = await tickInfiltrationSolver(ns, solver)
       if (solverResult === "cancelled") {
         clearInfiltrationRunOutcome()
         ns.print(`Infiltration cancelled at ${target.name}`)
         return "cancelled"
       }
       if (solverResult === "victory") {
-        ns.print(`Victory at ${target.name}`)
-        return "victory"
+        return finishVictory()
       }
       await ns.sleep(getInfiltrationSolverPollMs(solver))
       return null
@@ -96,12 +117,12 @@ export async function runInfiltrationForTarget(
   while (Date.now() < runDeadline) {
     if (!solver && isInfiltrationVictoryScreen()) {
       if (!victoryHandled) {
-        const reward = collectInfiltrationVictoryReward(ns)
+        const reward = await collectInfiltrationVictoryReward(ns)
         if (reward.ok) {
           victoryHandled = true
           setInfiltrationRunOutcome("victory")
           ns.print(`Victory at ${target.name}: ${reward.detail}`)
-          return "victory"
+          return finishVictory()
         }
         ns.print(`Victory reward failed at ${target.name}: ${reward.detail}`)
       }
@@ -129,10 +150,11 @@ export async function runInfiltrationForTarget(
       if (sharedOutcome === "victory") {
         clearInfiltrationRunOutcome()
         ns.print(`Infiltration at ${target.name} complete`)
-        return "victory"
+        return finishVictory()
       }
-      ns.print(`Infiltration at ${target.name} complete`)
-      return "victory"
+      const tickOutcome = await waitTick()
+      if (tickOutcome) return tickOutcome
+      continue
     }
 
     if (!infiltrationStarted && Date.now() >= visitDeadline) {
@@ -171,6 +193,12 @@ export async function runInfiltrationForTarget(
     }
 
     if (!result.ok) {
+      if (result.step === "city sidebar missing") {
+        ns.print("City sidebar not ready yet; waiting...")
+        const tickOutcome = await waitTick()
+        if (tickOutcome) return tickOutcome
+        continue
+      }
       ns.print(`ERROR: ${result.step}${result.detail ? `: ${result.detail}` : ""}`)
       return "visit_failed"
     }
