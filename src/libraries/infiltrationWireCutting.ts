@@ -1,3 +1,5 @@
+import { isMinesweeperTask } from "./infiltrationMinesweeper.js"
+
 export type WireColorName = "RED" | "YELLOW" | "BLUE" | "WHITE"
 
 export interface WireCutQuestion {
@@ -39,6 +41,7 @@ function looksLikeWireGrid(cells: Element[]): boolean {
 export function isWireCuttingTaskRoot(taskRoot: Element): boolean {
   const title = taskRoot.querySelector("h4")?.textContent?.trim() ?? ""
   if (title === "Match the symbols!") return false
+  if (isMinesweeperTask(title)) return false
   if (isWireCuttingTask(title)) return true
 
   for (const paragraph of Array.from(taskRoot.querySelectorAll("p"))) {

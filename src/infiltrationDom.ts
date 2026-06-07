@@ -6,6 +6,7 @@ import {
   readInfiltrationDomState,
   updateInfiltrationDomView,
 } from "./libraries/infiltrationDom.js"
+import { clearRememberedMines } from "./libraries/infiltrationMinesweeper.js"
 import {
   pressInfiltrationKey,
   enableTrustedKeyInjection,
@@ -138,6 +139,7 @@ export async function main(ns: NS): Promise<void> {
 
       if (wasActive && !state.active) {
         clearInfiltrationKeyHandler()
+        clearRememberedMines()
         session = null
       }
       wasActive = state.active

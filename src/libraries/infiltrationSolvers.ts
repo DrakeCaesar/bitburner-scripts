@@ -3,6 +3,7 @@ import { arrowSymbolToKey, isEnterTheCodeTask } from "./infiltrationArrowCode.js
 import { isPositiveBribeWord, isSaySomethingNiceTask } from "./infiltrationBribeWords.js"
 import { isSlashTaskTitle } from "./infiltrationSlash.js"
 import { isWireCutRuleText, isWireCuttingTask } from "./infiltrationWireCutting.js"
+import { isMinesweeperTask } from "./infiltrationMinesweeper.js"
 
 const BRACKET_CLOSERS: Record<string, string> = {
   "(": ")",
@@ -44,8 +45,59 @@ export function solveInfiltrationTask(taskTitle: string, state: InfiltrationDomS
       if (isWireCuttingState(state, taskTitle)) {
         return solveWireCutting(state)
       }
+      if (isMinesweeperTask(taskTitle)) {
+        return solveMinesweeper(state)
+      }
       return null
   }
+}
+
+/** Navigate on a wrapping grid (matches MinesweeperModel cursor movement). */
+function mineNavigationKeys(fromIndex: number, toIndex: number, cols: number): string[] {
+  const rows = cols
+  const fromRow = Math.floor(fromIndex / cols)
+  const fromCol = fromIndex % cols
+  const toRow = Math.floor(toIndex / cols)
+  const toCol = toIndex % cols
+
+  let rowDelta = toRow - fromRow
+  if (Math.abs(rowDelta) > rows / 2) {
+    rowDelta = rowDelta > 0 ? rowDelta - rows : rowDelta + rows
+  }
+
+  let colDelta = toCol - fromCol
+  if (Math.abs(colDelta) > cols / 2) {
+    colDelta = colDelta > 0 ? colDelta - cols : colDelta + cols
+  }
+
+  const keys: string[] = []
+  for (let i = 0; i < Math.abs(rowDelta); i++) {
+    keys.push(rowDelta > 0 ? "ArrowDown" : "ArrowUp")
+  }
+  for (let i = 0; i < Math.abs(colDelta); i++) {
+    keys.push(colDelta > 0 ? "ArrowRight" : "ArrowLeft")
+  }
+  return keys
+}
+
+/** Navigate to every remaining mine and mark each with space. */
+function solveMinesweeper(state: InfiltrationDomState): string[] | null {
+  if (state.minesPhase !== "mark") return null
+  if (!state.mineRemaining?.length) return null
+
+  const cols = state.mineGridCols
+  if (!cols) return null
+
+  let cursor = state.mineCursorIndex ?? 0
+  const keys: string[] = []
+
+  for (const target of state.mineRemaining) {
+    keys.push(...mineNavigationKeys(cursor, target, cols))
+    keys.push(" ")
+    cursor = target
+  }
+
+  return keys
 }
 
 function isWireCuttingState(state: InfiltrationDomState, taskTitle: string): boolean {
@@ -182,6 +234,9 @@ function formatKeySequence(taskTitle: string, keys: string[]): string {
   if (isWireCuttingTask(taskTitle)) {
     return keys.join("")
   }
+  if (isMinesweeperTask(taskTitle)) {
+    return keys.map(abbreviateKey).join("")
+  }
   return keys.join("")
 }
 
@@ -217,6 +272,11 @@ export function formatSolverPreview(taskTitle: string, keys: string[] | null): s
 
   if (isWireCuttingTask(taskTitle)) {
     return `Solver: ${formatKeySequence(taskTitle, keys)} (${keys.length} wires)`
+  }
+
+  if (isMinesweeperTask(taskTitle)) {
+    const mineCount = keys.filter((key) => key === " ").length
+    return `Solver: ${formatKeySequence(taskTitle, keys)} (${mineCount} mines, ${keys.length} keys)`
   }
 
   return `Solver: ${formatKeySequence(taskTitle, keys)}`

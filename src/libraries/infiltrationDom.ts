@@ -15,6 +15,12 @@ import {
   isWireCuttingTaskRoot,
   parseWireCuttingState,
 } from "./infiltrationWireCutting.js"
+import {
+  formatMinesweeperPhaseLabel,
+  isMinesweeperTask,
+  parseMinesweeperState,
+  type MinesweeperPhase,
+} from "./infiltrationMinesweeper.js"
 
 export interface InfiltrationDomState {
   active: boolean
@@ -38,6 +44,12 @@ export interface InfiltrationDomState {
   slashStatus?: SlashPhase
   /** Wire cutting: 1-based wire numbers still to cut. */
   wireCutRemaining?: number[]
+  /** Minesweeper: remember or mark phase. */
+  minesPhase?: MinesweeperPhase
+  mineGridCols?: number
+  mineIndices?: number[]
+  mineRemaining?: number[]
+  mineCursorIndex?: number
 }
 
 export interface InfiltrationDomWindow {
@@ -133,6 +145,27 @@ function readBribeTask(
     taskTitle,
     assignmentLines: currentWord ? [currentWord] : [],
     assignmentMirrored: false,
+  }
+}
+
+function readMinesweeperTask(
+  taskRoot: Element
+): Pick<
+  InfiltrationDomState,
+  "taskTitle" | "assignmentLines" | "assignmentMirrored" | "minesPhase" | "mineGridCols" | "mineIndices" | "mineRemaining" | "mineCursorIndex"
+> {
+  const taskTitle = taskRoot.querySelector("h4")?.textContent?.trim() ?? ""
+  const parsed = parseMinesweeperState(taskRoot, taskTitle)
+
+  return {
+    taskTitle,
+    assignmentLines: [],
+    assignmentMirrored: false,
+    minesPhase: parsed?.phase,
+    mineGridCols: parsed?.cols,
+    mineIndices: parsed?.mineIndices,
+    mineRemaining: parsed?.remainingIndices,
+    mineCursorIndex: parsed?.cursorIndex,
   }
 }
 
@@ -260,6 +293,10 @@ function readTaskArea(taskRoot: Element | null | undefined): Pick<
   const taskTitle = taskRoot.querySelector("h4")?.textContent?.trim() ?? ""
   if (taskTitle === "Match the symbols!") {
     return readMatchSymbolsTask(taskRoot)
+  }
+
+  if (isMinesweeperTask(taskTitle)) {
+    return readMinesweeperTask(taskRoot)
   }
 
   if (isWireCuttingTaskRoot(taskRoot)) {
@@ -390,6 +427,22 @@ function formatStateText(state: InfiltrationDomState, extras?: InfiltrationDomVi
       lines.push("")
       lines.push(`Cut: ${state.wireCutRemaining.join(", ")}`)
     }
+  } else if (isMinesweeperTask(state.taskTitle)) {
+    lines.push(`Phase: ${formatMinesweeperPhaseLabel(state.minesPhase)}`)
+    if (state.mineGridCols) {
+      lines.push(`Grid: ${state.mineGridCols}x${state.mineGridCols}`)
+    }
+    if (state.minesPhase === "remember" && (state.mineIndices?.length ?? 0) > 0) {
+      lines.push(`Mines seen: ${state.mineIndices!.length}`)
+    }
+    if (state.minesPhase === "mark") {
+      if ((state.mineRemaining?.length ?? 0) > 0) {
+        lines.push(`Mark: ${state.mineRemaining!.length} remaining`)
+      }
+      if (state.mineCursorIndex !== undefined) {
+        lines.push(`Cursor: ${state.mineCursorIndex}`)
+      }
+    }
   } else if (state.assignmentLines.length > 0) {
     if (state.taskTitle === "Match the symbols!") {
       lines.push("Targets:")
@@ -508,6 +561,12 @@ export function getMinigamePhaseKey(state: InfiltrationDomState): string {
     return `${base}|${state.wireCutRemaining.join(",")}`
   }
 
+  if (isMinesweeperTask(title)) {
+    if (state.minesPhase !== "mark") return ""
+    if (!state.mineRemaining?.length) return ""
+    return `${base}|mark|${state.mineIndices?.join(",") ?? ""}`
+  }
+
   return base
 }
 
@@ -530,6 +589,14 @@ export function canSolveInfiltrationTask(state: InfiltrationDomState): boolean {
 
   if (isWireCuttingTask(title) || isWireCuttingTaskRootFromState(state)) {
     return (state.wireCutRemaining?.length ?? 0) > 0
+  }
+
+  if (isMinesweeperTask(title)) {
+    return (
+      state.minesPhase === "mark" &&
+      (state.mineRemaining?.length ?? 0) > 0 &&
+      (state.mineIndices?.length ?? 0) > 0
+    )
   }
 
   return state.assignmentLines.length > 0
