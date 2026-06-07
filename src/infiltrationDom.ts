@@ -20,6 +20,7 @@ import {
   formatSolverPreview,
   solveInfiltrationTask,
 } from "./libraries/infiltrationSolvers.js"
+import { isWireCuttingTask } from "./libraries/infiltrationWireCutting.js"
 
 const KEY_DELAY_MS = 50
 const BRACKET_KEY_DELAY_MS = 100
@@ -27,6 +28,7 @@ const POLL_MS = 100
 
 function getKeyDelayMs(taskTitle: string): number {
   if (taskTitle.includes("Close the bracket")) return BRACKET_KEY_DELAY_MS
+  if (isWireCuttingTask(taskTitle)) return 80
   return KEY_DELAY_MS
 }
 

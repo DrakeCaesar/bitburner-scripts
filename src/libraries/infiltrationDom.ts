@@ -9,6 +9,12 @@ import {
   SLASH_TASK_TITLE,
   type SlashPhase,
 } from "./infiltrationSlash.js"
+import {
+  isWireCutRuleText,
+  isWireCuttingTask,
+  isWireCuttingTaskRoot,
+  parseWireCuttingState,
+} from "./infiltrationWireCutting.js"
 
 export interface InfiltrationDomState {
   active: boolean
@@ -30,6 +36,8 @@ export interface InfiltrationDomState {
   codePressArrow?: string
   /** Slash the sentinel: current sentinel phase from status h4. */
   slashStatus?: SlashPhase
+  /** Wire cutting: 1-based wire numbers still to cut. */
+  wireCutRemaining?: number[]
 }
 
 export interface InfiltrationDomWindow {
@@ -125,6 +133,28 @@ function readBribeTask(
     taskTitle,
     assignmentLines: currentWord ? [currentWord] : [],
     assignmentMirrored: false,
+  }
+}
+
+function readWireCuttingTask(
+  taskRoot: Element
+): Pick<InfiltrationDomState, "taskTitle" | "assignmentLines" | "assignmentMirrored" | "wireCutRemaining"> {
+  const taskTitle = taskRoot.querySelector("h4")?.textContent?.trim() ?? ""
+  const parsed = parseWireCuttingState(taskRoot)
+  const assignmentLines: string[] = []
+
+  for (const paragraph of Array.from(taskRoot.querySelectorAll("p"))) {
+    const text = paragraph.textContent?.trim() ?? ""
+    if (isWireCutRuleText(text)) {
+      assignmentLines.push(text)
+    }
+  }
+
+  return {
+    taskTitle,
+    assignmentLines,
+    assignmentMirrored: false,
+    wireCutRemaining: parsed?.remainingWireNumbers,
   }
 }
 
@@ -227,14 +257,19 @@ function readTaskArea(taskRoot: Element | null | undefined): Pick<
     return { taskTitle: "", assignmentLines: [], assignmentMirrored: false }
   }
 
-  if (isSlashTaskRoot(taskRoot)) {
-    return readSlashTask(taskRoot)
-  }
-
   const taskTitle = taskRoot.querySelector("h4")?.textContent?.trim() ?? ""
   if (taskTitle === "Match the symbols!") {
     return readMatchSymbolsTask(taskRoot)
   }
+
+  if (isWireCuttingTaskRoot(taskRoot)) {
+    return readWireCuttingTask(taskRoot)
+  }
+
+  if (isSlashTaskRoot(taskRoot)) {
+    return readSlashTask(taskRoot)
+  }
+
   if (isSaySomethingNiceTask(taskTitle)) {
     return readBribeTask(taskRoot)
   }
@@ -346,6 +381,15 @@ function formatStateText(state: InfiltrationDomState, extras?: InfiltrationDomVi
     }
   } else if (isSlashTaskTitle(state.taskTitle)) {
     lines.push(`Sentinel: ${formatSlashStatusLabel(state.slashStatus)}`)
+  } else if (isWireCuttingTask(state.taskTitle) || isWireCuttingTaskRootFromState(state)) {
+    lines.push("Rules:")
+    for (const line of state.assignmentLines) {
+      lines.push(`  ${line}`)
+    }
+    if (state.wireCutRemaining && state.wireCutRemaining.length > 0) {
+      lines.push("")
+      lines.push(`Cut: ${state.wireCutRemaining.join(", ")}`)
+    }
   } else if (state.assignmentLines.length > 0) {
     if (state.taskTitle === "Match the symbols!") {
       lines.push("Targets:")
@@ -459,6 +503,11 @@ export function getMinigamePhaseKey(state: InfiltrationDomState): string {
     return `${base}|${state.slashStatus}`
   }
 
+  if (isWireCuttingTask(title) || isWireCuttingTaskRootFromState(state)) {
+    if (!state.wireCutRemaining?.length) return ""
+    return `${base}|${state.wireCutRemaining.join(",")}`
+  }
+
   return base
 }
 
@@ -479,7 +528,16 @@ export function canSolveInfiltrationTask(state: InfiltrationDomState): boolean {
     return state.slashStatus === "distracted"
   }
 
+  if (isWireCuttingTask(title) || isWireCuttingTaskRootFromState(state)) {
+    return (state.wireCutRemaining?.length ?? 0) > 0
+  }
+
   return state.assignmentLines.length > 0
+}
+
+function isWireCuttingTaskRootFromState(state: InfiltrationDomState): boolean {
+  if (isWireCuttingTask(state.taskTitle)) return true
+  return state.assignmentLines.some((line) => isWireCutRuleText(line))
 }
 
 /** Stable id for the current minigame (ignores cursor / in-progress typing). */

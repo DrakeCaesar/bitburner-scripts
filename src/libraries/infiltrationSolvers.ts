@@ -2,6 +2,7 @@ import type { InfiltrationDomState } from "./infiltrationDom.js"
 import { arrowSymbolToKey, isEnterTheCodeTask } from "./infiltrationArrowCode.js"
 import { isPositiveBribeWord, isSaySomethingNiceTask } from "./infiltrationBribeWords.js"
 import { isSlashTaskTitle } from "./infiltrationSlash.js"
+import { isWireCutRuleText, isWireCuttingTask } from "./infiltrationWireCutting.js"
 
 const BRACKET_CLOSERS: Record<string, string> = {
   "(": ")",
@@ -40,8 +41,22 @@ export function solveInfiltrationTask(taskTitle: string, state: InfiltrationDomS
       if (isSlashTaskTitle(taskTitle)) {
         return solveSlashTheSentinel(state)
       }
+      if (isWireCuttingState(state, taskTitle)) {
+        return solveWireCutting(state)
+      }
       return null
   }
+}
+
+function isWireCuttingState(state: InfiltrationDomState, taskTitle: string): boolean {
+  if (isWireCuttingTask(taskTitle)) return true
+  return state.assignmentLines.some((line) => isWireCutRuleText(line))
+}
+
+/** Press number keys for wires matching all rules. */
+function solveWireCutting(state: InfiltrationDomState): string[] | null {
+  if (!state.wireCutRemaining?.length) return null
+  return state.wireCutRemaining.map(String)
 }
 
 /** Press space when the sentinel is distracted. */
@@ -164,6 +179,9 @@ function formatKeySequence(taskTitle: string, keys: string[]): string {
   if (isSlashTaskTitle(taskTitle)) {
     return keys.map(abbreviateKey).join("")
   }
+  if (isWireCuttingTask(taskTitle)) {
+    return keys.join("")
+  }
   return keys.join("")
 }
 
@@ -195,6 +213,10 @@ export function formatSolverPreview(taskTitle: string, keys: string[] | null): s
 
   if (isSlashTaskTitle(taskTitle)) {
     return `Solver: attack (${formatKeySequence(taskTitle, keys)})`
+  }
+
+  if (isWireCuttingTask(taskTitle)) {
+    return `Solver: ${formatKeySequence(taskTitle, keys)} (${keys.length} wires)`
   }
 
   return `Solver: ${formatKeySequence(taskTitle, keys)}`
