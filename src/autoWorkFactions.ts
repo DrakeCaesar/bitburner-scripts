@@ -2,6 +2,7 @@ import { NS } from "@ns"
 import {
   buildFactionWorkRows,
   buildFactionWorkTableConfig,
+  filterWorkableFactions,
   gatherAugmentTargets,
   getTargetFavor,
   parseFactionWorkPriority,
@@ -62,7 +63,15 @@ export async function main(ns: NS) {
     }
 
     const targetFavor = getTargetFavor(ns)
-    const allTargets = gatherAugmentTargets(ns, player.factions)
+    const workableFactions = filterWorkableFactions(ns, player.factions)
+    const allTargets = gatherAugmentTargets(ns, workableFactions)
+    if (workableFactions.length === 0) {
+      ns.clearLog()
+      ns.print("ERROR: No factions with work available (e.g. Shadows of Anarchy only).")
+      await ns.sleep(CHECK_INTERVAL_MS)
+      continue
+    }
+
     const prioritized = prioritizeTargets(allTargets, targetFavor, priority)
     const bestTarget = prioritized[0]
 

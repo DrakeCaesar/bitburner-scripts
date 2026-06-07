@@ -55,6 +55,15 @@ export interface FactionWorkRow {
 const CYCLES_PER_SECOND = 1000 / 200
 const UNFOCUSED_FOCUS_MULT = 0.8
 
+/** Factions like Shadows of Anarchy have no hacking/field/security jobs. */
+export function factionOffersWork(ns: NS, faction: FactionName): boolean {
+  return ns.singularity.getFactionWorkTypes(faction).length > 0
+}
+
+export function filterWorkableFactions(ns: NS, factions: readonly FactionName[]): FactionName[] {
+  return factions.filter((faction) => factionOffersWork(ns, faction))
+}
+
 export interface WorkTargetEta {
   durationMs: number | null
   durationLabel: string
@@ -205,6 +214,8 @@ export function gatherAugmentTargets(ns: NS, playerFactions: readonly FactionNam
   const augmentsWithEnoughRep = new Set<string>()
 
   for (const faction of playerFactions) {
+    if (!factionOffersWork(ns, faction)) continue
+
     const augments = ns.singularity.getAugmentationsFromFaction(faction)
     const currentRep = ns.singularity.getFactionRep(faction)
 
@@ -218,6 +229,8 @@ export function gatherAugmentTargets(ns: NS, playerFactions: readonly FactionNam
   }
 
   for (const faction of playerFactions) {
+    if (!factionOffersWork(ns, faction)) continue
+
     const augments = ns.singularity.getAugmentationsFromFaction(faction)
     const currentRep = ns.singularity.getFactionRep(faction)
 
@@ -368,9 +381,30 @@ export function buildFactionWorkRows(
   const rows: FactionWorkRow[] = []
 
   for (const faction of playerFactions) {
-    const factionTargets = allTargets.filter((t) => t.faction === faction)
     const favor = ns.singularity.getFactionFavor(faction)
     const predictedFavor = favor + ns.singularity.getFactionFavorGain(faction)
+
+    if (!factionOffersWork(ns, faction)) {
+      rows.push({
+        faction,
+        mode: "idle",
+        job: "—",
+        augmentName: "—",
+        currentRep: ns.singularity.getFactionRep(faction),
+        requiredRep: 0,
+        repGap: 0,
+        favor,
+        predictedFavor,
+        favorGap: Math.max(0, targetFavor - predictedFavor),
+        targetEtaDuration: "—",
+        targetEtaAt: "—",
+        reason: "No faction work",
+        isSelected: false,
+      })
+      continue
+    }
+
+    const factionTargets = allTargets.filter((t) => t.faction === faction)
 
     if (factionTargets.length === 0) {
       const favorGap = Math.max(0, targetFavor - predictedFavor)

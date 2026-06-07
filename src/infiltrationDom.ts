@@ -22,6 +22,10 @@ import {
   solveInfiltrationTask,
 } from "./libraries/infiltrationSolvers.js"
 import { isWireCuttingTask } from "./libraries/infiltrationWireCutting.js"
+import {
+  collectInfiltrationVictoryReward,
+  isInfiltrationVictoryScreen,
+} from "./libraries/infiltrationVictory.js"
 
 const KEY_DELAY_MS = 50
 const BRACKET_KEY_DELAY_MS = 100
@@ -130,9 +134,23 @@ export async function main(ns: NS): Promise<void> {
 
   let session: SolveSession | null = null
   let wasActive = false
+  let victoryHandled = false
 
   while (true) {
     try {
+      if (isInfiltrationVictoryScreen()) {
+        if (!victoryHandled) {
+          const reward = collectInfiltrationVictoryReward(ns)
+          if (reward.ok) {
+            victoryHandled = true
+            ns.print(`Victory reward: ${reward.detail}`)
+          }
+        }
+        await ns.sleep(POLL_MS)
+        continue
+      }
+      victoryHandled = false
+
       const state = readInfiltrationDomState()
       const phaseKey = getMinigamePhaseKey(state)
       const canSolve = canSolveInfiltrationTask(state)
