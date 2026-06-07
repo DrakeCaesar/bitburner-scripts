@@ -80,6 +80,36 @@ export function getEasiestInfiltrationTarget(ns: NS): InfiltrationTarget | null 
   return targets[0] ?? null
 }
 
+/** Hardest non-blocked target (highest difficulty the game still allows). */
+export function getHardestInfiltrationTarget(ns: NS): InfiltrationTarget | null {
+  const targets = getAvailableInfiltrationTargets(ns)
+  return targets[targets.length - 1] ?? null
+}
+
+/** Available targets, hardest first. */
+export function getInfiltrationTargetsHardestFirst(ns: NS): InfiltrationTarget[] {
+  return [...getAvailableInfiltrationTargets(ns)].reverse()
+}
+
+export function getInfiltrationTargetByName(ns: NS, locationName: string): InfiltrationTarget | null {
+  const infiltration = getInfiltrationApi(ns)
+  if (!infiltration) return null
+
+  try {
+    const data = infiltration.getInfiltration(locationName)
+    return {
+      city: data.location.city as CityName,
+      name: data.location.name,
+      difficulty: data.difficulty,
+      rating: displayRating(data.difficulty),
+      tier: tierLabel(data.difficulty),
+      data,
+    }
+  } catch {
+    return null
+  }
+}
+
 /** All API-listed targets, including blocked ones. */
 export function getAllInfiltrationTargets(ns: NS): InfiltrationTarget[] {
   const infiltration = getInfiltrationApi(ns)
