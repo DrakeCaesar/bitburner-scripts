@@ -50,7 +50,7 @@ function describeSendState(
   if (session.nextKeyIndex >= session.pendingKeys.length) return "done"
   const nextKey = formatSentKeySequence(session.taskTitle, [session.pendingKeys[session.nextKeyIndex]])
   if (handlerMode === "missing") {
-    return `next ${nextKey} (${describeInfiltrationKeyInput()})`
+    return `waiting for handler (${describeInfiltrationKeyInput()})`
   }
   return `next ${nextKey} (${handlerMode})`
 }
@@ -165,10 +165,16 @@ export async function main(ns: NS): Promise<void> {
       updateInfiltrationDomView(infiltrationWindow.container, viewExtras)
 
       if (session && phaseKey && session.nextKeyIndex < session.pendingKeys.length) {
+        if (!isInfiltrationKeyInputReady()) {
+          await ns.sleep(POLL_MS)
+          continue
+        }
+
         const key = session.pendingKeys[session.nextKeyIndex]
-        pressInfiltrationKey(key)
-        session.sentKeys.push(key)
-        session.nextKeyIndex++
+        if (pressInfiltrationKey(key)) {
+          session.sentKeys.push(key)
+          session.nextKeyIndex++
+        }
 
         updateInfiltrationDomView(
           infiltrationWindow.container,

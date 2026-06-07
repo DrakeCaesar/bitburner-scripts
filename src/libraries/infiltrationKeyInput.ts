@@ -30,12 +30,8 @@ interface WindowWithPlayer extends Window {
 
 let trustedKeyInjectionEnabled = false
 let infiltrationKeyHandler: ((event: KeyboardEvent) => void) | null = null
-let cachedStageOnKey: ((event: KeyboardLikeEvent) => void) | null = null
-let cachedStageOnKeyAt = 0
 
 const CANCEL_LABEL = "Cancel Infiltration"
-const STAGE_ON_KEY_CACHE_MS = 250
-const STAGE_ON_KEY_MISS_CACHE_MS = 50
 
 function isInfiltrationUiActive(): boolean {
   const buttons = document.querySelectorAll("button")
@@ -55,6 +51,18 @@ function isOnInfiltrationPage(): boolean {
   for (let i = 0; i < headings.length; i++) {
     const text = headings[i].textContent?.trim() ?? ""
     if (text.startsWith("Infiltrating ")) {
+      return true
+    }
+    if (/^Level\s+\d+\s*\/\s*\d+$/i.test(text)) {
+      return true
+    }
+  }
+
+  // Intro screen uses "Cancel" before the minigame renames it.
+  const buttons = document.querySelectorAll("button")
+  for (let i = 0; i < buttons.length; i++) {
+    const label = buttons[i].textContent?.replace(/\s+/g, " ").trim() ?? ""
+    if (label === "Cancel" && buttons[i].closest(".MuiContainer-root")) {
       return true
     }
   }
@@ -122,6 +130,34 @@ function traverseFiber(
   )
 }
 
+function findStageInFiberAncestors(element: Element | null, seen: Set<ReactFiberNode>): InfiltrationStageLike | null {
+  let fiber = element ? getReactFiber(element) : null
+  while (fiber) {
+    const fromMemo = extractStageOnKey(fiber.memoizedProps)
+    if (fromMemo) return fromMemo
+
+    const fromPending = extractStageOnKey(fiber.pendingProps)
+    if (fromPending) return fromPending
+
+    const fromTree = traverseFiber(fiber.child, 0, 100, seen)
+    if (fromTree) return fromTree
+
+    fiber = fiber.return ?? null
+  }
+  return null
+}
+
+function findCancelButtonElement(): HTMLButtonElement | null {
+  const buttons = document.querySelectorAll("button")
+  for (let i = 0; i < buttons.length; i++) {
+    const label = buttons[i].textContent?.replace(/\s+/g, " ").trim() ?? ""
+    if (label.startsWith(CANCEL_LABEL) || label === "Cancel") {
+      return buttons[i]
+    }
+  }
+  return null
+}
+
 function getInfiltrationFiberRoots(): Element[] {
   const roots: Element[] = []
   const seen = new Set<Element>()
@@ -131,6 +167,8 @@ function getInfiltrationFiberRoots(): Element[] {
     seen.add(element)
     roots.push(element)
   }
+
+  add(findCancelButtonElement())
 
   add(document.getElementById("root"))
 
@@ -144,55 +182,64 @@ function getInfiltrationFiberRoots(): Element[] {
     add(papers[i])
   }
 
+  const grids = document.querySelectorAll("[style*='grid-template-columns']")
+  for (let i = 0; i < grids.length; i++) {
+    add(grids[i])
+  }
+
   const headings = document.querySelectorAll("h4, h5")
   for (let i = 0; i < headings.length; i++) {
     add(headings[i])
   }
 
-  const buttons = document.querySelectorAll("button")
-  for (let i = 0; i < buttons.length; i++) {
-    const label = buttons[i].textContent?.replace(/\s+/g, " ").trim() ?? ""
-    if (label.startsWith(CANCEL_LABEL)) {
-      add(buttons[i])
-      break
-    }
-  }
-
   return roots
 }
 
-function findStageOnKeyUncached(): ((event: KeyboardLikeEvent) => void) | null {
-  const win = window as WindowWithPlayer
-  const playerStage = win.Player?.infiltration?.stage
-  if (playerStage && typeof playerStage.onKey === "function") {
-    return (event) => playerStage.onKey(event)
+function getPlayerInfiltrationStage(): InfiltrationStageLike | null {
+  try {
+    const win = eval("window") as WindowWithPlayer
+    const stage = win.Player?.infiltration?.stage
+    if (stage && typeof stage.onKey === "function") {
+      return stage
+    }
+  } catch {
+    // ignore
   }
 
-  const seenFibers = new Set<ReactFiberNode>()
-  for (const root of getInfiltrationFiberRoots()) {
-    const stage = traverseFiber(getReactFiber(root), 0, 120, seenFibers)
-    if (stage) {
-      return (event) => stage.onKey(event)
-    }
+  const stage = (window as WindowWithPlayer).Player?.infiltration?.stage
+  if (stage && typeof stage.onKey === "function") {
+    return stage
   }
 
   return null
 }
 
-/** Call stage.onKey directly; bypasses InfiltrationRoot press() isTrusted check. */
-function findStageOnKey(): ((event: KeyboardLikeEvent) => void) | null {
-  const now = Date.now()
-  if (cachedStageOnKey) {
-    if (now - cachedStageOnKeyAt < STAGE_ON_KEY_CACHE_MS) {
-      return cachedStageOnKey
-    }
-  } else if (now - cachedStageOnKeyAt < STAGE_ON_KEY_MISS_CACHE_MS) {
-    return null
+function wrapStageOnKey(stage: InfiltrationStageLike): (event: KeyboardLikeEvent) => void {
+  return (event) => stage.onKey(event)
+}
+
+function findStageOnKeyUncached(): ((event: KeyboardLikeEvent) => void) | null {
+  const playerStage = getPlayerInfiltrationStage()
+  if (playerStage) {
+    return wrapStageOnKey(playerStage)
   }
 
-  cachedStageOnKey = findStageOnKeyUncached()
-  cachedStageOnKeyAt = now
-  return cachedStageOnKey
+  const seenFibers = new Set<ReactFiberNode>()
+
+  const cancelButton = findCancelButtonElement()
+  const fromCancel = findStageInFiberAncestors(cancelButton, seenFibers)
+  if (fromCancel) {
+    return wrapStageOnKey(fromCancel)
+  }
+
+  for (const root of getInfiltrationFiberRoots()) {
+    const stage = traverseFiber(getReactFiber(root), 0, 140, seenFibers)
+    if (stage) {
+      return wrapStageOnKey(stage)
+    }
+  }
+
+  return null
 }
 
 function markEventTrusted(event: KeyboardEvent): KeyboardEvent {
@@ -247,21 +294,27 @@ function createKeyboardEvent(key: string): KeyboardEvent {
   })
 }
 
-function deliverKeyboardEvent(key: string): void {
-  const stageOnKey = findStageOnKey()
+/** Returns true when a key path handled the event. */
+function deliverKeyboardEvent(key: string): boolean {
+  const stageOnKey = findStageOnKeyUncached()
   if (stageOnKey) {
     stageOnKey(createKeyboardLikeEvent(key))
-    return
+    return true
   }
 
   const event = upgradeUntrustedKeyboardEvent(markEventTrusted(createKeyboardEvent(key)))
 
   if (infiltrationKeyHandler) {
     infiltrationKeyHandler(event)
-    return
+    return true
   }
 
-  document.dispatchEvent(event)
+  if (isOnInfiltrationPage()) {
+    document.dispatchEvent(event)
+    return true
+  }
+
+  return false
 }
 
 /**
@@ -299,7 +352,9 @@ export function enableTrustedKeyInjection(): void {
       return
     }
 
-    infiltrationKeyHandler = callback as (event: KeyboardEvent) => void
+    if (isOnInfiltrationPage()) {
+      infiltrationKeyHandler = callback as (event: KeyboardEvent) => void
+    }
 
     const listener = callback as (event: KeyboardEvent) => void
     const wrapped = function (this: Document, event: Event) {
@@ -315,8 +370,6 @@ export function enableTrustedKeyInjection(): void {
 
 export function clearInfiltrationKeyHandler(): void {
   infiltrationKeyHandler = null
-  cachedStageOnKey = null
-  cachedStageOnKeyAt = 0
 }
 
 export function disableTrustedKeyInjection(): void {
@@ -333,8 +386,6 @@ export function disableTrustedKeyInjection(): void {
 
   trustedKeyInjectionEnabled = false
   infiltrationKeyHandler = null
-  cachedStageOnKey = null
-  cachedStageOnKeyAt = 0
 }
 
 export function isTrustedKeyInjectionEnabled(): boolean {
@@ -346,15 +397,15 @@ export function hasInfiltrationKeyHandler(): boolean {
 }
 
 export function hasInfiltrationStageOnKey(): boolean {
-  return findStageOnKey() !== null
+  return findStageOnKeyUncached() !== null
 }
 
 export function isInfiltrationKeyInputReady(): boolean {
-  return findStageOnKey() !== null || infiltrationKeyHandler !== null
+  return findStageOnKeyUncached() !== null || infiltrationKeyHandler !== null
 }
 
 export function getInfiltrationKeyInputMode(): string {
-  if (findStageOnKey()) return "stage"
+  if (findStageOnKeyUncached()) return "stage"
   if (infiltrationKeyHandler) return "handler"
   return "missing"
 }
@@ -390,7 +441,7 @@ function resolveKeyEvent(key: string): { key: string; code: string; keyCode: num
   }
 }
 
-/** Send a keydown to the infiltration minigame. */
-export function pressInfiltrationKey(key: string): void {
-  deliverKeyboardEvent(key)
+/** Send a keydown to the infiltration minigame. Returns true if a path handled it. */
+export function pressInfiltrationKey(key: string): boolean {
+  return deliverKeyboardEvent(key)
 }

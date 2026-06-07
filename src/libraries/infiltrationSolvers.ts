@@ -1,4 +1,7 @@
 import type { InfiltrationDomState } from "./infiltrationDom.js"
+import { arrowSymbolToKey, isEnterTheCodeTask } from "./infiltrationArrowCode.js"
+import { isPositiveBribeWord, isSaySomethingNiceTask } from "./infiltrationBribeWords.js"
+import { isSlashTaskTitle } from "./infiltrationSlash.js"
 
 const BRACKET_CLOSERS: Record<string, string> = {
   "(": ")",
@@ -21,9 +24,45 @@ export function solveInfiltrationTask(taskTitle: string, state: InfiltrationDomS
     case "Type it backward":
       return solveTypeItBackward(assignment)
 
+    case "Enter the Code!":
+      return solveEnterTheCode(state.codePressArrow ?? "")
+
+    case "Slash the sentinel":
+      return solveSlashTheSentinel(state)
+
     default:
+      if (isSaySomethingNiceTask(taskTitle)) {
+        return solveSaySomethingNice(state.assignmentLines[0] ?? "")
+      }
+      if (isEnterTheCodeTask(taskTitle)) {
+        return solveEnterTheCode(state.codePressArrow ?? "")
+      }
+      if (isSlashTaskTitle(taskTitle)) {
+        return solveSlashTheSentinel(state)
+      }
       return null
   }
+}
+
+/** Press space when the sentinel is distracted. */
+function solveSlashTheSentinel(state: InfiltrationDomState): string[] | null {
+  if (state.slashStatus !== "distracted") return null
+  return [" "]
+}
+
+/** Press the current bright arrow. One key per solve pass. */
+function solveEnterTheCode(pressArrow: string): string[] | null {
+  const key = arrowSymbolToKey(pressArrow.trim())
+  if (!key) return null
+  return [key]
+}
+
+/** Scroll up until a positive word is shown, then confirm with space. One key per solve pass. */
+function solveSaySomethingNice(currentWord: string): string[] | null {
+  const word = currentWord.trim().toLowerCase()
+  if (!word) return null
+  if (isPositiveBribeWord(word)) return [" "]
+  return ["ArrowUp"]
 }
 
 /** Enter matching closers for each opener, right to left. */
@@ -116,6 +155,15 @@ function formatKeySequence(taskTitle: string, keys: string[]): string {
   if (taskTitle === "Match the symbols!" || taskTitle.includes("Match the symbols")) {
     return keys.map(abbreviateKey).join("")
   }
+  if (isSaySomethingNiceTask(taskTitle)) {
+    return keys.map(abbreviateKey).join("")
+  }
+  if (isEnterTheCodeTask(taskTitle)) {
+    return keys.map(abbreviateKey).join("")
+  }
+  if (isSlashTaskTitle(taskTitle)) {
+    return keys.map(abbreviateKey).join("")
+  }
   return keys.join("")
 }
 
@@ -134,6 +182,19 @@ export function formatSolverPreview(taskTitle: string, keys: string[] | null): s
 
   if (taskTitle === "Match the symbols!") {
     return `Solver: ${formatKeySequence(taskTitle, keys)} (${keys.length} keys)`
+  }
+
+  if (isSaySomethingNiceTask(taskTitle)) {
+    const action = keys[0] === " " ? "confirm" : "scroll up"
+    return `Solver: ${action} (${formatKeySequence(taskTitle, keys)})`
+  }
+
+  if (isEnterTheCodeTask(taskTitle)) {
+    return `Solver: ${formatKeySequence(taskTitle, keys)}`
+  }
+
+  if (isSlashTaskTitle(taskTitle)) {
+    return `Solver: attack (${formatKeySequence(taskTitle, keys)})`
   }
 
   return `Solver: ${formatKeySequence(taskTitle, keys)}`

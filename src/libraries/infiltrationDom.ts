@@ -1,4 +1,14 @@
 import { createStandardContainer, FloatingWindow } from "./floatingWindow.js"
+import { isEnterTheCodeTask, parseEnterTheCodeState } from "./infiltrationArrowCode.js"
+import { isSaySomethingNiceTask } from "./infiltrationBribeWords.js"
+import {
+  formatSlashStatusLabel,
+  isSlashTaskRoot,
+  isSlashTaskTitle,
+  parseSlashStatus,
+  SLASH_TASK_TITLE,
+  type SlashPhase,
+} from "./infiltrationSlash.js"
 
 export interface InfiltrationDomState {
   active: boolean
@@ -16,6 +26,10 @@ export interface InfiltrationDomState {
   symbolGrid?: string[]
   /** Match the symbols: index of the highlighted grid cell. */
   symbolCursorIndex?: number
+  /** Enter the Code: bright arrow to press (dimmed ones are already entered). */
+  codePressArrow?: string
+  /** Slash the sentinel: current sentinel phase from status h4. */
+  slashStatus?: SlashPhase
 }
 
 export interface InfiltrationDomWindow {
@@ -77,6 +91,60 @@ function readProgressPercent(progressRoot: Element | null | undefined): number |
 
 function normalizeSymbolText(text: string): string {
   return text.replace(/\u00a0/g, " ").trim().toUpperCase()
+}
+
+function readCheatCodeTask(
+  taskRoot: Element
+): Pick<InfiltrationDomState, "taskTitle" | "assignmentLines" | "assignmentMirrored" | "codePressArrow"> {
+  const taskTitle = taskRoot.querySelector("h4")?.textContent?.trim() ?? ""
+  const { revealed, pressArrow } = parseEnterTheCodeState(taskRoot)
+
+  return {
+    taskTitle,
+    assignmentLines: revealed,
+    assignmentMirrored: false,
+    codePressArrow: pressArrow ?? undefined,
+  }
+}
+
+function readBribeTask(
+  taskRoot: Element
+): Pick<InfiltrationDomState, "taskTitle" | "assignmentLines" | "assignmentMirrored"> {
+  const taskTitle = taskRoot.querySelector("h4")?.textContent?.trim() ?? ""
+  const arrowLabels = new Set(["↑", "↓", "←", "→"])
+
+  let currentWord = ""
+  for (const h5 of Array.from(taskRoot.querySelectorAll("h5"))) {
+    const text = h5.textContent?.trim() ?? ""
+    if (!text || arrowLabels.has(text)) continue
+    currentWord = text.toLowerCase()
+    break
+  }
+
+  return {
+    taskTitle,
+    assignmentLines: currentWord ? [currentWord] : [],
+    assignmentMirrored: false,
+  }
+}
+
+function readSlashTask(
+  taskRoot: Element
+): Pick<InfiltrationDomState, "taskTitle" | "assignmentLines" | "assignmentMirrored" | "slashStatus"> {
+  const assignmentLines: string[] = []
+
+  for (const paragraph of Array.from(taskRoot.querySelectorAll("p"))) {
+    const text = paragraph.textContent?.trim() ?? ""
+    if (!text) continue
+    assignmentLines.push(text)
+  }
+
+  return {
+    taskTitle: SLASH_TASK_TITLE,
+    assignmentLines,
+    assignmentMirrored: false,
+    slashStatus: parseSlashStatus(taskRoot) ?? undefined,
+  }
 }
 
 function readMatchSymbolsTask(
@@ -159,9 +227,19 @@ function readTaskArea(taskRoot: Element | null | undefined): Pick<
     return { taskTitle: "", assignmentLines: [], assignmentMirrored: false }
   }
 
+  if (isSlashTaskRoot(taskRoot)) {
+    return readSlashTask(taskRoot)
+  }
+
   const taskTitle = taskRoot.querySelector("h4")?.textContent?.trim() ?? ""
   if (taskTitle === "Match the symbols!") {
     return readMatchSymbolsTask(taskRoot)
+  }
+  if (isSaySomethingNiceTask(taskTitle)) {
+    return readBribeTask(taskRoot)
+  }
+  if (isEnterTheCodeTask(taskTitle)) {
+    return readCheatCodeTask(taskRoot)
   }
 
   const assignmentLines: string[] = []
@@ -249,7 +327,26 @@ function formatStateText(state: InfiltrationDomState, extras?: InfiltrationDomVi
     lines.push(`Task: ${state.taskTitle}`)
   }
 
-  if (state.assignmentLines.length > 0) {
+  if (isEnterTheCodeTask(state.taskTitle)) {
+    lines.push("Code (revealed):")
+    if (state.assignmentLines.length > 0) {
+      lines.push(`  ${state.assignmentLines.join(" ")}`)
+    } else {
+      lines.push("  (waiting...)")
+    }
+    if (state.codePressArrow) {
+      lines.push(`  Next: ${state.codePressArrow}`)
+    }
+  } else if (isSaySomethingNiceTask(state.taskTitle)) {
+    lines.push("Current word:")
+    if (state.assignmentLines.length > 0) {
+      lines.push(`  ${state.assignmentLines[0]}`)
+    } else {
+      lines.push("  (waiting...)")
+    }
+  } else if (isSlashTaskTitle(state.taskTitle)) {
+    lines.push(`Sentinel: ${formatSlashStatusLabel(state.slashStatus)}`)
+  } else if (state.assignmentLines.length > 0) {
     if (state.taskTitle === "Match the symbols!") {
       lines.push("Targets:")
       for (const target of state.assignmentLines) {
@@ -345,7 +442,24 @@ export function getMinigamePhaseKey(state: InfiltrationDomState): string {
   const title = state.taskTitle.trim()
   if (title === "Get Ready!") return ""
 
-  return `${state.levelText}|${title}`
+  const base = `${state.levelText}|${title}`
+  if (isSaySomethingNiceTask(title)) {
+    const word = state.assignmentLines[0]?.trim().toLowerCase() ?? ""
+    if (!word) return ""
+    return `${base}|${word}`
+  }
+
+  if (isEnterTheCodeTask(title)) {
+    if (!state.codePressArrow) return ""
+    return `${base}|${state.assignmentLines.length}|${state.codePressArrow}`
+  }
+
+  if (isSlashTaskTitle(title)) {
+    if (!state.slashStatus) return ""
+    return `${base}|${state.slashStatus}`
+  }
+
+  return base
 }
 
 /** True when the DOM has enough data to compute a solution. */
@@ -355,6 +469,14 @@ export function canSolveInfiltrationTask(state: InfiltrationDomState): boolean {
 
   if (title === "Match the symbols!") {
     return (state.symbolTargets?.length ?? 0) > 0 && (state.symbolGrid?.length ?? 0) > 0
+  }
+
+  if (isEnterTheCodeTask(title)) {
+    return !!state.codePressArrow
+  }
+
+  if (isSlashTaskTitle(title)) {
+    return state.slashStatus === "distracted"
   }
 
   return state.assignmentLines.length > 0
