@@ -32,5 +32,8 @@ export async function main(ns: NS): Promise<void> {
     return
   }
 
-  await runInfiltrationForTarget(ns, target)
+  const outcome = await runInfiltrationForTarget(ns, target)
+  if (outcome === "cancelled") {
+    ns.print("Infiltration cancelled.")
+  }
 }

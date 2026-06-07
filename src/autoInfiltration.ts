@@ -89,6 +89,9 @@ export async function main(ns: NS): Promise<void> {
       case "victory":
         ns.print(`Done: ${target.name}. Picking next target.`)
         break
+      case "cancelled":
+        ns.print("Infiltration cancelled. Stopping auto script.")
+        return
       case "travel_failed":
         ns.print(`Travel failed for ${target.city}. Retrying next cycle.`)
         break

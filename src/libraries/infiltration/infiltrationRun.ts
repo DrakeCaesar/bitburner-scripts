@@ -10,12 +10,22 @@ import {
   collectInfiltrationVictoryReward,
   isInfiltrationVictoryScreen,
 } from "./infiltrationVictory.js"
+import {
+  clearInfiltrationRunOutcome,
+  peekInfiltrationRunOutcome,
+  setInfiltrationRunOutcome,
+} from "./infiltrationRunState.js"
 
 const POLL_MS = 200
 const DEFAULT_STEP_TIMEOUT_MS = 15000
 const DEFAULT_RUN_TIMEOUT_MS = 600000
 
-export type InfiltrationRunOutcome = "victory" | "timeout" | "visit_failed" | "travel_failed"
+export type InfiltrationRunOutcome =
+  | "victory"
+  | "cancelled"
+  | "timeout"
+  | "visit_failed"
+  | "travel_failed"
 
 export interface InfiltrationRunOptions {
   stepTimeoutMs?: number
@@ -62,6 +72,7 @@ export async function runInfiltrationForTarget(
         const reward = collectInfiltrationVictoryReward(ns)
         if (reward.ok) {
           victoryHandled = true
+          setInfiltrationRunOutcome("victory")
           ns.print(`Victory at ${target.name}: ${reward.detail}`)
           return "victory"
         }
@@ -78,6 +89,17 @@ export async function runInfiltrationForTarget(
     }
 
     if (infiltrationStarted && !isInfiltrationActive() && !isInfiltrationVictoryScreen()) {
+      const sharedOutcome = peekInfiltrationRunOutcome()
+      if (sharedOutcome === "cancelled") {
+        clearInfiltrationRunOutcome()
+        ns.print(`Infiltration cancelled at ${target.name}`)
+        return "cancelled"
+      }
+      if (sharedOutcome === "victory") {
+        clearInfiltrationRunOutcome()
+        ns.print(`Infiltration at ${target.name} complete`)
+        return "victory"
+      }
       ns.print(`Infiltration at ${target.name} complete`)
       return "victory"
     }
