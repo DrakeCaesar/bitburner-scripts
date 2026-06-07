@@ -64,19 +64,6 @@ export function filterWorkableFactions(ns: NS, factions: readonly FactionName[])
   return factions.filter((faction) => factionOffersWork(ns, faction))
 }
 
-/** Best faction target from the same planning logic as autoWorkFactions.js. */
-export function getPlannedFactionWorkTarget(
-  ns: NS,
-  priority: FactionWorkPriority = "favor"
-): FactionName | null {
-  const player = ns.getPlayer()
-  const workable = filterWorkableFactions(ns, player.factions)
-  if (workable.length === 0) return null
-
-  const targets = gatherAugmentTargets(ns, workable)
-  return prioritizeTargets(targets, getTargetFavor(ns), priority)[0]?.faction ?? null
-}
-
 export interface WorkTargetEta {
   durationMs: number | null
   durationLabel: string
