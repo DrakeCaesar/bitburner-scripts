@@ -7,8 +7,6 @@ const BRACKET_CLOSERS: Record<string, string> = {
   "<": ">",
 }
 
-const SYMBOL_GRID_COLS = 5
-
 /** Return keypress sequence for the current minigame, or null if unsupported. */
 export function solveInfiltrationTask(taskTitle: string, state: InfiltrationDomState): string[] | null {
   const assignment = state.assignmentLines.join("")
@@ -48,10 +46,19 @@ function solveTypeItBackward(text: string): string[] | null {
   return [...text].reverse()
 }
 
+function symbolGridCols(cellCount: number): number | null {
+  const cols = Math.round(Math.sqrt(cellCount))
+  if (cols <= 0 || cols * cols !== cellCount) return null
+  return cols
+}
+
 /** Move cursor to each target cell in order, then confirm with space. */
 function solveMatchTheSymbols(state: InfiltrationDomState): string[] | null {
   const { symbolTargets, symbolGrid, symbolCursorIndex } = state
   if (!symbolTargets?.length || !symbolGrid?.length) return null
+
+  const cols = symbolGridCols(symbolGrid.length)
+  if (!cols) return null
 
   const keys: string[] = []
   let pos = symbolCursorIndex ?? 0
@@ -60,7 +67,7 @@ function solveMatchTheSymbols(state: InfiltrationDomState): string[] | null {
     const targetIndex = symbolGrid.findIndex((cell) => cell === target)
     if (targetIndex < 0) continue
 
-    keys.push(...navigationKeys(pos, targetIndex, SYMBOL_GRID_COLS))
+    keys.push(...navigationKeys(pos, targetIndex, cols))
     keys.push(" ")
     pos = targetIndex
   }
@@ -105,6 +112,17 @@ function abbreviateKey(key: string): string {
   }
 }
 
+function formatKeySequence(taskTitle: string, keys: string[]): string {
+  if (taskTitle === "Match the symbols!" || taskTitle.includes("Match the symbols")) {
+    return keys.map(abbreviateKey).join("")
+  }
+  return keys.join("")
+}
+
+export function formatSentKeySequence(taskTitle: string, keys: string[]): string {
+  return formatKeySequence(taskTitle, keys)
+}
+
 /** Human-readable preview of the planned key sequence. */
 export function formatSolverPreview(taskTitle: string, keys: string[] | null): string {
   if (keys === null) {
@@ -115,8 +133,8 @@ export function formatSolverPreview(taskTitle: string, keys: string[] | null): s
   }
 
   if (taskTitle === "Match the symbols!") {
-    return `Solver: ${keys.map(abbreviateKey).join("")} (${keys.length} keys)`
+    return `Solver: ${formatKeySequence(taskTitle, keys)} (${keys.length} keys)`
   }
 
-  return `Solver: ${keys.join("")}`
+  return `Solver: ${formatKeySequence(taskTitle, keys)}`
 }

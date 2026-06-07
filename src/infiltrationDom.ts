@@ -1,7 +1,8 @@
 import { NS } from "@ns"
 import {
+  canSolveInfiltrationTask,
   createInfiltrationDomWindow,
-  getMinigameIdentityKey,
+  getMinigamePhaseKey,
   readInfiltrationDomState,
   updateInfiltrationDomView,
 } from "./libraries/infiltrationDom.js"
@@ -10,16 +11,77 @@ import {
   enableTrustedKeyInjection,
   disableTrustedKeyInjection,
   clearInfiltrationKeyHandler,
+  isInfiltrationKeyInputReady,
+  getInfiltrationKeyInputMode,
+  describeInfiltrationKeyInput,
 } from "./libraries/infiltrationKeyInput.js"
-import { formatSolverPreview, solveInfiltrationTask } from "./libraries/infiltrationSolvers.js"
+import {
+  formatSentKeySequence,
+  formatSolverPreview,
+  solveInfiltrationTask,
+} from "./libraries/infiltrationSolvers.js"
 
 const KEY_DELAY_MS = 50
 const BRACKET_KEY_DELAY_MS = 100
 const POLL_MS = 100
 
 function getKeyDelayMs(taskTitle: string): number {
-  if (taskTitle === "Close the brackets") return BRACKET_KEY_DELAY_MS
+  if (taskTitle.includes("Close the bracket")) return BRACKET_KEY_DELAY_MS
   return KEY_DELAY_MS
+}
+
+interface SolveSession {
+  phaseKey: string
+  taskTitle: string
+  pendingKeys: string[]
+  sentKeys: string[]
+  nextKeyIndex: number
+}
+
+function describeSendState(
+  phaseKey: string,
+  session: SolveSession | null,
+  canSolve: boolean,
+  handlerMode: string
+): string {
+  if (!phaseKey) return "waiting for task"
+  if (!canSolve) return "waiting for assignment"
+  if (!session) return "waiting for solve"
+  if (session.nextKeyIndex >= session.pendingKeys.length) return "done"
+  const nextKey = formatSentKeySequence(session.taskTitle, [session.pendingKeys[session.nextKeyIndex]])
+  if (handlerMode === "missing") {
+    return `next ${nextKey} (${describeInfiltrationKeyInput()})`
+  }
+  return `next ${nextKey} (${handlerMode})`
+}
+
+function buildViewExtras(
+  state: ReturnType<typeof readInfiltrationDomState>,
+  phaseKey: string,
+  session: SolveSession | null,
+  canSolve: boolean
+) {
+  const handlerReady = isInfiltrationKeyInputReady()
+  const handlerMode = getInfiltrationKeyInputMode()
+  const pendingKeys = session?.pendingKeys ?? []
+  const sentKeys = session?.sentKeys ?? []
+
+  return {
+    solverPreview: phaseKey
+      ? formatSolverPreview(state.taskTitle, session?.pendingKeys ?? null)
+      : undefined,
+    sendStatus: phaseKey
+      ? {
+          sentKeys,
+          totalKeys: pendingKeys.length,
+          handlerReady,
+          handlerMode,
+          handlerDetail: handlerReady ? undefined : describeInfiltrationKeyInput(),
+          sendState: describeSendState(phaseKey, session, canSolve, handlerMode),
+        }
+      : undefined,
+    formatSentKeys: (keys: string[]) => formatSentKeySequence(state.taskTitle, keys),
+  }
 }
 
 export async function main(ns: NS): Promise<void> {
@@ -63,55 +125,56 @@ export async function main(ns: NS): Promise<void> {
 
   const infiltrationWindow = createInfiltrationDomWindow(primaryColor, position ?? undefined, isCollapsed)
 
-  let lastIdentityKey = ""
-  let pendingKeys: string[] = []
-  let lastSolved: string[] | null = null
-  let currentTaskTitle = ""
-  let nextKeyIndex = 0
+  let session: SolveSession | null = null
   let wasActive = false
 
   while (true) {
     try {
       const state = readInfiltrationDomState()
-      const identityKey = getMinigameIdentityKey(state)
+      const phaseKey = getMinigamePhaseKey(state)
+      const canSolve = canSolveInfiltrationTask(state)
 
       if (wasActive && !state.active) {
         clearInfiltrationKeyHandler()
-        lastIdentityKey = ""
-        pendingKeys = []
-        lastSolved = null
-        nextKeyIndex = 0
+        session = null
       }
       wasActive = state.active
 
-      if (!identityKey && lastIdentityKey) {
-        lastIdentityKey = ""
-        pendingKeys = []
-        lastSolved = null
-        nextKeyIndex = 0
+      if (!phaseKey) {
+        session = null
+      } else if (!session || session.phaseKey !== phaseKey) {
+        if (canSolve) {
+          const solved = solveInfiltrationTask(state.taskTitle, state)
+          if (solved?.length) {
+            session = {
+              phaseKey,
+              taskTitle: state.taskTitle,
+              pendingKeys: solved,
+              sentKeys: [],
+              nextKeyIndex: 0,
+            }
+          } else {
+            session = null
+          }
+        } else {
+          session = null
+        }
       }
 
-      if (identityKey && identityKey !== lastIdentityKey) {
-        lastIdentityKey = identityKey
-        nextKeyIndex = 0
-        currentTaskTitle = state.taskTitle
-        lastSolved = solveInfiltrationTask(state.taskTitle, state)
-        pendingKeys = lastSolved ?? []
-      }
+      const viewExtras = buildViewExtras(state, phaseKey, session, canSolve)
+      updateInfiltrationDomView(infiltrationWindow.container, viewExtras)
 
-      const solverPreview = state.active ? formatSolverPreview(state.taskTitle, lastSolved) : undefined
+      if (session && phaseKey && session.nextKeyIndex < session.pendingKeys.length) {
+        const key = session.pendingKeys[session.nextKeyIndex]
+        pressInfiltrationKey(key)
+        session.sentKeys.push(key)
+        session.nextKeyIndex++
 
-      updateInfiltrationDomView(infiltrationWindow.container, solverPreview)
-
-      if (!identityKey) {
-        await ns.sleep(POLL_MS)
-        continue
-      }
-
-      if (state.active && nextKeyIndex < pendingKeys.length) {
-        pressInfiltrationKey(pendingKeys[nextKeyIndex])
-        nextKeyIndex++
-        await ns.sleep(getKeyDelayMs(currentTaskTitle))
+        updateInfiltrationDomView(
+          infiltrationWindow.container,
+          buildViewExtras(state, phaseKey, session, canSolve)
+        )
+        await ns.sleep(getKeyDelayMs(session.taskTitle))
         continue
       }
     } catch (err) {

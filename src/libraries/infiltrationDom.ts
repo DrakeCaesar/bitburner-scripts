@@ -90,7 +90,22 @@ function readMatchSymbolsTask(
 
   for (const span of Array.from(taskRoot.querySelectorAll("h5 span"))) {
     const text = normalizeSymbolText(span.textContent ?? "")
-    if (text) symbolTargets.push(text)
+    if (/^[0-9A-F]{2}$/.test(text)) {
+      symbolTargets.push(text)
+    }
+  }
+
+  if (symbolTargets.length === 0) {
+    const h5 = taskRoot.querySelector("h5")
+    if (h5) {
+      const raw = (h5.textContent ?? "").replace(/^Targets:\s*/i, "")
+      for (const part of raw.split(/\s+/)) {
+        const text = normalizeSymbolText(part)
+        if (/^[0-9A-F]{2}$/.test(text)) {
+          symbolTargets.push(text)
+        }
+      }
+    }
   }
 
   const gridRoot = taskRoot.querySelector("div[class*='MuiBox-root']")
@@ -211,7 +226,7 @@ export function readInfiltrationDomState(): InfiltrationDomState {
   }
 }
 
-function formatStateText(state: InfiltrationDomState, solverPreview?: string): string {
+function formatStateText(state: InfiltrationDomState, extras?: InfiltrationDomViewExtras): string {
   if (!state.active) {
     return "Not infiltrating.\n\nRun this script, then start infiltration.\nIf keys fail, cancel and restart the run\n(after this script is already running).\n"
   }
@@ -257,12 +272,40 @@ function formatStateText(state: InfiltrationDomState, solverPreview?: string): s
     lines.push("Assignment: (waiting for task...)")
   }
 
-  if (solverPreview) {
+  if (extras?.solverPreview) {
     lines.push("")
-    lines.push(solverPreview)
+    lines.push(extras.solverPreview)
+  }
+
+  if (extras?.sendStatus) {
+    const { sentKeys, totalKeys, handlerReady, handlerMode, handlerDetail, sendState } = extras.sendStatus
+    lines.push("")
+    lines.push(`Keys sent: ${sentKeys.length}/${totalKeys}`)
+    if (sentKeys.length > 0) {
+      lines.push(`Sent: ${extras.formatSentKeys(sentKeys)}`)
+    } else {
+      lines.push("Sent: (none yet)")
+    }
+    lines.push(`Handler: ${handlerReady ? handlerMode : (handlerDetail ?? "missing")}`)
+    lines.push(`Send: ${sendState}`)
   }
 
   return lines.join("\n")
+}
+
+export interface InfiltrationSendStatus {
+  sentKeys: string[]
+  totalKeys: number
+  handlerReady: boolean
+  handlerMode: string
+  handlerDetail?: string
+  sendState: string
+}
+
+export interface InfiltrationDomViewExtras {
+  solverPreview?: string
+  sendStatus?: InfiltrationSendStatus
+  formatSentKeys: (keys: string[]) => string
 }
 
 export function createInfiltrationDomWindow(
@@ -271,6 +314,7 @@ export function createInfiltrationDomWindow(
   isCollapsed?: boolean
 ): InfiltrationDomWindow {
   const container = createStandardContainer(primaryColor)
+  container.style.maxHeight = "480px"
   container.textContent = formatStateText(readInfiltrationDomState())
 
   const window = new FloatingWindow({
@@ -280,7 +324,7 @@ export function createInfiltrationDomWindow(
     x: position?.x ?? 1050,
     y: position?.y ?? 50,
     width: 420,
-    height: 280,
+    height: 520,
   })
 
   if (isCollapsed) {
@@ -290,8 +334,30 @@ export function createInfiltrationDomWindow(
   return { window, container }
 }
 
-export function updateInfiltrationDomView(container: HTMLElement, solverPreview?: string): void {
-  container.textContent = formatStateText(readInfiltrationDomState(), solverPreview)
+export function updateInfiltrationDomView(container: HTMLElement, extras?: InfiltrationDomViewExtras): void {
+  container.textContent = formatStateText(readInfiltrationDomState(), extras)
+}
+
+/** Stable key for the current minigame phase (level + task title). */
+export function getMinigamePhaseKey(state: InfiltrationDomState): string {
+  if (!state.active || !state.taskTitle) return ""
+
+  const title = state.taskTitle.trim()
+  if (title === "Get Ready!") return ""
+
+  return `${state.levelText}|${title}`
+}
+
+/** True when the DOM has enough data to compute a solution. */
+export function canSolveInfiltrationTask(state: InfiltrationDomState): boolean {
+  const title = state.taskTitle.trim()
+  if (!title || title === "Get Ready!") return false
+
+  if (title === "Match the symbols!") {
+    return (state.symbolTargets?.length ?? 0) > 0 && (state.symbolGrid?.length ?? 0) > 0
+  }
+
+  return state.assignmentLines.length > 0
 }
 
 /** Stable id for the current minigame (ignores cursor / in-progress typing). */

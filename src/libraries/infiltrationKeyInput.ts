@@ -1,11 +1,41 @@
 interface DocumentWithKeyWrap extends Document {
   _addEventListener?: typeof document.addEventListener
+  _dispatchEvent?: typeof document.dispatchEvent
+}
+
+interface KeyboardLikeEvent {
+  key: string
+  altKey: boolean
+  ctrlKey: boolean
+  metaKey: boolean
+  shiftKey: boolean
+  preventDefault?: () => void
+}
+
+interface InfiltrationStageLike {
+  onKey: (event: KeyboardLikeEvent) => void
+}
+
+interface ReactFiberNode {
+  memoizedProps?: Record<string, unknown>
+  pendingProps?: Record<string, unknown>
+  child?: ReactFiberNode | null
+  sibling?: ReactFiberNode | null
+  return?: ReactFiberNode | null
+}
+
+interface WindowWithPlayer extends Window {
+  Player?: { infiltration?: { stage?: InfiltrationStageLike } }
 }
 
 let trustedKeyInjectionEnabled = false
 let infiltrationKeyHandler: ((event: KeyboardEvent) => void) | null = null
+let cachedStageOnKey: ((event: KeyboardLikeEvent) => void) | null = null
+let cachedStageOnKeyAt = 0
 
 const CANCEL_LABEL = "Cancel Infiltration"
+const STAGE_ON_KEY_CACHE_MS = 250
+const STAGE_ON_KEY_MISS_CACHE_MS = 50
 
 function isInfiltrationUiActive(): boolean {
   const buttons = document.querySelectorAll("button")
@@ -18,6 +48,153 @@ function isInfiltrationUiActive(): boolean {
   return false
 }
 
+function isOnInfiltrationPage(): boolean {
+  if (isInfiltrationUiActive()) return true
+
+  const headings = document.querySelectorAll("h4")
+  for (let i = 0; i < headings.length; i++) {
+    const text = headings[i].textContent?.trim() ?? ""
+    if (text.startsWith("Infiltrating ")) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function getReactFiber(node: Element): ReactFiberNode | null {
+  for (const key of Object.keys(node)) {
+    if (key.startsWith("__reactFiber$") || key.startsWith("__reactInternalInstance$")) {
+      return (node as unknown as Record<string, ReactFiberNode>)[key]
+    }
+  }
+  return null
+}
+
+function looksLikeInfiltration(value: unknown): value is { stage: InfiltrationStageLike } {
+  if (!value || typeof value !== "object") return false
+  const record = value as Record<string, unknown>
+  return typeof record.stage === "object" && typeof (record.stage as InfiltrationStageLike).onKey === "function"
+}
+
+function extractStageOnKey(props: Record<string, unknown> | undefined): InfiltrationStageLike | null {
+  if (!props) return null
+
+  const stage = props.stage
+  if (stage && typeof stage === "object" && typeof (stage as InfiltrationStageLike).onKey === "function") {
+    return stage as InfiltrationStageLike
+  }
+
+  const state = props.state
+  if (looksLikeInfiltration(state)) {
+    return state.stage
+  }
+
+  for (const value of Object.values(props)) {
+    if (looksLikeInfiltration(value)) {
+      return value.stage
+    }
+  }
+
+  return null
+}
+
+function traverseFiber(
+  fiber: ReactFiberNode | null | undefined,
+  depth: number,
+  maxDepth: number,
+  seen: Set<ReactFiberNode>
+): InfiltrationStageLike | null {
+  if (!fiber || depth > maxDepth || seen.has(fiber)) {
+    return null
+  }
+  seen.add(fiber)
+
+  const fromMemo = extractStageOnKey(fiber.memoizedProps)
+  if (fromMemo) return fromMemo
+
+  const fromPending = extractStageOnKey(fiber.pendingProps)
+  if (fromPending) return fromPending
+
+  return (
+    traverseFiber(fiber.child, depth + 1, maxDepth, seen) ??
+    traverseFiber(fiber.sibling, depth + 1, maxDepth, seen)
+  )
+}
+
+function getInfiltrationFiberRoots(): Element[] {
+  const roots: Element[] = []
+  const seen = new Set<Element>()
+
+  const add = (element: Element | null | undefined): void => {
+    if (!element || seen.has(element)) return
+    seen.add(element)
+    roots.push(element)
+  }
+
+  add(document.getElementById("root"))
+
+  const containers = document.querySelectorAll(".MuiContainer-root")
+  for (let i = 0; i < containers.length; i++) {
+    add(containers[i])
+  }
+
+  const papers = document.querySelectorAll(".MuiContainer-root .MuiPaper-root")
+  for (let i = 0; i < papers.length; i++) {
+    add(papers[i])
+  }
+
+  const headings = document.querySelectorAll("h4, h5")
+  for (let i = 0; i < headings.length; i++) {
+    add(headings[i])
+  }
+
+  const buttons = document.querySelectorAll("button")
+  for (let i = 0; i < buttons.length; i++) {
+    const label = buttons[i].textContent?.replace(/\s+/g, " ").trim() ?? ""
+    if (label.startsWith(CANCEL_LABEL)) {
+      add(buttons[i])
+      break
+    }
+  }
+
+  return roots
+}
+
+function findStageOnKeyUncached(): ((event: KeyboardLikeEvent) => void) | null {
+  const win = window as WindowWithPlayer
+  const playerStage = win.Player?.infiltration?.stage
+  if (playerStage && typeof playerStage.onKey === "function") {
+    return (event) => playerStage.onKey(event)
+  }
+
+  const seenFibers = new Set<ReactFiberNode>()
+  for (const root of getInfiltrationFiberRoots()) {
+    const stage = traverseFiber(getReactFiber(root), 0, 120, seenFibers)
+    if (stage) {
+      return (event) => stage.onKey(event)
+    }
+  }
+
+  return null
+}
+
+/** Call stage.onKey directly; bypasses InfiltrationRoot press() isTrusted check. */
+function findStageOnKey(): ((event: KeyboardLikeEvent) => void) | null {
+  const now = Date.now()
+  if (cachedStageOnKey) {
+    if (now - cachedStageOnKeyAt < STAGE_ON_KEY_CACHE_MS) {
+      return cachedStageOnKey
+    }
+  } else if (now - cachedStageOnKeyAt < STAGE_ON_KEY_MISS_CACHE_MS) {
+    return null
+  }
+
+  cachedStageOnKey = findStageOnKeyUncached()
+  cachedStageOnKeyAt = now
+  return cachedStageOnKey
+}
+
 function markEventTrusted(event: KeyboardEvent): KeyboardEvent {
   Object.defineProperty(event, "isTrusted", { value: true, configurable: true })
   Object.defineProperty(event, "keyCode", { value: event.keyCode, configurable: true })
@@ -25,53 +202,88 @@ function markEventTrusted(event: KeyboardEvent): KeyboardEvent {
   return event
 }
 
-function createTrustedKeyboardEvent(key: string): KeyboardEvent {
-  const { key: eventKey, code, keyCode } = resolveKeyEvent(key)
-  return markEventTrusted(
-    new KeyboardEvent("keydown", {
-      key: eventKey,
-      code,
-      keyCode,
-      which: keyCode,
-      bubbles: true,
-      cancelable: true,
-    })
-  )
+function upgradeUntrustedKeyboardEvent(event: KeyboardEvent): KeyboardEvent {
+  if (event.isTrusted) {
+    return event
+  }
+
+  const hacked: Record<string, unknown> = {}
+  for (const key in event) {
+    if (key === "isTrusted") {
+      hacked.isTrusted = true
+    } else if (typeof (event as unknown as Record<string, unknown>)[key] === "function") {
+      hacked[key] = ((event as unknown as Record<string, unknown>)[key] as (...args: unknown[]) => unknown).bind(
+        event
+      )
+    } else {
+      hacked[key] = (event as unknown as Record<string, unknown>)[key]
+    }
+  }
+
+  Object.setPrototypeOf(hacked, KeyboardEvent.prototype)
+  return hacked as unknown as KeyboardEvent
 }
 
-function upgradeUntrustedKeyboardEvent(event: KeyboardEvent): KeyboardEvent {
-  return markEventTrusted(
-    new KeyboardEvent(event.type, {
-      key: event.key,
-      code: event.code,
-      location: event.location,
-      ctrlKey: event.ctrlKey,
-      shiftKey: event.shiftKey,
-      altKey: event.altKey,
-      metaKey: event.metaKey,
-      repeat: event.repeat,
-      bubbles: event.bubbles,
-      cancelable: event.cancelable,
-      composed: event.composed,
-      keyCode: event.keyCode,
-      which: event.which,
-    })
-  )
+function createKeyboardLikeEvent(key: string): KeyboardLikeEvent {
+  const { key: eventKey } = resolveKeyEvent(key)
+  return {
+    key: eventKey,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+  }
+}
+
+function createKeyboardEvent(key: string): KeyboardEvent {
+  const { key: eventKey, code, keyCode } = resolveKeyEvent(key)
+  return new KeyboardEvent("keydown", {
+    key: eventKey,
+    code,
+    keyCode,
+    which: keyCode,
+    bubbles: true,
+    cancelable: true,
+  })
+}
+
+function deliverKeyboardEvent(key: string): void {
+  const stageOnKey = findStageOnKey()
+  if (stageOnKey) {
+    stageOnKey(createKeyboardLikeEvent(key))
+    return
+  }
+
+  const event = upgradeUntrustedKeyboardEvent(markEventTrusted(createKeyboardEvent(key)))
+
+  if (infiltrationKeyHandler) {
+    infiltrationKeyHandler(event)
+    return
+  }
+
+  document.dispatchEvent(event)
 }
 
 /**
- * Capture infiltration's keydown handler and upgrade synthetic events.
- * Must run before starting an infiltration (script startup is fine).
- *
- * Current game checks both event.isTrusted and event instanceof KeyboardEvent.
- * Plain-object hacks no longer pass; use a real KeyboardEvent with isTrusted set.
+ * Patch document.addEventListener / dispatchEvent so synthetic keydowns reach
+ * the infiltration minigame as trusted KeyboardEvents.
  */
 export function enableTrustedKeyInjection(): void {
   const doc = document as DocumentWithKeyWrap
-  if (doc._addEventListener) return
+  if (doc._addEventListener) {
+    disableTrustedKeyInjection()
+  }
 
   trustedKeyInjectionEnabled = true
   doc._addEventListener = doc.addEventListener.bind(doc)
+  doc._dispatchEvent = doc.dispatchEvent.bind(doc)
+
+  doc.dispatchEvent = function (event: Event): boolean {
+    if (event instanceof KeyboardEvent && !event.isTrusted) {
+      return doc._dispatchEvent!(upgradeUntrustedKeyboardEvent(event))
+    }
+    return doc._dispatchEvent!(event)
+  }
 
   doc.addEventListener = function (
     type: string,
@@ -87,9 +299,7 @@ export function enableTrustedKeyInjection(): void {
       return
     }
 
-    if (isInfiltrationUiActive()) {
-      infiltrationKeyHandler = callback as (event: KeyboardEvent) => void
-    }
+    infiltrationKeyHandler = callback as (event: KeyboardEvent) => void
 
     const listener = callback as (event: KeyboardEvent) => void
     const wrapped = function (this: Document, event: Event) {
@@ -105,6 +315,8 @@ export function enableTrustedKeyInjection(): void {
 
 export function clearInfiltrationKeyHandler(): void {
   infiltrationKeyHandler = null
+  cachedStageOnKey = null
+  cachedStageOnKeyAt = 0
 }
 
 export function disableTrustedKeyInjection(): void {
@@ -113,8 +325,16 @@ export function disableTrustedKeyInjection(): void {
 
   doc.addEventListener = doc._addEventListener
   delete doc._addEventListener
+
+  if (doc._dispatchEvent) {
+    doc.dispatchEvent = doc._dispatchEvent
+    delete doc._dispatchEvent
+  }
+
   trustedKeyInjectionEnabled = false
   infiltrationKeyHandler = null
+  cachedStageOnKey = null
+  cachedStageOnKeyAt = 0
 }
 
 export function isTrustedKeyInjectionEnabled(): boolean {
@@ -123,6 +343,27 @@ export function isTrustedKeyInjectionEnabled(): boolean {
 
 export function hasInfiltrationKeyHandler(): boolean {
   return infiltrationKeyHandler !== null
+}
+
+export function hasInfiltrationStageOnKey(): boolean {
+  return findStageOnKey() !== null
+}
+
+export function isInfiltrationKeyInputReady(): boolean {
+  return findStageOnKey() !== null || infiltrationKeyHandler !== null
+}
+
+export function getInfiltrationKeyInputMode(): string {
+  if (findStageOnKey()) return "stage"
+  if (infiltrationKeyHandler) return "handler"
+  return "missing"
+}
+
+export function describeInfiltrationKeyInput(): string {
+  if (findStageOnKeyUncached()) return "stage.onKey"
+  if (infiltrationKeyHandler) return "keydown handler"
+  if (!isOnInfiltrationPage()) return "not on infiltration page"
+  return "no key path found"
 }
 
 function resolveKeyEvent(key: string): { key: string; code: string; keyCode: number } {
@@ -149,14 +390,7 @@ function resolveKeyEvent(key: string): { key: string; code: string; keyCode: num
   }
 }
 
-/** Send a trusted keydown to the infiltration minigame. */
+/** Send a keydown to the infiltration minigame. */
 export function pressInfiltrationKey(key: string): void {
-  const event = createTrustedKeyboardEvent(key)
-
-  if (infiltrationKeyHandler) {
-    infiltrationKeyHandler(event)
-    return
-  }
-
-  document.dispatchEvent(event)
+  deliverKeyboardEvent(key)
 }
