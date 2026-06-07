@@ -79,3 +79,55 @@ export function getEasiestInfiltrationTarget(ns: NS): InfiltrationTarget | null 
   const targets = getAvailableInfiltrationTargets(ns)
   return targets[0] ?? null
 }
+
+/** All API-listed targets, including blocked ones. */
+export function getAllInfiltrationTargets(ns: NS): InfiltrationTarget[] {
+  const infiltration = getInfiltrationApi(ns)
+  if (!infiltration) return []
+
+  const targets: InfiltrationTarget[] = []
+
+  for (const loc of infiltration.getPossibleLocations()) {
+    try {
+      const data = infiltration.getInfiltration(loc.name)
+      targets.push({
+        city: data.location.city,
+        name: data.location.name,
+        difficulty: data.difficulty,
+        rating: displayRating(data.difficulty),
+        tier: tierLabel(data.difficulty),
+        data,
+      })
+    } catch {
+      // Location may be unavailable in this BitNode or city state.
+    }
+  }
+
+  return targets
+}
+
+export interface InfiltrationCityGroup {
+  city: string
+  targets: InfiltrationTarget[]
+}
+
+/** Group targets by city to minimize travel during visit tests. */
+export function getInfiltrationTargetsByCity(ns: NS): InfiltrationCityGroup[] {
+  const byCity = new Map<string, InfiltrationTarget[]>()
+
+  for (const target of getAllInfiltrationTargets(ns)) {
+    const list = byCity.get(target.city) ?? []
+    list.push(target)
+    byCity.set(target.city, list)
+  }
+
+  const groups: InfiltrationCityGroup[] = []
+
+  for (const city of [...byCity.keys()].sort((a, b) => a.localeCompare(b))) {
+    const targets = byCity.get(city) ?? []
+    targets.sort((a, b) => a.name.localeCompare(b.name))
+    groups.push({ city, targets })
+  }
+
+  return groups
+}

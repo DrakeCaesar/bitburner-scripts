@@ -1,8 +1,13 @@
-import { invokeInfiltrateCompanyButton, invokeStartInfiltration } from "./infiltrationGameBridge.js"
+import {
+  invokeInfiltrateCompanyButton,
+  invokeStartInfiltration,
+  invokeTrustedClick,
+} from "./infiltrationGameBridge.js"
 
 const SIDEBAR_CITY_PAGE = "City"
 const INFILTRATE_BUTTON = "Infiltrate Company"
 const START_BUTTON = "Start"
+const CANCEL_INTRO_BUTTON = "Cancel"
 
 function normalizeText(text: string): string {
   return text.replace(/\s+/g, " ").trim()
@@ -85,6 +90,49 @@ export function isOnInfiltrationIntro(locationName: string): boolean {
   return false
 }
 
+export function isOnAnyInfiltrationIntro(): boolean {
+  for (const heading of Array.from(document.querySelectorAll("h4"))) {
+    if (normalizeText(heading.textContent ?? "").startsWith("Infiltrating")) {
+      return true
+    }
+  }
+
+  for (const button of Array.from(document.querySelectorAll("button"))) {
+    if (normalizeText(button.textContent ?? "") !== CANCEL_INTRO_BUTTON) continue
+    if (button.closest(".MuiContainer-root")) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function findCancelIntroButton(): HTMLButtonElement | null {
+  for (const button of Array.from(document.querySelectorAll("button"))) {
+    if (normalizeText(button.textContent ?? "") !== CANCEL_INTRO_BUTTON) continue
+    if (button.closest(".MuiContainer-root")) {
+      return button
+    }
+  }
+  return null
+}
+
+/** Leave the intro screen without starting the run. */
+export function clickCancelInfiltrationIntro(): boolean {
+  const button = findCancelIntroButton()
+  if (!button) return false
+  invokeTrustedClick(button)
+  return true
+}
+
+/** Return to the city map between visit checks. */
+export function resetToCityForNextVisit(): boolean {
+  if (isOnAnyInfiltrationIntro()) {
+    clickCancelInfiltrationIntro()
+  }
+  return openCityPage()
+}
+
 export function isInfiltrationActive(): boolean {
   for (const button of Array.from(document.querySelectorAll("button"))) {
     const label = normalizeText(button.textContent ?? "")
@@ -111,6 +159,38 @@ export function visitInfiltrationTargetDom(locationName: string): VisitInfiltrat
     if (clickStartInfiltration()) {
       return { ok: true, step: "started", detail: locationName }
     }
+    return { ok: true, step: "intro ready", detail: locationName }
+  }
+
+  if (findButtonByLabel(INFILTRATE_BUTTON)) {
+    const opened = clickInfiltrateCompany(locationName)
+    if (!opened.ok) {
+      return { ok: false, step: "infiltrate open failed", detail: opened.detail }
+    }
+    return { ok: true, step: "opened intro", detail: locationName }
+  }
+
+  if (findLocationElement(locationName)) {
+    if (!clickCityLocation(locationName)) {
+      return { ok: false, step: "location click failed", detail: locationName }
+    }
+    return { ok: true, step: "opened location", detail: locationName }
+  }
+
+  if (!openCityPage()) {
+    return { ok: false, step: "city sidebar missing", detail: SIDEBAR_CITY_PAGE }
+  }
+
+  return { ok: true, step: "opened city page", detail: locationName }
+}
+
+/** Navigate to the infiltration intro screen without starting the run. */
+export function visitInfiltrationIntroDom(locationName: string): VisitInfiltrationDomResult {
+  if (isInfiltrationActive()) {
+    return { ok: false, step: "infiltration active", detail: locationName }
+  }
+
+  if (isOnInfiltrationIntro(locationName)) {
     return { ok: true, step: "intro ready", detail: locationName }
   }
 
