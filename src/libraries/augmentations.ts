@@ -29,6 +29,19 @@ export const AUGMENT_QUEUE_PRICE_MULT = 1.9
 export const NEUROFLUX_LEVEL_MULT = 1.14
 export const NEUROFLUX_PRICE_STEP_MULT = NEUROFLUX_LEVEL_MULT * AUGMENT_QUEUE_PRICE_MULT
 
+/** SoA uses separate price/rep multipliers that do not reset on install — skip in buy/dashboard planners. */
+export const AUGMENT_PURCHASE_EXCLUDED_FACTIONS: ReadonlySet<FactionName> = new Set([
+  "Shadows of Anarchy" as FactionName,
+])
+
+export function isAugmentPurchaseExcludedFaction(faction: FactionName): boolean {
+  return AUGMENT_PURCHASE_EXCLUDED_FACTIONS.has(faction)
+}
+
+export function filterAugmentPurchaseFactions(factions: readonly FactionName[]): FactionName[] {
+  return factions.filter((faction) => !isAugmentPurchaseExcludedFaction(faction))
+}
+
 /** Simulated NeuroFlux price/rep when regular augs are not actually queued (dry run / dashboard). */
 export function neuroFluxPurchaseCost(
   neuroFluxInfo: AugmentInfo,
@@ -51,7 +64,7 @@ export function getAugmentData(ns: NS, playerFactions: FactionName[]): AugmentDa
   const augmentMap = new Map<string, AugmentInfo>()
   let neuroFluxInfo: AugmentInfo | null = null
 
-  for (const faction of playerFactions) {
+  for (const faction of filterAugmentPurchaseFactions(playerFactions)) {
     const augments = ns.singularity.getAugmentationsFromFaction(faction)
 
     for (const augName of augments) {
@@ -95,7 +108,7 @@ export function getAugmentData(ns: NS, playerFactions: FactionName[]): AugmentDa
   // Get player stats
   const playerMoney = ns.getPlayer().money
   const factionReps = new Map<string, number>()
-  for (const faction of playerFactions) {
+  for (const faction of filterAugmentPurchaseFactions(playerFactions)) {
     factionReps.set(faction, ns.singularity.getFactionRep(faction))
   }
 
@@ -252,7 +265,9 @@ export async function purchaseAugmentations(ns: NS, buyFlux: boolean, dryRun = f
     for (let i = 0; i < affordableSorted.length; i++) {
       const aug = affordableSorted[i]
       const adjustedPrice = aug.price * Math.pow(AUGMENT_PRICE_MULT, i)
-      const validFaction = aug.factions.find((f) => (factionReps.get(f) ?? 0) >= aug.repReq)
+      const validFaction = aug.factions.find(
+        (f) => !isAugmentPurchaseExcludedFaction(f) && (factionReps.get(f) ?? 0) >= aug.repReq
+      )
 
       if (!validFaction) {
         ns.tprint(`No valid faction found for: ${aug.name}`)
@@ -290,7 +305,9 @@ export async function purchaseAugmentations(ns: NS, buyFlux: boolean, dryRun = f
         }
 
     while (currentMoney >= currentPrice) {
-      const currentValidFactions = neuroFluxInfo.factions.filter((f) => (factionReps.get(f) ?? 0) >= currentRepReq)
+      const currentValidFactions = neuroFluxInfo.factions.filter(
+        (f) => !isAugmentPurchaseExcludedFaction(f) && (factionReps.get(f) ?? 0) >= currentRepReq
+      )
       const currentValidFaction =
         currentValidFactions.length > 0
           ? currentValidFactions.reduce((best, current) =>

@@ -6,8 +6,9 @@ import { FactionName, NS } from "@ns"
 import {
   AUGMENT_QUEUE_PRICE_MULT,
   AugmentInfo,
+  filterAugmentPurchaseFactions,
   neuroFluxPurchaseCost,
-} from "../augmentations"
+} from "../augmentations.js"
 import { createStandardContainer, FloatingWindow } from "../floatingWindow"
 import { formatTableRow, getTableBorders } from "../tableBuilder"
 
@@ -75,7 +76,7 @@ function getAugmentDataForDisplay(ns: NS, playerFactions: FactionName[]) {
   const augmentMap = new Map<string, AugmentInfo>()
   let neuroFluxInfo: AugmentInfo | null = null
 
-  for (const faction of playerFactions) {
+  for (const faction of filterAugmentPurchaseFactions(playerFactions)) {
     const augments = ns.singularity.getAugmentationsFromFaction(faction)
 
     for (const augName of augments) {
@@ -120,7 +121,7 @@ function getAugmentDataForDisplay(ns: NS, playerFactions: FactionName[]) {
   // Get player stats
   const playerMoney = ns.getPlayer().money
   const factionReps = new Map<string, number>()
-  for (const faction of playerFactions) {
+  for (const faction of filterAugmentPurchaseFactions(playerFactions)) {
     factionReps.set(faction, ns.singularity.getFactionRep(faction))
   }
 
@@ -234,7 +235,7 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
   //   containerDiv.textContent = "I am not in any factions yet."
   //   return
   // }
-  const factions = player.factions
+  const factions = filterAugmentPurchaseFactions(player.factions)
 
   const cityFactions: string[] = ["Aevum", "Sector12", "Volhaven", "Chongqing", "Ishima", "NewTokyo"]
 
