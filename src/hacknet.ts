@@ -21,7 +21,7 @@ export async function main(ns: NS) {
     // moneyReserve: 160_000_000_000,
     // moneyReserve: 200_005_000_000_000,
     moneyReserve: 0,
-    spendCapFraction: 0.001,
+    spendCapFraction: 0.1,
     cacheCapFraction: 0.001,
   }
 
@@ -40,7 +40,6 @@ export async function main(ns: NS) {
 async function spendHashes(ns: NS): Promise<void> {
   if (ns.hacknet.hashCapacity() == 0) return
 
-  const hashes = ns.hacknet.numHashes()
   const capacity = ns.hacknet.hashCapacity()
   const upgrades = ns.hacknet.getHashUpgrades()
 
@@ -49,7 +48,7 @@ async function spendHashes(ns: NS): Promise<void> {
 
   if (!moneyUpgrade) return
 
-  // Spend hashes when we're at 90% capacity or have at least 4 hashes
+  // Spend hashes when near capacity OR when hash rate is low
   let hashThreshold: number
   if (ns.hacknet.hashCapacity() > 100) {
     hashThreshold = Math.max(4, capacity * 0.9)
@@ -57,15 +56,19 @@ async function spendHashes(ns: NS): Promise<void> {
     hashThreshold = Math.min(4, capacity * 0.9)
   }
 
-  while (ns.hacknet.numHashes() >= hashThreshold) {
+  const hashRate = calculateTotalHashRate(ns)
+  const lowHashRate = hashRate < 4
+
+  while (true) {
+    const numHashes = ns.hacknet.numHashes()
+    if (numHashes < hashThreshold && !lowHashRate) break
+
     const cost = ns.hacknet.hashCost(moneyUpgrade)
-    if (ns.hacknet.numHashes() >= cost) {
-      const success = ns.hacknet.spendHashes(moneyUpgrade)
-      if (!success) {
-        ns.print(`Failed to spend hashes on ${moneyUpgrade}`)
-        break
-      }
-    } else {
+    if (numHashes < cost) break
+
+    const success = ns.hacknet.spendHashes(moneyUpgrade)
+    if (!success) {
+      ns.print(`Failed to spend hashes on ${moneyUpgrade}`)
       break
     }
   }
@@ -225,6 +228,16 @@ async function handlePurchasing(ns: NS, config: HacknetConfig): Promise<void> {
     ns.print("Could not afford the upgrade")
     await ns.sleep(10) // Wait longer if we can't afford anything
   }
+}
+
+function calculateTotalHashRate(ns: NS): number {
+  const mult = ns.getHacknetMultipliers().production
+  let total = 0
+  for (let i = 0; i < ns.hacknet.numNodes(); i++) {
+    const node = ns.hacknet.getNodeStats(i)
+    total += ns.formulas.hacknetServers.hashGainRate(node.level, node.cache ?? 0, node.ram, node.cores, mult)
+  }
+  return total
 }
 
 /** Hash/s from a new node at default stats (level 1, 1GB RAM, 1 core). */
