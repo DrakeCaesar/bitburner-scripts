@@ -474,40 +474,42 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
       orderNum++
     }
 
-    // If we can't afford even one, or don't have rep, show one row indicating unavailability
-    if (neuroFluxIndex === 0) {
-      const { price: adjustedPrice } = neuroFluxPurchaseCost(neuroFluxInfo, positionOffset, 0)
-      const basePrice = adjustedPrice / Math.pow(AUGMENT_PRICE_MULT, positionOffset)
-      const { repReq: currentRepReq } = neuroFluxPurchaseCost(neuroFluxInfo, positionOffset, 0)
-      const canAffordMoney = remainingMoney >= adjustedPrice
-      const hasEnoughRep = maxFactionRep >= currentRepReq
+    // Next NeuroFlux level we cannot buy yet (first if none affordable, otherwise one past last affordable)
+    const { price: nextPrice, repReq: nextRepReq } = neuroFluxPurchaseCost(
+      neuroFluxInfo,
+      positionOffset,
+      neuroFluxIndex
+    )
+    const nextCumulative = neuroFluxCumulative + nextPrice
+    const levelBasePrice = nextPrice / Math.pow(AUGMENT_PRICE_MULT, positionOffset + neuroFluxIndex)
+    const canAffordMoney = remainingMoney >= nextPrice
+    const hasEnoughRep = maxFactionRep >= nextRepReq
 
-      let statusSymbol = "X"
-      if (!canAffordMoney && !hasEnoughRep) statusSymbol = "XX"
-      else if (!canAffordMoney) statusSymbol = "X$"
-      else if (!hasEnoughRep) statusSymbol = "XR"
+    let statusSymbol = "X"
+    if (!canAffordMoney && !hasEnoughRep) statusSymbol = "XX"
+    else if (!canAffordMoney) statusSymbol = "X$"
+    else if (!hasEnoughRep) statusSymbol = "XR"
 
-      const nfFactionsAtLevel = factionsMeetingRepReq(neuroFluxInfo.factions, factionReps, currentRepReq)
+    const nfFactionsAtLevel = factionsMeetingRepReq(neuroFluxInfo.factions, factionReps, nextRepReq)
 
-      rows.push({
-        order: " ".repeat(orderLen),
-        name: neuroFluxInfo.name.padEnd(nameLen),
-        faction: formatFactionText(
-          nfFactionsAtLevel.length > 0 ? nfFactionsAtLevel : neuroFluxInfo.factions,
-          factionLen
-        ).padEnd(factionLen),
-        price: ns.format.number(basePrice).padStart(priceLen),
-        priceRed: !canAffordMoney,
-        adjusted: ns.format.number(adjustedPrice).padStart(adjustedLen),
-        adjustedRed: !canAffordMoney,
-        cumulative: " ".repeat(cumulativeLen),
-        cumulativeRed: false,
-        rep: ns.format.number(currentRepReq).padStart(repLen),
-        repRed: !hasEnoughRep,
-        owned: (neuroFluxInfo.owned ? "Y" : " ").padStart(ownedLen),
-        status: statusSymbol.padStart(statusLen),
-      })
-    }
+    rows.push({
+      order: " ".repeat(orderLen),
+      name: neuroFluxInfo.name.padEnd(nameLen),
+      faction: formatFactionText(
+        nfFactionsAtLevel.length > 0 ? nfFactionsAtLevel : neuroFluxInfo.factions,
+        factionLen
+      ).padEnd(factionLen),
+      price: ns.format.number(levelBasePrice).padStart(priceLen),
+      priceRed: !canAffordMoney,
+      adjusted: ns.format.number(nextPrice).padStart(adjustedLen),
+      adjustedRed: !canAffordMoney,
+      cumulative: ns.format.number(nextCumulative).padStart(cumulativeLen),
+      cumulativeRed: true,
+      rep: ns.format.number(nextRepReq).padStart(repLen),
+      repRed: !hasEnoughRep,
+      owned: (neuroFluxInfo.owned ? "Y" : " ").padStart(ownedLen),
+      status: statusSymbol.padStart(statusLen),
+    })
   }
 
   // Build table header and footer using table builder
