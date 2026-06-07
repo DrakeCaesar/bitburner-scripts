@@ -4,6 +4,9 @@ import { ScriptLogBuilder, type ReactTableConfig, type TableLayout } from "./scr
 
 export const WEAKEN_SCRIPT = "/hacking/weaken.js"
 
+/** Keep this much RAM free on home for other scripts (batch, hacknet, etc.). */
+export const HOME_RAM_RESERVE_GB = 100
+
 const SECURITY_EPSILON = 0.001
 
 /** Servers we never try to weaken (special / non-target hosts). */
@@ -53,6 +56,8 @@ export interface ServerSecurityRow {
 export interface RemoveSecurityState {
   execHost: string
   execFreeRam: number
+  execAllocatableRam: number
+  homeRamReserveGb: number
   weakenRamPerThread: number
   atMinimum: ServerSecurityRow[]
   runningWeaken: ServerSecurityRow[]
@@ -102,10 +107,18 @@ export function findRunningWeaken(ns: NS, hosts: Iterable<string>, target: strin
   return null
 }
 
+export function getExecAllocatableRam(ns: NS, execHost: string): number {
+  const freeRam = ns.getServerMaxRam(execHost) - ns.getServerUsedRam(execHost)
+  if (execHost !== "home") {
+    return freeRam
+  }
+  return Math.max(0, freeRam - HOME_RAM_RESERVE_GB)
+}
+
 export function calcWeakenThreads(ns: NS, execHost: string, securityGap: number): number {
   if (securityGap <= SECURITY_EPSILON) return 0
   const weakenRam = ns.getScriptRam(WEAKEN_SCRIPT)
-  const freeRam = ns.getServerMaxRam(execHost) - ns.getServerUsedRam(execHost)
+  const freeRam = getExecAllocatableRam(ns, execHost)
   const threadsForGap = Math.ceil(securityGap / 0.05)
   const threadsForRam = Math.floor(freeRam / weakenRam)
   return Math.min(threadsForGap, threadsForRam)
@@ -161,6 +174,8 @@ export function collectRemoveSecurityState(ns: NS, execHost: string, knownHosts:
   return {
     execHost,
     execFreeRam: ns.getServerMaxRam(execHost) - ns.getServerUsedRam(execHost),
+    execAllocatableRam: getExecAllocatableRam(ns, execHost),
+    homeRamReserveGb: execHost === "home" ? HOME_RAM_RESERVE_GB : 0,
     weakenRamPerThread,
     atMinimum,
     runningWeaken,
@@ -220,8 +235,11 @@ export function buildRemoveSecurityLog(ns: NS, state: RemoveSecurityState): Scri
   const log = new ScriptLogBuilder(REMOVE_SECURITY_LAYOUT)
 
   log.text(
-    `Exec: ${state.execHost}  |  free RAM: ${ns.format.ram(state.execFreeRam)}  |  ` +
-      `${WEAKEN_SCRIPT}: ${ns.format.ram(state.weakenRamPerThread)}/thread  |  ` +
+    `Exec: ${state.execHost}  |  free RAM: ${ns.format.ram(state.execFreeRam)}` +
+      (state.homeRamReserveGb > 0
+        ? `  |  allocatable: ${ns.format.ram(state.execAllocatableRam)} (${state.homeRamReserveGb}GB reserved)`
+        : "") +
+      `  |  ${WEAKEN_SCRIPT}: ${ns.format.ram(state.weakenRamPerThread)}/thread  |  ` +
       `min ${state.atMinimum.length}  running ${state.runningWeaken.length}  pending ${state.pending.length}` +
       (state.skippedCount > 0 ? `  |  skipped ${state.skippedCount}` : "")
   )
