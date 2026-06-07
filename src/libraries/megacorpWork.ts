@@ -177,6 +177,15 @@ export function isWorkingAtCompany(ns: NS, company: CompanyName): boolean {
   return work != null && work.type === "COMPANY" && work.companyName === company
 }
 
+export function isStudyingLeadershipAtVolhaven(ns: NS): boolean {
+  const work = ns.singularity.getCurrentWork()
+  if (!work || work.type !== "CLASS") return false
+  return (
+    work.classType === ns.enums.UniversityClassType.leadership &&
+    work.location === ns.enums.LocationName.VolhavenZBInstituteOfTechnology
+  )
+}
+
 function meetsPositionRequirements(player: Player, position: JobName, company: CompanyName, ns: NS): boolean {
   const skills = ns.singularity.getCompanyPositionInfo(company, position).requiredSkills
 

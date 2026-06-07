@@ -7,6 +7,7 @@ import {
   getMegacorps,
   getRequiredRep,
   isMegacorpFactionUnlocked,
+  isStudyingLeadershipAtVolhaven,
   isWorkingAtCompany,
   pickBestCompanyField,
   type MegacorpWorkSnapshot,
@@ -92,15 +93,13 @@ export async function main(ns: NS): Promise<void> {
       }
 
       if (charismaGrind) {
-        const uniCity = ns.enums.CityName.Volhaven
-        if (ns.getPlayer().city !== uniCity) {
-          ns.singularity.travelToCity(uniCity)
+        if (!isStudyingLeadershipAtVolhaven(ns)) {
+          ns.singularity.universityCourse(
+            ns.enums.LocationName.VolhavenZBInstituteOfTechnology,
+            ns.enums.UniversityClassType.leadership,
+            focus
+          )
         }
-        ns.singularity.universityCourse(
-          ns.enums.LocationName.VolhavenZBInstituteOfTechnology,
-          ns.enums.UniversityClassType.leadership,
-          focus
-        )
         await renderMegacorpTable(ns, snapshot, megacorps)
         await ns.sleep(ACTIVE_INTERVAL_MS)
         continue
