@@ -5,24 +5,11 @@ import { runInfiltrationForTarget } from "./libraries/infiltration/infiltrationR
 import { setupInfiltrationSolver, shutdownInfiltrationSolver } from "./libraries/infiltration/infiltrationSolver.js"
 import {
   getInfiltrationApi,
-  getInfiltrationTargetsHardestFirst,
-  type InfiltrationTarget,
+  getHardestInfiltrationTarget,
 } from "./libraries/infiltration/infiltrationTargets.js"
 
 const CHECK_INTERVAL_MS = 2000
 const BETWEEN_RUNS_MS = 1000
-
-function pickNextTarget(
-  targets: InfiltrationTarget[],
-  index: number
-): { target: InfiltrationTarget; nextIndex: number } | null {
-  if (targets.length === 0) {
-    return null
-  }
-
-  const target = targets[index % targets.length]
-  return { target, nextIndex: (index + 1) % targets.length }
-}
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("sleep")
@@ -37,22 +24,16 @@ export async function main(ns: NS): Promise<void> {
 
   const solver = setupInfiltrationSolver(ns)
 
-  let targetIndex = 0
-
   try {
     while (true) {
-      const targets = getInfiltrationTargetsHardestFirst(ns)
-      const picked = pickNextTarget(targets, targetIndex)
+      const target = getHardestInfiltrationTarget(ns)
 
-      if (!picked) {
+      if (!target) {
         ns.print("No infiltration targets available. Waiting...")
         syncTrustedKeyInjection()
         await ns.sleep(CHECK_INTERVAL_MS)
         continue
       }
-
-      targetIndex = picked.nextIndex
-      const target = picked.target
 
       ns.print(
         `Target: ${target.name} (${target.city}, ${target.tier}, rating ${target.rating.toFixed(0)})`
@@ -66,19 +47,19 @@ export async function main(ns: NS): Promise<void> {
 
       switch (outcome) {
         case "victory":
-          ns.print(`Done: ${target.name}. Picking next target.`)
+          ns.print(`Done: ${target.name}. Re-running hardest target.`)
           break
         case "cancelled":
           ns.print("Infiltration cancelled. Stopping auto script.")
           return
         case "travel_failed":
-          ns.print(`Travel failed for ${target.city}. Retrying next cycle.`)
+          ns.print(`Travel failed for ${target.city}. Retrying.`)
           break
         case "visit_failed":
-          ns.print(`Visit failed for ${target.name}. Trying next target.`)
+          ns.print(`Visit failed for ${target.name}. Retrying.`)
           break
         case "timeout":
-          ns.print(`Timed out on ${target.name}. Trying next target.`)
+          ns.print(`Timed out on ${target.name}. Retrying.`)
           break
       }
 
