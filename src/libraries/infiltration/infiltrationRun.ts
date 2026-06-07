@@ -15,6 +15,11 @@ import {
   peekInfiltrationRunOutcome,
   setInfiltrationRunOutcome,
 } from "./infiltrationRunState.js"
+import {
+  getInfiltrationSolverPollMs,
+  tickInfiltrationSolver,
+  type InfiltrationSolverState,
+} from "./infiltrationSolver.js"
 
 const POLL_MS = 200
 const DEFAULT_STEP_TIMEOUT_MS = 15000
@@ -30,6 +35,7 @@ export type InfiltrationRunOutcome =
 export interface InfiltrationRunOptions {
   stepTimeoutMs?: number
   runTimeoutMs?: number
+  solver?: InfiltrationSolverState
 }
 
 export async function travelToInfiltrationCity(ns: NS, city: CityName): Promise<boolean> {
@@ -65,9 +71,30 @@ export async function runInfiltrationForTarget(
   let lastStep = ""
   let victoryHandled = false
   let infiltrationStarted = isInfiltrationActive()
+  const solver = options.solver
+
+  async function waitTick(): Promise<InfiltrationRunOutcome | null> {
+    if (solver) {
+      const solverResult = tickInfiltrationSolver(ns, solver)
+      if (solverResult === "cancelled") {
+        clearInfiltrationRunOutcome()
+        ns.print(`Infiltration cancelled at ${target.name}`)
+        return "cancelled"
+      }
+      if (solverResult === "victory") {
+        ns.print(`Victory at ${target.name}`)
+        return "victory"
+      }
+      await ns.sleep(getInfiltrationSolverPollMs(solver))
+      return null
+    }
+
+    await ns.sleep(POLL_MS)
+    return null
+  }
 
   while (Date.now() < runDeadline) {
-    if (isInfiltrationVictoryScreen()) {
+    if (!solver && isInfiltrationVictoryScreen()) {
       if (!victoryHandled) {
         const reward = collectInfiltrationVictoryReward(ns)
         if (reward.ok) {
@@ -78,13 +105,17 @@ export async function runInfiltrationForTarget(
         }
         ns.print(`Victory reward failed at ${target.name}: ${reward.detail}`)
       }
-      await ns.sleep(POLL_MS)
+      const tickOutcome = await waitTick()
+      if (tickOutcome) return tickOutcome
       continue
     }
-    victoryHandled = false
+    if (!solver) {
+      victoryHandled = false
+    }
 
     if (infiltrationStarted && isInfiltrationActive()) {
-      await ns.sleep(POLL_MS)
+      const tickOutcome = await waitTick()
+      if (tickOutcome) return tickOutcome
       continue
     }
 
@@ -114,19 +145,22 @@ export async function runInfiltrationForTarget(
         ns.print(`Infiltration running at ${target.name}`)
       }
       infiltrationStarted = true
-      await ns.sleep(POLL_MS)
+      const tickOutcome = await waitTick()
+      if (tickOutcome) return tickOutcome
       continue
     }
 
     if (isOnInfiltrationIntro(target.name) && clickStartInfiltration()) {
       ns.print(`Started infiltration at ${target.name}`)
       infiltrationStarted = true
-      await ns.sleep(POLL_MS)
+      const tickOutcome = await waitTick()
+      if (tickOutcome) return tickOutcome
       continue
     }
 
     if (Date.now() >= visitDeadline && infiltrationStarted) {
-      await ns.sleep(POLL_MS)
+      const tickOutcome = await waitTick()
+      if (tickOutcome) return tickOutcome
       continue
     }
 
@@ -144,11 +178,13 @@ export async function runInfiltrationForTarget(
     if (result.step === "started") {
       ns.print(`Infiltration started at ${target.name}`)
       infiltrationStarted = true
-      await ns.sleep(POLL_MS)
+      const tickOutcome = await waitTick()
+      if (tickOutcome) return tickOutcome
       continue
     }
 
-    await ns.sleep(POLL_MS)
+    const tickOutcome = await waitTick()
+    if (tickOutcome) return tickOutcome
   }
 
   ns.print(`ERROR: Timed out waiting for infiltration at ${target.name}`)
