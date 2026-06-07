@@ -1,4 +1,4 @@
-import type { NS } from "@ns"
+import type { CityName, NS } from "@ns"
 
 /** Matches in-game MaxDifficultyForInfiltration (Intro screen uses rating out of 100). */
 export const MAX_INFILTRATION_DIFFICULTY = 3.5
@@ -12,7 +12,7 @@ export interface InfiltrationLocation {
 }
 
 export interface InfiltrationTarget {
-  city: string
+  city: CityName
   name: string
   difficulty: number
   rating: number
@@ -59,7 +59,7 @@ export function getAvailableInfiltrationTargets(ns: NS): InfiltrationTarget[] {
       if (isBlockedDifficulty(data.difficulty)) continue
 
       targets.push({
-        city: data.location.city,
+        city: data.location.city as CityName,
         name: data.location.name,
         difficulty: data.difficulty,
         rating: displayRating(data.difficulty),
@@ -91,7 +91,7 @@ export function getAllInfiltrationTargets(ns: NS): InfiltrationTarget[] {
     try {
       const data = infiltration.getInfiltration(loc.name)
       targets.push({
-        city: data.location.city,
+        city: data.location.city as CityName,
         name: data.location.name,
         difficulty: data.difficulty,
         rating: displayRating(data.difficulty),
@@ -107,13 +107,13 @@ export function getAllInfiltrationTargets(ns: NS): InfiltrationTarget[] {
 }
 
 export interface InfiltrationCityGroup {
-  city: string
+  city: CityName
   targets: InfiltrationTarget[]
 }
 
 /** Group targets by city to minimize travel during visit tests. */
 export function getInfiltrationTargetsByCity(ns: NS): InfiltrationCityGroup[] {
-  const byCity = new Map<string, InfiltrationTarget[]>()
+  const byCity = new Map<CityName, InfiltrationTarget[]>()
 
   for (const target of getAllInfiltrationTargets(ns)) {
     const list = byCity.get(target.city) ?? []

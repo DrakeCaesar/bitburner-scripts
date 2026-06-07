@@ -1,16 +1,16 @@
-import { NS } from "@ns"
+import { CityName, NS } from "@ns"
 import {
   isInfiltrationActive,
   isOnAnyInfiltrationIntro,
   isOnInfiltrationIntro,
   resetToCityForNextVisit,
   visitInfiltrationIntroDom,
-} from "./libraries/infiltrationNavigation.js"
+} from "./libraries/infiltration/infiltrationNavigation.js"
 import {
   getInfiltrationApi,
   getInfiltrationTargetsByCity,
   type InfiltrationTarget,
-} from "./libraries/infiltrationTargets.js"
+} from "./libraries/infiltration/infiltrationTargets.js"
 import { buildTable } from "./libraries/tableBuilder.js"
 
 const POLL_MS = 200
@@ -22,7 +22,7 @@ interface VisitTestResult {
   detail: string
 }
 
-async function travelToCity(ns: NS, city: string): Promise<boolean> {
+async function travelToCity(ns: NS, city: CityName): Promise<boolean> {
   if (ns.getPlayer().city === city) {
     return true
   }

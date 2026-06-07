@@ -5,8 +5,8 @@ import {
   getMinigamePhaseKey,
   readInfiltrationDomState,
   updateInfiltrationDomView,
-} from "./libraries/infiltrationDom.js"
-import { clearRememberedMines } from "./libraries/infiltrationMinesweeper.js"
+} from "./libraries/infiltration/infiltrationDom.js"
+import { clearRememberedMines } from "./libraries/infiltration/infiltrationMinesweeper.js"
 import {
   pressInfiltrationKey,
   enableTrustedKeyInjection,
@@ -15,17 +15,17 @@ import {
   isInfiltrationKeyInputReady,
   getInfiltrationKeyInputMode,
   describeInfiltrationKeyInput,
-} from "./libraries/infiltrationKeyInput.js"
+} from "./libraries/infiltration/infiltrationKeyInput.js"
 import {
   formatSentKeySequence,
   formatSolverPreview,
   solveInfiltrationTask,
-} from "./libraries/infiltrationSolvers.js"
-import { isWireCuttingTask } from "./libraries/infiltrationWireCutting.js"
+} from "./libraries/infiltration/infiltrationSolvers.js"
+import { isWireCuttingTask } from "./libraries/infiltration/infiltrationWireCutting.js"
 import {
   collectInfiltrationVictoryReward,
   isInfiltrationVictoryScreen,
-} from "./libraries/infiltrationVictory.js"
+} from "./libraries/infiltration/infiltrationVictory.js"
 
 const KEY_DELAY_MS = 50
 const BRACKET_KEY_DELAY_MS = 100

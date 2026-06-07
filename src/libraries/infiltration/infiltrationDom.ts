@@ -1,4 +1,4 @@
-import { createStandardContainer, FloatingWindow } from "./floatingWindow.js"
+import { createStandardContainer, FloatingWindow } from "../floatingWindow.js"
 import { isEnterTheCodeTask, parseEnterTheCodeState } from "./infiltrationArrowCode.js"
 import { isSaySomethingNiceTask } from "./infiltrationBribeWords.js"
 import {

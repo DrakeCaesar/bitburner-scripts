@@ -1,15 +1,15 @@
-import { NS } from "@ns"
+import { CityName, NS } from "@ns"
 import {
   clickStartInfiltration,
   isInfiltrationActive,
   isOnInfiltrationIntro,
   visitInfiltrationTargetDom,
-} from "./libraries/infiltrationNavigation.js"
-import { getEasiestInfiltrationTarget, getInfiltrationApi } from "./libraries/infiltrationTargets.js"
+} from "./libraries/infiltration/infiltrationNavigation.js"
+import { getEasiestInfiltrationTarget, getInfiltrationApi } from "./libraries/infiltration/infiltrationTargets.js"
 import {
   collectInfiltrationVictoryReward,
   isInfiltrationVictoryScreen,
-} from "./libraries/infiltrationVictory.js"
+} from "./libraries/infiltration/infiltrationVictory.js"
 
 const POLL_MS = 200
 const STEP_TIMEOUT_MS = 15000
@@ -23,18 +23,18 @@ function resolveTargetName(ns: NS): string | null {
   return target?.name ?? null
 }
 
-function resolveTargetCity(ns: NS, locationName: string): string | null {
+function resolveTargetCity(ns: NS, locationName: string): CityName | null {
   const infiltration = getInfiltrationApi(ns)
   if (!infiltration) return null
 
   try {
-    return infiltration.getInfiltration(locationName).location.city
+    return infiltration.getInfiltration(locationName).location.city as CityName
   } catch {
     return null
   }
 }
 
-async function travelToCity(ns: NS, city: string): Promise<boolean> {
+async function travelToCity(ns: NS, city: CityName): Promise<boolean> {
   if (ns.getPlayer().city === city) {
     ns.print(`Already in ${city}`)
     return true
