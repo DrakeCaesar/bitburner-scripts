@@ -88,16 +88,16 @@ export async function main(ns: NS): Promise<void> {
         bestRepPerSecond: null,
         alreadyWorking: isWorkingAtCompany(ns, company),
         needsApply: false,
-        message: charismaGrind ? "Training charisma (Aevum)" : "",
+        message: charismaGrind ? "Training charisma (Volhaven)" : "",
       }
 
       if (charismaGrind) {
-        const uniCity = ns.enums.CityName.Aevum
+        const uniCity = ns.enums.CityName.Volhaven
         if (ns.getPlayer().city !== uniCity) {
           ns.singularity.travelToCity(uniCity)
         }
         ns.singularity.universityCourse(
-          ns.enums.LocationName.AevumSummitUniversity,
+          ns.enums.LocationName.VolhavenZBInstituteOfTechnology,
           ns.enums.UniversityClassType.leadership,
           focus
         )
