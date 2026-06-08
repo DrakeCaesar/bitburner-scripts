@@ -511,6 +511,18 @@ function flattenTreeRows(rows: TreeTableRow[], rootIds?: string[]): FlatTreeRow[
   return out
 }
 
+/** Longest Host tree cell (prefix + label) for the given rows. */
+export function measureTreeTableHostChars(
+  rows: TreeTableRow[],
+  rootIds?: string[]
+): number {
+  const flat = flattenTreeRows(rows, rootIds)
+  if (flat.length === 0) {
+    return 0
+  }
+  return Math.max(...flat.map(({ row, treePrefix }) => formatTreeCellLabel(row.label, treePrefix).length))
+}
+
 export function buildReactTreeTable(config: TreeTableConfig): ReactNode {
   const flat = flattenTreeRows(config.rows, config.rootIds)
   const treeMin = config.treeMinWidth ?? 16

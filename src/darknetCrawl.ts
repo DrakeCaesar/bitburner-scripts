@@ -3,10 +3,12 @@ import { NS } from "@ns"
 // --- config ---
 
 export const DARKNET_CRAWL_SCRIPT = "darknetCrawl.js"
+export const DARKNET_REGISTRY_FILE = "darknet-registry.json"
 export const MAX_PROBE_DEPTH = 10
+export const DEFAULT_CRAWL_INTERVAL_MS = 60_000
 export const CRAWL_REPORT_PORT = 45107
 const WORKER_MODE_ARG = "worker"
-const DARKWEB = "darkweb"
+export const DARKWEB = "darkweb"
 
 // --- types ---
 
@@ -51,6 +53,129 @@ export interface CrawlProgressState {
 }
 
 export type CrawlProgressHandler = (state: CrawlProgressState) => void | Promise<void>
+
+export interface DarknetRegistryEntry {
+  hostname: string
+  parentHost: string | null
+  password: string | null
+  lastUpdated: number
+}
+
+export interface DarknetRegistry {
+  version: 1
+  servers: Record<string, DarknetRegistryEntry>
+}
+
+export function loadDarknetRegistry(ns: NS): DarknetRegistry {
+  if (!ns.fileExists(DARKNET_REGISTRY_FILE, "home")) {
+    return { version: 1, servers: {} }
+  }
+  try {
+    const parsed: unknown = JSON.parse(ns.read(DARKNET_REGISTRY_FILE))
+    if (typeof parsed !== "object" || parsed === null) {
+      return { version: 1, servers: {} }
+    }
+    const row = parsed as Record<string, unknown>
+    if (row.version !== 1 || typeof row.servers !== "object" || row.servers === null) {
+      return { version: 1, servers: {} }
+    }
+    const servers: Record<string, DarknetRegistryEntry> = {}
+    for (const [hostname, raw] of Object.entries(row.servers as Record<string, unknown>)) {
+      if (typeof raw !== "object" || raw === null) continue
+      const entry = raw as Record<string, unknown>
+      if (typeof entry.hostname !== "string") continue
+      servers[hostname] = {
+        hostname: entry.hostname,
+        parentHost:
+          typeof entry.parentHost === "string" ? entry.parentHost : entry.parentHost === null ? null : null,
+        password: typeof entry.password === "string" ? entry.password : null,
+        lastUpdated: typeof entry.lastUpdated === "number" ? entry.lastUpdated : 0,
+      }
+    }
+    return { version: 1, servers }
+  } catch {
+    return { version: 1, servers: {} }
+  }
+}
+
+export function saveDarknetRegistry(ns: NS, registry: DarknetRegistry): void {
+  ns.write(DARKNET_REGISTRY_FILE, JSON.stringify(registry), "w")
+}
+
+export function mergeCrawlReportsIntoRegistry(
+  registry: DarknetRegistry,
+  reports: ReadonlyMap<string, CrawlHostReport>
+): void {
+  const now = Date.now()
+  for (const report of reports.values()) {
+    const existing = registry.servers[report.hostname]
+    registry.servers[report.hostname] = {
+      hostname: report.hostname,
+      parentHost: report.parentHost != null ? report.parentHost : (existing?.parentHost ?? null),
+      password:
+        report.authenticated === true
+          ? (report.password ?? existing?.password ?? null)
+          : report.authenticated === false
+            ? null
+            : (existing?.password ?? null),
+      lastUpdated: now,
+    }
+  }
+}
+
+export function mergeRegistryWithCrawl(
+  registry: DarknetRegistry,
+  crawlReports: ReadonlyMap<string, CrawlHostReport>
+): Map<string, CrawlHostReport> {
+  const merged = new Map<string, CrawlHostReport>()
+  for (const entry of Object.values(registry.servers)) {
+    merged.set(entry.hostname, {
+      hostname: entry.hostname,
+      parentHost: entry.parentHost,
+      authenticated: entry.password != null ? true : null,
+      password: entry.password,
+      authGuesses: null,
+    })
+  }
+  for (const report of crawlReports.values()) {
+    const prev = merged.get(report.hostname)
+    merged.set(report.hostname, {
+      hostname: report.hostname,
+      parentHost: report.parentHost != null ? report.parentHost : (prev?.parentHost ?? null),
+      authenticated: report.authenticated ?? prev?.authenticated ?? null,
+      password: report.password ?? prev?.password ?? null,
+      authGuesses: report.authGuesses ?? prev?.authGuesses ?? null,
+    })
+  }
+  return merged
+}
+
+function loadLocalPasswordCache(ns: NS): Map<string, string> {
+  const cache = new Map<string, string>()
+  const host = ns.getHostname()
+  if (!ns.fileExists(DARKNET_REGISTRY_FILE, host)) {
+    return cache
+  }
+  try {
+    const parsed: unknown = JSON.parse(ns.read(DARKNET_REGISTRY_FILE))
+    if (typeof parsed !== "object" || parsed === null) {
+      return cache
+    }
+    const row = parsed as Record<string, unknown>
+    if (typeof row.servers !== "object" || row.servers === null) {
+      return cache
+    }
+    for (const raw of Object.values(row.servers as Record<string, unknown>)) {
+      if (typeof raw !== "object" || raw === null) continue
+      const entry = raw as Record<string, unknown>
+      if (typeof entry.hostname !== "string" || typeof entry.password !== "string") continue
+      cache.set(entry.hostname, entry.password)
+    }
+  } catch {
+    // ignore corrupt local registry copy
+  }
+  return cache
+}
 
 export interface DarknetCrawlApi {
   probe(): string[]
@@ -248,7 +373,7 @@ function solveBellaCuore(input: DarknetAuthSolverInput): string | null {
   return password
 }
 
-const PHP54_KEY_HINT_PREFIX = "The key is made from "
+const PHP54_MODEL = "PHP 5.4"
 
 function permutationsFromDigitPool(pool: string, length: number): string[] {
   const chars = pool.replace(/\D/g, "").split("")
@@ -272,16 +397,16 @@ function permutationsFromDigitPool(pool: string, length: number): string[] {
   return [...out].sort((a, b) => a.localeCompare(b))
 }
 
-function isPhp54NumericKeyFromData(details: ReturnType<DarknetCrawlApi["getServerDetails"]>): boolean {
-  return (
-    details.modelId === "PHP 5.4" &&
-    details.passwordFormat === "numeric" &&
-    details.passwordHint.startsWith(PHP54_KEY_HINT_PREFIX)
-  )
+function isPhp54Model(details: ReturnType<DarknetCrawlApi["getServerDetails"]>): boolean {
+  return details.modelId === PHP54_MODEL && details.passwordFormat === "numeric"
 }
 
-function php54NumericCandidates(data: string, length: number): string[] {
-  return permutationsFromDigitPool(data, length)
+function php54NumericCandidates(hint: string, length: number): string[] {
+  const numerals = hint.replace(/\D/g, "")
+  if (numerals.length < length) {
+    return []
+  }
+  return permutationsFromDigitPool(numerals, length)
 }
 
 const ACCOUNTS_MANAGER_MODEL = "AccountsManager_4.2"
@@ -832,12 +957,20 @@ async function tryAuthNeighbor(
   ns: NS,
   port: number,
   dnet: DarknetCrawlApi,
-  neighbor: string
+  neighbor: string,
+  knownPassword: string | null = null
 ): Promise<{ password: string | null; authenticated: boolean | null; authGuesses: number | null }> {
   const details = dnet.getServerDetails(neighbor)
 
   if (details.hasSession) {
     return { password: null, authenticated: true, authGuesses: 0 }
+  }
+
+  if (knownPassword != null) {
+    const cached = await authenticateWithStatus(ns, port, dnet, neighbor, knownPassword, "cached", 1)
+    if (cached.success) {
+      return { password: knownPassword, authenticated: true, authGuesses: 1 }
+    }
   }
 
   if (isNilModel(details)) {
@@ -860,8 +993,8 @@ async function tryAuthNeighbor(
     }
   }
 
-  if (isPhp54NumericKeyFromData(details)) {
-    const candidates = php54NumericCandidates(details.data, details.passwordLength)
+  if (isPhp54Model(details)) {
+    const candidates = php54NumericCandidates(details.passwordHint, details.passwordLength)
     if (candidates.length === 0) {
       return { password: null, authenticated: null, authGuesses: null }
     }
@@ -925,6 +1058,13 @@ async function copyCrawlScript(ns: NS, target: string, source: string): Promise<
   await ns.scp(DARKNET_CRAWL_SCRIPT, target, source)
 }
 
+async function copyCrawlAssets(ns: NS, target: string, source: string): Promise<void> {
+  await copyCrawlScript(ns, target, source)
+  if (ns.fileExists(DARKNET_REGISTRY_FILE, source)) {
+    await ns.scp(DARKNET_REGISTRY_FILE, target, source)
+  }
+}
+
 async function runCrawlWorker(ns: NS): Promise<void> {
   const reportPort = Number(ns.args[1])
   const remainingDepth = Number(ns.args[2])
@@ -938,6 +1078,7 @@ async function runCrawlWorker(ns: NS): Promise<void> {
   }
 
   const hostname = ns.getHostname()
+  const passwordCache = loadLocalPasswordCache(ns)
 
   writeCrawlReport(ns, reportPort, {
     hostname,
@@ -960,7 +1101,13 @@ async function runCrawlWorker(ns: NS): Promise<void> {
   })
 
   for (const neighbor of dnet.probe()) {
-    const auth = await tryAuthNeighbor(ns, reportPort, dnet, neighbor)
+    const auth = await tryAuthNeighbor(
+      ns,
+      reportPort,
+      dnet,
+      neighbor,
+      passwordCache.get(neighbor) ?? null
+    )
     writeCrawlReport(ns, reportPort, {
       hostname: neighbor,
       parentHost: hostname,
@@ -981,7 +1128,7 @@ async function runCrawlWorker(ns: NS): Promise<void> {
       detail: `depth ${remainingDepth - 1}`,
     })
 
-    await copyCrawlScript(ns, neighbor, hostname)
+    await copyCrawlAssets(ns, neighbor, hostname)
     const pid = ns.exec(DARKNET_CRAWL_SCRIPT, neighbor, 1, WORKER_MODE_ARG, reportPort, remainingDepth - 1)
     if (pid > 0) {
       childPids.push(pid)
@@ -1091,7 +1238,7 @@ function applyCrawlPortMessage(
       hostname: report.hostname,
       authenticated: report.authenticated,
       password: report.password,
-      parentHost: existing?.parentHost ?? report.parentHost ?? null,
+      parentHost: report.parentHost != null ? report.parentHost : (existing?.parentHost ?? null),
       authGuesses: report.authGuesses ?? existing?.authGuesses ?? null,
     })
     for (const [workerHost, op] of activeOps) {
@@ -1153,13 +1300,17 @@ export function formatCrawlStatusLine(status: CrawlStatusReport): string {
   return `${status.workerHost} -> ${status.targetHost}: ${status.phase} (est ${eta})${detail}`
 }
 
-export async function runDarknetCrawl(
+async function authenticateDarkwebEntry(
   ns: NS,
   dnet: DarknetCrawlApi,
-  maxDepth = MAX_PROBE_DEPTH,
-  onProgress?: CrawlProgressHandler
-): Promise<Map<string, CrawlHostReport>> {
-  const source = ns.getHostname()
+  cachedPassword: string | null | undefined
+): Promise<void> {
+  if (cachedPassword != null) {
+    const cached = await dnet.authenticate(DARKWEB, cachedPassword)
+    if (cached.success) {
+      return
+    }
+  }
 
   const details = dnet.getServerDetails(DARKWEB)
   const { password } = solveDarknetPassword(solverInputFromDetails(details))
@@ -1169,8 +1320,24 @@ export async function runDarknetCrawl(
   } else if (dnet.connectToSession) {
     dnet.connectToSession(DARKWEB, "")
   }
+}
 
-  await copyCrawlScript(ns, DARKWEB, source)
+export async function runDarknetCrawl(
+  ns: NS,
+  dnet: DarknetCrawlApi,
+  maxDepth = MAX_PROBE_DEPTH,
+  onProgress?: CrawlProgressHandler,
+  registry?: DarknetRegistry
+): Promise<Map<string, CrawlHostReport>> {
+  const source = ns.getHostname()
+
+  if (registry) {
+    saveDarknetRegistry(ns, registry)
+  }
+
+  await authenticateDarkwebEntry(ns, dnet, registry?.servers[DARKWEB]?.password)
+
+  await copyCrawlAssets(ns, DARKWEB, source)
   ns.clearPort(CRAWL_REPORT_PORT)
   ns.scriptKill(DARKNET_CRAWL_SCRIPT, DARKWEB)
 

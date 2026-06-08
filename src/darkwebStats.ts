@@ -1,17 +1,25 @@
 import { NS } from "@ns"
 import {
+  DEFAULT_CRAWL_INTERVAL_MS,
+  DARKNET_REGISTRY_FILE,
   MAX_PROBE_DEPTH,
   formatCrawlOpShort,
+  loadDarknetRegistry,
+  mergeCrawlReportsIntoRegistry,
+  mergeRegistryWithCrawl,
   runDarknetCrawl,
+  saveDarknetRegistry,
   type CrawlHostReport,
   type CrawlProgressState,
   type CrawlStatusReport,
   type DarknetCrawlApi,
+  type DarknetRegistry,
   type DarknetServerDetailsForFormulas,
 } from "./darknetCrawl.js"
 import {
   ScriptLogBuilder,
   initScriptLogTail,
+  measureTreeTableHostChars,
   type TableLayout,
   type TreeTableRow,
 } from "./libraries/scriptLogUi.js"
@@ -30,7 +38,9 @@ const DARKWEB_STATS_LAYOUT: Partial<TableLayout> = {
 
 const ACT_COLUMN_HEADER = "Act"
 const ACT_COLUMN_MIN_CHARS = 10
+const HOST_COLUMN_MIN_CHARS = 16
 let actColumnMaxChars = ACT_COLUMN_MIN_CHARS
+let hostColumnMaxChars = HOST_COLUMN_MIN_CHARS
 
 const TREE_DATA_COLUMNS = [
   { header: "Ses", align: "center" as const, minWidth: 3 },
@@ -128,6 +138,13 @@ function bumpActColumnMax(rows: TreeTableRow[]): void {
   }
 }
 
+function bumpHostColumnMax(rows: TreeTableRow[], rootIds?: string[]): void {
+  const measured = measureTreeTableHostChars(rows, rootIds)
+  if (measured > hostColumnMaxChars) {
+    hostColumnMaxChars = measured
+  }
+}
+
 function treeDataColumns() {
   return TREE_DATA_COLUMNS.map((col) =>
     col.header === ACT_COLUMN_HEADER ? { ...col, minWidth: actColumnMaxChars } : col
@@ -146,11 +163,14 @@ function appendDarknetTreeTable(
     return
   }
   const rows = buildDarknetTreeRows(ns, dnet, reports, activeOps)
+  const rootIds = reports.has("darkweb") ? ["darkweb"] : undefined
   bumpActColumnMax(rows)
+  bumpHostColumnMax(rows, rootIds)
   log.treeTable({
     layout: DARKWEB_STATS_LAYOUT,
     title,
-    rootIds: reports.has("darkweb") ? ["darkweb"] : undefined,
+    rootIds,
+    treeMinWidth: hostColumnMaxChars,
     columns: treeDataColumns(),
     rows,
   })
@@ -172,17 +192,54 @@ function countAuthStats(reports: ReadonlyMap<string, CrawlHostReport>): {
   return { ok, failed, skipped }
 }
 
-async function renderCrawlProgress(ns: NS, dnet: DarknetApi, state: CrawlProgressState): Promise<void> {
-  const auth = countAuthStats(state.reports)
+function countRegistryPasswords(registry: DarknetRegistry): number {
+  let n = 0
+  for (const entry of Object.values(registry.servers)) {
+    if (entry.password != null) n++
+  }
+  return n
+}
+
+async function renderCrawlProgress(
+  ns: NS,
+  dnet: DarknetApi,
+  registry: DarknetRegistry,
+  state: CrawlProgressState,
+  crawlNum: number
+): Promise<void> {
+  const displayReports = mergeRegistryWithCrawl(registry, state.reports)
+  const auth = countAuthStats(displayReports)
   const status = state.workerRunning ? "running" : "done"
   const activeCount = state.activeOps.length
+  const knownPw = countRegistryPasswords(registry)
 
   await renderLog(ns, (log) => {
     log.text(
-      `Crawl ${status} | ${state.reports.size} host(s) | auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped}` +
+      `Crawl #${crawlNum} ${status} | registry ${Object.keys(registry.servers).length} host(s), ${knownPw} password(s) | ` +
+        `shown ${displayReports.size} | auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped}` +
         (activeCount > 0 ? ` | active ${activeCount}` : "")
     )
-    appendDarknetTreeTable(log, ns, dnet, state.reports, state.activeOps, "Darknet crawl")
+    appendDarknetTreeTable(log, ns, dnet, displayReports, state.activeOps, "Darknet crawl")
+  })
+}
+
+async function renderRegistrySummary(
+  ns: NS,
+  dnet: DarknetApi,
+  registry: DarknetRegistry,
+  crawlReports: ReadonlyMap<string, CrawlHostReport>,
+  crawlNum: number
+): Promise<void> {
+  const displayReports = mergeRegistryWithCrawl(registry, crawlReports)
+  const auth = countAuthStats(displayReports)
+  const knownPw = countRegistryPasswords(registry)
+
+  await renderLog(ns, (log) => {
+    log.text(
+      `Crawl #${crawlNum} done | registry ${Object.keys(registry.servers).length} host(s), ${knownPw} password(s) saved to ${DARKNET_REGISTRY_FILE} | ` +
+        `auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped}`
+    )
+    appendDarknetTreeTable(log, ns, dnet, displayReports, [], "Darknet crawl")
   })
 }
 
@@ -192,10 +249,19 @@ async function renderLog(ns: NS, build: (log: ScriptLogBuilder) => void): Promis
   await log.render(ns)
 }
 
+function parseCrawlIntervalMs(ns: NS): number {
+  const arg = Number(ns.args[0])
+  if (Number.isFinite(arg) && arg > 0) {
+    return arg
+  }
+  return DEFAULT_CRAWL_INTERVAL_MS
+}
+
 // --- entry ---
 
 export async function main(ns: NS): Promise<void> {
   actColumnMaxChars = ACT_COLUMN_MIN_CHARS
+  hostColumnMaxChars = HOST_COLUMN_MIN_CHARS
   initScriptLogTail(ns, "Darknet", DARKWEB_STATS_LAYOUT)
 
   const dnet = getDarknetApi(ns)
@@ -212,23 +278,29 @@ export async function main(ns: NS): Promise<void> {
     return
   }
 
-  let reports: Map<string, CrawlHostReport>
-  try {
-    reports = await runDarknetCrawl(ns, dnet, MAX_PROBE_DEPTH, async (state) => {
-      await renderCrawlProgress(ns, dnet, state)
-    })
-  } catch (err) {
-    await renderLog(ns, (log) => log.text(`ERROR: ${String(err)}`))
-    return
+  const crawlIntervalMs = parseCrawlIntervalMs(ns)
+  let registry = loadDarknetRegistry(ns)
+  let crawlNum = 0
+
+  while (true) {
+    crawlNum++
+    try {
+      const reports = await runDarknetCrawl(
+        ns,
+        dnet,
+        MAX_PROBE_DEPTH,
+        async (state) => {
+          await renderCrawlProgress(ns, dnet, registry, state, crawlNum)
+        },
+        registry
+      )
+      mergeCrawlReportsIntoRegistry(registry, reports)
+      saveDarknetRegistry(ns, registry)
+      await renderRegistrySummary(ns, dnet, registry, reports, crawlNum)
+    } catch (err) {
+      await renderLog(ns, (log) => log.text(`ERROR crawl #${crawlNum}: ${String(err)}`))
+    }
+
+    await ns.sleep(crawlIntervalMs)
   }
-
-  const auth = countAuthStats(reports)
-
-  await renderLog(ns, (log) => {
-    log.text(
-      `Discovered ${reports.size} host(s) (recursive crawl depth ${MAX_PROBE_DEPTH}) | ` +
-        `auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped}`
-    )
-    appendDarknetTreeTable(log, ns, dnet, reports, [], "Darknet crawl")
-  })
 }
