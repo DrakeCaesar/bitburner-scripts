@@ -22,25 +22,56 @@ interface DarknetAuthSolverInput {
 }
 
 interface CrawlHostReport {
+  type?: "host"
   hostname: string
   authenticated: boolean | null
   password: string | null
 }
+
+export type CrawlStatusPhase = "auth" | "heartbleed" | "probe" | "spawn" | "wait"
+
+export interface CrawlStatusReport {
+  type: "status"
+  workerHost: string
+  targetHost: string
+  phase: CrawlStatusPhase
+  etaMs: number
+  detail: string | null
+}
+
+export type CrawlPortMessage = CrawlHostReport | CrawlStatusReport
+
+export interface CrawlProgressState {
+  reports: ReadonlyMap<string, CrawlHostReport>
+  activeOps: readonly CrawlStatusReport[]
+  workerRunning: boolean
+}
+
+export type CrawlProgressHandler = (state: CrawlProgressState) => void | Promise<void>
 
 export interface DarknetCrawlApi {
   probe(): string[]
   authenticate(host: string, password: string, additionalMsec?: number): Promise<{ success: boolean }>
   heartbleed(host: string, options?: { peek?: boolean }): Promise<{ success: boolean; logs: string[] }>
   connectToSession?(host: string, password: string): { success: boolean }
-  getServerDetails(host?: string): {
-    hasSession: boolean
-    modelId: string
-    passwordFormat: DarknetPasswordFormat
-    passwordHint: string
-    passwordLength: number
-    data: string
-    depth: number
-  }
+  getServerDetails(host?: string): DarknetServerDetailsForFormulas
+}
+
+export type DarknetServerDetailsForFormulas = {
+  hasSession: boolean
+  isOnline: boolean
+  isConnectedToCurrentServer: boolean
+  isStationary: boolean
+  blockedRam: number
+  modelId: string
+  passwordFormat: DarknetPasswordFormat
+  passwordHint: string
+  passwordLength: number
+  data: string
+  depth: number
+  difficulty: number
+  requiredCharismaSkill: number
+  logTrafficInterval: number
 }
 
 // --- auth-solver ---
@@ -247,10 +278,20 @@ function parseNilFeedback(data: string, length: number): boolean[] | null {
 }
 
 async function readNilFeedback(
+  ns: NS,
+  port: number,
   dnet: DarknetCrawlApi,
   host: string,
   guess: string
 ): Promise<boolean[] | null> {
+  writeCrawlStatus(ns, port, {
+    workerHost: ns.getHostname(),
+    targetHost: host,
+    phase: "heartbleed",
+    etaMs: getHeartbleedEtaMs(ns, dnet, host),
+    detail: "reading auth log",
+  })
+
   const result = await dnet.heartbleed(host, { peek: true })
   if (!result.success) {
     return null
@@ -271,6 +312,8 @@ async function readNilFeedback(
 }
 
 async function authenticateNil(
+  ns: NS,
+  port: number,
   dnet: DarknetCrawlApi,
   host: string,
   length: number
@@ -279,12 +322,13 @@ async function authenticateNil(
 
   for (let digit = 0; digit <= 9; digit++) {
     const guess = String(digit).repeat(length)
-    const result = await dnet.authenticate(host, guess)
+    const detail = `NIL digit ${digit}/9`
+    const result = await authenticateWithStatus(ns, port, dnet, host, guess, detail)
     if (result.success) {
       return { password: guess, authenticated: true }
     }
 
-    const feedback = await readNilFeedback(dnet, host, guess)
+    const feedback = await readNilFeedback(ns, port, dnet, host, guess)
     if (feedback) {
       for (let i = 0; i < length; i++) {
         if (feedback[i]) {
@@ -303,7 +347,7 @@ async function authenticateNil(
   }
 
   const password = digits.join("")
-  const result = await dnet.authenticate(host, password)
+  const result = await authenticateWithStatus(ns, port, dnet, host, password, "NIL final")
   return { password, authenticated: result.success }
 }
 
@@ -352,11 +396,75 @@ function solverInputFromDetails(
 
 // --- crawl-worker ---
 
+interface DarknetFormulasApi {
+  dnet?: {
+    getAuthenticateTime(data: DarknetServerDetailsForFormulas, threads?: number): number
+    getHeartbleedTime(data: DarknetServerDetailsForFormulas, threads?: number): number
+  }
+}
+
+function getScriptThreads(ns: NS): number {
+  const running = ns.getRunningScript(ns.getScriptName(), ns.getHostname())
+  return running && running.threads > 0 ? running.threads : 1
+}
+
+function getFormulasApi(ns: NS): DarknetFormulasApi | null {
+  return (ns as NS & { formulas?: DarknetFormulasApi }).formulas ?? null
+}
+
+function getAuthEtaMs(ns: NS, dnet: DarknetCrawlApi, host: string): number {
+  const details = dnet.getServerDetails(host)
+  if (!details.isOnline) {
+    return 0
+  }
+  const formulas = getFormulasApi(ns)?.dnet
+  if (!formulas) {
+    return 0
+  }
+  return formulas.getAuthenticateTime(details, getScriptThreads(ns))
+}
+
+function getHeartbleedEtaMs(ns: NS, dnet: DarknetCrawlApi, host: string): number {
+  const details = dnet.getServerDetails(host)
+  if (!details.isOnline) {
+    return 0
+  }
+  const formulas = getFormulasApi(ns)?.dnet
+  if (!formulas) {
+    return 0
+  }
+  return formulas.getHeartbleedTime(details, getScriptThreads(ns))
+}
+
 function writeCrawlReport(ns: NS, port: number, report: CrawlHostReport): void {
-  ns.writePort(port, JSON.stringify(report))
+  ns.writePort(port, JSON.stringify({ type: "host", ...report }))
+}
+
+function writeCrawlStatus(ns: NS, port: number, status: Omit<CrawlStatusReport, "type">): void {
+  ns.writePort(port, JSON.stringify({ type: "status", ...status }))
+}
+
+async function authenticateWithStatus(
+  ns: NS,
+  port: number,
+  dnet: DarknetCrawlApi,
+  host: string,
+  password: string,
+  detail: string | null = null
+): Promise<{ success: boolean }> {
+  writeCrawlStatus(ns, port, {
+    workerHost: ns.getHostname(),
+    targetHost: host,
+    phase: "auth",
+    etaMs: getAuthEtaMs(ns, dnet, host),
+    detail,
+  })
+  return dnet.authenticate(host, password)
 }
 
 async function tryAuthNeighbor(
+  ns: NS,
+  port: number,
   dnet: DarknetCrawlApi,
   neighbor: string
 ): Promise<{ password: string | null; authenticated: boolean | null }> {
@@ -367,7 +475,7 @@ async function tryAuthNeighbor(
   }
 
   if (isNilModel(details)) {
-    const nil = await authenticateNil(dnet, neighbor, details.passwordLength)
+    const nil = await authenticateNil(ns, port, dnet, neighbor, details.passwordLength)
     return {
       password: nil.password,
       authenticated: nil.authenticated ? true : nil.password !== null ? false : null,
@@ -377,7 +485,7 @@ async function tryAuthNeighbor(
   const { password } = solveDarknetPassword(solverInputFromDetails(details))
 
   if (password !== null) {
-    const result = await dnet.authenticate(neighbor, password)
+    const result = await authenticateWithStatus(ns, port, dnet, neighbor, password)
     return { password, authenticated: result.success }
   }
 
@@ -426,8 +534,16 @@ async function runCrawlWorker(ns: NS): Promise<void> {
 
   const childPids: number[] = []
 
+  writeCrawlStatus(ns, reportPort, {
+    workerHost: hostname,
+    targetHost: hostname,
+    phase: "probe",
+    etaMs: 0,
+    detail: null,
+  })
+
   for (const neighbor of dnet.probe()) {
-    const auth = await tryAuthNeighbor(dnet, neighbor)
+    const auth = await tryAuthNeighbor(ns, reportPort, dnet, neighbor)
     writeCrawlReport(ns, reportPort, {
       hostname: neighbor,
       authenticated: auth.authenticated,
@@ -438,6 +554,14 @@ async function runCrawlWorker(ns: NS): Promise<void> {
       continue
     }
 
+    writeCrawlStatus(ns, reportPort, {
+      workerHost: hostname,
+      targetHost: neighbor,
+      phase: "spawn",
+      etaMs: 0,
+      detail: `depth ${remainingDepth - 1}`,
+    })
+
     await copyCrawlScript(ns, neighbor, hostname)
     const pid = ns.exec(DARKNET_CRAWL_SCRIPT, neighbor, 1, WORKER_MODE_ARG, reportPort, remainingDepth - 1)
     if (pid > 0) {
@@ -445,21 +569,64 @@ async function runCrawlWorker(ns: NS): Promise<void> {
     }
   }
 
+  if (childPids.length > 0) {
+    writeCrawlStatus(ns, reportPort, {
+      workerHost: hostname,
+      targetHost: hostname,
+      phase: "wait",
+      etaMs: 0,
+      detail: `${childPids.length} child worker(s)`,
+    })
+  }
+
   await waitForChildPids(ns, childPids)
 }
 
 // --- crawl-master ---
+
+function parseCrawlStatus(raw: Record<string, unknown>): CrawlStatusReport | null {
+  if (raw.type !== "status") {
+    return null
+  }
+  if (typeof raw.workerHost !== "string" || typeof raw.targetHost !== "string") {
+    return null
+  }
+  if (
+    raw.phase !== "auth" &&
+    raw.phase !== "heartbleed" &&
+    raw.phase !== "probe" &&
+    raw.phase !== "spawn" &&
+    raw.phase !== "wait"
+  ) {
+    return null
+  }
+  if (typeof raw.etaMs !== "number" || !Number.isFinite(raw.etaMs)) {
+    return null
+  }
+  return {
+    type: "status",
+    workerHost: raw.workerHost,
+    targetHost: raw.targetHost,
+    phase: raw.phase,
+    etaMs: raw.etaMs,
+    detail: typeof raw.detail === "string" ? raw.detail : null,
+  }
+}
 
 function parseCrawlReport(raw: unknown): CrawlHostReport | null {
   try {
     const parsed: unknown = typeof raw === "string" ? JSON.parse(raw) : raw
     if (typeof parsed !== "object" || parsed === null) return null
     const row = parsed as Record<string, unknown>
+    if (row.type === "status") {
+      return null
+    }
     if (typeof row.hostname !== "string") return null
     if (row.authenticated !== true && row.authenticated !== false && row.authenticated !== null) {
       return null
     }
     return {
+      type: "host",
       hostname: row.hostname,
       authenticated: row.authenticated,
       password: typeof row.password === "string" || row.password === null ? row.password : null,
@@ -469,23 +636,85 @@ function parseCrawlReport(raw: unknown): CrawlHostReport | null {
   }
 }
 
-function drainCrawlPort(ns: NS, port: number): Map<string, CrawlHostReport> {
-  const reports = new Map<string, CrawlHostReport>()
+function applyCrawlPortMessage(
+  raw: unknown,
+  reports: Map<string, CrawlHostReport>,
+  activeOps: Map<string, CrawlStatusReport>
+): void {
+  try {
+    const parsed: unknown = typeof raw === "string" ? JSON.parse(raw) : raw
+    if (typeof parsed !== "object" || parsed === null) {
+      return
+    }
+    const row = parsed as Record<string, unknown>
+    const status = parseCrawlStatus(row)
+    if (status) {
+      activeOps.set(status.workerHost, status)
+      return
+    }
+    const report = parseCrawlReport(parsed)
+    if (!report) {
+      return
+    }
+    reports.set(report.hostname, report)
+    for (const [workerHost, op] of activeOps) {
+      if (op.targetHost === report.hostname && (op.phase === "auth" || op.phase === "heartbleed")) {
+        activeOps.delete(workerHost)
+      }
+    }
+  } catch {
+    // ignore malformed port data
+  }
+}
+
+function drainCrawlPort(
+  ns: NS,
+  port: number,
+  reports: Map<string, CrawlHostReport>,
+  activeOps: Map<string, CrawlStatusReport>
+): void {
   while (true) {
     const raw = ns.readPort(port)
     if (raw === "NULL PORT DATA") break
-    const report = parseCrawlReport(raw)
-    if (report) {
-      reports.set(report.hostname, report)
-    }
+    applyCrawlPortMessage(raw, reports, activeOps)
   }
-  return reports
+}
+
+function pollCrawlPort(
+  ns: NS,
+  port: number,
+  reports: Map<string, CrawlHostReport>,
+  activeOps: Map<string, CrawlStatusReport>
+): void {
+  while (true) {
+    const raw = ns.peek(port)
+    if (raw === "NULL PORT DATA") break
+    ns.readPort(port)
+    applyCrawlPortMessage(raw, reports, activeOps)
+  }
+}
+
+function formatEtaMs(etaMs: number): string {
+  if (etaMs <= 0) {
+    return "-"
+  }
+  if (etaMs < 1000) {
+    return `${Math.round(etaMs)}ms`
+  }
+  return `${(etaMs / 1000).toFixed(1)}s`
+}
+
+export function formatCrawlStatusLine(status: CrawlStatusReport): string {
+  const eta = formatEtaMs(status.etaMs)
+  const detail = status.detail ? ` | ${status.detail}` : ""
+  return `${status.workerHost} -> ${status.targetHost}: ${status.phase} (est ${eta})${detail}`
 }
 
 export async function runDarknetCrawl(
   ns: NS,
   dnet: DarknetCrawlApi,
-  maxDepth = MAX_PROBE_DEPTH
+  maxDepth = MAX_PROBE_DEPTH,
+  onProgress?: CrawlProgressHandler
 ): Promise<Map<string, CrawlHostReport>> {
   const source = ns.getHostname()
 
@@ -515,11 +744,32 @@ export async function runDarknetCrawl(
     throw new Error(`Could not exec ${DARKNET_CRAWL_SCRIPT} on ${DARKWEB}`)
   }
 
-  while (ns.isRunning(pid)) {
-    await ns.sleep(50)
+  const reports = new Map<string, CrawlHostReport>()
+  const activeOps = new Map<string, CrawlStatusReport>()
+
+  const emitProgress = async (workerRunning: boolean): Promise<void> => {
+    if (!onProgress) {
+      return
+    }
+    await onProgress({
+      reports,
+      activeOps: [...activeOps.values()],
+      workerRunning,
+    })
   }
 
-  return drainCrawlPort(ns, CRAWL_REPORT_PORT)
+  await emitProgress(true)
+
+  while (ns.isRunning(pid)) {
+    pollCrawlPort(ns, CRAWL_REPORT_PORT, reports, activeOps)
+    await emitProgress(true)
+    await ns.sleep(100)
+  }
+
+  drainCrawlPort(ns, CRAWL_REPORT_PORT, reports, activeOps)
+  await emitProgress(false)
+
+  return reports
 }
 
 // --- entry ---
