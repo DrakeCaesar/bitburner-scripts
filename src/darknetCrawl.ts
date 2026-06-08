@@ -21,11 +21,13 @@ interface DarknetAuthSolverInput {
   scrapedLogs: string[]
 }
 
-interface CrawlHostReport {
+export interface CrawlHostReport {
   type?: "host"
   hostname: string
+  parentHost?: string | null
   authenticated: boolean | null
   password: string | null
+  authGuesses?: number | null
 }
 
 export type CrawlStatusPhase = "auth" | "heartbleed" | "probe" | "spawn" | "wait"
@@ -37,6 +39,7 @@ export interface CrawlStatusReport {
   phase: CrawlStatusPhase
   etaMs: number
   detail: string | null
+  authGuesses?: number
 }
 
 export type CrawlPortMessage = CrawlHostReport | CrawlStatusReport
@@ -76,23 +79,70 @@ export type DarknetServerDetailsForFormulas = {
 
 // --- auth-solver ---
 
+function isDefaultPasswordHint(hint: string): boolean {
+  return (
+    hint === "It's still the default" ||
+    hint === "It's still the factory settings" ||
+    hint === "I never changed the password" ||
+    hint === "The password is the default password" ||
+    hint === "The default password is set"
+  )
+}
+
+/** Space before, digits, then space/dot/comma/end (avoids matching inside words/times). */
+function extractLogNumbers(text: string): number[] {
+  const numbers: number[] = []
+  const re = /(?:^|\s)(\d+)(?=[\s.,]|$)/g
+  let match: RegExpExecArray | null
+  while ((match = re.exec(text)) !== null) {
+    numbers.push(Number(match[1]))
+  }
+  return numbers
+}
+
+function numericDefaultZeros(length: number): string {
+  return "0".repeat(length)
+}
+
+function numericDefaultSequence(length: number): string {
+  return Array.from({ length }, (_, i) => String(i + 1)).join("")
+}
+
+function freshInstallNumericCandidates(length: number, logs: string[]): string[] {
+  const zeros = numericDefaultZeros(length)
+  const sequence = numericDefaultSequence(length)
+
+  const numbers: number[] = []
+  for (const line of logs) {
+    numbers.push(...extractLogNumbers(line))
+  }
+  const clues = numbers.filter((n) => n >= 0 && n <= length)
+  if (clues.length === 0) {
+    return [zeros, sequence]
+  }
+
+  if (clues.every((n) => n === 0)) {
+    return [zeros]
+  }
+
+  if (clues.some((n) => n > 0)) {
+    return [sequence]
+  }
+
+  return [zeros, sequence]
+}
+
 function solveFreshInstall(input: DarknetAuthSolverInput): string | null {
   if (input.modelId !== "FreshInstall_1.0") {
     return null
   }
 
-  if (
-    input.passwordHint !== "It's still the default" &&
-    input.passwordHint !== "It's still the factory settings" &&
-    input.passwordHint !== "I never changed the password" &&
-    input.passwordHint !== "The password is the default password" &&
-    input.passwordHint !== "The default password is set"
-  ) {
+  if (!isDefaultPasswordHint(input.passwordHint)) {
     return null
   }
 
   if (input.passwordFormat === "numeric") {
-    return "0".repeat(input.passwordLength)
+    return null
   }
 
   if (input.passwordFormat === "alphabetic") {
@@ -317,15 +367,17 @@ async function authenticateNil(
   dnet: DarknetCrawlApi,
   host: string,
   length: number
-): Promise<{ password: string | null; authenticated: boolean }> {
+): Promise<{ password: string | null; authenticated: boolean; authGuesses: number }> {
   const digits: (string | null)[] = Array.from({ length }, () => null)
+  let authGuesses = 0
 
   for (let digit = 0; digit <= 9; digit++) {
+    authGuesses++
     const guess = String(digit).repeat(length)
     const detail = `NIL digit ${digit}/9`
-    const result = await authenticateWithStatus(ns, port, dnet, host, guess, detail)
+    const result = await authenticateWithStatus(ns, port, dnet, host, guess, detail, authGuesses)
     if (result.success) {
-      return { password: guess, authenticated: true }
+      return { password: guess, authenticated: true, authGuesses }
     }
 
     const feedback = await readNilFeedback(ns, port, dnet, host, guess)
@@ -343,12 +395,13 @@ async function authenticateNil(
   }
 
   if (!digits.every((d) => d !== null)) {
-    return { password: null, authenticated: false }
+    return { password: null, authenticated: false, authGuesses }
   }
 
+  authGuesses++
   const password = digits.join("")
-  const result = await authenticateWithStatus(ns, port, dnet, host, password, "NIL final")
-  return { password, authenticated: result.success }
+  const result = await authenticateWithStatus(ns, port, dnet, host, password, "NIL final", authGuesses)
+  return { password, authenticated: result.success, authGuesses }
 }
 
 function solveDarknetPassword(input: DarknetAuthSolverInput): { password: string | null } {
@@ -377,8 +430,32 @@ function solveDarknetPassword(input: DarknetAuthSolverInput): { password: string
     return { password: bellaCuore }
   }
 
-  void input.scrapedLogs
   return { password: null }
+}
+
+function isFreshInstallDefaultNumeric(details: ReturnType<DarknetCrawlApi["getServerDetails"]>): boolean {
+  return (
+    details.modelId === "FreshInstall_1.0" &&
+    details.passwordFormat === "numeric" &&
+    isDefaultPasswordHint(details.passwordHint)
+  )
+}
+
+async function scrapeHeartbleedLogs(
+  ns: NS,
+  port: number,
+  dnet: DarknetCrawlApi,
+  host: string
+): Promise<string[]> {
+  writeCrawlStatus(ns, port, {
+    workerHost: ns.getHostname(),
+    targetHost: host,
+    phase: "heartbleed",
+    etaMs: getHeartbleedEtaMs(ns, dnet, host),
+    detail: "scraping logs",
+  })
+  const result = await dnet.heartbleed(host, { peek: true })
+  return result.success ? result.logs : []
 }
 
 function solverInputFromDetails(
@@ -450,7 +527,8 @@ async function authenticateWithStatus(
   dnet: DarknetCrawlApi,
   host: string,
   password: string,
-  detail: string | null = null
+  detail: string | null = null,
+  authGuesses?: number
 ): Promise<{ success: boolean }> {
   writeCrawlStatus(ns, port, {
     workerHost: ns.getHostname(),
@@ -458,6 +536,7 @@ async function authenticateWithStatus(
     phase: "auth",
     etaMs: getAuthEtaMs(ns, dnet, host),
     detail,
+    authGuesses,
   })
   return dnet.authenticate(host, password)
 }
@@ -467,11 +546,11 @@ async function tryAuthNeighbor(
   port: number,
   dnet: DarknetCrawlApi,
   neighbor: string
-): Promise<{ password: string | null; authenticated: boolean | null }> {
+): Promise<{ password: string | null; authenticated: boolean | null; authGuesses: number | null }> {
   const details = dnet.getServerDetails(neighbor)
 
   if (details.hasSession) {
-    return { password: null, authenticated: true }
+    return { password: null, authenticated: true, authGuesses: 0 }
   }
 
   if (isNilModel(details)) {
@@ -479,17 +558,38 @@ async function tryAuthNeighbor(
     return {
       password: nil.password,
       authenticated: nil.authenticated ? true : nil.password !== null ? false : null,
+      authGuesses: nil.authGuesses,
+    }
+  }
+
+  if (isFreshInstallDefaultNumeric(details)) {
+    const scrapedLogs = await scrapeHeartbleedLogs(ns, port, dnet, neighbor)
+    const candidates = freshInstallNumericCandidates(details.passwordLength, scrapedLogs)
+    let authGuesses = 0
+    for (let i = 0; i < candidates.length; i++) {
+      authGuesses++
+      const password = candidates[i]!
+      const detail = candidates.length > 1 ? `try ${i + 1}/${candidates.length}` : null
+      const result = await authenticateWithStatus(ns, port, dnet, neighbor, password, detail, authGuesses)
+      if (result.success) {
+        return { password, authenticated: true, authGuesses }
+      }
+    }
+    return {
+      password: candidates[candidates.length - 1] ?? null,
+      authenticated: false,
+      authGuesses,
     }
   }
 
   const { password } = solveDarknetPassword(solverInputFromDetails(details))
 
   if (password !== null) {
-    const result = await authenticateWithStatus(ns, port, dnet, neighbor, password)
-    return { password, authenticated: result.success }
+    const result = await authenticateWithStatus(ns, port, dnet, neighbor, password, null, 1)
+    return { password, authenticated: result.success, authGuesses: 1 }
   }
 
-  return { password: null, authenticated: null }
+  return { password: null, authenticated: null, authGuesses: null }
 }
 
 async function waitForChildPids(ns: NS, pids: number[]): Promise<void> {
@@ -546,8 +646,10 @@ async function runCrawlWorker(ns: NS): Promise<void> {
     const auth = await tryAuthNeighbor(ns, reportPort, dnet, neighbor)
     writeCrawlReport(ns, reportPort, {
       hostname: neighbor,
+      parentHost: hostname,
       authenticated: auth.authenticated,
       password: auth.password,
+      authGuesses: auth.authGuesses,
     })
 
     if (!dnet.getServerDetails(neighbor).hasSession || remainingDepth <= 1) {
@@ -610,6 +712,7 @@ function parseCrawlStatus(raw: Record<string, unknown>): CrawlStatusReport | nul
     phase: raw.phase,
     etaMs: raw.etaMs,
     detail: typeof raw.detail === "string" ? raw.detail : null,
+    authGuesses: typeof raw.authGuesses === "number" ? raw.authGuesses : undefined,
   }
 }
 
@@ -625,11 +728,21 @@ function parseCrawlReport(raw: unknown): CrawlHostReport | null {
     if (row.authenticated !== true && row.authenticated !== false && row.authenticated !== null) {
       return null
     }
+    const parentHost =
+      typeof row.parentHost === "string" ? row.parentHost : row.parentHost === null ? null : undefined
+    const authGuesses =
+      typeof row.authGuesses === "number"
+        ? row.authGuesses
+        : row.authGuesses === null
+          ? null
+          : undefined
     return {
       type: "host",
       hostname: row.hostname,
+      parentHost,
       authenticated: row.authenticated,
       password: typeof row.password === "string" || row.password === null ? row.password : null,
+      authGuesses,
     }
   } catch {
     return null
@@ -656,7 +769,14 @@ function applyCrawlPortMessage(
     if (!report) {
       return
     }
-    reports.set(report.hostname, report)
+    const existing = reports.get(report.hostname)
+    reports.set(report.hostname, {
+      hostname: report.hostname,
+      authenticated: report.authenticated,
+      password: report.password,
+      parentHost: existing?.parentHost ?? report.parentHost ?? null,
+      authGuesses: report.authGuesses ?? existing?.authGuesses ?? null,
+    })
     for (const [workerHost, op] of activeOps) {
       if (op.targetHost === report.hostname && (op.phase === "auth" || op.phase === "heartbleed")) {
         activeOps.delete(workerHost)
@@ -694,7 +814,7 @@ function pollCrawlPort(
   }
 }
 
-function formatEtaMs(etaMs: number): string {
+export function formatEtaMs(etaMs: number): string {
   if (etaMs <= 0) {
     return "-"
   }
@@ -702,6 +822,12 @@ function formatEtaMs(etaMs: number): string {
     return `${Math.round(etaMs)}ms`
   }
   return `${(etaMs / 1000).toFixed(1)}s`
+}
+
+export function formatCrawlOpShort(status: CrawlStatusReport): string {
+  const eta = formatEtaMs(status.etaMs)
+  const detail = status.detail ? ` ${status.detail}` : ""
+  return `${status.phase} ${eta}${detail}`.trim()
 }
 
 export function formatCrawlStatusLine(status: CrawlStatusReport): string {

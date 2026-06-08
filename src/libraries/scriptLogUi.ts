@@ -1,5 +1,5 @@
 import { NS, ReactNode } from "@ns"
-import type { Alignment, KeyValueTableConfig, TableConfig, ThreeColumnTableConfig } from "./tableBuilder.js"
+import type { Alignment, ColumnConfig, KeyValueTableConfig, TableConfig, ThreeColumnTableConfig } from "./tableBuilder.js"
 
 export type LogFn = (message: string) => void
 
@@ -410,6 +410,170 @@ export function buildReactThreeColumnTable(
   return buildReactTable({ layout: config.layout, ...threeColumnToReactTableConfig(config) })
 }
 
+export interface TreeTableRow {
+  id: string
+  parentId: string | null
+  label: string
+  cells: string[]
+  highlight?: boolean
+}
+
+export interface TreeTableConfig {
+  layout?: Partial<TableLayout>
+  title?: string
+  treeColumnHeader?: string
+  treeMinWidth?: number
+  columns: ColumnConfig[]
+  rows: TreeTableRow[]
+  rootIds?: string[]
+  tableWidth?: number
+  columnWidths?: number[]
+}
+
+const TREE_PIPE = "\u2502  "
+const TREE_GAP = "   "
+const TREE_BRANCH = "\u251c\u2500\u2500 "
+const TREE_LAST = "\u2514\u2500\u2500 "
+
+interface FlatTreeRow {
+  row: TreeTableRow
+  depth: number
+  flatIndex: number
+  treePrefix: string
+}
+
+function formatTreePrefix(ancestorHasMore: boolean[], isLast: boolean): string {
+  let prefix = ""
+  for (const hasMore of ancestorHasMore) {
+    prefix += hasMore ? TREE_PIPE : TREE_GAP
+  }
+  prefix += isLast ? TREE_LAST : TREE_BRANCH
+  return prefix
+}
+
+function formatTreeCellLabel(label: string, treePrefix: string): string {
+  return treePrefix + label
+}
+
+function flattenTreeRows(rows: TreeTableRow[], rootIds?: string[]): FlatTreeRow[] {
+  const byId = new Map(rows.map((r) => [r.id, r]))
+  const children = new Map<string, TreeTableRow[]>()
+
+  for (const row of rows) {
+    const pid = row.parentId
+    if (pid != null && byId.has(pid)) {
+      const list = children.get(pid) ?? []
+      list.push(row)
+      children.set(pid, list)
+    }
+  }
+
+  let roots: string[]
+  if (rootIds && rootIds.length > 0) {
+    roots = rootIds.filter((id) => byId.has(id))
+  } else {
+    roots = rows
+      .filter((row) => row.parentId == null || !byId.has(row.parentId))
+      .map((row) => row.id)
+    roots.sort((a, b) => {
+      if (a === "darkweb") return -1
+      if (b === "darkweb") return 1
+      return a.localeCompare(b)
+    })
+  }
+
+  const out: FlatTreeRow[] = []
+  const visited = new Set<string>()
+  let flatIndex = 0
+
+  function walk(id: string, depth: number, ancestorHasMore: boolean[], isLast: boolean): void {
+    if (visited.has(id)) return
+    const row = byId.get(id)
+    if (!row) return
+    visited.add(id)
+    const treePrefix = depth === 0 ? "" : formatTreePrefix(ancestorHasMore, isLast)
+    out.push({ row, depth, flatIndex: flatIndex++, treePrefix })
+    const kids = (children.get(id) ?? []).slice().sort((a, b) => a.label.localeCompare(b.label))
+    const nextAncestors = depth === 0 ? [] : [...ancestorHasMore, !isLast]
+    for (let i = 0; i < kids.length; i++) {
+      walk(kids[i].id, depth + 1, nextAncestors, i === kids.length - 1)
+    }
+  }
+
+  for (const root of roots) {
+    walk(root, 0, [], true)
+  }
+  for (const row of rows) {
+    if (!visited.has(row.id)) {
+      walk(row.id, 0, [], true)
+    }
+  }
+  return out
+}
+
+export function buildReactTreeTable(config: TreeTableConfig): ReactNode {
+  const flat = flattenTreeRows(config.rows, config.rootIds)
+  const treeMin = config.treeMinWidth ?? 16
+  const maxTreeChars = Math.max(
+    treeMin,
+    ...flat.map(({ row, treePrefix }) => formatTreeCellLabel(row.label, treePrefix).length)
+  )
+  const columns: ColumnConfig[] = [
+    { header: config.treeColumnHeader ?? "Host", align: "left", minWidth: maxTreeChars },
+    ...config.columns,
+  ]
+  const tableRows = flat.map(({ row, treePrefix }) => [formatTreeCellLabel(row.label, treePrefix), ...row.cells])
+  const highlightCells = new Set<string>()
+  const activeHeaderColumns = new Set<number>()
+  let hasActive = false
+  flat.forEach(({ row }, rowIdx) => {
+    if (!row.highlight) return
+    hasActive = true
+    for (let colIdx = 0; colIdx < columns.length; colIdx++) {
+      highlightCells.add(`${rowIdx},${colIdx}`)
+    }
+  })
+  if (hasActive) {
+    const actColIdx = columns.findIndex((col) => col.header === "Act")
+    if (actColIdx >= 0) activeHeaderColumns.add(actColIdx)
+  }
+  return buildReactTable({
+    layout: config.layout,
+    title: config.title,
+    tableWidth: config.tableWidth,
+    columnWidths: config.columnWidths,
+    columns,
+    rows: tableRows,
+    highlightCells,
+    activeHeaderColumns,
+  })
+}
+
+export function estimateReactTreeTableWidthPx(config: TreeTableConfig, layout?: Partial<TableLayout>): number {
+  const flat = flattenTreeRows(config.rows, config.rootIds)
+  const treeMin = config.treeMinWidth ?? 16
+  const maxTreeChars = Math.max(
+    treeMin,
+    ...flat.map(({ row, treePrefix }) => formatTreeCellLabel(row.label, treePrefix).length)
+  )
+  const tableConfig: ReactTableConfig = {
+    layout: config.layout ?? layout,
+    tableWidth: config.tableWidth,
+    columnWidths: config.columnWidths,
+    columns: [{ header: config.treeColumnHeader ?? "Host", align: "left", minWidth: maxTreeChars }, ...config.columns],
+    rows: flat.map(({ row, treePrefix }) => [formatTreeCellLabel(row.label, treePrefix), ...row.cells]),
+  }
+  return estimateReactTableWidthPx(tableConfig, config.layout ?? layout)
+}
+
+export function estimateReactTreeTableHeightPx(config: TreeTableConfig, layout?: Partial<TableLayout>): number {
+  const flat = flattenTreeRows(config.rows, config.rootIds)
+  const merged = mergeLayout(config.layout ?? layout)
+  let height = merged.headerRowHeightPx + flat.length * merged.bodyRowHeightPx
+  if (config.title) height += merged.fontSizePx + 4 + merged.sectionGapPx
+  return height + merged.sectionGapPx
+}
+
 export function buildSectionHeader(title: string, layout?: Partial<TableLayout>): ReactNode {
   const React = getReact()
   const merged = mergeLayout(layout)
@@ -459,19 +623,42 @@ type LogSection =
   | { kind: "text"; message: string }
   | { kind: "section"; title: string }
   | { kind: "table"; config: ReactTableConfig }
+  | { kind: "treeTable"; config: TreeTableConfig }
   | { kind: "keyValue"; config: KeyValueTableConfig & Pick<ReactTableConfig, "tableWidth" | "columnWidths"> }
   | { kind: "threeColumn"; config: ThreeColumnTableConfig & Pick<ReactTableConfig, "tableWidth" | "columnWidths"> }
 
-function logSectionToReactTableConfig(section: LogSection): ReactTableConfig | null {
+function logSectionMaxWidthPx(section: LogSection, layout?: Partial<TableLayout>): number {
   switch (section.kind) {
     case "table":
-      return section.config
+      return estimateReactTableWidthPx({ layout, ...section.config }, layout)
+    case "treeTable":
+      return estimateReactTreeTableWidthPx(section.config, layout)
     case "keyValue":
-      return keyValueToReactTableConfig(section.config)
+      return estimateReactTableWidthPx({ layout, ...keyValueToReactTableConfig(section.config) }, layout)
     case "threeColumn":
-      return threeColumnToReactTableConfig(section.config)
+      return estimateReactTableWidthPx({ layout, ...threeColumnToReactTableConfig(section.config) }, layout)
     default:
-      return null
+      return 0
+  }
+}
+
+function logSectionHeightPx(section: LogSection, merged: TableLayout): number {
+  switch (section.kind) {
+    case "text":
+      return estimateTextHeightPx(section.message, merged)
+    case "section":
+      return merged.sectionGapPx + merged.fontSizePx + 4
+    case "table":
+      return estimateReactTableHeightPx({ layout: merged, ...section.config }, merged)
+    case "treeTable":
+      return estimateReactTreeTableHeightPx({ layout: merged, ...section.config }, merged)
+    case "keyValue":
+      return estimateReactTableHeightPx({ layout: merged, ...keyValueToReactTableConfig(section.config) }, merged)
+    case "threeColumn":
+      return estimateReactTableHeightPx(
+        { layout: merged, ...threeColumnToReactTableConfig(section.config) },
+        merged
+      )
   }
 }
 
@@ -503,6 +690,11 @@ export class ScriptLogBuilder {
     return this
   }
 
+  treeTable(config: TreeTableConfig): this {
+    this.sections.push({ kind: "treeTable", config })
+    return this
+  }
+
   keyValueTable(config: KeyValueTableConfig & Pick<ReactTableConfig, "tableWidth" | "columnWidths">): this {
     this.sections.push({ kind: "keyValue", config })
     return this
@@ -517,8 +709,7 @@ export class ScriptLogBuilder {
   estimateMaxTableWidthPx(): number {
     let max = mergeLayout(this.layout).tableWidthPx
     for (const section of this.sections) {
-      const tableConfig = logSectionToReactTableConfig(section)
-      if (tableConfig) max = Math.max(max, estimateReactTableWidthPx(tableConfig, this.layout))
+      max = Math.max(max, logSectionMaxWidthPx(section, this.layout))
     }
     return max
   }
@@ -528,29 +719,7 @@ export class ScriptLogBuilder {
     const merged = mergeLayout(this.layout)
     let height = 0
     for (const section of this.sections) {
-      switch (section.kind) {
-        case "text":
-          height += estimateTextHeightPx(section.message, merged)
-          break
-        case "section":
-          height += merged.sectionGapPx + merged.fontSizePx + 4
-          break
-        case "table":
-          height += estimateReactTableHeightPx({ layout: merged, ...section.config }, merged)
-          break
-        case "keyValue":
-          height += estimateReactTableHeightPx(
-            { layout: merged, ...keyValueToReactTableConfig(section.config) },
-            merged
-          )
-          break
-        case "threeColumn":
-          height += estimateReactTableHeightPx(
-            { layout: merged, ...threeColumnToReactTableConfig(section.config) },
-            merged
-          )
-          break
-      }
+      height += logSectionHeightPx(section, merged)
     }
     return height
   }
@@ -565,6 +734,8 @@ export class ScriptLogBuilder {
           return buildSectionHeader(section.title, layout)
         case "table":
           return buildReactTable({ layout, ...section.config })
+        case "treeTable":
+          return buildReactTreeTable({ layout, ...section.config })
         case "keyValue":
           return buildReactKeyValueTable({ layout, ...section.config })
         case "threeColumn":

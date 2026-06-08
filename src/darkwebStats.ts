@@ -1,22 +1,49 @@
 import { NS } from "@ns"
 import {
   MAX_PROBE_DEPTH,
-  formatCrawlStatusLine,
+  formatCrawlOpShort,
   runDarknetCrawl,
+  type CrawlHostReport,
   type CrawlProgressState,
+  type CrawlStatusReport,
   type DarknetCrawlApi,
   type DarknetServerDetailsForFormulas,
 } from "./darknetCrawl.js"
-import { ScriptLogBuilder, initScriptLogTail, type TableLayout } from "./libraries/scriptLogUi.js"
+import {
+  ScriptLogBuilder,
+  initScriptLogTail,
+  type TableLayout,
+  type TreeTableRow,
+} from "./libraries/scriptLogUi.js"
 
 // --- config ---
 
 const DARKSCAPE_NAV = "DarkscapeNavigator.exe"
 
 const DARKWEB_STATS_LAYOUT: Partial<TableLayout> = {
-  fontSizePx: 12,
-  tableWidthPx: 960,
+  fontSizePx: 11,
+  paddingXPx: 6,
+  headerRowHeightPx: 22,
+  bodyRowHeightPx: 18,
+  tableWidthPx: 1050,
 }
+
+const ACT_COLUMN_HEADER = "Act"
+const ACT_COLUMN_MIN_CHARS = 10
+let actColumnMaxChars = ACT_COLUMN_MIN_CHARS
+
+const TREE_DATA_COLUMNS = [
+  { header: "Ses", align: "center" as const, minWidth: 3 },
+  { header: "Gss", align: "right" as const, minWidth: 3 },
+  { header: ACT_COLUMN_HEADER, align: "left" as const, minWidth: ACT_COLUMN_MIN_CHARS },
+  { header: "On", align: "center" as const, minWidth: 2 },
+  { header: "D", align: "right" as const, minWidth: 3 },
+  { header: "Diff", align: "right" as const, minWidth: 4 },
+  { header: "Model", align: "left" as const, minWidth: 11 },
+  { header: "Cha", align: "right" as const, minWidth: 3 },
+  { header: "Len", align: "right" as const, minWidth: 3 },
+  { header: "RAM", align: "right" as const, minWidth: 7 },
+]
 
 // --- types ---
 
@@ -26,78 +53,136 @@ interface DarknetApi extends DarknetCrawlApi {
 
 // --- ui ---
 
-const TABLE_COLUMNS = [
-  { header: "Host", align: "left" as const, minWidth: 22 },
-  { header: "On", align: "center" as const, minWidth: 3 },
-  { header: "Depth", align: "right" as const, minWidth: 5 },
-  { header: "Diff", align: "right" as const, minWidth: 4 },
-  { header: "Model", align: "left" as const, minWidth: 10 },
-  { header: "Cha", align: "right" as const, minWidth: 4 },
-  { header: "Fmt", align: "left" as const, minWidth: 8 },
-  { header: "Len", align: "right" as const, minWidth: 3 },
-  { header: "RAM", align: "right" as const, minWidth: 8 },
-  { header: "Ses", align: "center" as const, minWidth: 3 },
-  { header: "Hint", align: "left" as const, minWidth: 28 },
-]
-
-function truncate(text: string, maxLen: number): string {
-  const trimmed = text.replace(/\s+/g, " ").trim()
-  if (trimmed.length <= maxLen) return trimmed
-  return `${trimmed.slice(0, maxLen - 3)}...`
-}
-
 function getDarknetApi(ns: NS): DarknetApi | null {
   return (ns as NS & { dnet?: DarknetApi }).dnet ?? null
 }
 
-async function renderCrawlProgress(ns: NS, dnet: DarknetApi, state: CrawlProgressState): Promise<void> {
-  const hosts = [...state.reports.keys()].sort((a, b) => {
-    const depthA = dnet.getServerDetails(a).depth
-    const depthB = dnet.getServerDetails(b).depth
-    return depthA - depthB || a.localeCompare(b)
-  })
+function formatAuthGuesses(
+  report: CrawlHostReport | undefined,
+  op: CrawlStatusReport | undefined
+): string {
+  if (op?.authGuesses != null) {
+    return String(op.authGuesses)
+  }
+  if (report?.authGuesses != null) {
+    return String(report.authGuesses)
+  }
+  return ""
+}
 
-  const authSucceeded = [...state.reports.values()].filter((r) => r.authenticated === true).length
-  const authFailed = [...state.reports.values()].filter((r) => r.authenticated === false).length
-  const authSkipped = [...state.reports.values()].filter((r) => r.authenticated === null).length
+function activeOpsByTarget(activeOps: readonly CrawlStatusReport[]): Map<string, CrawlStatusReport> {
+  const byTarget = new Map<string, CrawlStatusReport>()
+  for (const op of activeOps) {
+    byTarget.set(op.targetHost, op)
+  }
+  return byTarget
+}
+
+function buildDarknetTreeRows(
+  ns: NS,
+  dnet: DarknetApi,
+  reports: ReadonlyMap<string, CrawlHostReport>,
+  activeOps: readonly CrawlStatusReport[]
+): TreeTableRow[] {
+  const activeByTarget = activeOpsByTarget(activeOps)
+
+  return [...reports.keys()].map((hostname) => {
+    const details = dnet.getServerDetails(hostname)
+    const server = ns.getServer(hostname)
+    const report = reports.get(hostname)
+    const op = activeByTarget.get(hostname)
+    const ses =
+      report?.authenticated === true || details.hasSession
+        ? "Y"
+        : report?.authenticated === false
+          ? "F"
+          : ""
+
+    return {
+      id: hostname,
+      parentId: report?.parentHost ?? null,
+      label: hostname,
+      highlight: op != null,
+      cells: [
+        ses,
+        formatAuthGuesses(report, op),
+        op ? formatCrawlOpShort(op) : "",
+        details.isOnline ? "Y" : "N",
+        String(details.depth),
+        String(details.difficulty),
+        details.modelId || "-",
+        String(details.requiredCharismaSkill),
+        String(details.passwordLength),
+        ns.format.ram(server.maxRam, 0),
+      ],
+    }
+  })
+}
+
+function bumpActColumnMax(rows: TreeTableRow[]): void {
+  for (const row of rows) {
+    const act = row.cells[2] ?? ""
+    if (act.length > actColumnMaxChars) {
+      actColumnMaxChars = act.length
+    }
+  }
+}
+
+function treeDataColumns() {
+  return TREE_DATA_COLUMNS.map((col) =>
+    col.header === ACT_COLUMN_HEADER ? { ...col, minWidth: actColumnMaxChars } : col
+  )
+}
+
+function appendDarknetTreeTable(
+  log: ScriptLogBuilder,
+  ns: NS,
+  dnet: DarknetApi,
+  reports: ReadonlyMap<string, CrawlHostReport>,
+  activeOps: readonly CrawlStatusReport[],
+  title: string
+): void {
+  if (reports.size === 0) {
+    return
+  }
+  const rows = buildDarknetTreeRows(ns, dnet, reports, activeOps)
+  bumpActColumnMax(rows)
+  log.treeTable({
+    layout: DARKWEB_STATS_LAYOUT,
+    title,
+    rootIds: reports.has("darkweb") ? ["darkweb"] : undefined,
+    columns: treeDataColumns(),
+    rows,
+  })
+}
+
+function countAuthStats(reports: ReadonlyMap<string, CrawlHostReport>): {
+  ok: number
+  failed: number
+  skipped: number
+} {
+  let ok = 0
+  let failed = 0
+  let skipped = 0
+  for (const report of reports.values()) {
+    if (report.authenticated === true) ok++
+    else if (report.authenticated === false) failed++
+    else skipped++
+  }
+  return { ok, failed, skipped }
+}
+
+async function renderCrawlProgress(ns: NS, dnet: DarknetApi, state: CrawlProgressState): Promise<void> {
+  const auth = countAuthStats(state.reports)
   const status = state.workerRunning ? "running" : "done"
+  const activeCount = state.activeOps.length
 
   await renderLog(ns, (log) => {
     log.text(
-      `Crawl ${status} | ${hosts.length} host(s) | auth ok ${authSucceeded}, failed ${authFailed}, skipped ${authSkipped}`
+      `Crawl ${status} | ${state.reports.size} host(s) | auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped}` +
+        (activeCount > 0 ? ` | active ${activeCount}` : "")
     )
-    if (state.activeOps.length === 0) {
-      log.text("Active: (idle)")
-    } else {
-      for (const op of state.activeOps) {
-        log.text(`Active: ${formatCrawlStatusLine(op)}`)
-      }
-    }
-    if (hosts.length > 0) {
-      log.table({
-        layout: DARKWEB_STATS_LAYOUT,
-        title: "Darknet crawl (partial)",
-        columns: TABLE_COLUMNS,
-        rows: hosts.map((hostname) => {
-          const details = dnet.getServerDetails(hostname)
-          const server = ns.getServer(hostname)
-          const report = state.reports.get(hostname)
-          return [
-            hostname,
-            details.isOnline ? "Y" : "N",
-            String(details.depth),
-            String(details.difficulty),
-            details.modelId || "-",
-            String(details.requiredCharismaSkill),
-            details.passwordFormat || "-",
-            String(details.passwordLength),
-            ns.format.ram(server.maxRam, 0),
-            report?.authenticated === true || details.hasSession ? "Y" : report?.authenticated === false ? "F" : "",
-            truncate(details.passwordHint || details.data || "-", 32),
-          ]
-        }),
-      })
-    }
+    appendDarknetTreeTable(log, ns, dnet, state.reports, state.activeOps, "Darknet crawl")
   })
 }
 
@@ -110,6 +195,7 @@ async function renderLog(ns: NS, build: (log: ScriptLogBuilder) => void): Promis
 // --- entry ---
 
 export async function main(ns: NS): Promise<void> {
+  actColumnMaxChars = ACT_COLUMN_MIN_CHARS
   initScriptLogTail(ns, "Darknet", DARKWEB_STATS_LAYOUT)
 
   const dnet = getDarknetApi(ns)
@@ -126,7 +212,7 @@ export async function main(ns: NS): Promise<void> {
     return
   }
 
-  let reports
+  let reports: Map<string, CrawlHostReport>
   try {
     reports = await runDarknetCrawl(ns, dnet, MAX_PROBE_DEPTH, async (state) => {
       await renderCrawlProgress(ns, dnet, state)
@@ -136,42 +222,13 @@ export async function main(ns: NS): Promise<void> {
     return
   }
 
-  const hosts = [...reports.keys()].sort((a, b) => {
-    const depthA = dnet.getServerDetails(a).depth
-    const depthB = dnet.getServerDetails(b).depth
-    return depthA - depthB || a.localeCompare(b)
-  })
-
-  const authSucceeded = [...reports.values()].filter((r) => r.authenticated === true).length
-  const authFailed = [...reports.values()].filter((r) => r.authenticated === false).length
-  const authSkipped = [...reports.values()].filter((r) => r.authenticated === null).length
+  const auth = countAuthStats(reports)
 
   await renderLog(ns, (log) => {
     log.text(
-      `Discovered ${hosts.length} host(s) (recursive crawl depth ${MAX_PROBE_DEPTH}) | ` +
-        `auth ok ${authSucceeded}, failed ${authFailed}, skipped ${authSkipped}`
+      `Discovered ${reports.size} host(s) (recursive crawl depth ${MAX_PROBE_DEPTH}) | ` +
+        `auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped}`
     )
-    log.table({
-      layout: DARKWEB_STATS_LAYOUT,
-      title: "Darknet crawl",
-      columns: TABLE_COLUMNS,
-      rows: hosts.map((hostname) => {
-        const details = dnet.getServerDetails(hostname)
-        const server = ns.getServer(hostname)
-        return [
-          hostname,
-          details.isOnline ? "Y" : "N",
-          String(details.depth),
-          String(details.difficulty),
-          details.modelId || "-",
-          String(details.requiredCharismaSkill),
-          details.passwordFormat || "-",
-          String(details.passwordLength),
-          ns.format.ram(server.maxRam, 0),
-          details.hasSession ? "Y" : "",
-          truncate(details.passwordHint || details.data || "-", 32),
-        ]
-      }),
-    })
+    appendDarknetTreeTable(log, ns, dnet, reports, [], "Darknet crawl")
   })
 }
