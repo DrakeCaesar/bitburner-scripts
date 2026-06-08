@@ -79,16 +79,6 @@ export type DarknetServerDetailsForFormulas = {
 
 // --- auth-solver ---
 
-function isDefaultPasswordHint(hint: string): boolean {
-  return (
-    hint === "It's still the default" ||
-    hint === "It's still the factory settings" ||
-    hint === "I never changed the password" ||
-    hint === "The password is the default password" ||
-    hint === "The default password is set"
-  )
-}
-
 /** Space before, digits, then space/dot/comma/end (avoids matching inside words/times). */
 function extractLogNumbers(text: string): number[] {
   const numbers: number[] = []
@@ -137,20 +127,17 @@ function solveFreshInstall(input: DarknetAuthSolverInput): string | null {
     return null
   }
 
-  if (!isDefaultPasswordHint(input.passwordHint)) {
-    return null
-  }
-
   if (input.passwordFormat === "numeric") {
     return null
   }
 
   if (input.passwordFormat === "alphabetic") {
-    if (input.passwordLength !== 8) {
-      return null
+    if (input.passwordLength === 5) {
+      return "admin"
     }
-
-    return "password"
+    if (input.passwordLength === 8) {
+      return "password"
+    }
   }
 
   return null
@@ -194,20 +181,12 @@ function solveDeskMemo(input: DarknetAuthSolverInput): string | null {
     return null
   }
 
-  let value: string | null = null
-  if (input.passwordHint.startsWith("The PIN is ")) {
-    value = input.passwordHint.slice("The PIN is ".length)
-  } else if (input.passwordHint.startsWith("The secret is ")) {
-    value = input.passwordHint.slice("The secret is ".length)
-  } else if (input.passwordHint.startsWith("The key is ")) {
-    value = input.passwordHint.slice("The key is ".length)
-  }
-
-  if (value === null || value.length !== input.passwordLength) {
+  const numerals = input.passwordHint.replace(/\D/g, "")
+  if (numerals.length !== input.passwordLength) {
     return null
   }
 
-  return value
+  return numerals
 }
 
 function romanToDecimal(roman: string): number | null {
@@ -267,6 +246,153 @@ function solveBellaCuore(input: DarknetAuthSolverInput): string | null {
   }
 
   return password
+}
+
+const PHP54_KEY_HINT_PREFIX = "The key is made from "
+
+function permutationsFromDigitPool(pool: string, length: number): string[] {
+  const chars = pool.replace(/\D/g, "").split("")
+  if (chars.length < length) {
+    return []
+  }
+
+  const out = new Set<string>()
+  function walk(available: string[], prefix: string): void {
+    if (prefix.length === length) {
+      out.add(prefix)
+      return
+    }
+    for (let i = 0; i < available.length; i++) {
+      const ch = available[i]!
+      const rest = available.slice(0, i).concat(available.slice(i + 1))
+      walk(rest, prefix + ch)
+    }
+  }
+  walk(chars, "")
+  return [...out].sort((a, b) => a.localeCompare(b))
+}
+
+function isPhp54NumericKeyFromData(details: ReturnType<DarknetCrawlApi["getServerDetails"]>): boolean {
+  return (
+    details.modelId === "PHP 5.4" &&
+    details.passwordFormat === "numeric" &&
+    details.passwordHint.startsWith(PHP54_KEY_HINT_PREFIX)
+  )
+}
+
+function php54NumericCandidates(data: string, length: number): string[] {
+  return permutationsFromDigitPool(data, length)
+}
+
+const ACCOUNTS_MANAGER_MODEL = "AccountsManager_4.2"
+const GUESS_NUMBER_HINT_RE = /^The password is a number between 0 and (\d+)$/
+
+function parseGuessNumberMax(hint: string): number | null {
+  const match = hint.match(GUESS_NUMBER_HINT_RE)
+  if (!match) {
+    return null
+  }
+  const max = Number(match[1])
+  return Number.isFinite(max) && max > 0 ? max : null
+}
+
+function isAccountsManagerGuessNumber(details: ReturnType<DarknetCrawlApi["getServerDetails"]>): boolean {
+  return (
+    details.modelId === ACCOUNTS_MANAGER_MODEL &&
+    details.passwordFormat === "numeric" &&
+    parseGuessNumberMax(details.passwordHint) !== null
+  )
+}
+
+const DEEP_GREEN_MODEL = "DeepGreen"
+const MAX_MASTERMIND_CANDIDATES = 50_000
+
+function isDeepGreenModel(details: ReturnType<DarknetCrawlApi["getServerDetails"]>): boolean {
+  return details.modelId === DEEP_GREEN_MODEL
+}
+
+function mastermindCharset(format: DarknetPasswordFormat): string {
+  switch (format) {
+    case "numeric":
+      return "0123456789"
+    case "alphabetic":
+      return "abcdefghijklmnopqrstuvwxyz"
+    case "alphanumeric":
+      return "0123456789abcdefghijklmnopqrstuvwxyz"
+    default:
+      return "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+  }
+}
+
+/** Matches bitburner getMastermindResponse / getMisplacedCorrectCharsCount. */
+function mastermindFeedback(secret: string, guess: string): { exact: number; misplaced: number } {
+  const exact = secret.split("").filter((ch, i) => ch === guess[i]).length
+  const remainingSecret = secret.split("").filter((ch, i) => ch !== guess[i])
+  const remainingGuess = guess.split("").filter((ch, i) => ch !== secret[i])
+  let misplaced = 0
+  const used = remainingSecret.map(() => false)
+  for (const ch of remainingGuess) {
+    const idx = remainingSecret.findIndex((s, i) => !used[i] && s === ch)
+    if (idx >= 0) {
+      used[idx] = true
+      misplaced++
+    }
+  }
+  return { exact, misplaced }
+}
+
+function parseMastermindFeedback(data: string): { exact: number; misplaced: number } | null {
+  const parts = data.split(",")
+  if (parts.length !== 2) {
+    return null
+  }
+  const exact = Number(parts[0]?.trim())
+  const misplaced = Number(parts[1]?.trim())
+  if (!Number.isInteger(exact) || !Number.isInteger(misplaced)) {
+    return null
+  }
+  return { exact, misplaced }
+}
+
+function generateMastermindCandidates(length: number, charset: string): string[] | null {
+  if (length <= 0) {
+    return null
+  }
+  const size = charset.length ** length
+  if (size > MAX_MASTERMIND_CANDIDATES) {
+    return null
+  }
+  const out: string[] = []
+  const build = (prefix: string): void => {
+    if (prefix.length === length) {
+      out.push(prefix)
+      return
+    }
+    for (let i = 0; i < charset.length; i++) {
+      build(prefix + charset[i])
+    }
+  }
+  build("")
+  return out
+}
+
+function pickMastermindGuess(candidates: string[]): string {
+  let bestGuess = candidates[0]!
+  let bestWorstBucket = candidates.length + 1
+  for (const guess of candidates) {
+    const buckets = new Map<string, number>()
+    for (const secret of candidates) {
+      const fb = mastermindFeedback(secret, guess)
+      const key = `${fb.exact},${fb.misplaced}`
+      buckets.set(key, (buckets.get(key) ?? 0) + 1)
+    }
+    const worstBucket = Math.max(...buckets.values())
+    if (worstBucket < bestWorstBucket) {
+      bestWorstBucket = worstBucket
+      bestGuess = guess
+    }
+  }
+  return bestGuess
 }
 
 function isNilModel(details: ReturnType<DarknetCrawlApi["getServerDetails"]>): boolean {
@@ -361,6 +487,75 @@ async function readNilFeedback(
   return null
 }
 
+type GuessNumberFeedback = "Higher" | "Lower"
+
+async function readGuessNumberFeedback(
+  ns: NS,
+  port: number,
+  dnet: DarknetCrawlApi,
+  host: string,
+  guess: string
+): Promise<GuessNumberFeedback | null> {
+  writeCrawlStatus(ns, port, {
+    workerHost: ns.getHostname(),
+    targetHost: host,
+    phase: "heartbleed",
+    etaMs: getHeartbleedEtaMs(ns, dnet, host),
+    detail: "reading auth log",
+  })
+
+  const result = await dnet.heartbleed(host, { peek: true })
+  if (!result.success) {
+    return null
+  }
+
+  for (const logLine of result.logs) {
+    const entry = parseAuthLogLine(logLine)
+    if (entry?.passwordAttempted !== guess || !entry.data) {
+      continue
+    }
+    if (entry.data === "Higher" || entry.data === "Lower") {
+      return entry.data
+    }
+  }
+
+  return null
+}
+
+async function readMastermindFeedback(
+  ns: NS,
+  port: number,
+  dnet: DarknetCrawlApi,
+  host: string,
+  guess: string
+): Promise<{ exact: number; misplaced: number } | null> {
+  writeCrawlStatus(ns, port, {
+    workerHost: ns.getHostname(),
+    targetHost: host,
+    phase: "heartbleed",
+    etaMs: getHeartbleedEtaMs(ns, dnet, host),
+    detail: "reading auth log",
+  })
+
+  const result = await dnet.heartbleed(host, { peek: true })
+  if (!result.success) {
+    return null
+  }
+
+  for (const logLine of result.logs) {
+    const entry = parseAuthLogLine(logLine)
+    if (entry?.passwordAttempted !== guess || !entry.data) {
+      continue
+    }
+    const feedback = parseMastermindFeedback(entry.data)
+    if (feedback) {
+      return feedback
+    }
+  }
+
+  return null
+}
+
 async function authenticateNil(
   ns: NS,
   port: number,
@@ -404,6 +599,78 @@ async function authenticateNil(
   return { password, authenticated: result.success, authGuesses }
 }
 
+async function authenticateAccountsManager(
+  ns: NS,
+  port: number,
+  dnet: DarknetCrawlApi,
+  host: string,
+  maxExclusive: number
+): Promise<{ password: string | null; authenticated: boolean; authGuesses: number }> {
+  let min = 0
+  let max = maxExclusive - 1
+  let authGuesses = 0
+
+  while (min <= max) {
+    const mid = Math.floor((min + max) / 2)
+    const guess = String(mid)
+    authGuesses++
+    const result = await authenticateWithStatus(ns, port, dnet, host, guess, `guess ${guess}`, authGuesses)
+    if (result.success) {
+      return { password: guess, authenticated: true, authGuesses }
+    }
+
+    const feedback = await readGuessNumberFeedback(ns, port, dnet, host, guess)
+    if (feedback === "Lower") {
+      max = mid - 1
+    } else if (feedback === "Higher") {
+      min = mid + 1
+    } else {
+      return { password: null, authenticated: false, authGuesses }
+    }
+  }
+
+  return { password: null, authenticated: false, authGuesses }
+}
+
+async function authenticateDeepGreen(
+  ns: NS,
+  port: number,
+  dnet: DarknetCrawlApi,
+  host: string,
+  length: number,
+  format: DarknetPasswordFormat
+): Promise<{ password: string | null; authenticated: boolean; authGuesses: number }> {
+  const initial = generateMastermindCandidates(length, mastermindCharset(format))
+  if (!initial) {
+    return { password: null, authenticated: false, authGuesses: 0 }
+  }
+
+  let candidates = initial
+  let authGuesses = 0
+
+  while (candidates.length > 0) {
+    const guess = pickMastermindGuess(candidates)
+    authGuesses++
+    const detail = `${candidates.length} candidate(s)`
+    const result = await authenticateWithStatus(ns, port, dnet, host, guess, detail, authGuesses)
+    if (result.success) {
+      return { password: guess, authenticated: true, authGuesses }
+    }
+
+    const feedback = await readMastermindFeedback(ns, port, dnet, host, guess)
+    if (!feedback) {
+      return { password: null, authenticated: false, authGuesses }
+    }
+
+    candidates = candidates.filter((secret) => {
+      const fb = mastermindFeedback(secret, guess)
+      return fb.exact === feedback.exact && fb.misplaced === feedback.misplaced
+    })
+  }
+
+  return { password: null, authenticated: false, authGuesses }
+}
+
 function solveDarknetPassword(input: DarknetAuthSolverInput): { password: string | null } {
   const zeroLogon = solveZeroLogon(input)
   if (zeroLogon !== null) {
@@ -433,12 +700,8 @@ function solveDarknetPassword(input: DarknetAuthSolverInput): { password: string
   return { password: null }
 }
 
-function isFreshInstallDefaultNumeric(details: ReturnType<DarknetCrawlApi["getServerDetails"]>): boolean {
-  return (
-    details.modelId === "FreshInstall_1.0" &&
-    details.passwordFormat === "numeric" &&
-    isDefaultPasswordHint(details.passwordHint)
-  )
+function isFreshInstallNumeric(details: ReturnType<DarknetCrawlApi["getServerDetails"]>): boolean {
+  return details.modelId === "FreshInstall_1.0" && details.passwordFormat === "numeric"
 }
 
 async function scrapeHeartbleedLogs(
@@ -541,6 +804,30 @@ async function authenticateWithStatus(
   return dnet.authenticate(host, password)
 }
 
+async function authenticateCandidates(
+  ns: NS,
+  port: number,
+  dnet: DarknetCrawlApi,
+  host: string,
+  candidates: string[]
+): Promise<{ password: string | null; authenticated: boolean; authGuesses: number }> {
+  let authGuesses = 0
+  for (let i = 0; i < candidates.length; i++) {
+    authGuesses++
+    const password = candidates[i]!
+    const detail = candidates.length > 1 ? `try ${i + 1}/${candidates.length}` : null
+    const result = await authenticateWithStatus(ns, port, dnet, host, password, detail, authGuesses)
+    if (result.success) {
+      return { password, authenticated: true, authGuesses }
+    }
+  }
+  return {
+    password: candidates[candidates.length - 1] ?? null,
+    authenticated: false,
+    authGuesses,
+  }
+}
+
 async function tryAuthNeighbor(
   ns: NS,
   port: number,
@@ -562,23 +849,53 @@ async function tryAuthNeighbor(
     }
   }
 
-  if (isFreshInstallDefaultNumeric(details)) {
+  if (isFreshInstallNumeric(details)) {
     const scrapedLogs = await scrapeHeartbleedLogs(ns, port, dnet, neighbor)
     const candidates = freshInstallNumericCandidates(details.passwordLength, scrapedLogs)
-    let authGuesses = 0
-    for (let i = 0; i < candidates.length; i++) {
-      authGuesses++
-      const password = candidates[i]!
-      const detail = candidates.length > 1 ? `try ${i + 1}/${candidates.length}` : null
-      const result = await authenticateWithStatus(ns, port, dnet, neighbor, password, detail, authGuesses)
-      if (result.success) {
-        return { password, authenticated: true, authGuesses }
-      }
-    }
+    const auth = await authenticateCandidates(ns, port, dnet, neighbor, candidates)
     return {
-      password: candidates[candidates.length - 1] ?? null,
-      authenticated: false,
-      authGuesses,
+      password: auth.password,
+      authenticated: auth.authenticated ? true : auth.password !== null ? false : null,
+      authGuesses: auth.authGuesses,
+    }
+  }
+
+  if (isPhp54NumericKeyFromData(details)) {
+    const candidates = php54NumericCandidates(details.data, details.passwordLength)
+    if (candidates.length === 0) {
+      return { password: null, authenticated: null, authGuesses: null }
+    }
+    const auth = await authenticateCandidates(ns, port, dnet, neighbor, candidates)
+    return {
+      password: auth.password,
+      authenticated: auth.authenticated ? true : false,
+      authGuesses: auth.authGuesses,
+    }
+  }
+
+  if (isAccountsManagerGuessNumber(details)) {
+    const maxExclusive = parseGuessNumberMax(details.passwordHint)!
+    const auth = await authenticateAccountsManager(ns, port, dnet, neighbor, maxExclusive)
+    return {
+      password: auth.password,
+      authenticated: auth.authenticated ? true : auth.password !== null ? false : null,
+      authGuesses: auth.authGuesses,
+    }
+  }
+
+  if (isDeepGreenModel(details)) {
+    const auth = await authenticateDeepGreen(
+      ns,
+      port,
+      dnet,
+      neighbor,
+      details.passwordLength,
+      details.passwordFormat
+    )
+    return {
+      password: auth.password,
+      authenticated: auth.authenticated ? true : auth.password !== null ? false : null,
+      authGuesses: auth.authGuesses,
     }
   }
 
