@@ -42,6 +42,63 @@ export function filterAugmentPurchaseFactions(factions: readonly FactionName[]):
   return factions.filter((faction) => !isAugmentPurchaseExcludedFaction(faction))
 }
 
+/**
+ * Purchase order: prerequisites before dependents, expensive-first by *chain* price.
+ * A cheap prereq ranks at max(own price, dependents' prices) so pairs like
+ * BrachiBlades + Graphene upgrade stay together and the upgrade does not land
+ * in a late 1.9x queue slot.
+ */
+export function sortAugmentsForPurchase(augs: AugmentInfo[]): AugmentInfo[] {
+  const augsByName = new Map(augs.map((aug) => [aug.name, aug]))
+  const dependents = new Map<string, string[]>()
+  const prereqCount = new Map<string, number>()
+
+  for (const aug of augs) {
+    const inSetPrereqs = aug.prereqs.filter((p) => augsByName.has(p))
+    prereqCount.set(aug.name, inSetPrereqs.length)
+    for (const prereqName of inSetPrereqs) {
+      const list = dependents.get(prereqName)
+      if (list) list.push(aug.name)
+      else dependents.set(prereqName, [aug.name])
+    }
+  }
+
+  const effectivePriceMemo = new Map<string, number>()
+  function effectiveSortPrice(name: string): number {
+    const cached = effectivePriceMemo.get(name)
+    if (cached !== undefined) return cached
+    const aug = augsByName.get(name)
+    if (!aug) return 0
+    let max = aug.price
+    for (const depName of dependents.get(name) ?? []) {
+      max = Math.max(max, effectiveSortPrice(depName))
+    }
+    effectivePriceMemo.set(name, max)
+    return max
+  }
+
+  const visited = new Set<string>()
+  const result: AugmentInfo[] = []
+
+  while (result.length < augs.length) {
+    const available = augs.filter((aug) => !visited.has(aug.name) && (prereqCount.get(aug.name) ?? 0) === 0)
+    if (available.length === 0) break
+
+    const next = available.reduce((best, aug) =>
+      effectiveSortPrice(aug.name) > effectiveSortPrice(best.name) ? aug : best
+    )
+
+    visited.add(next.name)
+    result.push(next)
+
+    for (const depName of dependents.get(next.name) ?? []) {
+      prereqCount.set(depName, (prereqCount.get(depName) ?? 0) - 1)
+    }
+  }
+
+  return result
+}
+
 /** Simulated NeuroFlux price/rep when regular augs are not actually queued (dry run / dashboard). */
 export function neuroFluxPurchaseCost(
   neuroFluxInfo: AugmentInfo,
@@ -130,58 +187,7 @@ export function getAugmentData(ns: NS, playerFactions: FactionName[]): AugmentDa
     }
   }
 
-  // Topological sort optimized for minimum total cost
-  // Strategy: Buy expensive augments first (to minimize 1.9x price inflation),
-  // but ensure prerequisites are purchased before their dependents
-  function topologicalSort(augs: AugmentInfo[]): AugmentInfo[] {
-    const augsByName = new Map(augs.map((aug) => [aug.name, aug]))
-    const visited = new Set<string>()
-    const result: AugmentInfo[] = []
-
-    // Build dependency graph: for each aug, track what depends on it
-    const dependents = new Map<string, Set<string>>()
-    const prereqCount = new Map<string, number>()
-
-    for (const aug of augs) {
-      prereqCount.set(aug.name, aug.prereqs.filter((p) => augsByName.has(p)).length)
-
-      for (const prereqName of aug.prereqs) {
-        if (augsByName.has(prereqName)) {
-          if (!dependents.has(prereqName)) {
-            dependents.set(prereqName, new Set())
-          }
-          dependents.get(prereqName)!.add(aug.name)
-        }
-      }
-    }
-
-    // Process augments by price (most expensive first), respecting dependencies
-    while (result.length < augs.length) {
-      // Find all augments with no remaining prerequisites
-      const available = augs.filter((aug) => !visited.has(aug.name) && (prereqCount.get(aug.name) ?? 0) === 0)
-
-      if (available.length === 0) break // Circular dependency or error
-
-      // Among available augments, pick the most expensive one
-      const next = available.reduce((max, aug) => (aug.price > max.price ? aug : max))
-
-      visited.add(next.name)
-      result.push(next)
-
-      // Update prereq counts for dependents
-      const deps = dependents.get(next.name)
-      if (deps) {
-        for (const depName of deps) {
-          prereqCount.set(depName, (prereqCount.get(depName) ?? 0) - 1)
-        }
-      }
-    }
-
-    return result
-  }
-
-  // Sort all potentially affordable augments for optimal purchase order (expensive first, respecting prereqs)
-  const optimallySorted = topologicalSort(potentiallyAffordable)
+  const optimallySorted = sortAugmentsForPurchase(potentiallyAffordable)
 
   // Now split into truly affordable (based on cumulative adjusted cost) and too expensive
   const AUGMENT_PRICE_MULT = AUGMENT_QUEUE_PRICE_MULT

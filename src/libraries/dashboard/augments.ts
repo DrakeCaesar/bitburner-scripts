@@ -5,8 +5,8 @@
 import { FactionName, NS } from "@ns"
 import {
   AUGMENT_QUEUE_PRICE_MULT,
-  AugmentInfo,
   filterAugmentPurchaseFactions,
+  getAugmentData,
   neuroFluxPurchaseCost,
 } from "../augmentations.js"
 import { createStandardContainer, FloatingWindow } from "../floatingWindow"
@@ -71,163 +71,6 @@ function bestFactionRep(
   return best
 }
 
-// Get augmentation data with display-specific optimizations (topological sort)
-function getAugmentDataForDisplay(ns: NS, playerFactions: FactionName[]) {
-  const augmentMap = new Map<string, AugmentInfo>()
-  let neuroFluxInfo: AugmentInfo | null = null
-
-  for (const faction of filterAugmentPurchaseFactions(playerFactions)) {
-    const augments = ns.singularity.getAugmentationsFromFaction(faction)
-
-    for (const augName of augments) {
-      const price = ns.singularity.getAugmentationPrice(augName)
-      const repReq = ns.singularity.getAugmentationRepReq(augName)
-      const owned = ns.singularity.getOwnedAugmentations(true).includes(augName)
-      const prereqs = ns.singularity.getAugmentationPrereq(augName)
-
-      // Handle NeuroFlux Governor separately
-      if (augName.startsWith("NeuroFlux Governor")) {
-        if (!neuroFluxInfo) {
-          neuroFluxInfo = {
-            name: augName,
-            factions: [faction],
-            price: price,
-            repReq: repReq,
-            owned: owned,
-            prereqs: prereqs,
-          }
-        } else {
-          neuroFluxInfo.factions.push(faction)
-        }
-        continue
-      }
-
-      if (augmentMap.has(augName)) {
-        // Add this faction to the existing entry
-        augmentMap.get(augName)!.factions.push(faction)
-      } else {
-        augmentMap.set(augName, {
-          name: augName,
-          factions: [faction],
-          price: price,
-          repReq: repReq,
-          owned: owned,
-          prereqs: prereqs,
-        })
-      }
-    }
-  }
-
-  // Get player stats
-  const playerMoney = ns.getPlayer().money
-  const factionReps = new Map<string, number>()
-  for (const faction of filterAugmentPurchaseFactions(playerFactions)) {
-    factionReps.set(faction, ns.singularity.getFactionRep(faction))
-  }
-
-  // Filter out owned augmentations and check rep requirements
-  const potentiallyAffordable: AugmentInfo[] = []
-  const unaffordable: AugmentInfo[] = []
-
-  for (const aug of augmentMap.values()) {
-    // Skip owned augmentations entirely
-    if (aug.owned) continue
-
-    // Check if we have enough rep in ANY of the factions that offer this augment
-    const hasEnoughRep = aug.factions.some((faction) => (factionReps.get(faction) ?? 0) >= aug.repReq)
-
-    if (hasEnoughRep) {
-      potentiallyAffordable.push(aug)
-    } else {
-      unaffordable.push(aug)
-    }
-  }
-
-  // Topological sort optimized for minimum total cost
-  // Strategy: Buy expensive augments first (to minimize 1.9x price inflation),
-  // but ensure prerequisites are purchased before their dependents
-  function topologicalSort(augs: AugmentInfo[]): AugmentInfo[] {
-    const augsByName = new Map(augs.map((aug) => [aug.name, aug]))
-    const visited = new Set<string>()
-    const result: AugmentInfo[] = []
-
-    // Build dependency graph: for each aug, track what depends on it
-    const dependents = new Map<string, Set<string>>()
-    const prereqCount = new Map<string, number>()
-
-    for (const aug of augs) {
-      prereqCount.set(aug.name, aug.prereqs.filter((p) => augsByName.has(p)).length)
-
-      for (const prereqName of aug.prereqs) {
-        if (augsByName.has(prereqName)) {
-          if (!dependents.has(prereqName)) {
-            dependents.set(prereqName, new Set())
-          }
-          dependents.get(prereqName)!.add(aug.name)
-        }
-      }
-    }
-
-    // Process augments by price (most expensive first), respecting dependencies
-    while (result.length < augs.length) {
-      // Find all augments with no remaining prerequisites
-      const available = augs.filter((aug) => !visited.has(aug.name) && (prereqCount.get(aug.name) ?? 0) === 0)
-
-      if (available.length === 0) break // Circular dependency or error
-
-      // Among available augments, pick the most expensive one
-      const next = available.reduce((max, aug) => (aug.price > max.price ? aug : max))
-
-      visited.add(next.name)
-      result.push(next)
-
-      // Update prereq counts for dependents
-      const deps = dependents.get(next.name)
-      if (deps) {
-        for (const depName of deps) {
-          prereqCount.set(depName, (prereqCount.get(depName) ?? 0) - 1)
-        }
-      }
-    }
-
-    return result
-  }
-
-  // Sort all potentially affordable augments for optimal purchase order (expensive first, respecting prereqs)
-  const optimallySorted = topologicalSort(potentiallyAffordable)
-
-  // Now split into truly affordable (based on cumulative adjusted cost) and too expensive
-  const AUGMENT_PRICE_MULT = AUGMENT_QUEUE_PRICE_MULT
-  let cumulativeCost = 0
-  const affordable: AugmentInfo[] = []
-  const tooExpensiveCumulative: AugmentInfo[] = []
-
-  for (let i = 0; i < optimallySorted.length; i++) {
-    const adjustedPrice = optimallySorted[i].price * Math.pow(AUGMENT_PRICE_MULT, i)
-    cumulativeCost += adjustedPrice
-
-    if (cumulativeCost <= playerMoney) {
-      affordable.push(optimallySorted[i])
-    } else {
-      // This and all subsequent augments are unaffordable due to cumulative cost
-      tooExpensiveCumulative.push(...optimallySorted.slice(i))
-      break
-    }
-  }
-
-  // Sort unaffordable by price (most expensive first)
-  unaffordable.sort((a, b) => b.price - a.price)
-
-  return {
-    affordableSorted: affordable,
-    tooExpensiveCumulative,
-    unaffordable,
-    neuroFluxInfo,
-    playerMoney,
-    factionReps,
-  }
-}
-
 export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryColor: string): void {
   const player = ns.getPlayer()
 
@@ -253,7 +96,7 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
   }
 
   const { affordableSorted, tooExpensiveCumulative, unaffordable, neuroFluxInfo, playerMoney, factionReps } =
-    getAugmentDataForDisplay(ns, factions)
+    getAugmentData(ns, factions)
 
   // Calculate column widths
   const orderCol = "#"
