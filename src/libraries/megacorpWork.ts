@@ -53,6 +53,17 @@ export interface MegacorpRow {
   note: string
 }
 
+export interface MegacorpPositionRow {
+  position: JobName
+  field: JobField
+  requiredRep: string
+  qualified: string
+  repPerSecond: string
+  fieldPick: string
+  isSelected: boolean
+  note: string
+}
+
 export interface MegacorpWorkSnapshot {
   currentCompany: CompanyName
   completedCompanies: readonly CompanyName[]
@@ -121,6 +132,131 @@ export function buildMegacorpRows(ns: NS, snapshot: MegacorpWorkSnapshot, megaco
     const order = megacorps.indexOf(a.company) - megacorps.indexOf(b.company)
     return order
   })
+}
+
+function qualifiedPositionByField(
+  ns: NS,
+  company: CompanyName,
+  positions: JobName[],
+  player: Player,
+  companyRep: number
+): Map<JobField, JobName | null> {
+  const result = new Map<JobField, JobName | null>()
+
+  for (const [field, fieldPositions] of positionsByField(ns, company, positions)) {
+    result.set(field, highestQualifiedInField(ns, company, fieldPositions, player, companyRep))
+  }
+
+  return result
+}
+
+export function buildMegacorpPositionRows(ns: NS, snapshot: MegacorpWorkSnapshot): MegacorpPositionRow[] {
+  const company = snapshot.currentCompany
+  if (isMegacorpFactionUnlocked(ns, company)) return []
+
+  const positions = ns.singularity.getCompanyPositions(company)
+  if (positions.length === 0) return []
+
+  const player = ns.getPlayer()
+  const companyRep = ns.singularity.getCompanyRep(company)
+  const companyFavor = ns.singularity.getCompanyFavor(company)
+  const qualifiedByField = qualifiedPositionByField(ns, company, positions, player, companyRep)
+  const best = pickBestCompanyField(ns, company, positions, player, companyFavor, snapshot.focus, companyRep)
+  const rows: MegacorpPositionRow[] = []
+
+  for (const position of positions) {
+    const info = ns.singularity.getCompanyPositionInfo(company, position)
+    const skillsOk = meetsPositionRequirements(player, position, company, ns)
+    const repOk = meetsPositionReputation(companyRep, info.requiredReputation)
+    const qualified = skillsOk && repOk
+    const fieldCandidate = qualifiedByField.get(info.field) === position
+    const isSelected = best?.positionName === position
+    const repRate = qualified
+      ? companyRepPerSecond(ns, company, position, companyFavor, snapshot.focus)
+      : null
+
+    let note = ""
+    if (!skillsOk) {
+      note = "Skill requirements not met"
+    } else if (!repOk) {
+      note = `Need ${ns.format.number(info.requiredReputation)} company rep`
+    } else if (!fieldCandidate) {
+      note = "Not top qualified in field"
+    } else if (!isSelected && best) {
+      note = `Lower rep/s than ${best.field}`
+    }
+
+    rows.push({
+      position,
+      field: info.field,
+      requiredRep: ns.format.number(info.requiredReputation),
+      qualified: qualified ? "yes" : skillsOk ? "low rep" : "no",
+      repPerSecond: repRate != null ? repRate.toFixed(2) : "—",
+      fieldPick: fieldCandidate ? "yes" : "—",
+      isSelected,
+      note,
+    })
+  }
+
+  return rows.sort((a, b) => {
+    if (a.isSelected) return -1
+    if (b.isSelected) return 1
+    if (a.fieldPick === "yes" && b.fieldPick !== "yes") return -1
+    if (b.fieldPick === "yes" && a.fieldPick !== "yes") return 1
+    const aRep = a.repPerSecond === "—" ? -1 : Number(a.repPerSecond)
+    const bRep = b.repPerSecond === "—" ? -1 : Number(b.repPerSecond)
+    if (aRep !== bRep) return bRep - aRep
+    return a.position.localeCompare(b.position)
+  })
+}
+
+export function buildMegacorpPositionTableConfig(
+  ns: NS,
+  rows: MegacorpPositionRow[],
+  snapshot: MegacorpWorkSnapshot
+): ReactTableConfig {
+  const selectedRowIndex = rows.findIndex((row) => row.isSelected)
+  const highlightCells =
+    selectedRowIndex >= 0
+      ? new Set([`${selectedRowIndex},0`, `${selectedRowIndex},1`, `${selectedRowIndex},4`])
+      : undefined
+
+  const selected = rows.find((row) => row.isSelected)
+  const titleParts = [
+    `Positions @ ${snapshot.currentCompany}`,
+    selected?.position ?? snapshot.bestPosition ?? null,
+    selected != null && selected.repPerSecond !== "—"
+      ? `${selected.repPerSecond} rep/s`
+      : snapshot.bestRepPerSecond != null
+        ? `${snapshot.bestRepPerSecond.toFixed(2)} rep/s`
+        : null,
+  ].filter(Boolean)
+
+  return {
+    title: titleParts.join(" — "),
+    columns: [
+      { header: "Pick", align: "center", minWidth: 4 },
+      { header: "Position", align: "left", minWidth: 22 },
+      { header: "Field", align: "left", minWidth: 10 },
+      { header: "Req rep", align: "right" },
+      { header: "Qualified", align: "center", minWidth: 5 },
+      { header: "Rep/s", align: "right", minWidth: 7 },
+      { header: "Field pick", align: "center", minWidth: 5 },
+      { header: "Why", align: "left", minWidth: 22 },
+    ],
+    rows: rows.map((row) => [
+      row.isSelected ? "->" : "",
+      row.position,
+      row.field,
+      row.requiredRep,
+      row.qualified,
+      row.repPerSecond,
+      row.fieldPick,
+      row.note,
+    ]),
+    selectedRowIndex: selectedRowIndex >= 0 ? selectedRowIndex : undefined,
+    highlightCells,
+  }
 }
 
 export function buildMegacorpTableConfig(ns: NS, rows: MegacorpRow[], snapshot: MegacorpWorkSnapshot): ReactTableConfig {
@@ -201,6 +337,10 @@ function meetsPositionRequirements(player: Player, position: JobName, company: C
   return true
 }
 
+function meetsPositionReputation(companyRep: number, requiredRep: number): boolean {
+  return companyRep >= requiredRep
+}
+
 export function companyRepPerSecond(
   ns: NS,
   company: CompanyName,
@@ -233,7 +373,8 @@ function highestQualifiedInField(
   ns: NS,
   company: CompanyName,
   fieldPositions: JobName[],
-  player: Player
+  player: Player,
+  companyRep: number
 ): JobName | null {
   if (fieldPositions.length === 0) return null
 
@@ -251,12 +392,19 @@ function highestQualifiedInField(
   if (!meetsPositionRequirements(player, entry, company, ns)) {
     return null
   }
+  if (!meetsPositionReputation(companyRep, minRep)) {
+    return null
+  }
 
   let current = entry
   for (;;) {
     const next = ns.singularity.getCompanyPositionInfo(company, current).nextPosition
     if (next == null || !fieldPositions.includes(next)) break
+
+    const nextInfo = ns.singularity.getCompanyPositionInfo(company, next)
     if (!meetsPositionRequirements(player, next, company, ns)) break
+    if (!meetsPositionReputation(companyRep, nextInfo.requiredReputation)) break
+
     current = next
   }
 
@@ -269,14 +417,15 @@ export function pickBestCompanyField(
   positions: JobName[],
   player: Player,
   companyFavor: number,
-  focused: boolean
+  focused: boolean,
+  companyRep = ns.singularity.getCompanyRep(company)
 ): { field: JobField; positionName: JobName; repPerSecond: number } | null {
   let bestField: JobField | null = null
   let bestPositionName: JobName | null = null
   let bestRepPerSecond = -1
 
   for (const [field, fieldPositions] of positionsByField(ns, company, positions)) {
-    const position = highestQualifiedInField(ns, company, fieldPositions, player)
+    const position = highestQualifiedInField(ns, company, fieldPositions, player, companyRep)
     if (position == null) continue
 
     const repPerSecond = companyRepPerSecond(ns, company, position, companyFavor, focused)

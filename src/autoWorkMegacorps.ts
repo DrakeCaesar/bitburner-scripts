@@ -1,6 +1,8 @@
 import { CompanyName, NS } from "@ns"
 import { killOtherInstances } from "./libraries/batchCalculations.js"
 import {
+  buildMegacorpPositionRows,
+  buildMegacorpPositionTableConfig,
   buildMegacorpRows,
   buildMegacorpTableConfig,
   getFactionName,
@@ -14,11 +16,9 @@ import {
 } from "./libraries/megacorpWork.js"
 import {
   applyTailSize,
-  buildReactTable,
-  estimateReactTableHeightPx,
-  estimateReactTableWidthPx,
   initScriptLogTail,
   renderScriptLog,
+  ScriptLogBuilder,
   type TableLayout,
 } from "./libraries/scriptLogUi.js"
 
@@ -31,16 +31,22 @@ const MEGACORP_LAYOUT: Partial<TableLayout> = {
 }
 
 async function renderMegacorpTable(ns: NS, snapshot: MegacorpWorkSnapshot, megacorps: CompanyName[]): Promise<void> {
+  const log = new ScriptLogBuilder(MEGACORP_LAYOUT)
   const rows = buildMegacorpRows(ns, snapshot, megacorps)
-  const table = buildMegacorpTableConfig(ns, rows, snapshot)
-  const tableConfig = { layout: MEGACORP_LAYOUT, ...table }
+  log.table({ layout: MEGACORP_LAYOUT, ...buildMegacorpTableConfig(ns, rows, snapshot) })
+
+  const positionRows = buildMegacorpPositionRows(ns, snapshot)
+  if (positionRows.length > 0) {
+    log.table({ layout: MEGACORP_LAYOUT, ...buildMegacorpPositionTableConfig(ns, positionRows, snapshot) })
+  }
+
   const renderLayout = {
     ...MEGACORP_LAYOUT,
-    tailTableWidthPx: estimateReactTableWidthPx(tableConfig),
-    tailContentHeightPx: estimateReactTableHeightPx(tableConfig),
+    tailTableWidthPx: log.estimateMaxTableWidthPx(),
+    tailContentHeightPx: log.estimateContentHeightPx(),
   }
   applyTailSize(ns, renderLayout)
-  await renderScriptLog(ns, buildReactTable(tableConfig), renderLayout)
+  await renderScriptLog(ns, log.build(), renderLayout)
 }
 
 export async function main(ns: NS): Promise<void> {
@@ -127,7 +133,7 @@ export async function main(ns: NS): Promise<void> {
 
       const player = ns.getPlayer()
       const companyFavor = ns.singularity.getCompanyFavor(company)
-      const best = pickBestCompanyField(ns, company, positions, player, companyFavor, focus)
+      const best = pickBestCompanyField(ns, company, positions, player, companyFavor, focus, currentRep)
 
       if (!best) {
         snapshot.message = `ERROR: No qualified job at ${company}`
