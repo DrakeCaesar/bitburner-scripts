@@ -8,8 +8,9 @@ export const MAX_PROBE_DEPTH = 10
 export const DEFAULT_CRAWL_INTERVAL_MS = 60_000
 export const CRAWL_REPORT_PORT = 45107
 const WORKER_MODE_ARG = "worker"
+const OPEN_CACHES_MODE_ARG = "openCaches"
 export const DARKWEB = "darkweb"
-/** Flat archive folder on home for copied darknet .txt and .cache files. */
+/** Flat archive folder on home for copied darknet .txt files and opened .cache rewards. */
 export const DARKWEB_ARCHIVE_DIR = "darkweb"
 
 // --- types ---
@@ -48,10 +49,24 @@ export interface CrawlStatusReport {
 
 export type CrawlPortMessage = CrawlHostReport | CrawlStatusReport
 
+export interface CrawlCacheOpen {
+  host: string
+  file: string
+  message: string
+  karmaLoss: number
+  openedAt: number
+}
+
 export interface CrawlProgressState {
   reports: ReadonlyMap<string, CrawlHostReport>
   activeOps: readonly CrawlStatusReport[]
   workerRunning: boolean
+  cacheOpens: readonly CrawlCacheOpen[]
+}
+
+export interface DarknetCrawlResult {
+  reports: Map<string, CrawlHostReport>
+  cacheOpens: CrawlCacheOpen[]
 }
 
 export type CrawlProgressHandler = (state: CrawlProgressState) => void | Promise<void>
@@ -184,6 +199,7 @@ export interface DarknetCrawlApi {
   authenticate(host: string, password: string, additionalMsec?: number): Promise<{ success: boolean }>
   heartbleed(host: string, options?: { peek?: boolean }): Promise<{ success: boolean; logs: string[] }>
   connectToSession?(host: string, password: string): { success: boolean }
+  openCache(filename: string, suppressToast?: boolean): { success: boolean; message: string; karmaLoss: number }
   getServerDetails(host?: string): DarknetServerDetailsForFormulas
 }
 
@@ -432,10 +448,47 @@ function isAccountsManagerGuessNumber(details: ReturnType<DarknetCrawlApi["getSe
 }
 
 const DEEP_GREEN_MODEL = "DeepGreen"
+const DEEP_GREEN_CLUE_LINE_RE = /remember|must use/i
 const MAX_MASTERMIND_CANDIDATES = 50_000
 
 function isDeepGreenModel(details: ReturnType<DarknetCrawlApi["getServerDetails"]>): boolean {
   return details.modelId === DEEP_GREEN_MODEL
+}
+
+function extractDeepGreenClueDigits(line: string): string[] {
+  if (!DEEP_GREEN_CLUE_LINE_RE.test(line)) {
+    return []
+  }
+  const digits: string[] = []
+  for (const ch of line) {
+    if (ch >= "0" && ch <= "9") {
+      digits.push(ch)
+    }
+  }
+  return digits
+}
+
+function deepGreenLogPermutationCandidates(
+  logs: string[],
+  length: number,
+  format: DarknetPasswordFormat
+): string[] | null {
+  if (format !== "numeric" || length <= 0) {
+    return null
+  }
+
+  const clueDigits: string[] = []
+  for (const line of logs) {
+    clueDigits.push(...extractDeepGreenClueDigits(line))
+  }
+
+  const unique = [...new Set(clueDigits)]
+  if (unique.length !== length) {
+    return null
+  }
+
+  const candidates = permutationsFromDigitPool(unique.join(""), length)
+  return candidates.length > 0 ? candidates : null
 }
 
 function mastermindCharset(format: DarknetPasswordFormat): string {
@@ -1019,6 +1072,21 @@ async function tryAuthNeighbor(
   }
 
   if (isDeepGreenModel(details)) {
+    const scrapedLogs = await scrapeHeartbleedLogs(ns, port, dnet, neighbor)
+    const logCandidates = deepGreenLogPermutationCandidates(
+      scrapedLogs,
+      details.passwordLength,
+      details.passwordFormat
+    )
+    if (logCandidates != null) {
+      const auth = await authenticateCandidates(ns, port, dnet, neighbor, logCandidates)
+      return {
+        password: auth.password,
+        authenticated: auth.authenticated ? true : auth.password !== null ? false : null,
+        authGuesses: auth.authGuesses,
+      }
+    }
+
     const auth = await authenticateDeepGreen(
       ns,
       port,
@@ -1067,9 +1135,16 @@ async function copyCrawlAssets(ns: NS, target: string, source: string): Promise<
   }
 }
 
-function isArchivableDarknetFile(fileName: string): boolean {
-  const base = fileName.includes("/") ? (fileName.split("/").pop() ?? fileName) : fileName
-  return base.endsWith(".txt") || base.endsWith(".cache")
+function isArchivableTextFile(fileName: string): boolean {
+  return flatFileName(fileName).endsWith(".txt")
+}
+
+function isLiteratureFile(fileName: string): boolean {
+  return flatFileName(fileName).endsWith(".lit")
+}
+
+function isCacheFile(fileName: string): boolean {
+  return flatFileName(fileName).endsWith(".cache")
 }
 
 function flatFileName(fileName: string): string {
@@ -1103,20 +1178,113 @@ function resolveArchiveWritePath(ns: NS, fileName: string, content: string): str
   }
 }
 
-function finalizeArchiveFile(ns: NS, fileName: string): void {
-  if (!ns.fileExists(fileName, "home")) {
-    return
-  }
-  const content = ns.read(fileName)
+function finalizeArchiveContent(ns: NS, fileName: string, content: string): void {
   const destPath = resolveArchiveWritePath(ns, fileName, content)
-  ns.rm(fileName)
   if (destPath === null) {
     return
   }
   ns.write(destPath, content, "w")
 }
 
-async function archiveServerFiles(ns: NS, sourceHost: string, reportPort?: number): Promise<void> {
+function finalizeArchiveFile(ns: NS, fileName: string): void {
+  if (!ns.fileExists(fileName, "home")) {
+    return
+  }
+  const content = ns.read(fileName)
+  ns.rm(fileName)
+  finalizeArchiveContent(ns, fileName, content)
+}
+
+function queueArchiveFile(
+  ns: NS,
+  fileName: string,
+  reportPort: number | undefined
+): void {
+  if (ns.getHostname() === "home") {
+    finalizeArchiveFile(ns, fileName)
+  } else if (reportPort != null && reportPort > 0) {
+    ns.writePort(reportPort, JSON.stringify({ type: "archive", file: flatFileName(fileName) }))
+  }
+}
+
+function reportCacheOpen(
+  ns: NS,
+  host: string,
+  fileName: string,
+  result: { message: string; karmaLoss: number },
+  reportPort: number | undefined,
+  cacheOpens?: CrawlCacheOpen[]
+): void {
+  const entry: CrawlCacheOpen = {
+    host,
+    file: flatFileName(fileName),
+    message: result.message,
+    karmaLoss: result.karmaLoss,
+    openedAt: Date.now(),
+  }
+
+  if (ns.getHostname() === "home") {
+    finalizeArchiveContent(ns, entry.file, result.message)
+    cacheOpens?.push(entry)
+    return
+  }
+
+  if (reportPort != null && reportPort > 0) {
+    ns.writePort(reportPort, JSON.stringify({ type: "cacheOpen", ...entry }))
+  }
+}
+
+async function openCacheFilesOnCurrentHost(
+  ns: NS,
+  dnet: DarknetCrawlApi,
+  reportPort: number | undefined,
+  cacheOpens?: CrawlCacheOpen[]
+): Promise<void> {
+  const hostname = ns.getHostname()
+  let files: string[]
+  try {
+    files = ns.ls(hostname)
+  } catch {
+    return
+  }
+
+  for (const file of files) {
+    if (!isCacheFile(file)) {
+      continue
+    }
+    const result = dnet.openCache(file, true)
+    if (!result.success) {
+      continue
+    }
+    reportCacheOpen(ns, hostname, file, result, reportPort, cacheOpens)
+  }
+}
+
+async function execOpenCachesOnHost(
+  ns: NS,
+  host: string,
+  reportPort: number | undefined
+): Promise<void> {
+  if (!ns.fileExists(DARKNET_CRAWL_SCRIPT, host)) {
+    await copyCrawlScript(ns, host, ns.getHostname())
+  }
+  const port = reportPort ?? 0
+  const pid = ns.exec(DARKNET_CRAWL_SCRIPT, host, 1, OPEN_CACHES_MODE_ARG, port)
+  if (pid === 0) {
+    return
+  }
+  while (ns.isRunning(pid)) {
+    await ns.sleep(50)
+  }
+}
+
+async function archiveServerFiles(
+  ns: NS,
+  dnet: DarknetCrawlApi,
+  sourceHost: string,
+  reportPort?: number,
+  cacheOpens?: CrawlCacheOpen[]
+): Promise<void> {
   let files: string[]
   try {
     files = ns.ls(sourceHost)
@@ -1125,20 +1293,33 @@ async function archiveServerFiles(ns: NS, sourceHost: string, reportPort?: numbe
   }
 
   const onHome = ns.getHostname() === "home"
+  const onSource = ns.getHostname() === sourceHost
 
   for (const file of files) {
-    if (!isArchivableDarknetFile(file)) {
+    const base = flatFileName(file)
+    if (isLiteratureFile(file)) {
+      if (!ns.fileExists(base, "home")) {
+        ns.scp(file, "home", sourceHost)
+      }
       continue
     }
-    const base = flatFileName(file)
+    if (!isArchivableTextFile(file)) {
+      continue
+    }
     if (!ns.scp(file, "home", sourceHost)) {
       continue
     }
     if (onHome) {
       finalizeArchiveFile(ns, base)
     } else if (reportPort != null) {
-      ns.writePort(reportPort, JSON.stringify({ type: "archive", file: base }))
+      queueArchiveFile(ns, base, reportPort)
     }
+  }
+
+  if (onSource) {
+    await openCacheFilesOnCurrentHost(ns, dnet, reportPort, cacheOpens)
+  } else if (dnet.getServerDetails(sourceHost).hasSession) {
+    await execOpenCachesOnHost(ns, sourceHost, reportPort)
   }
 }
 
@@ -1164,7 +1345,7 @@ async function runCrawlWorker(ns: NS): Promise<void> {
   })
 
   if (dnet.getServerDetails(hostname).hasSession) {
-    await archiveServerFiles(ns, hostname, reportPort)
+    await archiveServerFiles(ns, dnet, hostname, reportPort)
   }
 
   if (remainingDepth <= 0) {
@@ -1198,7 +1379,7 @@ async function runCrawlWorker(ns: NS): Promise<void> {
     })
 
     if (dnet.getServerDetails(neighbor).hasSession) {
-      await archiveServerFiles(ns, neighbor, reportPort)
+      await archiveServerFiles(ns, dnet, neighbor, reportPort)
     }
 
     if (!dnet.getServerDetails(neighbor).hasSession || remainingDepth <= 1) {
@@ -1276,6 +1457,9 @@ function parseCrawlReport(raw: unknown): CrawlHostReport | null {
     if (row.type === "archive") {
       return null
     }
+    if (row.type === "cacheOpen") {
+      return null
+    }
     if (typeof row.hostname !== "string") return null
     if (row.authenticated !== true && row.authenticated !== false && row.authenticated !== null) {
       return null
@@ -1301,11 +1485,31 @@ function parseCrawlReport(raw: unknown): CrawlHostReport | null {
   }
 }
 
+function parseCacheOpen(row: Record<string, unknown>): CrawlCacheOpen | null {
+  if (row.type !== "cacheOpen") {
+    return null
+  }
+  if (typeof row.host !== "string" || typeof row.file !== "string" || typeof row.message !== "string") {
+    return null
+  }
+  if (typeof row.karmaLoss !== "number" || !Number.isFinite(row.karmaLoss)) {
+    return null
+  }
+  return {
+    host: row.host,
+    file: row.file,
+    message: row.message,
+    karmaLoss: row.karmaLoss,
+    openedAt: typeof row.openedAt === "number" && Number.isFinite(row.openedAt) ? row.openedAt : Date.now(),
+  }
+}
+
 function applyCrawlPortMessage(
   ns: NS,
   raw: unknown,
   reports: Map<string, CrawlHostReport>,
-  activeOps: Map<string, CrawlStatusReport>
+  activeOps: Map<string, CrawlStatusReport>,
+  cacheOpens: CrawlCacheOpen[]
 ): void {
   try {
     const parsed: unknown = typeof raw === "string" ? JSON.parse(raw) : raw
@@ -1313,6 +1517,12 @@ function applyCrawlPortMessage(
       return
     }
     const row = parsed as Record<string, unknown>
+    const cacheOpen = parseCacheOpen(row)
+    if (cacheOpen) {
+      cacheOpens.push(cacheOpen)
+      finalizeArchiveContent(ns, cacheOpen.file, cacheOpen.message)
+      return
+    }
     if (row.type === "archive" && typeof row.file === "string") {
       finalizeArchiveFile(ns, row.file)
       return
@@ -1348,12 +1558,13 @@ function drainCrawlPort(
   ns: NS,
   port: number,
   reports: Map<string, CrawlHostReport>,
-  activeOps: Map<string, CrawlStatusReport>
+  activeOps: Map<string, CrawlStatusReport>,
+  cacheOpens: CrawlCacheOpen[]
 ): void {
   while (true) {
     const raw = ns.readPort(port)
     if (raw === "NULL PORT DATA") break
-    applyCrawlPortMessage(ns, raw, reports, activeOps)
+    applyCrawlPortMessage(ns, raw, reports, activeOps, cacheOpens)
   }
 }
 
@@ -1361,13 +1572,14 @@ function pollCrawlPort(
   ns: NS,
   port: number,
   reports: Map<string, CrawlHostReport>,
-  activeOps: Map<string, CrawlStatusReport>
+  activeOps: Map<string, CrawlStatusReport>,
+  cacheOpens: CrawlCacheOpen[]
 ): void {
   while (true) {
     const raw = ns.peek(port)
     if (raw === "NULL PORT DATA") break
     ns.readPort(port)
-    applyCrawlPortMessage(ns, raw, reports, activeOps)
+    applyCrawlPortMessage(ns, raw, reports, activeOps, cacheOpens)
   }
 }
 
@@ -1421,7 +1633,7 @@ export async function runDarknetCrawl(
   maxDepth = MAX_PROBE_DEPTH,
   onProgress?: CrawlProgressHandler,
   registry?: DarknetRegistry
-): Promise<Map<string, CrawlHostReport>> {
+): Promise<DarknetCrawlResult> {
   const source = ns.getHostname()
 
   if (registry) {
@@ -1429,10 +1641,6 @@ export async function runDarknetCrawl(
   }
 
   await authenticateDarkwebEntry(ns, dnet, registry?.servers[DARKWEB]?.password)
-
-  if (dnet.getServerDetails(DARKWEB).hasSession) {
-    await archiveServerFiles(ns, DARKWEB)
-  }
 
   await copyCrawlAssets(ns, DARKWEB, source)
   ns.clearPort(CRAWL_REPORT_PORT)
@@ -1453,6 +1661,7 @@ export async function runDarknetCrawl(
 
   const reports = new Map<string, CrawlHostReport>()
   const activeOps = new Map<string, CrawlStatusReport>()
+  const cacheOpens: CrawlCacheOpen[] = []
 
   const emitProgress = async (workerRunning: boolean): Promise<void> => {
     if (!onProgress) {
@@ -1462,21 +1671,32 @@ export async function runDarknetCrawl(
       reports,
       activeOps: [...activeOps.values()],
       workerRunning,
+      cacheOpens,
     })
   }
 
   await emitProgress(true)
 
   while (ns.isRunning(pid)) {
-    pollCrawlPort(ns, CRAWL_REPORT_PORT, reports, activeOps)
+    pollCrawlPort(ns, CRAWL_REPORT_PORT, reports, activeOps, cacheOpens)
     await emitProgress(true)
     await ns.sleep(100)
   }
 
-  drainCrawlPort(ns, CRAWL_REPORT_PORT, reports, activeOps)
+  drainCrawlPort(ns, CRAWL_REPORT_PORT, reports, activeOps, cacheOpens)
   await emitProgress(false)
 
-  return reports
+  return { reports, cacheOpens }
+}
+
+async function runOpenCachesWorker(ns: NS): Promise<void> {
+  const reportPort = Number(ns.args[1])
+  const dnet = (ns as NS & { dnet?: DarknetCrawlApi }).dnet
+  if (!dnet) {
+    return
+  }
+  const port = Number.isInteger(reportPort) && reportPort > 0 ? reportPort : undefined
+  await openCacheFilesOnCurrentHost(ns, dnet, port)
 }
 
 // --- entry ---
@@ -1484,5 +1704,7 @@ export async function runDarknetCrawl(
 export async function main(ns: NS): Promise<void> {
   if (ns.args[0] === WORKER_MODE_ARG) {
     await runCrawlWorker(ns)
+  } else if (ns.args[0] === OPEN_CACHES_MODE_ARG) {
+    await runOpenCachesWorker(ns)
   }
 }

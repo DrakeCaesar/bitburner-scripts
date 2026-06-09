@@ -9,6 +9,7 @@ import {
   mergeRegistryWithCrawl,
   runDarknetCrawl,
   saveDarknetRegistry,
+  type CrawlCacheOpen,
   type CrawlHostReport,
   type CrawlProgressState,
   type CrawlStatusReport,
@@ -17,9 +18,10 @@ import {
   type DarknetServerDetailsForFormulas,
 } from "./darknetCrawl.js"
 import {
-  ScriptLogBuilder,
+  TabbedScriptLogBuilder,
   initScriptLogTail,
   measureTreeTableHostChars,
+  type TabDefinition,
   type TableLayout,
   type TreeTableRow,
 } from "./libraries/scriptLogUi.js"
@@ -27,6 +29,11 @@ import {
 // --- config ---
 
 const DARKSCAPE_NAV = "DarkscapeNavigator.exe"
+
+const DARKWEB_TABS: TabDefinition[] = [
+  { id: "crawl", label: "Crawl" },
+  { id: "caches", label: "Caches" },
+]
 
 const DARKWEB_STATS_LAYOUT: Partial<TableLayout> = {
   fontSizePx: 11,
@@ -53,6 +60,13 @@ const TREE_DATA_COLUMNS = [
   { header: "Cha", align: "right" as const, minWidth: 3 },
   { header: "Len", align: "right" as const, minWidth: 3 },
   { header: "RAM", align: "right" as const, minWidth: 7 },
+]
+
+const CACHE_TABLE_COLUMNS = [
+  { header: "Host", align: "left" as const, minWidth: 16 },
+  { header: "File", align: "left" as const, minWidth: 18 },
+  { header: "Karma", align: "right" as const, minWidth: 5 },
+  { header: "Reward", align: "left" as const, minWidth: 24 },
 ]
 
 // --- types ---
@@ -152,7 +166,7 @@ function treeDataColumns() {
 }
 
 function appendDarknetTreeTable(
-  log: ScriptLogBuilder,
+  log: TabbedScriptLogBuilder,
   ns: NS,
   dnet: DarknetApi,
   reports: ReadonlyMap<string, CrawlHostReport>,
@@ -166,13 +180,38 @@ function appendDarknetTreeTable(
   const rootIds = reports.has("darkweb") ? ["darkweb"] : undefined
   bumpActColumnMax(rows)
   bumpHostColumnMax(rows, rootIds)
-  log.treeTable({
+  log.tab("crawl").treeTable({
     layout: DARKWEB_STATS_LAYOUT,
     title,
     rootIds,
     treeMinWidth: hostColumnMaxChars,
     columns: treeDataColumns(),
     rows,
+  })
+}
+
+function sumCacheKarma(cacheOpens: readonly CrawlCacheOpen[]): number {
+  let total = 0
+  for (const entry of cacheOpens) {
+    total += entry.karmaLoss
+  }
+  return total
+}
+
+function appendCacheOpenTable(log: TabbedScriptLogBuilder, cacheOpens: readonly CrawlCacheOpen[]): void {
+  const builder = log.tab("caches")
+  if (cacheOpens.length === 0) {
+    builder.text("No caches opened yet this session.")
+    return
+  }
+
+  const sorted = [...cacheOpens].sort((a, b) => b.openedAt - a.openedAt)
+  builder.text(`${sorted.length} cache(s) opened | total karma ${sumCacheKarma(sorted)}`)
+  builder.table({
+    layout: DARKWEB_STATS_LAYOUT,
+    title: "Opened caches",
+    columns: CACHE_TABLE_COLUMNS,
+    rows: sorted.map((entry) => [entry.host, entry.file, String(entry.karmaLoss), entry.message]),
   })
 }
 
@@ -200,53 +239,78 @@ function countRegistryPasswords(registry: DarknetRegistry): number {
   return n
 }
 
+async function renderDashboard(
+  ns: NS,
+  dnet: DarknetApi,
+  tabbedLog: TabbedScriptLogBuilder,
+  registry: DarknetRegistry,
+  displayReports: ReadonlyMap<string, CrawlHostReport>,
+  activeOps: readonly CrawlStatusReport[],
+  cacheOpens: readonly CrawlCacheOpen[],
+  summaryLine: string
+): Promise<void> {
+  tabbedLog.clearPanels()
+  tabbedLog.tab("crawl").text(summaryLine)
+  appendDarknetTreeTable(tabbedLog, ns, dnet, displayReports, activeOps, "Darknet crawl")
+  appendCacheOpenTable(tabbedLog, cacheOpens)
+  await tabbedLog.render(ns)
+}
+
 async function renderCrawlProgress(
   ns: NS,
   dnet: DarknetApi,
+  tabbedLog: TabbedScriptLogBuilder,
   registry: DarknetRegistry,
   state: CrawlProgressState,
-  crawlNum: number
+  crawlNum: number,
+  sessionCacheOpens: readonly CrawlCacheOpen[]
 ): Promise<void> {
   const displayReports = mergeRegistryWithCrawl(registry, state.reports)
   const auth = countAuthStats(displayReports)
   const status = state.workerRunning ? "running" : "done"
   const activeCount = state.activeOps.length
   const knownPw = countRegistryPasswords(registry)
+  const cacheOpens = [...sessionCacheOpens, ...state.cacheOpens]
 
-  await renderLog(ns, (log) => {
-    log.text(
-      `Crawl #${crawlNum} ${status} | registry ${Object.keys(registry.servers).length} host(s), ${knownPw} password(s) | ` +
-        `shown ${displayReports.size} | auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped}` +
-        (activeCount > 0 ? ` | active ${activeCount}` : "")
-    )
-    appendDarknetTreeTable(log, ns, dnet, displayReports, state.activeOps, "Darknet crawl")
-  })
+  await renderDashboard(
+    ns,
+    dnet,
+    tabbedLog,
+    registry,
+    displayReports,
+    state.activeOps,
+    cacheOpens,
+    `Crawl #${crawlNum} ${status} | registry ${Object.keys(registry.servers).length} host(s), ${knownPw} password(s) | ` +
+      `shown ${displayReports.size} | auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped}` +
+      (activeCount > 0 ? ` | active ${activeCount}` : "") +
+      ` | caches ${cacheOpens.length}`
+  )
 }
 
 async function renderRegistrySummary(
   ns: NS,
   dnet: DarknetApi,
+  tabbedLog: TabbedScriptLogBuilder,
   registry: DarknetRegistry,
   crawlReports: ReadonlyMap<string, CrawlHostReport>,
-  crawlNum: number
+  crawlNum: number,
+  sessionCacheOpens: readonly CrawlCacheOpen[]
 ): Promise<void> {
   const displayReports = mergeRegistryWithCrawl(registry, crawlReports)
   const auth = countAuthStats(displayReports)
   const knownPw = countRegistryPasswords(registry)
 
-  await renderLog(ns, (log) => {
-    log.text(
-      `Crawl #${crawlNum} done | registry ${Object.keys(registry.servers).length} host(s), ${knownPw} password(s) saved to ${DARKNET_REGISTRY_FILE} | ` +
-        `auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped}`
-    )
-    appendDarknetTreeTable(log, ns, dnet, displayReports, [], "Darknet crawl")
-  })
-}
-
-async function renderLog(ns: NS, build: (log: ScriptLogBuilder) => void): Promise<void> {
-  const log = new ScriptLogBuilder(DARKWEB_STATS_LAYOUT)
-  build(log)
-  await log.render(ns)
+  await renderDashboard(
+    ns,
+    dnet,
+    tabbedLog,
+    registry,
+    displayReports,
+    [],
+    sessionCacheOpens,
+    `Crawl #${crawlNum} done | registry ${Object.keys(registry.servers).length} host(s), ${knownPw} password(s) saved to ${DARKNET_REGISTRY_FILE} | ` +
+      `auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped} | caches ${sessionCacheOpens.length}`
+  )
 }
 
 function parseCrawlIntervalMs(ns: NS): number {
@@ -264,41 +328,50 @@ export async function main(ns: NS): Promise<void> {
   hostColumnMaxChars = HOST_COLUMN_MIN_CHARS
   initScriptLogTail(ns, "Darknet", DARKWEB_STATS_LAYOUT)
 
+  const tabbedLog = new TabbedScriptLogBuilder(DARKWEB_TABS, DARKWEB_STATS_LAYOUT)
+
   const dnet = getDarknetApi(ns)
   if (!dnet) {
-    await renderLog(ns, (log) => log.text("ERROR: ns.dnet API not available"))
+    tabbedLog.tab("crawl").text("ERROR: ns.dnet API not available")
+    await tabbedLog.render(ns)
     return
   }
   if (!ns.hasTorRouter()) {
-    await renderLog(ns, (log) => log.text("ERROR: Need a TOR router"))
+    tabbedLog.tab("crawl").text("ERROR: Need a TOR router")
+    await tabbedLog.render(ns)
     return
   }
   if (!ns.fileExists(DARKSCAPE_NAV, "home")) {
-    await renderLog(ns, (log) => log.text(`ERROR: Need ${DARKSCAPE_NAV} on home`))
+    tabbedLog.tab("crawl").text(`ERROR: Need ${DARKSCAPE_NAV} on home`)
+    await tabbedLog.render(ns)
     return
   }
 
   const crawlIntervalMs = parseCrawlIntervalMs(ns)
   let registry = loadDarknetRegistry(ns)
   let crawlNum = 0
+  const sessionCacheOpens: CrawlCacheOpen[] = []
 
   while (true) {
     crawlNum++
     try {
-      const reports = await runDarknetCrawl(
+      const { reports, cacheOpens } = await runDarknetCrawl(
         ns,
         dnet,
         MAX_PROBE_DEPTH,
         async (state) => {
-          await renderCrawlProgress(ns, dnet, registry, state, crawlNum)
+          await renderCrawlProgress(ns, dnet, tabbedLog, registry, state, crawlNum, sessionCacheOpens)
         },
         registry
       )
+      sessionCacheOpens.push(...cacheOpens)
       mergeCrawlReportsIntoRegistry(registry, reports)
       saveDarknetRegistry(ns, registry)
-      await renderRegistrySummary(ns, dnet, registry, reports, crawlNum)
+      await renderRegistrySummary(ns, dnet, tabbedLog, registry, reports, crawlNum, sessionCacheOpens)
     } catch (err) {
-      await renderLog(ns, (log) => log.text(`ERROR crawl #${crawlNum}: ${String(err)}`))
+      tabbedLog.clearPanels()
+      tabbedLog.tab("crawl").text(`ERROR crawl #${crawlNum}: ${String(err)}`)
+      await tabbedLog.render(ns)
     }
 
     await ns.sleep(crawlIntervalMs)
