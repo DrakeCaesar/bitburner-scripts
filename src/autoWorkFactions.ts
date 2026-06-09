@@ -8,6 +8,7 @@ import {
   parseFactionWorkPriority,
   prioritizeTargets,
   startFactionWork,
+  stopFactionWorkIfActive,
   type FactionWorkPriority,
 } from "./libraries/factionWork.js"
 import {
@@ -78,6 +79,9 @@ export async function main(ns: NS) {
     await renderFactionWorkTable(ns, priority)
 
     if (!bestTarget) {
+      if (stopFactionWorkIfActive(ns)) {
+        ns.print("All faction goals met — stopped faction work.")
+      }
       return
     }
 

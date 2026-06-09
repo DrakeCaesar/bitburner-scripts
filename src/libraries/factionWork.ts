@@ -142,6 +142,15 @@ export function startFactionWork(
   return { ok, workType }
 }
 
+/** Stop player faction work only; leaves gym, crime, company work, etc. untouched. */
+export function stopFactionWorkIfActive(ns: NS): boolean {
+  const work = ns.singularity.getCurrentWork()
+  if (work?.type !== "FACTION") {
+    return false
+  }
+  return ns.singularity.stopAction()
+}
+
 /** ETA to reach augment rep target via hacking contracts (assumes continuous work). */
 export function estimateAugmentRepEta(
   ns: NS,
