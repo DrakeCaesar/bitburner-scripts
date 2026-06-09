@@ -8,7 +8,7 @@ const UNFOCUSED_FOCUS_MULT = 0.8
 export const DEFAULT_REQUIRED_REP = 400000
 
 export const REQUIRED_REP_OVERRIDES: Record<string, number> = {
-  MegaCorp: 300000,
+  MegaCorp: 400000,
 }
 
 export function getMegacorps(ns: NS): CompanyName[] {
