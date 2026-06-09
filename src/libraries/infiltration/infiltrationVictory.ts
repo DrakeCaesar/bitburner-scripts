@@ -5,8 +5,8 @@ import { waitForCityNavigationReady } from "./infiltrationNavigation.js"
 
 const VICTORY_TITLE = "Infiltration successful!"
 const SHADOWS_OF_ANARCHY = "Shadows of Anarchy"
-const VICTORY_REWARD_SELECT_DELAY_MS = 5000
-const VICTORY_REWARD_CONFIRM_DELAY_MS = 5000
+const VICTORY_REWARD_SELECT_DELAY_MS = 500
+const VICTORY_REWARD_CONFIRM_DELAY_MS = 500
 const VICTORY_MENU_OPEN_WAIT_MS = 1500
 const VICTORY_STATE_SETTLE_MS = 200
 const VICTORY_TRADE_RENDER_DELAY_MS = 300
@@ -475,6 +475,19 @@ function findTradeRepRecipient(
   return best ? { faction: best.faction, delta: best.delta } : null
 }
 
+function formatVictoryDeltaPercent(delta: number, expected: number): string {
+  if (expected === 0) return "n/a"
+  const percent = (delta / expected) * 100
+  const shortfall = expected - delta
+  return `${percent.toFixed(4)}% of expected (short by ${shortfall})`
+}
+
+/** Skip audit noise when payout is >= 99% of expected or overshoots. */
+function shouldLogVictoryRewardShortfall(delta: number, expected: number): boolean {
+  if (expected <= 0) return false
+  return delta / expected < 0.99
+}
+
 function logVictoryRewardAudit(context: {
   intendedFaction: string | null
   intendedAction: VictorySubmitAction
@@ -498,12 +511,13 @@ function logVictoryRewardAudit(context: {
     if (
       context.intendedAction === "sell" &&
       context.expected.sellCash != null &&
-      moneyDelta + 1 < context.expected.sellCash
+      shouldLogVictoryRewardShortfall(moneyDelta, context.expected.sellCash)
     ) {
       console.log(
         "[infiltration victory] money shortfall:" +
           ` expected >= ${context.expected.sellCash},` +
-          ` before ${context.before.money}, after ${context.after.money}, delta ${moneyDelta}`
+          ` before ${context.before.money}, after ${context.after.money},` +
+          ` delta ${moneyDelta} (${formatVictoryDeltaPercent(moneyDelta, context.expected.sellCash)})`
       )
     }
     if (context.intendedAction === "trade") {
@@ -517,7 +531,11 @@ function logVictoryRewardAudit(context: {
     return
   }
 
-  if (context.expected.tradeRep != null && factionDelta != null && factionDelta + 1 < context.expected.tradeRep) {
+  if (
+    context.expected.tradeRep != null &&
+    factionDelta != null &&
+    shouldLogVictoryRewardShortfall(factionDelta, context.expected.tradeRep)
+  ) {
     const recipient = findTradeRepRecipient(
       context.allFactionRepsBefore,
       context.allFactionRepsAfter,
@@ -536,7 +554,8 @@ function logVictoryRewardAudit(context: {
       "[infiltration victory] faction rep shortfall:" +
         ` audited ${context.actualFaction ?? "?"},` +
         ` expected >= ${context.expected.tradeRep},` +
-        ` before ${context.before.factionRep}, after ${context.after.factionRep}, delta ${factionDelta},` +
+        ` before ${context.before.factionRep}, after ${context.after.factionRep},` +
+        ` delta ${factionDelta} (${formatVictoryDeltaPercent(factionDelta, context.expected.tradeRep)}),` +
         ` dropdown "${context.dropdownAtSubmit}",` +
         ` factionName state "${context.factionStateAtSubmit}"` +
         recipientNote +
