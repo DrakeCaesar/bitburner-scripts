@@ -86,6 +86,47 @@ export function getHardestInfiltrationTarget(ns: NS): InfiltrationTarget | null 
   return targets[targets.length - 1] ?? null
 }
 
+export type InfiltrationRewardGoal = "money" | "reputation"
+
+export function getInfiltrationRewardPerLevel(
+  target: InfiltrationTarget,
+  goal: InfiltrationRewardGoal
+): number {
+  const reward = target.data.reward[goal === "money" ? "sellCash" : "tradeRep"]
+  return reward / target.data.maxClearanceLevel
+}
+
+/** Best available target for the chosen victory reward (sell cash or trade rep). */
+export function getBestInfiltrationTarget(
+  ns: NS,
+  goal: InfiltrationRewardGoal
+): InfiltrationTarget | null {
+  const targets = getAvailableInfiltrationTargets(ns)
+  if (targets.length === 0) return null
+
+  let best = targets[0]
+  let bestRate = getInfiltrationRewardPerLevel(best, goal)
+
+  for (let i = 1; i < targets.length; i++) {
+    const target = targets[i]
+    const rate = getInfiltrationRewardPerLevel(target, goal)
+    const rewardKey = goal === "money" ? "sellCash" : "tradeRep"
+    const bestTotalReward = best.data.reward[rewardKey]
+    const totalReward = target.data.reward[rewardKey]
+
+    if (
+      rate > bestRate ||
+      (rate === bestRate && totalReward > bestTotalReward) ||
+      (rate === bestRate && totalReward === bestTotalReward && target.difficulty > best.difficulty)
+    ) {
+      best = target
+      bestRate = rate
+    }
+  }
+
+  return best
+}
+
 /** Available targets, hardest first. */
 export function getInfiltrationTargetsHardestFirst(ns: NS): InfiltrationTarget[] {
   return [...getAvailableInfiltrationTargets(ns)].reverse()

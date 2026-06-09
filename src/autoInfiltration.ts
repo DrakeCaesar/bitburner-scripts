@@ -1,11 +1,13 @@
 import { NS } from "@ns"
+import { getPreferredFactionForRep, parseFactionWorkPriority } from "./libraries/factionWork.js"
 import { disableTrustedKeyInjection, syncTrustedKeyInjection } from "./libraries/infiltration/infiltrationKeyInput.js"
 import { isInfiltrationActive } from "./libraries/infiltration/infiltrationNavigation.js"
 import { runInfiltrationForTarget } from "./libraries/infiltration/infiltrationRun.js"
 import { setupInfiltrationSolver, shutdownInfiltrationSolver } from "./libraries/infiltration/infiltrationSolver.js"
 import {
+  getBestInfiltrationTarget,
   getInfiltrationApi,
-  getHardestInfiltrationTarget,
+  getInfiltrationRewardPerLevel,
 } from "./libraries/infiltration/infiltrationTargets.js"
 
 /** Debug overlay for infiltration DOM state; disable once automation is stable. */
@@ -29,7 +31,9 @@ export async function main(ns: NS): Promise<void> {
 
   try {
     while (true) {
-      const target = getHardestInfiltrationTarget(ns)
+      const priority = parseFactionWorkPriority(ns)
+      const rewardGoal = getPreferredFactionForRep(ns, priority) != null ? "reputation" : "money"
+      const target = getBestInfiltrationTarget(ns, rewardGoal)
 
       if (!target) {
         ns.print("No infiltration targets available. Waiting...")
@@ -38,8 +42,13 @@ export async function main(ns: NS): Promise<void> {
         continue
       }
 
+      const rewardPerLevel = getInfiltrationRewardPerLevel(target, rewardGoal)
+      const rewardLabel =
+        rewardGoal === "reputation"
+          ? `rep ${ns.format.number(target.data.reward.tradeRep)} (${ns.format.number(rewardPerLevel)}/lvl, ${target.data.maxClearanceLevel} lvls)`
+          : `cash ${ns.format.number(target.data.reward.sellCash)} (${ns.format.number(rewardPerLevel)}/lvl, ${target.data.maxClearanceLevel} lvls)`
       ns.print(
-        `Target: ${target.name} (${target.city}, ${target.tier}, rating ${target.rating.toFixed(0)})`
+        `Target: ${target.name} (${target.city}, ${target.tier}, rating ${target.rating.toFixed(0)}, ${rewardLabel})`
       )
 
       if (isInfiltrationActive()) {
@@ -50,7 +59,7 @@ export async function main(ns: NS): Promise<void> {
 
       switch (outcome) {
         case "victory":
-          ns.print(`Done: ${target.name}. Re-running hardest target.`)
+          ns.print(`Done: ${target.name}. Re-running best ${rewardGoal} target.`)
           break
         case "cancelled":
           ns.print("Infiltration cancelled. Stopping auto script.")
