@@ -7,7 +7,8 @@ import { findButtonByTextPrefix, invokeTrustedClick } from "./infiltrationGameBr
 import { waitForCityNavigationReady } from "./infiltrationNavigation.js"
 
 const VICTORY_TITLE = "Infiltration successful!"
-const VICTORY_REWARD_CONFIRM_DELAY_MS = 1000
+const VICTORY_REWARD_SELECT_DELAY_MS = 500
+const VICTORY_REWARD_CONFIRM_DELAY_MS = 500
 
 function normalizeText(text: string): string {
   return text.replace(/\s+/g, " ").trim()
@@ -53,61 +54,84 @@ function getVictoryFactionSelect(): HTMLElement | null {
   return combobox instanceof HTMLElement ? combobox : null
 }
 
-function getVictorySelectValue(): string {
-  const select = getVictoryFactionSelect()
-  if (!select) return ""
+/** Outermost MUI Select fiber (Victory.tsx factionName state), not the inner combobox. */
+function getVictorySelectFiber(): ReactFiberLike | null {
+  const combobox = getVictoryFactionSelect()
+  if (!combobox) return null
 
-  let fiber: ReactFiberLike | null = getReactFiber(select)
+  let fiber: ReactFiberLike | null = getReactFiber(combobox)
   const seen = new Set<ReactFiberLike>()
+  let selectFiber: ReactFiberLike | null = null
 
   while (fiber) {
     if (seen.has(fiber)) break
     seen.add(fiber)
 
     for (const props of [fiber.memoizedProps, fiber.pendingProps]) {
-      if (props && typeof props.value === "string") {
-        return normalizeText(props.value)
+      if (
+        props &&
+        typeof props.onChange === "function" &&
+        typeof props.value === "string"
+      ) {
+        selectFiber = fiber
       }
     }
 
     fiber = fiber.return ?? null
   }
 
-  return normalizeText(select.textContent ?? "")
+  return selectFiber
 }
 
-function invokeVictorySelectChange(factionName: string): boolean {
-  if (getVictorySelectValue() === factionName) {
-    return true
-  }
-
-  const select = getVictoryFactionSelect()
-  if (!select) return false
-
-  let fiber: ReactFiberLike | null = getReactFiber(select)
-  const seen = new Set<ReactFiberLike>()
-
-  while (fiber) {
-    if (seen.has(fiber)) break
-    seen.add(fiber)
-
-    for (const props of [fiber.memoizedProps, fiber.pendingProps]) {
-      if (props && typeof props.onChange === "function") {
-        ;(props.onChange as (event: { target: { value: string } }) => void)({
-          target: { value: factionName },
-        })
-        return getVictorySelectValue() === factionName
-      }
+function readVictorySelectFiberValue(fiber: ReactFiberLike): string {
+  for (const props of [fiber.memoizedProps, fiber.pendingProps]) {
+    if (props && typeof props.value === "string") {
+      return normalizeText(props.value)
     }
+  }
+  return ""
+}
 
-    fiber = fiber.return ?? null
+function getVictorySelectValue(): string {
+  const selectFiber = getVictorySelectFiber()
+  if (!selectFiber) return ""
+  return readVictorySelectFiberValue(selectFiber)
+}
+
+function invokeVictorySelectFiberChange(fiber: ReactFiberLike, factionName: string): void {
+  for (const props of [fiber.memoizedProps, fiber.pendingProps]) {
+    if (props && typeof props.onChange === "function") {
+      ;(props.onChange as (event: { target: { value: string } }) => void)({
+        target: { value: factionName },
+      })
+      return
+    }
+  }
+}
+
+function getVictoryMenuItemValue(option: Element): string {
+  const dataValue = option.getAttribute("data-value")
+  if (dataValue != null && dataValue !== "") {
+    return normalizeText(dataValue)
+  }
+  return normalizeText(option.textContent ?? "")
+}
+
+/** Always apply selection; visible label can disagree with React factionName state. */
+function invokeVictorySelectChange(factionName: string): boolean {
+  const selectFiber = getVictorySelectFiber()
+  if (selectFiber) {
+    invokeVictorySelectFiberChange(selectFiber, factionName)
   }
 
-  invokeTrustedClick(select)
-  for (const option of Array.from(document.querySelectorAll('[role="option"], .MuiMenuItem-root'))) {
-    if (normalizeText(option.textContent ?? "") !== factionName) continue
-    invokeTrustedClick(option as HTMLElement)
-    return getVictorySelectValue() === factionName
+  const combobox = getVictoryFactionSelect()
+  if (combobox) {
+    invokeTrustedClick(combobox)
+    for (const option of Array.from(document.querySelectorAll('[role="option"], .MuiMenuItem-root'))) {
+      if (getVictoryMenuItemValue(option) !== factionName) continue
+      invokeTrustedClick(option as HTMLElement)
+      break
+    }
   }
 
   return getVictorySelectValue() === factionName
@@ -145,6 +169,10 @@ export async function collectInfiltrationVictoryReward(
 
   const priority = parseFactionWorkPriority(ns)
   const faction = getPreferredFactionForRep(ns, priority)
+
+  ns.print(`Victory reward: selecting in ${VICTORY_REWARD_SELECT_DELAY_MS / 1000}s`)
+  await ns.sleep(VICTORY_REWARD_SELECT_DELAY_MS)
+
   let rewardAction = "sell for money"
   if (faction) {
     invokeVictorySelectChange(faction)
