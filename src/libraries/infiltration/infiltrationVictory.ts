@@ -1,12 +1,12 @@
-import type { NS } from "@ns"
+import type { FactionName, NS } from "@ns"
 import { getPreferredFactionForRep, parseFactionWorkPriority } from "../factionWork.js"
 import { getInfiltrationRewardGoal, isInfiltrationMoneyMode } from "./infiltrationTargets.js"
 import { findButtonByTextPrefix, invokeTrustedClick } from "./infiltrationGameBridge.js"
 import { waitForCityNavigationReady } from "./infiltrationNavigation.js"
 
 const VICTORY_TITLE = "Infiltration successful!"
-const VICTORY_REWARD_SELECT_DELAY_MS = 500
-const VICTORY_REWARD_CONFIRM_DELAY_MS = 500
+const VICTORY_REWARD_SELECT_DELAY_MS = 5000
+const VICTORY_REWARD_CONFIRM_DELAY_MS = 5000
 
 function normalizeText(text: string): string {
   return text.replace(/\s+/g, " ").trim()
@@ -15,8 +15,22 @@ function normalizeText(text: string): string {
 type ReactFiberLike = {
   memoizedProps?: Record<string, unknown>
   pendingProps?: Record<string, unknown>
+  child?: ReactFiberLike | null
+  sibling?: ReactFiberLike | null
   return?: ReactFiberLike | null
 }
+
+interface VictoryScreenRewards {
+  sellCash: number | null
+  tradeRep: number | null
+}
+
+interface VictoryRewardSnapshot {
+  money: number
+  factionRep: number | null
+}
+
+type VictorySubmitAction = "sell" | "trade"
 
 function getReactFiber(node: Element): ReactFiberLike | null {
   for (const key of Object.keys(node)) {
@@ -148,13 +162,121 @@ function clickVictoryButton(prefix: string): { ok: boolean; detail: string } {
   return { ok: true, detail: prefix }
 }
 
+function walkFiberTreeForNumberProp(
+  fiber: ReactFiberLike | null,
+  propName: string,
+  seen = new Set<ReactFiberLike>(),
+  depth = 0
+): number | null {
+  if (!fiber || depth > 80 || seen.has(fiber)) return null
+  seen.add(fiber)
+
+  for (const props of [fiber.memoizedProps, fiber.pendingProps]) {
+    const value = props?.[propName]
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value
+    }
+  }
+
+  return (
+    walkFiberTreeForNumberProp(fiber.child ?? null, propName, seen, depth + 1) ??
+    walkFiberTreeForNumberProp(fiber.sibling ?? null, propName, seen, depth + 1)
+  )
+}
+
+function readRewardFromButton(prefix: string, propName: string): number | null {
+  const button = findButtonByTextPrefix(prefix)
+  if (!button) return null
+  return walkFiberTreeForNumberProp(getReactFiber(button), propName)
+}
+
+function readVictoryScreenRewards(): VictoryScreenRewards {
+  return {
+    sellCash: readRewardFromButton("Sell for", "money"),
+    tradeRep: readRewardFromButton("Trade for", "reputation"),
+  }
+}
+
+function snapshotPlayerRewards(ns: NS, faction: FactionName | null): VictoryRewardSnapshot {
+  return {
+    money: ns.getPlayer().money,
+    factionRep: faction != null ? ns.singularity.getFactionRep(faction) : null,
+  }
+}
+
+function logVictoryRewardAudit(context: {
+  intendedFaction: string | null
+  intendedAction: VictorySubmitAction
+  actualAction: VictorySubmitAction
+  actualFaction: string | null
+  dropdownAtSubmit: string
+  expected: VictoryScreenRewards
+  before: VictoryRewardSnapshot
+  after: VictoryRewardSnapshot
+}): void {
+  const moneyDelta = context.after.money - context.before.money
+  const factionDelta =
+    context.before.factionRep != null && context.after.factionRep != null
+      ? context.after.factionRep - context.before.factionRep
+      : null
+
+  if (context.actualAction === "sell") {
+    if (context.expected.sellCash != null && moneyDelta + 1 < context.expected.sellCash) {
+      console.log(
+        "[infiltration victory] money shortfall:" +
+          ` expected >= ${context.expected.sellCash},` +
+          ` before ${context.before.money}, after ${context.after.money}, delta ${moneyDelta}`
+      )
+    }
+    if (context.intendedAction === "trade") {
+      console.log(
+        "[infiltration victory] intended trade but sold:" +
+          ` wanted ${context.intendedFaction ?? "?"},` +
+          ` dropdown at submit "${context.dropdownAtSubmit}"`
+      )
+    }
+    return
+  }
+
+  if (context.expected.tradeRep != null && factionDelta != null && factionDelta + 1 < context.expected.tradeRep) {
+    console.log(
+      "[infiltration victory] faction rep shortfall:" +
+        ` faction ${context.actualFaction ?? "?"},` +
+        ` expected >= ${context.expected.tradeRep},` +
+        ` before ${context.before.factionRep}, after ${context.after.factionRep}, delta ${factionDelta},` +
+        ` dropdown at submit "${context.dropdownAtSubmit}"` +
+        (context.intendedFaction !== context.actualFaction
+          ? `, intended ${context.intendedFaction ?? "?"}`
+          : "")
+    )
+  }
+}
+
 async function confirmVictoryReward(
   ns: NS,
-  detail: string
+  detail: string,
+  audit?: {
+    intendedFaction: string | null
+    intendedAction: VictorySubmitAction
+    actualAction: VictorySubmitAction
+    actualFaction: string | null
+    dropdownAtSubmit: string
+    expected: VictoryScreenRewards
+    before: VictoryRewardSnapshot
+  }
 ): Promise<{ ok: boolean; detail: string }> {
   if (!(await waitForCityNavigationReady(ns))) {
     return { ok: false, detail: `${detail} (UI did not close)` }
   }
+
+  if (audit) {
+    const after = snapshotPlayerRewards(
+      ns,
+      audit.actualAction === "trade" ? (audit.actualFaction as FactionName | null) : null
+    )
+    logVictoryRewardAudit({ ...audit, after })
+  }
+
   return { ok: true, detail }
 }
 
@@ -170,6 +292,15 @@ export async function collectInfiltrationVictoryReward(
     rewardGoal === "reputation"
       ? getPreferredFactionForRep(ns, parseFactionWorkPriority(ns))
       : null
+  const expected = readVictoryScreenRewards()
+  const before = snapshotPlayerRewards(ns, faction)
+  const intendedAction: VictorySubmitAction = faction != null ? "trade" : "sell"
+  const auditBase = {
+    intendedFaction: faction,
+    intendedAction,
+    expected,
+    before,
+  }
 
   ns.print(`Victory reward: selecting in ${VICTORY_REWARD_SELECT_DELAY_MS / 1000}s`)
   await ns.sleep(VICTORY_REWARD_SELECT_DELAY_MS)
@@ -198,16 +329,28 @@ export async function collectInfiltrationVictoryReward(
     invokeVictorySelectChange(faction)
     const selected = getVictorySelectValue()
     if (selected === faction) {
+      const dropdownAtSubmit = getVictorySelectValue()
       const traded = clickVictoryButton("Trade for")
       if (traded.ok) {
-        return confirmVictoryReward(ns, `traded for ${faction} reputation`)
+        return confirmVictoryReward(ns, `traded for ${faction} reputation`, {
+          ...auditBase,
+          actualAction: "trade",
+          actualFaction: faction,
+          dropdownAtSubmit,
+        })
       }
     }
   }
 
+  const dropdownAtSubmit = getVictorySelectValue()
   const sold = clickVictoryButton("Sell for")
   if (sold.ok) {
-    return confirmVictoryReward(ns, "sold for money")
+    return confirmVictoryReward(ns, "sold for money", {
+      ...auditBase,
+      actualAction: "sell",
+      actualFaction: null,
+      dropdownAtSubmit,
+    })
   }
   return sold
 }
