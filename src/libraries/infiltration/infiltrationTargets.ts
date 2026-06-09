@@ -1,4 +1,5 @@
 import type { CityName, NS } from "@ns"
+import { getPreferredFactionForRep, parseFactionWorkPriority } from "../factionWork.js"
 
 /** Matches in-game MaxDifficultyForInfiltration (Intro screen uses rating out of 100). */
 export const MAX_INFILTRATION_DIFFICULTY = 3.5
@@ -87,6 +88,18 @@ export function getHardestInfiltrationTarget(ns: NS): InfiltrationTarget | null 
 }
 
 export type InfiltrationRewardGoal = "money" | "reputation"
+
+/** First script arg: `money` / `cash` / `m` forces cash rewards and targets. */
+export function isInfiltrationMoneyMode(ns: NS): boolean {
+  const arg = String(ns.args[0] ?? "").toLowerCase()
+  return arg === "money" || arg === "cash" || arg === "m"
+}
+
+export function getInfiltrationRewardGoal(ns: NS): InfiltrationRewardGoal {
+  if (isInfiltrationMoneyMode(ns)) return "money"
+  const priority = parseFactionWorkPriority(ns)
+  return getPreferredFactionForRep(ns, priority) != null ? "reputation" : "money"
+}
 
 export function getInfiltrationRewardPerLevel(
   target: InfiltrationTarget,

@@ -1,5 +1,4 @@
 import { NS } from "@ns"
-import { getPreferredFactionForRep, parseFactionWorkPriority } from "./libraries/factionWork.js"
 import { disableTrustedKeyInjection, syncTrustedKeyInjection } from "./libraries/infiltration/infiltrationKeyInput.js"
 import { isInfiltrationActive } from "./libraries/infiltration/infiltrationNavigation.js"
 import { runInfiltrationForTarget } from "./libraries/infiltration/infiltrationRun.js"
@@ -7,7 +6,9 @@ import { setupInfiltrationSolver, shutdownInfiltrationSolver } from "./libraries
 import {
   getBestInfiltrationTarget,
   getInfiltrationApi,
+  getInfiltrationRewardGoal,
   getInfiltrationRewardPerLevel,
+  isInfiltrationMoneyMode,
 } from "./libraries/infiltration/infiltrationTargets.js"
 
 /** Debug overlay for infiltration DOM state; disable once automation is stable. */
@@ -20,7 +21,7 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("sleep")
   ns.atExit(() => disableTrustedKeyInjection())
   ns.ui.openTail()
-  ns.ui.setTailTitle("Auto Infiltration")
+  ns.ui.setTailTitle(isInfiltrationMoneyMode(ns) ? "Auto Infiltration (money)" : "Auto Infiltration")
 
   if (!getInfiltrationApi(ns)) {
     ns.print("ERROR: ns.infiltration API is not available")
@@ -31,8 +32,7 @@ export async function main(ns: NS): Promise<void> {
 
   try {
     while (true) {
-      const priority = parseFactionWorkPriority(ns)
-      const rewardGoal = getPreferredFactionForRep(ns, priority) != null ? "reputation" : "money"
+      const rewardGoal = getInfiltrationRewardGoal(ns)
       const target = getBestInfiltrationTarget(ns, rewardGoal)
 
       if (!target) {

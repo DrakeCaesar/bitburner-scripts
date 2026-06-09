@@ -1,8 +1,6 @@
 import type { NS } from "@ns"
-import {
-  getPreferredFactionForRep,
-  parseFactionWorkPriority,
-} from "../factionWork.js"
+import { getPreferredFactionForRep, parseFactionWorkPriority } from "../factionWork.js"
+import { getInfiltrationRewardGoal, isInfiltrationMoneyMode } from "./infiltrationTargets.js"
 import { findButtonByTextPrefix, invokeTrustedClick } from "./infiltrationGameBridge.js"
 import { waitForCityNavigationReady } from "./infiltrationNavigation.js"
 
@@ -167,8 +165,11 @@ export async function collectInfiltrationVictoryReward(
     return { ok: false, detail: "not on victory screen" }
   }
 
-  const priority = parseFactionWorkPriority(ns)
-  const faction = getPreferredFactionForRep(ns, priority)
+  const rewardGoal = getInfiltrationRewardGoal(ns)
+  const faction =
+    rewardGoal === "reputation"
+      ? getPreferredFactionForRep(ns, parseFactionWorkPriority(ns))
+      : null
 
   ns.print(`Victory reward: selecting in ${VICTORY_REWARD_SELECT_DELAY_MS / 1000}s`)
   await ns.sleep(VICTORY_REWARD_SELECT_DELAY_MS)
@@ -184,6 +185,8 @@ export async function collectInfiltrationVictoryReward(
         `Victory reward: preferred faction is ${faction}, dropdown shows "${selected || "none"}"; will sell for money`
       )
     }
+  } else if (isInfiltrationMoneyMode(ns)) {
+    ns.print("Victory reward: money mode; will sell for money")
   } else {
     ns.print("Victory reward: no faction needs reputation; will sell for money")
   }
