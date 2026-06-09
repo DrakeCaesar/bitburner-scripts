@@ -133,7 +133,7 @@ export async function main(ns: NS): Promise<void> {
 
       const player = ns.getPlayer()
       const companyFavor = ns.singularity.getCompanyFavor(company)
-      const best = pickBestCompanyField(ns, company, positions, player, companyFavor, focus, currentRep)
+      const best = pickBestCompanyField(ns, company, positions, player, companyFavor, currentRep)
 
       if (!best) {
         snapshot.message = `ERROR: No qualified job at ${company}`

@@ -3,7 +3,6 @@ import { NS } from "@ns"
 import type { ReactTableConfig } from "./scriptLogUi.js"
 
 const CYCLES_PER_SECOND = 1000 / 200
-const UNFOCUSED_FOCUS_MULT = 0.8
 
 export const DEFAULT_REQUIRED_REP = 400000
 
@@ -100,7 +99,7 @@ export function buildMegacorpRows(ns: NS, snapshot: MegacorpWorkSnapshot, megaco
 
     let repPerSecond = "—"
     if (company === snapshot.currentCompany && job !== "—") {
-      const rate = companyRepPerSecond(ns, company, job, favor, snapshot.focus)
+      const rate = companyRepPerSecond(ns, company, job, favor)
       if (rate != null) repPerSecond = rate.toFixed(2)
     }
 
@@ -161,7 +160,7 @@ export function buildMegacorpPositionRows(ns: NS, snapshot: MegacorpWorkSnapshot
   const companyRep = ns.singularity.getCompanyRep(company)
   const companyFavor = ns.singularity.getCompanyFavor(company)
   const qualifiedByField = qualifiedPositionByField(ns, company, positions, player, companyRep)
-  const best = pickBestCompanyField(ns, company, positions, player, companyFavor, snapshot.focus, companyRep)
+  const best = pickBestCompanyField(ns, company, positions, player, companyFavor, companyRep)
   const rows: MegacorpPositionRow[] = []
 
   for (const position of positions) {
@@ -172,7 +171,7 @@ export function buildMegacorpPositionRows(ns: NS, snapshot: MegacorpWorkSnapshot
     const fieldCandidate = qualifiedByField.get(info.field) === position
     const isSelected = best?.positionName === position
     const repRate = qualified
-      ? companyRepPerSecond(ns, company, position, companyFavor, snapshot.focus)
+      ? companyRepPerSecond(ns, company, position, companyFavor)
       : null
 
     let note = ""
@@ -304,10 +303,6 @@ export function buildMegacorpTableConfig(ns: NS, rows: MegacorpRow[], snapshot: 
   }
 }
 
-export function focusMultiplier(focused: boolean): number {
-  return focused ? 1 : UNFOCUSED_FOCUS_MULT
-}
-
 export function isWorkingAtCompany(ns: NS, company: CompanyName): boolean {
   const work = ns.singularity.getCurrentWork()
   return work != null && work.type === "COMPANY" && work.companyName === company
@@ -341,16 +336,16 @@ function meetsPositionReputation(companyRep: number, requiredRep: number): boole
   return companyRep >= requiredRep
 }
 
+/** Focused rep/s from formulas API (favor, augments, BitNode mults included). */
 export function companyRepPerSecond(
   ns: NS,
   company: CompanyName,
   position: JobName,
-  companyFavor: number,
-  focused: boolean
+  companyFavor: number
 ): number | null {
   try {
     const gains = ns.formulas.work.companyGains(ns.getPlayer(), company, position, companyFavor)
-    return gains.reputation * CYCLES_PER_SECOND * focusMultiplier(focused)
+    return gains.reputation * CYCLES_PER_SECOND
   } catch {
     return null
   }
@@ -417,7 +412,6 @@ export function pickBestCompanyField(
   positions: JobName[],
   player: Player,
   companyFavor: number,
-  focused: boolean,
   companyRep = ns.singularity.getCompanyRep(company)
 ): { field: JobField; positionName: JobName; repPerSecond: number } | null {
   let bestField: JobField | null = null
@@ -428,7 +422,7 @@ export function pickBestCompanyField(
     const position = highestQualifiedInField(ns, company, fieldPositions, player, companyRep)
     if (position == null) continue
 
-    const repPerSecond = companyRepPerSecond(ns, company, position, companyFavor, focused)
+    const repPerSecond = companyRepPerSecond(ns, company, position, companyFavor)
     if (repPerSecond == null || repPerSecond <= bestRepPerSecond) continue
 
     bestRepPerSecond = repPerSecond
