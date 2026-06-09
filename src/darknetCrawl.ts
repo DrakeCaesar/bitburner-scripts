@@ -9,6 +9,8 @@ export const DEFAULT_CRAWL_INTERVAL_MS = 60_000
 export const CRAWL_REPORT_PORT = 45107
 const WORKER_MODE_ARG = "worker"
 export const DARKWEB = "darkweb"
+/** Flat archive folder on home for copied darknet .txt and .cache files. */
+export const DARKWEB_ARCHIVE_DIR = "darkweb"
 
 // --- types ---
 
@@ -1065,6 +1067,81 @@ async function copyCrawlAssets(ns: NS, target: string, source: string): Promise<
   }
 }
 
+function isArchivableDarknetFile(fileName: string): boolean {
+  const base = fileName.includes("/") ? (fileName.split("/").pop() ?? fileName) : fileName
+  return base.endsWith(".txt") || base.endsWith(".cache")
+}
+
+function flatFileName(fileName: string): string {
+  return fileName.includes("/") ? (fileName.split("/").pop() ?? fileName) : fileName
+}
+
+function archiveDestPath(fileName: string, suffix: number | null): string {
+  const base = flatFileName(fileName)
+  const dot = base.lastIndexOf(".")
+  if (dot <= 0) {
+    return suffix === null ? `${DARKWEB_ARCHIVE_DIR}/${base}` : `${DARKWEB_ARCHIVE_DIR}/${base} (${suffix})`
+  }
+  const stem = base.slice(0, dot)
+  const ext = base.slice(dot)
+  return suffix === null
+    ? `${DARKWEB_ARCHIVE_DIR}/${base}`
+    : `${DARKWEB_ARCHIVE_DIR}/${stem} (${suffix})${ext}`
+}
+
+function resolveArchiveWritePath(ns: NS, fileName: string, content: string): string | null {
+  let suffix: number | null = null
+  while (true) {
+    const path = archiveDestPath(fileName, suffix)
+    if (!ns.fileExists(path, "home")) {
+      return path
+    }
+    if (ns.read(path) === content) {
+      return null
+    }
+    suffix = suffix === null ? 1 : suffix + 1
+  }
+}
+
+function finalizeArchiveFile(ns: NS, fileName: string): void {
+  if (!ns.fileExists(fileName, "home")) {
+    return
+  }
+  const content = ns.read(fileName)
+  const destPath = resolveArchiveWritePath(ns, fileName, content)
+  ns.rm(fileName)
+  if (destPath === null) {
+    return
+  }
+  ns.write(destPath, content, "w")
+}
+
+async function archiveServerFiles(ns: NS, sourceHost: string, reportPort?: number): Promise<void> {
+  let files: string[]
+  try {
+    files = ns.ls(sourceHost)
+  } catch {
+    return
+  }
+
+  const onHome = ns.getHostname() === "home"
+
+  for (const file of files) {
+    if (!isArchivableDarknetFile(file)) {
+      continue
+    }
+    const base = flatFileName(file)
+    if (!ns.scp(file, "home", sourceHost)) {
+      continue
+    }
+    if (onHome) {
+      finalizeArchiveFile(ns, base)
+    } else if (reportPort != null) {
+      ns.writePort(reportPort, JSON.stringify({ type: "archive", file: base }))
+    }
+  }
+}
+
 async function runCrawlWorker(ns: NS): Promise<void> {
   const reportPort = Number(ns.args[1])
   const remainingDepth = Number(ns.args[2])
@@ -1085,6 +1162,10 @@ async function runCrawlWorker(ns: NS): Promise<void> {
     authenticated: dnet.getServerDetails(hostname).hasSession ? true : null,
     password: null,
   })
+
+  if (dnet.getServerDetails(hostname).hasSession) {
+    await archiveServerFiles(ns, hostname, reportPort)
+  }
 
   if (remainingDepth <= 0) {
     return
@@ -1115,6 +1196,10 @@ async function runCrawlWorker(ns: NS): Promise<void> {
       password: auth.password,
       authGuesses: auth.authGuesses,
     })
+
+    if (dnet.getServerDetails(neighbor).hasSession) {
+      await archiveServerFiles(ns, neighbor, reportPort)
+    }
 
     if (!dnet.getServerDetails(neighbor).hasSession || remainingDepth <= 1) {
       continue
@@ -1188,6 +1273,9 @@ function parseCrawlReport(raw: unknown): CrawlHostReport | null {
     if (row.type === "status") {
       return null
     }
+    if (row.type === "archive") {
+      return null
+    }
     if (typeof row.hostname !== "string") return null
     if (row.authenticated !== true && row.authenticated !== false && row.authenticated !== null) {
       return null
@@ -1214,6 +1302,7 @@ function parseCrawlReport(raw: unknown): CrawlHostReport | null {
 }
 
 function applyCrawlPortMessage(
+  ns: NS,
   raw: unknown,
   reports: Map<string, CrawlHostReport>,
   activeOps: Map<string, CrawlStatusReport>
@@ -1224,6 +1313,10 @@ function applyCrawlPortMessage(
       return
     }
     const row = parsed as Record<string, unknown>
+    if (row.type === "archive" && typeof row.file === "string") {
+      finalizeArchiveFile(ns, row.file)
+      return
+    }
     const status = parseCrawlStatus(row)
     if (status) {
       activeOps.set(status.workerHost, status)
@@ -1260,7 +1353,7 @@ function drainCrawlPort(
   while (true) {
     const raw = ns.readPort(port)
     if (raw === "NULL PORT DATA") break
-    applyCrawlPortMessage(raw, reports, activeOps)
+    applyCrawlPortMessage(ns, raw, reports, activeOps)
   }
 }
 
@@ -1274,7 +1367,7 @@ function pollCrawlPort(
     const raw = ns.peek(port)
     if (raw === "NULL PORT DATA") break
     ns.readPort(port)
-    applyCrawlPortMessage(raw, reports, activeOps)
+    applyCrawlPortMessage(ns, raw, reports, activeOps)
   }
 }
 
@@ -1336,6 +1429,10 @@ export async function runDarknetCrawl(
   }
 
   await authenticateDarkwebEntry(ns, dnet, registry?.servers[DARKWEB]?.password)
+
+  if (dnet.getServerDetails(DARKWEB).hasSession) {
+    await archiveServerFiles(ns, DARKWEB)
+  }
 
   await copyCrawlAssets(ns, DARKWEB, source)
   ns.clearPort(CRAWL_REPORT_PORT)
