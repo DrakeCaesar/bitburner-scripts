@@ -1,12 +1,15 @@
 import type { FactionName, NS } from "@ns"
 import { getPreferredFactionForRep, parseFactionWorkPriority } from "../factionWork.js"
 import { getInfiltrationRewardGoal, isInfiltrationMoneyMode } from "./infiltrationTargets.js"
-import { findButtonByTextPrefix, invokeTrustedClick } from "./infiltrationGameBridge.js"
+import { invokeTrustedClick } from "./infiltrationGameBridge.js"
 import { waitForCityNavigationReady } from "./infiltrationNavigation.js"
 
 const VICTORY_TITLE = "Infiltration successful!"
+const SHADOWS_OF_ANARCHY = "Shadows of Anarchy"
 const VICTORY_REWARD_SELECT_DELAY_MS = 1000
 const VICTORY_REWARD_CONFIRM_DELAY_MS = 1000
+const VICTORY_MENU_OPEN_WAIT_MS = 1500
+const VICTORY_STATE_SETTLE_MS = 200
 
 function normalizeText(text: string): string {
   return text.replace(/\s+/g, " ").trim()
@@ -65,6 +68,20 @@ function findVictoryRoot(): Element | null {
   return null
 }
 
+function findVictoryButtonByTextPrefix(prefix: string): HTMLButtonElement | null {
+  const root = findVictoryRoot()
+  const buttons = root
+    ? Array.from(root.querySelectorAll("button"))
+    : Array.from(document.querySelectorAll("button"))
+
+  for (const button of buttons) {
+    if (normalizeText(button.textContent ?? "").startsWith(prefix)) {
+      return button
+    }
+  }
+  return null
+}
+
 function getFiberTypeName(fiber: ReactFiberLike): string | null {
   const type = fiber.type
   if (typeof type === "string") return type
@@ -102,6 +119,14 @@ function hasVictorySelectOnChange(fiber: ReactFiberLike): boolean {
     }
   }
   return false
+}
+
+function getVictoryFactionSelect(): HTMLElement | null {
+  const root = findVictoryRoot()
+  if (!root) return null
+
+  const combobox = root.querySelector('[role="combobox"]')
+  return combobox instanceof HTMLElement ? combobox : null
 }
 
 /** Outermost Select onChange fiber walking up from the victory combobox. */
@@ -156,8 +181,8 @@ function findVictoryComponentFiber(): ReactFiberLike | null {
 }
 
 /**
- * factionName from Victory.tsx useState — this is what trade() uses, not combobox text.
- * @see bitburner-src stable/src/Infiltration/ui/Victory.tsx
+ * factionName from Victory.tsx useState -- trade() reads this, not the combobox label.
+ * The MUI Select is uncontrolled (no value prop), so the visible label can stay "none".
  */
 function readVictoryFactionState(): string | null {
   const victory = findVictoryComponentFiber()
@@ -165,15 +190,6 @@ function readVictoryFactionState(): string | null {
   return readHookStateString(victory)
 }
 
-function getVictoryFactionSelect(): HTMLElement | null {
-  const root = findVictoryRoot()
-  if (!root) return null
-
-  const combobox = root.querySelector('[role="combobox"]')
-  return combobox instanceof HTMLElement ? combobox : null
-}
-
-/** Select fiber wired to changeDropdown / setFactionName in Victory.tsx. */
 function findVictorySelectFiber(): ReactFiberLike | null {
   const victory = findVictoryComponentFiber()
   if (!victory) return null
@@ -191,15 +207,6 @@ function getVictorySelectFiber(): ReactFiberLike | null {
   return getVictorySelectFiberFromCombobox() ?? findVictorySelectFiber()
 }
 
-function readVictorySelectFiberValue(fiber: ReactFiberLike): string {
-  for (const props of [fiber.memoizedProps, fiber.pendingProps]) {
-    if (props && typeof props.value === "string") {
-      return normalizeText(props.value)
-    }
-  }
-  return ""
-}
-
 function getVictoryComboboxDisplayValue(): string {
   const combobox = getVictoryFactionSelect()
   if (!combobox) return ""
@@ -212,18 +219,9 @@ function getVictoryComboboxDisplayValue(): string {
   return normalizeText(combobox.textContent ?? "")
 }
 
-/** Select value prop when controlled; otherwise combobox label. */
-function getVictorySelectValue(): string {
-  const selectFiber = getVictorySelectFiber()
-  const propValue = selectFiber ? readVictorySelectFiberValue(selectFiber) : ""
-  if (propValue) return propValue
-  return getVictoryComboboxDisplayValue()
-}
-
 function invokeVictorySelectFiberChange(fiber: ReactFiberLike, factionName: string): void {
   for (const props of [fiber.memoizedProps, fiber.pendingProps]) {
     if (props && typeof props.onChange === "function") {
-      // Victory.tsx changeDropdown reads event.target.value into setFactionName.
       ;(props.onChange as (event: { target: { value: string; name?: string } }) => void)({
         target: { value: factionName, name: "" },
       })
@@ -238,6 +236,19 @@ function getVictoryMenuItemValue(option: Element): string {
     return normalizeText(dataValue)
   }
   return normalizeText(option.textContent ?? "")
+}
+
+function getNudgeFactionForTarget(factions: string[], targetFaction: string): string | null {
+  const targetIndex = factions.indexOf(targetFaction)
+  if (targetIndex < 0 || factions.length < 2) return null
+
+  if (targetIndex === 0) return factions[1]
+  if (targetIndex === factions.length - 1) return factions[factions.length - 2]
+  return factions[targetIndex - 1]
+}
+
+function getWorkableFactionChoices(ns: NS): string[] {
+  return [...ns.getPlayer().factions]
 }
 
 async function waitForVictoryFactionState(
@@ -255,27 +266,89 @@ async function waitForVictoryFactionState(
   return readVictoryFactionState() === factionName
 }
 
-/** Apply changeDropdown and wait until Victory factionName state matches. */
-async function invokeVictorySelectChange(ns: NS, factionName: string): Promise<boolean> {
+async function setVictoryFactionState(ns: NS, factionName: string): Promise<boolean> {
   const selectFiber = getVictorySelectFiber()
-  if (selectFiber) {
-    invokeVictorySelectFiberChange(selectFiber, factionName)
-    if (await waitForVictoryFactionState(ns, factionName, 500)) {
-      return true
+  if (!selectFiber) return false
+
+  invokeVictorySelectFiberChange(selectFiber, factionName)
+  return waitForVictoryFactionState(ns, factionName, 500)
+}
+
+async function waitForVictoryMenuOptions(ns: NS): Promise<Element[]> {
+  const deadline = Date.now() + VICTORY_MENU_OPEN_WAIT_MS
+  while (Date.now() < deadline) {
+    const options = Array.from(
+      document.querySelectorAll('[role="option"], .MuiMenuItem-root')
+    ).filter((option) => {
+      const value = getVictoryMenuItemValue(option)
+      return value !== "" && value !== "none"
+    })
+    if (options.length > 0) return options
+    await ns.sleep(50)
+  }
+  return []
+}
+
+function openVictoryFactionMenuUi(): void {
+  const root = findVictoryRoot()
+  const targets: HTMLElement[] = []
+  const combobox = getVictoryFactionSelect()
+  if (combobox) targets.push(combobox)
+
+  if (root) {
+    for (const selector of [".MuiSelect-select", ".MuiSelect-icon", ".MuiInputBase-root"]) {
+      const element = root.querySelector(selector)
+      if (element instanceof HTMLElement) targets.push(element)
     }
   }
 
-  const combobox = getVictoryFactionSelect()
-  if (combobox) {
-    invokeTrustedClick(combobox)
-    for (const option of Array.from(document.querySelectorAll('[role="option"], .MuiMenuItem-root'))) {
-      if (getVictoryMenuItemValue(option) !== factionName) continue
-      invokeTrustedClick(option as HTMLElement)
-      break
+  for (const target of targets) {
+    target.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window })
+    )
+    invokeTrustedClick(target)
+    target.click()
+  }
+}
+
+async function clickVictoryFactionMenuOption(ns: NS, factionName: string): Promise<boolean> {
+  openVictoryFactionMenuUi()
+  const options = await waitForVictoryMenuOptions(ns)
+  if (options.length === 0) return false
+
+  for (const option of options) {
+    if (getVictoryMenuItemValue(option) !== factionName) continue
+    if (!(option instanceof HTMLElement)) return false
+
+    invokeTrustedClick(option)
+    await ns.sleep(VICTORY_STATE_SETTLE_MS)
+    return true
+  }
+
+  return false
+}
+
+/**
+ * Set Victory factionName via Select onChange (what trade() uses). UI clicks are fallback only.
+ */
+async function invokeVictorySelectChange(ns: NS, factionName: string): Promise<boolean> {
+  const current = readVictoryFactionState()
+  const choices = getWorkableFactionChoices(ns)
+
+  if (current === factionName) {
+    const nudgeFaction = getNudgeFactionForTarget(choices, factionName)
+    if (nudgeFaction != null) {
+      await setVictoryFactionState(ns, nudgeFaction)
+      await ns.sleep(VICTORY_STATE_SETTLE_MS)
     }
-    if (await waitForVictoryFactionState(ns, factionName, 2000)) {
-      return true
-    }
+  }
+
+  if (await setVictoryFactionState(ns, factionName)) {
+    return true
+  }
+
+  if (await clickVictoryFactionMenuOption(ns, factionName)) {
+    return waitForVictoryFactionState(ns, factionName, 2000)
   }
 
   return readVictoryFactionState() === factionName
@@ -286,7 +359,7 @@ function isVictoryFactionReadyForTrade(factionName: string): boolean {
 }
 
 function clickVictoryButton(prefix: string): { ok: boolean; detail: string } {
-  const button = findButtonByTextPrefix(prefix)
+  const button = findVictoryButtonByTextPrefix(prefix)
   if (!button) {
     return { ok: false, detail: `${prefix} button not found` }
   }
@@ -321,7 +394,7 @@ function walkFiberTreeForNumberProp(
 }
 
 function readRewardFromButton(prefix: string, propName: string): number | null {
-  const button = findButtonByTextPrefix(prefix)
+  const button = findVictoryButtonByTextPrefix(prefix)
   if (!button) return null
   return walkFiberTreeForNumberProp(getReactFiber(button), propName)
 }
@@ -348,22 +421,26 @@ function snapshotAllFactionReps(ns: NS): Map<string, number> {
   return reps
 }
 
-function findFactionWithRepGain(
+function findTradeRepRecipient(
   before: Map<string, number>,
   after: Map<string, number>,
-  minGain: number
+  expectedRep: number
 ): { faction: string; delta: number } | null {
-  let best: { faction: string; delta: number } | null = null
+  let best: { faction: string; delta: number; distance: number } | null = null
 
   for (const faction of before.keys()) {
+    if (faction === SHADOWS_OF_ANARCHY) continue
+
     const delta = (after.get(faction) ?? 0) - (before.get(faction) ?? 0)
-    if (delta + 1 < minGain) continue
-    if (!best || delta > best.delta) {
-      best = { faction, delta }
+    if (delta < 1) continue
+
+    const distance = Math.abs(delta - expectedRep)
+    if (!best || distance < best.distance) {
+      best = { faction, delta, distance }
     }
   }
 
-  return best
+  return best ? { faction: best.faction, delta: best.delta } : null
 }
 
 function logVictoryRewardAudit(context: {
@@ -409,14 +486,19 @@ function logVictoryRewardAudit(context: {
   }
 
   if (context.expected.tradeRep != null && factionDelta != null && factionDelta + 1 < context.expected.tradeRep) {
-    const recipient = findFactionWithRepGain(
+    const recipient = findTradeRepRecipient(
       context.allFactionRepsBefore,
       context.allFactionRepsAfter,
       context.expected.tradeRep
     )
+    const soaDelta =
+      (context.allFactionRepsAfter.get(SHADOWS_OF_ANARCHY) ?? 0) -
+      (context.allFactionRepsBefore.get(SHADOWS_OF_ANARCHY) ?? 0)
     const recipientNote = recipient
-      ? `, rep recipient ${recipient.faction} (+${recipient.delta})`
-      : ", no faction gained expected rep"
+      ? `, closest trade-like gain ${recipient.faction} (+${recipient.delta})`
+      : ", no faction gained trade-like rep"
+    const infiltratorNote =
+      soaDelta > 1 ? `, ${SHADOWS_OF_ANARCHY} infiltrator bonus +${soaDelta}` : ""
 
     console.log(
       "[infiltration victory] faction rep shortfall:" +
@@ -426,9 +508,7 @@ function logVictoryRewardAudit(context: {
         ` dropdown "${context.dropdownAtSubmit}",` +
         ` factionName state "${context.factionStateAtSubmit}"` +
         recipientNote +
-        (context.intendedFaction !== context.actualFaction
-          ? `, intended ${context.intendedFaction ?? "?"}`
-          : "")
+        infiltratorNote
     )
   }
 }
@@ -494,49 +574,52 @@ export async function collectInfiltrationVictoryReward(
   ns.print(`Victory reward: selecting in ${VICTORY_REWARD_SELECT_DELAY_MS / 1000}s`)
   await ns.sleep(VICTORY_REWARD_SELECT_DELAY_MS)
 
-  let rewardAction = "sell for money"
   if (faction) {
-    const selected = await invokeVictorySelectChange(ns, faction)
-    if (selected) {
-      rewardAction = `trade for ${faction} reputation`
-    } else {
-      const dropdown = getVictorySelectValue()
+    for (let attempt = 0; attempt < 3 && !isVictoryFactionReadyForTrade(faction); attempt++) {
+      const selected = await invokeVictorySelectChange(ns, faction)
       const state = readVictoryFactionState() ?? "?"
+      const dropdown = getVictoryComboboxDisplayValue() || "none"
       ns.print(
-        `Victory reward: preferred faction is ${faction}, dropdown "${dropdown || "none"}", state "${state}"; will sell for money`
+        `Victory reward: set ${faction} attempt ${attempt + 1} (${selected ? "ok" : "pending"}, state "${state}", dropdown "${dropdown}")`
       )
+      await ns.sleep(VICTORY_STATE_SETTLE_MS)
     }
-  } else if (isInfiltrationMoneyMode(ns)) {
+
+    if (!isVictoryFactionReadyForTrade(faction)) {
+      const state = readVictoryFactionState() ?? "?"
+      const dropdown = getVictoryComboboxDisplayValue() || "none"
+      return {
+        ok: false,
+        detail: `faction state not ready (wanted ${faction}, state "${state}", dropdown "${dropdown}")`,
+      }
+    }
+
+    ns.print(`Victory reward: state ready for ${faction}, confirming trade`)
+    await ns.sleep(VICTORY_REWARD_CONFIRM_DELAY_MS)
+
+    const dropdownAtSubmit = getVictoryComboboxDisplayValue() || "none"
+    const factionStateAtSubmit = readVictoryFactionState() ?? ""
+    const traded = clickVictoryButton("Trade for")
+    if (traded.ok) {
+      return confirmVictoryReward(ns, `traded for ${faction} reputation`, {
+        ...auditBase,
+        actualAction: "trade",
+        actualFaction: faction,
+        dropdownAtSubmit,
+        factionStateAtSubmit,
+      })
+    }
+    return traded
+  }
+
+  if (isInfiltrationMoneyMode(ns)) {
     ns.print("Victory reward: money mode; will sell for money")
   } else {
     ns.print("Victory reward: no faction needs reputation; will sell for money")
   }
 
-  ns.print(`Victory reward: confirming in ${VICTORY_REWARD_CONFIRM_DELAY_MS / 1000}s (${rewardAction})`)
   await ns.sleep(VICTORY_REWARD_CONFIRM_DELAY_MS)
-
-  if (faction) {
-    for (let attempt = 0; attempt < 3 && !isVictoryFactionReadyForTrade(faction); attempt++) {
-      await invokeVictorySelectChange(ns, faction)
-      await ns.sleep(200)
-    }
-    if (isVictoryFactionReadyForTrade(faction)) {
-      const dropdownAtSubmit = getVictorySelectValue()
-      const factionStateAtSubmit = readVictoryFactionState() ?? ""
-      const traded = clickVictoryButton("Trade for")
-      if (traded.ok) {
-        return confirmVictoryReward(ns, `traded for ${faction} reputation`, {
-          ...auditBase,
-          actualAction: "trade",
-          actualFaction: faction,
-          dropdownAtSubmit,
-          factionStateAtSubmit,
-        })
-      }
-    }
-  }
-
-  const dropdownAtSubmit = getVictorySelectValue()
+  const dropdownAtSubmit = getVictoryComboboxDisplayValue() || "none"
   const factionStateAtSubmit = readVictoryFactionState() ?? ""
   const sold = clickVictoryButton("Sell for")
   if (sold.ok) {

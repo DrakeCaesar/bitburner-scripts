@@ -35,6 +35,18 @@ let infiltrationKeyHandler: ((event: KeyboardEvent) => void) | null = null
 export const INFILTRATION_KEY_DELAY_MS = 0
 
 const CANCEL_LABEL = "Cancel Infiltration"
+const VICTORY_TITLE = "Infiltration successful!"
+
+function isInfiltrationVictoryScreenActive(): boolean {
+  const headings = document.querySelectorAll("h4")
+  for (let i = 0; i < headings.length; i++) {
+    const text = headings[i].textContent?.replace(/\s+/g, " ").trim() ?? ""
+    if (text === VICTORY_TITLE) {
+      return true
+    }
+  }
+  return false
+}
 
 function isInfiltrationMinigameActive(): boolean {
   const buttons = document.querySelectorAll("button")
@@ -245,13 +257,6 @@ function findStageOnKeyUncached(): ((event: KeyboardLikeEvent) => void) | null {
   return null
 }
 
-function markEventTrusted(event: KeyboardEvent): KeyboardEvent {
-  Object.defineProperty(event, "isTrusted", { value: true, configurable: true })
-  Object.defineProperty(event, "keyCode", { value: event.keyCode, configurable: true })
-  Object.defineProperty(event, "which", { value: event.which, configurable: true })
-  return event
-}
-
 function upgradeUntrustedKeyboardEvent(event: KeyboardEvent): KeyboardEvent {
   if (event.isTrusted) {
     return event
@@ -305,19 +310,34 @@ function deliverKeyboardEvent(key: string): boolean {
     return true
   }
 
-  const event = upgradeUntrustedKeyboardEvent(markEventTrusted(createKeyboardEvent(key)))
+  return dispatchDomKeyboardEvent(key)
+}
+
+function dispatchDomKeyboardEvent(key: string, target?: HTMLElement | null): boolean {
+  const rawEvent = createKeyboardEvent(key)
 
   if (infiltrationKeyHandler) {
-    infiltrationKeyHandler(event)
+    infiltrationKeyHandler(upgradeUntrustedKeyboardEvent(rawEvent))
     return true
   }
 
-  if (isOnInfiltrationPage()) {
-    document.dispatchEvent(event)
-    return true
+  if (!isOnInfiltrationPage() || isInfiltrationVictoryScreenActive()) {
+    return false
   }
 
-  return false
+  const dispatchTarget =
+    target ??
+    (document.activeElement instanceof HTMLElement &&
+    document.activeElement !== document.body
+      ? document.activeElement
+      : null)
+
+  if (dispatchTarget) {
+    dispatchTarget.focus()
+    return dispatchTarget.dispatchEvent(rawEvent)
+  }
+
+  return document.dispatchEvent(rawEvent)
 }
 
 /**
@@ -396,7 +416,7 @@ export function restoreDocumentKeyboard(): void {
   disableTrustedKeyInjection()
 }
 
-/** Enable patching only while a minigame is active; restore otherwise. */
+/** Enable patching during minigames only (victory uses trusted clicks, not keys). */
 export function syncTrustedKeyInjection(): void {
   if (isInfiltrationMinigameActive()) {
     enableTrustedKeyInjection()
@@ -447,6 +467,12 @@ function resolveKeyEvent(key: string): { key: string; code: string; keyCode: num
       return { key: "ArrowRight", code: "ArrowRight", keyCode: 39 }
     case "ArrowDown":
       return { key: "ArrowDown", code: "ArrowDown", keyCode: 40 }
+    case "Tab":
+      return { key: "Tab", code: "Tab", keyCode: 9 }
+    case "Enter":
+      return { key: "Enter", code: "Enter", keyCode: 13 }
+    case "Escape":
+      return { key: "Escape", code: "Escape", keyCode: 27 }
     default:
       if (key.length !== 1) {
         return { key, code: key, keyCode: 0 }
@@ -462,4 +488,12 @@ function resolveKeyEvent(key: string): { key: string; code: string; keyCode: num
 /** Send a keydown to the infiltration minigame. Returns true if a path handled it. */
 export function pressInfiltrationKey(key: string): boolean {
   return deliverKeyboardEvent(key)
+}
+
+/**
+ * Send a keydown to the victory UI (dropdown / trade buttons), bypassing stage.onKey
+ * so MUI controls receive Tab, Enter, and arrow keys.
+ */
+export function pressVictoryKeyboardKey(key: string, target?: HTMLElement | null): boolean {
+  return dispatchDomKeyboardEvent(key, target)
 }
