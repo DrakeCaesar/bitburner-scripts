@@ -45,8 +45,12 @@ interface SolveSession {
   nextKeyIndex: number
 }
 
+export interface InfiltrationSolverOptions {
+  showDomWindow?: boolean
+}
+
 export interface InfiltrationSolverState {
-  window: InfiltrationDomWindow
+  window: InfiltrationDomWindow | null
   session: SolveSession | null
   wasActive: boolean
   victoryHandled: boolean
@@ -112,7 +116,11 @@ function getWindowCollapsedState(element: HTMLElement | null): boolean {
   return !contentArea.classList.contains("MuiCollapse-entered")
 }
 
-export function setupInfiltrationSolver(ns: NS): InfiltrationSolverState {
+export function setupInfiltrationSolver(
+  ns: NS,
+  options: InfiltrationSolverOptions = {}
+): InfiltrationSolverState {
+  const showDomWindow = options.showDomWindow ?? true
   disableTrustedKeyInjection()
   ns.atExit(() => disableTrustedKeyInjection())
 
@@ -123,19 +131,24 @@ export function setupInfiltrationSolver(ns: NS): InfiltrationSolverState {
     }
   }
 
-  const existingWindow = document.querySelector("#infiltration-dom-window") as HTMLElement | null
-  const position = getWindowPosition(existingWindow)
-  const isCollapsed = getWindowCollapsedState(existingWindow)
-  existingWindow?.remove()
+  let domWindow: InfiltrationDomWindow | null = null
+  if (showDomWindow) {
+    const existingWindow = document.querySelector("#infiltration-dom-window") as HTMLElement | null
+    const position = getWindowPosition(existingWindow)
+    const isCollapsed = getWindowCollapsedState(existingWindow)
+    existingWindow?.remove()
 
-  const primaryElement = document.querySelector('[class*="css-"][class*="-primary"]') as HTMLElement | null
-  let primaryColor = "#0f0"
-  if (primaryElement) {
-    primaryColor = window.getComputedStyle(primaryElement).color || primaryColor
+    const primaryElement = document.querySelector('[class*="css-"][class*="-primary"]') as HTMLElement | null
+    let primaryColor = "#0f0"
+    if (primaryElement) {
+      primaryColor = window.getComputedStyle(primaryElement).color || primaryColor
+    }
+
+    domWindow = createInfiltrationDomWindow(primaryColor, position ?? undefined, isCollapsed)
   }
 
   return {
-    window: createInfiltrationDomWindow(primaryColor, position ?? undefined, isCollapsed),
+    window: domWindow,
     session: null,
     wasActive: false,
     victoryHandled: false,
@@ -145,7 +158,7 @@ export function setupInfiltrationSolver(ns: NS): InfiltrationSolverState {
 export function shutdownInfiltrationSolver(state: InfiltrationSolverState): void {
   clearInfiltrationKeyHandler()
   clearRememberedMines()
-  state.window.window.close()
+  state.window?.window.close()
   restoreDocumentKeyboard()
 }
 
@@ -221,8 +234,10 @@ export async function tickInfiltrationSolver(
     }
   }
 
-  const viewExtras = buildViewExtras(domState, phaseKey, state.session, canSolve)
-  updateInfiltrationDomView(state.window.container, viewExtras)
+  if (state.window) {
+    const viewExtras = buildViewExtras(domState, phaseKey, state.session, canSolve)
+    updateInfiltrationDomView(state.window.container, viewExtras)
+  }
 
   if (state.session && phaseKey && state.session.nextKeyIndex < state.session.pendingKeys.length) {
     if (!isInfiltrationKeyInputReady()) {
@@ -236,10 +251,12 @@ export async function tickInfiltrationSolver(
       state.session.nextKeyIndex++
     }
 
-    updateInfiltrationDomView(
-      state.window.container,
-      buildViewExtras(domState, phaseKey, state.session, canSolve)
-    )
+    if (state.window) {
+      updateInfiltrationDomView(
+        state.window.container,
+        buildViewExtras(domState, phaseKey, state.session, canSolve)
+      )
+    }
   }
 
   syncTrustedKeyInjection()

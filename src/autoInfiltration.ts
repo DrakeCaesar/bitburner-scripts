@@ -8,6 +8,9 @@ import {
   getHardestInfiltrationTarget,
 } from "./libraries/infiltration/infiltrationTargets.js"
 
+/** Debug overlay for infiltration DOM state; disable once automation is stable. */
+const SHOW_INFILTRATION_DOM_WINDOW = false
+
 const CHECK_INTERVAL_MS = 2000
 const BETWEEN_RUNS_MS = 1000
 
@@ -22,7 +25,7 @@ export async function main(ns: NS): Promise<void> {
     return
   }
 
-  const solver = setupInfiltrationSolver(ns)
+  const solver = setupInfiltrationSolver(ns, { showDomWindow: SHOW_INFILTRATION_DOM_WINDOW })
 
   try {
     while (true) {

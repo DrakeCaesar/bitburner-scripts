@@ -297,6 +297,16 @@ export function findAugmentTargets(
   return prioritizeTargets(gatherAugmentTargets(ns, playerFactions), getTargetFavor(ns), priority)
 }
 
+/** Faction that needs reputation next, using the same rules as autoWorkFactions. */
+export function getPreferredFactionForRep(
+  ns: NS,
+  priority: FactionWorkPriority = "favor"
+): FactionName | null {
+  const workableFactions = filterWorkableFactions(ns, ns.getPlayer().factions)
+  const bestTarget = findAugmentTargets(ns, workableFactions, priority)[0]
+  return bestTarget?.faction ?? null
+}
+
 function idleReason(ns: NS, faction: FactionName): string {
   const owned = new Set(ns.singularity.getOwnedAugmentations(true))
   const augments = ns.singularity.getAugmentationsFromFaction(faction)
