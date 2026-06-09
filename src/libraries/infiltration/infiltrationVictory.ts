@@ -1,15 +1,15 @@
 import type { FactionName, NS } from "@ns"
 import { getPreferredFactionForRep, parseFactionWorkPriority } from "../factionWork.js"
 import { getInfiltrationRewardGoal, isInfiltrationMoneyMode } from "./infiltrationTargets.js"
-import { invokeTrustedClick } from "./infiltrationGameBridge.js"
 import { waitForCityNavigationReady } from "./infiltrationNavigation.js"
 
 const VICTORY_TITLE = "Infiltration successful!"
 const SHADOWS_OF_ANARCHY = "Shadows of Anarchy"
-const VICTORY_REWARD_SELECT_DELAY_MS = 1000
-const VICTORY_REWARD_CONFIRM_DELAY_MS = 1000
+const VICTORY_REWARD_SELECT_DELAY_MS = 5000
+const VICTORY_REWARD_CONFIRM_DELAY_MS = 5000
 const VICTORY_MENU_OPEN_WAIT_MS = 1500
 const VICTORY_STATE_SETTLE_MS = 200
+const VICTORY_TRADE_RENDER_DELAY_MS = 300
 
 function normalizeText(text: string): string {
   return text.replace(/\s+/g, " ").trim()
@@ -101,15 +101,26 @@ function walkFiberTree(
   walkFiberTree(fiber.sibling ?? null, visit, seen)
 }
 
-function readHookStateString(fiber: ReactFiberLike): string | null {
-  let hook = fiber.memoizedState as ReactHookSlot | null
-  while (hook) {
-    if (typeof hook.memoizedState === "string") {
-      return normalizeText(hook.memoizedState)
-    }
-    hook = hook.next ?? null
+/**
+ * Victory.tsx: const [factionName, setFactionName] = useState(defaultFactionChoice)
+ * trade() closes over this hook -- not the uncontrolled MUI Select display state.
+ */
+function readVictoryUseStateFaction(fiber: ReactFiberLike): string | null {
+  const firstHook = fiber.memoizedState as ReactHookSlot | null
+  if (firstHook && typeof firstHook.memoizedState === "string") {
+    return normalizeText(firstHook.memoizedState)
   }
   return null
+}
+
+function fiberDepthUnderAncestor(fiber: ReactFiberLike, ancestor: ReactFiberLike): number {
+  let depth = 0
+  let current: ReactFiberLike | null = fiber
+  while (current && current !== ancestor) {
+    depth++
+    current = current.return ?? null
+  }
+  return current === ancestor ? depth : Number.POSITIVE_INFINITY
 }
 
 function hasVictorySelectOnChange(fiber: ReactFiberLike): boolean {
@@ -129,30 +140,7 @@ function getVictoryFactionSelect(): HTMLElement | null {
   return combobox instanceof HTMLElement ? combobox : null
 }
 
-/** Outermost Select onChange fiber walking up from the victory combobox. */
-function getVictorySelectFiberFromCombobox(): ReactFiberLike | null {
-  const combobox = getVictoryFactionSelect()
-  if (!combobox) return null
-
-  let fiber: ReactFiberLike | null = getReactFiber(combobox)
-  const seen = new Set<ReactFiberLike>()
-  let selectFiber: ReactFiberLike | null = null
-
-  while (fiber) {
-    if (seen.has(fiber)) break
-    seen.add(fiber)
-
-    if (hasVictorySelectOnChange(fiber)) {
-      selectFiber = fiber
-    }
-
-    fiber = fiber.return ?? null
-  }
-
-  return selectFiber
-}
-
-/** Victory.tsx component fiber (owns factionName useState). */
+/** Victory.tsx function component (owns factionName useState). */
 function findVictoryComponentFiber(): ReactFiberLike | null {
   const root = findVictoryRoot()
   if (!root) return null
@@ -165,46 +153,61 @@ function findVictoryComponentFiber(): ReactFiberLike | null {
   })
   if (found) return found
 
-  const selectFiber = getVictorySelectFiberFromCombobox()
-  if (!selectFiber) return null
+  const tradeButton = findVictoryButtonByTextPrefix("Trade for")
+  if (!tradeButton) return null
 
-  let fiber: ReactFiberLike | null = selectFiber.return ?? null
+  let fiber: ReactFiberLike | null = getReactFiber(tradeButton)
   const seen = new Set<ReactFiberLike>()
-  while (fiber && !seen.has(fiber)) {
+  while (fiber) {
+    if (seen.has(fiber)) break
     seen.add(fiber)
-    if (readHookStateString(fiber) != null) {
+
+    if (readVictoryUseStateFaction(fiber) != null) {
       return fiber
     }
+
     fiber = fiber.return ?? null
   }
+
   return null
 }
 
-/**
- * factionName from Victory.tsx useState -- trade() reads this, not the combobox label.
- * The MUI Select is uncontrolled (no value prop), so the visible label can stay "none".
- */
+/** factionName useState on Victory.tsx -- trade() reads this closure value. */
 function readVictoryFactionState(): string | null {
   const victory = findVictoryComponentFiber()
   if (!victory) return null
-  return readHookStateString(victory)
+  return readVictoryUseStateFaction(victory)
 }
 
-function findVictorySelectFiber(): ReactFiberLike | null {
+/**
+ * Victory.tsx wires <Select onChange={changeDropdown}> where changeDropdown calls
+ * setFactionName. Pick the shallowest onChange under Victory, not MUI internals
+ * found by walking up from the combobox (those update display only).
+ */
+function getVictorySelectFiber(): ReactFiberLike | null {
   const victory = findVictoryComponentFiber()
   if (!victory) return null
 
-  let found: ReactFiberLike | null = null
+  const candidates: ReactFiberLike[] = []
   walkFiberTree(victory, (fiber) => {
     if (hasVictorySelectOnChange(fiber)) {
-      found = fiber
+      candidates.push(fiber)
     }
   })
-  return found
-}
 
-function getVictorySelectFiber(): ReactFiberLike | null {
-  return getVictorySelectFiberFromCombobox() ?? findVictorySelectFiber()
+  if (candidates.length === 0) return null
+
+  let best = candidates[0]
+  let bestDepth = fiberDepthUnderAncestor(best, victory)
+  for (let i = 1; i < candidates.length; i++) {
+    const depth = fiberDepthUnderAncestor(candidates[i], victory)
+    if (depth < bestDepth) {
+      best = candidates[i]
+      bestDepth = depth
+    }
+  }
+
+  return best
 }
 
 function getVictoryComboboxDisplayValue(): string {
@@ -306,7 +309,6 @@ function openVictoryFactionMenuUi(): void {
     target.dispatchEvent(
       new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window })
     )
-    invokeTrustedClick(target)
     target.click()
   }
 }
@@ -320,7 +322,7 @@ async function clickVictoryFactionMenuOption(ns: NS, factionName: string): Promi
     if (getVictoryMenuItemValue(option) !== factionName) continue
     if (!(option instanceof HTMLElement)) return false
 
-    invokeTrustedClick(option)
+    option.click()
     await ns.sleep(VICTORY_STATE_SETTLE_MS)
     return true
   }
@@ -343,12 +345,15 @@ async function invokeVictorySelectChange(ns: NS, factionName: string): Promise<b
     }
   }
 
-  if (await setVictoryFactionState(ns, factionName)) {
-    return true
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (await setVictoryFactionState(ns, factionName)) {
+      return true
+    }
+    await ns.sleep(VICTORY_STATE_SETTLE_MS)
   }
 
   if (await clickVictoryFactionMenuOption(ns, factionName)) {
-    return waitForVictoryFactionState(ns, factionName, 2000)
+    return setVictoryFactionState(ns, factionName)
   }
 
   return readVictoryFactionState() === factionName
@@ -356,6 +361,33 @@ async function invokeVictorySelectChange(ns: NS, factionName: string): Promise<b
 
 function isVictoryFactionReadyForTrade(factionName: string): boolean {
   return readVictoryFactionState() === factionName && factionName !== "none"
+}
+
+/**
+ * Victory.tsx trade() closes over factionName from the render that created the handler.
+ * invokeTrustedClick calls stale memoizedProps.onClick from before setFactionName re-render,
+ * so rep can go to defaultFactionChoice (current-work faction) while useState already updated.
+ * Native click goes through React's current listener after commit.
+ */
+async function waitForVictoryTradeButtonCommit(ns: NS, factionName: string): Promise<boolean> {
+  const deadline = Date.now() + 2000
+  while (Date.now() < deadline) {
+    if (!isVictoryFactionReadyForTrade(factionName)) {
+      await ns.sleep(50)
+      continue
+    }
+
+    const button = findVictoryButtonByTextPrefix("Trade for")
+    const fiber = button ? getReactFiber(button) : null
+    if (!fiber || fiber.pendingProps == null) {
+      await ns.sleep(VICTORY_TRADE_RENDER_DELAY_MS)
+      return true
+    }
+
+    await ns.sleep(50)
+  }
+
+  return isVictoryFactionReadyForTrade(factionName)
 }
 
 function clickVictoryButton(prefix: string): { ok: boolean; detail: string } {
@@ -367,7 +399,7 @@ function clickVictoryButton(prefix: string): { ok: boolean; detail: string } {
     return { ok: false, detail: `${prefix} button disabled` }
   }
 
-  invokeTrustedClick(button)
+  button.click()
   return { ok: true, detail: prefix }
 }
 
@@ -579,8 +611,10 @@ export async function collectInfiltrationVictoryReward(
       const selected = await invokeVictorySelectChange(ns, faction)
       const state = readVictoryFactionState() ?? "?"
       const dropdown = getVictoryComboboxDisplayValue() || "none"
+      const stateOk = state === faction
       ns.print(
-        `Victory reward: set ${faction} attempt ${attempt + 1} (${selected ? "ok" : "pending"}, state "${state}", dropdown "${dropdown}")`
+        `Victory reward: set ${faction} attempt ${attempt + 1}` +
+          ` (${selected ? "handler ok" : "handler pending"}, useState "${state}"${stateOk ? "" : " MISMATCH"}, display "${dropdown}")`
       )
       await ns.sleep(VICTORY_STATE_SETTLE_MS)
     }
@@ -594,8 +628,16 @@ export async function collectInfiltrationVictoryReward(
       }
     }
 
-    ns.print(`Victory reward: state ready for ${faction}, confirming trade`)
+    ns.print(
+      `Victory reward: useState ready for ${faction} (display "${getVictoryComboboxDisplayValue() || "none"}"), waiting for Trade handler commit`
+    )
     await ns.sleep(VICTORY_REWARD_CONFIRM_DELAY_MS)
+    if (!(await waitForVictoryTradeButtonCommit(ns, faction))) {
+      return {
+        ok: false,
+        detail: `Trade button handler not committed for ${faction}`,
+      }
+    }
 
     const dropdownAtSubmit = getVictoryComboboxDisplayValue() || "none"
     const factionStateAtSubmit = readVictoryFactionState() ?? ""
