@@ -1,10 +1,14 @@
 const ARROW_SYMBOLS = new Set(["↑", "↓", "←", "→"])
 
 export interface EnterTheCodeDomState {
-  /** Arrow symbols shown so far (stops at first "?"). */
+  /** Arrow symbols shown so far (stops at first "?" without Trickery of Hermes). */
   revealed: string[]
   /** Arrow to press now: bright span, or last symbol before "?". */
   pressArrow: string | null
+  /** Arrows still to type (one key, or full remainder when sequence is visible). */
+  pendingArrows: string[]
+  /** True when Trickery of Hermes shows the whole code (no "?" placeholders). */
+  hasFullSequence: boolean
 }
 
 export function isArrowSymbol(text: string): boolean {
@@ -55,17 +59,28 @@ function findCodeContainer(taskRoot: Element): Element | null {
 
 function parseFromSpans(container: Element): EnterTheCodeDomState {
   const revealed: string[] = []
+  const pendingArrows: string[] = []
   let pressArrow: string | null = null
+  let hasQuestionMark = false
+  let atCurrentArrow = false
 
   for (const span of Array.from(container.querySelectorAll("span"))) {
     const text = span.textContent?.trim() ?? ""
-    if (text === "?") break
+    if (text === "?") {
+      hasQuestionMark = true
+      break
+    }
     if (!isArrowSymbol(text)) continue
 
     revealed.push(text)
 
-    if (span instanceof HTMLElement && !isDimmedSpan(span)) {
+    const isCurrent = span instanceof HTMLElement && !isDimmedSpan(span)
+    if (isCurrent) {
+      atCurrentArrow = true
       pressArrow = text
+      pendingArrows.push(text)
+    } else if (atCurrentArrow) {
+      pendingArrows.push(text)
     }
   }
 
@@ -73,28 +88,58 @@ function parseFromSpans(container: Element): EnterTheCodeDomState {
     pressArrow = revealed[revealed.length - 1]
   }
 
-  return { revealed, pressArrow }
+  const hasFullSequence = !hasQuestionMark && revealed.length > 1
+  const arrowsToType = hasFullSequence ? pendingArrows : pressArrow ? [pressArrow] : []
+
+  return { revealed, pressArrow, pendingArrows: arrowsToType, hasFullSequence }
 }
 
 /** Fallback when span structure differs: read chars until "?". */
 function parseFromText(container: Element): EnterTheCodeDomState {
   const revealed: string[] = []
   let pressArrow: string | null = null
+  let hasQuestionMark = false
 
   for (const char of container.textContent ?? "") {
-    if (char === "?") break
+    if (char === "?") {
+      hasQuestionMark = true
+      break
+    }
     if (isArrowSymbol(char)) {
       revealed.push(char)
       pressArrow = char
     }
   }
 
-  return { revealed, pressArrow }
+  const pendingArrows = pressArrow ? [pressArrow] : []
+  return {
+    revealed,
+    pressArrow,
+    pendingArrows,
+    hasFullSequence: false,
+  }
+}
+
+const EMPTY_ENTER_THE_CODE_STATE: EnterTheCodeDomState = {
+  revealed: [],
+  pressArrow: null,
+  pendingArrows: [],
+  hasFullSequence: false,
+}
+
+export function arrowsToKeyNames(arrows: readonly string[]): string[] | null {
+  const keys: string[] = []
+  for (const arrow of arrows) {
+    const key = arrowSymbolToKey(arrow)
+    if (!key) return null
+    keys.push(key)
+  }
+  return keys
 }
 
 export function parseEnterTheCodeState(taskRoot: Element): EnterTheCodeDomState {
   const container = findCodeContainer(taskRoot)
-  if (!container) return { revealed: [], pressArrow: null }
+  if (!container) return EMPTY_ENTER_THE_CODE_STATE
 
   const fromSpans = parseFromSpans(container)
   if (fromSpans.revealed.length > 0 || fromSpans.pressArrow) {

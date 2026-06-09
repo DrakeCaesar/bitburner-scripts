@@ -32,7 +32,7 @@ let trustedKeyInjectionEnabled = false
 let infiltrationKeyHandler: ((event: KeyboardEvent) => void) | null = null
 
 /** Delay between injected minigame key presses. */
-export const INFILTRATION_KEY_DELAY_MS = 1
+export const INFILTRATION_KEY_DELAY_MS = 0
 
 const CANCEL_LABEL = "Cancel Infiltration"
 

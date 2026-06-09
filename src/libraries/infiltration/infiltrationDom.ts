@@ -41,6 +41,10 @@ export interface InfiltrationDomState {
   symbolCursorIndex?: number
   /** Enter the Code: bright arrow to press (dimmed ones are already entered). */
   codePressArrow?: string
+  /** Enter the Code: arrows still to type (one, or full burst with Trickery of Hermes). */
+  codePendingArrows?: string[]
+  /** Enter the Code: whole sequence visible (Trickery of Hermes). */
+  codeFullSequence?: boolean
   /** Slash the sentinel: current sentinel phase from status h4. */
   slashStatus?: SlashPhase
   /** Wire cutting: 1-based wire numbers still to cut. */
@@ -116,15 +120,20 @@ function normalizeSymbolText(text: string): string {
 
 function readCheatCodeTask(
   taskRoot: Element
-): Pick<InfiltrationDomState, "taskTitle" | "assignmentLines" | "assignmentMirrored" | "codePressArrow"> {
+): Pick<
+  InfiltrationDomState,
+  "taskTitle" | "assignmentLines" | "assignmentMirrored" | "codePressArrow" | "codePendingArrows" | "codeFullSequence"
+> {
   const taskTitle = taskRoot.querySelector("h4")?.textContent?.trim() ?? ""
-  const { revealed, pressArrow } = parseEnterTheCodeState(taskRoot)
+  const { revealed, pressArrow, pendingArrows, hasFullSequence } = parseEnterTheCodeState(taskRoot)
 
   return {
     taskTitle,
     assignmentLines: revealed,
     assignmentMirrored: false,
     codePressArrow: pressArrow ?? undefined,
+    codePendingArrows: pendingArrows.length > 0 ? pendingArrows : undefined,
+    codeFullSequence: hasFullSequence || undefined,
   }
 }
 
@@ -428,7 +437,9 @@ function formatStateText(state: InfiltrationDomState, extras?: InfiltrationDomVi
     } else {
       lines.push("  (waiting...)")
     }
-    if (state.codePressArrow) {
+    if (state.codeFullSequence && state.codePendingArrows?.length) {
+      lines.push(`  Burst: ${state.codePendingArrows.join(" ")} (${state.codePendingArrows.length} keys)`)
+    } else if (state.codePressArrow) {
       lines.push(`  Next: ${state.codePressArrow}`)
     }
   } else if (isSaySomethingNiceTask(state.taskTitle)) {
@@ -569,6 +580,9 @@ export function getMinigamePhaseKey(state: InfiltrationDomState): string {
   }
 
   if (isEnterTheCodeTask(title)) {
+    if (state.codeFullSequence && state.assignmentLines.length > 0) {
+      return `${base}|code|${state.assignmentLines.join("")}`
+    }
     if (!state.codePressArrow) return ""
     return `${base}|${state.assignmentLines.length}|${state.codePressArrow}`
   }
@@ -602,7 +616,7 @@ export function canSolveInfiltrationTask(state: InfiltrationDomState): boolean {
   }
 
   if (isEnterTheCodeTask(title)) {
-    return !!state.codePressArrow
+    return (state.codePendingArrows?.length ?? 0) > 0 || !!state.codePressArrow
   }
 
   if (isSlashTaskTitle(title)) {

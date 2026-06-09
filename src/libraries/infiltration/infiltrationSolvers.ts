@@ -1,5 +1,5 @@
 import type { InfiltrationDomState } from "./infiltrationDom.js"
-import { arrowSymbolToKey, isEnterTheCodeTask } from "./infiltrationArrowCode.js"
+import { arrowsToKeyNames, isEnterTheCodeTask } from "./infiltrationArrowCode.js"
 import { isPositiveBribeWord, isSaySomethingNiceTask } from "./infiltrationBribeWords.js"
 import { isSlashTaskTitle } from "./infiltrationSlash.js"
 import { isWireCutRuleText, isWireCuttingTask } from "./infiltrationWireCutting.js"
@@ -28,7 +28,7 @@ export function solveInfiltrationTask(taskTitle: string, state: InfiltrationDomS
       return solveTypeItBackward(assignment)
 
     case "Enter the Code!":
-      return solveEnterTheCode(state.codePressArrow ?? "")
+      return solveEnterTheCode(state)
 
     case "Slash the sentinel":
       return solveSlashTheSentinel(state)
@@ -38,7 +38,7 @@ export function solveInfiltrationTask(taskTitle: string, state: InfiltrationDomS
         return solveSaySomethingNice(state.assignmentLines[0] ?? "")
       }
       if (isEnterTheCodeTask(taskTitle)) {
-        return solveEnterTheCode(state.codePressArrow ?? "")
+        return solveEnterTheCode(state)
       }
       if (isSlashTaskTitle(taskTitle)) {
         return solveSlashTheSentinel(state)
@@ -118,11 +118,14 @@ function solveSlashTheSentinel(state: InfiltrationDomState): string[] | null {
   return [" "]
 }
 
-/** Press the current bright arrow. One key per solve pass. */
-function solveEnterTheCode(pressArrow: string): string[] | null {
-  const key = arrowSymbolToKey(pressArrow.trim())
-  if (!key) return null
-  return [key]
+/** Type pending arrows; one key without Trickery of Hermes, full remainder when sequence is visible. */
+function solveEnterTheCode(state: InfiltrationDomState): string[] | null {
+  const pending = state.codePendingArrows
+  if (pending?.length) {
+    return arrowsToKeyNames(pending)
+  }
+  if (!state.codePressArrow) return null
+  return arrowsToKeyNames([state.codePressArrow])
 }
 
 /** Scroll up until a positive word is shown, then confirm with space. One key per solve pass. */
@@ -264,7 +267,7 @@ export function formatSolverPreview(taskTitle: string, keys: string[] | null): s
   }
 
   if (isEnterTheCodeTask(taskTitle)) {
-    return `Solver: ${formatKeySequence(taskTitle, keys)}`
+    return `Solver: ${formatKeySequence(taskTitle, keys)} (${keys.length} keys)`
   }
 
   if (isSlashTaskTitle(taskTitle)) {
