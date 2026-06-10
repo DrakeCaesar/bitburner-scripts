@@ -482,10 +482,10 @@ function formatVictoryDeltaPercent(delta: number, expected: number): string {
   return `${percent.toFixed(4)}% of expected (short by ${shortfall})`
 }
 
-/** Skip audit noise when payout is >= 99% of expected or overshoots. */
+/** Skip audit noise when payout is >= 90% of expected or overshoots. */
 function shouldLogVictoryRewardShortfall(delta: number, expected: number): boolean {
   if (expected <= 0) return false
-  return delta / expected < 0.99
+  return delta / expected < 0.90
 }
 
 function logVictoryRewardAudit(context: {
