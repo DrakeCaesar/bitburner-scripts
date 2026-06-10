@@ -11,7 +11,13 @@ import {
   stopFactionWorkIfActive,
   type FactionWorkPriority,
 } from "./libraries/factionWork.js"
+import type { TableLayout } from "./libraries/scriptLogUi.js"
 import { createTailLog, openTailLog } from "./libraries/scriptLogUiLayout.js"
+
+const TAIL_SIZE_DEBUG: Partial<TableLayout> = {
+  debugTailSizing: true,
+  tailSizingDebugLabel: "faction-work",
+}
 
 const CHECK_INTERVAL_MS = 1_000
 
@@ -24,7 +30,7 @@ async function renderFactionWorkTable(ns: NS, priority: FactionWorkPriority): Pr
   const rows = buildFactionWorkRows(ns, player.factions, allTargets, prioritized, best, priority)
   const table = buildFactionWorkTableConfig(ns, rows, best, priority)
 
-  await createTailLog().table(table).render(ns)
+  await createTailLog(TAIL_SIZE_DEBUG).table(table).render(ns)
 }
 
 export async function main(ns: NS) {
