@@ -42,21 +42,19 @@ export function filterAugmentPurchaseFactions(factions: readonly FactionName[]):
   return factions.filter((faction) => !isAugmentPurchaseExcludedFaction(faction))
 }
 
-/**
- * Purchase order: prerequisites before dependents, expensive-first by *chain* price.
- * A cheap prereq ranks at max(own price, dependents' prices) so pairs like
- * BrachiBlades + Graphene upgrade stay together and the upgrade does not land
- * in a late 1.9x queue slot.
- */
-export function sortAugmentsForPurchase(augs: AugmentInfo[]): AugmentInfo[] {
+interface PurchaseGraph {
+  augsByName: Map<string, AugmentInfo>
+  dependents: Map<string, string[]>
+  effectiveSortPrice(name: string): number
+}
+
+function buildPurchaseGraph(augs: AugmentInfo[]): PurchaseGraph {
   const augsByName = new Map(augs.map((aug) => [aug.name, aug]))
   const dependents = new Map<string, string[]>()
-  const prereqCount = new Map<string, number>()
 
   for (const aug of augs) {
-    const inSetPrereqs = aug.prereqs.filter((p) => augsByName.has(p))
-    prereqCount.set(aug.name, inSetPrereqs.length)
-    for (const prereqName of inSetPrereqs) {
+    for (const prereqName of aug.prereqs) {
+      if (!augsByName.has(prereqName)) continue
       const list = dependents.get(prereqName)
       if (list) list.push(aug.name)
       else dependents.set(prereqName, [aug.name])
@@ -77,6 +75,32 @@ export function sortAugmentsForPurchase(augs: AugmentInfo[]): AugmentInfo[] {
     return max
   }
 
+  return { augsByName, dependents, effectiveSortPrice }
+}
+
+function inSetPrereqCount(aug: AugmentInfo, pool: Map<string, AugmentInfo>): number {
+  return aug.prereqs.filter((p) => pool.has(p)).length
+}
+
+function pickNextByChainPrice(available: AugmentInfo[], graph: PurchaseGraph): AugmentInfo {
+  return available.reduce((best, aug) =>
+    graph.effectiveSortPrice(aug.name) > graph.effectiveSortPrice(best.name) ? aug : best
+  )
+}
+
+/**
+ * Purchase order: prerequisites before dependents, expensive-first by *chain* price.
+ * A cheap prereq ranks at max(own price, dependents' prices) so pairs like
+ * BrachiBlades + Graphene upgrade stay together and the upgrade does not land
+ * in a late 1.9x queue slot.
+ */
+export function sortAugmentsForPurchase(augs: AugmentInfo[]): AugmentInfo[] {
+  const graph = buildPurchaseGraph(augs)
+  const prereqCount = new Map<string, number>()
+  for (const aug of augs) {
+    prereqCount.set(aug.name, inSetPrereqCount(aug, graph.augsByName))
+  }
+
   const visited = new Set<string>()
   const result: AugmentInfo[] = []
 
@@ -84,19 +108,54 @@ export function sortAugmentsForPurchase(augs: AugmentInfo[]): AugmentInfo[] {
     const available = augs.filter((aug) => !visited.has(aug.name) && (prereqCount.get(aug.name) ?? 0) === 0)
     if (available.length === 0) break
 
-    const next = available.reduce((best, aug) =>
-      effectiveSortPrice(aug.name) > effectiveSortPrice(best.name) ? aug : best
-    )
-
+    const next = pickNextByChainPrice(available, graph)
     visited.add(next.name)
     result.push(next)
 
-    for (const depName of dependents.get(next.name) ?? []) {
+    for (const depName of graph.dependents.get(next.name) ?? []) {
       prereqCount.set(depName, (prereqCount.get(depName) ?? 0) - 1)
     }
   }
 
   return result
+}
+
+/**
+ * Build a purchase plan using only augments that fit the current budget at each queue slot.
+ * Rep-qualified augments that are too expensive are skipped (not queued ahead of cheaper buys).
+ */
+export function buildAffordablePurchasePlan(
+  augs: AugmentInfo[],
+  playerMoney: number
+): { affordable: AugmentInfo[]; skippedHasRep: AugmentInfo[] } {
+  const remaining = new Map(augs.map((aug) => [aug.name, aug]))
+  const planned: AugmentInfo[] = []
+  const plannedNames = new Set<string>()
+  let budget = playerMoney
+
+  while (remaining.size > 0) {
+    const available = [...remaining.values()].filter((aug) =>
+      aug.prereqs.every((p) => plannedNames.has(p) || !remaining.has(p))
+    )
+    if (available.length === 0) break
+
+    const slot = planned.length
+    const graph = buildPurchaseGraph([...remaining.values()])
+    const affordableNow = available.filter((aug) => {
+      const adjusted = aug.price * Math.pow(AUGMENT_QUEUE_PRICE_MULT, slot)
+      return adjusted <= budget
+    })
+    if (affordableNow.length === 0) break
+
+    const next = pickNextByChainPrice(affordableNow, graph)
+    const adjusted = next.price * Math.pow(AUGMENT_QUEUE_PRICE_MULT, slot)
+    planned.push(next)
+    plannedNames.add(next.name)
+    budget -= adjusted
+    remaining.delete(next.name)
+  }
+
+  return { affordable: planned, skippedHasRep: [...remaining.values()] }
 }
 
 /** Simulated NeuroFlux price/rep when regular augs are not actually queued (dry run / dashboard). */
@@ -187,28 +246,10 @@ export function getAugmentData(ns: NS, playerFactions: FactionName[]): AugmentDa
     }
   }
 
-  const optimallySorted = sortAugmentsForPurchase(potentiallyAffordable)
+  const { affordable, skippedHasRep } = buildAffordablePurchasePlan(potentiallyAffordable, playerMoney)
+  const tooExpensiveCumulative = skippedHasRep
 
-  // Now split into truly affordable (based on cumulative adjusted cost) and too expensive
-  const AUGMENT_PRICE_MULT = AUGMENT_QUEUE_PRICE_MULT
-  let cumulativeCost = 0
-  const affordable: AugmentInfo[] = []
-  const tooExpensiveCumulative: AugmentInfo[] = []
-
-  for (let i = 0; i < optimallySorted.length; i++) {
-    const adjustedPrice = optimallySorted[i].price * Math.pow(AUGMENT_PRICE_MULT, i)
-    cumulativeCost += adjustedPrice
-
-    if (cumulativeCost <= playerMoney) {
-      affordable.push(optimallySorted[i])
-    } else {
-      // This and all subsequent augments are unaffordable due to cumulative cost
-      tooExpensiveCumulative.push(...optimallySorted.slice(i))
-      break
-    }
-  }
-
-  // Sort unaffordable by price (most expensive first)
+  // Sort unaffordable (no rep) by price (most expensive first)
   unaffordable.sort((a, b) => b.price - a.price)
 
   const affordableSorted = affordable

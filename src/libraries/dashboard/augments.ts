@@ -97,7 +97,6 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
 
   const { affordableSorted, tooExpensiveCumulative, unaffordable, neuroFluxInfo, playerMoney, factionReps } =
     getAugmentData(ns, factions)
-
   // Calculate column widths
   const orderCol = "#"
   const nameCol = "Augmentation"
@@ -119,18 +118,38 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
   let ownedLen = ownedCol.length
   let statusLen = statusCol.length
 
-  const allAugs = [...affordableSorted, ...tooExpensiveCumulative, ...unaffordable]
-  if (neuroFluxInfo) allAugs.push(neuroFluxInfo)
+  const isNeuroFluxAugment = (name: string) => name.startsWith("NeuroFlux Governor")
 
-  // Calculate adjusted prices and cumulative costs for affordable + too expensive augments
+  type AugmentRowKind = "buy" | "goal" | "noRep"
+  interface AugmentDisplayRow {
+    aug: (typeof affordableSorted)[number]
+    kind: AugmentRowKind
+    buyIndex?: number
+  }
+
+  // Regular augments only — NeuroFlux is always listed at the bottom, never price-sorted with these
+  const displayByPrice: AugmentDisplayRow[] = [
+    ...tooExpensiveCumulative
+      .filter((aug) => !isNeuroFluxAugment(aug.name))
+      .map((aug) => ({ aug, kind: "goal" as const })),
+    ...affordableSorted
+      .map((aug, buyIndex) => ({ aug, kind: "buy" as const, buyIndex }))
+      .filter((row) => !isNeuroFluxAugment(row.aug.name)),
+    ...unaffordable
+      .filter((aug) => !isNeuroFluxAugment(aug.name))
+      .map((aug) => ({ aug, kind: "noRep" as const })),
+  ].sort((a, b) => b.aug.price - a.aug.price)
+
+  const allAugs = displayByPrice.map((row) => row.aug)
+
+  // Adjusted / cumulative columns apply only to the numbered buy plan
   const AUGMENT_PRICE_MULT = AUGMENT_QUEUE_PRICE_MULT
   let cumulativeCost = 0
   const adjustedPrices: number[] = []
   const cumulativeCosts: number[] = []
-  const combinedList = [...affordableSorted, ...tooExpensiveCumulative]
 
-  for (let i = 0; i < combinedList.length; i++) {
-    const adjustedPrice = combinedList[i].price * Math.pow(AUGMENT_PRICE_MULT, i)
+  for (let i = 0; i < affordableSorted.length; i++) {
+    const adjustedPrice = affordableSorted[i].price * Math.pow(AUGMENT_PRICE_MULT, i)
     adjustedPrices.push(adjustedPrice)
     cumulativeCost += adjustedPrice
     cumulativeCosts.push(cumulativeCost)
@@ -171,6 +190,20 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
     cumulativeLen = Math.max(cumulativeLen, ns.format.number(cumulativeCosts[i]).length)
   }
 
+  if (neuroFluxInfo) {
+    nameLen = Math.max(nameLen, neuroFluxInfo.name.length)
+    for (let i = 0; i < neuroFluxCount + 1; i++) {
+      const { price, repReq } = neuroFluxPurchaseCost(neuroFluxInfo, affordableSorted.length, i)
+      const levelBasePrice = price / Math.pow(AUGMENT_PRICE_MULT, affordableSorted.length + i)
+      priceLen = Math.max(priceLen, ns.format.number(levelBasePrice).length)
+      repLen = Math.max(repLen, ns.format.number(repReq).length)
+      adjustedLen = Math.max(adjustedLen, ns.format.number(price).length)
+    }
+  }
+
+  const colWidths = [orderLen, nameLen, factionLen, repLen, priceLen, adjustedLen, cumulativeLen, ownedLen, statusLen]
+  const borders = getTableBorders(colWidths)
+
   // Build table with HTML spans for coloring
   interface TableRow {
     order: string
@@ -190,66 +223,38 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
 
   const rows: TableRow[] = []
 
-  // Affordable section
-  let orderNum = 1
-  for (let i = 0; i < affordableSorted.length; i++) {
-    const aug = affordableSorted[i]
-    const validFactions = aug.factions.filter((f) => (factionReps.get(f) ?? 0) >= aug.repReq)
-    rows.push({
-      order: orderNum.toString().padStart(orderLen),
-      name: aug.name.padEnd(nameLen),
-      faction: formatFactionText(validFactions, factionLen).padEnd(factionLen),
-      price: ns.format.number(aug.price).padStart(priceLen),
-      priceRed: playerMoney < aug.price,
-      adjusted: ns.format.number(adjustedPrices[i]).padStart(adjustedLen),
-      adjustedRed: false,
-      cumulative: ns.format.number(cumulativeCosts[i]).padStart(cumulativeLen),
-      cumulativeRed: playerMoney < cumulativeCosts[i],
-      rep: ns.format.number(aug.repReq).padStart(repLen),
-      repRed: false,
-      owned: (aug.owned ? "Y" : " ").padStart(ownedLen),
-      status: "Y".padStart(statusLen),
-    })
-    orderNum++
-  }
-
-  // Too expensive (cumulative) section - have rep but can't afford due to price escalation
-  for (let i = 0; i < tooExpensiveCumulative.length; i++) {
-    const aug = tooExpensiveCumulative[i]
-    const adjustedIdx = affordableSorted.length + i
-    const validFactions = aug.factions.filter((f) => (factionReps.get(f) ?? 0) >= aug.repReq)
-
-    rows.push({
-      order: " ".repeat(orderLen),
-      name: aug.name.padEnd(nameLen),
-      faction: formatFactionText(validFactions, factionLen).padEnd(factionLen),
-      price: ns.format.number(aug.price).padStart(priceLen),
-      priceRed: playerMoney < aug.price,
-      adjusted: ns.format.number(adjustedPrices[adjustedIdx]).padStart(adjustedLen),
-      adjustedRed: true,
-      cumulative: ns.format.number(cumulativeCosts[adjustedIdx]).padStart(cumulativeLen),
-      cumulativeRed: true,
-      rep: ns.format.number(aug.repReq).padStart(repLen),
-      repRed: false,
-      owned: (aug.owned ? "Y" : " ").padStart(ownedLen),
-      status: "X$".padStart(statusLen),
-    })
-  }
-
-  // Unaffordable section - sort by price (most expensive first)
-  const sortedUnaffordable = [...unaffordable].sort((a, b) => b.price - a.price)
-
-  for (const aug of sortedUnaffordable) {
+  for (const { aug, kind, buyIndex } of displayByPrice) {
     const hasEnoughMoney = playerMoney >= aug.price
     const hasEnoughRep = aug.factions.some((faction) => (factionReps.get(faction) ?? 0) >= aug.repReq)
-
     const validFactions = aug.factions.filter((f) => (factionReps.get(f) ?? 0) >= aug.repReq)
     const factionList = validFactions.length > 0 ? validFactions : aug.factions
 
-    let statusSymbol = "X"
-    if (!hasEnoughMoney && !hasEnoughRep) statusSymbol = "XX"
-    else if (!hasEnoughMoney) statusSymbol = "X$"
-    else if (!hasEnoughRep) statusSymbol = "XR"
+    if (kind === "buy" && buyIndex !== undefined) {
+      rows.push({
+        order: (buyIndex + 1).toString().padStart(orderLen),
+        name: aug.name.padEnd(nameLen),
+        faction: formatFactionText(validFactions, factionLen).padEnd(factionLen),
+        price: ns.format.number(aug.price).padStart(priceLen),
+        priceRed: !hasEnoughMoney,
+        adjusted: ns.format.number(adjustedPrices[buyIndex]).padStart(adjustedLen),
+        adjustedRed: false,
+        cumulative: ns.format.number(cumulativeCosts[buyIndex]).padStart(cumulativeLen),
+        cumulativeRed: playerMoney < cumulativeCosts[buyIndex],
+        rep: ns.format.number(aug.repReq).padStart(repLen),
+        repRed: false,
+        owned: (aug.owned ? "Y" : " ").padStart(ownedLen),
+        status: "Y".padStart(statusLen),
+      })
+      continue
+    }
+
+    let statusSymbol = ">$"
+    if (kind === "noRep") {
+      statusSymbol = "X"
+      if (!hasEnoughMoney && !hasEnoughRep) statusSymbol = "XX"
+      else if (!hasEnoughMoney) statusSymbol = "X$"
+      else if (!hasEnoughRep) statusSymbol = "XR"
+    }
 
     rows.push({
       order: " ".repeat(orderLen),
@@ -262,14 +267,17 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
       cumulative: " ".repeat(cumulativeLen),
       cumulativeRed: false,
       rep: ns.format.number(aug.repReq).padStart(repLen),
-      repRed: !hasEnoughRep,
+      repRed: kind === "noRep" && !hasEnoughRep,
       owned: (aug.owned ? "Y" : " ").padStart(ownedLen),
       status: statusSymbol.padStart(statusLen),
     })
   }
 
-  // NeuroFlux section - expand to show individual purchases after all affordable regular augments
+  // NeuroFlux always at the bottom (not included in price sort above)
+  let neuroFluxStartIndex: number | null = null
+  let orderNum = affordableSorted.length + 1
   if (neuroFluxInfo) {
+    neuroFluxStartIndex = rows.length
     // Start from the money remaining after purchasing affordable regular augments only
     const lastAffordableCost = affordableSorted.length > 0 ? cumulativeCosts[affordableSorted.length - 1] : 0
     let remainingMoney = playerMoney - lastAffordableCost
@@ -355,11 +363,6 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
     })
   }
 
-  // Build table header and footer using table builder
-  // Reorder columns: Rep Req comes before Price
-  const colWidths = [orderLen, nameLen, factionLen, repLen, priceLen, adjustedLen, cumulativeLen, ownedLen, statusLen]
-  const borders = getTableBorders(colWidths)
-
   const headerCells = [
     orderCol.padStart(orderLen),
     nameCol.padEnd(nameLen),
@@ -383,7 +386,7 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
 
   const tableFooter =
     `${borders.bottom()}\n` +
-    `\nAffordable: ${affordableSorted.length} | Too expensive (cumulative): ${tooExpensiveCumulative.length} | No rep: ${unaffordable.length} | Total: ${allAugs.length}\n` +
+    `\nRegular augments by base price | NeuroFlux at bottom | Buying: ${affordableSorted.length} | Goals: ${tooExpensiveCumulative.length} | No rep: ${unaffordable.length}\n` +
     `Current money: ${ns.format.number(playerMoney)}${neuroFluxRepNote}`
 
   // Clear and rebuild container
@@ -395,7 +398,14 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
   containerDiv.appendChild(headerSpan)
 
   // Add rows with conditional coloring
-  for (const row of rows) {
+  for (let i = 0; i < rows.length; i++) {
+    if (neuroFluxStartIndex !== null && i === neuroFluxStartIndex) {
+      const sepSpan = document.createElement("span")
+      sepSpan.textContent = `${borders.separator()}\n`
+      containerDiv.appendChild(sepSpan)
+    }
+
+    const row = rows[i]
     const rowSpan = document.createElement("span")
     rowSpan.textContent = `┃ ${row.order} ┃ ${row.name} ┃ ${row.faction} ┃ `
     containerDiv.appendChild(rowSpan)
