@@ -14,19 +14,13 @@ import {
   pickBestCompanyField,
   type MegacorpWorkSnapshot,
 } from "./libraries/megacorpWork.js"
-import { createTailLog, openTailLog, type TableLayout } from "./libraries/scriptLogUiLayout.js"
-
-/** One-time F12 sizing report — open browser console after starting autoWorkMegacorps.js */
-const TAIL_SIZE_DEBUG: Partial<TableLayout> = {
-  debugTailSizing: true,
-  tailSizingDebugLabel: "megacorp-work",
-}
+import { createTailLog, openTailLog } from "./libraries/scriptLogUiLayout.js"
 
 const ACTIVE_INTERVAL_MS = 1000
 const STABLE_INTERVAL_MS = 5000
 
 async function renderMegacorpTable(ns: NS, snapshot: MegacorpWorkSnapshot, megacorps: CompanyName[]): Promise<void> {
-  const log = createTailLog(TAIL_SIZE_DEBUG)
+  const log = createTailLog()
   const rows = buildMegacorpRows(ns, snapshot, megacorps)
   log.table(buildMegacorpTableConfig(ns, rows, snapshot))
 
