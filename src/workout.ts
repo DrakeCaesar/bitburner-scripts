@@ -1,6 +1,12 @@
-import { GymType, NS } from "@ns"
+import { CityName, GymType, NS } from "@ns"
+
+const SECTOR_12: CityName = "Sector-12"
+const SKILL_GAP_TRAVEL_THRESHOLD = 100
+const MIN_TRAVEL_MONEY = 100_000_000
+const TRAVEL_COOLDOWN_MS = 60_000
 
 export async function main(ns: NS): Promise<void> {
+  let lastTravelAt = 0
   // Define the preferred order for tie-breakers
   const orderPreference: Record<string, number> = {
     str: 0,
@@ -31,6 +37,20 @@ export async function main(ns: NS): Promise<void> {
       }
       return min
     })
+
+    const skillLevels = skills.map((skill) => skill.value)
+    const skillGap = Math.max(...skillLevels) - Math.min(...skillLevels)
+    const now = Date.now()
+    if (
+      skillGap >= SKILL_GAP_TRAVEL_THRESHOLD &&
+      player.city !== SECTOR_12 &&
+      player.money >= MIN_TRAVEL_MONEY &&
+      now - lastTravelAt >= TRAVEL_COOLDOWN_MS
+    ) {
+      ns.singularity.travelToCity(SECTOR_12)
+      lastTravelAt = now
+      await ns.sleep(500)
+    }
 
     ns.singularity.gymWorkout("Powerhouse Gym", lowestSkill.name as GymType, focus)
     await ns.sleep(250)
