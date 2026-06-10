@@ -7,6 +7,7 @@ import {
   AUGMENT_QUEUE_PRICE_MULT,
   filterAugmentPurchaseFactions,
   getAugmentData,
+  isNeuroFluxAugment,
   neuroFluxPurchaseCost,
 } from "../augmentations.js"
 import { createStandardContainer, FloatingWindow } from "../floatingWindow"
@@ -117,8 +118,6 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
   let repLen = Math.max(repCol.length, 8)
   let ownedLen = ownedCol.length
   let statusLen = statusCol.length
-
-  const isNeuroFluxAugment = (name: string) => name.startsWith("NeuroFlux Governor")
 
   type AugmentRowKind = "buy" | "goal" | "noRep"
   interface AugmentDisplayRow {

@@ -1,13 +1,5 @@
 import { FactionName, NS } from "@ns"
-
-function factionAugmentsOwned(ns: NS, faction: FactionName): boolean {
-  const owned = new Set(ns.singularity.getOwnedAugmentations(true))
-  for (const aug of ns.singularity.getAugmentationsFromFaction(faction)) {
-    if (aug.startsWith("NeuroFlux Governor")) continue
-    if (!owned.has(aug)) return false
-  }
-  return true
-}
+import { factionAugmentsOwned } from "./augmentations.js"
 
 function isEnemyOf(ns: NS, faction: FactionName, other: FactionName): boolean {
   return ns.singularity.getFactionEnemies(faction).includes(other)

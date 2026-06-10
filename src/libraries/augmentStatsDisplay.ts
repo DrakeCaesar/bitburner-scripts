@@ -3,7 +3,9 @@ import {
   AUGMENT_QUEUE_PRICE_MULT,
   AugmentInfo,
   filterAugmentPurchaseFactions,
+  getAugmentCatalog,
   getAugmentData,
+  isNeuroFluxAugment,
   neuroFluxPurchaseCost,
 } from "./augmentations.js"
 import { col, W, type ReactTableConfig } from "./scriptLogUiLayout.js"
@@ -96,10 +98,6 @@ export interface AugmentStatsDisplayRow {
 
 const CITY_FACTIONS = ["Aevum", "Sector12", "Volhaven", "Chongqing", "Ishima", "NewTokyo"] as const
 
-function isNeuroFluxAugment(name: string): boolean {
-  return name.startsWith("NeuroFlux Governor")
-}
-
 function formatFactionText(factions: string[], maxWidth = 28): string {
   const joined = factions.join(", ")
   if (joined.length <= maxWidth) return joined
@@ -142,7 +140,7 @@ export function formatAugmentStatValue(value: number | undefined): string {
 function getAugmentStatsCached(ns: NS, name: string, cache: Map<string, AugmentMultipliers>): AugmentMultipliers {
   const cached = cache.get(name)
   if (cached) return cached
-  const stats = ns.singularity.getAugmentationStats(name) as AugmentMultipliers
+  const stats = (getAugmentCatalog(ns).get(name)?.stats ?? {}) as AugmentMultipliers
   cache.set(name, stats)
   return stats
 }

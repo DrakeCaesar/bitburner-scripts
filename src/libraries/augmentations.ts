@@ -42,6 +42,103 @@ export function filterAugmentPurchaseFactions(factions: readonly FactionName[]):
   return factions.filter((faction) => !isAugmentPurchaseExcludedFaction(faction))
 }
 
+/** Static augmentation metadata from the game (cached for the script lifetime). */
+export type AugmentStats = Record<string, number>
+
+export interface AugmentCatalogEntry {
+  name: string
+  factions: FactionName[]
+  basePrice: number
+  repReq: number
+  prereqs: string[]
+  stats: AugmentStats
+}
+
+let augmentCatalog: Map<string, AugmentCatalogEntry> | null = null
+let augmentsByFaction: Map<FactionName, string[]> | null = null
+
+function buildAugmentsByFaction(catalog: Map<string, AugmentCatalogEntry>): Map<FactionName, string[]> {
+  const byFaction = new Map<FactionName, string[]>()
+  for (const entry of catalog.values()) {
+    for (const faction of entry.factions) {
+      const list = byFaction.get(faction)
+      if (list) list.push(entry.name)
+      else byFaction.set(faction, [entry.name])
+    }
+  }
+  return byFaction
+}
+
+/**
+ * All augmentations in the game, built once on first use.
+ * Static fields are cached; use getAugmentationPrice for current price (and NF rep after purchases).
+ */
+export function getAugmentCatalog(ns: NS): ReadonlyMap<string, AugmentCatalogEntry> {
+  if (augmentCatalog) return augmentCatalog
+
+  augmentCatalog = new Map()
+  const allFactions = Object.values(ns.enums.FactionName) as FactionName[]
+
+  for (const faction of allFactions) {
+    let augments: string[]
+    try {
+      augments = ns.singularity.getAugmentationsFromFaction(faction)
+    } catch {
+      continue
+    }
+
+    for (const augName of augments) {
+      const existing = augmentCatalog.get(augName)
+      if (existing) {
+        if (!existing.factions.includes(faction)) {
+          existing.factions.push(faction)
+        }
+        continue
+      }
+
+      augmentCatalog.set(augName, {
+        name: augName,
+        factions: [faction],
+        basePrice: ns.singularity.getAugmentationBasePrice(augName),
+        repReq: ns.singularity.getAugmentationRepReq(augName),
+        prereqs: ns.singularity.getAugmentationPrereq(augName),
+        stats: ns.singularity.getAugmentationStats(augName) as AugmentStats,
+      })
+    }
+  }
+
+  augmentsByFaction = buildAugmentsByFaction(augmentCatalog)
+  return augmentCatalog
+}
+
+export function isNeuroFluxAugment(name: string): boolean {
+  return name.startsWith("NeuroFlux Governor")
+}
+
+export function getOwnedAugmentationNames(ns: NS): Set<string> {
+  return new Set(ns.singularity.getOwnedAugmentations(true))
+}
+
+/** Augment names sold by a faction (from catalog). */
+export function getAugmentNamesFromFaction(ns: NS, faction: FactionName): readonly string[] {
+  getAugmentCatalog(ns)
+  return augmentsByFaction?.get(faction) ?? []
+}
+
+export function getAugmentCatalogEntry(ns: NS, augName: string): AugmentCatalogEntry | undefined {
+  return getAugmentCatalog(ns).get(augName)
+}
+
+/** True when every non-NeuroFlux augment from this faction is owned or queued. */
+export function factionAugmentsOwned(ns: NS, faction: FactionName): boolean {
+  const owned = getOwnedAugmentationNames(ns)
+  for (const augName of getAugmentNamesFromFaction(ns, faction)) {
+    if (isNeuroFluxAugment(augName)) continue
+    if (!owned.has(augName)) return false
+  }
+  return true
+}
+
 interface PurchaseGraph {
   augsByName: Map<string, AugmentInfo>
   dependents: Map<string, string[]>
@@ -177,48 +274,47 @@ export function neuroFluxPurchaseCost(
  * Collect and organize augmentation data from all player factions
  */
 export function getAugmentData(ns: NS, playerFactions: FactionName[]): AugmentData {
+  const relevantFactions = new Set(filterAugmentPurchaseFactions(playerFactions))
+  const ownedSet = new Set(ns.singularity.getOwnedAugmentations(true))
+  const catalog = getAugmentCatalog(ns)
   const augmentMap = new Map<string, AugmentInfo>()
   let neuroFluxInfo: AugmentInfo | null = null
 
-  for (const faction of filterAugmentPurchaseFactions(playerFactions)) {
-    const augments = ns.singularity.getAugmentationsFromFaction(faction)
+  for (const entry of catalog.values()) {
+    const factions = entry.factions.filter((faction) => relevantFactions.has(faction))
+    if (factions.length === 0) continue
 
-    for (const augName of augments) {
-      const price = ns.singularity.getAugmentationPrice(augName)
-      const repReq = ns.singularity.getAugmentationRepReq(augName)
-      const owned = ns.singularity.getOwnedAugmentations(true).includes(augName)
-      const prereqs = ns.singularity.getAugmentationPrereq(augName)
+    const price = ns.singularity.getAugmentationPrice(entry.name)
+    const owned = ownedSet.has(entry.name)
 
-      // Handle NeuroFlux Governor separately
-      if (augName.startsWith("NeuroFlux Governor")) {
-        if (!neuroFluxInfo) {
-          neuroFluxInfo = {
-            name: augName,
-            factions: [faction],
-            price: price,
-            repReq: repReq,
-            owned: owned,
-            prereqs: prereqs,
-          }
-        } else {
-          neuroFluxInfo.factions.push(faction)
+    if (entry.name.startsWith("NeuroFlux Governor")) {
+      if (!neuroFluxInfo) {
+        neuroFluxInfo = {
+          name: entry.name,
+          factions: [...factions],
+          price,
+          repReq: entry.repReq,
+          owned,
+          prereqs: entry.prereqs,
         }
-        continue
-      }
-
-      if (augmentMap.has(augName)) {
-        augmentMap.get(augName)!.factions.push(faction)
       } else {
-        augmentMap.set(augName, {
-          name: augName,
-          factions: [faction],
-          price: price,
-          repReq: repReq,
-          owned: owned,
-          prereqs: prereqs,
-        })
+        for (const faction of factions) {
+          if (!neuroFluxInfo.factions.includes(faction)) {
+            neuroFluxInfo.factions.push(faction)
+          }
+        }
       }
+      continue
     }
+
+    augmentMap.set(entry.name, {
+      name: entry.name,
+      factions: [...factions],
+      price,
+      repReq: entry.repReq,
+      owned,
+      prereqs: entry.prereqs,
+    })
   }
 
   // Get player stats

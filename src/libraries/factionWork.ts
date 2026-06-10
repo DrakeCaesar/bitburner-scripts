@@ -1,5 +1,13 @@
 import { FactionName, FactionWorkType, NS } from "@ns"
-import { buildAffordablePurchasePlan, getAugmentData, type AugmentInfo } from "./augmentations.js"
+import {
+  buildAffordablePurchasePlan,
+  getAugmentCatalog,
+  getAugmentData,
+  getAugmentNamesFromFaction,
+  getOwnedAugmentationNames,
+  isNeuroFluxAugment,
+  type AugmentInfo,
+} from "./augmentations.js"
 import { col, W, type ReactTableConfig } from "./scriptLogUiLayout.js"
 
 /** Matches in-game BaseFavorToDonate (see bitburner-src Constants.ts). */
@@ -219,21 +227,22 @@ function jobLabelForFaction(ns: NS, faction: FactionName): string {
 }
 
 export function gatherAugmentTargets(ns: NS, playerFactions: readonly FactionName[]): AugmentTarget[] {
-  const ownedAugments = new Set(ns.singularity.getOwnedAugmentations(true))
+  const ownedAugments = getOwnedAugmentationNames(ns)
+  const catalog = getAugmentCatalog(ns)
   const targets: AugmentTarget[] = []
   const augmentsWithEnoughRep = new Set<string>()
 
   for (const faction of playerFactions) {
     if (!factionOffersWork(ns, faction)) continue
 
-    const augments = ns.singularity.getAugmentationsFromFaction(faction)
     const currentRep = ns.singularity.getFactionRep(faction)
 
-    for (const augName of augments) {
+    for (const augName of getAugmentNamesFromFaction(ns, faction)) {
       if (ownedAugments.has(augName)) continue
-      if (augName.startsWith("NeuroFlux Governor")) continue
+      if (isNeuroFluxAugment(augName)) continue
 
-      const requiredRep = ns.singularity.getAugmentationRepReq(augName)
+      const requiredRep = catalog.get(augName)?.repReq
+      if (requiredRep == null) continue
       if (currentRep >= requiredRep) augmentsWithEnoughRep.add(augName)
     }
   }
@@ -241,15 +250,16 @@ export function gatherAugmentTargets(ns: NS, playerFactions: readonly FactionNam
   for (const faction of playerFactions) {
     if (!factionOffersWork(ns, faction)) continue
 
-    const augments = ns.singularity.getAugmentationsFromFaction(faction)
     const currentRep = ns.singularity.getFactionRep(faction)
 
-    for (const augName of augments) {
+    for (const augName of getAugmentNamesFromFaction(ns, faction)) {
       if (ownedAugments.has(augName)) continue
-      if (augName.startsWith("NeuroFlux Governor")) continue
+      if (isNeuroFluxAugment(augName)) continue
       if (augmentsWithEnoughRep.has(augName)) continue
 
-      const requiredRep = ns.singularity.getAugmentationRepReq(augName)
+      const requiredRep = catalog.get(augName)?.repReq
+      if (requiredRep == null) continue
+
       const favor = ns.singularity.getFactionFavor(faction)
       const favorGain = ns.singularity.getFactionFavorGain(faction)
       const predictedFavor = favor + favorGain
@@ -460,14 +470,16 @@ export function getPreferredFactionForRep(
 }
 
 function idleReason(ns: NS, faction: FactionName): string {
-  const owned = new Set(ns.singularity.getOwnedAugmentations(true))
-  const augments = ns.singularity.getAugmentationsFromFaction(faction)
-  const pending = augments.filter((a) => !a.startsWith("NeuroFlux Governor") && !owned.has(a))
+  const owned = getOwnedAugmentationNames(ns)
+  const catalog = getAugmentCatalog(ns)
+  const pending = getAugmentNamesFromFaction(ns, faction).filter(
+    (augName) => !isNeuroFluxAugment(augName) && !owned.has(augName)
+  )
 
   if (pending.length === 0) return "All augmentations owned"
 
   const currentRep = ns.singularity.getFactionRep(faction)
-  if (pending.every((a) => currentRep >= ns.singularity.getAugmentationRepReq(a))) {
+  if (pending.every((augName) => currentRep >= (catalog.get(augName)?.repReq ?? Infinity))) {
     return "Reputation met for remaining augments"
   }
 
