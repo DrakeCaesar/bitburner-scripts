@@ -142,12 +142,12 @@ export class InfiltrationRunStatsTracker {
       this.rewardGoal === "reputation" &&
       repGoal != null &&
       repGoal.repNeeded > 0 &&
-      avgCycleMs != null &&
-      avgCycleMs > 0 &&
       this.predictedReward > 0
     ) {
       etaRuns = Math.ceil(repGoal.repNeeded / this.predictedReward)
-      etaMs = etaRuns * avgCycleMs
+      if (avgCycleMs != null && avgCycleMs > 0) {
+        etaMs = etaRuns * avgCycleMs
+      }
     }
 
     return {
@@ -226,10 +226,13 @@ export function formatInfiltrationRunViewLines(ns: NS, view: InfiltrationRunView
     lines.push("--- ETA ---")
     lines.push(`Goal: ${view.repGoal.label}`)
     lines.push(`Need: ${ns.format.number(view.repGoal.repNeeded)} rep`)
-    if (view.etaMs != null && view.etaRuns != null) {
-      lines.push(`Est: ${ns.format.time(view.etaMs)} (${view.etaRuns} runs)`)
-    } else {
-      lines.push("Est: need 2+ rounds at this location")
+    if (view.etaRuns != null) {
+      if (view.etaMs != null) {
+        lines.push(`Est: ${ns.format.time(view.etaMs)} (${view.etaRuns} runs)`)
+      } else {
+        lines.push(`Est: ${view.etaRuns} runs (${ns.format.number(view.predictedReward)} rep/run predicted)`)
+        lines.push("Time: need 1 completed round at this location")
+      }
     }
   }
 
