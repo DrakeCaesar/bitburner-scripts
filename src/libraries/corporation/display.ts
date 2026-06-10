@@ -4,7 +4,6 @@ import {
   TabbedScriptLogBuilder,
   type ReactTableConfig,
   type TabDefinition,
-  type TableLayout,
 } from "@/libraries/scriptLogUi.js"
 import { FARMLAND_DIVISION } from "@/libraries/corporation/farmland.js"
 import {
@@ -28,11 +27,6 @@ import {
 import { type HeadcountPlanTable } from "@/libraries/corporation/office.js"
 import { asCorpMaterialList } from "@/libraries/corporation/simulation/officeJobs.js"
 import { type ManagedSupply } from "@/libraries/corporation/supplies.js"
-
-export const CORP_LOG_LAYOUT: Partial<TableLayout> = {
-  tableWidthPx: 880,
-  fontSizePx: 12,
-}
 
 export const CORP_TABS: TabDefinition[] = [
   { id: "overview", label: "Overview" },

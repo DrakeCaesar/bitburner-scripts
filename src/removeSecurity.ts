@@ -1,6 +1,5 @@
 import { NS } from "@ns"
 import {
-  REMOVE_SECURITY_LAYOUT,
   WEAKEN_SCRIPT,
   buildRemoveSecurityLog,
   collectRemoveSecurityState,
@@ -8,6 +7,7 @@ import {
   refreshKnownHosts,
 } from "./libraries/removeSecurity.js"
 import { initScriptLogTail } from "./libraries/scriptLogUi.js"
+import { TAIL_LAYOUT } from "./libraries/scriptLogUiLayout.js"
 
 const LOOP_INTERVAL_MS = 1_000
 
@@ -18,7 +18,7 @@ export async function main(ns: NS): Promise<void> {
   const knownHosts = new Set<string>()
   refreshKnownHosts(ns, knownHosts)
 
-  initScriptLogTail(ns, `Remove Security (${execHost})`, REMOVE_SECURITY_LAYOUT)
+  initScriptLogTail(ns, `Remove Security (${execHost})`, TAIL_LAYOUT)
 
   while (true) {
     refreshKnownHosts(ns, knownHosts)

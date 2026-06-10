@@ -15,7 +15,7 @@ export interface TableLayout {
   tailTableWidthPx?: number
   /** Estimated content height in px (excludes title bar); used with resolveTailSize. */
   tailContentHeightPx?: number
-  /** Minimum tail window width (defaults to tableWidthPx). */
+  /** Optional floor for tail window width (defaults to measured content width). */
   tailWidthPx?: number
   /** Optional fixed total tail height; overrides tailContentHeightPx when set. */
   tailHeightPx?: number
@@ -131,7 +131,7 @@ function buildViewportShell(content: ReactNode, layout: TableLayout): ReactNode 
 function resolveTailWidth(layout: TableLayout): number {
   const win = eval("window") as Window
   const contentWidth = layout.tailTableWidthPx ?? layout.tableWidthPx
-  const minWidth = layout.tailWidthPx ?? layout.tableWidthPx
+  const minWidth = layout.tailWidthPx ?? contentWidth
   const maxWidth = layout.tailMaxWidthPx ?? Math.floor(win.innerWidth * 0.95)
   const padded = Math.ceil(contentWidth + layout.sectionGapPx)
   return Math.min(maxWidth, Math.max(minWidth, padded))
@@ -237,7 +237,7 @@ interface ColumnWidthSpec {
 /** Horizontal inset per cell side; column width includes both sides. */
 const CELL_HORIZONTAL_PAD_CH = 0.5
 
-/** Monospace column width = longest cell/header string + 1ch pad left and right. */
+/** Monospace column width = max(text, minWidth) + horizontal pad on both sides. */
 function computeColumnWidths(config: TableConfig, columnWidthsPx?: number[]): ColumnWidthSpec[] {
   if (columnWidthsPx) {
     return columnWidthsPx.map((value) => ({ value, unit: "px" as const }))
@@ -248,7 +248,8 @@ function computeColumnWidths(config: TableConfig, columnWidthsPx?: number[]): Co
     for (const row of config.rows) {
       if (row[colIdx]) maxChars = Math.max(maxChars, row[colIdx].length)
     }
-    return { value: maxChars + CELL_HORIZONTAL_PAD_CH * 2, unit: "ch" as const }
+    const contentChars = Math.max(maxChars, col.minWidth ?? 0)
+    return { value: contentChars + CELL_HORIZONTAL_PAD_CH * 2, unit: "ch" as const }
   })
 }
 
@@ -743,11 +744,11 @@ export class ScriptLogBuilder {
 
   /** Widest table width this builder's sections need (char-based estimate). */
   estimateMaxTableWidthPx(): number {
-    let max = mergeLayout(this.layout).tableWidthPx
+    let max = 0
     for (const section of this.sections) {
       max = Math.max(max, logSectionMaxWidthPx(section, this.layout))
     }
-    return max
+    return max > 0 ? max : mergeLayout(this.layout).tableWidthPx
   }
 
   /** Tallest stacked content height in px (tables, text, section headers). */
@@ -917,11 +918,11 @@ export class TabbedScriptLogBuilder {
   }
 
   private resolveTailTableWidthPx(): number {
-    let maxWidth = mergeLayout(this.layout).tableWidthPx
+    let maxWidth = 0
     for (const builder of this.builders.values()) {
       maxWidth = Math.max(maxWidth, builder.estimateMaxTableWidthPx())
     }
-    return maxWidth
+    return maxWidth > 0 ? maxWidth : mergeLayout(this.layout).tableWidthPx
   }
 
   private resolveTailContentHeightPx(): number {

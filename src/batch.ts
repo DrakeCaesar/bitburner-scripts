@@ -21,8 +21,8 @@ import {
   initScriptLogTail,
   type ReactTableConfig,
   type TabDefinition,
-  type TableLayout,
 } from "./libraries/scriptLogUi.js"
+import { TAIL_LAYOUT } from "./libraries/scriptLogUiLayout.js"
 import {
   getNodesForBatching,
   killAllHackingScriptsOnNodes,
@@ -31,11 +31,6 @@ import {
 } from "./libraries/serverManagement.js"
 // import { joinWorthyFactionInvitations } from "./libraries/factionInvites.js"
 import { formatGameTimeMs } from "./libraries/format.js"
-
-const BATCH_LAYOUT: Partial<TableLayout> = {
-  tableWidthPx: 720,
-  fontSizePx: 14,
-}
 
 const BATCH_TABS: TabDefinition[] = [
   { id: "setup", label: "Setup" },
@@ -54,9 +49,9 @@ export async function main(ns: NS) {
   const playerHackLevel = batchOptions.playerHackLevel
   const debug = batchOptions.debug
 
-  initScriptLogTail(ns, debug ? "Batch (debug)" : "Batch", BATCH_LAYOUT)
+  initScriptLogTail(ns, debug ? "Batch (debug)" : "Batch", TAIL_LAYOUT)
 
-  const tabbedLog = new TabbedScriptLogBuilder(BATCH_TABS, BATCH_LAYOUT)
+  const tabbedLog = new TabbedScriptLogBuilder(BATCH_TABS, TAIL_LAYOUT)
   const renderLog = () => tabbedLog.render(ns)
   const fmtTime = (ms: number) => formatGameTimeMs(ms, (m) => ns.format.time(m))
 

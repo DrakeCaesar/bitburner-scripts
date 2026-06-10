@@ -11,22 +11,10 @@ import {
   stopFactionWorkIfActive,
   type FactionWorkPriority,
 } from "./libraries/factionWork.js"
-import {
-  applyTailSize,
-  buildReactTable,
-  estimateReactTableHeightPx,
-  estimateReactTableWidthPx,
-  initScriptLogTail,
-  renderScriptLog,
-  type TableLayout,
-} from "./libraries/scriptLogUi.js"
+import { initScriptLogTail } from "./libraries/scriptLogUi.js"
+import { renderReactTableLog, TAIL_LAYOUT } from "./libraries/scriptLogUiLayout.js"
 
 const CHECK_INTERVAL_MS = 1_000
-
-const FACTION_WORK_LAYOUT: Partial<TableLayout> = {
-  tableWidthPx: 720,
-  fontSizePx: 12,
-}
 
 async function renderFactionWorkTable(ns: NS, priority: FactionWorkPriority): Promise<void> {
   const player = ns.getPlayer()
@@ -37,21 +25,14 @@ async function renderFactionWorkTable(ns: NS, priority: FactionWorkPriority): Pr
   const rows = buildFactionWorkRows(ns, player.factions, allTargets, prioritized, best, priority)
   const table = buildFactionWorkTableConfig(ns, rows, best, priority)
 
-  const tableConfig = { layout: FACTION_WORK_LAYOUT, ...table }
-  const renderLayout = {
-    ...FACTION_WORK_LAYOUT,
-    tailTableWidthPx: estimateReactTableWidthPx(tableConfig),
-    tailContentHeightPx: estimateReactTableHeightPx(tableConfig),
-  }
-  applyTailSize(ns, renderLayout)
-  await renderScriptLog(ns, buildReactTable(tableConfig), renderLayout)
+  await renderReactTableLog(ns, table, TAIL_LAYOUT)
 }
 
 export async function main(ns: NS) {
   ns.disableLog("ALL")
   const priority = parseFactionWorkPriority(ns)
   const tailTitle = priority === "augments" ? "Faction Work (augments)" : "Faction Work"
-  initScriptLogTail(ns, tailTitle, FACTION_WORK_LAYOUT)
+  initScriptLogTail(ns, tailTitle, TAIL_LAYOUT)
 
   while (true) {
     const player = ns.getPlayer()

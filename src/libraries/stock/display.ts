@@ -1,12 +1,8 @@
 import { NS } from "@ns"
-import { TabbedScriptLogBuilder, type TabDefinition, type TableLayout } from "@/libraries/scriptLogUi.js"
+import { TabbedScriptLogBuilder, type TabDefinition } from "@/libraries/scriptLogUi.js"
+import { TAIL_LAYOUT } from "@/libraries/scriptLogUiLayout.js"
 import { formatSnapshotMoney } from "@/libraries/stock/trader.js"
 import type { StockSymbolSnapshot, StockTraderSnapshot } from "@/libraries/stock/types.js"
-
-export const STOCK_LOG_LAYOUT: Partial<TableLayout> = {
-  tableWidthPx: 920,
-  fontSizePx: 12,
-}
 
 export const STOCK_TABS: TabDefinition[] = [
   { id: "overview", label: "Overview" },

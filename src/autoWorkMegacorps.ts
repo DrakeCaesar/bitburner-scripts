@@ -14,44 +14,28 @@ import {
   pickBestCompanyField,
   type MegacorpWorkSnapshot,
 } from "./libraries/megacorpWork.js"
-import {
-  applyTailSize,
-  initScriptLogTail,
-  renderScriptLog,
-  ScriptLogBuilder,
-  type TableLayout,
-} from "./libraries/scriptLogUi.js"
+import { initScriptLogTail, ScriptLogBuilder } from "./libraries/scriptLogUi.js"
+import { TAIL_LAYOUT } from "./libraries/scriptLogUiLayout.js"
 
 const ACTIVE_INTERVAL_MS = 1000
 const STABLE_INTERVAL_MS = 5000
 
-const MEGACORP_LAYOUT: Partial<TableLayout> = {
-  tableWidthPx: 900,
-  fontSizePx: 12,
-}
-
 async function renderMegacorpTable(ns: NS, snapshot: MegacorpWorkSnapshot, megacorps: CompanyName[]): Promise<void> {
-  const log = new ScriptLogBuilder(MEGACORP_LAYOUT)
+  const log = new ScriptLogBuilder(TAIL_LAYOUT)
   const rows = buildMegacorpRows(ns, snapshot, megacorps)
-  log.table({ layout: MEGACORP_LAYOUT, ...buildMegacorpTableConfig(ns, rows, snapshot) })
+  log.table({ layout: TAIL_LAYOUT, ...buildMegacorpTableConfig(ns, rows, snapshot) })
 
   const positionRows = buildMegacorpPositionRows(ns, snapshot)
   if (positionRows.length > 0) {
-    log.table({ layout: MEGACORP_LAYOUT, ...buildMegacorpPositionTableConfig(ns, positionRows, snapshot) })
+    log.table({ layout: TAIL_LAYOUT, ...buildMegacorpPositionTableConfig(ns, positionRows, snapshot) })
   }
 
-  const renderLayout = {
-    ...MEGACORP_LAYOUT,
-    tailTableWidthPx: log.estimateMaxTableWidthPx(),
-    tailContentHeightPx: log.estimateContentHeightPx(),
-  }
-  applyTailSize(ns, renderLayout)
-  await renderScriptLog(ns, log.build(), renderLayout)
+  await log.render(ns)
 }
 
 export async function main(ns: NS): Promise<void> {
   await killOtherInstances(ns)
-  initScriptLogTail(ns, "Megacorp Work", MEGACORP_LAYOUT)
+  initScriptLogTail(ns, "Megacorp Work", TAIL_LAYOUT)
 
   const megacorps = getMegacorps(ns)
   const completedCompanies: CompanyName[] = []

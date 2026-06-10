@@ -1,14 +1,6 @@
 import { CrimeType, NS } from "@ns"
-import {
-  applyTailSize,
-  buildReactTable,
-  estimateReactTableHeightPx,
-  estimateReactTableWidthPx,
-  initScriptLogTail,
-  renderScriptLog,
-  type ReactTableConfig,
-  type TableLayout,
-} from "./libraries/scriptLogUi.js"
+import { initScriptLogTail, type ReactTableConfig } from "./libraries/scriptLogUi.js"
+import { renderReactTableLog, TAIL_LAYOUT } from "./libraries/scriptLogUiLayout.js"
 
 type CrimeMode = "money" | "karma" | "xp"
 
@@ -19,12 +11,6 @@ interface CrimeInfo {
   expectedKarmaPerMs: number
   totalXpPerMs: number
 }
-
-const CRIME_LAYOUT: Partial<TableLayout> = {
-  tableWidthPx: 640,
-}
-
-const COL_WIDTHS = [160, 72, 136, 136, 136]
 
 function getCrimeInfos(ns: NS): CrimeInfo[] {
   return Object.values(ns.enums.CrimeType).map((crime) => {
@@ -100,15 +86,12 @@ function buildCrimeTableConfig(ns: NS, crimeInfos: CrimeInfo[], mode: CrimeMode,
   const selectedRowIndex = rows.findIndex((crime) => crime.name === selected.name)
 
   return {
-    layout: CRIME_LAYOUT,
-    tableWidth: CRIME_LAYOUT.tableWidthPx,
-    columnWidths: COL_WIDTHS,
     columns: [
-      { header: "Crime", align: "left" },
-      { header: "Success", align: "right" },
-      { header: "Karma", align: "right" },
-      { header: "Money", align: "right" },
-      { header: "XP", align: "right" },
+      { header: "Crime", align: "left", minWidth: 14 },
+      { header: "Success", align: "right", minWidth: 7 },
+      { header: "Karma", align: "right", minWidth: 10 },
+      { header: "Money", align: "right", minWidth: 12 },
+      { header: "XP", align: "right", minWidth: 10 },
     ],
     rows: rows.map((crime) => [
       crime.name,
@@ -123,22 +106,6 @@ function buildCrimeTableConfig(ns: NS, crimeInfos: CrimeInfo[], mode: CrimeMode,
   }
 }
 
-async function renderCrimeTable(
-  ns: NS,
-  crimeInfos: CrimeInfo[],
-  mode: CrimeMode,
-  selected: CrimeInfo
-): Promise<void> {
-  const tableConfig = buildCrimeTableConfig(ns, crimeInfos, mode, selected)
-  const renderLayout = {
-    ...CRIME_LAYOUT,
-    tailTableWidthPx: estimateReactTableWidthPx(tableConfig),
-    tailContentHeightPx: estimateReactTableHeightPx(tableConfig),
-  }
-  applyTailSize(ns, renderLayout)
-  await renderScriptLog(ns, buildReactTable(tableConfig), renderLayout)
-}
-
 function parseMode(ns: NS): CrimeMode {
   const arg = String(ns.args[0] ?? "")
   if (arg === "karma" || arg === "k") return "karma"
@@ -150,13 +117,13 @@ function parseMode(ns: NS): CrimeMode {
 export async function main(ns: NS): Promise<void> {
   const mode = parseMode(ns)
 
-  initScriptLogTail(ns, `Crime - ${mode}`, CRIME_LAYOUT)
+  initScriptLogTail(ns, `Crime - ${mode}`, TAIL_LAYOUT)
 
   for (;;) {
     const crimeInfos = getCrimeInfos(ns)
     const bestCrime = pickBestCrime(crimeInfos, mode)
 
-    await renderCrimeTable(ns, crimeInfos, mode, bestCrime)
+    await renderReactTableLog(ns, buildCrimeTableConfig(ns, crimeInfos, mode, bestCrime), TAIL_LAYOUT)
 
     const crimeTime = ns.singularity.commitCrime(bestCrime.name, false)
     await ns.sleep(crimeTime + 10)

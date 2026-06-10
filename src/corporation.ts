@@ -1,6 +1,7 @@
 import { NS } from "@ns"
 import { ensureCorporationCreated } from "@/libraries/corporation/manager.js"
-import { CORP_LOG_LAYOUT, CORP_TABS, renderCorporationDashboard } from "@/libraries/corporation/display.js"
+import { CORP_TABS, renderCorporationDashboard } from "@/libraries/corporation/display.js"
+import { TAIL_LAYOUT } from "@/libraries/scriptLogUiLayout.js"
 import { ensureFarmlandDivision } from "@/libraries/corporation/expansion.js"
 import { ensurePlantsExportToTobacco } from "@/libraries/corporation/materialExports.js"
 import { buildDivisionHeadcountPlanTables } from "@/libraries/corporation/office.js"
@@ -30,9 +31,9 @@ export async function main(ns: NS): Promise<void> {
     return
   }
 
-  initScriptLogTail(ns, "dracorp", CORP_LOG_LAYOUT)
+  initScriptLogTail(ns, "dracorp", TAIL_LAYOUT)
 
-  const tabbedLog = new TabbedScriptLogBuilder(CORP_TABS, CORP_LOG_LAYOUT)
+  const tabbedLog = new TabbedScriptLogBuilder(CORP_TABS, TAIL_LAYOUT)
   const simHistory: ValidationRun[] = []
   const perfHistory: CorpPerfReport[] = []
   let simMismatchWarning: ValidationRun | null = null

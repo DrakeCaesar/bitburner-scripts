@@ -1,6 +1,7 @@
 import { NS } from "@ns"
 import { crawl, isHackableNetworkServer } from "./crawl.js"
-import { ScriptLogBuilder, type ReactTableConfig, type TableLayout } from "./scriptLogUi.js"
+import { ScriptLogBuilder, type ReactTableConfig } from "./scriptLogUi.js"
+import { TAIL_LAYOUT } from "./scriptLogUiLayout.js"
 
 export const WEAKEN_SCRIPT = "/hacking/weaken.js"
 
@@ -21,10 +22,6 @@ const EXCLUDED_HOSTS = new Set([
   "w0r1d_d43m0n",
   "The-Cave",
 ])
-
-export const REMOVE_SECURITY_LAYOUT: Partial<TableLayout> = {
-  fontSizePx: 12,
-}
 
 const TABLE_COLUMNS = [
   { header: "Server", align: "left" as const },
@@ -232,7 +229,7 @@ function buildAllServerRows(ns: NS, state: RemoveSecurityState): string[][] {
 }
 
 export function buildRemoveSecurityLog(ns: NS, state: RemoveSecurityState): ScriptLogBuilder {
-  const log = new ScriptLogBuilder(REMOVE_SECURITY_LAYOUT)
+  const log = new ScriptLogBuilder(TAIL_LAYOUT)
 
   log.text(
     `Exec: ${state.execHost}  |  free RAM: ${ns.format.ram(state.execFreeRam)}` +
@@ -247,7 +244,7 @@ export function buildRemoveSecurityLog(ns: NS, state: RemoveSecurityState): Scri
   const rows = buildAllServerRows(ns, state)
   if (rows.length > 0) {
     log.table({
-      layout: REMOVE_SECURITY_LAYOUT,
+      layout: TAIL_LAYOUT,
       columns: TABLE_COLUMNS,
       rows,
     })
