@@ -1,6 +1,6 @@
 import { FactionName, FactionWorkType, NS } from "@ns"
 import { buildAffordablePurchasePlan, getAugmentData, type AugmentInfo } from "./augmentations.js"
-import type { ReactTableConfig } from "./scriptLogUi.js"
+import { col, W, type ReactTableConfig } from "./scriptLogUiLayout.js"
 
 /** Matches in-game BaseFavorToDonate (see bitburner-src Constants.ts). */
 const BASE_FAVOR_TO_DONATE = 150
@@ -704,19 +704,19 @@ export function buildFactionWorkTableConfig(
     return {
       title,
       columns: [
-        { header: "Faction", align: "left", minWidth: 12 },
-        { header: "Work", align: "center", minWidth: 4 },
-        { header: "Job", align: "left", minWidth: 5 },
-        { header: "Augment", align: "left", minWidth: 16 },
-        { header: "Rep", align: "right" },
-        { header: "Required", align: "right" },
-        { header: "Rep gap", align: "right" },
-        { header: "Rep ETA", align: "right", minWidth: 10 },
-        { header: "At", align: "left", minWidth: 18 },
-        { header: "Favor", align: "right" },
-        { header: "After reset", align: "right" },
-        { header: `Fav→${targetFavor}`, align: "right" },
-        { header: "Why", align: "left", minWidth: 24 },
+        col("Faction", "left", W.faction),
+        col("Work", "center", W.work),
+        col("Job", "left", W.job),
+        col("Augment", "left", W.augment),
+        col("Rep", "right"),
+        col("Required", "right"),
+        col("Rep gap", "right"),
+        col("Rep ETA", "right", W.rate),
+        col("At", "left", W.timeAt),
+        col("Favor", "right"),
+        col("After reset", "right"),
+        col(`Fav→${targetFavor}`, "right"),
+        col("Why", "left", W.why),
       ],
       rows: rows.map((row) => {
         const hasAugment = row.augmentName !== "—"
@@ -744,20 +744,20 @@ export function buildFactionWorkTableConfig(
   return {
     title,
     columns: [
-      { header: "Faction", align: "left", minWidth: 12 },
-      { header: "Work", align: "center", minWidth: 4 },
-      { header: "Job", align: "left", minWidth: 5 },
-      { header: "Mode", align: "left", minWidth: 6 },
-      { header: "Augment", align: "left", minWidth: 16 },
-      { header: "Rep", align: "right" },
-      { header: "Required", align: "right" },
-      { header: "Rep gap", align: "right" },
-      { header: "Favor", align: "right" },
-      { header: "After reset", align: "right" },
-      { header: `Gap→${targetFavor}`, align: "right" },
-      { header: "Favor ETA", align: "right", minWidth: 10 },
-      { header: "At", align: "left", minWidth: 18 },
-      { header: "Why", align: "left", minWidth: 24 },
+      col("Faction", "left", W.faction),
+      col("Work", "center", W.work),
+      col("Job", "left", W.job),
+      col("Mode", "left", W.mode),
+      col("Augment", "left", W.augment),
+      col("Rep", "right"),
+      col("Required", "right"),
+      col("Rep gap", "right"),
+      col("Favor", "right"),
+      col("After reset", "right"),
+      col(`Gap→${targetFavor}`, "right"),
+      col("Favor ETA", "right", W.rate),
+      col("At", "left", W.timeAt),
+      col("Why", "left", W.why),
     ],
     rows: rows.map((row) => {
       const hasAugment = row.augmentName !== "—"

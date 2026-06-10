@@ -1,6 +1,5 @@
 import { CrimeType, NS } from "@ns"
-import { initScriptLogTail, type ReactTableConfig } from "./libraries/scriptLogUi.js"
-import { renderReactTableLog, TAIL_LAYOUT } from "./libraries/scriptLogUiLayout.js"
+import { col, createTailLog, openTailLog, W, type ReactTableConfig } from "./libraries/scriptLogUiLayout.js"
 
 type CrimeMode = "money" | "karma" | "xp"
 
@@ -87,11 +86,11 @@ function buildCrimeTableConfig(ns: NS, crimeInfos: CrimeInfo[], mode: CrimeMode,
 
   return {
     columns: [
-      { header: "Crime", align: "left", minWidth: 14 },
-      { header: "Success", align: "right", minWidth: 7 },
-      { header: "Karma", align: "right", minWidth: 10 },
-      { header: "Money", align: "right", minWidth: 12 },
-      { header: "XP", align: "right", minWidth: 10 },
+      col("Crime", "left", W.crime),
+      col("Success", "right", W.success),
+      col("Karma", "right", W.karma),
+      col("Money", "right", W.money),
+      col("XP", "right", W.karma),
     ],
     rows: rows.map((crime) => [
       crime.name,
@@ -117,13 +116,13 @@ function parseMode(ns: NS): CrimeMode {
 export async function main(ns: NS): Promise<void> {
   const mode = parseMode(ns)
 
-  initScriptLogTail(ns, `Crime - ${mode}`, TAIL_LAYOUT)
+  openTailLog(ns, `Crime - ${mode}`)
 
   for (;;) {
     const crimeInfos = getCrimeInfos(ns)
     const bestCrime = pickBestCrime(crimeInfos, mode)
 
-    await renderReactTableLog(ns, buildCrimeTableConfig(ns, crimeInfos, mode, bestCrime), TAIL_LAYOUT)
+    await createTailLog().table(buildCrimeTableConfig(ns, crimeInfos, mode, bestCrime)).render(ns)
 
     const crimeTime = ns.singularity.commitCrime(bestCrime.name, false)
     await ns.sleep(crimeTime + 10)

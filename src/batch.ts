@@ -16,13 +16,8 @@ import {
 import { purchasePrograms, purchaseTorRouter } from "./libraries/purchasePrograms.js"
 import { purchaseServers } from "./libraries/purchaseServer.js"
 import { sumBatchWorkerRam } from "./libraries/ramUtils.js"
-import {
-  TabbedScriptLogBuilder,
-  initScriptLogTail,
-  type ReactTableConfig,
-  type TabDefinition,
-} from "./libraries/scriptLogUi.js"
-import { TAIL_LAYOUT } from "./libraries/scriptLogUiLayout.js"
+import type { ReactTableConfig } from "./libraries/scriptLogUiLayout.js"
+import { createTabbedTailLog, openTailLog, type TabDefinition } from "./libraries/scriptLogUiLayout.js"
 import {
   getNodesForBatching,
   killAllHackingScriptsOnNodes,
@@ -49,9 +44,9 @@ export async function main(ns: NS) {
   const playerHackLevel = batchOptions.playerHackLevel
   const debug = batchOptions.debug
 
-  initScriptLogTail(ns, debug ? "Batch (debug)" : "Batch", TAIL_LAYOUT)
+  openTailLog(ns, debug ? "Batch (debug)" : "Batch")
 
-  const tabbedLog = new TabbedScriptLogBuilder(BATCH_TABS, TAIL_LAYOUT)
+  const tabbedLog = createTabbedTailLog(BATCH_TABS)
   const renderLog = () => tabbedLog.render(ns)
   const fmtTime = (ms: number) => formatGameTimeMs(ms, (m) => ns.format.time(m))
 

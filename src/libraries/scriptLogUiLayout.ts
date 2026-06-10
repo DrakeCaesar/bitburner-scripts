@@ -1,55 +1,70 @@
-import { NS, ReactNode } from "@ns"
+/**
+ * Public API for React script-log (tail) UIs.
+ *
+ * Entry scripts and display builders should import from here, not scriptLogUi.ts directly.
+ *
+ * Patterns:
+ * - Single table:  createTailLog().table(config).render(ns)
+ * - Stacked:       createTailLog().text(...).table(...).render(ns)
+ * - Tabbed:        createTabbedTailLog(TABS).tab("id").table(...); tabbed.render(ns)
+ */
+
+import { NS } from "@ns"
+import { col, W } from "./reactTableColumns.js"
+import type { LogFn } from "./logFn.js"
 import {
-  buildReactTable,
-  estimateReactTableHeightPx,
-  estimateReactTableWidthPx,
+  DEFAULT_LAYOUT,
+  ScriptLogBuilder,
+  TabbedScriptLogBuilder,
+  initScriptLogTail,
+  measureTreeTableHostChars,
   mergeLayout,
-  renderScriptLog,
   type ReactTableConfig,
+  type TabDefinition,
   type TableLayout,
+  type TreeTableConfig,
+  type TreeTableRow,
 } from "./scriptLogUi.js"
 
-/**
- * Standard tail-window layout for React script logs.
- * Empty partial = {@link DEFAULT_LAYOUT} values from scriptLogUi (12px mono, default row heights).
- * Override here only when a script truly needs different sizing.
- */
-export const TAIL_LAYOUT: Readonly<Partial<TableLayout>> = Object.freeze({})
+export { col, W }
+export type { LogFn }
+export {
+  DEFAULT_LAYOUT,
+  ScriptLogBuilder,
+  TabbedScriptLogBuilder,
+  initScriptLogTail,
+  measureTreeTableHostChars,
+  mergeLayout,
+  type ReactTableConfig,
+  type TabDefinition,
+  type TableLayout,
+  type TreeTableConfig,
+  type TreeTableRow,
+}
+
+/** Standard layout for all React tail windows (12px mono, default row heights). */
+export const TAIL_LAYOUT: Readonly<TableLayout> = Object.freeze({ ...DEFAULT_LAYOUT })
 
 export function mergeTailLayout(overrides?: Partial<TableLayout>): TableLayout {
-  return mergeLayout({ ...TAIL_LAYOUT, ...overrides })
+  return mergeLayout(overrides ? { ...TAIL_LAYOUT, ...overrides } : TAIL_LAYOUT)
 }
 
-/** Height of a plain-text block (e.g. summary line above a table). */
-export function estimateTextBlockHeightPx(lineCount: number, layout?: Partial<TableLayout>): number {
-  const merged = mergeTailLayout(layout)
-  return lineCount * (merged.fontSizePx + 4)
+/** Fluent builder for a single tail panel (text, tables, sections). */
+export function createTailLog(overrides?: Partial<TableLayout>): ScriptLogBuilder {
+  return new ScriptLogBuilder(overrides)
 }
 
-export interface TailContentSizeHints {
-  tailTableWidthPx?: number
-  tailContentHeightPx?: number
+/** Fluent builder for a tabbed tail window. */
+export function createTabbedTailLog(tabs: TabDefinition[], overrides?: Partial<TableLayout>): TabbedScriptLogBuilder {
+  return new TabbedScriptLogBuilder(tabs, overrides)
 }
 
-/** Render arbitrary React tail content with optional measured width/height. */
-export async function renderTailContent(
-  ns: NS,
-  content: ReactNode,
-  layout?: Partial<TableLayout>,
-  sizeHints?: TailContentSizeHints
-): Promise<void> {
-  await renderScriptLog(ns, content, {
-    ...layout,
-    tailTableWidthPx: sizeHints?.tailTableWidthPx,
-    tailContentHeightPx: sizeHints?.tailContentHeightPx,
-  })
+/** Open tail window with standard layout (call once at script start). */
+export function openTailLog(ns: NS, title: string, overrides?: Partial<TableLayout>): void {
+  initScriptLogTail(ns, title, overrides)
 }
 
-/** Size and render a single React table using standard ch-based columns. */
-export async function renderReactTableLog(ns: NS, config: ReactTableConfig, layout?: Partial<TableLayout>): Promise<void> {
-  const tableConfig = { layout, ...config }
-  await renderTailContent(ns, buildReactTable(tableConfig), layout, {
-    tailTableWidthPx: estimateReactTableWidthPx(tableConfig, layout),
-    tailContentHeightPx: estimateReactTableHeightPx(tableConfig, layout),
-  })
+/** Render one table in the tail (sugar over createTailLog). */
+export async function renderTailTable(ns: NS, config: ReactTableConfig, overrides?: Partial<TableLayout>): Promise<void> {
+  await createTailLog(overrides).table(config).render(ns)
 }

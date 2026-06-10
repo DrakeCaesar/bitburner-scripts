@@ -14,20 +14,19 @@ import {
   pickBestCompanyField,
   type MegacorpWorkSnapshot,
 } from "./libraries/megacorpWork.js"
-import { initScriptLogTail, ScriptLogBuilder } from "./libraries/scriptLogUi.js"
-import { TAIL_LAYOUT } from "./libraries/scriptLogUiLayout.js"
+import { createTailLog, openTailLog } from "./libraries/scriptLogUiLayout.js"
 
 const ACTIVE_INTERVAL_MS = 1000
 const STABLE_INTERVAL_MS = 5000
 
 async function renderMegacorpTable(ns: NS, snapshot: MegacorpWorkSnapshot, megacorps: CompanyName[]): Promise<void> {
-  const log = new ScriptLogBuilder(TAIL_LAYOUT)
+  const log = createTailLog()
   const rows = buildMegacorpRows(ns, snapshot, megacorps)
-  log.table({ layout: TAIL_LAYOUT, ...buildMegacorpTableConfig(ns, rows, snapshot) })
+  log.table(buildMegacorpTableConfig(ns, rows, snapshot))
 
   const positionRows = buildMegacorpPositionRows(ns, snapshot)
   if (positionRows.length > 0) {
-    log.table({ layout: TAIL_LAYOUT, ...buildMegacorpPositionTableConfig(ns, positionRows, snapshot) })
+    log.table(buildMegacorpPositionTableConfig(ns, positionRows, snapshot))
   }
 
   await log.render(ns)
@@ -35,7 +34,7 @@ async function renderMegacorpTable(ns: NS, snapshot: MegacorpWorkSnapshot, megac
 
 export async function main(ns: NS): Promise<void> {
   await killOtherInstances(ns)
-  initScriptLogTail(ns, "Megacorp Work", TAIL_LAYOUT)
+  openTailLog(ns, "Megacorp Work")
 
   const megacorps = getMegacorps(ns)
   const completedCompanies: CompanyName[] = []

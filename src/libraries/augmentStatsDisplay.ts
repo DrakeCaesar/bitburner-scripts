@@ -6,7 +6,7 @@ import {
   getAugmentData,
   neuroFluxPurchaseCost,
 } from "./augmentations.js"
-import type { ReactTableConfig } from "./scriptLogUi.js"
+import { col, W, type ReactTableConfig } from "./scriptLogUiLayout.js"
 
 /** Augment stat multipliers returned by ns.singularity.getAugmentationStats */
 export interface AugmentMultipliers {
@@ -331,22 +331,18 @@ export function buildAugmentStatsTableConfig(ns: NS): ReactTableConfig & { summa
   const statsCache = new Map<string, AugmentMultipliers>()
 
   const baseColumns = [
-    { header: "#", align: "right" as const, minWidth: 2 },
-    { header: "Augmentation", align: "left" as const, minWidth: 18 },
-    { header: "Faction", align: "left" as const, minWidth: 12 },
-    { header: "Rep Req", align: "right" as const, minWidth: 6 },
-    { header: "Price", align: "right" as const, minWidth: 7 },
-    { header: "Adj Price", align: "right" as const, minWidth: 7 },
-    { header: "Total Cost", align: "right" as const, minWidth: 8 },
-    { header: "Own", align: "center" as const, minWidth: 3 },
-    { header: "Stat", align: "center" as const, minWidth: 3 },
+    col("#", "right", W.order),
+    col("Augmentation", "left", W.augmentName),
+    col("Faction", "left", W.faction),
+    col("Rep Req", "right", W.rep),
+    col("Price", "right", W.num),
+    col("Adj Price", "right", W.num),
+    col("Total Cost", "right", W.price),
+    col("Own", "center", W.own),
+    col("Stat", "center", W.flag),
   ]
 
-  const statColumns = AUGMENT_STAT_COLUMNS.map(({ header }) => ({
-    header,
-    align: "right" as const,
-    minWidth: 5,
-  }))
+  const statColumns = AUGMENT_STAT_COLUMNS.map(({ header }) => col(header, "right", W.stat))
 
   const highlightCells = new Set<string>()
   const separatorAfter: number[] = []

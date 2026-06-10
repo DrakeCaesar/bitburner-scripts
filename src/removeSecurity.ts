@@ -6,8 +6,7 @@ import {
   launchPendingWeakenJobs,
   refreshKnownHosts,
 } from "./libraries/removeSecurity.js"
-import { initScriptLogTail } from "./libraries/scriptLogUi.js"
-import { TAIL_LAYOUT } from "./libraries/scriptLogUiLayout.js"
+import { openTailLog } from "./libraries/scriptLogUiLayout.js"
 
 const LOOP_INTERVAL_MS = 1_000
 
@@ -18,7 +17,7 @@ export async function main(ns: NS): Promise<void> {
   const knownHosts = new Set<string>()
   refreshKnownHosts(ns, knownHosts)
 
-  initScriptLogTail(ns, `Remove Security (${execHost})`, TAIL_LAYOUT)
+  openTailLog(ns, `Remove Security (${execHost})`)
 
   while (true) {
     refreshKnownHosts(ns, knownHosts)

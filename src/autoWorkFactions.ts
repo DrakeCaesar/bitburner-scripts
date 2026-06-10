@@ -11,8 +11,7 @@ import {
   stopFactionWorkIfActive,
   type FactionWorkPriority,
 } from "./libraries/factionWork.js"
-import { initScriptLogTail } from "./libraries/scriptLogUi.js"
-import { renderReactTableLog, TAIL_LAYOUT } from "./libraries/scriptLogUiLayout.js"
+import { createTailLog, openTailLog } from "./libraries/scriptLogUiLayout.js"
 
 const CHECK_INTERVAL_MS = 1_000
 
@@ -25,14 +24,14 @@ async function renderFactionWorkTable(ns: NS, priority: FactionWorkPriority): Pr
   const rows = buildFactionWorkRows(ns, player.factions, allTargets, prioritized, best, priority)
   const table = buildFactionWorkTableConfig(ns, rows, best, priority)
 
-  await renderReactTableLog(ns, table, TAIL_LAYOUT)
+  await createTailLog().table(table).render(ns)
 }
 
 export async function main(ns: NS) {
   ns.disableLog("ALL")
   const priority = parseFactionWorkPriority(ns)
   const tailTitle = priority === "augments" ? "Faction Work (augments)" : "Faction Work"
-  initScriptLogTail(ns, tailTitle, TAIL_LAYOUT)
+  openTailLog(ns, tailTitle)
 
   while (true) {
     const player = ns.getPlayer()

@@ -1,10 +1,12 @@
 import { CorpMaterialName, NS } from "@ns"
 import {
+  col,
   ScriptLogBuilder,
   TabbedScriptLogBuilder,
+  W,
   type ReactTableConfig,
   type TabDefinition,
-} from "@/libraries/scriptLogUi.js"
+} from "@/libraries/scriptLogUiLayout.js"
 import { FARMLAND_DIVISION } from "@/libraries/corporation/farmland.js"
 import {
   estimateDevelopmentEtaSeconds,
@@ -344,11 +346,7 @@ function populateSimulationTab(
 
   builder.table({
     title: "Sim summary",
-    columns: [
-      { header: "City", align: "left" },
-      { header: "Match", align: "center" },
-      { header: "Notes", align: "left", minWidth: 48 },
-    ],
+    columns: [col("City", "left"), col("Match", "center"), col("Notes", "left", W.notesWide)],
     rows: [[`${simRun.result.city}`, simRun.result.allOk ? "PASS" : "FAIL", simRun.result.notes.join(" · ") || "—"]],
   })
 
@@ -356,12 +354,12 @@ function populateSimulationTab(
     builder.table({
       title: "Sim: predicted vs actual",
       columns: [
-        { header: "Field", align: "left", minWidth: 22 },
-        { header: "Predicted", align: "right", minWidth: 12 },
-        { header: "Actual", align: "right", minWidth: 12 },
-        { header: "Δ", align: "right", minWidth: 10 },
-        { header: "Err%", align: "right", minWidth: 8 },
-        { header: "OK", align: "center", minWidth: 4 },
+        col("Field", "left", W.jobs),
+        col("Predicted", "right", W.predicted),
+        col("Actual", "right", W.actual),
+        col("Δ", "right", W.delta),
+        col("Err%", "right", W.errPct),
+        col("OK", "center", W.ok),
       ],
       rows: simRun.result.comparisons.map((c: FieldComparison) => [
         c.path,
@@ -378,10 +376,10 @@ function populateSimulationTab(
     builder.table({
       title: "Sim: recent stages",
       columns: [
-        { header: "Stage", align: "left", minWidth: 10 },
-        { header: "OK", align: "center", minWidth: 4 },
-        { header: "Fails", align: "right", minWidth: 6 },
-        { header: "Notes", align: "left", minWidth: 36 },
+        col("Stage", "left", W.division),
+        col("OK", "center", W.ok),
+        col("Fails", "right", W.rep),
+        col("Notes", "left", W.notes),
       ],
       rows: simHistory.map((h) => [
         h.stage,
@@ -401,13 +399,13 @@ function populateStaffTab(ns: NS, tabbedLog: TabbedScriptLogBuilder, tables: Hea
     builder.table({
       title: "Offices (all divisions)",
       columns: [
-        { header: "Division", align: "left", minWidth: 10 },
-        { header: "City", align: "left", minWidth: 12 },
-        { header: "Staff", align: "right", minWidth: 8 },
-        { header: "Morale", align: "right", minWidth: 7 },
-        { header: "Energy", align: "right", minWidth: 7 },
-        { header: "Jobs", align: "left", minWidth: 22 },
-        { header: "XP", align: "right", minWidth: 8 },
+        col("Division", "left", W.division),
+        col("City", "left", W.city),
+        col("Staff", "right", W.staff),
+        col("Morale", "right", W.morale),
+        col("Energy", "right", W.energy),
+        col("Jobs", "left", W.jobs),
+        col("XP", "right", W.xp),
       ],
       rows: officeRows,
     })
@@ -431,21 +429,21 @@ function populateStaffTab(ns: NS, tabbedLog: TabbedScriptLogBuilder, tables: Hea
         `$ /s · cycle ${plan.secondsPerMarketCycle}s · game $${gameProfitK}k/s · ` +
         `Est PnL = (rev-inputs)-payroll · * best · < current`
     const columns: ReactTableConfig["columns"] = [
-      { header: "N", align: "right", minWidth: 3 },
-      { header: "Ops", align: "right", minWidth: 3 },
-      { header: "Eng", align: "right", minWidth: 3 },
-      { header: "Bus", align: "right", minWidth: 3 },
-      { header: "Mgmt", align: "right", minWidth: 4 },
-      { header: "R&D", align: "right", minWidth: 3 },
-      { header: "Int", align: "right", minWidth: 3 },
-      { header: isDev ? "—" : "Gross/s", align: "right", minWidth: 8 },
-      { header: isDev ? "—" : "Pay/s", align: "right", minWidth: 8 },
-      { header: isDev ? "Dev/c" : "Est/s", align: "right", minWidth: 8 },
+      col("N", "right", W.role),
+      col("Ops", "right", W.role),
+      col("Eng", "right", W.role),
+      col("Bus", "right", W.role),
+      col("Mgmt", "right", W.mgmt),
+      col("R&D", "right", W.role),
+      col("Int", "right", W.role),
+      col(isDev ? "—" : "Gross/s", "right", W.gross),
+      col(isDev ? "—" : "Pay/s", "right", W.pay),
+      col(isDev ? "Dev/c" : "Est/s", "right", W.est),
     ]
     if (isDev) {
-      columns.push({ header: "ETA", align: "right", minWidth: 7 })
+      columns.push(col("ETA", "right", W.num))
     }
-    columns.push({ header: "", align: "center", minWidth: 5 })
+    columns.push(col("", "center", W.stat))
     builder.table({ title, columns, rows: plan.rows })
   }
 }
@@ -497,10 +495,10 @@ function populatePerformanceTab(
   builder.table({
     title: "Last cycle (sorted by ms)",
     columns: [
-      { header: "Step", align: "left", minWidth: 28 },
-      { header: "ms", align: "right", minWidth: 8 },
-      { header: "% loop", align: "right", minWidth: 8 },
-      { header: "Note", align: "left", minWidth: 12 },
+      col("Step", "left", W.step),
+      col("ms", "right", W.timing),
+      col("% loop", "right", W.pctLoop),
+      col("Note", "left", W.city),
     ],
     rows: sorted.map((s: CorpPerfSample) => [
       s.label,
@@ -514,10 +512,10 @@ function populatePerformanceTab(
     builder.table({
       title: `Rolling stats (${history.length} cycles)`,
       columns: [
-        { header: "Step", align: "left", minWidth: 28 },
-        { header: "Last", align: "right", minWidth: 8 },
-        { header: "Avg", align: "right", minWidth: 8 },
-        { header: "Max", align: "right", minWidth: 8 },
+        col("Step", "left", W.step),
+        col("Last", "right", W.timing),
+        col("Avg", "right", W.timing),
+        col("Max", "right", W.timing),
       ],
       rows: historyRows.map((r) => [
         r.label,
@@ -592,12 +590,12 @@ function buildSupplyTable(rows: string[][]): ReactTableConfig {
   return {
     title: "Input supplies (Water, Chemicals)",
     columns: [
-      { header: "City", align: "left", minWidth: 12 },
-      { header: "Material", align: "left", minWidth: 10 },
-      { header: "Stored", align: "right", minWidth: 8 },
-      { header: "Use/s", align: "right", minWidth: 8 },
-      { header: "Buy/s", align: "right", minWidth: 8 },
-      { header: "Tier", align: "left", minWidth: 6 },
+      col("City", "left", W.city),
+      col("Material", "left", W.material),
+      col("Stored", "right", W.stored),
+      col("Use/s", "right", W.useRate),
+      col("Buy/s", "right", W.useRate),
+      col("Tier", "left", W.tier),
     ],
     rows,
   }
@@ -607,12 +605,12 @@ function buildOfficeTable(title: string, rows: string[][]): ReactTableConfig {
   return {
     title,
     columns: [
-      { header: "City", align: "left", minWidth: 12 },
-      { header: "Staff", align: "right", minWidth: 8 },
-      { header: "Morale", align: "right", minWidth: 7 },
-      { header: "Energy", align: "right", minWidth: 7 },
-      { header: "Jobs", align: "left", minWidth: 22 },
-      { header: "XP", align: "right", minWidth: 8 },
+      col("City", "left", W.city),
+      col("Staff", "right", W.staff),
+      col("Morale", "right", W.morale),
+      col("Energy", "right", W.energy),
+      col("Jobs", "left", W.jobs),
+      col("XP", "right", W.xp),
     ],
     rows,
   }
@@ -622,12 +620,12 @@ function buildProductDevelopingTable(title: string, rows: string[][]): ReactTabl
   return {
     title: `${title} (designing; wall-clock ETA, ${rows.length} active)`,
     columns: [
-      { header: "City", align: "left", minWidth: 12 },
-      { header: "Product", align: "left", minWidth: 10 },
-      { header: "Progress", align: "right", minWidth: 9 },
-      { header: "Dev/c", align: "right", minWidth: 8 },
-      { header: "ETA", align: "right", minWidth: 8 },
-      { header: "Done at", align: "right", minWidth: 8 },
+      col("City", "left", W.city),
+      col("Product", "left", W.product),
+      col("Progress", "right", W.progress),
+      col("Dev/c", "right", W.est),
+      col("ETA", "right", W.eta),
+      col("Done at", "right", W.eta),
     ],
     rows,
   }
@@ -637,11 +635,11 @@ function buildProductReadyTable(title: string, rows: string[][]): ReactTableConf
   return {
     title: `${title} (ready)`,
     columns: [
-      { header: "City", align: "left", minWidth: 12 },
-      { header: "Product", align: "left", minWidth: 10 },
-      { header: "Rating", align: "right", minWidth: 7 },
-      { header: "Sell", align: "left", minWidth: 14 },
-      { header: "Stored", align: "right", minWidth: 8 },
+      col("City", "left", W.city),
+      col("Product", "left", W.product),
+      col("Rating", "right", W.rating),
+      col("Sell", "left", W.sell),
+      col("Stored", "right", W.stored),
     ],
     rows,
   }
@@ -651,15 +649,15 @@ function buildMaterialTable(rows: string[][]): ReactTableConfig {
   return {
     title: "Produce (sell MAX @ MP)",
     columns: [
-      { header: "City", align: "left", minWidth: 12 },
-      { header: "Material", align: "left", minWidth: 10 },
-      { header: "Stored", align: "right", minWidth: 8 },
-      { header: "Rate/s", align: "right", minWidth: 8 },
-      { header: "Qual", align: "right", minWidth: 5 },
-      { header: "Mkt $", align: "right", minWidth: 8 },
-      { header: "Sell", align: "left", minWidth: 14 },
-      { header: "Demand", align: "right", minWidth: 7 },
-      { header: "WH used", align: "right", minWidth: 9 },
+      col("City", "left", W.city),
+      col("Material", "left", W.material),
+      col("Stored", "right", W.stored),
+      col("Rate/s", "right", W.useRate),
+      col("Qual", "right", W.qual),
+      col("Mkt $", "right", W.est),
+      col("Sell", "left", W.sell),
+      col("Demand", "right", W.rating),
+      col("WH used", "right", W.whUsed),
     ],
     rows,
   }

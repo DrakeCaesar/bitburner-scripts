@@ -1,6 +1,5 @@
 import { NS } from "@ns"
-import { TabbedScriptLogBuilder, type TabDefinition } from "@/libraries/scriptLogUi.js"
-import { TAIL_LAYOUT } from "@/libraries/scriptLogUiLayout.js"
+import { col, TabbedScriptLogBuilder, W, type TabDefinition } from "@/libraries/scriptLogUiLayout.js"
 import { formatSnapshotMoney } from "@/libraries/stock/trader.js"
 import type { StockSymbolSnapshot, StockTraderSnapshot } from "@/libraries/stock/types.js"
 
@@ -68,13 +67,13 @@ function populatePositionsTab(ns: NS, tabbedLog: TabbedScriptLogBuilder, snapsho
   builder.table({
     title: "Symbols (4S)",
     columns: [
-      { header: "Sym", align: "left", minWidth: 5 },
-      { header: "Price", align: "right", minWidth: 10 },
-      { header: "Fcst", align: "right", minWidth: 6 },
-      { header: "Vol", align: "right", minWidth: 6 },
-      { header: "Pos", align: "left", minWidth: 10 },
-      { header: "Signal", align: "left", minWidth: 14 },
-      { header: "Unreal P/L", align: "right", minWidth: 12 },
+      col("Sym", "left", W.sym),
+      col("Price", "right", W.money),
+      col("Fcst", "right", W.rep),
+      col("Vol", "right", W.rep),
+      col("Pos", "left", W.rate),
+      col("Signal", "left", W.signal),
+      col("Unreal P/L", "right", W.pl),
     ],
     rows,
     highlightCells,

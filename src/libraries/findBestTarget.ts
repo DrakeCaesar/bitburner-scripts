@@ -14,7 +14,7 @@ import { crawl } from "./crawl.js"
 import { formatGameTimeMs } from "./format.js"
 import { distributeBatchesAcrossNodes, getAllNodes } from "./serverManagement.js"
 import { buildTable } from "./tableBuilder.js"
-import type { ReactTableConfig } from "./scriptLogUi.js"
+import { col, W, type ReactTableConfig } from "./scriptLogUiLayout.js"
 import { getEffectiveMaxRam } from "./ramUtils.js"
 
 const DEFAULT_PROFITABILITY_TABLE_ROWS = 20
@@ -57,15 +57,15 @@ export function buildProfitabilityTableConfig(
         ? `Targets (top ${maxRows} of ${servers.length} hackable)`
         : `Targets (${servers.length} hackable)`,
     columns: [
-      { header: "Server", align: "left", minWidth: 14 },
-      { header: "Lvl", align: "right" },
-      { header: "Max Money", align: "right" },
-      { header: "Threshold", align: "right" },
-      { header: "$/sec", align: "right" },
-      { header: "Prepped $/s", align: "right" },
-      { header: "Weaken", align: "right" },
-      { header: "Batch RAM", align: "right" },
-      { header: "Batches", align: "right" },
+      col("Server", "left", W.server),
+      col("Lvl", "right"),
+      col("Max Money", "right"),
+      col("Threshold", "right"),
+      col("$/sec", "right"),
+      col("Prepped $/s", "right"),
+      col("Weaken", "right"),
+      col("Batch RAM", "right"),
+      col("Batches", "right"),
     ],
     rows: shown.map((server) => [
       server.serverName,

@@ -1,7 +1,6 @@
 import { NS } from "@ns"
 import { ensureCorporationCreated } from "@/libraries/corporation/manager.js"
 import { CORP_TABS, renderCorporationDashboard } from "@/libraries/corporation/display.js"
-import { TAIL_LAYOUT } from "@/libraries/scriptLogUiLayout.js"
 import { ensureFarmlandDivision } from "@/libraries/corporation/expansion.js"
 import { ensurePlantsExportToTobacco } from "@/libraries/corporation/materialExports.js"
 import { buildDivisionHeadcountPlanTables } from "@/libraries/corporation/office.js"
@@ -15,7 +14,7 @@ import { manageTobaccoPlantsSupply } from "@/libraries/corporation/tobaccoSuppli
 import { CorpPerfCollector, pushPerfHistory, type CorpPerfReport } from "@/libraries/corporation/perf.js"
 import { captureCorporationSnapshot } from "@/libraries/corporation/simulation/snapshot.js"
 import { validateCorpStage, type ValidationRun } from "@/libraries/corporation/simulation/validate.js"
-import { TabbedScriptLogBuilder, initScriptLogTail } from "@/libraries/scriptLogUi.js"
+import { createTabbedTailLog, openTailLog } from "@/libraries/scriptLogUiLayout.js"
 
 const SIM_HISTORY_MAX = 12
 
@@ -31,9 +30,9 @@ export async function main(ns: NS): Promise<void> {
     return
   }
 
-  initScriptLogTail(ns, "dracorp", TAIL_LAYOUT)
+  openTailLog(ns, "dracorp")
 
-  const tabbedLog = new TabbedScriptLogBuilder(CORP_TABS, TAIL_LAYOUT)
+  const tabbedLog = createTabbedTailLog(CORP_TABS)
   const simHistory: ValidationRun[] = []
   const perfHistory: CorpPerfReport[] = []
   let simMismatchWarning: ValidationRun | null = null

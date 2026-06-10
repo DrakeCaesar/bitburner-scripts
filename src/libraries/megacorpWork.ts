@@ -1,6 +1,6 @@
 import type { CompanyName, FactionName, JobField, JobName, Player } from "@ns"
 import { NS } from "@ns"
-import type { ReactTableConfig } from "./scriptLogUi.js"
+import { col, W, type ReactTableConfig } from "./scriptLogUiLayout.js"
 
 const CYCLES_PER_SECOND = 1000 / 200
 
@@ -234,14 +234,14 @@ export function buildMegacorpPositionTableConfig(
   return {
     title: titleParts.join(" — "),
     columns: [
-      { header: "Pick", align: "center", minWidth: 4 },
-      { header: "Position", align: "left", minWidth: 22 },
-      { header: "Field", align: "left", minWidth: 10 },
-      { header: "Req rep", align: "right" },
-      { header: "Qualified", align: "center", minWidth: 5 },
-      { header: "Rep/s", align: "right", minWidth: 7 },
-      { header: "Field pick", align: "center", minWidth: 5 },
-      { header: "Why", align: "left", minWidth: 22 },
+      col("Pick", "center", W.pick),
+      col("Position", "left", W.position),
+      col("Field", "left", W.field),
+      col("Req rep", "right"),
+      col("Qualified", "center", W.job),
+      col("Rep/s", "right", W.num),
+      col("Field pick", "center", W.job),
+      col("Why", "left", W.position),
     ],
     rows: rows.map((row) => [
       row.isSelected ? "->" : "",
@@ -277,15 +277,15 @@ export function buildMegacorpTableConfig(ns: NS, rows: MegacorpRow[], snapshot: 
   return {
     title: titleParts.join(" — "),
     columns: [
-      { header: "Company", align: "left", minWidth: 14 },
-      { header: "Status", align: "left", minWidth: 8 },
-      { header: "Job", align: "left", minWidth: 18 },
-      { header: "Field", align: "left", minWidth: 10 },
-      { header: "Rep/s", align: "right", minWidth: 7 },
-      { header: "Rep", align: "right" },
-      { header: "Target", align: "right" },
-      { header: "Favor", align: "right" },
-      { header: "Note", align: "left", minWidth: 16 },
+      col("Company", "left", W.company),
+      col("Status", "left", W.status),
+      col("Job", "left", W.jobLong),
+      col("Field", "left", W.field),
+      col("Rep/s", "right", W.num),
+      col("Rep", "right"),
+      col("Target", "right"),
+      col("Favor", "right"),
+      col("Note", "left", W.note),
     ],
     rows: rows.map((row) => [
       row.company,

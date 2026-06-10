@@ -13,7 +13,7 @@ import {
   wkn2ServerInstance,
 } from "./batchCalculations.js"
 import { getEffectiveMaxRam } from "./ramUtils.js"
-import type { LogFn } from "./scriptLogUi.js"
+import type { LogFn } from "./logFn.js"
 import { distributeBatchesAcrossNodes } from "./serverManagement.js"
 
 /** Parent port: each hack.js writes ns.hack() return value here (exec cannot return to parent). */

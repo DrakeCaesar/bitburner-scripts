@@ -18,7 +18,7 @@ const PROGRAMS: Program[] = [
   { name: "AutoLink.exe", cost: 1000000 },
 ]
 
-import type { LogFn } from "./scriptLogUi.js"
+import type { LogFn } from "./logFn.js"
 
 export function purchaseTorRouter(ns: NS, logMessage?: LogFn): boolean {
   if (ns.hasTorRouter()) return false

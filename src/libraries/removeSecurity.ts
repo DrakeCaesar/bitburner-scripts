@@ -1,7 +1,6 @@
 import { NS } from "@ns"
 import { crawl, isHackableNetworkServer } from "./crawl.js"
-import { ScriptLogBuilder, type ReactTableConfig } from "./scriptLogUi.js"
-import { TAIL_LAYOUT } from "./scriptLogUiLayout.js"
+import { col, createTailLog, type ReactTableConfig, type ScriptLogBuilder } from "./scriptLogUiLayout.js"
 
 export const WEAKEN_SCRIPT = "/hacking/weaken.js"
 
@@ -24,14 +23,14 @@ const EXCLUDED_HOSTS = new Set([
 ])
 
 const TABLE_COLUMNS = [
-  { header: "Server", align: "left" as const },
-  { header: "Hack", align: "right" as const },
-  { header: "Min", align: "right" as const },
-  { header: "Now", align: "right" as const },
-  { header: "+Sec", align: "right" as const },
-  { header: "Status", align: "left" as const },
-  { header: "Ends In", align: "right" as const },
-  { header: "Detail", align: "left" as const },
+  col("Server", "left"),
+  col("Hack", "right"),
+  col("Min", "right"),
+  col("Now", "right"),
+  col("+Sec", "right"),
+  col("Status", "left"),
+  col("Ends In", "right"),
+  col("Detail", "left"),
 ]
 
 export interface RunningWeaken {
@@ -229,7 +228,7 @@ function buildAllServerRows(ns: NS, state: RemoveSecurityState): string[][] {
 }
 
 export function buildRemoveSecurityLog(ns: NS, state: RemoveSecurityState): ScriptLogBuilder {
-  const log = new ScriptLogBuilder(TAIL_LAYOUT)
+  const log = createTailLog()
 
   log.text(
     `Exec: ${state.execHost}  |  free RAM: ${ns.format.ram(state.execFreeRam)}` +
@@ -244,7 +243,6 @@ export function buildRemoveSecurityLog(ns: NS, state: RemoveSecurityState): Scri
   const rows = buildAllServerRows(ns, state)
   if (rows.length > 0) {
     log.table({
-      layout: TAIL_LAYOUT,
       columns: TABLE_COLUMNS,
       rows,
     })

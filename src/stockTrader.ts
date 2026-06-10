@@ -2,7 +2,6 @@ import { NS } from "@ns"
 import { killOtherInstances } from "@/libraries/batchCalculations.js"
 import { parseStockTraderArgs } from "@/libraries/stock/args.js"
 import { STOCK_TABS, renderStockTraderDashboard } from "@/libraries/stock/display.js"
-import { TAIL_LAYOUT } from "@/libraries/scriptLogUiLayout.js"
 import {
   collectTraderSnapshot,
   hasAnyStockPosition,
@@ -10,11 +9,11 @@ import {
   liquidateAllPositions,
   runStockTradingTick,
 } from "@/libraries/stock/trader.js"
-import { TabbedScriptLogBuilder, initScriptLogTail } from "@/libraries/scriptLogUi.js"
+import { createTabbedTailLog, openTailLog } from "@/libraries/scriptLogUiLayout.js"
 
 async function runLiquidateMode(ns: NS): Promise<void> {
-  initScriptLogTail(ns, "WSE Liquidate", TAIL_LAYOUT)
-  const tabbedLog = new TabbedScriptLogBuilder(STOCK_TABS, TAIL_LAYOUT)
+  openTailLog(ns, "WSE Liquidate")
+  const tabbedLog = createTabbedTailLog(STOCK_TABS)
 
   if (!hasAnyStockPosition(ns)) {
     ns.tprint("No stock positions to close.")
@@ -56,8 +55,8 @@ async function runLiquidateMode(ns: NS): Promise<void> {
 
 async function runTradeMode(ns: NS): Promise<void> {
   const { config } = parseStockTraderArgs(ns)
-  initScriptLogTail(ns, "WSE Trader", TAIL_LAYOUT)
-  const tabbedLog = new TabbedScriptLogBuilder(STOCK_TABS, TAIL_LAYOUT)
+  openTailLog(ns, "WSE Trader")
+  const tabbedLog = createTabbedTailLog(STOCK_TABS)
 
   let sessionStartNetWorth = 0
   let tickCount = 0

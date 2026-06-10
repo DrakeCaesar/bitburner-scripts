@@ -71,6 +71,8 @@ export interface DarknetCrawlResult {
 
 export type CrawlProgressHandler = (state: CrawlProgressState) => void | Promise<void>
 
+export type CrawlCycleCompleteHandler = (result: DarknetCrawlResult) => void | Promise<void>
+
 export interface DarknetRegistryEntry {
   hostname: string
   parentHost: string | null
@@ -218,6 +220,41 @@ export type DarknetServerDetailsForFormulas = {
   difficulty: number
   requiredCharismaSkill: number
   logTrafficInterval: number
+}
+
+/** Returns null when the host no longer exists in the darknet (offline graph, stale registry). */
+export function safeGetServerDetails(
+  dnet: DarknetCrawlApi,
+  host: string
+): DarknetServerDetailsForFormulas | null {
+  try {
+    return dnet.getServerDetails(host)
+  } catch {
+    return null
+  }
+}
+
+function tryConnectToSession(dnet: DarknetCrawlApi, host: string, password: string): boolean {
+  if (!dnet.connectToSession || safeGetServerDetails(dnet, host) == null) {
+    return false
+  }
+  try {
+    return dnet.connectToSession(host, password).success
+  } catch {
+    return false
+  }
+}
+
+/** Drop registry entries for hosts removed from the darknet graph. */
+export function pruneInvalidRegistryHosts(dnet: DarknetCrawlApi, registry: DarknetRegistry): string[] {
+  const removed: string[] = []
+  for (const hostname of Object.keys(registry.servers)) {
+    if (safeGetServerDetails(dnet, hostname) == null) {
+      delete registry.servers[hostname]
+      removed.push(hostname)
+    }
+  }
+  return removed
 }
 
 // --- auth-solver ---
@@ -964,6 +1001,10 @@ function writeCrawlStatus(ns: NS, port: number, status: Omit<CrawlStatusReport, 
   ns.writePort(port, JSON.stringify({ type: "status", ...status }))
 }
 
+function writeCrawlCycleComplete(ns: NS, port: number): void {
+  ns.writePort(port, JSON.stringify({ type: "cycleComplete" }))
+}
+
 async function authenticateWithStatus(
   ns: NS,
   port: number,
@@ -1022,6 +1063,9 @@ async function tryAuthNeighbor(
   }
 
   if (knownPassword != null) {
+    if (tryConnectToSession(dnet, neighbor, knownPassword)) {
+      return { password: knownPassword, authenticated: true, authGuesses: 0 }
+    }
     const cached = await authenticateWithStatus(ns, port, dnet, neighbor, knownPassword, "cached", 1)
     if (cached.success) {
       return { password: knownPassword, authenticated: true, authGuesses: 1 }
@@ -1323,20 +1367,17 @@ async function archiveServerFiles(
   }
 }
 
-async function runCrawlWorker(ns: NS): Promise<void> {
-  const reportPort = Number(ns.args[1])
-  const remainingDepth = Number(ns.args[2])
-  if (!Number.isInteger(reportPort) || reportPort <= 0 || !Number.isInteger(remainingDepth)) {
-    return
-  }
-
-  const dnet = (ns as NS & { dnet?: DarknetCrawlApi }).dnet
-  if (!dnet) {
-    return
-  }
-
-  const hostname = ns.getHostname()
+async function runOneCrawlPass(
+  ns: NS,
+  reportPort: number,
+  remainingDepth: number,
+  intervalMs: number,
+  dnet: DarknetCrawlApi
+): Promise<void> {
   const passwordCache = loadLocalPasswordCache(ns)
+  const hostname = ns.getHostname()
+
+  await ensureSessionOnSelf(ns, dnet, passwordCache)
 
   writeCrawlReport(ns, reportPort, {
     hostname,
@@ -1353,6 +1394,7 @@ async function runCrawlWorker(ns: NS): Promise<void> {
   }
 
   const childPids: number[] = []
+  const continuous = intervalMs > 0
 
   writeCrawlStatus(ns, reportPort, {
     workerHost: hostname,
@@ -1394,14 +1436,25 @@ async function runCrawlWorker(ns: NS): Promise<void> {
       detail: `depth ${remainingDepth - 1}`,
     })
 
-    await copyCrawlAssets(ns, neighbor, hostname)
-    const pid = ns.exec(DARKNET_CRAWL_SCRIPT, neighbor, 1, WORKER_MODE_ARG, reportPort, remainingDepth - 1)
-    if (pid > 0) {
-      childPids.push(pid)
+    if (continuous) {
+      await ensureCrawlWorkerOnHost(ns, neighbor, remainingDepth - 1, intervalMs, hostname)
+    } else {
+      await copyCrawlAssets(ns, neighbor, hostname)
+      const pid = ns.exec(
+        DARKNET_CRAWL_SCRIPT,
+        neighbor,
+        1,
+        WORKER_MODE_ARG,
+        reportPort,
+        remainingDepth - 1
+      )
+      if (pid > 0) {
+        childPids.push(pid)
+      }
     }
   }
 
-  if (childPids.length > 0) {
+  if (!continuous && childPids.length > 0) {
     writeCrawlStatus(ns, reportPort, {
       workerHost: hostname,
       targetHost: hostname,
@@ -1409,9 +1462,34 @@ async function runCrawlWorker(ns: NS): Promise<void> {
       etaMs: 0,
       detail: `${childPids.length} child worker(s)`,
     })
+    await waitForChildPids(ns, childPids)
+  }
+}
+
+async function runCrawlWorker(ns: NS): Promise<void> {
+  const reportPort = Number(ns.args[1])
+  const remainingDepth = Number(ns.args[2])
+  const intervalMs = Number(ns.args[3] ?? 0)
+  if (!Number.isInteger(reportPort) || reportPort <= 0 || !Number.isInteger(remainingDepth)) {
+    return
   }
 
-  await waitForChildPids(ns, childPids)
+  const dnet = (ns as NS & { dnet?: DarknetCrawlApi }).dnet
+  if (!dnet) {
+    return
+  }
+
+  if (intervalMs > 0) {
+    while (true) {
+      await runOneCrawlPass(ns, reportPort, remainingDepth, intervalMs, dnet)
+      if (ns.getHostname() === DARKWEB) {
+        writeCrawlCycleComplete(ns, reportPort)
+      }
+      await ns.sleep(intervalMs)
+    }
+  }
+
+  await runOneCrawlPass(ns, reportPort, remainingDepth, intervalMs, dnet)
 }
 
 // --- crawl-master ---
@@ -1458,6 +1536,9 @@ function parseCrawlReport(raw: unknown): CrawlHostReport | null {
       return null
     }
     if (row.type === "cacheOpen") {
+      return null
+    }
+    if (row.type === "cycleComplete") {
       return null
     }
     if (typeof row.hostname !== "string") return null
@@ -1509,7 +1590,8 @@ function applyCrawlPortMessage(
   raw: unknown,
   reports: Map<string, CrawlHostReport>,
   activeOps: Map<string, CrawlStatusReport>,
-  cacheOpens: CrawlCacheOpen[]
+  cacheOpens: CrawlCacheOpen[],
+  cycleComplete?: { value: boolean }
 ): void {
   try {
     const parsed: unknown = typeof raw === "string" ? JSON.parse(raw) : raw
@@ -1517,6 +1599,12 @@ function applyCrawlPortMessage(
       return
     }
     const row = parsed as Record<string, unknown>
+    if (row.type === "cycleComplete") {
+      if (cycleComplete) {
+        cycleComplete.value = true
+      }
+      return
+    }
     const cacheOpen = parseCacheOpen(row)
     if (cacheOpen) {
       cacheOpens.push(cacheOpen)
@@ -1559,12 +1647,13 @@ function drainCrawlPort(
   port: number,
   reports: Map<string, CrawlHostReport>,
   activeOps: Map<string, CrawlStatusReport>,
-  cacheOpens: CrawlCacheOpen[]
+  cacheOpens: CrawlCacheOpen[],
+  cycleComplete?: { value: boolean }
 ): void {
   while (true) {
     const raw = ns.readPort(port)
     if (raw === "NULL PORT DATA") break
-    applyCrawlPortMessage(ns, raw, reports, activeOps, cacheOpens)
+    applyCrawlPortMessage(ns, raw, reports, activeOps, cacheOpens, cycleComplete)
   }
 }
 
@@ -1573,13 +1662,14 @@ function pollCrawlPort(
   port: number,
   reports: Map<string, CrawlHostReport>,
   activeOps: Map<string, CrawlStatusReport>,
-  cacheOpens: CrawlCacheOpen[]
+  cacheOpens: CrawlCacheOpen[],
+  cycleComplete?: { value: boolean }
 ): void {
   while (true) {
     const raw = ns.peek(port)
     if (raw === "NULL PORT DATA") break
     ns.readPort(port)
-    applyCrawlPortMessage(ns, raw, reports, activeOps, cacheOpens)
+    applyCrawlPortMessage(ns, raw, reports, activeOps, cacheOpens, cycleComplete)
   }
 }
 
@@ -1622,8 +1712,125 @@ async function authenticateDarkwebEntry(
 
   if (password !== null) {
     await dnet.authenticate(DARKWEB, password)
-  } else if (dnet.connectToSession) {
-    dnet.connectToSession(DARKWEB, "")
+  } else {
+    tryConnectToSession(dnet, DARKWEB, "")
+  }
+}
+
+async function copyCrawlRegistry(ns: NS, target: string, source: string): Promise<void> {
+  if (ns.fileExists(DARKNET_REGISTRY_FILE, source)) {
+    await ns.scp(DARKNET_REGISTRY_FILE, target, source)
+  }
+}
+
+function findCrawlWorkerPid(
+  ns: NS,
+  host: string,
+  remainingDepth: number,
+  intervalMs: number
+): number {
+  for (const proc of ns.ps(host)) {
+    if (!proc.filename.endsWith(DARKNET_CRAWL_SCRIPT)) {
+      continue
+    }
+    const args = proc.args
+    if (args[0] !== WORKER_MODE_ARG) {
+      continue
+    }
+    if (Number(args[1]) !== CRAWL_REPORT_PORT) {
+      continue
+    }
+    if (Number(args[2]) !== remainingDepth) {
+      continue
+    }
+    if (Number(args[3] ?? 0) !== intervalMs) {
+      continue
+    }
+    return proc.pid
+  }
+  return 0
+}
+
+function crawlWorkerArgs(remainingDepth: number, intervalMs: number): (string | number)[] {
+  return intervalMs > 0
+    ? [WORKER_MODE_ARG, CRAWL_REPORT_PORT, remainingDepth, intervalMs]
+    : [WORKER_MODE_ARG, CRAWL_REPORT_PORT, remainingDepth]
+}
+
+async function ensureCrawlWorkerOnHost(
+  ns: NS,
+  host: string,
+  remainingDepth: number,
+  intervalMs: number,
+  assetSource: string
+): Promise<void> {
+  if (findCrawlWorkerPid(ns, host, remainingDepth, intervalMs) > 0) {
+    await copyCrawlRegistry(ns, host, assetSource)
+    return
+  }
+
+  await copyCrawlAssets(ns, host, assetSource)
+  const workerRam = ns.getScriptRam(DARKNET_CRAWL_SCRIPT, host)
+  const freeRam = ns.getServerMaxRam(host) - ns.getServerUsedRam(host)
+  if (workerRam > freeRam) {
+    return
+  }
+  ns.exec(DARKNET_CRAWL_SCRIPT, host, 1, ...crawlWorkerArgs(remainingDepth, intervalMs))
+}
+
+async function ensureSessionOnSelf(
+  ns: NS,
+  dnet: DarknetCrawlApi,
+  passwordCache: Map<string, string>
+): Promise<void> {
+  const hostname = ns.getHostname()
+  if (dnet.getServerDetails(hostname).hasSession) {
+    return
+  }
+  const password = passwordCache.get(hostname)
+  if (password == null) {
+    return
+  }
+  if (tryConnectToSession(dnet, hostname, password)) {
+    return
+  }
+  await dnet.authenticate(hostname, password)
+}
+
+function crawlWorkerHosts(ns: NS, registry?: DarknetRegistry): string[] {
+  const hosts = new Set<string>([ns.getHostname(), DARKWEB])
+  if (registry) {
+    for (const hostname of Object.keys(registry.servers)) {
+      hosts.add(hostname)
+    }
+  }
+  return [...hosts]
+}
+
+async function killCrawlWorkersOnHost(
+  ns: NS,
+  dnet: DarknetCrawlApi,
+  host: string,
+  password: string | null | undefined
+): Promise<void> {
+  if (host !== ns.getHostname() && password != null) {
+    tryConnectToSession(dnet, host, password)
+  }
+  try {
+    ns.scriptKill(DARKNET_CRAWL_SCRIPT, host)
+  } catch {
+    // host removed from darknet or no access
+  }
+}
+
+/** Kill every darknetCrawl.js instance on known crawl hosts (registry + home + darkweb). */
+export async function killAllCrawlWorkers(
+  ns: NS,
+  dnet: DarknetCrawlApi,
+  registry?: DarknetRegistry
+): Promise<void> {
+  for (const host of crawlWorkerHosts(ns, registry)) {
+    await killCrawlWorkersOnHost(ns, dnet, host, registry?.servers[host]?.password ?? null)
   }
 }
 
@@ -1632,20 +1839,26 @@ export async function runDarknetCrawl(
   dnet: DarknetCrawlApi,
   maxDepth = MAX_PROBE_DEPTH,
   onProgress?: CrawlProgressHandler,
-  registry?: DarknetRegistry
+  registry?: DarknetRegistry,
+  intervalMs = 0,
+  onCycleComplete?: CrawlCycleCompleteHandler
 ): Promise<DarknetCrawlResult> {
   const source = ns.getHostname()
+  const continuous = intervalMs > 0
 
   if (registry) {
+    pruneInvalidRegistryHosts(dnet, registry)
     saveDarknetRegistry(ns, registry)
   }
 
   await authenticateDarkwebEntry(ns, dnet, registry?.servers[DARKWEB]?.password)
+  await killAllCrawlWorkers(ns, dnet, registry)
+  await ns.sleep(5000)
 
   await copyCrawlAssets(ns, DARKWEB, source)
   ns.clearPort(CRAWL_REPORT_PORT)
-  ns.scriptKill(DARKNET_CRAWL_SCRIPT, DARKWEB)
 
+  const workerArgs = crawlWorkerArgs(maxDepth, intervalMs)
   const workerRam = ns.getScriptRam(DARKNET_CRAWL_SCRIPT, DARKWEB)
   const freeRam = ns.getServerMaxRam(DARKWEB) - ns.getServerUsedRam(DARKWEB)
   if (workerRam > freeRam) {
@@ -1654,7 +1867,7 @@ export async function runDarknetCrawl(
     )
   }
 
-  const pid = ns.exec(DARKNET_CRAWL_SCRIPT, DARKWEB, 1, WORKER_MODE_ARG, CRAWL_REPORT_PORT, maxDepth)
+  const pid = ns.exec(DARKNET_CRAWL_SCRIPT, DARKWEB, 1, ...workerArgs)
   if (pid === 0) {
     throw new Error(`Could not exec ${DARKNET_CRAWL_SCRIPT} on ${DARKWEB}`)
   }
@@ -1662,6 +1875,7 @@ export async function runDarknetCrawl(
   const reports = new Map<string, CrawlHostReport>()
   const activeOps = new Map<string, CrawlStatusReport>()
   const cacheOpens: CrawlCacheOpen[] = []
+  const cycleComplete = { value: false }
 
   const emitProgress = async (workerRunning: boolean): Promise<void> => {
     if (!onProgress) {
@@ -1676,6 +1890,34 @@ export async function runDarknetCrawl(
   }
 
   await emitProgress(true)
+
+  if (continuous) {
+    while (true) {
+      pollCrawlPort(ns, CRAWL_REPORT_PORT, reports, activeOps, cacheOpens, cycleComplete)
+      if (cycleComplete.value) {
+        cycleComplete.value = false
+        const result: DarknetCrawlResult = {
+          reports: new Map(reports),
+          cacheOpens: [...cacheOpens],
+        }
+        if (onCycleComplete) {
+          await onCycleComplete(result)
+        }
+        if (registry) {
+          saveDarknetRegistry(ns, registry)
+          await copyCrawlRegistry(ns, DARKWEB, source)
+        }
+        reports.clear()
+        activeOps.clear()
+        cacheOpens.length = 0
+      }
+      await emitProgress(true)
+      if (!ns.isRunning(pid)) {
+        throw new Error(`${DARKNET_CRAWL_SCRIPT} worker on ${DARKWEB} stopped unexpectedly`)
+      }
+      await ns.sleep(100)
+    }
+  }
 
   while (ns.isRunning(pid)) {
     pollCrawlPort(ns, CRAWL_REPORT_PORT, reports, activeOps, cacheOpens)

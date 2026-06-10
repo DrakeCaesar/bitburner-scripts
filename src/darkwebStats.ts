@@ -7,7 +7,9 @@ import {
   loadDarknetRegistry,
   mergeCrawlReportsIntoRegistry,
   mergeRegistryWithCrawl,
+  pruneInvalidRegistryHosts,
   runDarknetCrawl,
+  safeGetServerDetails,
   saveDarknetRegistry,
   type CrawlCacheOpen,
   type CrawlHostReport,
@@ -18,13 +20,15 @@ import {
   type DarknetServerDetailsForFormulas,
 } from "./darknetCrawl.js"
 import {
-  TabbedScriptLogBuilder,
-  initScriptLogTail,
+  col,
+  createTabbedTailLog,
   measureTreeTableHostChars,
+  openTailLog,
+  W,
   type TabDefinition,
-  type TableLayout,
+  type TabbedScriptLogBuilder,
   type TreeTableRow,
-} from "./libraries/scriptLogUi.js"
+} from "./libraries/scriptLogUiLayout.js"
 
 // --- config ---
 
@@ -35,14 +39,6 @@ const DARKWEB_TABS: TabDefinition[] = [
   { id: "caches", label: "Caches" },
 ]
 
-const DARKWEB_STATS_LAYOUT: Partial<TableLayout> = {
-  fontSizePx: 11,
-  paddingXPx: 6,
-  headerRowHeightPx: 22,
-  bodyRowHeightPx: 18,
-  tableWidthPx: 1050,
-}
-
 const ACT_COLUMN_HEADER = "Act"
 const ACT_COLUMN_MIN_CHARS = 10
 const HOST_COLUMN_MIN_CHARS = 16
@@ -50,23 +46,23 @@ let actColumnMaxChars = ACT_COLUMN_MIN_CHARS
 let hostColumnMaxChars = HOST_COLUMN_MIN_CHARS
 
 const TREE_DATA_COLUMNS = [
-  { header: "Ses", align: "center" as const, minWidth: 3 },
-  { header: "Gss", align: "right" as const, minWidth: 3 },
-  { header: ACT_COLUMN_HEADER, align: "left" as const, minWidth: ACT_COLUMN_MIN_CHARS },
-  { header: "On", align: "center" as const, minWidth: 2 },
-  { header: "D", align: "right" as const, minWidth: 3 },
-  { header: "Diff", align: "right" as const, minWidth: 4 },
-  { header: "Model", align: "left" as const, minWidth: 11 },
-  { header: "Cha", align: "right" as const, minWidth: 3 },
-  { header: "Len", align: "right" as const, minWidth: 3 },
-  { header: "RAM", align: "right" as const, minWidth: 7 },
+  col("Ses", "center", W.ses),
+  col("Gss", "right", W.gss),
+  col(ACT_COLUMN_HEADER, "left", ACT_COLUMN_MIN_CHARS),
+  col("On", "center", W.on),
+  col("D", "right", W.dCol),
+  col("Diff", "right", W.diff),
+  col("Model", "left", W.model),
+  col("Cha", "right", W.cha),
+  col("Len", "right", W.len),
+  col("RAM", "right", W.num),
 ]
 
 const CACHE_TABLE_COLUMNS = [
-  { header: "Host", align: "left" as const, minWidth: 16 },
-  { header: "File", align: "left" as const, minWidth: 18 },
-  { header: "Karma", align: "right" as const, minWidth: 5 },
-  { header: "Reward", align: "left" as const, minWidth: 24 },
+  col("Host", "left", W.host),
+  col("File", "left", W.file),
+  col("Karma", "right", W.job),
+  col("Reward", "left", W.reward),
 ]
 
 // --- types ---
@@ -110,8 +106,11 @@ function buildDarknetTreeRows(
 ): TreeTableRow[] {
   const activeByTarget = activeOpsByTarget(activeOps)
 
-  return [...reports.keys()].map((hostname) => {
-    const details = dnet.getServerDetails(hostname)
+  return [...reports.keys()].flatMap((hostname) => {
+    const details = safeGetServerDetails(dnet, hostname)
+    if (!details) {
+      return []
+    }
     const server = ns.getServer(hostname)
     const report = reports.get(hostname)
     const op = activeByTarget.get(hostname)
@@ -122,24 +121,26 @@ function buildDarknetTreeRows(
           ? "F"
           : ""
 
-    return {
-      id: hostname,
-      parentId: report?.parentHost ?? null,
-      label: hostname,
-      highlight: op != null,
-      cells: [
-        ses,
-        formatAuthGuesses(report, op),
-        op ? formatCrawlOpShort(op) : "",
-        details.isOnline ? "Y" : "N",
-        String(details.depth),
-        String(details.difficulty),
-        details.modelId || "-",
-        String(details.requiredCharismaSkill),
-        String(details.passwordLength),
-        ns.format.ram(server.maxRam, 0),
-      ],
-    }
+    return [
+      {
+        id: hostname,
+        parentId: report?.parentHost ?? null,
+        label: hostname,
+        highlight: op != null,
+        cells: [
+          ses,
+          formatAuthGuesses(report, op),
+          op ? formatCrawlOpShort(op) : "",
+          details.isOnline ? "Y" : "N",
+          String(details.depth),
+          String(details.difficulty),
+          details.modelId || "-",
+          String(details.requiredCharismaSkill),
+          String(details.passwordLength),
+          ns.format.ram(server.maxRam, 0),
+        ],
+      },
+    ]
   })
 }
 
@@ -181,7 +182,6 @@ function appendDarknetTreeTable(
   bumpActColumnMax(rows)
   bumpHostColumnMax(rows, rootIds)
   log.tab("crawl").treeTable({
-    layout: DARKWEB_STATS_LAYOUT,
     title,
     rootIds,
     treeMinWidth: hostColumnMaxChars,
@@ -208,7 +208,6 @@ function appendCacheOpenTable(log: TabbedScriptLogBuilder, cacheOpens: readonly 
   const sorted = [...cacheOpens].sort((a, b) => b.openedAt - a.openedAt)
   builder.text(`${sorted.length} cache(s) opened | total karma ${sumCacheKarma(sorted)}`)
   builder.table({
-    layout: DARKWEB_STATS_LAYOUT,
     title: "Opened caches",
     columns: CACHE_TABLE_COLUMNS,
     rows: sorted.map((entry) => [entry.host, entry.file, String(entry.karmaLoss), entry.message]),
@@ -326,9 +325,9 @@ function parseCrawlIntervalMs(ns: NS): number {
 export async function main(ns: NS): Promise<void> {
   actColumnMaxChars = ACT_COLUMN_MIN_CHARS
   hostColumnMaxChars = HOST_COLUMN_MIN_CHARS
-  initScriptLogTail(ns, "Darknet", DARKWEB_STATS_LAYOUT)
+  openTailLog(ns, "Darknet")
 
-  const tabbedLog = new TabbedScriptLogBuilder(DARKWEB_TABS, DARKWEB_STATS_LAYOUT)
+  const tabbedLog = createTabbedTailLog(DARKWEB_TABS)
 
   const dnet = getDarknetApi(ns)
   if (!dnet) {
@@ -349,31 +348,34 @@ export async function main(ns: NS): Promise<void> {
 
   const crawlIntervalMs = parseCrawlIntervalMs(ns)
   let registry = loadDarknetRegistry(ns)
+  const pruned = pruneInvalidRegistryHosts(dnet, registry)
+  if (pruned.length > 0) {
+    saveDarknetRegistry(ns, registry)
+  }
   let crawlNum = 0
   const sessionCacheOpens: CrawlCacheOpen[] = []
 
-  while (true) {
-    crawlNum++
-    try {
-      const { reports, cacheOpens } = await runDarknetCrawl(
-        ns,
-        dnet,
-        MAX_PROBE_DEPTH,
-        async (state) => {
-          await renderCrawlProgress(ns, dnet, tabbedLog, registry, state, crawlNum, sessionCacheOpens)
-        },
-        registry
-      )
-      sessionCacheOpens.push(...cacheOpens)
-      mergeCrawlReportsIntoRegistry(registry, reports)
-      saveDarknetRegistry(ns, registry)
-      await renderRegistrySummary(ns, dnet, tabbedLog, registry, reports, crawlNum, sessionCacheOpens)
-    } catch (err) {
-      tabbedLog.clearPanels()
-      tabbedLog.tab("crawl").text(`ERROR crawl #${crawlNum}: ${String(err)}`)
-      await tabbedLog.render(ns)
-    }
-
-    await ns.sleep(crawlIntervalMs)
+  try {
+    await runDarknetCrawl(
+      ns,
+      dnet,
+      MAX_PROBE_DEPTH,
+      async (state) => {
+        await renderCrawlProgress(ns, dnet, tabbedLog, registry, state, crawlNum, sessionCacheOpens)
+      },
+      registry,
+      crawlIntervalMs,
+      async (result) => {
+        crawlNum++
+        mergeCrawlReportsIntoRegistry(registry, result.reports)
+        saveDarknetRegistry(ns, registry)
+        sessionCacheOpens.push(...result.cacheOpens)
+        await renderRegistrySummary(ns, dnet, tabbedLog, registry, result.reports, crawlNum, sessionCacheOpens)
+      }
+    )
+  } catch (err) {
+    tabbedLog.clearPanels()
+    tabbedLog.tab("crawl").text(`ERROR: ${String(err)}`)
+    await tabbedLog.render(ns)
   }
 }
