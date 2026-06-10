@@ -22,6 +22,10 @@ import {
   parseMinesweeperState,
   type MinesweeperPhase,
 } from "./infiltrationMinesweeper.js"
+import {
+  formatInfiltrationRunViewLines,
+  type InfiltrationRunView,
+} from "./infiltrationRunStats.js"
 
 export interface InfiltrationDomState {
   active: boolean
@@ -407,12 +411,11 @@ export function readInfiltrationDomState(): InfiltrationDomState {
   }
 }
 
-function formatStateText(state: InfiltrationDomState, extras?: InfiltrationDomViewExtras): string {
-  if (!state.active) {
-    return "Not infiltrating.\n\nRun this script, then start infiltration.\nIf keys fail, cancel and restart the run\n(after this script is already running).\n"
-  }
-
-  const lines: string[] = ["Status: Active", ""]
+function formatMinigameSection(
+  state: InfiltrationDomState,
+  extras?: InfiltrationDomViewExtras
+): string[] {
+  const lines: string[] = ["--- Minigame ---", "Status: Active", ""]
 
   if (state.levelText) {
     lines.push(`Level: ${state.levelText}`)
@@ -508,13 +511,35 @@ function formatStateText(state: InfiltrationDomState, extras?: InfiltrationDomVi
     const { sentKeys, totalKeys, handlerReady, handlerMode, handlerDetail, sendState } = extras.sendStatus
     lines.push("")
     lines.push(`Keys sent: ${sentKeys.length}/${totalKeys}`)
-    if (sentKeys.length > 0) {
+    if (sentKeys.length > 0 && extras?.formatSentKeys) {
       lines.push(`Sent: ${extras.formatSentKeys(sentKeys)}`)
     } else {
       lines.push("Sent: (none yet)")
     }
     lines.push(`Handler: ${handlerReady ? handlerMode : (handlerDetail ?? "missing")}`)
     lines.push(`Send: ${sendState}`)
+  }
+
+  return lines
+}
+
+function formatStateText(state: InfiltrationDomState, extras?: InfiltrationDomViewExtras): string {
+  const lines: string[] = []
+
+  if (extras?.runViewLines?.length) {
+    lines.push(...extras.runViewLines)
+  }
+
+  const showMinigame = extras?.showMinigameInfo === true
+  if (showMinigame && state.active) {
+    if (lines.length > 0) lines.push("")
+    lines.push(...formatMinigameSection(state, extras))
+  }
+
+  if (lines.length === 0) {
+    return showMinigame && !state.active
+      ? "Waiting for infiltration...\n"
+      : "Waiting for infiltration run...\n"
   }
 
   return lines.join("\n")
@@ -530,19 +555,24 @@ export interface InfiltrationSendStatus {
 }
 
 export interface InfiltrationDomViewExtras {
+  runViewLines?: string[]
+  showMinigameInfo?: boolean
   solverPreview?: string
   sendStatus?: InfiltrationSendStatus
-  formatSentKeys: (keys: string[]) => string
+  formatSentKeys?: (keys: string[]) => string
 }
+
+export type { InfiltrationRunView }
 
 export function createInfiltrationDomWindow(
   primaryColor: string,
   position?: { x: number; y: number },
-  isCollapsed?: boolean
+  isCollapsed?: boolean,
+  showMinigameInfo = false
 ): InfiltrationDomWindow {
   const container = createStandardContainer(primaryColor)
-  container.style.maxHeight = "480px"
-  container.textContent = formatStateText(readInfiltrationDomState())
+  container.style.maxHeight = showMinigameInfo ? "480px" : "360px"
+  container.textContent = formatStateText(readInfiltrationDomState(), { showMinigameInfo })
 
   const window = new FloatingWindow({
     title: "Infiltration",
@@ -551,7 +581,7 @@ export function createInfiltrationDomWindow(
     x: position?.x ?? 1050,
     y: position?.y ?? 50,
     width: 420,
-    height: 520,
+    height: showMinigameInfo ? 580 : 360,
   })
 
   if (isCollapsed) {

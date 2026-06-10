@@ -11,7 +11,7 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("sleep")
   ns.atExit(() => disableTrustedKeyInjection())
 
-  const solver = setupInfiltrationSolver(ns)
+  const solver = setupInfiltrationSolver(ns, { showMinigameInfo: true })
 
   while (true) {
     try {

@@ -34,6 +34,10 @@ import {
   isInfiltrationVictoryScreen,
 } from "./infiltrationVictory.js"
 import { waitForCityNavigationReady } from "./infiltrationNavigation.js"
+import {
+  formatInfiltrationRunViewLines,
+  type InfiltrationRunStatsTracker,
+} from "./infiltrationRunStats.js"
 
 export type InfiltrationSolverTickResult = "continue" | "cancelled" | "victory"
 
@@ -47,6 +51,8 @@ interface SolveSession {
 
 export interface InfiltrationSolverOptions {
   showDomWindow?: boolean
+  /** Task/solver debug in the overlay; off by default for run-stats-only view. */
+  showMinigameInfo?: boolean
 }
 
 export interface InfiltrationSolverState {
@@ -54,6 +60,8 @@ export interface InfiltrationSolverState {
   session: SolveSession | null
   wasActive: boolean
   victoryHandled: boolean
+  runStats: InfiltrationRunStatsTracker | null
+  showMinigameInfo: boolean
 }
 
 function describeSendState(
@@ -74,10 +82,13 @@ function describeSendState(
 }
 
 function buildViewExtras(
+  ns: NS,
   state: ReturnType<typeof readInfiltrationDomState>,
   phaseKey: string,
   session: SolveSession | null,
-  canSolve: boolean
+  canSolve: boolean,
+  runStats: InfiltrationRunStatsTracker | null,
+  showMinigameInfo: boolean
 ) {
   const handlerReady = isInfiltrationKeyInputReady()
   const handlerMode = getInfiltrationKeyInputMode()
@@ -85,20 +96,26 @@ function buildViewExtras(
   const sentKeys = session?.sentKeys ?? []
 
   return {
-    solverPreview: phaseKey
-      ? formatSolverPreview(state.taskTitle, session?.pendingKeys ?? null)
+    runViewLines: runStats ? formatInfiltrationRunViewLines(ns, runStats.getView(ns)) : undefined,
+    showMinigameInfo,
+    solverPreview:
+      showMinigameInfo && phaseKey
+        ? formatSolverPreview(state.taskTitle, session?.pendingKeys ?? null)
+        : undefined,
+    sendStatus:
+      showMinigameInfo && phaseKey
+        ? {
+            sentKeys,
+            totalKeys: pendingKeys.length,
+            handlerReady,
+            handlerMode,
+            handlerDetail: handlerReady ? undefined : describeInfiltrationKeyInput(),
+            sendState: describeSendState(phaseKey, session, canSolve, handlerMode),
+          }
+        : undefined,
+    formatSentKeys: showMinigameInfo
+      ? (keys: string[]) => formatSentKeySequence(state.taskTitle, keys)
       : undefined,
-    sendStatus: phaseKey
-      ? {
-          sentKeys,
-          totalKeys: pendingKeys.length,
-          handlerReady,
-          handlerMode,
-          handlerDetail: handlerReady ? undefined : describeInfiltrationKeyInput(),
-          sendState: describeSendState(phaseKey, session, canSolve, handlerMode),
-        }
-      : undefined,
-    formatSentKeys: (keys: string[]) => formatSentKeySequence(state.taskTitle, keys),
   }
 }
 
@@ -121,6 +138,7 @@ export function setupInfiltrationSolver(
   options: InfiltrationSolverOptions = {}
 ): InfiltrationSolverState {
   const showDomWindow = options.showDomWindow ?? true
+  const showMinigameInfo = options.showMinigameInfo ?? false
   disableTrustedKeyInjection()
   ns.atExit(() => disableTrustedKeyInjection())
 
@@ -144,7 +162,12 @@ export function setupInfiltrationSolver(
       primaryColor = window.getComputedStyle(primaryElement).color || primaryColor
     }
 
-    domWindow = createInfiltrationDomWindow(primaryColor, position ?? undefined, isCollapsed)
+    domWindow = createInfiltrationDomWindow(
+      primaryColor,
+      position ?? undefined,
+      isCollapsed,
+      showMinigameInfo
+    )
   }
 
   return {
@@ -152,6 +175,8 @@ export function setupInfiltrationSolver(
     session: null,
     wasActive: false,
     victoryHandled: false,
+    runStats: null,
+    showMinigameInfo,
   }
 }
 
@@ -235,7 +260,15 @@ export async function tickInfiltrationSolver(
   }
 
   if (state.window) {
-    const viewExtras = buildViewExtras(domState, phaseKey, state.session, canSolve)
+    const viewExtras = buildViewExtras(
+      ns,
+      domState,
+      phaseKey,
+      state.session,
+      canSolve,
+      state.runStats,
+      state.showMinigameInfo
+    )
     updateInfiltrationDomView(state.window.container, viewExtras)
   }
 
@@ -254,7 +287,15 @@ export async function tickInfiltrationSolver(
     if (state.window) {
       updateInfiltrationDomView(
         state.window.container,
-        buildViewExtras(domState, phaseKey, state.session, canSolve)
+        buildViewExtras(
+          ns,
+          domState,
+          phaseKey,
+          state.session,
+          canSolve,
+          state.runStats,
+          state.showMinigameInfo
+        )
       )
     }
   }

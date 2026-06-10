@@ -1,7 +1,9 @@
 import { NS } from "@ns"
+import { getPreferredFactionForRep, parseFactionWorkPriority } from "./libraries/factionWork.js"
 import { disableTrustedKeyInjection, syncTrustedKeyInjection } from "./libraries/infiltration/infiltrationKeyInput.js"
 import { isInfiltrationActive } from "./libraries/infiltration/infiltrationNavigation.js"
 import { runInfiltrationForTarget } from "./libraries/infiltration/infiltrationRun.js"
+import { InfiltrationRunStatsTracker } from "./libraries/infiltration/infiltrationRunStats.js"
 import { setupInfiltrationSolver, shutdownInfiltrationSolver } from "./libraries/infiltration/infiltrationSolver.js"
 import {
   getBestInfiltrationTarget,
@@ -11,8 +13,8 @@ import {
   isInfiltrationMoneyMode,
 } from "./libraries/infiltration/infiltrationTargets.js"
 
-/** Debug overlay for infiltration DOM state; disable once automation is stable. */
-const SHOW_INFILTRATION_DOM_WINDOW = false
+const SHOW_INFILTRATION_DOM_WINDOW = true
+const SHOW_MINIGAME_INFO = false
 
 const CHECK_INTERVAL_MS = 2000
 const BETWEEN_RUNS_MS = 1000
@@ -28,11 +30,20 @@ export async function main(ns: NS): Promise<void> {
     return
   }
 
-  const solver = setupInfiltrationSolver(ns, { showDomWindow: SHOW_INFILTRATION_DOM_WINDOW })
+  const solver = setupInfiltrationSolver(ns, {
+    showDomWindow: SHOW_INFILTRATION_DOM_WINDOW,
+    showMinigameInfo: SHOW_MINIGAME_INFO,
+  })
+  const runStats = new InfiltrationRunStatsTracker()
+  solver.runStats = runStats
 
   try {
     while (true) {
       const rewardGoal = getInfiltrationRewardGoal(ns)
+      const grindFaction =
+        rewardGoal === "reputation"
+          ? getPreferredFactionForRep(ns, parseFactionWorkPriority(ns))
+          : null
       const target = getBestInfiltrationTarget(ns, rewardGoal)
 
       if (!target) {
@@ -55,22 +66,28 @@ export async function main(ns: NS): Promise<void> {
         ns.print("Infiltration already in progress; waiting for completion...")
       }
 
+      runStats.beginCycle(target, rewardGoal, grindFaction)
       const outcome = await runInfiltrationForTarget(ns, target, { solver })
 
       switch (outcome) {
         case "victory":
+          runStats.completeCycle()
           ns.print(`Done: ${target.name}. Re-running best ${rewardGoal} target.`)
           break
         case "cancelled":
+          runStats.abandonCycle()
           ns.print("Infiltration cancelled. Stopping auto script.")
           return
         case "travel_failed":
+          runStats.abandonCycle()
           ns.print(`Travel failed for ${target.city}. Retrying.`)
           break
         case "visit_failed":
+          runStats.abandonCycle()
           ns.print(`Visit failed for ${target.name}. Retrying.`)
           break
         case "timeout":
+          runStats.abandonCycle()
           ns.print(`Timed out on ${target.name}. Retrying.`)
           break
       }
