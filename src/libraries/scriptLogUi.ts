@@ -204,7 +204,7 @@ function baseCellStyle(
     boxSizing: "border-box",
     height: `${rowHeightPx}px`,
     lineHeight: `${layout.fontSizePx}px`,
-    padding: `0 ${layout.paddingXPx}px`,
+    padding: `0 ${CELL_HORIZONTAL_PAD_CH}ch`,
     border: `${layout.borderPx}px solid ${borderColor}`,
     fontSize: `${layout.fontSizePx}px`,
     verticalAlign: "middle",
@@ -227,33 +227,50 @@ export function headerCellStyle(layout: TableLayout, activeHeader = false): Reco
   }
 }
 
-/** Extra width (in char units) for one space of inset on each side of cell text. */
-const COLUMN_WIDTH_PAD_CHARS = 2
-/** Monospace advance width relative to font size (~1ch in browsers). */
-const CHAR_WIDTH_TO_FONT_RATIO = 0.6
+type ColumnWidthUnit = "ch" | "px"
 
-function computeColumnWidthsPx(config: TableConfig, layout: TableLayout, columnWidths?: number[]): number[] {
-  if (columnWidths) return columnWidths
+interface ColumnWidthSpec {
+  value: number
+  unit: ColumnWidthUnit
+}
 
-  const charPx = layout.fontSizePx * CHAR_WIDTH_TO_FONT_RATIO
-  const cellPaddingPx = layout.paddingXPx * 2
+/** Horizontal inset per cell side; column width includes both sides. */
+const CELL_HORIZONTAL_PAD_CH = 0.5
+
+/** Monospace column width = longest cell/header string + 1ch pad left and right. */
+function computeColumnWidths(config: TableConfig, columnWidthsPx?: number[]): ColumnWidthSpec[] {
+  if (columnWidthsPx) {
+    return columnWidthsPx.map((value) => ({ value, unit: "px" as const }))
+  }
+
   return config.columns.map((col, colIdx) => {
     let maxChars = col.header.length
     for (const row of config.rows) {
       if (row[colIdx]) maxChars = Math.max(maxChars, row[colIdx].length)
     }
-    const charWidth = Math.max(maxChars, col.minWidth ?? 0) + COLUMN_WIDTH_PAD_CHARS
-    return Math.ceil(charWidth * charPx + cellPaddingPx)
+    return { value: maxChars + CELL_HORIZONTAL_PAD_CH * 2, unit: "ch" as const }
   })
+}
+
+/** Typical advance width of one monospace glyph in CSS ch units (not 1em). */
+const MONOSPACE_CH_TO_FONT_SIZE = 0.6
+
+function columnWidthToPx(spec: ColumnWidthSpec, layout: TableLayout): number {
+  if (spec.unit === "px") return spec.value
+  return spec.value * layout.fontSizePx * MONOSPACE_CH_TO_FONT_SIZE
+}
+
+function sumColumnWidthsPx(specs: ColumnWidthSpec[], layout: TableLayout): number {
+  return specs.reduce((sum, spec) => sum + columnWidthToPx(spec, layout), 0)
 }
 
 /** Pixel width a table needs (same rules as buildReactTable). */
 export function estimateReactTableWidthPx(config: ReactTableConfig, layout?: Partial<TableLayout>): number {
   const merged = mergeLayout(config.layout ?? layout)
-  const colWidths = computeColumnWidthsPx(config, merged, config.columnWidths)
-  const sumColWidths = colWidths.reduce((sum, width) => sum + width, 0)
+  const colWidths = computeColumnWidths(config, config.columnWidths)
+  const sumColWidths = sumColumnWidthsPx(colWidths, merged)
   if (config.tableWidth != null) return Math.max(config.tableWidth, sumColWidths)
-  return Math.max(sumColWidths, merged.tableWidthPx)
+  return sumColWidths
 }
 
 export function estimateReactTableHeightPx(config: ReactTableConfig, layout?: Partial<TableLayout>): number {
@@ -318,9 +335,11 @@ export function buildReactTable(config: ReactTableConfig): ReactNode {
   const React = getReact()
   const layout = mergeLayout(config.layout)
   const { columns, rows, title, separatorAfter = [] } = config
-  const colWidths = computeColumnWidthsPx(config, layout, config.columnWidths)
-  const sumColWidths = colWidths.reduce((sum, width) => sum + width, 0)
-  const tableWidth = config.tableWidth != null ? Math.max(config.tableWidth, sumColWidths) : sumColWidths
+  const colWidths = computeColumnWidths(config, config.columnWidths)
+  const sumColWidths = sumColumnWidthsPx(colWidths, layout)
+  const tableWidthPx = config.tableWidth != null ? Math.max(config.tableWidth, sumColWidths) : sumColWidths
+  // ch-based cols: do not force a px table width wider than the cols (fixed layout would stretch them).
+  const shrinkToColumns = config.columnWidths == null && config.tableWidth == null
   const alignments = columns.map((col, idx) => col.align ?? (idx === 0 ? "left" : "right"))
 
   const headerCells = columns.map((col, idx) =>
@@ -359,7 +378,12 @@ export function buildReactTable(config: ReactTableConfig): ReactNode {
   const colgroup = React.createElement(
     "colgroup",
     null,
-    ...colWidths.map((width, idx) => React.createElement("col", { key: `col-${idx}`, style: { width: `${width}px` } }))
+    ...colWidths.map((spec, idx) =>
+      React.createElement("col", {
+        key: `col-${idx}`,
+        style: { width: spec.unit === "ch" ? `${spec.value}ch` : `${spec.value}px` },
+      })
+    )
   )
 
   const table = React.createElement(
@@ -368,7 +392,7 @@ export function buildReactTable(config: ReactTableConfig): ReactNode {
       style: {
         borderCollapse: "collapse",
         tableLayout: "fixed",
-        width: `${tableWidth}px`,
+        width: shrinkToColumns ? "max-content" : `${tableWidthPx}px`,
         margin: "0",
         fontFamily: "monospace",
         fontSize: `${layout.fontSizePx}px`,
