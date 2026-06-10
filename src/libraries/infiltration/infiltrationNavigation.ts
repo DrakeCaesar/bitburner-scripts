@@ -3,28 +3,23 @@ import {
   invokeStartInfiltration,
   invokeTrustedClick,
 } from "./infiltrationGameBridge.js"
-import type { NS } from "@ns"
+import type { LocationName, NS } from "@ns"
 
 const SIDEBAR_CITY_PAGE = "City"
 const VICTORY_TITLE = "Infiltration successful!"
 const NAV_READY_POLL_MS = 200
 const DEFAULT_NAV_READY_TIMEOUT_MS = 15000
 const INFILTRATE_BUTTON = "Infiltrate Company"
-const START_BUTTON = "Start"
 const CANCEL_INTRO_BUTTON = "Cancel"
 
 function normalizeText(text: string): string {
   return text.replace(/\s+/g, " ").trim()
 }
 
-function clickElement(element: HTMLElement): void {
-  element.click()
-}
-
 function findSidebarPageLink(pageName: string): HTMLElement | null {
   for (const item of Array.from(document.querySelectorAll(".MuiListItem-root"))) {
     for (const label of Array.from(item.querySelectorAll(".MuiTypography-root"))) {
-      if (normalizeText(label.textContent ?? "") === pageName) {
+      if (normalizeText(label.textContent ?? "") === pageName && item instanceof HTMLElement) {
         return item
       }
     }
@@ -41,47 +36,19 @@ function findButtonByLabel(label: string): HTMLButtonElement | null {
   return null
 }
 
-function findLocationElement(locationName: string): HTMLElement | null {
-  for (const button of Array.from(document.querySelectorAll("button"))) {
-    if (normalizeText(button.textContent ?? "") === locationName) {
-      return button
-    }
-  }
-
-  const labeled = document.querySelector(`span[aria-label="${locationName}"]`)
-  if (labeled instanceof HTMLElement) {
-    return labeled
-  }
-
-  return null
-}
-
-export function openCityPage(): boolean {
+function openCityPage(): boolean {
   const link = findSidebarPageLink(SIDEBAR_CITY_PAGE)
   if (!link) return false
-  clickElement(link)
+  link.click()
   return true
 }
 
-export function clickCityLocation(locationName: string): boolean {
-  const element = findLocationElement(locationName)
-  if (!element) return false
-  clickElement(element)
-  return true
-}
-
-export function clickInfiltrateCompany(locationName: string): { ok: boolean; detail: string } {
-  return invokeInfiltrateCompanyButton(locationName)
+function goToCompanyLocation(ns: NS, locationName: string): boolean {
+  return ns.singularity.goToLocation(locationName as LocationName)
 }
 
 export function clickStartInfiltration(): boolean {
-  const result = invokeStartInfiltration()
-  if (result.ok) return true
-
-  const button = findButtonByLabel(START_BUTTON)
-  if (!button || button.disabled) return false
-  clickElement(button)
-  return true
+  return invokeStartInfiltration().ok
 }
 
 export function isOnInfiltrationIntro(locationName: string): boolean {
@@ -125,8 +92,7 @@ function findCancelIntroButton(): HTMLButtonElement | null {
 export function clickCancelInfiltrationIntro(): boolean {
   const button = findCancelIntroButton()
   if (!button) return false
-  invokeTrustedClick(button)
-  return true
+  return invokeTrustedClick(button)
 }
 
 /** Return to the city map between visit checks. */
@@ -189,69 +155,41 @@ export interface VisitInfiltrationDomResult {
   detail?: string
 }
 
-/** Navigate the World UI to a company and open the infiltration intro screen. */
-export function visitInfiltrationTargetDom(locationName: string): VisitInfiltrationDomResult {
+function visitInfiltrationIntro(ns: NS, locationName: string, startRun: boolean): VisitInfiltrationDomResult {
   if (isInfiltrationActive()) {
-    return { ok: true, step: "already active", detail: locationName }
+    return startRun
+      ? { ok: true, step: "already active", detail: locationName }
+      : { ok: false, step: "infiltration active", detail: locationName }
   }
 
   if (isOnInfiltrationIntro(locationName)) {
-    if (clickStartInfiltration()) {
+    if (startRun && clickStartInfiltration()) {
       return { ok: true, step: "started", detail: locationName }
     }
     return { ok: true, step: "intro ready", detail: locationName }
   }
 
   if (findButtonByLabel(INFILTRATE_BUTTON)) {
-    const opened = clickInfiltrateCompany(locationName)
+    const opened = invokeInfiltrateCompanyButton()
     if (!opened.ok) {
       return { ok: false, step: "infiltrate open failed", detail: opened.detail }
     }
     return { ok: true, step: "opened intro", detail: locationName }
   }
 
-  if (findLocationElement(locationName)) {
-    if (!clickCityLocation(locationName)) {
-      return { ok: false, step: "location click failed", detail: locationName }
-    }
-    return { ok: true, step: "opened location", detail: locationName }
+  if (goToCompanyLocation(ns, locationName)) {
+    return { ok: true, step: "opened company", detail: locationName }
   }
 
-  if (!openCityPage()) {
-    return { ok: false, step: "city sidebar missing", detail: SIDEBAR_CITY_PAGE }
-  }
+  return { ok: false, step: "go to location failed", detail: locationName }
+}
 
-  return { ok: true, step: "opened city page", detail: locationName }
+/** Navigate to the company, open intro, and start the run when already on intro. */
+export function visitInfiltrationTargetDom(ns: NS, locationName: string): VisitInfiltrationDomResult {
+  return visitInfiltrationIntro(ns, locationName, true)
 }
 
 /** Navigate to the infiltration intro screen without starting the run. */
-export function visitInfiltrationIntroDom(locationName: string): VisitInfiltrationDomResult {
-  if (isInfiltrationActive()) {
-    return { ok: false, step: "infiltration active", detail: locationName }
-  }
-
-  if (isOnInfiltrationIntro(locationName)) {
-    return { ok: true, step: "intro ready", detail: locationName }
-  }
-
-  if (findButtonByLabel(INFILTRATE_BUTTON)) {
-    const opened = clickInfiltrateCompany(locationName)
-    if (!opened.ok) {
-      return { ok: false, step: "infiltrate open failed", detail: opened.detail }
-    }
-    return { ok: true, step: "opened intro", detail: locationName }
-  }
-
-  if (findLocationElement(locationName)) {
-    if (!clickCityLocation(locationName)) {
-      return { ok: false, step: "location click failed", detail: locationName }
-    }
-    return { ok: true, step: "opened location", detail: locationName }
-  }
-
-  if (!openCityPage()) {
-    return { ok: false, step: "city sidebar missing", detail: SIDEBAR_CITY_PAGE }
-  }
-
-  return { ok: true, step: "opened city page", detail: locationName }
+export function visitInfiltrationIntroDom(ns: NS, locationName: string): VisitInfiltrationDomResult {
+  return visitInfiltrationIntro(ns, locationName, false)
 }

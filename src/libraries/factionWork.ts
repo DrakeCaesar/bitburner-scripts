@@ -1,4 +1,5 @@
 import { FactionName, FactionWorkType, NS } from "@ns"
+import { buildAffordablePurchasePlan, getAugmentData, type AugmentInfo } from "./augmentations.js"
 import type { ReactTableConfig } from "./scriptLogUi.js"
 
 /** Matches in-game BaseFavorToDonate (see bitburner-src Constants.ts). */
@@ -308,8 +309,44 @@ export function repForTargetFavor(ns: NS, targetFavor?: number): number {
 
 export type InfiltrationRepTier = "pre-favor-aug" | "favor" | "post-favor-aug"
 
+export type InfiltrationMoneyTier = "pre-favor-aug" | "post-favor-aug"
+
 export interface InfiltrationGrindTarget extends AugmentTarget {
   tier: InfiltrationRepTier
+}
+
+type InfiltrationAugmentBucket = "pre-favor" | "post-favor"
+
+function augmentInBucket(aug: AugmentInfo, repForDonation: number, bucket: InfiltrationAugmentBucket): boolean {
+  return bucket === "pre-favor" ? aug.repReq < repForDonation : aug.repReq >= repForDonation
+}
+
+function needsMoneyForAugmentBucket(
+  ns: NS,
+  playerFactions: readonly FactionName[],
+  bucket: InfiltrationAugmentBucket
+): boolean {
+  const repForDonation = repForTargetFavor(ns)
+  const { allAugs, factionReps, playerMoney } = getAugmentData(ns, [...playerFactions])
+  const pending = allAugs.filter((aug) => augmentInBucket(aug, repForDonation, bucket))
+  if (pending.length === 0) return false
+
+  const repQualified = pending.filter((aug) =>
+    aug.factions.some((faction) => (factionReps.get(faction) ?? 0) >= aug.repReq)
+  )
+  if (repQualified.length === 0) return false
+
+  return buildAffordablePurchasePlan(repQualified, playerMoney).skippedHasRep.length > 0
+}
+
+function hasPendingFavorGrind(ns: NS, playerFactions: readonly FactionName[], targetFavor: number): boolean {
+  for (const faction of playerFactions) {
+    if (!factionOffersWork(ns, faction)) continue
+    const predictedFavor =
+      ns.singularity.getFactionFavor(faction) + ns.singularity.getFactionFavorGain(faction)
+    if (predictedFavor < targetFavor) return true
+  }
+  return false
 }
 
 function buildFavorGrindTarget(ns: NS, faction: FactionName, targetFavor: number): AugmentTarget {
@@ -331,11 +368,42 @@ function buildFavorGrindTarget(ns: NS, faction: FactionName, targetFavor: number
   }
 }
 
+/** Active money-save phase, or null when grinding reputation or nothing pending. */
+export function getInfiltrationMoneyTier(
+  ns: NS,
+  playerFactions: readonly FactionName[]
+): InfiltrationMoneyTier | null {
+  const targetFavor = getTargetFavor(ns)
+  const repForDonation = repForTargetFavor(ns, targetFavor)
+  const all = gatherAugmentTargets(ns, playerFactions)
+
+  const preFavorRepPending = all.some((target) => target.requiredRep < repForDonation)
+  if (preFavorRepPending) return null
+  if (needsMoneyForAugmentBucket(ns, playerFactions, "pre-favor")) return "pre-favor-aug"
+
+  if (hasPendingFavorGrind(ns, playerFactions, targetFavor)) return null
+
+  const postFavorRepPending = all.some((target) => target.requiredRep >= repForDonation)
+  if (postFavorRepPending) return null
+  if (needsMoneyForAugmentBucket(ns, playerFactions, "post-favor")) return "post-favor-aug"
+
+  return null
+}
+
+export function needsInfiltrationMoneyForAugments(
+  ns: NS,
+  playerFactions: readonly FactionName[]
+): boolean {
+  return getInfiltrationMoneyTier(ns, playerFactions) != null
+}
+
 /**
- * Infiltration rep grind order:
- * 1. Augments cheaper than donation-favor rep threshold
- * 2. Donation favor for all factions still below it
- * 3. Remaining augments at or above that threshold
+ * Infiltration grind order:
+ * 1. Pre-favor augments (rep below donation threshold) - reputation
+ * 2. Pre-favor augments - money
+ * 3. Donation favor - reputation
+ * 4. Post-favor augments - reputation
+ * 5. Post-favor augments - money
  */
 export function prioritizeInfiltrationRepTargets(
   ns: NS,
@@ -345,27 +413,30 @@ export function prioritizeInfiltrationRepTargets(
   const repForDonation = repForTargetFavor(ns, targetFavor)
   const all = gatherAugmentTargets(ns, playerFactions)
 
-  const tier1 = all
+  const preFavorRep = all
     .filter((target) => target.requiredRep < repForDonation)
     .sort((a, b) => a.repGap - b.repGap)
     .map((target) => ({ ...target, tier: "pre-favor-aug" as const }))
-  if (tier1.length > 0) return tier1
+  if (preFavorRep.length > 0) return preFavorRep
 
-  const tier2: InfiltrationGrindTarget[] = []
+  if (needsMoneyForAugmentBucket(ns, playerFactions, "pre-favor")) return []
+
+  const favorTargets: InfiltrationGrindTarget[] = []
   for (const faction of playerFactions) {
     if (!factionOffersWork(ns, faction)) continue
     const predictedFavor =
       ns.singularity.getFactionFavor(faction) + ns.singularity.getFactionFavorGain(faction)
     if (predictedFavor >= targetFavor) continue
-    tier2.push({ ...buildFavorGrindTarget(ns, faction, targetFavor), tier: "favor" })
+    favorTargets.push({ ...buildFavorGrindTarget(ns, faction, targetFavor), tier: "favor" })
   }
-  tier2.sort((a, b) => targetFavor - a.predictedFavor - (targetFavor - b.predictedFavor))
-  if (tier2.length > 0) return tier2
+  favorTargets.sort((a, b) => targetFavor - a.predictedFavor - (targetFavor - b.predictedFavor))
+  if (favorTargets.length > 0) return favorTargets
 
-  return all
+  const postFavorRep = all
     .filter((target) => target.requiredRep >= repForDonation)
     .sort((a, b) => a.repGap - b.repGap)
     .map((target) => ({ ...target, tier: "post-favor-aug" as const }))
+  return postFavorRep
 }
 
 export function getInfiltrationGrindTarget(ns: NS): InfiltrationGrindTarget | null {

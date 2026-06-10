@@ -59,7 +59,7 @@ async function tryVisitIntro(ns: NS, target: InfiltrationTarget): Promise<VisitT
       continue
     }
 
-    const result = visitInfiltrationIntroDom(target.name)
+    const result = visitInfiltrationIntroDom(ns, target.name)
     if (result.step !== lastStep) {
       ns.print(`  step: ${result.step}${result.detail ? ` (${result.detail})` : ""}`)
       lastStep = result.step

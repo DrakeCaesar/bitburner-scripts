@@ -95,6 +95,12 @@ export function isInfiltrationMoneyMode(ns: NS): boolean {
   return arg === "money" || arg === "cash" || arg === "m"
 }
 
+/**
+ * Infiltration reward order:
+ * 1. Pre-favor augment rep, then cash for those augments
+ * 2. Donation favor rep
+ * 3. Post-favor augment rep, then cash for those augments
+ */
 export function getInfiltrationRewardGoal(ns: NS): InfiltrationRewardGoal {
   if (isInfiltrationMoneyMode(ns)) return "money"
   return getPreferredFactionForInfiltrationRep(ns) != null ? "reputation" : "money"

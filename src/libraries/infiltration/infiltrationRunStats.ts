@@ -1,5 +1,11 @@
 import type { FactionName, NS } from "@ns"
-import { getInfiltrationGrindTarget, type InfiltrationRepTier } from "../factionWork.js"
+import {
+  filterWorkableFactions,
+  getInfiltrationGrindTarget,
+  getInfiltrationMoneyTier,
+  type InfiltrationMoneyTier,
+  type InfiltrationRepTier,
+} from "../factionWork.js"
 import type { InfiltrationRewardGoal, InfiltrationTarget } from "./infiltrationTargets.js"
 
 const MAX_CYCLE_SAMPLES = 5
@@ -156,6 +162,10 @@ function formatInfiltrationTierLabel(tier: InfiltrationRepTier): string {
   }
 }
 
+function formatInfiltrationMoneyTierLabel(tier: InfiltrationMoneyTier): string {
+  return tier === "pre-favor-aug" ? "pre-favor augments" : "post-favor augments"
+}
+
 export function formatInfiltrationRunViewLines(ns: NS, view: InfiltrationRunView | null): string[] {
   if (!view || !view.location) {
     return ["Run: waiting for target..."]
@@ -167,7 +177,13 @@ export function formatInfiltrationRunViewLines(ns: NS, view: InfiltrationRunView
   lines.push(`Location: ${view.location}`)
 
   if (view.rewardGoal === "money") {
-    lines.push("Grinding: money")
+    const workable = filterWorkableFactions(ns, ns.getPlayer().factions)
+    const moneyTier = getInfiltrationMoneyTier(ns, workable)
+    lines.push(
+      moneyTier != null
+        ? `Grinding: money (${formatInfiltrationMoneyTierLabel(moneyTier)})`
+        : "Grinding: money"
+    )
     lines.push(`Predicted: ${ns.format.number(view.predictedReward)}`)
   } else if (view.faction) {
     lines.push(`Grinding: ${view.faction} reputation`)

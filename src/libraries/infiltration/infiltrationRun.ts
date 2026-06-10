@@ -186,15 +186,15 @@ export async function runInfiltrationForTarget(
       continue
     }
 
-    const result = visitInfiltrationTargetDom(target.name)
+    const result = visitInfiltrationTargetDom(ns, target.name)
     if (result.step !== lastStep) {
       ns.print(`Step: ${result.step}${result.detail ? ` (${result.detail})` : ""}`)
       lastStep = result.step
     }
 
     if (!result.ok) {
-      if (result.step === "city sidebar missing") {
-        ns.print("City sidebar not ready yet; waiting...")
+      if (result.step === "go to location failed") {
+        ns.print(`Singularity goToLocation(${target.name}) failed; waiting...`)
         const tickOutcome = await waitTick()
         if (tickOutcome) return tickOutcome
         continue

@@ -1,5 +1,9 @@
 import type { FactionName, NS } from "@ns"
-import { getPreferredFactionForInfiltrationRep } from "../factionWork.js"
+import {
+  filterWorkableFactions,
+  getInfiltrationMoneyTier,
+  getPreferredFactionForInfiltrationRep,
+} from "../factionWork.js"
 import { getInfiltrationRewardGoal, isInfiltrationMoneyMode } from "./infiltrationTargets.js"
 import { waitForCityNavigationReady } from "./infiltrationNavigation.js"
 
@@ -727,7 +731,13 @@ export async function collectInfiltrationVictoryReward(
   if (isInfiltrationMoneyMode(ns)) {
     ns.print("Victory reward: money mode; will sell for money")
   } else {
-    ns.print("Victory reward: no faction needs reputation; will sell for money")
+    const moneyTier = getInfiltrationMoneyTier(ns, filterWorkableFactions(ns, ns.getPlayer().factions))
+    if (moneyTier != null) {
+      const label = moneyTier === "pre-favor-aug" ? "pre-favor augments" : "post-favor augments"
+      ns.print(`Victory reward: saving for ${label}; will sell for money`)
+    } else {
+      ns.print("Victory reward: no faction needs reputation; will sell for money")
+    }
   }
 
   await ns.sleep(VICTORY_REWARD_CONFIRM_DELAY_MS)

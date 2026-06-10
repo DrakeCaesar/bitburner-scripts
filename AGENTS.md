@@ -127,8 +127,31 @@ Use the right source depending on what you need:
 | [`NetscriptDefinitions.d.ts`](NetscriptDefinitions.d.ts) | API signatures, JSDoc, RAM costs, return types while writing or editing scripts |
 | [Bitburner docs (oddiz fork)](https://bitburner-fork-oddiz.readthedocs.io/en/latest/) | Gameplay mechanics, NS2 rules, migrations, and non-API topics |
 | Cursor **@Docs** | Add the ReadTheDocs URL above in **Settings → Features → Docs** for semantic search over the full doc site in chat |
+| Local game source (`../bitburner-src`) | Game client internals: UI routing, `Player` methods, infiltration flow, React components |
 
 For Netscript API work, prefer `NetscriptDefinitions.d.ts` first — it matches this repo and is faster than fetching individual doc pages.
+
+#### Local Bitburner game source (`../bitburner-src`)
+
+A clone of [bitburner-official/bitburner-src](https://github.com/bitburner-official/bitburner-src) lives next to this repo at `../bitburner-src` (e.g. `c:\Users\domin\dev\bitburner-src`).
+
+- **Branch:** Use **`stable`** when investigating behavior of the Steam/release client. Use `dev` only for unreleased mechanics or when intentionally tracking upstream in development.
+- **Agents:** Read files from `../bitburner-src` directly. Do **not** fetch the same files from GitHub when the local clone is present.
+- **Scope:** This is the game **client** (React UI, `Player`, `Router`, `Locations`, infiltration minigames). It is **not** a substitute for `NetscriptDefinitions.d.ts` for `ns.*` API work.
+
+Useful paths for infiltration automation in this repo:
+
+| Topic | Path in `../bitburner-src` |
+|-------|----------------------------|
+| `Player.initInfiltration` | `src/PersonObjects/Player/PlayerObjectGeneralMethods.ts` |
+| `Infiltration.startInfiltration` / `cancel` | `src/Infiltration/Infiltration.ts` |
+| Infiltrate Company button | `src/Locations/ui/CompanyLocation.tsx` |
+| City map navigation | `src/Locations/ui/City.tsx` |
+| `Locations` map keys | `src/Locations/Locations.ts`, `src/Locations/data/LocationsMetadata.ts` |
+| `ns.infiltration` API | `src/NetscriptFunctions/Infiltration.ts` |
+| Page routing | `src/ui/GameRoot.tsx`, `src/ui/Router.ts` |
+
+**`window` globals:** Production builds do **not** expose `Locations` or `Router` on `window`. The dev build only exposes `globalThis.Bitburner` (with `Player`, `Factions`, `Companies`, etc.) when `NODE_ENV === "development"` — see `src/engine.tsx`. Scripts that call `eval("window").Player` or `window.Locations` are relying on hooks that may be absent in release; DOM/React fallbacks exist for that reason.
 
 ### Development patterns
 
@@ -160,6 +183,7 @@ Scripts that render in the game (tail logs, `printRaw`, terminal output, floatin
 ## Instructions for agents
 
 - **Always consult `NetscriptDefinitions.d.ts` when working with NS API functions** — it contains complete documentation, RAM costs, and type signatures
+- **For game UI / `Player` / infiltration internals**, read `../bitburner-src` on the **`stable`** branch instead of fetching GitHub raw URLs
 - Do not run linter, TypeScript checks, or build commands unless explicitly requested by the user
 - Do what has been asked; nothing more, nothing less
 - Do not create files unless they are absolutely necessary for the goal
