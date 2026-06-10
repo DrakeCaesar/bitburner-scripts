@@ -5,11 +5,24 @@ import { waitForCityNavigationReady } from "./infiltrationNavigation.js"
 
 const VICTORY_TITLE = "Infiltration successful!"
 const SHADOWS_OF_ANARCHY = "Shadows of Anarchy"
-const VICTORY_REWARD_SELECT_DELAY_MS = 500
-const VICTORY_REWARD_CONFIRM_DELAY_MS = 500
-const VICTORY_MENU_OPEN_WAIT_MS = 1500
-const VICTORY_STATE_SETTLE_MS = 200
-const VICTORY_TRADE_RENDER_DELAY_MS = 300
+const VICTORY_REWARD_SELECT_DELAY_MS = 0
+const VICTORY_REWARD_CONFIRM_DELAY_MS = 0
+const VICTORY_MENU_OPEN_WAIT_MS = 0
+const VICTORY_STATE_SETTLE_MS = 0
+const VICTORY_TRADE_RENDER_DELAY_MS = 0
+const VICTORY_POLL_MS = 0
+const VICTORY_FACTION_STATE_WAIT_MS = 0
+const VICTORY_TRADE_BUTTON_COMMIT_WAIT_MS = 0
+
+/** TEMP: cycle trade target each victory to verify faction selection at speed. */
+const VICTORY_TEST_CYCLE_FACTIONS = true
+let victoryTestFactionIndex = 0
+
+function logVictoryTestCycleFaction(faction: string | null, detail = ""): void {
+  if (!VICTORY_TEST_CYCLE_FACTIONS) return
+  const suffix = detail ? ` (${detail})` : ""
+  console.log(`[infiltration victory] TEST cycle faction: ${faction ?? "none"}${suffix}`)
+}
 
 function normalizeText(text: string): string {
   return text.replace(/\s+/g, " ").trim()
@@ -254,6 +267,18 @@ function getWorkableFactionChoices(ns: NS): string[] {
   return [...ns.getPlayer().factions]
 }
 
+function getVictoryTestCycleFactionPool(ns: NS): string[] {
+  return getWorkableFactionChoices(ns).filter((faction) => faction !== SHADOWS_OF_ANARCHY)
+}
+
+function getVictoryTestCycleFaction(ns: NS): FactionName | null {
+  const factions = getVictoryTestCycleFactionPool(ns)
+  if (factions.length === 0) return null
+  const faction = factions[victoryTestFactionIndex % factions.length] as FactionName
+  victoryTestFactionIndex = (victoryTestFactionIndex + 1) % factions.length
+  return faction
+}
+
 async function waitForVictoryFactionState(
   ns: NS,
   factionName: string,
@@ -264,7 +289,7 @@ async function waitForVictoryFactionState(
     if (readVictoryFactionState() === factionName) {
       return true
     }
-    await ns.sleep(50)
+    await ns.sleep(VICTORY_POLL_MS)
   }
   return readVictoryFactionState() === factionName
 }
@@ -274,7 +299,7 @@ async function setVictoryFactionState(ns: NS, factionName: string): Promise<bool
   if (!selectFiber) return false
 
   invokeVictorySelectFiberChange(selectFiber, factionName)
-  return waitForVictoryFactionState(ns, factionName, 500)
+  return waitForVictoryFactionState(ns, factionName, VICTORY_FACTION_STATE_WAIT_MS)
 }
 
 async function waitForVictoryMenuOptions(ns: NS): Promise<Element[]> {
@@ -287,7 +312,7 @@ async function waitForVictoryMenuOptions(ns: NS): Promise<Element[]> {
       return value !== "" && value !== "none"
     })
     if (options.length > 0) return options
-    await ns.sleep(50)
+    await ns.sleep(VICTORY_POLL_MS)
   }
   return []
 }
@@ -370,10 +395,10 @@ function isVictoryFactionReadyForTrade(factionName: string): boolean {
  * Native click goes through React's current listener after commit.
  */
 async function waitForVictoryTradeButtonCommit(ns: NS, factionName: string): Promise<boolean> {
-  const deadline = Date.now() + 2000
+  const deadline = Date.now() + VICTORY_TRADE_BUTTON_COMMIT_WAIT_MS
   while (Date.now() < deadline) {
     if (!isVictoryFactionReadyForTrade(factionName)) {
-      await ns.sleep(50)
+      await ns.sleep(VICTORY_POLL_MS)
       continue
     }
 
@@ -384,7 +409,7 @@ async function waitForVictoryTradeButtonCommit(ns: NS, factionName: string): Pro
       return true
     }
 
-    await ns.sleep(50)
+    await ns.sleep(VICTORY_POLL_MS)
   }
 
   return isVictoryFactionReadyForTrade(factionName)
@@ -593,6 +618,17 @@ async function confirmVictoryReward(
       after,
       allFactionRepsAfter: snapshotAllFactionReps(ns),
     })
+
+    if (VICTORY_TEST_CYCLE_FACTIONS && audit.actualAction === "trade") {
+      const repDelta =
+        audit.before.factionRep != null && after.factionRep != null
+          ? after.factionRep - audit.before.factionRep
+          : null
+      logVictoryTestCycleFaction(
+        audit.actualFaction,
+        repDelta != null ? `rep +${repDelta}` : "rep delta unknown"
+      )
+    }
   }
 
   return { ok: true, detail }
@@ -606,8 +642,9 @@ export async function collectInfiltrationVictoryReward(
   }
 
   const rewardGoal = getInfiltrationRewardGoal(ns)
-  const faction =
-    rewardGoal === "reputation"
+  const faction = VICTORY_TEST_CYCLE_FACTIONS
+    ? getVictoryTestCycleFaction(ns)
+    : rewardGoal === "reputation"
       ? getPreferredFactionForInfiltrationRep(ns)
       : null
   const expected = readVictoryScreenRewards()
@@ -622,7 +659,12 @@ export async function collectInfiltrationVictoryReward(
     allFactionRepsBefore,
   }
 
-  ns.print(`Victory reward: selecting in ${VICTORY_REWARD_SELECT_DELAY_MS / 1000}s`)
+  logVictoryTestCycleFaction(faction, "selected")
+  ns.print(
+    VICTORY_TEST_CYCLE_FACTIONS
+      ? `Victory reward: TEST cycle -> ${faction ?? "none"}`
+      : "Victory reward: selecting faction"
+  )
   await ns.sleep(VICTORY_REWARD_SELECT_DELAY_MS)
 
   if (faction) {
@@ -641,6 +683,10 @@ export async function collectInfiltrationVictoryReward(
     if (!isVictoryFactionReadyForTrade(faction)) {
       const state = readVictoryFactionState() ?? "?"
       const dropdown = getVictoryComboboxDisplayValue() || "none"
+      logVictoryTestCycleFaction(
+        faction,
+        `not ready, state "${state}", dropdown "${dropdown}"`
+      )
       return {
         ok: false,
         detail: `faction state not ready (wanted ${faction}, state "${state}", dropdown "${dropdown}")`,
@@ -652,6 +698,7 @@ export async function collectInfiltrationVictoryReward(
     )
     await ns.sleep(VICTORY_REWARD_CONFIRM_DELAY_MS)
     if (!(await waitForVictoryTradeButtonCommit(ns, faction))) {
+      logVictoryTestCycleFaction(faction, "Trade handler not committed")
       return {
         ok: false,
         detail: `Trade button handler not committed for ${faction}`,
@@ -660,6 +707,10 @@ export async function collectInfiltrationVictoryReward(
 
     const dropdownAtSubmit = getVictoryComboboxDisplayValue() || "none"
     const factionStateAtSubmit = readVictoryFactionState() ?? ""
+    logVictoryTestCycleFaction(
+      faction,
+      `submit state "${factionStateAtSubmit}", dropdown "${dropdownAtSubmit}"`
+    )
     const traded = clickVictoryButton("Trade for")
     if (traded.ok) {
       return confirmVictoryReward(ns, `traded for ${faction} reputation`, {
