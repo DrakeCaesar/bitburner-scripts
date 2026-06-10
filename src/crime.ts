@@ -1,5 +1,18 @@
 import { CrimeType, NS } from "@ns"
-import { col, createTailLog, openTailLog, W, type ReactTableConfig } from "./libraries/scriptLogUiLayout.js"
+import {
+  col,
+  createTailLog,
+  openTailLog,
+  W,
+  type ReactTableConfig,
+  type TableLayout,
+} from "./libraries/scriptLogUiLayout.js"
+
+/** One-time F12 sizing report — open browser console after starting crime.js */
+const TAIL_SIZE_DEBUG: Partial<TableLayout> = {
+  debugTailSizing: true,
+  tailSizingDebugLabel: "crime",
+}
 
 type CrimeMode = "money" | "karma" | "xp"
 
@@ -122,7 +135,7 @@ export async function main(ns: NS): Promise<void> {
     const crimeInfos = getCrimeInfos(ns)
     const bestCrime = pickBestCrime(crimeInfos, mode)
 
-    await createTailLog().table(buildCrimeTableConfig(ns, crimeInfos, mode, bestCrime)).render(ns)
+    await createTailLog(TAIL_SIZE_DEBUG).table(buildCrimeTableConfig(ns, crimeInfos, mode, bestCrime)).render(ns)
 
     const crimeTime = ns.singularity.commitCrime(bestCrime.name, false)
     await ns.sleep(crimeTime + 10)

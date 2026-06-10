@@ -12,6 +12,7 @@ export interface TableLayout {
   headerRowHeightPx: number
   bodyRowHeightPx: number
   tableWidthPx: number
+  /** Bitburner title row in px; window borders are added via borderPx in resolveTailSize. */
   tailTitleBarPx: number
   /** Widest table in a tabbed log; used for resizeTail only, not per-table width. */
   tailTableWidthPx?: number
@@ -27,8 +28,12 @@ export interface TableLayout {
   tailMaxHeightPx?: number
   /** Scrollable content area inside the tail (set when sizing before render). */
   tailViewportMaxHeightPx?: number
-  /** Log sizing breakdown to the browser console (F12). */
+  /** Log sizing breakdown to the browser console (F12); once per tailSizingDebugLabel. */
   debugTailSizing?: boolean
+  /** Groups one-time F12 sizing logs when several tail scripts run (e.g. "crime"). */
+  tailSizingDebugLabel?: string
+  /** Per-render viewport id so DOM sizing targets this tail only (set in renderScriptLog). */
+  tailViewportInstanceId?: number
   sectionGapPx: number
 }
 
@@ -39,7 +44,8 @@ export const DEFAULT_LAYOUT: TableLayout = {
   headerRowHeightPx: 26,
   bodyRowHeightPx: 22,
   tableWidthPx: 640,
-  tailTitleBarPx: 40,
+  /** Bitburner title row only; borders are added in resolveTailSize via borderPx. */
+  tailTitleBarPx: 32,
   sectionGapPx: 8,
 }
 
@@ -85,17 +91,135 @@ function findScrollParent(el: HTMLElement): HTMLElement | null {
 }
 
 const SCRIPT_LOG_VIEWPORT_ATTR = "data-script-log-viewport"
+const SCRIPT_LOG_VIEWPORT_ID_ATTR = "data-script-log-viewport-id"
 
-/** Interior padding between content and tail window edge. */
+let tailViewportSeq = 0
+
+function findTailViewport(instanceId?: number): HTMLElement | null {
+  try {
+    const doc = eval("document") as Document
+    if (instanceId != null) {
+      return doc.querySelector(`[${SCRIPT_LOG_VIEWPORT_ID_ATTR}="${instanceId}"]`) as HTMLElement | null
+    }
+    return doc.querySelector(`[${SCRIPT_LOG_VIEWPORT_ATTR}]`) as HTMLElement | null
+  } catch {
+    return null
+  }
+}
+
+/** Fallback horizontal inset when the log container is not measured yet. */
 const TAIL_WIDTH_CHROME_PX = 4
 
-let pendingTailSizingDebug: {
-  columns: number
-  totalCh: number
-  columnsPx: number
-  totalChPx: number
-  tableWidthPx: number
-} | null = null
+/** Measured or estimated title row + window borders (Bitburner chrome we do not render). */
+let cachedTailTitleBarPx: number | null = null
+let tailTitleBarDomMeasured = false
+interface TailLogInsets {
+  top: number
+  right: number
+  bottom: number
+  left: number
+}
+
+/** Padding + borders on the Bitburner log scroll container (measured after openTail). */
+let cachedTailLogInsets: TailLogInsets | null = null
+
+function defaultTailTitleBarPx(layout: TableLayout): number {
+  return layout.tailTitleBarPx + layout.borderPx * 2
+}
+
+function getTailTitleBarPx(layout: TableLayout): number {
+  return cachedTailTitleBarPx ?? defaultTailTitleBarPx(layout)
+}
+
+function getTailLogInsets(): TailLogInsets {
+  return cachedTailLogInsets ?? { top: 0, right: 0, bottom: 0, left: 0 }
+}
+
+function measureLogInsets(scrollParent: HTMLElement): TailLogInsets {
+  const win = eval("window") as Window
+  const style = win.getComputedStyle(scrollParent)
+  return {
+    top: Math.ceil(parseFloat(style.paddingTop) + parseFloat(style.borderTopWidth)),
+    right: Math.ceil(parseFloat(style.paddingRight) + parseFloat(style.borderRightWidth)),
+    bottom: Math.ceil(parseFloat(style.paddingBottom) + parseFloat(style.borderBottomWidth)),
+    left: Math.ceil(parseFloat(style.paddingLeft) + parseFloat(style.borderLeftWidth)),
+  }
+}
+
+function logInsetsTotalX(insets: TailLogInsets): number {
+  return insets.left + insets.right
+}
+
+function logInsetsTotalY(insets: TailLogInsets): number {
+  return insets.top + insets.bottom
+}
+
+function findTailLogScrollParent(): HTMLElement | null {
+  try {
+    const doc = eval("document") as Document
+    const win = eval("window") as Window
+    for (const el of Array.from(doc.querySelectorAll("div"))) {
+      const style = win.getComputedStyle(el)
+      if (style.flexDirection !== "column-reverse") continue
+      if (style.overflowY !== "scroll" && style.overflowY !== "auto") continue
+      return el
+    }
+  } catch {
+    // ignore
+  }
+  return null
+}
+
+/** Measure tail chrome (title bar, log padding) so resizeTail matches Bitburner layout. */
+function primeTailLogChrome(layout: TableLayout): void {
+  const fallbackTitleBar = defaultTailTitleBarPx(layout)
+  try {
+    const win = eval("window") as Window
+    const scrollParent = findTailLogScrollParent()
+    if (!scrollParent) return
+
+    const insets = measureLogInsets(scrollParent)
+    if (logInsetsTotalX(insets) + logInsetsTotalY(insets) > 0) {
+      cachedTailLogInsets = insets
+    }
+
+    if (!tailTitleBarDomMeasured) {
+      const scrollRect = scrollParent.getBoundingClientRect()
+      let anchorTop = scrollRect.top
+      let node: HTMLElement | null = scrollParent.parentElement
+      while (node) {
+        const ps = win.getComputedStyle(node)
+        if (ps.position === "fixed") {
+          anchorTop = node.getBoundingClientRect().top
+          break
+        }
+        node = node.parentElement
+      }
+      const measured = Math.round(scrollRect.top - anchorTop)
+      if (measured >= 28 && measured <= 48) {
+        cachedTailTitleBarPx = measured
+        tailTitleBarDomMeasured = true
+      }
+    }
+  } catch {
+    // keep fallback
+  }
+  if (cachedTailTitleBarPx == null) {
+    cachedTailTitleBarPx = fallbackTitleBar
+  }
+}
+
+let pendingTailSizingDebug: Record<string, unknown> | null = null
+
+const tailSizingDebugLogged = new Set<string>()
+
+function getTailSizingDebugLabel(layout: Partial<TableLayout>): string {
+  return layout.tailSizingDebugLabel ?? "tail"
+}
+
+function shouldLogTailSizingDebug(layout: Partial<TableLayout>): boolean {
+  return layout.debugTailSizing === true && !tailSizingDebugLogged.has(getTailSizingDebugLabel(layout))
+}
 
 interface ViewportShellProps {
   layout: TableLayout
@@ -110,15 +234,29 @@ function ViewportShell(props: ViewportShellProps): ReactNode {
 
   React.useEffect(() => {
     if (!containerEl) return
-    const scrollParent = findScrollParent(containerEl)
-    if (scrollParent) scrollParent.scrollTop = 0
-  }, [containerEl])
+    const win = eval("window") as Window
+    const pinScroll = (): void => {
+      const scrollParent = findScrollParent(containerEl)
+      if (!scrollParent) return
+      const flexDirection = win.getComputedStyle(scrollParent).flexDirection
+      // column-reverse tails leave empty space at the visual top unless scrolled to the end
+      scrollParent.scrollTop =
+        flexDirection === "column-reverse"
+          ? scrollParent.scrollHeight - scrollParent.clientHeight
+          : 0
+    }
+    pinScroll()
+    const frame = win.requestAnimationFrame(pinScroll)
+    return () => win.cancelAnimationFrame(frame)
+  }, [containerEl, props.layout.tailViewportMaxHeightPx])
 
   const viewportMax = props.layout.tailViewportMaxHeightPx
   return React.createElement(
     "div",
     {
       [SCRIPT_LOG_VIEWPORT_ATTR]: "",
+      [SCRIPT_LOG_VIEWPORT_ID_ATTR]:
+        props.layout.tailViewportInstanceId != null ? String(props.layout.tailViewportInstanceId) : "",
       ref: (node: unknown) => {
         const el = node as HTMLElement | null
         setContainerEl((prev) => (prev === el ? prev : el))
@@ -127,11 +265,10 @@ function ViewportShell(props: ViewportShellProps): ReactNode {
         display: "block",
         margin: "0",
         padding: "0",
-        width: "100%",
+        width: "max-content",
         boxSizing: "border-box",
-        ...(viewportMax != null
-          ? { maxHeight: `${viewportMax}px`, overflowY: "auto", overflowX: "auto" }
-          : {}),
+        overflowX: "auto",
+        ...(viewportMax != null ? { maxHeight: `${viewportMax}px`, overflowY: "auto" } : {}),
       },
     },
     children
@@ -148,7 +285,7 @@ function resolveTailWidth(layout: TableLayout): { width: number; capped: boolean
   const contentWidth = layout.tailTableWidthPx ?? layout.tableWidthPx
   const maxWidth = layout.tailMaxWidthPx ?? Math.floor(win.innerWidth * 0.95)
   const floor = layout.tailWidthPx ?? 0
-  const padded = Math.ceil(contentWidth + TAIL_WIDTH_CHROME_PX)
+  const padded = Math.ceil(contentWidth + logInsetsTotalX(getTailLogInsets()))
   const uncapped = Math.max(floor, padded)
   const capped = uncapped > maxWidth
   return { width: capped ? maxWidth : uncapped, capped, maxWidth, padded: uncapped }
@@ -159,37 +296,83 @@ function resolveTailMaxHeight(layout: TableLayout): number {
   return layout.tailMaxHeightPx ?? win.innerHeight
 }
 
-/** Extra viewport height so stacked sections / title bar chrome are not clipped. */
-const TAIL_CONTENT_HEIGHT_PAD_PX = 48
-
 /** Total tail window size from layout estimates (call applyTailSize before renderScriptLog). */
 export function resolveTailSize(layout?: Partial<TableLayout>): {
   width: number
   height: number
-  viewportMaxHeightPx: number
+  viewportMaxHeightPx?: number
 } {
   const merged = mergeLayout(layout)
-  const contentHeight = (merged.tailContentHeightPx ?? 0) + TAIL_CONTENT_HEIGHT_PAD_PX
-  let height = merged.tailHeightPx ?? merged.tailTitleBarPx + contentHeight
-  height = Math.max(merged.tailTitleBarPx + 40, height)
-  height = Math.min(height, resolveTailMaxHeight(merged))
-  const viewportMaxHeightPx = Math.max(40, height - merged.tailTitleBarPx)
+  const contentHeight = merged.tailContentHeightPx ?? 0
+  const titleBarPx = getTailTitleBarPx(merged)
+  const naturalTotal = titleBarPx + contentHeight + logInsetsTotalY(getTailLogInsets())
+  const maxTotal = resolveTailMaxHeight(merged)
+  const height = Math.min(merged.tailHeightPx ?? naturalTotal, maxTotal)
+  const scrollable = naturalTotal > maxTotal
   return {
     width: resolveTailWidth(merged).width,
     height,
-    viewportMaxHeightPx,
+    viewportMaxHeightPx: scrollable ? Math.max(40, height - titleBarPx) : undefined,
   }
 }
 
-function debugMeasureTablesInViewport(): Array<{ scrollWidth: number; offsetWidth: number; clientWidth: number }> {
+function debugMeasureTailHeightInViewport(
+  merged: TableLayout,
+  sized: ReturnType<typeof resolveTailSize>
+): Record<string, unknown> | null {
   try {
-    const doc = eval("document") as Document
-    const viewports = Array.from(doc.querySelectorAll(`[${SCRIPT_LOG_VIEWPORT_ATTR}]`))
-    const tables: HTMLElement[] = []
-    for (const viewport of viewports) {
-      tables.push(...Array.from(viewport.querySelectorAll("table")))
+    const win = eval("window") as Window
+    const viewport = findTailViewport(merged.tailViewportInstanceId)
+    if (!viewport) return null
+    const scrollParent = findScrollParent(viewport)
+    const tables = Array.from(viewport.querySelectorAll("table"))
+    const renderedTableHeightPx = tables.reduce((sum, table) => sum + table.offsetHeight, 0)
+    const renderedViewportHeightPx = viewport.offsetHeight
+    const titleBarPx = getTailTitleBarPx(merged)
+    const estimatedContentHeightPx = merged.tailContentHeightPx ?? null
+    const scrollParentClientHeightPx = scrollParent?.clientHeight ?? null
+    const scrollParentScrollHeightPx = scrollParent?.scrollHeight ?? null
+    const scrollParentFlexDirection = scrollParent ? win.getComputedStyle(scrollParent).flexDirection : null
+    const topGapPx =
+      scrollParentClientHeightPx != null ? scrollParentClientHeightPx - renderedViewportHeightPx : null
+    const scrollParentClientWidthPx = scrollParent?.clientWidth ?? null
+    const bottomClipPx = renderedViewportHeightPx - renderedTableHeightPx
+    const insets = scrollParent ? measureLogInsets(scrollParent) : getTailLogInsets()
+    return {
+      estimatedContentHeightPx,
+      renderedViewportHeightPx,
+      renderedTableHeightPx,
+      resolvedTailHeightPx: sized.height,
+      titleBarPx,
+      scrollParentClientHeightPx,
+      scrollParentClientWidthPx,
+      scrollParentScrollHeightPx,
+      scrollParentFlexDirection,
+      topGapPx,
+      bottomClipPx,
+      heightEstimateMinusRenderedPx:
+        estimatedContentHeightPx != null ? estimatedContentHeightPx - renderedViewportHeightPx : null,
+      tailHeightMinusTitleMinusRenderedPx:
+        sized.height - titleBarPx - logInsetsTotalY(insets) - renderedViewportHeightPx,
+      renderedTables: tables.map((table, index) => ({
+        index,
+        offsetHeightPx: table.offsetHeight,
+        scrollWidthPx: table.scrollWidth,
+        clientWidthPx: table.clientWidth,
+      })),
     }
-    return tables.map((table) => ({
+  } catch {
+    return null
+  }
+}
+
+function debugMeasureTablesInViewport(
+  instanceId?: number
+): Array<{ scrollWidth: number; offsetWidth: number; clientWidth: number }> {
+  try {
+    const viewport = findTailViewport(instanceId)
+    if (!viewport) return []
+    return Array.from(viewport.querySelectorAll("table")).map((table) => ({
       scrollWidth: table.scrollWidth,
       offsetWidth: table.offsetWidth,
       clientWidth: table.clientWidth,
@@ -199,35 +382,106 @@ function debugMeasureTablesInViewport(): Array<{ scrollWidth: number; offsetWidt
   }
 }
 
-let tailSizingDebugLogged = false
+function diagnoseTailSizingIssues(
+  merged: TableLayout,
+  sized: ReturnType<typeof resolveTailSize>,
+  widthInfo: ReturnType<typeof resolveTailWidth>,
+  heightInfo: Record<string, unknown> | null,
+  widestRendered: number
+): string[] {
+  const issues: string[] = []
+  const chromePx = logInsetsTotalX(getTailLogInsets())
+  const topGapPx = heightInfo?.topGapPx as number | null | undefined
+  const renderedViewportHeightPx = heightInfo?.renderedViewportHeightPx as number | undefined
+  const tailSparePx = heightInfo?.tailHeightMinusTitleMinusRenderedPx as number | undefined
+  const heightEstDelta = heightInfo?.heightEstimateMinusRenderedPx as number | null | undefined
+  const contentWidthPx = merged.tailTableWidthPx
+
+  if (topGapPx != null && topGapPx > 2) {
+    issues.push(`TOP GAP ${topGapPx}px: tail log area taller than content (column-reverse shows this at top)`)
+  }
+  if (tailSparePx != null && tailSparePx < -2) {
+    issues.push(`HEIGHT SHORT ${-tailSparePx}px: resizeTail height smaller than title+content (clip at bottom)`)
+  }
+  if (heightEstDelta != null && heightEstDelta < -2) {
+    issues.push(`HEIGHT EST LOW ${-heightEstDelta}px: content estimate below rendered viewport height`)
+  }
+  if (heightEstDelta != null && heightEstDelta > 4) {
+    issues.push(`HEIGHT EST HIGH ${heightEstDelta}px: content estimate above rendered viewport height`)
+  }
+  if (widestRendered > 0 && contentWidthPx != null && widestRendered - contentWidthPx > 2) {
+    issues.push(`WIDTH EST LOW ${widestRendered - contentWidthPx}px: table wider than ch column estimate`)
+  }
+  if (widestRendered > 0 && contentWidthPx != null && contentWidthPx - widestRendered > 4) {
+    issues.push(`WIDTH EST HIGH ${contentWidthPx - widestRendered}px: ch estimate wider than rendered table`)
+  }
+  if (widestRendered > 0 && widthInfo.width - widestRendered < chromePx - 2) {
+    issues.push(
+      `TAIL NARROW ${widestRendered + chromePx - widthInfo.width}px: window width below table+chrome (${widthInfo.width} vs need ~${widestRendered + chromePx})`
+    )
+  }
+  if (widthInfo.capped && widestRendered + chromePx > widthInfo.width + 2) {
+    issues.push(
+      `SCREEN CAP: content needs ~${widestRendered + chromePx}px but tail capped at ${widthInfo.width}px (max ${widthInfo.maxWidth}) — use horizontal scroll`
+    )
+  }
+  if (issues.length === 0) {
+    issues.push("No sizing mismatch detected (gaps within 2px)")
+  }
+  return issues
+}
 
 function logTailSizingReport(layout: Partial<TableLayout> | undefined): void {
   const merged = mergeLayout(layout)
-  if (!merged.debugTailSizing || tailSizingDebugLogged) return
-  tailSizingDebugLogged = true
+  const label = getTailSizingDebugLabel(merged)
+  if (!shouldLogTailSizingDebug(merged)) return
+  tailSizingDebugLogged.add(label)
 
   const widthInfo = resolveTailWidth(merged)
+  const estimatedSize = resolveTailSize(merged)
   const chPx = getChWidthPx(merged.fontSizePx)
   const win = eval("window") as Window
-  const tables = debugMeasureTablesInViewport()
+  const tables = debugMeasureTablesInViewport(merged.tailViewportInstanceId)
   const widestRendered = tables.reduce((max, t) => Math.max(max, t.scrollWidth), 0)
+  const measuredSize = resolveMeasuredTailSize(merged)
+  const heightInfo = debugMeasureTailHeightInViewport(merged, measuredSize ?? estimatedSize)
+  const issues = diagnoseTailSizingIssues(
+    merged,
+    measuredSize ?? estimatedSize,
+    measuredSize ? { width: measuredSize.width, capped: false, maxWidth: widthInfo.maxWidth, padded: measuredSize.width } : widthInfo,
+    heightInfo,
+    widestRendered
+  )
 
-  console.log("[tail-sizing]", {
+  console.log(`[tail-sizing:${label}]`, {
+    sizingSource: measuredSize ? "measured-dom" : "estimate",
+    issues,
     ...pendingTailSizingDebug,
+    ...heightInfo,
     contentWidthPx: merged.tailTableWidthPx,
+    contentHeightPx: merged.tailContentHeightPx,
     chPx,
     chSource: isChWidthCached(merged.fontSizePx) ? "cached" : "fallback",
-    tailChromePx: TAIL_WIDTH_CHROME_PX,
+    tailChromePx: logInsetsTotalX(getTailLogInsets()),
+    tailLogInsets: getTailLogInsets(),
+    estimatedTailWidthPx: estimatedSize.width,
+    estimatedTailHeightPx: estimatedSize.height,
     paddedWidthPx: widthInfo.padded,
-    resolvedTailWidthPx: widthInfo.width,
+    resolvedTailWidthPx: measuredSize?.width ?? estimatedSize.width,
+    resolvedTailHeightPx: measuredSize?.height ?? estimatedSize.height,
     screenMaxWidthPx: widthInfo.maxWidth,
     cappedByScreen: widthInfo.capped,
     windowInnerWidth: win.innerWidth,
+    windowInnerHeight: win.innerHeight,
     widestTableScrollWidthPx: widestRendered || null,
     gapRenderedMinusContentPx:
       widestRendered > 0 && merged.tailTableWidthPx != null ? widestRendered - merged.tailTableWidthPx : null,
-    gapTailMinusRenderedPx: widestRendered > 0 ? widthInfo.width - widestRendered : null,
-    gapRenderedMinusTailPx: widestRendered > 0 ? widestRendered + TAIL_WIDTH_CHROME_PX - widthInfo.width : null,
+    gapTailMinusRenderedPx:
+      widestRendered > 0 ? (measuredSize?.width ?? widthInfo.width) - widestRendered : null,
+    gapRenderedMinusTailPx:
+      widestRendered > 0
+        ? widestRendered + logInsetsTotalX(getTailLogInsets()) - (measuredSize?.width ?? widthInfo.width)
+        : null,
     tables,
   })
   pendingTailSizingDebug = null
@@ -408,16 +662,42 @@ function estimateTextWidthPx(message: string, layout: TableLayout): number {
   return maxChars * getChWidthPx(layout.fontSizePx)
 }
 
-export function estimateReactTableHeightPx(config: ReactTableConfig, layout?: Partial<TableLayout>): number {
-  const merged = mergeLayout(config.layout ?? layout)
-  let height = merged.headerRowHeightPx + config.rows.length * merged.bodyRowHeightPx
-  if (config.title) height += merged.fontSizePx + 4 + merged.sectionGapPx
-  return height + merged.sectionGapPx
+/** Line box for pre/title blocks — matches lineHeight set in buildTextBlock / buildReactTable. */
+function textLineBoxPx(layout: TableLayout): number {
+  return layout.fontSizePx + 4
 }
 
-function estimateTextHeightPx(message: string, layout: TableLayout): number {
-  const lines = message.split("\n").length
-  return lines * (layout.fontSizePx + 4) + layout.sectionGapPx
+function estimateTitleBlockHeightPx(title: string, layout: TableLayout, contentWidthPx: number): number {
+  const titleText = `=== ${title} ===`
+  const titleWidthPx = computeStringWidthPx(titleText, layout)
+  const lines = Math.max(1, Math.ceil(titleWidthPx / Math.max(1, contentWidthPx)))
+  return lines * textLineBoxPx(layout) + 4
+}
+
+export function estimateReactTableHeightPx(
+  config: ReactTableConfig,
+  layout?: Partial<TableLayout>,
+  contentWidthPx?: number
+): number {
+  const merged = mergeLayout(config.layout ?? layout)
+  let height = merged.headerRowHeightPx + config.rows.length * merged.bodyRowHeightPx
+  if (config.separatorAfter?.length) {
+    height += config.separatorAfter.length
+  }
+  if (config.title) {
+    height += estimateTitleBlockHeightPx(config.title, merged, contentWidthPx ?? merged.tableWidthPx)
+  }
+  return height
+}
+
+function estimateTextHeightPx(message: string, layout: TableLayout, contentWidthPx: number): number {
+  const lines = message.split("\n")
+  let totalLines = 0
+  for (const line of lines) {
+    const lineWidthPx = computeStringWidthPx(line, layout)
+    totalLines += Math.max(1, Math.ceil(lineWidthPx / Math.max(1, contentWidthPx)))
+  }
+  return totalLines * textLineBoxPx(layout)
 }
 
 const TAB_BAR_HEIGHT_PX = 36
@@ -535,6 +815,7 @@ export function buildReactTable(config: ReactTableConfig): ReactNode {
         style: {
           fontFamily: "monospace",
           fontSize: `${layout.fontSizePx}px`,
+          lineHeight: `${textLineBoxPx(layout)}px`,
           marginBottom: "4px",
           fontWeight: "bold",
         },
@@ -715,12 +996,18 @@ export function estimateReactTreeTableWidthPx(config: TreeTableConfig, layout?: 
   return computeReactTableWidthPx(tableConfig, config.layout ?? layout)
 }
 
-export function estimateReactTreeTableHeightPx(config: TreeTableConfig, layout?: Partial<TableLayout>): number {
+export function estimateReactTreeTableHeightPx(
+  config: TreeTableConfig,
+  layout?: Partial<TableLayout>,
+  contentWidthPx?: number
+): number {
   const flat = flattenTreeRows(config.rows, config.rootIds)
   const merged = mergeLayout(config.layout ?? layout)
   let height = merged.headerRowHeightPx + flat.length * merged.bodyRowHeightPx
-  if (config.title) height += merged.fontSizePx + 4 + merged.sectionGapPx
-  return height + merged.sectionGapPx
+  if (config.title) {
+    height += estimateTitleBlockHeightPx(config.title, merged, contentWidthPx ?? merged.tableWidthPx)
+  }
+  return height
 }
 
 export function buildSectionHeader(title: string, layout?: Partial<TableLayout>): ReactNode {
@@ -732,6 +1019,7 @@ export function buildSectionHeader(title: string, layout?: Partial<TableLayout>)
       style: {
         fontFamily: "monospace",
         fontSize: `${merged.fontSizePx}px`,
+        lineHeight: `${textLineBoxPx(merged)}px`,
         fontWeight: "bold",
         margin: `${merged.sectionGapPx}px 0 4px 0`,
       },
@@ -749,6 +1037,7 @@ export function buildTextBlock(text: string, layout?: Partial<TableLayout>): Rea
       style: {
         fontFamily: "monospace",
         fontSize: `${merged.fontSizePx}px`,
+        lineHeight: `${textLineBoxPx(merged)}px`,
         margin: "0 0 4px 0",
         padding: "0",
         whiteSpace: "pre-wrap",
@@ -776,6 +1065,22 @@ type LogSection =
   | { kind: "keyValue"; config: KeyValueTableConfig }
   | { kind: "threeColumn"; config: ThreeColumnTableConfig }
 
+function sectionBottomMarginPx(section: LogSection): number {
+  switch (section.kind) {
+    case "text":
+    case "section":
+      return 4
+    case "table":
+      return section.config.title ? 4 : 0
+    case "treeTable":
+      return section.config.title ? 4 : 0
+    case "keyValue":
+      return section.config.title ? 4 : 0
+    case "threeColumn":
+      return section.config.title ? 4 : 0
+  }
+}
+
 function logSectionMaxWidthPx(section: LogSection, layout?: Partial<TableLayout>): number {
   const merged = mergeLayout(layout)
   switch (section.kind) {
@@ -796,22 +1101,83 @@ function logSectionMaxWidthPx(section: LogSection, layout?: Partial<TableLayout>
   }
 }
 
-function logSectionHeightPx(section: LogSection, merged: TableLayout): number {
+function buildPendingTailSizingDebug(
+  sections: LogSection[],
+  merged: TableLayout,
+  contentWidthPx: number,
+  contentHeightPx: number,
+  wrapWidthPx: number
+): Record<string, unknown> {
+  const sectionBreakdown = sections.map((section, index) => ({
+    index,
+    kind: section.kind,
+    estimatedHeightPx: logSectionHeightPx(section, merged, wrapWidthPx),
+    bottomMarginPx: sectionBottomMarginPx(section),
+    estimatedWidthPx: logSectionMaxWidthPx(section, merged),
+    ...(section.kind === "table"
+      ? { rowCount: section.config.rows.length, titled: Boolean(section.config.title) }
+      : section.kind === "text"
+        ? { lineCount: section.message.split("\n").length }
+        : {}),
+  }))
+
+  let widestTable: ReactTableConfig | null = null
+  let widestTablePx = 0
+  for (const section of sections) {
+    if (section.kind !== "table") continue
+    const sectionPx = logSectionMaxWidthPx(section, merged)
+    if (sectionPx > widestTablePx) {
+      widestTablePx = sectionPx
+      widestTable = section.config
+    }
+  }
+
+  const out: Record<string, unknown> = {
+    label: getTailSizingDebugLabel(merged),
+    sectionCount: sections.length,
+    sectionBreakdown,
+    contentWidthPx,
+    contentHeightPx,
+    titleWrapWidthPx: wrapWidthPx,
+  }
+
+  if (widestTable) {
+    const widthsCh = computeColumnWidthsCh(widestTable)
+    const breakdown = columnWidthsChToPxBreakdown(widthsCh, merged)
+    out.widestTable = {
+      columns: widestTable.columns.length,
+      rows: widestTable.rows.length,
+      totalCh: widthsCh.reduce((sum, ch) => sum + ch, 0),
+      columnsPx: breakdown.columnsPx,
+      totalChPx: breakdown.totalChPx,
+      tableWidthPx: breakdown.totalPx,
+    }
+  }
+
+  return out
+}
+
+function logSectionHeightPx(section: LogSection, merged: TableLayout, contentWidthPx: number): number {
   switch (section.kind) {
     case "text":
-      return estimateTextHeightPx(section.message, merged)
+      return estimateTextHeightPx(section.message, merged, contentWidthPx)
     case "section":
-      return merged.sectionGapPx + merged.fontSizePx + 4
+      return merged.sectionGapPx + estimateTitleBlockHeightPx(section.title, merged, contentWidthPx)
     case "table":
-      return estimateReactTableHeightPx({ layout: merged, ...section.config }, merged)
+      return estimateReactTableHeightPx({ layout: merged, ...section.config }, merged, contentWidthPx)
     case "treeTable":
-      return estimateReactTreeTableHeightPx({ layout: merged, ...section.config }, merged)
+      return estimateReactTreeTableHeightPx({ layout: merged, ...section.config }, merged, contentWidthPx)
     case "keyValue":
-      return estimateReactTableHeightPx({ layout: merged, ...keyValueToReactTableConfig(section.config) }, merged)
+      return estimateReactTableHeightPx(
+        { layout: merged, ...keyValueToReactTableConfig(section.config) },
+        merged,
+        contentWidthPx
+      )
     case "threeColumn":
       return estimateReactTableHeightPx(
         { layout: merged, ...threeColumnToReactTableConfig(section.config) },
-        merged
+        merged,
+        contentWidthPx
       )
   }
 }
@@ -866,32 +1232,19 @@ export class ScriptLogBuilder {
     for (const section of this.sections) {
       max = Math.max(max, logSectionMaxWidthPx(section, this.layout))
     }
-    if (merged.debugTailSizing && !tailSizingDebugLogged) {
-      const tableSection = this.sections.find((s) => s.kind === "table")
-      if (tableSection?.kind === "table") {
-        const widthsCh = computeColumnWidthsCh(tableSection.config)
-        const breakdown = columnWidthsChToPxBreakdown(widthsCh, merged)
-        pendingTailSizingDebug = {
-          columns: tableSection.config.columns.length,
-          totalCh: widthsCh.reduce((sum, ch) => sum + ch, 0),
-          columnsPx: breakdown.columnsPx,
-          totalChPx: breakdown.totalChPx,
-          tableWidthPx: breakdown.totalPx,
-        }
-      }
-    }
     return max > 0 ? Math.ceil(max) : merged.tableWidthPx
   }
 
   /** Tallest stacked content height in px (tables, text, section headers). */
   estimateContentHeightPx(): number {
     const merged = mergeLayout(this.layout)
+    const contentWidthPx = Math.max(1, this.computeContentWidthPx())
+    const { width: tailWidthPx } = resolveTailWidth({ ...merged, tailTableWidthPx: contentWidthPx })
+    const wrapWidthPx = Math.max(1, tailWidthPx - logInsetsTotalX(getTailLogInsets()))
     let height = 0
     for (const section of this.sections) {
-      height += logSectionHeightPx(section, merged)
-    }
-    if (this.sections.length > 1) {
-      height += (this.sections.length - 1) * 4
+      height += logSectionHeightPx(section, merged, wrapWidthPx)
+      height += sectionBottomMarginPx(section)
     }
     return height
   }
@@ -922,10 +1275,24 @@ export class ScriptLogBuilder {
   }
 
   render(ns: NS): Promise<void> {
+    const merged = mergeLayout(this.layout)
+    const contentWidthPx = this.computeContentWidthPx()
+    const contentHeightPx = this.estimateContentHeightPx()
+    if (shouldLogTailSizingDebug(merged)) {
+      const { width: tailWidthPx } = resolveTailWidth({ ...merged, tailTableWidthPx: contentWidthPx })
+      const wrapWidthPx = Math.max(1, tailWidthPx - logInsetsTotalX(getTailLogInsets()))
+      pendingTailSizingDebug = buildPendingTailSizingDebug(
+        this.sections,
+        merged,
+        contentWidthPx,
+        contentHeightPx,
+        wrapWidthPx
+      )
+    }
     return renderScriptLog(ns, this.build(), {
       ...this.layout,
-      tailTableWidthPx: this.computeContentWidthPx(),
-      tailContentHeightPx: this.estimateContentHeightPx(),
+      tailTableWidthPx: contentWidthPx,
+      tailContentHeightPx: contentHeightPx,
     })
   }
 }
@@ -1117,13 +1484,69 @@ export class TabbedScriptLogBuilder {
   }
 }
 
+function pinTailScroll(viewport: HTMLElement): void {
+  const win = eval("window") as Window
+  const scrollParent = findScrollParent(viewport)
+  if (!scrollParent) return
+  const flexDirection = win.getComputedStyle(scrollParent).flexDirection
+  scrollParent.scrollTop =
+    flexDirection === "column-reverse" ? scrollParent.scrollHeight - scrollParent.clientHeight : 0
+}
+
+/**
+ * Size the tail from rendered content + this window's log chrome (title bar + scroll padding).
+ * Same path for every script — no per-table px fudge factors.
+ */
+function resolveMeasuredTailSize(layout: TableLayout): ReturnType<typeof resolveTailSize> | null {
+  const instanceId = layout.tailViewportInstanceId
+  if (instanceId == null) return null
+  const viewport = findTailViewport(instanceId)
+  if (!viewport) return null
+
+  const win = eval("window") as Window
+  const scrollParent = findScrollParent(viewport)
+  const insets = scrollParent ? measureLogInsets(scrollParent) : getTailLogInsets()
+  const contentW = Math.ceil(viewport.scrollWidth)
+  const contentH = Math.ceil(viewport.offsetHeight)
+  const titleBar = getTailTitleBarPx(layout)
+  const padX = logInsetsTotalX(insets)
+  const padY = logInsetsTotalY(insets)
+  const maxW = layout.tailMaxWidthPx ?? Math.floor(win.innerWidth * 0.95)
+  const maxH = layout.tailMaxHeightPx ?? win.innerHeight
+  const naturalW = Math.max(layout.tailWidthPx ?? 0, contentW + padX)
+  const naturalH = titleBar + contentH + padY
+  const width = Math.min(naturalW, maxW)
+  const height = Math.min(naturalH, maxH)
+  const scrollable = naturalH > maxH
+  return {
+    width,
+    height,
+    viewportMaxHeightPx: scrollable ? Math.max(40, height - titleBar - padY) : undefined,
+  }
+}
+
+function applyMeasuredTailSize(ns: NS, layout: TableLayout, instanceId: number): boolean {
+  const viewport = findTailViewport(instanceId)
+  if (!viewport) return false
+
+  const sized = resolveMeasuredTailSize({ ...layout, tailViewportInstanceId: instanceId })
+  if (!sized) return false
+
+  ns.ui.resizeTail(sized.width, sized.height)
+  pinTailScroll(viewport)
+  return true
+}
+
 export async function renderScriptLog(ns: NS, content: ReactNode, layout?: Partial<TableLayout>): Promise<void> {
-  const renderLayout = layoutForTailRender(layout)
+  const instanceId = ++tailViewportSeq
+  primeTailLogChrome(mergeLayout(layout))
+  const renderLayout = layoutForTailRender({ ...layout, tailViewportInstanceId: instanceId })
   applyTailSize(ns, renderLayout)
   ns.clearLog()
   ns.printRaw(buildViewportShell(content, renderLayout))
   ns.ui.renderTail()
-  logTailSizingReport(layout)
+  applyMeasuredTailSize(ns, renderLayout, instanceId)
+  logTailSizingReport({ ...layout, ...renderLayout, tailViewportInstanceId: instanceId })
 }
 
 export function initScriptLogTail(ns: NS, title: string, layout?: Partial<TableLayout>): void {
@@ -1133,5 +1556,6 @@ export function initScriptLogTail(ns: NS, title: string, layout?: Partial<TableL
   ns.ui.setTailTitle(title)
   ns.ui.setTailFontSize(merged.fontSizePx)
   primeChWidthPx(merged.fontSizePx)
+  primeTailLogChrome(merged)
 }
 
