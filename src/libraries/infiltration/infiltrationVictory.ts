@@ -15,7 +15,7 @@ const VICTORY_FACTION_STATE_WAIT_MS = 0
 const VICTORY_TRADE_BUTTON_COMMIT_WAIT_MS = 0
 
 /** TEMP: cycle trade target each victory to verify faction selection at speed. */
-const VICTORY_TEST_CYCLE_FACTIONS = true
+const VICTORY_TEST_CYCLE_FACTIONS = false
 let victoryTestFactionIndex = 0
 
 function logVictoryTestCycleFaction(faction: string | null, detail = ""): void {
