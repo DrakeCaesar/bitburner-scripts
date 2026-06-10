@@ -1,5 +1,5 @@
 import type { FactionName, NS } from "@ns"
-import { getPreferredFactionForRep, parseFactionWorkPriority } from "../factionWork.js"
+import { getPreferredFactionForInfiltrationRep } from "../factionWork.js"
 import { getInfiltrationRewardGoal, isInfiltrationMoneyMode } from "./infiltrationTargets.js"
 import { waitForCityNavigationReady } from "./infiltrationNavigation.js"
 
@@ -608,7 +608,7 @@ export async function collectInfiltrationVictoryReward(
   const rewardGoal = getInfiltrationRewardGoal(ns)
   const faction =
     rewardGoal === "reputation"
-      ? getPreferredFactionForRep(ns, parseFactionWorkPriority(ns))
+      ? getPreferredFactionForInfiltrationRep(ns)
       : null
   const expected = readVictoryScreenRewards()
   const before = snapshotPlayerRewards(ns, faction)

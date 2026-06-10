@@ -1,5 +1,5 @@
 import { NS } from "@ns"
-import { getPreferredFactionForRep, parseFactionWorkPriority } from "./libraries/factionWork.js"
+import { getPreferredFactionForInfiltrationRep } from "./libraries/factionWork.js"
 import { disableTrustedKeyInjection, syncTrustedKeyInjection } from "./libraries/infiltration/infiltrationKeyInput.js"
 import { isInfiltrationActive } from "./libraries/infiltration/infiltrationNavigation.js"
 import { runInfiltrationForTarget } from "./libraries/infiltration/infiltrationRun.js"
@@ -41,9 +41,7 @@ export async function main(ns: NS): Promise<void> {
     while (true) {
       const rewardGoal = getInfiltrationRewardGoal(ns)
       const grindFaction =
-        rewardGoal === "reputation"
-          ? getPreferredFactionForRep(ns, parseFactionWorkPriority(ns))
-          : null
+        rewardGoal === "reputation" ? getPreferredFactionForInfiltrationRep(ns) : null
       const target = getBestInfiltrationTarget(ns, rewardGoal)
 
       if (!target) {

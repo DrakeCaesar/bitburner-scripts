@@ -297,6 +297,87 @@ export function findAugmentTargets(
   return prioritizeTargets(gatherAugmentTargets(ns, playerFactions), getTargetFavor(ns), priority)
 }
 
+/** Total rep from zero that equals donation favor (e.g. 150). */
+export function repForTargetFavor(ns: NS, targetFavor?: number): number {
+  try {
+    return ns.formulas.reputation.calculateFavorToRep(targetFavor ?? getTargetFavor(ns))
+  } catch {
+    return 0
+  }
+}
+
+export type InfiltrationRepTier = "pre-favor-aug" | "favor" | "post-favor-aug"
+
+export interface InfiltrationGrindTarget extends AugmentTarget {
+  tier: InfiltrationRepTier
+}
+
+function buildFavorGrindTarget(ns: NS, faction: FactionName, targetFavor: number): AugmentTarget {
+  const favor = ns.singularity.getFactionFavor(faction)
+  const favorGain = ns.singularity.getFactionFavorGain(faction)
+  const currentRep = ns.singularity.getFactionRep(faction)
+  const predictedFavor = favor + favorGain
+  const repNeeded = repNeededForTargetFavor(ns, faction, favor, currentRep, targetFavor) ?? 0
+
+  return {
+    augmentName: `donation favor ${targetFavor}`,
+    faction,
+    currentRep,
+    requiredRep: currentRep + repNeeded,
+    repGap: repNeeded,
+    favor,
+    favorGain,
+    predictedFavor,
+  }
+}
+
+/**
+ * Infiltration rep grind order:
+ * 1. Augments cheaper than donation-favor rep threshold
+ * 2. Donation favor for all factions still below it
+ * 3. Remaining augments at or above that threshold
+ */
+export function prioritizeInfiltrationRepTargets(
+  ns: NS,
+  playerFactions: readonly FactionName[]
+): InfiltrationGrindTarget[] {
+  const targetFavor = getTargetFavor(ns)
+  const repForDonation = repForTargetFavor(ns, targetFavor)
+  const all = gatherAugmentTargets(ns, playerFactions)
+
+  const tier1 = all
+    .filter((target) => target.requiredRep < repForDonation)
+    .sort((a, b) => a.repGap - b.repGap)
+    .map((target) => ({ ...target, tier: "pre-favor-aug" as const }))
+  if (tier1.length > 0) return tier1
+
+  const tier2: InfiltrationGrindTarget[] = []
+  for (const faction of playerFactions) {
+    if (!factionOffersWork(ns, faction)) continue
+    const predictedFavor =
+      ns.singularity.getFactionFavor(faction) + ns.singularity.getFactionFavorGain(faction)
+    if (predictedFavor >= targetFavor) continue
+    tier2.push({ ...buildFavorGrindTarget(ns, faction, targetFavor), tier: "favor" })
+  }
+  tier2.sort((a, b) => targetFavor - a.predictedFavor - (targetFavor - b.predictedFavor))
+  if (tier2.length > 0) return tier2
+
+  return all
+    .filter((target) => target.requiredRep >= repForDonation)
+    .sort((a, b) => a.repGap - b.repGap)
+    .map((target) => ({ ...target, tier: "post-favor-aug" as const }))
+}
+
+export function getInfiltrationGrindTarget(ns: NS): InfiltrationGrindTarget | null {
+  const workableFactions = filterWorkableFactions(ns, ns.getPlayer().factions)
+  return prioritizeInfiltrationRepTargets(ns, workableFactions)[0] ?? null
+}
+
+/** Faction that needs reputation next for infiltration victory trades. */
+export function getPreferredFactionForInfiltrationRep(ns: NS): FactionName | null {
+  return getInfiltrationGrindTarget(ns)?.faction ?? null
+}
+
 /** Faction that needs reputation next, using the same rules as autoWorkFactions. */
 export function getPreferredFactionForRep(
   ns: NS,

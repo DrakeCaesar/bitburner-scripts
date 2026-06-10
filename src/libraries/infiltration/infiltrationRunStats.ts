@@ -1,12 +1,5 @@
 import type { FactionName, NS } from "@ns"
-import {
-  findAugmentTargets,
-  filterWorkableFactions,
-  getTargetFavor,
-  parseFactionWorkPriority,
-  repNeededForTargetFavor,
-  type FactionWorkPriority,
-} from "../factionWork.js"
+import { getInfiltrationGrindTarget, type InfiltrationRepTier } from "../factionWork.js"
 import type { InfiltrationRewardGoal, InfiltrationTarget } from "./infiltrationTargets.js"
 
 const MAX_CYCLE_SAMPLES = 5
@@ -47,27 +40,11 @@ function average(values: number[]): number | null {
   return values.reduce((sum, value) => sum + value, 0) / values.length
 }
 
-export function getInfiltrationRepGoal(
-  ns: NS,
-  faction: FactionName,
-  priority: FactionWorkPriority
-): InfiltrationRepGoal | null {
-  const targetFavor = getTargetFavor(ns)
-  const favor = ns.singularity.getFactionFavor(faction)
-  const favorGain = ns.singularity.getFactionFavorGain(faction)
-  const currentRep = ns.singularity.getFactionRep(faction)
+export function getInfiltrationRepGoal(ns: NS, faction: FactionName): InfiltrationRepGoal | null {
+  const grind = getInfiltrationGrindTarget(ns)
+  if (!grind || grind.faction !== faction || grind.repGap <= 0) return null
 
-  if (priority === "favor" && favor + favorGain < targetFavor) {
-    const repNeeded = repNeededForTargetFavor(ns, faction, favor, currentRep, targetFavor)
-    if (repNeeded == null) return null
-    return { label: `donation favor ${targetFavor}`, repNeeded }
-  }
-
-  const workableFactions = filterWorkableFactions(ns, ns.getPlayer().factions)
-  const augmentTarget = findAugmentTargets(ns, workableFactions, priority).find((row) => row.faction === faction)
-  if (!augmentTarget || augmentTarget.repGap <= 0) return null
-
-  return { label: augmentTarget.augmentName, repNeeded: augmentTarget.repGap }
+  return { label: grind.augmentName, repNeeded: grind.repGap }
 }
 
 export class InfiltrationRunStatsTracker {
@@ -114,10 +91,9 @@ export class InfiltrationRunStatsTracker {
   }
 
   getView(ns: NS): InfiltrationRunView {
-    const priority = parseFactionWorkPriority(ns)
     const repGoal =
       this.rewardGoal === "reputation" && this.faction != null
-        ? getInfiltrationRepGoal(ns, this.faction, priority)
+        ? getInfiltrationRepGoal(ns, this.faction)
         : null
 
     const roundCount = this.samples.length
@@ -169,6 +145,17 @@ export class InfiltrationRunStatsTracker {
   }
 }
 
+function formatInfiltrationTierLabel(tier: InfiltrationRepTier): string {
+  switch (tier) {
+    case "pre-favor-aug":
+      return "pre-favor augment"
+    case "favor":
+      return "donation favor"
+    case "post-favor-aug":
+      return "post-favor augment"
+  }
+}
+
 export function formatInfiltrationRunViewLines(ns: NS, view: InfiltrationRunView | null): string[] {
   if (!view || !view.location) {
     return ["Run: waiting for target..."]
@@ -184,6 +171,10 @@ export function formatInfiltrationRunViewLines(ns: NS, view: InfiltrationRunView
     lines.push(`Predicted: ${ns.format.number(view.predictedReward)}`)
   } else if (view.faction) {
     lines.push(`Grinding: ${view.faction} reputation`)
+    const grind = getInfiltrationGrindTarget(ns)
+    if (grind?.faction === view.faction) {
+      lines.push(`Target: ${grind.augmentName} (${formatInfiltrationTierLabel(grind.tier)})`)
+    }
     lines.push(`Predicted: ${ns.format.number(view.predictedReward)} rep`)
   } else {
     lines.push("Grinding: money (no faction target)")
