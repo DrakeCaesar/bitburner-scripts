@@ -8,6 +8,25 @@
 /dist/
 /playground/dist/
 
+# IPvGO native / WASM engine build artifacts
+ipvgo-engine/build/
+ipvgo-engine/temp/
+ipvgo-engine/cpp/*.wasm
+ipvgo-engine/cpp/ipvgo.wasm.js
+
+# CMake artifacts if misconfigured into repo-root build/ (legacy watch scripts live there)
+build/.cmake/
+build/_deps/
+build/CMakeCache.txt
+build/CMakeFiles/
+build/cmake_install.cmake
+build/*.vcxproj
+build/*.vcxproj.filters
+build/*.slnx
+build/*.dir/
+build/x64/
+build/Debug/
+
 # MacOS folder attributes
 .DS_Store
 

@@ -6,6 +6,11 @@ import {
   verifyIpvgoWorker,
 } from "./libraries/ipvgo/createWorker.js"
 import {
+  isIpvgoEngineAvailable,
+  requestIpvgoEngineMove,
+} from "./libraries/ipvgo/engineClient.js"
+import { findTacticalMove } from "./libraries/ipvgo/tactics.js"
+import {
   IPVGO_BOARD_SIZES,
   IPVGO_KOMI_BY_OPPONENT,
   IPVGO_OPPONENTS,
@@ -110,6 +115,8 @@ export async function main(ns: NS): Promise<void> {
   const boardSize = parseBoardSize(ns.args[1] as string | number | undefined)
   const iterations = parseIterations(ns.args[2] as string | number | undefined)
   const autoReset = ns.args.includes("auto")
+  const forceEngine = ns.args.includes("engine")
+  const forceWorker = ns.args.includes("worker")
 
   logStatus(ns, "IPvGO MCTS bot starting")
   ns.print(`Opponent: ${opponent}`)
@@ -117,22 +124,57 @@ export async function main(ns: NS): Promise<void> {
   ns.print(`Iterations/move: ${iterations}`)
   ns.print(`Auto reset: ${autoReset ? "on" : "off"}`)
   ns.print(`RAM note: needs ~16GB for getBoardState + getValidMoves + makeMove`)
-  ns.print(`Usage: run ${SCRIPT_NAME} [opponent] [boardSize] [iterations] [auto]`)
+  ns.print(
+    `Usage: run ${SCRIPT_NAME} [opponent] [boardSize] [iterations] [auto] [engine|worker]`
+  )
   ns.print("")
 
-  let worker: Worker
-  try {
-    worker = createIpvgoWorker(ns)
-    logStatus(ns, "Worker loaded, running smoke test...")
-    const smoke = await verifyIpvgoWorker(worker)
+  type MoveBackend = "native" | "worker"
+  let backend: MoveBackend
+
+  if (forceEngine && forceWorker) {
+    ns.print("ERROR: use only one of 'engine' or 'worker'")
+    return
+  }
+
+  if (forceEngine) {
+    const available = await isIpvgoEngineAvailable()
+    if (!available) {
+      ns.print(
+        "ERROR: native engine unavailable. Start it with: cd ipvgo-engine && pnpm run build:native && pnpm run server"
+      )
+      return
+    }
+    backend = "native"
+    logStatus(ns, "Using native engine (localhost:3010)")
+  } else if (forceWorker) {
+    backend = "worker"
+    logStatus(ns, "Using in-game JS worker")
+  } else {
+    backend = (await isIpvgoEngineAvailable()) ? "native" : "worker"
     logStatus(
       ns,
-      `Worker OK (smoke move ${formatMove(smoke.move)}, ${smoke.iterations} sims, ${smoke.elapsedMs.toFixed(0)}ms)`
+      backend === "native"
+        ? "Native engine detected (localhost:3010)"
+        : "No native engine; using in-game JS worker"
     )
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    ns.print(`ERROR: ${message}`)
-    return
+  }
+
+  let worker: Worker | undefined
+  if (backend === "worker") {
+    try {
+      worker = createIpvgoWorker(ns)
+      logStatus(ns, "Worker loaded, running smoke test...")
+      const smoke = await verifyIpvgoWorker(worker)
+      logStatus(
+        ns,
+        `Worker OK (smoke move ${formatMove(smoke.move)}, ${smoke.iterations} sims, ${smoke.elapsedMs.toFixed(0)}ms)`
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      ns.print(`ERROR: ${message}`)
+      return
+    }
   }
 
   let moveNumber = 0
@@ -191,39 +233,54 @@ export async function main(ns: NS): Promise<void> {
         continue
       }
 
-      logStatus(
-        ns,
-        `Move ${moveNumber}: thinking (${iterations} sims, ${legalCount} legal, ${history.length} prior boards)...`
-      )
+      const tactical = findTacticalMove(board, validMoves, "X")
+      let move: IpvgoMove
+      let thinkMs = 0
+      let sims = 0
 
-      const started = performance.now()
-      const analysis = await requestIpvgoMove(worker, {
-        board,
-        history,
-        komi,
-        iterations,
-        playAs: "X",
-        validMoves,
-      })
-      const thinkMs = performance.now() - started
-
-      const suggested = analysis.move
-      const move = pickLegalMove(validMoves, suggested)
-      if (
-        suggested.type === "move" &&
-        (move.type === "pass" || move.x !== suggested.x || move.y !== suggested.y)
-      ) {
+      if (tactical) {
+        move = tactical
+        logStatus(ns, `Move ${moveNumber}: tactical ${formatMove(move)} (capture or defend)`)
+      } else {
         logStatus(
           ns,
-          `Move ${moveNumber}: worker suggested illegal ${formatMove(suggested)}, using ${formatMove(move)} instead`
+          `Move ${moveNumber}: thinking (${iterations} sims, ${legalCount} legal, ${history.length} prior boards)...`
+        )
+
+        const started = performance.now()
+        const request = {
+          board,
+          history,
+          komi,
+          iterations,
+          playAs: "X" as const,
+          validMoves,
+        }
+        const analysis =
+          backend === "native"
+            ? await requestIpvgoEngineMove(request)
+            : await requestIpvgoMove(worker!, request)
+        thinkMs = performance.now() - started
+        sims = analysis.iterations
+
+        const suggested = analysis.move
+        move = pickLegalMove(validMoves, suggested)
+        if (
+          suggested.type === "move" &&
+          (move.type === "pass" || move.x !== suggested.x || move.y !== suggested.y)
+        ) {
+          logStatus(
+            ns,
+            `Move ${moveNumber}: ${backend} suggested illegal ${formatMove(suggested)}, using ${formatMove(move)} instead`
+          )
+        }
+
+        logStatus(
+          ns,
+          `Move ${moveNumber}: play ${formatMove(move)} ` +
+            `(${sims} sims, ${thinkMs.toFixed(0)}ms)`
         )
       }
-
-      logStatus(
-        ns,
-        `Move ${moveNumber}: play ${formatMove(move)} ` +
-          `(${analysis.iterations} sims, worker ${analysis.elapsedMs.toFixed(0)}ms, total ${thinkMs.toFixed(0)}ms)`
-      )
 
       let result
       if (move.type === "pass") {

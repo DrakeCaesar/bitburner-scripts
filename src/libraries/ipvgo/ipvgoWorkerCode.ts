@@ -173,7 +173,13 @@ function ipvgoIsSuperko(board: Board, history: Board[]): boolean {
   return false
 }
 
-function ipvgoGetLegalMoves(board: Board, history: Board[], color: Color, validMask?: boolean[][]): Move[] {
+function ipvgoGetLegalMoves(
+  board: Board,
+  history: Board[],
+  color: Color,
+  validMask?: boolean[][],
+  allowPass = true
+): Move[] {
   const size = ipvgoBoardSize(board)
   const moves: Move[] = []
 
@@ -188,7 +194,10 @@ function ipvgoGetLegalMoves(board: Board, history: Board[], color: Color, validM
     }
   }
 
-  moves.push({ type: "pass" })
+  if (allowPass || moves.length === 0) {
+    moves.push({ type: "pass" })
+  }
+
   return moves
 }
 
@@ -263,19 +272,33 @@ function ipvgoScore(board: Board, komi: number): { black: number; white: number 
   }
 }
 
+function ipvgoOwnChainInAtari(board: Board, x: number, y: number, color: Color): boolean {
+  for (const [nx, ny] of ipvgoNeighbors(board, x, y)) {
+    if (board[nx][ny] !== color) continue
+    const chain = ipvgoCollectChain(board, nx, ny, color)
+    const liberties = ipvgoChainLiberties(board, chain)
+    if (liberties.size === 1 && liberties.has(`${x},${y}`)) return true
+  }
+  return false
+}
+
 function ipvgoMoveHeuristic(board: Board, move: Move, color: Color): number {
-  if (move.type === "pass") return -5
+  if (move.type === "pass") return -1000
   const { x, y } = move
   let score = 0
-  if (ipvgoWouldCapture(board, x, y, color)) score += 100
+  if (ipvgoWouldCapture(board, x, y, color)) score += 500
+  if (ipvgoOwnChainInAtari(board, x, y, color)) score += 300
   for (const [nx, ny] of ipvgoNeighbors(board, x, y)) {
     const stone = board[nx][ny]
-    if (stone === color) score += 4
-    else if (stone === ipvgoOpponent(color)) score += 2
+    if (stone === color) score += 6
+    else if (stone === ipvgoOpponent(color)) score += 3
   }
-  if (x === 0 || y === 0 || x === ipvgoBoardSize(board) - 1 || y === ipvgoBoardSize(board) - 1) {
-    score += 1
-  }
+  const size = ipvgoBoardSize(board)
+  const edge = x === 0 || y === 0 || x === size - 1 || y === size - 1
+  if (edge) score += 2
+  const center = Math.floor(size / 2)
+  const dist = Math.abs(x - center) + Math.abs(y - center)
+  score += Math.max(0, 4 - dist)
   return score
 }
 
@@ -322,7 +345,7 @@ function ipvgoCreateNode(
     passes,
     parent,
     children: [],
-    untried: ipvgoGetLegalMoves(board, history, player, validMask).sort(
+    untried: ipvgoGetLegalMoves(board, history, player, validMask, validMask === undefined).sort(
       (a, b) => ipvgoMoveHeuristic(board, b, player) - ipvgoMoveHeuristic(board, a, player)
     ),
     visits: 0,
@@ -330,18 +353,22 @@ function ipvgoCreateNode(
   }
 }
 
-function ipvgoUctValue(node: MctsNode, child: MctsNode, exploration: number): number {
+function ipvgoUctValue(node: MctsNode, child: MctsNode, exploration: number, board: Board, rootColor: Color): number {
   if (child.visits === 0) return Number.POSITIVE_INFINITY
   const exploitation = child.wins / child.visits
   const explore = exploration * Math.sqrt(Math.log(node.visits) / child.visits)
-  return exploitation + explore
+  const prior =
+    child.move && child.move.type === "move"
+      ? ipvgoMoveHeuristic(board, child.move, rootColor) / 500
+      : 0
+  return exploitation + explore + prior * 0.05
 }
 
-function ipvgoSelectChild(node: MctsNode, exploration: number): MctsNode {
+function ipvgoSelectChild(node: MctsNode, exploration: number, rootColor: Color): MctsNode {
   let best = node.children[0]
   let bestValue = -Infinity
   for (const child of node.children) {
-    const value = ipvgoUctValue(node, child, exploration)
+    const value = ipvgoUctValue(node, child, exploration, node.board, rootColor)
     if (value > bestValue) {
       bestValue = value
       best = child
@@ -370,8 +397,15 @@ function ipvgoRandomChoice<T>(items: T[]): T {
 
 function ipvgoSimulationPolicy(board: Board, moves: Move[], color: Color): Move {
   const captures = moves.filter((m) => m.type === "move" && ipvgoWouldCapture(board, m.x, m.y, color))
-  if (captures.length > 0 && Math.random() < 0.85) {
+  if (captures.length > 0 && Math.random() < 0.92) {
     return ipvgoRandomChoice(captures)
+  }
+
+  const defends = moves.filter(
+    (m) => m.type === "move" && ipvgoOwnChainInAtari(board, m.x, m.y, color)
+  )
+  if (defends.length > 0 && Math.random() < 0.8) {
+    return ipvgoRandomChoice(defends)
   }
 
   const nonPass = moves.filter((m) => m.type === "move")
@@ -444,7 +478,7 @@ function ipvgoFindBestMove(
     let node: MctsNode = root
 
     while (node.untried.length === 0 && node.children.length > 0) {
-      node = ipvgoSelectChild(node, exploration)
+      node = ipvgoSelectChild(node, exploration, playAs)
     }
 
     if (node.untried.length > 0) {
@@ -462,9 +496,18 @@ function ipvgoFindBestMove(
   }
 
   let bestChild = root.children[0]
+  let bestRate = -1
   for (const child of root.children) {
-    if (child.visits > bestChild.visits) {
+    if (child.visits < 3) continue
+    const rate = child.wins / child.visits
+    if (rate > bestRate || (rate === bestRate && child.visits > bestChild.visits)) {
+      bestRate = rate
       bestChild = child
+    }
+  }
+  if (bestRate < 0) {
+    for (const child of root.children) {
+      if (child.visits > bestChild.visits) bestChild = child
     }
   }
 

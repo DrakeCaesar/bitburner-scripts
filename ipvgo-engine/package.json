@@ -1,0 +1,13 @@
+{
+  "name": "bitburner-ipvgo-engine",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Native / WASM IPvGO engine for Bitburner (JSON API)",
+  "type": "module",
+  "scripts": {
+    "build:wasm": "node build.js",
+    "build:native": "cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release",
+    "build": "pnpm run build:wasm",
+    "server": "node server.js"
+  }
+}
