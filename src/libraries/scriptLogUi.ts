@@ -1146,21 +1146,23 @@ export class TabbedScriptLogBuilder {
     return Math.ceil(width)
   }
 
+  private activeTabBuilder(): ScriptLogBuilder | undefined {
+    const builder = this.builders.get(this.displayTabId)
+    return builder && !builder.isEmpty() ? builder : undefined
+  }
+
   private resolveTailTableWidthPx(): number {
-    let maxWidth = this.estimateTabBarWidthPx()
-    for (const builder of this.builders.values()) {
-      maxWidth = Math.max(maxWidth, builder.computeContentWidthPx())
+    let width = this.estimateTabBarWidthPx()
+    const active = this.activeTabBuilder()
+    if (active) {
+      width = Math.max(width, active.computeContentWidthPx())
     }
-    return maxWidth > 0 ? maxWidth : mergeLayout(this.layout).tableWidthPx
+    return width > 0 ? width : mergeLayout(this.layout).tableWidthPx
   }
 
   private resolveTailContentHeightPx(): number {
-    let panelHeight = 0
-    for (const builder of this.builders.values()) {
-      if (!builder.isEmpty()) {
-        panelHeight = Math.max(panelHeight, builder.estimateContentHeightPx())
-      }
-    }
+    const active = this.activeTabBuilder()
+    const panelHeight = active ? active.estimateContentHeightPx() : 0
     return panelHeight + TAB_BAR_HEIGHT_PX
   }
 
