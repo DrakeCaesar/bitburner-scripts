@@ -16,6 +16,7 @@ const PROGRAMS: Program[] = [
   { name: "DeepscanV1.exe", cost: 500000 },
   { name: "DeepscanV2.exe", cost: 25000000 },
   { name: "AutoLink.exe", cost: 1000000 },
+  { name: "DarkscapeNavigator.exe", cost: 50000000 },
 ]
 
 import type { LogFn } from "./logFn.js"
