@@ -20,6 +20,7 @@ import {
   measureTreeTableHostChars,
   mergeLayout,
   type ReactTableConfig,
+  type TabbedLogOptions,
   type TabDefinition,
   type TableLayout,
   type TreeTableConfig,
@@ -36,6 +37,7 @@ export {
   measureTreeTableHostChars,
   mergeLayout,
   type ReactTableConfig,
+  type TabbedLogOptions,
   type TabDefinition,
   type TableLayout,
   type TreeTableConfig,
@@ -55,8 +57,12 @@ export function createTailLog(overrides?: Partial<TableLayout>): ScriptLogBuilde
 }
 
 /** Fluent builder for a tabbed tail window. */
-export function createTabbedTailLog(tabs: TabDefinition[], overrides?: Partial<TableLayout>): TabbedScriptLogBuilder {
-  return new TabbedScriptLogBuilder(tabs, overrides)
+export function createTabbedTailLog(
+  tabs: TabDefinition[],
+  overrides?: Partial<TableLayout>,
+  options?: TabbedLogOptions
+): TabbedScriptLogBuilder {
+  return new TabbedScriptLogBuilder(tabs, overrides, options)
 }
 
 /** Open tail window with standard layout (call once at script start). */

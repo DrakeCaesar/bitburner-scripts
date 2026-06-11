@@ -1012,6 +1012,14 @@ export interface TabDefinition {
   label: string
 }
 
+export interface TabbedLogOptions {
+  /**
+   * Build React only for the active tab (faster refresh). Inactive tabs stay empty until
+   * the next render with that tab selected — do not use when users click tabs between renders.
+   */
+  lazyInactivePanels?: boolean
+}
+
 interface TabbedLogViewProps {
   tabOrder: TabDefinition[]
   panels: Record<string, ReactNode>
@@ -1085,13 +1093,16 @@ export class TabbedScriptLogBuilder {
   /** Tab shown in the UI; kept across re-renders when the user picks a tab. */
   private displayTabId: string
   private layout?: Partial<TableLayout>
+  private readonly lazyInactivePanels: boolean
 
   constructor(
     private tabOrder: TabDefinition[],
-    layout?: Partial<TableLayout>
+    layout?: Partial<TableLayout>,
+    options?: TabbedLogOptions
   ) {
     this.layout = layout
     this.displayTabId = tabOrder[0]?.id ?? ""
+    this.lazyInactivePanels = options?.lazyInactivePanels === true
   }
 
   reset(): this {
@@ -1184,9 +1195,18 @@ export class TabbedScriptLogBuilder {
     }
 
     const panels: Record<string, ReactNode> = {}
-    const activeBuilder = this.builders.get(this.displayTabId)
-    if (activeBuilder && !activeBuilder.isEmpty()) {
-      panels[this.displayTabId] = activeBuilder.build(layout)
+    if (this.lazyInactivePanels) {
+      const activeBuilder = this.builders.get(this.displayTabId)
+      if (activeBuilder && !activeBuilder.isEmpty()) {
+        panels[this.displayTabId] = activeBuilder.build(layout)
+      }
+    } else {
+      for (const { id } of this.tabOrder) {
+        const builder = this.builders.get(id)
+        if (builder && !builder.isEmpty()) {
+          panels[id] = builder.build(layout)
+        }
+      }
     }
 
     return React.createElement(TabbedLogView, {

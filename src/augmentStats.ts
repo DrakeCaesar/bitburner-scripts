@@ -16,7 +16,7 @@ export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL")
   openTailLog(ns, "Augment Stats")
 
-  const tabbedLog = createTabbedTailLog(AUGMENT_STATS_TABS)
+  const tabbedLog = createTabbedTailLog(AUGMENT_STATS_TABS, undefined, { lazyInactivePanels: true })
 
   tabbedLog.clearPanels()
   const { summary: catalogSummary, ...catalogTable } = buildAugmentCatalogTableConfig(ns)
