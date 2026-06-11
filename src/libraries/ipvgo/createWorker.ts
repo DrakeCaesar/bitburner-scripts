@@ -59,6 +59,7 @@ const EMPTY_5X5 = [".....", ".....", ".....", ".....", "....."]
 
 /** Quick worker smoke test so failures show up before the first real move. */
 export async function verifyIpvgoWorker(worker: Worker): Promise<IpvgoWorkerResponse> {
+  const validMoves = EMPTY_5X5.map(() => Array(5).fill(true))
   return requestIpvgoMove(
     worker,
     {
@@ -67,6 +68,7 @@ export async function verifyIpvgoWorker(worker: Worker): Promise<IpvgoWorkerResp
       komi: 5.5,
       iterations: 10,
       playAs: "X",
+      validMoves,
     },
     10_000
   )

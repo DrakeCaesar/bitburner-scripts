@@ -6,12 +6,16 @@ export type IpvgoColor = "X" | "O"
 
 export type IpvgoMove = { type: "move"; x: number; y: number } | { type: "pass" }
 
+export type IpvgoValidMoves = boolean[][]
+
 export type IpvgoWorkerRequest = {
   board: IpvgoBoard
   history: IpvgoBoard[]
   komi: number
   iterations: number
   playAs: IpvgoColor
+  /** Authoritative legal moves from ns.go.analysis.getValidMoves() for the root position. */
+  validMoves: IpvgoValidMoves
 }
 
 export type IpvgoWorkerResponse = {

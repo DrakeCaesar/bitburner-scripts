@@ -11,6 +11,7 @@ import {
   IPVGO_OPPONENTS,
   type IpvgoBoardSize,
   type IpvgoMove,
+  type IpvgoValidMoves,
 } from "./libraries/ipvgo/types.js"
 
 const SCRIPT_NAME = "ipvgo.js"
@@ -46,6 +47,33 @@ function parseIterations(value: string | number | undefined): number {
 
 function formatMove(move: IpvgoMove): string {
   return move.type === "pass" ? "pass" : `${move.x},${move.y}`
+}
+
+function countValidMoves(validMoves: IpvgoValidMoves): number {
+  let count = 0
+  for (const column of validMoves) {
+    for (const isValid of column) {
+      if (isValid) count++
+    }
+  }
+  return count
+}
+
+function pickLegalMove(validMoves: IpvgoValidMoves, preferred?: IpvgoMove): IpvgoMove {
+  if (preferred?.type === "move" && validMoves[preferred.x]?.[preferred.y] === true) {
+    return preferred
+  }
+
+  const options: Array<[number, number]> = []
+  for (let x = 0; x < validMoves.length; x++) {
+    for (let y = 0; y < validMoves[x].length; y++) {
+      if (validMoves[x][y]) options.push([x, y])
+    }
+  }
+
+  if (options.length === 0) return { type: "pass" }
+  const [x, y] = options[Math.floor(Math.random() * options.length)]
+  return { type: "move", x, y }
 }
 
 function formatOpponentTurn(result: { type: string; x: number | null; y: number | null }): string {
@@ -88,6 +116,7 @@ export async function main(ns: NS): Promise<void> {
   ns.print(`Board: ${boardSize}x${boardSize}`)
   ns.print(`Iterations/move: ${iterations}`)
   ns.print(`Auto reset: ${autoReset ? "on" : "off"}`)
+  ns.print(`RAM note: needs ~16GB for getBoardState + getValidMoves + makeMove`)
   ns.print(`Usage: run ${SCRIPT_NAME} [opponent] [boardSize] [iterations] [auto]`)
   ns.print("")
 
@@ -147,11 +176,24 @@ export async function main(ns: NS): Promise<void> {
       const history = ns.go.getMoveHistory()
       const gameState = ns.go.getGameState()
       const komi = gameState.komi || IPVGO_KOMI_BY_OPPONENT[opponent] || 5.5
+      const validMoves = ns.go.analysis.getValidMoves()
+      const legalCount = countValidMoves(validMoves)
       moveNumber++
+
+      if (legalCount === 0) {
+        logStatus(ns, `Move ${moveNumber}: no legal plays, passing`)
+        const passResult = await ns.go.passTurn()
+        if (passResult.type === "gameOver") {
+          logGameEnd(ns, opponent)
+          if (!autoReset) break
+        }
+        await ns.sleep(LOOP_SLEEP_MS)
+        continue
+      }
 
       logStatus(
         ns,
-        `Move ${moveNumber}: thinking (${iterations} sims, ${history.length} prior boards, komi ${komi})...`
+        `Move ${moveNumber}: thinking (${iterations} sims, ${legalCount} legal, ${history.length} prior boards)...`
       )
 
       const started = performance.now()
@@ -161,10 +203,22 @@ export async function main(ns: NS): Promise<void> {
         komi,
         iterations,
         playAs: "X",
+        validMoves,
       })
       const thinkMs = performance.now() - started
 
-      const move = analysis.move
+      const suggested = analysis.move
+      const move = pickLegalMove(validMoves, suggested)
+      if (
+        suggested.type === "move" &&
+        (move.type === "pass" || move.x !== suggested.x || move.y !== suggested.y)
+      ) {
+        logStatus(
+          ns,
+          `Move ${moveNumber}: worker suggested illegal ${formatMove(suggested)}, using ${formatMove(move)} instead`
+        )
+      }
+
       logStatus(
         ns,
         `Move ${moveNumber}: play ${formatMove(move)} ` +

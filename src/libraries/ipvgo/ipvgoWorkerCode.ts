@@ -101,6 +101,48 @@ function ipvgoWouldCapture(board: Board, x: number, y: number, color: Color): bo
   return false
 }
 
+function ipvgoAllChainsOfColor(board: Board, color: Color): Array<Array<[number, number]>> {
+  const size = ipvgoBoardSize(board)
+  const visited = new Set<string>()
+  const chains: Array<Array<[number, number]>> = []
+
+  for (let x = 0; x < size; x++) {
+    for (let y = 0; y < size; y++) {
+      if (board[x][y] !== color) continue
+      const key = `${x},${y}`
+      if (visited.has(key)) continue
+      const chain = ipvgoCollectChain(board, x, y, color)
+      for (const [cx, cy] of chain) visited.add(`${cx},${cy}`)
+      chains.push(chain)
+    }
+  }
+
+  return chains
+}
+
+/** Match game capture order: opponent groups first, then own groups, repeat until stable. */
+function ipvgoResolveCaptures(board: Board, playerWhoMoved: Color): boolean {
+  const opponent = ipvgoOpponent(playerWhoMoved)
+  let removedAny = false
+
+  for (const chain of ipvgoAllChainsOfColor(board, opponent)) {
+    if (ipvgoChainLiberties(board, chain).size === 0) {
+      ipvgoRemoveChain(board, chain)
+      removedAny = true
+    }
+  }
+  if (removedAny) return true
+
+  for (const chain of ipvgoAllChainsOfColor(board, playerWhoMoved)) {
+    if (ipvgoChainLiberties(board, chain).size === 0) {
+      ipvgoRemoveChain(board, chain)
+      return true
+    }
+  }
+
+  return false
+}
+
 function ipvgoApplyMove(board: Board, x: number, y: number, color: Color): Board | null {
   const size = ipvgoBoardSize(board)
   if (!ipvgoInBounds(size, x, y)) return null
@@ -109,15 +151,11 @@ function ipvgoApplyMove(board: Board, x: number, y: number, color: Color): Board
   const next = ipvgoCloneBoard(board)
   next[x] = next[x].slice(0, y) + color + next[x].slice(y + 1)
 
-  const opponent = ipvgoOpponent(color)
-  for (const [nx, ny] of ipvgoNeighbors(next, x, y)) {
-    if (next[nx][ny] !== opponent) continue
-    const chain = ipvgoCollectChain(next, nx, ny, opponent)
-    const liberties = ipvgoChainLiberties(next, chain)
-    if (liberties.size === 0) {
-      ipvgoRemoveChain(next, chain)
-    }
+  while (ipvgoResolveCaptures(next, color)) {
+    // Captures can cascade when removed chains free adjacent liberties.
   }
+
+  if (next[x][y] !== color) return null
 
   const ownChain = ipvgoCollectChain(next, x, y, color)
   if (ipvgoChainLiberties(next, ownChain).size === 0) {
@@ -135,12 +173,13 @@ function ipvgoIsSuperko(board: Board, history: Board[]): boolean {
   return false
 }
 
-function ipvgoGetLegalMoves(board: Board, history: Board[], color: Color): Move[] {
+function ipvgoGetLegalMoves(board: Board, history: Board[], color: Color, validMask?: boolean[][]): Move[] {
   const size = ipvgoBoardSize(board)
   const moves: Move[] = []
 
   for (let x = 0; x < size; x++) {
     for (let y = 0; y < size; y++) {
+      if (validMask && !validMask[x]?.[y]) continue
       if (board[x][y] !== ".") continue
       const played = ipvgoApplyMove(board, x, y, color)
       if (!played) continue
@@ -271,7 +310,8 @@ function ipvgoCreateNode(
   history: Board[],
   komi: number,
   passes: number,
-  parent: MctsNode | null
+  parent: MctsNode | null,
+  validMask?: boolean[][]
 ): MctsNode {
   return {
     move,
@@ -282,7 +322,7 @@ function ipvgoCreateNode(
     passes,
     parent,
     children: [],
-    untried: ipvgoGetLegalMoves(board, history, player).sort(
+    untried: ipvgoGetLegalMoves(board, history, player, validMask).sort(
       (a, b) => ipvgoMoveHeuristic(board, b, player) - ipvgoMoveHeuristic(board, a, player)
     ),
     visits: 0,
@@ -319,15 +359,7 @@ function ipvgoExpand(node: MctsNode): MctsNode {
     return ipvgoExpand(node)
   }
 
-  const child = ipvgoCreateNode(
-    move,
-    result.next,
-    result.board,
-    result.history,
-    node.komi,
-    node.passes + result.passes,
-    node
-  )
+  const child = ipvgoCreateNode(move, result.next, result.board, result.history, node.komi, node.passes + result.passes, node)
   node.children.push(child)
   return child
 }
@@ -401,9 +433,10 @@ function ipvgoFindBestMove(
   history: Board[],
   komi: number,
   playAs: Color,
-  iterations: number
+  iterations: number,
+  validMask?: boolean[][]
 ): { move: Move; iterations: number } {
-  const root = ipvgoCreateNode(null, playAs, ipvgoCloneBoard(board), [...history], komi, 0, null)
+  const root = ipvgoCreateNode(null, playAs, ipvgoCloneBoard(board), [...history], komi, 0, null, validMask)
   const exploration = 1.41
   let completed = 0
 
@@ -424,7 +457,7 @@ function ipvgoFindBestMove(
   }
 
   if (root.children.length === 0) {
-    const fallback = ipvgoGetLegalMoves(board, history, playAs).find((m) => m.type === "move")
+    const fallback = ipvgoGetLegalMoves(board, history, playAs, validMask).find((m) => m.type === "move")
     return { move: fallback ?? { type: "pass" }, iterations: completed }
   }
 
@@ -439,16 +472,17 @@ function ipvgoFindBestMove(
 }
 
 onmessage = (event: MessageEvent) => {
-  const { board, history, komi, iterations, playAs } = event.data as {
+  const { board, history, komi, iterations, playAs, validMoves } = event.data as {
     board: Board
     history: Board[]
     komi: number
     iterations: number
     playAs: Color
+    validMoves?: boolean[][]
   }
 
   const started = performance.now()
-  const result = ipvgoFindBestMove(board, history, komi, playAs, iterations)
+  const result = ipvgoFindBestMove(board, history, komi, playAs, iterations, validMoves)
   const elapsedMs = performance.now() - started
 
   postMessage({
