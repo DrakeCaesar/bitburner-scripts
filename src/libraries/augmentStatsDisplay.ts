@@ -5,8 +5,10 @@ import {
   filterAugmentPurchaseFactions,
   getAugmentCatalog,
   getAugmentData,
+  getOwnedAugmentationNames,
   isNeuroFluxAugment,
   neuroFluxPurchaseCost,
+  type AugmentCatalogEntry,
 } from "./augmentations.js"
 import { col, W, type ReactTableConfig } from "./scriptLogUiLayout.js"
 
@@ -100,6 +102,13 @@ const CITY_FACTIONS = ["Aevum", "Sector12", "Volhaven", "Chongqing", "Ishima", "
 
 function formatFactionText(factions: string[], maxWidth = 28): string {
   const joined = factions.join(", ")
+  if (joined.length <= maxWidth) return joined
+  return `${joined.substring(0, maxWidth - 3)}...`
+}
+
+function formatPrereqText(prereqs: string[], maxWidth = 28): string {
+  if (prereqs.length === 0) return ""
+  const joined = prereqs.join(", ")
   if (joined.length <= maxWidth) return joined
   return `${joined.substring(0, maxWidth - 3)}...`
 }
@@ -382,6 +391,62 @@ export function buildAugmentStatsTableConfig(ns: NS): ReactTableConfig & { summa
     columns: [...baseColumns, ...statColumns],
     rows: tableRows,
     separatorAfter,
+    highlightCells,
+  }
+}
+
+export function buildAugmentCatalogTableConfig(ns: NS): ReactTableConfig & { summary: string } {
+  const catalog = getAugmentCatalog(ns)
+  const owned = getOwnedAugmentationNames(ns)
+  const entries = [...catalog.values()].sort((a, b) => b.basePrice - a.basePrice || a.name.localeCompare(b.name))
+  const statsCache = new Map<string, AugmentMultipliers>()
+
+  const baseColumns = [
+    col("Augmentation", "left", W.augmentName),
+    col("Faction", "left", W.faction),
+    col("Base Price", "right", W.price),
+    col("Rep Req", "right", W.rep),
+    col("Prereq", "left", W.faction),
+    col("Own", "center", W.own),
+  ]
+
+  const statColumns = AUGMENT_STAT_COLUMNS.map(({ header }) => col(header, "right", W.stat))
+  const highlightCells = new Set<string>()
+  const ownColIdx = baseColumns.length - 1
+
+  const tableRows = entries.map((entry: AugmentCatalogEntry, rowIdx) => {
+    const isOwned = owned.has(entry.name)
+    if (isOwned) {
+      highlightCells.add(`${rowIdx},${ownColIdx}`)
+    }
+
+    const stats = getAugmentStatsCached(ns, entry.name, statsCache)
+    const statCells = AUGMENT_STAT_COLUMNS.map(({ key }, colIdx) => {
+      const value = formatAugmentStatValue(stats[key])
+      const statColIdx = baseColumns.length + colIdx
+      if (value) highlightCells.add(`${rowIdx},${statColIdx}`)
+      return value
+    })
+
+    return [
+      entry.name,
+      formatFactionText(entry.factions),
+      ns.format.number(entry.basePrice),
+      ns.format.number(entry.repReq),
+      formatPrereqText(entry.prereqs),
+      isOwned ? "Y" : "",
+      ...statCells,
+    ]
+  })
+
+  const ownedCount = entries.filter((entry) => owned.has(entry.name)).length
+  const summary = `All game augments: ${entries.length} | Owned: ${ownedCount} | Sorted by base price`
+
+  return {
+    title: "Augment Catalog",
+    summary,
+    columns: [...baseColumns, ...statColumns],
+    rows: tableRows,
     highlightCells,
   }
 }

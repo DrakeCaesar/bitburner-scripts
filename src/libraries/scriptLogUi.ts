@@ -28,6 +28,8 @@ export interface TableLayout {
   tailMaxHeightPx?: number
   /** Scrollable content area inside the tail (set when sizing before render). */
   tailViewportMaxHeightPx?: number
+  /** Calling script pid; used to restore scroll across tail redraws. */
+  tailScriptPid?: number
   sectionGapPx: number
 }
 
@@ -71,20 +73,35 @@ export function mergeLayout(partial?: Partial<TableLayout>): TableLayout {
   return { ...DEFAULT_LAYOUT, ...partial }
 }
 
-function findScrollParent(el: HTMLElement): HTMLElement | null {
-  const win = eval("window") as Window
-  let node: HTMLElement | null = el.parentElement
-  while (node) {
-    const style = win.getComputedStyle(node)
-    if (style.overflowY === "scroll" || style.overflowY === "auto") {
-      return node
-    }
-    node = node.parentElement
-  }
-  return null
+const SCRIPT_LOG_VIEWPORT_ATTR = "data-script-log-viewport"
+const SCRIPT_LOG_PID_ATTR = "data-script-log-pid"
+
+function isVerticallyScrollable(el: HTMLElement, win: Window): boolean {
+  const style = win.getComputedStyle(el)
+  const overflowY = style.overflowY
+  return (
+    (overflowY === "scroll" || overflowY === "auto") && el.scrollHeight > el.clientHeight + 1
+  )
 }
 
-const SCRIPT_LOG_VIEWPORT_ATTR = "data-script-log-viewport"
+/** Innermost scroll container with offset, or innermost scrollable ancestor (includes el). */
+function findActiveScrollContainer(el: HTMLElement): HTMLElement | null {
+  const win = eval("window") as Window
+  const scrollables: HTMLElement[] = []
+  let node: HTMLElement | null = el
+  while (node) {
+    if (isVerticallyScrollable(node, win)) scrollables.push(node)
+    node = node.parentElement
+  }
+  if (scrollables.length === 0) return null
+  for (let i = scrollables.length - 1; i >= 0; i--) {
+    if (scrollables[i].scrollTop > 0) return scrollables[i]
+  }
+  return scrollables[0]
+}
+
+/** Per-script scroll offset preserved across clearLog / renderTail redraws. */
+const lastScrollTopByPid = new Map<number, number>()
 
 /** Measured or default title row from Bitburner tail chrome (h6 + control buttons). */
 let cachedTailTitleBarPx: number | null = null
@@ -94,6 +111,39 @@ const lastTailSizeByPid = new Map<number, { width: number; height: number }>()
 
 function resetTailSession(pid: number): void {
   lastTailSizeByPid.delete(pid)
+  lastScrollTopByPid.delete(pid)
+}
+
+function saveTailScrollPosition(pid: number): void {
+  try {
+    const doc = eval("document") as Document
+    const viewport = doc.querySelector(`[${SCRIPT_LOG_PID_ATTR}="${pid}"]`) as HTMLElement | null
+    if (!viewport) return
+    const scrollEl = findActiveScrollContainer(viewport)
+    if (!scrollEl) return
+    lastScrollTopByPid.set(pid, scrollEl.scrollTop)
+  } catch {
+    // ignore
+  }
+}
+
+function applyTailScrollPosition(containerEl: HTMLElement, pid: number | undefined): void {
+  if (pid == null) return
+  const scrollEl = findActiveScrollContainer(containerEl)
+  if (!scrollEl) return
+
+  const saved = lastScrollTopByPid.get(pid)
+  if (saved != null) {
+    const maxScroll = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight)
+    scrollEl.scrollTop = Math.min(saved, maxScroll)
+    return
+  }
+
+  const win = eval("window") as Window
+  const flexDirection = win.getComputedStyle(scrollEl).flexDirection
+  if (flexDirection === "column-reverse") {
+    scrollEl.scrollTop = scrollEl.scrollHeight - scrollEl.clientHeight
+  }
 }
 
 /** Parsed from Bitburner logs panel `height: calc(100% - Npx)` (see script tail DOM). */
@@ -139,7 +189,7 @@ interface ViewportShellProps {
   children: ReactNode
 }
 
-/** Pins tail log scroll to top (Bitburner uses column-reverse on the log container). */
+/** Restores scroll after redraw; first open pins column-reverse tails to content start. */
 function ViewportShell(props: ViewportShellProps): ReactNode {
   const React = getReact()
   const { children } = props
@@ -148,28 +198,21 @@ function ViewportShell(props: ViewportShellProps): ReactNode {
   React.useEffect(() => {
     if (!containerEl) return
     const win = eval("window") as Window
-    const pinScroll = (): void => {
-      const scrollParent = findScrollParent(containerEl)
-      if (!scrollParent) return
-      const flexDirection = win.getComputedStyle(scrollParent).flexDirection
-      // column-reverse tails leave empty space at the visual top unless scrolled to the end
-      const target =
-        flexDirection === "column-reverse"
-          ? scrollParent.scrollHeight - scrollParent.clientHeight
-          : 0
-      if (Math.abs(scrollParent.scrollTop - target) <= 1) return
-      scrollParent.scrollTop = target
+    const syncScroll = (): void => {
+      applyTailScrollPosition(containerEl, props.layout.tailScriptPid)
     }
-    pinScroll()
-    const frame = win.requestAnimationFrame(pinScroll)
+    syncScroll()
+    const frame = win.requestAnimationFrame(syncScroll)
     return () => win.cancelAnimationFrame(frame)
-  }, [containerEl, props.layout.tailViewportMaxHeightPx])
+  }, [containerEl, props.layout.tailViewportMaxHeightPx, props.layout.tailScriptPid])
 
   const viewportMax = props.layout.tailViewportMaxHeightPx
+  const pid = props.layout.tailScriptPid
   return React.createElement(
     "div",
     {
       [SCRIPT_LOG_VIEWPORT_ATTR]: "",
+      ...(pid != null ? { [SCRIPT_LOG_PID_ATTR]: String(pid) } : {}),
       ref: (node: unknown) => {
         const el = node as HTMLElement | null
         setContainerEl((prev) => (prev === el ? prev : el))
@@ -1166,8 +1209,10 @@ function syncTailSize(ns: NS, layout: TableLayout): void {
 }
 
 export async function renderScriptLog(ns: NS, content: ReactNode, layout?: Partial<TableLayout>): Promise<void> {
+  const pid = ns.pid
+  saveTailScrollPosition(pid)
   primeTailLogChrome(mergeLayout(layout))
-  const renderLayout = layoutForTailRender(layout)
+  const renderLayout = layoutForTailRender({ ...layout, tailScriptPid: pid })
   ns.clearLog()
   ns.printRaw(buildViewportShell(content, renderLayout))
   ns.ui.renderTail()
