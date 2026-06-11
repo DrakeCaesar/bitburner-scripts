@@ -10,7 +10,7 @@ const AUGMENT_STATS_TABS: TabDefinition[] = [
   { id: "catalog", label: "All Augments" },
 ]
 
-const REFRESH_MS = 1_000
+const PLANNER_REFRESH_MS = 1_000
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL")
@@ -18,16 +18,31 @@ export async function main(ns: NS): Promise<void> {
 
   const tabbedLog = createTabbedTailLog(AUGMENT_STATS_TABS)
 
+  tabbedLog.clearPanels()
+  const { summary: catalogSummary, ...catalogTable } = buildAugmentCatalogTableConfig(ns)
+  tabbedLog.tab("catalog").text(catalogSummary).table(catalogTable)
+
+  const { summary, ...table } = buildAugmentStatsTableConfig(ns)
+  tabbedLog.tab("planner").text(summary).table(table)
+  await tabbedLog.render(ns)
+
+  let lastActiveTab = tabbedLog.getActiveTabId()
+
   while (true) {
-    tabbedLog.clearPanels()
+    const activeTab = tabbedLog.getActiveTabId()
+    const tabChanged = activeTab !== lastActiveTab
+    lastActiveTab = activeTab
 
-    const { summary, ...table } = buildAugmentStatsTableConfig(ns)
-    tabbedLog.tab("planner").text(summary).table(table)
+    if (activeTab === "catalog" && !tabChanged) {
+      await ns.sleep(PLANNER_REFRESH_MS)
+      continue
+    }
 
-    const { summary: catalogSummary, ...catalogTable } = buildAugmentCatalogTableConfig(ns)
-    tabbedLog.tab("catalog").text(catalogSummary).table(catalogTable)
+    tabbedLog.clearPanelsExcept(["catalog"])
+    const { summary: plannerSummary, ...plannerTable } = buildAugmentStatsTableConfig(ns)
+    tabbedLog.tab("planner").text(plannerSummary).table(plannerTable)
 
     await tabbedLog.render(ns)
-    await ns.sleep(REFRESH_MS)
+    await ns.sleep(PLANNER_REFRESH_MS)
   }
 }

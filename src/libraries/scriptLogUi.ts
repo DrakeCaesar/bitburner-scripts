@@ -1015,6 +1015,7 @@ export interface TabDefinition {
 interface TabbedLogViewProps {
   tabOrder: TabDefinition[]
   panels: Record<string, ReactNode>
+  populatedTabIds: readonly string[]
   programmaticActiveId: string
   layout: TableLayout
   onTabChange?: (tabId: string) => void
@@ -1023,7 +1024,8 @@ interface TabbedLogViewProps {
 /** Stateful tab UI — uses React hooks (no document/window DOM). Clicks may not work in all game versions. */
 function TabbedLogView(props: TabbedLogViewProps): ReactNode {
   const React = getReact()
-  const { tabOrder, panels, programmaticActiveId, layout, onTabChange } = props
+  const { tabOrder, panels, populatedTabIds, programmaticActiveId, layout, onTabChange } = props
+  const populated = new Set(populatedTabIds)
   const [activeId, setActiveId] = React.useState(programmaticActiveId)
 
   React.useEffect(() => {
@@ -1042,7 +1044,7 @@ function TabbedLogView(props: TabbedLogViewProps): ReactNode {
     },
     ...tabOrder.map(({ id, label }) => {
       const isActive = id === activeId
-      const hasContent = panels[id] != null
+      const hasContent = populated.has(id)
       return React.createElement(
         "div",
         {
@@ -1120,6 +1122,10 @@ export class TabbedScriptLogBuilder {
     return this
   }
 
+  getActiveTabId(): string {
+    return this.displayTabId
+  }
+
   tab(tabId: string): ScriptLogBuilder {
     let builder = this.builders.get(tabId)
     if (!builder) {
@@ -1169,18 +1175,22 @@ export class TabbedScriptLogBuilder {
   build(): ReactNode {
     const React = getReact()
     const layout = mergeLayout(this.layout)
-    const panels: Record<string, ReactNode> = {}
-
+    const populatedTabIds: string[] = []
     for (const { id } of this.tabOrder) {
       const builder = this.builders.get(id)
-      if (builder && !builder.isEmpty()) {
-        panels[id] = builder.build(layout)
-      }
+      if (builder && !builder.isEmpty()) populatedTabIds.push(id)
+    }
+
+    const panels: Record<string, ReactNode> = {}
+    const activeBuilder = this.builders.get(this.displayTabId)
+    if (activeBuilder && !activeBuilder.isEmpty()) {
+      panels[this.displayTabId] = activeBuilder.build(layout)
     }
 
     return React.createElement(TabbedLogView, {
       tabOrder: this.tabOrder,
       panels,
+      populatedTabIds,
       programmaticActiveId: this.displayTabId,
       layout,
       onTabChange: (tabId: string) => {
