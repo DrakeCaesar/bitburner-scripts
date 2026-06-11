@@ -6,10 +6,13 @@ import { runInfiltrationForTarget } from "./libraries/infiltration/infiltrationR
 import { InfiltrationRunStatsTracker } from "./libraries/infiltration/infiltrationRunStats.js"
 import { setupInfiltrationSolver, shutdownInfiltrationSolver } from "./libraries/infiltration/infiltrationSolver.js"
 import {
+  canAffordInfiltrationTravel,
   getBestInfiltrationTarget,
+  getBestInfiltrationTargetForPlayer,
   getInfiltrationApi,
   getInfiltrationRewardGoal,
   getInfiltrationRewardPerLevel,
+  INFILTRATION_TRAVEL_COST,
   isInfiltrationMoneyMode,
 } from "./libraries/infiltration/infiltrationTargets.js"
 
@@ -42,13 +45,36 @@ export async function main(ns: NS): Promise<void> {
       const rewardGoal = getInfiltrationRewardGoal(ns)
       const grindFaction =
         rewardGoal === "reputation" ? getPreferredFactionForInfiltrationRep(ns) : null
-      const target = getBestInfiltrationTarget(ns, rewardGoal)
+      const globalBest = getBestInfiltrationTarget(ns, rewardGoal)
+      const playerCity = ns.getPlayer().city
+      const target = getBestInfiltrationTargetForPlayer(ns, rewardGoal)
 
       if (!target) {
-        ns.print("No infiltration targets available. Waiting...")
+        if (
+          globalBest != null &&
+          globalBest.city !== playerCity &&
+          !canAffordInfiltrationTravel(ns)
+        ) {
+          ns.print(
+            `Cannot afford travel (${ns.format.number(INFILTRATION_TRAVEL_COST)}) and no targets in ${playerCity}. Waiting...`
+          )
+        } else {
+          ns.print("No infiltration targets available. Waiting...")
+        }
         syncTrustedKeyInjection()
         await ns.sleep(CHECK_INTERVAL_MS)
         continue
+      }
+
+      if (
+        globalBest != null &&
+        target !== globalBest &&
+        globalBest.city !== playerCity &&
+        !canAffordInfiltrationTravel(ns)
+      ) {
+        ns.print(
+          `Cannot afford travel (${ns.format.number(INFILTRATION_TRAVEL_COST)}); using ${target.name} in ${playerCity}`
+        )
       }
 
       const rewardPerLevel = getInfiltrationRewardPerLevel(target, rewardGoal)

@@ -114,12 +114,17 @@ export function getInfiltrationRewardPerLevel(
   return reward / target.data.maxClearanceLevel
 }
 
-/** Best available target for the chosen victory reward (sell cash or trade rep). */
-export function getBestInfiltrationTarget(
-  ns: NS,
+/** Bitburner city travel cost (CONSTANTS.TravelCost). */
+export const INFILTRATION_TRAVEL_COST = 200_000
+
+export function canAffordInfiltrationTravel(ns: NS): boolean {
+  return ns.getPlayer().money >= INFILTRATION_TRAVEL_COST
+}
+
+function pickBestInfiltrationTarget(
+  targets: readonly InfiltrationTarget[],
   goal: InfiltrationRewardGoal
 ): InfiltrationTarget | null {
-  const targets = getAvailableInfiltrationTargets(ns)
   if (targets.length === 0) return null
 
   let best = targets[0]
@@ -143,6 +148,31 @@ export function getBestInfiltrationTarget(
   }
 
   return best
+}
+
+/** Best available target for the chosen victory reward (sell cash or trade rep). */
+export function getBestInfiltrationTarget(
+  ns: NS,
+  goal: InfiltrationRewardGoal,
+  city?: CityName
+): InfiltrationTarget | null {
+  const targets = getAvailableInfiltrationTargets(ns)
+  const filtered = city != null ? targets.filter((target) => target.city === city) : targets
+  return pickBestInfiltrationTarget(filtered, goal)
+}
+
+/**
+ * Best target for the player. When travel is unaffordable, uses the best target in the current city.
+ */
+export function getBestInfiltrationTargetForPlayer(
+  ns: NS,
+  goal: InfiltrationRewardGoal
+): InfiltrationTarget | null {
+  const playerCity = ns.getPlayer().city
+  const best = getBestInfiltrationTarget(ns, goal)
+  if (best == null) return null
+  if (best.city === playerCity || canAffordInfiltrationTravel(ns)) return best
+  return getBestInfiltrationTarget(ns, goal, playerCity)
 }
 
 /** Available targets, hardest first. */
