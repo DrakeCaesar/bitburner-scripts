@@ -1,8 +1,11 @@
 import { NS } from "@ns"
 
+/** RAM left free on home for other scripts while batching. */
+export const HOME_BATCH_RAM_RESERVE_GB = 150
+
 /**
  * Gets the effective max RAM for a server, with special handling for "home".
- * For the "home" server, reserves 10% or 100 GB (whichever is larger) to ensure
+ * For the "home" server, reserves 10% or HOME_BATCH_RAM_RESERVE_GB (whichever is larger) to ensure
  * headroom for running scripts while batching operations are ongoing.
  *
  * @param ns - Netscript instance
@@ -13,7 +16,7 @@ export function getEffectiveMaxRam(ns: NS, server: string): number {
   const maxRam = ns.getServerMaxRam(server)
   if (server === "home") {
     const tenPercent = maxRam * 0.1
-    const reservation = Math.max(tenPercent, Math.min(maxRam, 100))
+    const reservation = Math.max(tenPercent, Math.min(maxRam, HOME_BATCH_RAM_RESERVE_GB))
 
     return Math.max(0, maxRam - reservation)
   }

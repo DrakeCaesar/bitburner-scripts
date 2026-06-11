@@ -24,7 +24,7 @@ import {
   killHackingScriptsForTarget,
   parseBatchArgs,
 } from "./libraries/serverManagement.js"
-// import { joinWorthyFactionInvitations } from "./libraries/factionInvites.js"
+import { joinWorthyFactionInvitations } from "./libraries/factionInvites.js"
 import { formatGameTimeMs } from "./libraries/format.js"
 
 const BATCH_TABS: TabDefinition[] = [
@@ -79,10 +79,10 @@ export async function main(ns: NS) {
       )
     }
 
-    // const joinedFactions = joinWorthyFactionInvitations(ns)
-    // if (joinedFactions.length > 0) {
-    //   tabbedLog.tab("setup").text(`Joined factions: ${joinedFactions.join(", ")}`)
-    // }
+    const joinedFactions = joinWorthyFactionInvitations(ns)
+    if (joinedFactions.length > 0) {
+      tabbedLog.tab("setup").text(`Joined factions: ${joinedFactions.join(", ")}`)
+    }
 
     // ns.scriptKill("autoWorkFactions.js", "home") — batch does not start it; leave faction work running if launched elsewhere
     ns.scriptKill("contractSolver.js", "home")
