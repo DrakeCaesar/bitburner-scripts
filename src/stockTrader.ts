@@ -1,6 +1,7 @@
 import { NS } from "@ns"
 import { killOtherInstances } from "@/libraries/batchCalculations.js"
 import { parseStockTraderArgs } from "@/libraries/stock/args.js"
+import { mergeStockTraderConfig } from "@/libraries/stock/config.js"
 import { STOCK_TABS, renderStockTraderDashboard } from "@/libraries/stock/display.js"
 import {
   collectTraderSnapshot,
@@ -35,7 +36,13 @@ async function runLiquidateMode(ns: NS): Promise<void> {
       const actions = liquidateAllPositions(ns)
       tickCount++
 
-      const snapshot = collectTraderSnapshot(ns, {}, sessionStartNetWorth, tickCount, actions)
+      const snapshot = collectTraderSnapshot(
+        ns,
+        mergeStockTraderConfig({}),
+        sessionStartNetWorth,
+        tickCount,
+        actions
+      )
       snapshot.configSummary = "LIQUIDATE — sell all longs, cover all shorts, then exit"
       await renderStockTraderDashboard(ns, tabbedLog, snapshot)
 

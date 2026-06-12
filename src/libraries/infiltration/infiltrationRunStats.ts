@@ -159,11 +159,20 @@ function formatInfiltrationTierLabel(tier: InfiltrationRepTier): string {
       return "donation favor"
     case "post-favor-aug":
       return "post-favor augment"
+    case "neuroflux":
+      return "NeuroFlux Governor"
   }
 }
 
 function formatInfiltrationMoneyTierLabel(tier: InfiltrationMoneyTier): string {
-  return tier === "pre-favor-aug" ? "pre-favor augments" : "post-favor augments"
+  switch (tier) {
+    case "pre-favor-aug":
+      return "pre-favor augments"
+    case "post-favor-aug":
+      return "post-favor augments"
+    case "neuroflux":
+      return "NeuroFlux Governor"
+  }
 }
 
 export function formatInfiltrationRunViewLines(ns: NS, view: InfiltrationRunView | null): string[] {

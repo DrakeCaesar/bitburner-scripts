@@ -12,25 +12,38 @@ interface HacknetConfig {
 
 const MAX_CACHE_LEVEL = 15
 
+/** Spend caps scale with hash/s: aggressive early, conservative on production at high rates. */
+function getSpendCapFractions(hashRate: number): Pick<HacknetConfig, "spendCapFraction" | "cacheCapFraction"> {
+  if (hashRate < 10) {
+    return { spendCapFraction: 0.1, cacheCapFraction: 0.001 }
+  }
+  if (hashRate < 100) {
+    return { spendCapFraction: 0.1, cacheCapFraction: 0.1 }
+  }
+  return { spendCapFraction: 0.001, cacheCapFraction: 0.01 }
+}
+
 export async function main(ns: NS) {
   ns.disableLog("sleep")
   await killOtherInstances(ns)
 
-  const config: HacknetConfig = {
+  const config: Omit<HacknetConfig, "spendCapFraction" | "cacheCapFraction"> = {
     enablePurchasing: true,
     // moneyReserve: 160_000_000_000,
     // moneyReserve: 200_005_000_000_000,
     moneyReserve: 0,
-    spendCapFraction: 0.001,
-    cacheCapFraction: 0.001,
   }
 
   for (;;) {
     await spendHashes(ns)
 
     if (config.enablePurchasing) {
-      await handleCacheUpgrades(ns, config)
-      await handlePurchasing(ns, config)
+      const purchaseConfig: HacknetConfig = {
+        ...config,
+        ...getSpendCapFractions(calculateTotalHashRate(ns)),
+      }
+      await handleCacheUpgrades(ns, purchaseConfig)
+      await handlePurchasing(ns, purchaseConfig)
     }
 
     await ns.sleep(10)

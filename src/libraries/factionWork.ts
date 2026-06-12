@@ -4,6 +4,7 @@ import {
   getAugmentCatalog,
   getAugmentData,
   getAugmentNamesFromFaction,
+  getNextNeuroFluxLevel,
   getOwnedAugmentationNames,
   isNeuroFluxAugment,
   type AugmentInfo,
@@ -317,9 +318,9 @@ export function repForTargetFavor(ns: NS, targetFavor?: number): number {
   }
 }
 
-export type InfiltrationRepTier = "pre-favor-aug" | "favor" | "post-favor-aug"
+export type InfiltrationRepTier = "pre-favor-aug" | "favor" | "post-favor-aug" | "neuroflux"
 
-export type InfiltrationMoneyTier = "pre-favor-aug" | "post-favor-aug"
+export type InfiltrationMoneyTier = "pre-favor-aug" | "post-favor-aug" | "neuroflux"
 
 export interface InfiltrationGrindTarget extends AugmentTarget {
   tier: InfiltrationRepTier
@@ -349,14 +350,79 @@ function needsMoneyForAugmentBucket(
   return buildAffordablePurchasePlan(repQualified, playerMoney).skippedHasRep.length > 0
 }
 
-function hasPendingFavorGrind(ns: NS, playerFactions: readonly FactionName[], targetFavor: number): boolean {
+/** Unowned augments from this faction that need rep at or above the donation-favor threshold. */
+function factionHasPendingPostFavorAugments(
+  ns: NS,
+  faction: FactionName,
+  repForDonation: number
+): boolean {
+  const owned = getOwnedAugmentationNames(ns)
+  const catalog = getAugmentCatalog(ns)
+
+  for (const augName of getAugmentNamesFromFaction(ns, faction)) {
+    if (owned.has(augName)) continue
+    if (isNeuroFluxAugment(augName)) continue
+    const repReq = catalog.get(augName)?.repReq
+    if (repReq == null) continue
+    if (repReq >= repForDonation) return true
+  }
+
+  return false
+}
+
+function hasPendingFavorGrind(
+  ns: NS,
+  playerFactions: readonly FactionName[],
+  targetFavor: number,
+  repForDonation: number
+): boolean {
   for (const faction of playerFactions) {
     if (!factionOffersWork(ns, faction)) continue
+    if (!factionHasPendingPostFavorAugments(ns, faction, repForDonation)) continue
     const predictedFavor =
       ns.singularity.getFactionFavor(faction) + ns.singularity.getFactionFavorGain(faction)
     if (predictedFavor < targetFavor) return true
   }
   return false
+}
+
+function isRegularAugmentPipelineComplete(
+  ns: NS,
+  playerFactions: readonly FactionName[],
+  targetFavor: number,
+  repForDonation: number,
+  repTargets: AugmentTarget[]
+): boolean {
+  if (repTargets.some((target) => target.requiredRep < repForDonation)) return false
+  if (needsMoneyForAugmentBucket(ns, playerFactions, "pre-favor")) return false
+  if (hasPendingFavorGrind(ns, playerFactions, targetFavor, repForDonation)) return false
+  if (repTargets.some((target) => target.requiredRep >= repForDonation)) return false
+  if (needsMoneyForAugmentBucket(ns, playerFactions, "post-favor")) return false
+  return true
+}
+
+function buildNeuroFluxGrindTarget(
+  ns: NS,
+  levelIndex: number,
+  faction: FactionName,
+  currentRep: number,
+  repReq: number,
+  repGap: number
+): InfiltrationGrindTarget {
+  const favor = ns.singularity.getFactionFavor(faction)
+  const favorGain = ns.singularity.getFactionFavorGain(faction)
+
+  return {
+    augmentName: levelIndex > 0 ? `NeuroFlux Governor +${levelIndex}` : "NeuroFlux Governor",
+    faction,
+    currentRep,
+    requiredRep: repReq,
+    repGap,
+    favor,
+    favorGain,
+    predictedFavor: favor + favorGain,
+    tier: "neuroflux",
+  }
 }
 
 function buildFavorGrindTarget(ns: NS, faction: FactionName, targetFavor: number): AugmentTarget {
@@ -391,11 +457,18 @@ export function getInfiltrationMoneyTier(
   if (preFavorRepPending) return null
   if (needsMoneyForAugmentBucket(ns, playerFactions, "pre-favor")) return "pre-favor-aug"
 
-  if (hasPendingFavorGrind(ns, playerFactions, targetFavor)) return null
+  if (hasPendingFavorGrind(ns, playerFactions, targetFavor, repForDonation)) return null
 
   const postFavorRepPending = all.some((target) => target.requiredRep >= repForDonation)
   if (postFavorRepPending) return null
   if (needsMoneyForAugmentBucket(ns, playerFactions, "post-favor")) return "post-favor-aug"
+
+  if (
+    isRegularAugmentPipelineComplete(ns, playerFactions, targetFavor, repForDonation, all) &&
+    getNextNeuroFluxLevel(ns, playerFactions, new Set(playerFactions))?.need === "money"
+  ) {
+    return "neuroflux"
+  }
 
   return null
 }
@@ -411,9 +484,10 @@ export function needsInfiltrationMoneyForAugments(
  * Infiltration grind order:
  * 1. Pre-favor augments (rep below donation threshold) - reputation
  * 2. Pre-favor augments - money
- * 3. Donation favor - reputation
+ * 3. Donation favor (factions with unowned post-favor augments only) - reputation
  * 4. Post-favor augments - reputation
  * 5. Post-favor augments - money
+ * 6. NeuroFlux Governor - reputation, then money
  */
 export function prioritizeInfiltrationRepTargets(
   ns: NS,
@@ -434,6 +508,7 @@ export function prioritizeInfiltrationRepTargets(
   const favorTargets: InfiltrationGrindTarget[] = []
   for (const faction of playerFactions) {
     if (!factionOffersWork(ns, faction)) continue
+    if (!factionHasPendingPostFavorAugments(ns, faction, repForDonation)) continue
     const predictedFavor =
       ns.singularity.getFactionFavor(faction) + ns.singularity.getFactionFavorGain(faction)
     if (predictedFavor >= targetFavor) continue
@@ -446,7 +521,30 @@ export function prioritizeInfiltrationRepTargets(
     .filter((target) => target.requiredRep >= repForDonation)
     .sort((a, b) => a.repGap - b.repGap)
     .map((target) => ({ ...target, tier: "post-favor-aug" as const }))
-  return postFavorRep
+  if (postFavorRep.length > 0) return postFavorRep
+
+  if (needsMoneyForAugmentBucket(ns, playerFactions, "post-favor")) return []
+
+  if (!isRegularAugmentPipelineComplete(ns, playerFactions, targetFavor, repForDonation, all)) {
+    return []
+  }
+
+  const workable = new Set(playerFactions)
+  const nextNeuroFlux = getNextNeuroFluxLevel(ns, playerFactions, workable)
+  if (nextNeuroFlux?.need === "rep") {
+    return [
+      buildNeuroFluxGrindTarget(
+        ns,
+        nextNeuroFlux.levelIndex,
+        nextNeuroFlux.faction,
+        nextNeuroFlux.currentRep,
+        nextNeuroFlux.repReq,
+        nextNeuroFlux.repGap
+      ),
+    ]
+  }
+
+  return []
 }
 
 export function getInfiltrationGrindTarget(ns: NS): InfiltrationGrindTarget | null {

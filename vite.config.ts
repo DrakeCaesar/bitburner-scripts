@@ -1,19 +1,18 @@
 /* eslint-env node */
 import { defineConfig } from "viteburner"
 import { resolve } from "path"
-import type { Plugin } from "vite"
 
 /**
  * Vite resolves imports to /src/.../*.ts. viteburner fixImport only rewrites
  * top-level `import` declarations — not `export from` or dynamic `import()`.
  * Bitburner RAM calc then looks for /src/.../*.ts on home and fails.
  */
-function bitburnerImportPaths(): Plugin {
+function bitburnerImportPaths() {
   return {
     name: "bitburner-import-paths",
     enforce: "post",
     apply: "serve",
-    transform(code, id) {
+    transform(code: string, id: string) {
       if (!/\.[jt]sx?$/.test(id)) return
       if (!id.replace(/\\/g, "/").includes("/src/")) return
 

@@ -102,7 +102,7 @@ export function getAugmentCatalog(ns: NS): ReadonlyMap<string, AugmentCatalogEnt
         basePrice: ns.singularity.getAugmentationBasePrice(augName),
         repReq: ns.singularity.getAugmentationRepReq(augName),
         prereqs: ns.singularity.getAugmentationPrereq(augName),
-        stats: ns.singularity.getAugmentationStats(augName) as AugmentStats,
+        stats: ns.singularity.getAugmentationStats(augName) as unknown as AugmentStats,
       })
     }
   }
@@ -268,6 +268,121 @@ export function neuroFluxPurchaseCost(
       Math.pow(NEUROFLUX_PRICE_STEP_MULT, neuroFluxIndex),
     repReq: neuroFluxInfo.repReq * Math.pow(NEUROFLUX_LEVEL_MULT, neuroFluxIndex),
   }
+}
+
+export type NeuroFluxGrindNeed = "rep" | "money"
+
+export interface NextNeuroFluxLevel {
+  levelIndex: number
+  price: number
+  repReq: number
+  need: NeuroFluxGrindNeed
+  faction: FactionName
+  currentRep: number
+  repGap: number
+}
+
+const MAX_NEUROFLUX_SIM_LEVELS = 1000
+
+function bestNeuroFluxRepGrindFaction(
+  neuroFluxInfo: AugmentInfo,
+  factionReps: Map<string, number>,
+  repReq: number,
+  grindFactions: ReadonlySet<FactionName>
+): { faction: FactionName; currentRep: number; repGap: number } | null {
+  let best: { faction: FactionName; currentRep: number; repGap: number } | null = null
+
+  for (const faction of neuroFluxInfo.factions) {
+    if (!grindFactions.has(faction)) continue
+    const currentRep = factionReps.get(faction) ?? 0
+    if (currentRep >= repReq) continue
+    const repGap = repReq - currentRep
+    if (
+      !best ||
+      repGap < best.repGap ||
+      (repGap === best.repGap && currentRep > best.currentRep)
+    ) {
+      best = { faction, currentRep, repGap }
+    }
+  }
+
+  return best
+}
+
+function bestNeuroFluxTradeFaction(
+  neuroFluxInfo: AugmentInfo,
+  factionReps: Map<string, number>,
+  repReq: number
+): { faction: FactionName; currentRep: number } | null {
+  let best: { faction: FactionName; currentRep: number } | null = null
+
+  for (const faction of neuroFluxInfo.factions) {
+    const currentRep = factionReps.get(faction) ?? 0
+    if (currentRep < repReq) continue
+    if (!best || currentRep > best.currentRep) {
+      best = { faction, currentRep }
+    }
+  }
+
+  return best
+}
+
+/**
+ * First NeuroFlux level that still needs rep or money after simulating affordable regular augments.
+ * Skips levels already covered by current money and faction rep.
+ */
+export function getNextNeuroFluxLevel(
+  ns: NS,
+  playerFactions: readonly FactionName[],
+  grindFactions?: ReadonlySet<FactionName>
+): NextNeuroFluxLevel | null {
+  const { affordableSorted, neuroFluxInfo, factionReps, playerMoney } = getAugmentData(ns, [
+    ...playerFactions,
+  ])
+  if (!neuroFluxInfo) return null
+
+  const repGrindFactions = grindFactions ?? new Set(playerFactions)
+  const positionOffset = affordableSorted.length
+  let budget = playerMoney
+
+  for (let i = 0; i < affordableSorted.length; i++) {
+    budget -= affordableSorted[i].price * Math.pow(AUGMENT_QUEUE_PRICE_MULT, i)
+  }
+
+  for (let levelIndex = 0; levelIndex < MAX_NEUROFLUX_SIM_LEVELS; levelIndex++) {
+    const { price, repReq } = neuroFluxPurchaseCost(neuroFluxInfo, positionOffset, levelIndex)
+    const tradeFaction = bestNeuroFluxTradeFaction(neuroFluxInfo, factionReps, repReq)
+
+    if (!tradeFaction) {
+      const grind = bestNeuroFluxRepGrindFaction(neuroFluxInfo, factionReps, repReq, repGrindFactions)
+      if (!grind) return null
+      return {
+        levelIndex,
+        price,
+        repReq,
+        need: "rep",
+        faction: grind.faction,
+        currentRep: grind.currentRep,
+        repGap: grind.repGap,
+      }
+    }
+
+    if (price > budget) {
+      return {
+        levelIndex,
+        price,
+        repReq,
+        need: "money",
+        faction: tradeFaction.faction,
+        currentRep: tradeFaction.currentRep,
+        repGap: 0,
+      }
+    }
+
+    budget -= price
+  }
+
+  return null
 }
 
 /**

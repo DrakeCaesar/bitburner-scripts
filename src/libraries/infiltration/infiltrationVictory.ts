@@ -733,7 +733,12 @@ export async function collectInfiltrationVictoryReward(
   } else {
     const moneyTier = getInfiltrationMoneyTier(ns, filterWorkableFactions(ns, ns.getPlayer().factions))
     if (moneyTier != null) {
-      const label = moneyTier === "pre-favor-aug" ? "pre-favor augments" : "post-favor augments"
+      const label =
+        moneyTier === "pre-favor-aug"
+          ? "pre-favor augments"
+          : moneyTier === "post-favor-aug"
+            ? "post-favor augments"
+            : "NeuroFlux Governor"
       ns.print(`Victory reward: saving for ${label}; will sell for money`)
     } else {
       ns.print("Victory reward: no faction needs reputation; will sell for money")

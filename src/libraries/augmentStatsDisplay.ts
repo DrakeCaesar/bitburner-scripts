@@ -149,7 +149,7 @@ export function formatAugmentStatValue(value: number | undefined): string {
 function getAugmentStatsCached(ns: NS, name: string, cache: Map<string, AugmentMultipliers>): AugmentMultipliers {
   const cached = cache.get(name)
   if (cached) return cached
-  const stats = (getAugmentCatalog(ns).get(name)?.stats ?? {}) as AugmentMultipliers
+  const stats = (getAugmentCatalog(ns).get(name)?.stats ?? {}) as unknown as AugmentMultipliers
   cache.set(name, stats)
   return stats
 }
