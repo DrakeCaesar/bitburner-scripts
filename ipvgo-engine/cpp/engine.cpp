@@ -49,7 +49,8 @@ MoveResult findBestMove(
     double komi,
     Color playAs,
     int iterations,
-    const ValidMask* validMask) {
+    const ValidMask* validMask,
+    int threads) {
   if (validMask) {
     Move tactical = findTacticalMove(board, *validMask, playAs);
     if (tactical.type == MoveType::Play) {
@@ -60,7 +61,7 @@ MoveResult findBestMove(
       return out;
     }
   }
-  return findBestMoveMcts(board, history, komi, playAs, iterations, validMask);
+  return findBestMoveMcts(board, history, komi, playAs, iterations, validMask, threads);
 }
 
 } // namespace ipvgo

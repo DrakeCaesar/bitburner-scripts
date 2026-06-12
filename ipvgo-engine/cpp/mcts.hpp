@@ -10,6 +10,7 @@ MoveResult findBestMoveMcts(
     double komi,
     Color playAs,
     int iterations,
-    const ValidMask* validMask = nullptr);
+    const ValidMask* validMask = nullptr,
+    int threads = 0);
 
 } // namespace ipvgo

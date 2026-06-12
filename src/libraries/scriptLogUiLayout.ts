@@ -25,6 +25,7 @@ import {
   type TableLayout,
   type TreeTableConfig,
   type TreeTableRow,
+  type ReactSectionSize,
 } from "./scriptLogUi.js"
 
 export { col, W }
@@ -37,6 +38,7 @@ export {
   measureTreeTableHostChars,
   mergeLayout,
   type ReactTableConfig,
+  type ReactSectionSize,
   type TabbedLogOptions,
   type TabDefinition,
   type TableLayout,

@@ -25,7 +25,9 @@
     "watch:init": "node build/init.js",
     "watch:local": "node build/watch.js",
     "watch:remote": "bitburner-filesync",
-    "watch:transpile": "tsc -w --preserveWatchOutput"
+    "watch:transpile": "tsc -w --preserveWatchOutput",
+    "server": "node ipvgo-engine/server.js",
+    "ipvgo:build": "cmake --build ipvgo-engine/build --config Release"
   },
   "prettier": {
     "printWidth": 120,

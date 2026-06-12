@@ -5,13 +5,32 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <cstdlib>
+#include <cstdint>
 #include <memory>
+#include <random>
+#include <unordered_map>
 #include <vector>
+
+#if !defined(__EMSCRIPTEN__)
+#include <future>
+#include <thread>
+#endif
 
 namespace ipvgo {
 
 namespace {
+
+struct Rng {
+  std::mt19937 gen;
+  explicit Rng(uint32_t seed) : gen(seed) {}
+  int nextInt(int maxExclusive) {
+    if (maxExclusive <= 1) return 0;
+    return static_cast<int>(gen() % static_cast<uint32_t>(maxExclusive));
+  }
+  double nextDouble() {
+    return std::uniform_real_distribution<double>(0.0, 1.0)(gen);
+  }
+};
 
 struct MctsNode {
   Move move{MoveType::Pass, -1, -1};
@@ -26,6 +45,17 @@ struct MctsNode {
   int visits = 0;
   double wins = 0;
 };
+
+struct RootChildStats {
+  Move move;
+  int visits = 0;
+  double wins = 0;
+};
+
+std::string moveKey(const Move& move) {
+  if (move.type == MoveType::Pass) return "pass";
+  return std::to_string(move.x) + "," + std::to_string(move.y);
+}
 
 MctsNode* createNode(
     const Move& move,
@@ -87,7 +117,7 @@ MctsNode* expand(MctsNode& node) {
   return createNode(move, result.next, result.board, result.history, node.komi, node.passes + result.passes, node);
 }
 
-Move simulationPolicy(const Board& board, const std::vector<Move>& moves, Color color) {
+Move simulationPolicy(const Board& board, const std::vector<Move>& moves, Color color, Rng& rng) {
   std::vector<Move> captures;
   std::vector<Move> defends;
   std::vector<Move> nonPass;
@@ -98,11 +128,11 @@ Move simulationPolicy(const Board& board, const std::vector<Move>& moves, Color 
     if (ownChainInAtari(board, m.x, m.y, color)) defends.push_back(m);
   }
 
-  if (!captures.empty() && (static_cast<double>(rand()) / RAND_MAX) < 0.92) {
-    return captures[rand() % captures.size()];
+  if (!captures.empty() && rng.nextDouble() < 0.92) {
+    return captures[rng.nextInt(static_cast<int>(captures.size()))];
   }
-  if (!defends.empty() && (static_cast<double>(rand()) / RAND_MAX) < 0.8) {
-    return defends[rand() % defends.size()];
+  if (!defends.empty() && rng.nextDouble() < 0.8) {
+    return defends[rng.nextInt(static_cast<int>(defends.size()))];
   }
   if (nonPass.empty()) return {MoveType::Pass, -1, -1};
 
@@ -118,7 +148,7 @@ Move simulationPolicy(const Board& board, const std::vector<Move>& moves, Color 
   const size_t topN = std::min<size_t>(8, weighted.size());
   int total = 0;
   for (size_t i = 0; i < topN; i++) total += weighted[i].weight;
-  double roll = (static_cast<double>(rand()) / RAND_MAX) * total;
+  double roll = rng.nextDouble() * total;
   for (size_t i = 0; i < topN; i++) {
     roll -= weighted[i].weight;
     if (roll <= 0) return weighted[i].move;
@@ -126,7 +156,7 @@ Move simulationPolicy(const Board& board, const std::vector<Move>& moves, Color 
   return weighted[topN - 1].move;
 }
 
-double simulate(MctsNode& node, Color rootColor) {
+double simulate(MctsNode& node, Color rootColor, Rng& rng) {
   Board board = node.board;
   std::vector<Board> history = node.history;
   Color player = node.player;
@@ -137,7 +167,7 @@ double simulate(MctsNode& node, Color rootColor) {
   for (int ply = 0; ply < maxPlies; ply++) {
     if (passes >= 2) break;
     auto moves = getLegalMoves(board, history, player);
-    Move move = simulationPolicy(board, moves, player);
+    Move move = simulationPolicy(board, moves, player, rng);
     TurnResult result;
     if (!applyTurn(board, history, move, player, result)) continue;
     board = std::move(result.board);
@@ -161,15 +191,24 @@ void backpropagate(MctsNode* node, double result) {
   }
 }
 
-} // namespace
+std::vector<RootChildStats> collectRootChildStats(const MctsNode& root) {
+  std::vector<RootChildStats> stats;
+  for (const auto& childPtr : root.children) {
+    stats.push_back({childPtr->move, childPtr->visits, childPtr->wins});
+  }
+  return stats;
+}
 
-MoveResult findBestMoveMcts(
+std::vector<RootChildStats> runSingleTreeMcts(
     const Board& board,
     const std::vector<Board>& history,
     double komi,
     Color playAs,
     int iterations,
-    const ValidMask* validMask) {
+    const ValidMask* validMask,
+    uint32_t rngSeed) {
+  Rng rng(rngSeed);
+
   auto rootOwner = std::make_unique<MctsNode>();
   MctsNode* root = rootOwner.get();
   root->player = playAs;
@@ -182,7 +221,6 @@ MoveResult findBestMoveMcts(
   });
 
   const double exploration = 1.41;
-  const auto started = std::chrono::steady_clock::now();
 
   for (int i = 0; i < iterations; i++) {
     MctsNode* node = root;
@@ -192,44 +230,139 @@ MoveResult findBestMoveMcts(
     if (!node->untried.empty()) {
       node = expand(*node);
     }
-    const double result = simulate(*node, playAs);
+    const double result = simulate(*node, playAs, rng);
     backpropagate(node, result);
   }
 
+  return collectRootChildStats(*root);
+}
+
+void mergeRootStats(std::unordered_map<std::string, RootChildStats>& merged, const std::vector<RootChildStats>& batch) {
+  for (const auto& stat : batch) {
+    const std::string key = moveKey(stat.move);
+    auto& entry = merged[key];
+    if (entry.visits == 0) entry.move = stat.move;
+    entry.visits += stat.visits;
+    entry.wins += stat.wins;
+  }
+}
+
+Move pickBestMoveFromStats(
+    const std::unordered_map<std::string, RootChildStats>& merged,
+    const Board& board,
+    const std::vector<Board>& history,
+    Color playAs,
+    const ValidMask* validMask) {
+  if (merged.empty()) {
+    auto fallback = getLegalMoves(board, history, playAs, validMask);
+    for (const auto& m : fallback) {
+      if (m.type == MoveType::Play) return m;
+    }
+    return {MoveType::Pass, -1, -1};
+  }
+
+  const RootChildStats* best = nullptr;
+  double bestRate = -1;
+  for (const auto& [_, stat] : merged) {
+    if (stat.visits < 3) continue;
+    const double rate = stat.wins / stat.visits;
+    if (!best || rate > bestRate || (rate == bestRate && stat.visits > best->visits)) {
+      bestRate = rate;
+      best = &stat;
+    }
+  }
+
+  if (!best) {
+    for (const auto& [_, stat] : merged) {
+      if (!best || stat.visits > best->visits) best = &stat;
+    }
+  }
+
+  return best->move;
+}
+
+unsigned resolveThreadCount(int requestedThreads, int iterations) {
+  unsigned threads = 0;
+  if (requestedThreads > 0) {
+    threads = static_cast<unsigned>(requestedThreads);
+  }
+#if defined(__EMSCRIPTEN__)
+  else {
+    threads = 1;
+  }
+#else
+  else {
+    threads = std::thread::hardware_concurrency();
+  }
+#endif
+  if (threads == 0) threads = 4;
+  threads = std::max(1u, std::min(threads, static_cast<unsigned>(iterations)));
+  return threads;
+}
+
+void splitIterations(int iterations, unsigned threads, std::vector<int>& perThread) {
+  perThread.assign(threads, iterations / static_cast<int>(threads));
+  const int remainder = iterations % static_cast<int>(threads);
+  for (int i = 0; i < remainder; i++) {
+    perThread[static_cast<size_t>(i)]++;
+  }
+}
+
+uint32_t makeThreadSeed(uint32_t baseSeed, unsigned threadIndex) {
+  return baseSeed ^ (threadIndex * 0x9E3779B9u) ^ 0x85EBCA6Bu;
+}
+
+} // namespace
+
+MoveResult findBestMoveMcts(
+    const Board& board,
+    const std::vector<Board>& history,
+    double komi,
+    Color playAs,
+    int iterations,
+    const ValidMask* validMask,
+    int threads) {
+  const auto started = std::chrono::steady_clock::now();
+
+  const uint32_t baseSeed = static_cast<uint32_t>(
+      std::chrono::steady_clock::now().time_since_epoch().count());
+
+  std::unordered_map<std::string, RootChildStats> merged;
+
+#if defined(__EMSCRIPTEN__)
+  const unsigned threadCount = 1;
+  (void)threads;
+  mergeRootStats(merged, runSingleTreeMcts(board, history, komi, playAs, iterations, validMask, baseSeed));
+#else
+  const unsigned threadCount = resolveThreadCount(threads, iterations);
+  std::vector<int> perThread;
+  splitIterations(iterations, threadCount, perThread);
+
+  if (threadCount == 1) {
+    mergeRootStats(merged, runSingleTreeMcts(board, history, komi, playAs, iterations, validMask, baseSeed));
+  } else {
+    std::vector<std::future<std::vector<RootChildStats>>> futures;
+    futures.reserve(threadCount);
+
+    for (unsigned t = 0; t < threadCount; t++) {
+      const int threadIters = perThread[t];
+      const uint32_t seed = makeThreadSeed(baseSeed, t);
+      futures.push_back(std::async(
+          std::launch::async,
+          [=]() { return runSingleTreeMcts(board, history, komi, playAs, threadIters, validMask, seed); }));
+    }
+
+    for (auto& future : futures) {
+      mergeRootStats(merged, future.get());
+    }
+  }
+#endif
+
   MoveResult out;
+  out.move = pickBestMoveFromStats(merged, board, history, playAs, validMask);
   out.iterations = iterations;
   out.elapsedMs =
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
-
-  if (root->children.empty()) {
-    auto fallback = getLegalMoves(board, history, playAs, validMask);
-    for (const auto& m : fallback) {
-      if (m.type == MoveType::Play) {
-        out.move = m;
-        return out;
-      }
-    }
-    out.move = {MoveType::Pass, -1, -1};
-    return out;
-  }
-
-  MctsNode* bestChild = root->children[0].get();
-  double bestRate = -1;
-  for (const auto& childPtr : root->children) {
-    if (childPtr->visits < 3) continue;
-    const double rate = childPtr->wins / childPtr->visits;
-    if (rate > bestRate || (rate == bestRate && childPtr->visits > bestChild->visits)) {
-      bestRate = rate;
-      bestChild = childPtr.get();
-    }
-  }
-  if (bestRate < 0) {
-    for (const auto& childPtr : root->children) {
-      if (childPtr->visits > bestChild->visits) bestChild = childPtr.get();
-    }
-  }
-
-  out.move = bestChild->move;
   return out;
 }
 

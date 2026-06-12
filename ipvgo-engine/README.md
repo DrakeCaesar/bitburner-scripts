@@ -19,8 +19,16 @@ Build once, then start the server manually from a terminal (e.g. VS Code).
 
 VS Code CMake is configured (`.vscode/settings.json`) to use **`ipvgo-engine/build`** only — not repo-root `build/` (that folder holds legacy watch scripts).
 
+From the **repo root**:
+
 ```bash
-cd ipvgo-engine
+pnpm run ipvgo:build   # after first cmake configure in ipvgo-engine/
+pnpm run server
+```
+
+Or from **`ipvgo-engine/`**:
+
+```bash
 pnpm run build:native
 pnpm run server
 ```
@@ -57,6 +65,9 @@ Outputs `cpp/ipvgo.wasm.js` and `cpp/ipvgo.wasm.wasm`.
   "komi": 1.5,
   "iterations": 5000,
   "playAs": "X",
+  "threads": 0,
   "validMoves": [[true, false, ...]]
 }
 ```
+
+`threads`: `0` = all CPU cores (default), or set an explicit count.

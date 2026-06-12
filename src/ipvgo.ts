@@ -9,6 +9,13 @@ import {
   isIpvgoEngineAvailable,
   requestIpvgoEngineMove,
 } from "./libraries/ipvgo/engineClient.js"
+import {
+  appendIpvgoLog,
+  createIpvgoSnapshot,
+  refreshFactionStats,
+  renderIpvgoDashboard,
+  type IpvgoBackend,
+} from "./libraries/ipvgo/display.js"
 import { findTacticalMove } from "./libraries/ipvgo/tactics.js"
 import {
   IPVGO_BOARD_SIZES,
@@ -18,6 +25,7 @@ import {
   type IpvgoMove,
   type IpvgoValidMoves,
 } from "./libraries/ipvgo/types.js"
+import { createTailLog, openTailLog } from "./libraries/scriptLogUiLayout.js"
 
 const SCRIPT_NAME = "ipvgo.js"
 const DEFAULT_ITERATIONS = 4000
@@ -82,32 +90,28 @@ function pickLegalMove(validMoves: IpvgoValidMoves, preferred?: IpvgoMove): Ipvg
 }
 
 function formatOpponentTurn(result: { type: string; x: number | null; y: number | null }): string {
-  if (result.type === "pass") return "opponent passed"
+  if (result.type === "pass") return "pass"
   if (result.type === "move" && result.x !== null && result.y !== null) {
-    return `opponent played ${result.x},${result.y}`
+    return `${result.x},${result.y}`
   }
-  return `opponent response: ${result.type}`
+  return result.type
 }
 
-function logStatus(ns: NS, message: string): void {
-  const time = new Date().toLocaleTimeString("en-GB", { hour12: false })
-  ns.print(`[${time}] ${message}`)
-}
-
-function logGameState(ns: NS, label: string): void {
+function syncGameState(ns: NS, snapshot: ReturnType<typeof createIpvgoSnapshot>) {
   const gameState = ns.go.getGameState()
-  const player = ns.go.getCurrentPlayer()
-  const opponent = ns.go.getOpponent()
-  logStatus(
-    ns,
-    `${label} | turn:${player} vs:${opponent} score B:${gameState.blackScore.toFixed(1)} W:${gameState.whiteScore.toFixed(1)}`
-  )
+  return {
+    ...refreshFactionStats(snapshot, ns),
+    currentPlayer: ns.go.getCurrentPlayer(),
+    komi: gameState.komi || IPVGO_KOMI_BY_OPPONENT[snapshot.opponent] || 5.5,
+    blackScore: gameState.blackScore,
+    whiteScore: gameState.whiteScore,
+    board: ns.go.getBoardState(),
+  }
 }
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("sleep")
-  ns.ui.openTail()
-  ns.ui.setTailTitle("IPvGO Bot")
+  openTailLog(ns, "IPvGO Bot")
 
   await killOtherInstances(ns)
 
@@ -118,61 +122,72 @@ export async function main(ns: NS): Promise<void> {
   const forceEngine = ns.args.includes("engine")
   const forceWorker = ns.args.includes("worker")
 
-  logStatus(ns, "IPvGO MCTS bot starting")
-  ns.print(`Opponent: ${opponent}`)
-  ns.print(`Board: ${boardSize}x${boardSize}`)
-  ns.print(`Iterations/move: ${iterations}`)
-  ns.print(`Auto reset: ${autoReset ? "on" : "off"}`)
-  ns.print(`RAM note: needs ~16GB for getBoardState + getValidMoves + makeMove`)
-  ns.print(
-    `Usage: run ${SCRIPT_NAME} [opponent] [boardSize] [iterations] [auto] [engine|worker]`
+  const tailLog = createTailLog()
+  let snapshot = appendIpvgoLog(
+    createIpvgoSnapshot(opponent, boardSize, iterations, autoReset),
+    "IPvGO MCTS bot starting"
   )
-  ns.print("")
+  snapshot = appendIpvgoLog(snapshot, `Usage: run ${SCRIPT_NAME} [opponent] [boardSize] [iterations] [auto] [engine|worker]`)
+  snapshot = { ...snapshot, phase: "Initializing" }
+  await renderIpvgoDashboard(ns, tailLog, snapshot)
 
   type MoveBackend = "native" | "worker"
   let backend: MoveBackend
 
   if (forceEngine && forceWorker) {
-    ns.print("ERROR: use only one of 'engine' or 'worker'")
+    snapshot = appendIpvgoLog(snapshot, "ERROR: use only one of 'engine' or 'worker'")
+    snapshot = { ...snapshot, phase: "Error" }
+    await renderIpvgoDashboard(ns, tailLog, snapshot)
     return
   }
 
   if (forceEngine) {
     const available = await isIpvgoEngineAvailable()
     if (!available) {
-      ns.print(
-        "ERROR: native engine unavailable. Start it with: cd ipvgo-engine && pnpm run build:native && pnpm run server"
+      snapshot = appendIpvgoLog(
+        snapshot,
+        "ERROR: native engine unavailable. Run: pnpm run server (from repo root)"
       )
+      snapshot = { ...snapshot, phase: "Error" }
+      await renderIpvgoDashboard(ns, tailLog, snapshot)
       return
     }
     backend = "native"
-    logStatus(ns, "Using native engine (localhost:3010)")
+    snapshot = appendIpvgoLog(snapshot, "Using native engine (localhost:3010)")
   } else if (forceWorker) {
     backend = "worker"
-    logStatus(ns, "Using in-game JS worker")
+    snapshot = appendIpvgoLog(snapshot, "Using in-game JS worker")
   } else {
     backend = (await isIpvgoEngineAvailable()) ? "native" : "worker"
-    logStatus(
-      ns,
+    snapshot = appendIpvgoLog(
+      snapshot,
       backend === "native"
         ? "Native engine detected (localhost:3010)"
         : "No native engine; using in-game JS worker"
     )
   }
 
+  snapshot = { ...snapshot, backend: backend as IpvgoBackend, phase: "Ready" }
+  await renderIpvgoDashboard(ns, tailLog, snapshot)
+
   let worker: Worker | undefined
   if (backend === "worker") {
     try {
       worker = createIpvgoWorker(ns)
-      logStatus(ns, "Worker loaded, running smoke test...")
+      snapshot = appendIpvgoLog(snapshot, "Worker loaded, running smoke test...")
+      snapshot = { ...snapshot, phase: "Worker test" }
+      await renderIpvgoDashboard(ns, tailLog, snapshot)
+
       const smoke = await verifyIpvgoWorker(worker)
-      logStatus(
-        ns,
-        `Worker OK (smoke move ${formatMove(smoke.move)}, ${smoke.iterations} sims, ${smoke.elapsedMs.toFixed(0)}ms)`
+      snapshot = appendIpvgoLog(
+        snapshot,
+        `Worker OK (smoke ${formatMove(smoke.move)}, ${smoke.iterations} sims, ${smoke.elapsedMs.toFixed(0)}ms)`
       )
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      ns.print(`ERROR: ${message}`)
+      snapshot = appendIpvgoLog(snapshot, `ERROR: ${message}`)
+      snapshot = { ...snapshot, phase: "Error" }
+      await renderIpvgoDashboard(ns, tailLog, snapshot)
       return
     }
   }
@@ -187,29 +202,66 @@ export async function main(ns: NS): Promise<void> {
 
       if (currentOpponent !== opponent || currentPlayer === "None") {
         if (!autoReset && currentPlayer === "None") {
-          logStatus(ns, "Game over. Pass 'auto' to start another subnet.")
+          snapshot = appendIpvgoLog(snapshot, "Game over. Pass 'auto' to start another subnet.")
+          snapshot = { ...syncGameState(ns, snapshot), phase: "Stopped" }
+          await renderIpvgoDashboard(ns, tailLog, snapshot)
           break
         }
-        logStatus(ns, `Resetting subnet (${boardSize}x${boardSize} vs ${opponent})...`)
+        snapshot = appendIpvgoLog(snapshot, `Resetting subnet (${boardSize}x${boardSize} vs ${opponent})...`)
         ns.go.resetBoardState(opponent, boardSize)
         gamesPlayed++
         moveNumber = 0
-        logGameState(ns, `Game ${gamesPlayed} started`)
+        snapshot = {
+          ...syncGameState(ns, snapshot),
+          gamesPlayed,
+          moveNumber,
+          phase: "New game",
+          lastOurMove: undefined,
+          lastOpponentMove: undefined,
+          thinkMs: 0,
+          sims: 0,
+        }
+        snapshot = appendIpvgoLog(
+          snapshot,
+          `Game ${gamesPlayed} started | B:${snapshot.blackScore.toFixed(1)} W:${snapshot.whiteScore.toFixed(1)}`
+        )
+        await renderIpvgoDashboard(ns, tailLog, snapshot)
         await ns.sleep(LOOP_SLEEP_MS)
         continue
       }
 
       if (currentPlayer !== "Black") {
-        logStatus(ns, `Waiting for opponent (${currentPlayer})...`)
+        snapshot = {
+          ...syncGameState(ns, snapshot),
+          phase: `Waiting (${currentPlayer})`,
+          moveNumber,
+          thinking: false,
+          validMoves: undefined,
+        }
+        await renderIpvgoDashboard(ns, tailLog, snapshot)
+
         const waitResult = await ns.go.opponentNextTurn(false)
         if (waitResult.type === "gameOver") {
-          logGameEnd(ns, opponent)
-          if (!autoReset) break
+          snapshot = logGameEnd(ns, snapshot, opponent)
+          if (!autoReset) {
+            await renderIpvgoDashboard(ns, tailLog, snapshot)
+            break
+          }
+          await renderIpvgoDashboard(ns, tailLog, snapshot)
           await ns.sleep(500)
           continue
         }
-        logStatus(ns, formatOpponentTurn(waitResult))
-        logGameState(ns, "After opponent")
+
+        const opponentMove = formatOpponentTurn(waitResult)
+        snapshot = appendIpvgoLog(snapshot, `Opponent: ${opponentMove}`)
+        snapshot = {
+          ...syncGameState(ns, snapshot),
+          lastOpponentMove: opponentMove,
+          phase: "Opponent moved",
+          moveNumber,
+          validMoves: undefined,
+        }
+        await renderIpvgoDashboard(ns, tailLog, snapshot)
         await ns.sleep(LOOP_SLEEP_MS)
         continue
       }
@@ -223,12 +275,27 @@ export async function main(ns: NS): Promise<void> {
       moveNumber++
 
       if (legalCount === 0) {
-        logStatus(ns, `Move ${moveNumber}: no legal plays, passing`)
+        snapshot = appendIpvgoLog(snapshot, `Move ${moveNumber}: no legal plays, passing`)
+        snapshot = {
+          ...syncGameState(ns, snapshot),
+          moveNumber,
+          legalCount,
+          validMoves,
+          phase: "Passing",
+          thinking: false,
+        }
+        await renderIpvgoDashboard(ns, tailLog, snapshot)
+
         const passResult = await ns.go.passTurn()
         if (passResult.type === "gameOver") {
-          logGameEnd(ns, opponent)
-          if (!autoReset) break
+          snapshot = logGameEnd(ns, snapshot, opponent)
+          if (!autoReset) {
+            await renderIpvgoDashboard(ns, tailLog, snapshot)
+            break
+          }
         }
+        snapshot = syncGameState(ns, snapshot)
+        await renderIpvgoDashboard(ns, tailLog, snapshot)
         await ns.sleep(LOOP_SLEEP_MS)
         continue
       }
@@ -240,12 +307,27 @@ export async function main(ns: NS): Promise<void> {
 
       if (tactical) {
         move = tactical
-        logStatus(ns, `Move ${moveNumber}: tactical ${formatMove(move)} (capture or defend)`)
+        snapshot = {
+          ...syncGameState(ns, snapshot),
+          moveNumber,
+          legalCount,
+          validMoves,
+          phase: "Tactical move",
+        }
+        await renderIpvgoDashboard(ns, tailLog, snapshot)
+        snapshot = appendIpvgoLog(snapshot, `Move ${moveNumber}: tactical ${formatMove(move)}`)
       } else {
-        logStatus(
-          ns,
-          `Move ${moveNumber}: thinking (${iterations} sims, ${legalCount} legal, ${history.length} prior boards)...`
-        )
+        snapshot = {
+          ...syncGameState(ns, snapshot),
+          moveNumber,
+          legalCount,
+          validMoves,
+          thinking: true,
+          phase: "Thinking",
+          thinkMs: 0,
+          sims: 0,
+        }
+        await renderIpvgoDashboard(ns, tailLog, snapshot)
 
         const started = performance.now()
         const request = {
@@ -269,16 +351,15 @@ export async function main(ns: NS): Promise<void> {
           suggested.type === "move" &&
           (move.type === "pass" || move.x !== suggested.x || move.y !== suggested.y)
         ) {
-          logStatus(
-            ns,
-            `Move ${moveNumber}: ${backend} suggested illegal ${formatMove(suggested)}, using ${formatMove(move)} instead`
+          snapshot = appendIpvgoLog(
+            snapshot,
+            `Move ${moveNumber}: ${backend} illegal ${formatMove(suggested)}, using ${formatMove(move)}`
           )
         }
 
-        logStatus(
-          ns,
-          `Move ${moveNumber}: play ${formatMove(move)} ` +
-            `(${sims} sims, ${thinkMs.toFixed(0)}ms)`
+        snapshot = appendIpvgoLog(
+          snapshot,
+          `Move ${moveNumber}: play ${formatMove(move)} (${sims} sims, ${thinkMs.toFixed(0)}ms)`
         )
       }
 
@@ -292,36 +373,73 @@ export async function main(ns: NS): Promise<void> {
       }
 
       if (result.type === "gameOver") {
-        logGameEnd(ns, opponent)
-        if (!autoReset) break
+        snapshot = logGameEnd(ns, snapshot, opponent)
+        snapshot = {
+          ...snapshot,
+          lastOurMove: move,
+          thinkMs,
+          sims,
+          thinking: false,
+        }
+        if (!autoReset) {
+          await renderIpvgoDashboard(ns, tailLog, snapshot)
+          break
+        }
+        await renderIpvgoDashboard(ns, tailLog, snapshot)
         await ns.sleep(500)
         continue
       }
 
+      let opponentReply = ""
       if (result.type === "move" && result.x !== null && result.y !== null) {
-        logStatus(ns, formatOpponentTurn(result))
+        opponentReply = `${result.x},${result.y}`
+        snapshot = appendIpvgoLog(snapshot, `Opponent: ${opponentReply}`)
       } else if (result.type === "pass") {
-        logStatus(ns, "opponent passed")
+        opponentReply = "pass"
+        snapshot = appendIpvgoLog(snapshot, "Opponent: pass")
       }
 
-      logGameState(ns, "After our move")
+      snapshot = {
+        ...syncGameState(ns, snapshot),
+        moveNumber,
+        legalCount,
+        validMoves: undefined,
+        lastOurMove: move,
+        lastOpponentMove: opponentReply || snapshot.lastOpponentMove,
+        thinkMs,
+        sims,
+        thinking: false,
+        phase: "Our move played",
+      }
+      await renderIpvgoDashboard(ns, tailLog, snapshot)
       await ns.sleep(LOOP_SLEEP_MS)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      logStatus(ns, `ERROR: ${message}`)
-      logGameState(ns, "Failed state")
+      snapshot = appendIpvgoLog(snapshot, `ERROR: ${message}`)
+      snapshot = { ...syncGameState(ns, snapshot), phase: "Error", thinking: false }
+      await renderIpvgoDashboard(ns, tailLog, snapshot)
       await ns.sleep(1000)
     }
   }
 }
 
-function logGameEnd(ns: NS, opponent: GoOpponent): void {
+function logGameEnd(
+  ns: NS,
+  snapshot: ReturnType<typeof createIpvgoSnapshot>,
+  opponent: GoOpponent
+) {
   const stats = ns.go.analysis.getStats()[opponent]
   const gameState = ns.go.getGameState()
   const won = gameState.blackScore > gameState.whiteScore
-  logStatus(
-    ns,
-    `Game over (${won ? "WIN" : "LOSS"}). Final B:${gameState.blackScore.toFixed(1)} W:${gameState.whiteScore.toFixed(1)} ` +
-      `| streak ${stats?.winStreak ?? 0}, wins ${stats?.wins ?? 0}, losses ${stats?.losses ?? 0}`
+  return appendIpvgoLog(
+    {
+      ...syncGameState(ns, snapshot),
+      winStreak: stats?.winStreak ?? snapshot.winStreak,
+      wins: stats?.wins ?? snapshot.wins,
+      losses: stats?.losses ?? snapshot.losses,
+      phase: won ? "Win" : "Loss",
+    },
+    `Game over (${won ? "WIN" : "LOSS"}) B:${gameState.blackScore.toFixed(1)} W:${gameState.whiteScore.toFixed(1)} ` +
+      `| streak ${stats?.winStreak ?? 0}, W ${stats?.wins ?? 0} L ${stats?.losses ?? 0}`
   )
 }

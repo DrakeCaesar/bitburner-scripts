@@ -845,6 +845,12 @@ type LogSection =
   | { kind: "treeTable"; config: TreeTableConfig }
   | { kind: "keyValue"; config: KeyValueTableConfig }
   | { kind: "threeColumn"; config: ThreeColumnTableConfig }
+  | { kind: "react"; node: ReactNode; widthPx?: number; heightPx?: number }
+
+export type ReactSectionSize = {
+  widthPx?: number
+  heightPx?: number
+}
 
 function sectionBottomMarginPx(section: LogSection): number {
   switch (section.kind) {
@@ -855,6 +861,8 @@ function sectionBottomMarginPx(section: LogSection): number {
     case "treeTable":
     case "keyValue":
     case "threeColumn":
+      return 0
+    case "react":
       return 0
   }
 }
@@ -874,6 +882,8 @@ function logSectionMaxWidthPx(section: LogSection, layout?: Partial<TableLayout>
       return computeReactTableWidthPx(keyValueToReactTableConfig(section.config), layout)
     case "threeColumn":
       return computeReactTableWidthPx(threeColumnToReactTableConfig(section.config), layout)
+    case "react":
+      return section.widthPx ?? merged.tableWidthPx
     default:
       return 0
   }
@@ -901,6 +911,8 @@ function logSectionHeightPx(section: LogSection, merged: TableLayout, contentWid
         merged,
         contentWidthPx
       )
+    case "react":
+      return section.heightPx ?? merged.bodyRowHeightPx
   }
 }
 
@@ -947,6 +959,11 @@ export class ScriptLogBuilder {
     return this
   }
 
+  react(node: ReactNode, size?: ReactSectionSize): this {
+    this.sections.push({ kind: "react", node, widthPx: size?.widthPx, heightPx: size?.heightPx })
+    return this
+  }
+
   /** Widest section width in px (same px colgroup widths as buildReactTable). */
   computeContentWidthPx(): number {
     const merged = mergeLayout(this.layout)
@@ -987,6 +1004,8 @@ export class ScriptLogBuilder {
           return buildReactKeyValueTable({ layout, ...section.config })
         case "threeColumn":
           return buildReactThreeColumnTable({ layout, ...section.config })
+        case "react":
+          return section.node
       }
     })
     return buildStack(nodes, layout)

@@ -56,6 +56,7 @@ std::string processMoveRequestJson(const std::string& requestJson) {
   const std::vector<Board> history = req.contains("history") ? parseHistory(req.at("history")) : std::vector<Board>{};
   const double komi = req.value("komi", 5.5);
   const int iterations = req.value("iterations", 4000);
+  const int threads = req.value("threads", 0);
   const Color playAs = parseColor(req.value("playAs", "X"));
 
   const ValidMask* maskPtr = nullptr;
@@ -65,7 +66,7 @@ std::string processMoveRequestJson(const std::string& requestJson) {
     maskPtr = &maskStorage;
   }
 
-  const MoveResult result = findBestMove(board, history, komi, playAs, iterations, maskPtr);
+  const MoveResult result = findBestMove(board, history, komi, playAs, iterations, maskPtr, threads);
 
   json out;
   out["move"] = moveToJson(result.move);
