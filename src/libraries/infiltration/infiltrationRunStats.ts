@@ -3,6 +3,7 @@ import {
   filterWorkableFactions,
   getInfiltrationGrindTarget,
   getInfiltrationMoneyTier,
+  getInfiltrationPurchaseFactions,
   type InfiltrationMoneyTier,
   type InfiltrationRepTier,
 } from "../factionWork.js"
@@ -186,7 +187,7 @@ export function formatInfiltrationRunViewLines(ns: NS, view: InfiltrationRunView
   lines.push(`Location: ${view.location}`)
 
   if (view.rewardGoal === "money") {
-    const workable = filterWorkableFactions(ns, ns.getPlayer().factions)
+    const workable = filterWorkableFactions(ns, getInfiltrationPurchaseFactions(ns))
     const moneyTier = getInfiltrationMoneyTier(ns, workable)
     lines.push(
       moneyTier != null

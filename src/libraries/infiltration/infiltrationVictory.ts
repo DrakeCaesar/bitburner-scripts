@@ -2,6 +2,7 @@ import type { FactionName, NS } from "@ns"
 import {
   filterWorkableFactions,
   getInfiltrationMoneyTier,
+  getInfiltrationPurchaseFactions,
   getPreferredFactionForInfiltrationRep,
 } from "../factionWork.js"
 import { getInfiltrationRewardGoal, isInfiltrationMoneyMode } from "./infiltrationTargets.js"
@@ -731,7 +732,10 @@ export async function collectInfiltrationVictoryReward(
   if (isInfiltrationMoneyMode(ns)) {
     ns.print("Victory reward: money mode; will sell for money")
   } else {
-    const moneyTier = getInfiltrationMoneyTier(ns, filterWorkableFactions(ns, ns.getPlayer().factions))
+    const moneyTier = getInfiltrationMoneyTier(
+      ns,
+      filterWorkableFactions(ns, getInfiltrationPurchaseFactions(ns))
+    )
     if (moneyTier != null) {
       const label =
         moneyTier === "pre-favor-aug"

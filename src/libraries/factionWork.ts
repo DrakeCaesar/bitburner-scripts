@@ -1,11 +1,13 @@
 import { FactionName, FactionWorkType, NS } from "@ns"
 import {
   buildAffordablePurchasePlan,
+  filterAugmentPurchaseFactions,
   getAugmentCatalog,
   getAugmentData,
   getAugmentNamesFromFaction,
   getNextNeuroFluxLevel,
   getOwnedAugmentationNames,
+  isAugmentPurchaseExcludedFaction,
   isNeuroFluxAugment,
   type AugmentInfo,
 } from "./augmentations.js"
@@ -72,6 +74,21 @@ export function factionOffersWork(ns: NS, faction: FactionName): boolean {
 
 export function filterWorkableFactions(ns: NS, factions: readonly FactionName[]): FactionName[] {
   return factions.filter((faction) => factionOffersWork(ns, faction))
+}
+
+/** Factions whose augments count toward the normal buy / infiltration plan (excludes SoA). */
+export function getInfiltrationPurchaseFactions(ns: NS): FactionName[] {
+  return filterAugmentPurchaseFactions(ns.getPlayer().factions)
+}
+
+function augmentExcludedFromInfiltrationPlan(ns: NS, augName: string): boolean {
+  const entry = getAugmentCatalog(ns).get(augName)
+  if (!entry) return true
+  return entry.factions.every((faction) => isAugmentPurchaseExcludedFaction(faction))
+}
+
+function isPurchasePlannedAugment(aug: AugmentInfo): boolean {
+  return aug.factions.some((faction) => !isAugmentPurchaseExcludedFaction(faction))
 }
 
 export interface WorkTargetEta {
@@ -235,12 +252,14 @@ export function gatherAugmentTargets(ns: NS, playerFactions: readonly FactionNam
 
   for (const faction of playerFactions) {
     if (!factionOffersWork(ns, faction)) continue
+    if (isAugmentPurchaseExcludedFaction(faction)) continue
 
     const currentRep = ns.singularity.getFactionRep(faction)
 
     for (const augName of getAugmentNamesFromFaction(ns, faction)) {
       if (ownedAugments.has(augName)) continue
       if (isNeuroFluxAugment(augName)) continue
+      if (augmentExcludedFromInfiltrationPlan(ns, augName)) continue
 
       const requiredRep = catalog.get(augName)?.repReq
       if (requiredRep == null) continue
@@ -250,12 +269,14 @@ export function gatherAugmentTargets(ns: NS, playerFactions: readonly FactionNam
 
   for (const faction of playerFactions) {
     if (!factionOffersWork(ns, faction)) continue
+    if (isAugmentPurchaseExcludedFaction(faction)) continue
 
     const currentRep = ns.singularity.getFactionRep(faction)
 
     for (const augName of getAugmentNamesFromFaction(ns, faction)) {
       if (ownedAugments.has(augName)) continue
       if (isNeuroFluxAugment(augName)) continue
+      if (augmentExcludedFromInfiltrationPlan(ns, augName)) continue
       if (augmentsWithEnoughRep.has(augName)) continue
 
       const requiredRep = catalog.get(augName)?.repReq
@@ -334,12 +355,14 @@ function augmentInBucket(aug: AugmentInfo, repForDonation: number, bucket: Infil
 
 function needsMoneyForAugmentBucket(
   ns: NS,
-  playerFactions: readonly FactionName[],
+  purchaseFactions: readonly FactionName[],
   bucket: InfiltrationAugmentBucket
 ): boolean {
   const repForDonation = repForTargetFavor(ns)
-  const { allAugs, factionReps, playerMoney } = getAugmentData(ns, [...playerFactions])
-  const pending = allAugs.filter((aug) => augmentInBucket(aug, repForDonation, bucket))
+  const { allAugs, factionReps, playerMoney } = getAugmentData(ns, [...purchaseFactions])
+  const pending = allAugs.filter(
+    (aug) => augmentInBucket(aug, repForDonation, bucket) && isPurchasePlannedAugment(aug)
+  )
   if (pending.length === 0) return false
 
   const repQualified = pending.filter((aug) =>
@@ -359,9 +382,12 @@ function factionHasPendingPostFavorAugments(
   const owned = getOwnedAugmentationNames(ns)
   const catalog = getAugmentCatalog(ns)
 
+  if (isAugmentPurchaseExcludedFaction(faction)) return false
+
   for (const augName of getAugmentNamesFromFaction(ns, faction)) {
     if (owned.has(augName)) continue
     if (isNeuroFluxAugment(augName)) continue
+    if (augmentExcludedFromInfiltrationPlan(ns, augName)) continue
     const repReq = catalog.get(augName)?.repReq
     if (repReq == null) continue
     if (repReq >= repForDonation) return true
@@ -388,16 +414,17 @@ function hasPendingFavorGrind(
 
 function isRegularAugmentPipelineComplete(
   ns: NS,
-  playerFactions: readonly FactionName[],
+  workableFactions: readonly FactionName[],
+  purchaseFactions: readonly FactionName[],
   targetFavor: number,
   repForDonation: number,
   repTargets: AugmentTarget[]
 ): boolean {
   if (repTargets.some((target) => target.requiredRep < repForDonation)) return false
-  if (needsMoneyForAugmentBucket(ns, playerFactions, "pre-favor")) return false
-  if (hasPendingFavorGrind(ns, playerFactions, targetFavor, repForDonation)) return false
+  if (needsMoneyForAugmentBucket(ns, purchaseFactions, "pre-favor")) return false
+  if (hasPendingFavorGrind(ns, workableFactions, targetFavor, repForDonation)) return false
   if (repTargets.some((target) => target.requiredRep >= repForDonation)) return false
-  if (needsMoneyForAugmentBucket(ns, playerFactions, "post-favor")) return false
+  if (needsMoneyForAugmentBucket(ns, purchaseFactions, "post-favor")) return false
   return true
 }
 
@@ -447,30 +474,50 @@ function buildFavorGrindTarget(ns: NS, faction: FactionName, targetFavor: number
 /** Active money-save phase, or null when grinding reputation or nothing pending. */
 export function getInfiltrationMoneyTier(
   ns: NS,
-  playerFactions: readonly FactionName[]
+  workableFactions: readonly FactionName[]
 ): InfiltrationMoneyTier | null {
+  const purchaseFactions = getInfiltrationPurchaseFactions(ns)
   const targetFavor = getTargetFavor(ns)
   const repForDonation = repForTargetFavor(ns, targetFavor)
-  const all = gatherAugmentTargets(ns, playerFactions)
+  const all = gatherAugmentTargets(ns, workableFactions)
+  const neuroFluxGrindFactions = infiltrationNeuroFluxGrindFactions(workableFactions, purchaseFactions)
 
   const preFavorRepPending = all.some((target) => target.requiredRep < repForDonation)
   if (preFavorRepPending) return null
-  if (needsMoneyForAugmentBucket(ns, playerFactions, "pre-favor")) return "pre-favor-aug"
+  if (needsMoneyForAugmentBucket(ns, purchaseFactions, "pre-favor")) return "pre-favor-aug"
 
-  if (hasPendingFavorGrind(ns, playerFactions, targetFavor, repForDonation)) return null
+  if (hasPendingFavorGrind(ns, workableFactions, targetFavor, repForDonation)) return null
 
   const postFavorRepPending = all.some((target) => target.requiredRep >= repForDonation)
   if (postFavorRepPending) return null
-  if (needsMoneyForAugmentBucket(ns, playerFactions, "post-favor")) return "post-favor-aug"
+  if (needsMoneyForAugmentBucket(ns, purchaseFactions, "post-favor")) return "post-favor-aug"
 
   if (
-    isRegularAugmentPipelineComplete(ns, playerFactions, targetFavor, repForDonation, all) &&
-    getNextNeuroFluxLevel(ns, playerFactions, new Set(playerFactions))?.need === "money"
+    isRegularAugmentPipelineComplete(
+      ns,
+      workableFactions,
+      purchaseFactions,
+      targetFavor,
+      repForDonation,
+      all
+    ) &&
+    getNextNeuroFluxLevel(ns, purchaseFactions, neuroFluxGrindFactions)?.need === "money"
   ) {
     return "neuroflux"
   }
 
   return null
+}
+
+function infiltrationNeuroFluxGrindFactions(
+  workableFactions: readonly FactionName[],
+  purchaseFactions: readonly FactionName[]
+): Set<FactionName> {
+  const grind = new Set<FactionName>(workableFactions)
+  for (const faction of purchaseFactions) {
+    grind.add(faction)
+  }
+  return grind
 }
 
 export function needsInfiltrationMoneyForAugments(
@@ -491,11 +538,13 @@ export function needsInfiltrationMoneyForAugments(
  */
 export function prioritizeInfiltrationRepTargets(
   ns: NS,
-  playerFactions: readonly FactionName[]
+  workableFactions: readonly FactionName[]
 ): InfiltrationGrindTarget[] {
+  const purchaseFactions = getInfiltrationPurchaseFactions(ns)
+  const neuroFluxGrindFactions = infiltrationNeuroFluxGrindFactions(workableFactions, purchaseFactions)
   const targetFavor = getTargetFavor(ns)
   const repForDonation = repForTargetFavor(ns, targetFavor)
-  const all = gatherAugmentTargets(ns, playerFactions)
+  const all = gatherAugmentTargets(ns, workableFactions)
 
   const preFavorRep = all
     .filter((target) => target.requiredRep < repForDonation)
@@ -503,10 +552,10 @@ export function prioritizeInfiltrationRepTargets(
     .map((target) => ({ ...target, tier: "pre-favor-aug" as const }))
   if (preFavorRep.length > 0) return preFavorRep
 
-  if (needsMoneyForAugmentBucket(ns, playerFactions, "pre-favor")) return []
+  if (needsMoneyForAugmentBucket(ns, purchaseFactions, "pre-favor")) return []
 
   const favorTargets: InfiltrationGrindTarget[] = []
-  for (const faction of playerFactions) {
+  for (const faction of workableFactions) {
     if (!factionOffersWork(ns, faction)) continue
     if (!factionHasPendingPostFavorAugments(ns, faction, repForDonation)) continue
     const predictedFavor =
@@ -523,14 +572,22 @@ export function prioritizeInfiltrationRepTargets(
     .map((target) => ({ ...target, tier: "post-favor-aug" as const }))
   if (postFavorRep.length > 0) return postFavorRep
 
-  if (needsMoneyForAugmentBucket(ns, playerFactions, "post-favor")) return []
+  if (needsMoneyForAugmentBucket(ns, purchaseFactions, "post-favor")) return []
 
-  if (!isRegularAugmentPipelineComplete(ns, playerFactions, targetFavor, repForDonation, all)) {
+  if (
+    !isRegularAugmentPipelineComplete(
+      ns,
+      workableFactions,
+      purchaseFactions,
+      targetFavor,
+      repForDonation,
+      all
+    )
+  ) {
     return []
   }
 
-  const workable = new Set(playerFactions)
-  const nextNeuroFlux = getNextNeuroFluxLevel(ns, playerFactions, workable)
+  const nextNeuroFlux = getNextNeuroFluxLevel(ns, purchaseFactions, neuroFluxGrindFactions)
   if (nextNeuroFlux?.need === "rep") {
     return [
       buildNeuroFluxGrindTarget(
@@ -548,7 +605,8 @@ export function prioritizeInfiltrationRepTargets(
 }
 
 export function getInfiltrationGrindTarget(ns: NS): InfiltrationGrindTarget | null {
-  const workableFactions = filterWorkableFactions(ns, ns.getPlayer().factions)
+  const purchaseFactions = getInfiltrationPurchaseFactions(ns)
+  const workableFactions = filterWorkableFactions(ns, purchaseFactions)
   return prioritizeInfiltrationRepTargets(ns, workableFactions)[0] ?? null
 }
 

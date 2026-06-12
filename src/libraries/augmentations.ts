@@ -336,12 +336,14 @@ export function getNextNeuroFluxLevel(
   playerFactions: readonly FactionName[],
   grindFactions?: ReadonlySet<FactionName>
 ): NextNeuroFluxLevel | null {
-  const { affordableSorted, neuroFluxInfo, factionReps, playerMoney } = getAugmentData(ns, [
-    ...playerFactions,
-  ])
+  const purchaseFactions = filterAugmentPurchaseFactions([...playerFactions])
+  const { affordableSorted, neuroFluxInfo, factionReps, playerMoney } = getAugmentData(ns, purchaseFactions)
   if (!neuroFluxInfo) return null
 
-  const repGrindFactions = grindFactions ?? new Set(playerFactions)
+  const repGrindFactions = grindFactions ?? new Set(purchaseFactions)
+  const allPurchaseNfFactions = new Set(
+    neuroFluxInfo.factions.filter((faction) => purchaseFactions.includes(faction))
+  )
   const positionOffset = affordableSorted.length
   let budget = playerMoney
 
@@ -349,12 +351,16 @@ export function getNextNeuroFluxLevel(
     budget -= affordableSorted[i].price * Math.pow(AUGMENT_QUEUE_PRICE_MULT, i)
   }
 
-  for (let levelIndex = 0; levelIndex < MAX_NEUROFLUX_SIM_LEVELS; levelIndex++) {
+  let levelIndex = 0
+  for (; levelIndex < MAX_NEUROFLUX_SIM_LEVELS; levelIndex++) {
     const { price, repReq } = neuroFluxPurchaseCost(neuroFluxInfo, positionOffset, levelIndex)
     const tradeFaction = bestNeuroFluxTradeFaction(neuroFluxInfo, factionReps, repReq)
 
     if (!tradeFaction) {
-      const grind = bestNeuroFluxRepGrindFaction(neuroFluxInfo, factionReps, repReq, repGrindFactions)
+      let grind = bestNeuroFluxRepGrindFaction(neuroFluxInfo, factionReps, repReq, repGrindFactions)
+      if (!grind) {
+        grind = bestNeuroFluxRepGrindFaction(neuroFluxInfo, factionReps, repReq, allPurchaseNfFactions)
+      }
       if (!grind) return null
       return {
         levelIndex,
