@@ -5,8 +5,10 @@ import {
   requestIpvgoEngineMove,
 } from "./libraries/ipvgo/engineClient.js"
 import {
-  appendIpvgoLog,
   createIpvgoSnapshot,
+  recordGameResult,
+  recordOpponentMove,
+  recordOurMove,
   refreshFactionStats,
   renderIpvgoDashboard,
 } from "./libraries/ipvgo/display.js"
@@ -23,7 +25,6 @@ import {
 import { formatIpvgoPoint } from "./libraries/ipvgo/coords.js"
 import { createTailLog, openTailLog } from "./libraries/scriptLogUiLayout.js"
 
-const SCRIPT_NAME = "ipvgo.js"
 const DEFAULT_ITERATIONS = 4000
 const DEFAULT_BOARD_SIZE: IpvgoBoardSize = 7
 const DEFAULT_OPPONENT: GoOpponent = "Netburners"
@@ -52,10 +53,6 @@ function parseIterations(value: string | number | undefined): number {
     throw new Error(`Iterations must be a number >= 100 (got ${value})`)
   }
   return Math.floor(iterations)
-}
-
-function formatMove(move: IpvgoMove): string {
-  return move.type === "pass" ? "pass" : formatIpvgoPoint(move.x, move.y)
 }
 
 function countValidMoves(validMoves: IpvgoValidMoves): number {
@@ -117,24 +114,11 @@ export async function main(ns: NS): Promise<void> {
   const autoReset = ns.args.includes("auto")
 
   const tailLog = createTailLog()
-  let snapshot = appendIpvgoLog(
-    createIpvgoSnapshot(opponent, boardSize, iterations, autoReset),
-    "IPvGO MCTS bot starting"
-  )
-  snapshot = appendIpvgoLog(
-    snapshot,
-    `Usage: run ${SCRIPT_NAME} [opponent] [boardSize] [iterations] [auto]`
-  )
-  snapshot = appendIpvgoLog(snapshot, "Requires engine server: pnpm run ipvgo:setup && pnpm run server")
-  snapshot = { ...snapshot, phase: "Initializing" }
+  let snapshot = { ...createIpvgoSnapshot(opponent, boardSize, iterations, autoReset), phase: "Initializing" }
   await renderIpvgoDashboard(ns, tailLog, snapshot)
 
   if (!(await isIpvgoEngineAvailable())) {
-    snapshot = appendIpvgoLog(
-      snapshot,
-      "ERROR: engine unavailable. Run: pnpm run ipvgo:setup && pnpm run server"
-    )
-    snapshot = { ...snapshot, phase: "Error" }
+    snapshot = { ...snapshot, phase: "Error: engine unavailable" }
     await renderIpvgoDashboard(ns, tailLog, snapshot)
     return
   }
@@ -147,7 +131,6 @@ export async function main(ns: NS): Promise<void> {
     /* use default */
   }
 
-  snapshot = appendIpvgoLog(snapshot, `Engine ready (${engineLabel}, localhost:3010)`)
   snapshot = { ...snapshot, backend: engineLabel as "katago" | "native", phase: "Ready" }
   await renderIpvgoDashboard(ns, tailLog, snapshot)
 
@@ -161,12 +144,10 @@ export async function main(ns: NS): Promise<void> {
 
       if (currentOpponent !== opponent || currentPlayer === "None") {
         if (!autoReset && currentPlayer === "None") {
-          snapshot = appendIpvgoLog(snapshot, "Game over. Pass 'auto' to start another subnet.")
           snapshot = { ...syncGameState(ns, snapshot), phase: "Stopped" }
           await renderIpvgoDashboard(ns, tailLog, snapshot)
           break
         }
-        snapshot = appendIpvgoLog(snapshot, `Resetting subnet (${boardSize}x${boardSize} vs ${opponent})...`)
         ns.go.resetBoardState(opponent, boardSize)
         gamesPlayed++
         moveNumber = 0
@@ -174,16 +155,13 @@ export async function main(ns: NS): Promise<void> {
           ...syncGameState(ns, snapshot),
           gamesPlayed,
           moveNumber,
-          phase: "New game",
+          phase: `Game ${gamesPlayed}`,
           lastOurMove: undefined,
           lastOpponentMove: undefined,
+          gameMoves: [],
           thinkMs: 0,
           sims: 0,
         }
-        snapshot = appendIpvgoLog(
-          snapshot,
-          `Game ${gamesPlayed} started | B:${snapshot.blackScore.toFixed(1)} W:${snapshot.whiteScore.toFixed(1)}`
-        )
         await renderIpvgoDashboard(ns, tailLog, snapshot)
         await ns.sleep(LOOP_SLEEP_MS)
         continue
@@ -212,7 +190,7 @@ export async function main(ns: NS): Promise<void> {
         }
 
         const opponentMove = formatOpponentTurn(waitResult)
-        snapshot = appendIpvgoLog(snapshot, `Opponent: ${opponentMove}`)
+        snapshot = recordOpponentMove(snapshot, moveNumber, opponentMove)
         snapshot = {
           ...syncGameState(ns, snapshot),
           lastOpponentMove: opponentMove,
@@ -234,7 +212,7 @@ export async function main(ns: NS): Promise<void> {
       moveNumber++
 
       if (legalCount === 0) {
-        snapshot = appendIpvgoLog(snapshot, `Move ${moveNumber}: no legal plays, passing`)
+        snapshot = recordOurMove(snapshot, moveNumber, { type: "pass" }, "forced pass")
         snapshot = {
           ...syncGameState(ns, snapshot),
           moveNumber,
@@ -266,6 +244,7 @@ export async function main(ns: NS): Promise<void> {
 
       if (shouldPassToEndGame(ns, snapshot.lastOpponentMove)) {
         move = { type: "pass" }
+        snapshot = recordOurMove(snapshot, moveNumber, move, "end game")
         snapshot = {
           ...syncGameState(ns, snapshot),
           moveNumber,
@@ -274,9 +253,9 @@ export async function main(ns: NS): Promise<void> {
           phase: "End game",
         }
         await renderIpvgoDashboard(ns, tailLog, snapshot)
-        snapshot = appendIpvgoLog(snapshot, `Move ${moveNumber}: pass (end game)`)
       } else if (tactical) {
         move = tactical
+        snapshot = recordOurMove(snapshot, moveNumber, move, "tactical")
         snapshot = {
           ...syncGameState(ns, snapshot),
           moveNumber,
@@ -285,7 +264,6 @@ export async function main(ns: NS): Promise<void> {
           phase: "Tactical move",
         }
         await renderIpvgoDashboard(ns, tailLog, snapshot)
-        snapshot = appendIpvgoLog(snapshot, `Move ${moveNumber}: tactical ${formatMove(move)}`)
       } else {
         snapshot = {
           ...syncGameState(ns, snapshot),
@@ -314,20 +292,13 @@ export async function main(ns: NS): Promise<void> {
 
         const suggested = analysis.move
         move = pickLegalMove(validMoves, suggested)
-        if (
+        const illegal =
           suggested.type === "move" &&
           (move.type === "pass" || move.x !== suggested.x || move.y !== suggested.y)
-        ) {
-          snapshot = appendIpvgoLog(
-            snapshot,
-            `Move ${moveNumber}: engine illegal ${formatMove(suggested)}, using ${formatMove(move)}`
-          )
-        }
-
-        snapshot = appendIpvgoLog(
-          snapshot,
-          `Move ${moveNumber}: play ${formatMove(move)} (${sims} sims, ${thinkMs.toFixed(0)}ms)`
-        )
+        const note = illegal
+          ? `${sims} sims / ${thinkMs.toFixed(0)}ms fallback`
+          : `${sims} sims / ${thinkMs.toFixed(0)}ms`
+        snapshot = recordOurMove(snapshot, moveNumber, move, note)
       }
 
       let result
@@ -360,10 +331,10 @@ export async function main(ns: NS): Promise<void> {
       let opponentReply = ""
       if (result.type === "move" && result.x !== null && result.y !== null) {
         opponentReply = formatIpvgoPoint(result.x, result.y)
-        snapshot = appendIpvgoLog(snapshot, `Opponent: ${opponentReply}`)
+        snapshot = recordOpponentMove(snapshot, moveNumber, opponentReply)
       } else if (result.type === "pass") {
         opponentReply = "pass"
-        snapshot = appendIpvgoLog(snapshot, "Opponent: pass")
+        snapshot = recordOpponentMove(snapshot, moveNumber, opponentReply)
       }
 
       snapshot = {
@@ -382,8 +353,7 @@ export async function main(ns: NS): Promise<void> {
       await ns.sleep(LOOP_SLEEP_MS)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      snapshot = appendIpvgoLog(snapshot, `ERROR: ${message}`)
-      snapshot = { ...syncGameState(ns, snapshot), phase: "Error", thinking: false }
+      snapshot = { ...syncGameState(ns, snapshot), phase: `Error: ${message}`, thinking: false }
       await renderIpvgoDashboard(ns, tailLog, snapshot)
       await ns.sleep(1000)
     }
@@ -398,7 +368,7 @@ function logGameEnd(
   const stats = ns.go.analysis.getStats()[opponent]
   const gameState = ns.go.getGameState()
   const won = gameState.blackScore > gameState.whiteScore
-  return appendIpvgoLog(
+  return recordGameResult(
     {
       ...syncGameState(ns, snapshot),
       winStreak: stats?.winStreak ?? snapshot.winStreak,
@@ -406,7 +376,8 @@ function logGameEnd(
       losses: stats?.losses ?? snapshot.losses,
       phase: won ? "Win" : "Loss",
     },
-    `Game over (${won ? "WIN" : "LOSS"}) B:${gameState.blackScore.toFixed(1)} W:${gameState.whiteScore.toFixed(1)} ` +
-      `| streak ${stats?.winStreak ?? 0}, W ${stats?.wins ?? 0} L ${stats?.losses ?? 0}`
+    won,
+    gameState.blackScore,
+    gameState.whiteScore
   )
 }

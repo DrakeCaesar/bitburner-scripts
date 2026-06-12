@@ -1,7 +1,7 @@
 import { NS, type ReactNode } from "@ns"
 import type { GoOpponent } from "@ns"
-import { ScriptLogBuilder } from "@/libraries/scriptLogUiLayout.js"
-import { getReact } from "@/libraries/scriptLogUi.js"
+import { col, ScriptLogBuilder } from "@/libraries/scriptLogUiLayout.js"
+import { getReact, type ReactTableConfig } from "@/libraries/scriptLogUi.js"
 import {
   boardGridSizePx,
   buildBoardCell,
@@ -13,6 +13,13 @@ import { columnLabel, formatIpvgoPoint, parseIpvgoPoint, rowLabel } from "./coor
 import type { IpvgoBoard, IpvgoMove, IpvgoValidMoves } from "./types.js"
 
 export type IpvgoBackend = "katago" | "native" | "pending"
+
+export type IpvgoGameMoveRow = {
+  number: number
+  black: string
+  white: string
+  note?: string
+}
 
 export type IpvgoDashboardSnapshot = {
   opponent: GoOpponent
@@ -38,7 +45,7 @@ export type IpvgoDashboardSnapshot = {
   winStreak: number
   wins: number
   losses: number
-  logLines: readonly string[]
+  gameMoves: readonly IpvgoGameMoveRow[]
 }
 
 export function createIpvgoSnapshot(
@@ -68,25 +75,150 @@ export function createIpvgoSnapshot(
     winStreak: 0,
     wins: 0,
     losses: 0,
-    logLines: [],
+    gameMoves: [],
   }
 }
 
-const MAX_LOG_LINES = 80
-const LOG_DISPLAY_LINES = 12
-
-export function appendIpvgoLog(snapshot: IpvgoDashboardSnapshot, message: string): IpvgoDashboardSnapshot {
-  const time = new Date().toLocaleTimeString("en-GB", { hour12: false })
-  const line = `[${time}] ${message}`
-  const logLines = [...snapshot.logLines, line]
-  if (logLines.length > MAX_LOG_LINES) {
-    logLines.splice(0, logLines.length - MAX_LOG_LINES)
-  }
-  return { ...snapshot, logLines }
-}
+const MAX_MOVE_ROWS = 60
 
 function formatMove(move: IpvgoMove): string {
   return move.type === "pass" ? "pass" : formatIpvgoPoint(move.x, move.y)
+}
+
+function upsertGameMoveRow(
+  gameMoves: readonly IpvgoGameMoveRow[],
+  number: number,
+  patch: Partial<Omit<IpvgoGameMoveRow, "number">>
+): IpvgoGameMoveRow[] {
+  const rows = [...gameMoves]
+  const idx = rows.findIndex((row) => row.number === number)
+  if (idx >= 0) {
+    rows[idx] = { ...rows[idx], ...patch }
+    return rows
+  }
+  return [...rows, { number, black: "", white: "", ...patch }]
+}
+
+export function recordOurMove(
+  snapshot: IpvgoDashboardSnapshot,
+  moveNumber: number,
+  move: IpvgoMove,
+  note?: string
+): IpvgoDashboardSnapshot {
+  return {
+    ...snapshot,
+    gameMoves: upsertGameMoveRow(snapshot.gameMoves, moveNumber, { black: formatMove(move), note }),
+  }
+}
+
+export function recordOpponentMove(
+  snapshot: IpvgoDashboardSnapshot,
+  moveNumber: number,
+  move: string
+): IpvgoDashboardSnapshot {
+  return {
+    ...snapshot,
+    gameMoves: upsertGameMoveRow(snapshot.gameMoves, moveNumber, { white: move }),
+  }
+}
+
+export function recordGameResult(
+  snapshot: IpvgoDashboardSnapshot,
+  won: boolean,
+  blackScore: number,
+  whiteScore: number
+): IpvgoDashboardSnapshot {
+  const rows = [...snapshot.gameMoves]
+  rows.push({
+    number: rows.length + 1,
+    black: won ? "WIN" : "LOSS",
+    white: `B ${blackScore.toFixed(1)} / W ${whiteScore.toFixed(1)}`,
+    note: "result",
+  })
+  return { ...snapshot, gameMoves: rows }
+}
+
+function formatStreak(winStreak: number): string {
+  if (winStreak === 0) return "-"
+  if (winStreak > 0) return `${winStreak}W`
+  return `${Math.abs(winStreak)}L`
+}
+
+function scoreLeadText(blackScore: number, whiteScore: number): string {
+  const lead = blackScore - whiteScore
+  if (lead === 0) return "even"
+  return lead > 0 ? `B+${lead.toFixed(1)}` : `W+${(-lead).toFixed(1)}`
+}
+
+function buildStatusTable(snapshot: IpvgoDashboardSnapshot): ReactTableConfig {
+  const thinking =
+    snapshot.thinking ? `yes (${snapshot.iterations} sims)` : snapshot.thinkMs > 0 ? `${snapshot.sims} sims / ${snapshot.thinkMs.toFixed(0)}ms` : "no"
+
+  return {
+    title: "IPvGO",
+    columns: [
+      col("", "left", 10),
+      col("", "left", 18),
+    ],
+    rows: [
+      ["Phase", snapshot.phase],
+      ["Opponent", snapshot.opponent],
+      ["Board", `${snapshot.boardSize}x${snapshot.boardSize}`],
+      ["Engine", snapshot.backend],
+      ["Turn", snapshot.currentPlayer],
+      ["Score", `B ${snapshot.blackScore.toFixed(1)} / W ${snapshot.whiteScore.toFixed(1)} (${scoreLeadText(snapshot.blackScore, snapshot.whiteScore)})`],
+      ["Move", String(snapshot.moveNumber)],
+      ["Legal", String(snapshot.legalCount)],
+      ["Thinking", thinking],
+    ],
+    separatorAfter: [4],
+  }
+}
+
+function buildRecordTable(snapshot: IpvgoDashboardSnapshot): ReactTableConfig {
+  const streak = formatStreak(snapshot.winStreak)
+  const highlightCells = new Set<string>()
+  if (snapshot.winStreak > 0) highlightCells.add("0,2")
+  if (snapshot.winStreak < 0) highlightCells.add("0,2")
+
+  return {
+    title: "Record",
+    columns: [
+      col("Wins", "right", 6),
+      col("Losses", "right", 6),
+      col("Streak", "right", 8),
+      col("Played", "right", 6),
+    ],
+    rows: [[String(snapshot.wins), String(snapshot.losses), streak, String(snapshot.wins + snapshot.losses)]],
+    highlightCells,
+  }
+}
+
+function buildCurrentGameTable(snapshot: IpvgoDashboardSnapshot): ReactTableConfig {
+  const rows = [...snapshot.gameMoves]
+    .sort((a, b) => a.number - b.number)
+    .slice(-MAX_MOVE_ROWS)
+    .map((row) => [String(row.number), row.black || "-", row.white || "-", row.note ?? ""])
+
+  const lastMoveRow = [...snapshot.gameMoves]
+    .filter((row) => row.note !== "result")
+    .sort((a, b) => a.number - b.number)
+    .at(-1)
+  const selectedRowIndex = lastMoveRow
+    ? rows.findIndex((row) => row[0] === String(lastMoveRow.number))
+    : undefined
+
+  return {
+    title: "Current game",
+    columns: [
+      col("#", "right", 3),
+      col("Black", "left", 8),
+      col("White", "left", 8),
+      col("Note", "left", 18),
+    ],
+    rows: rows.length > 0 ? rows : [["-", "-", "-", "(waiting for first move)"]],
+    selectedRowIndex: selectedRowIndex !== undefined && selectedRowIndex >= 0 ? selectedRowIndex : undefined,
+  }
 }
 
 function parseOpponentPoint(lastOpponentMove?: string): { x: number; y: number } | undefined {
@@ -178,52 +310,13 @@ function buildTextBlockMinimal(text: string): ReactNode {
 }
 
 function populateDashboard(log: ScriptLogBuilder, snapshot: IpvgoDashboardSnapshot): void {
-  const scoreLead = snapshot.blackScore - snapshot.whiteScore
-  const leadText =
-    scoreLead === 0 ? "even" : scoreLead > 0 ? `B+${scoreLead.toFixed(1)}` : `W+${(-scoreLead).toFixed(1)}`
+  log.table(buildStatusTable(snapshot))
+  log.table(buildRecordTable(snapshot))
 
-  log.keyValueTable({
-    title: "IPvGO",
-    rows: [
-      { label: "Phase", value: snapshot.phase },
-      { label: "Opponent", value: snapshot.opponent },
-      { label: "Board", value: `${snapshot.boardSize}x${snapshot.boardSize}` },
-      { label: "Engine", value: snapshot.backend },
-      { label: "Turn", value: snapshot.currentPlayer },
-      { label: "Score", value: `B ${snapshot.blackScore.toFixed(1)} / W ${snapshot.whiteScore.toFixed(1)} (${leadText})` },
-      { label: "Move", value: String(snapshot.moveNumber) },
-      { label: "Legal", value: String(snapshot.legalCount) },
-      { label: "Record", value: `W ${snapshot.wins} L ${snapshot.losses} streak ${snapshot.winStreak}` },
-    ],
-    separatorAfter: [4],
-  })
-
-  if (snapshot.thinking) {
-    log.text(`Thinking... (${snapshot.iterations} sims)`)
-  } else if (snapshot.thinkMs > 0 || snapshot.sims > 0) {
-    log.text(`Last search: ${snapshot.sims} sims in ${snapshot.thinkMs.toFixed(0)} ms`)
-  }
-
-  log.section("Board")
   const boardSizePx = boardGridSizePx(snapshot.board.length || snapshot.boardSize)
   log.react(buildBoardReact(snapshot.board, snapshot.lastOurMove, snapshot.lastOpponentMove), boardSizePx)
-  log.text("Arms: purple white (O)  green black (X)  dot = empty node")
-  log.text("Ring: solid our last  dashed opp last")
 
-  if (snapshot.lastOurMove) {
-    log.text(`Our last: ${formatMove(snapshot.lastOurMove)}`)
-  }
-  if (snapshot.lastOpponentMove) {
-    log.text(`Opp last: ${snapshot.lastOpponentMove}`)
-  }
-
-  log.section("Log")
-  if (snapshot.logLines.length === 0) {
-    log.text("(no events yet)")
-  } else {
-    const recent = snapshot.logLines.slice(-LOG_DISPLAY_LINES)
-    log.text(recent.join("\n"))
-  }
+  log.table(buildCurrentGameTable(snapshot))
 }
 
 export function refreshFactionStats(snapshot: IpvgoDashboardSnapshot, ns: NS): IpvgoDashboardSnapshot {
