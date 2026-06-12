@@ -1,11 +1,6 @@
 import { NS, type GoOpponent } from "@ns"
 import { killOtherInstances } from "./libraries/batchCalculations.js"
 import {
-  createIpvgoWorker,
-  requestIpvgoMove,
-  verifyIpvgoWorker,
-} from "./libraries/ipvgo/createWorker.js"
-import {
   isIpvgoEngineAvailable,
   requestIpvgoEngineMove,
 } from "./libraries/ipvgo/engineClient.js"
@@ -14,7 +9,6 @@ import {
   createIpvgoSnapshot,
   refreshFactionStats,
   renderIpvgoDashboard,
-  type IpvgoBackend,
 } from "./libraries/ipvgo/display.js"
 import { findTacticalMove } from "./libraries/ipvgo/tactics.js"
 import {
@@ -120,78 +114,33 @@ export async function main(ns: NS): Promise<void> {
   const boardSize = parseBoardSize(ns.args[1] as string | number | undefined)
   const iterations = parseIterations(ns.args[2] as string | number | undefined)
   const autoReset = ns.args.includes("auto")
-  const forceEngine = ns.args.includes("engine")
-  const forceWorker = ns.args.includes("worker")
 
   const tailLog = createTailLog()
   let snapshot = appendIpvgoLog(
     createIpvgoSnapshot(opponent, boardSize, iterations, autoReset),
     "IPvGO MCTS bot starting"
   )
-  snapshot = appendIpvgoLog(snapshot, `Usage: run ${SCRIPT_NAME} [opponent] [boardSize] [iterations] [auto] [engine|worker]`)
+  snapshot = appendIpvgoLog(
+    snapshot,
+    `Usage: run ${SCRIPT_NAME} [opponent] [boardSize] [iterations] [auto]`
+  )
+  snapshot = appendIpvgoLog(snapshot, "Requires native engine: pnpm run server (from repo root)")
   snapshot = { ...snapshot, phase: "Initializing" }
   await renderIpvgoDashboard(ns, tailLog, snapshot)
 
-  type MoveBackend = "native" | "worker"
-  let backend: MoveBackend
-
-  if (forceEngine && forceWorker) {
-    snapshot = appendIpvgoLog(snapshot, "ERROR: use only one of 'engine' or 'worker'")
+  if (!(await isIpvgoEngineAvailable())) {
+    snapshot = appendIpvgoLog(
+      snapshot,
+      "ERROR: native engine unavailable. Run: pnpm run server (from repo root)"
+    )
     snapshot = { ...snapshot, phase: "Error" }
     await renderIpvgoDashboard(ns, tailLog, snapshot)
     return
   }
 
-  if (forceEngine) {
-    const available = await isIpvgoEngineAvailable()
-    if (!available) {
-      snapshot = appendIpvgoLog(
-        snapshot,
-        "ERROR: native engine unavailable. Run: pnpm run server (from repo root)"
-      )
-      snapshot = { ...snapshot, phase: "Error" }
-      await renderIpvgoDashboard(ns, tailLog, snapshot)
-      return
-    }
-    backend = "native"
-    snapshot = appendIpvgoLog(snapshot, "Using native engine (localhost:3010)")
-  } else if (forceWorker) {
-    backend = "worker"
-    snapshot = appendIpvgoLog(snapshot, "Using in-game JS worker")
-  } else {
-    backend = (await isIpvgoEngineAvailable()) ? "native" : "worker"
-    snapshot = appendIpvgoLog(
-      snapshot,
-      backend === "native"
-        ? "Native engine detected (localhost:3010)"
-        : "No native engine; using in-game JS worker"
-    )
-  }
-
-  snapshot = { ...snapshot, backend: backend as IpvgoBackend, phase: "Ready" }
+  snapshot = appendIpvgoLog(snapshot, "Native engine ready (localhost:3010)")
+  snapshot = { ...snapshot, backend: "native", phase: "Ready" }
   await renderIpvgoDashboard(ns, tailLog, snapshot)
-
-  let worker: Worker | undefined
-  if (backend === "worker") {
-    try {
-      worker = createIpvgoWorker(ns)
-      snapshot = appendIpvgoLog(snapshot, "Worker loaded, running smoke test...")
-      snapshot = { ...snapshot, phase: "Worker test" }
-      await renderIpvgoDashboard(ns, tailLog, snapshot)
-
-      const smoke = await verifyIpvgoWorker(worker)
-      snapshot = appendIpvgoLog(
-        snapshot,
-        `Worker OK (smoke ${formatMove(smoke.move)}, ${smoke.iterations} sims, ${smoke.elapsedMs.toFixed(0)}ms)`
-      )
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      snapshot = appendIpvgoLog(snapshot, `ERROR: ${message}`)
-      snapshot = { ...snapshot, phase: "Error" }
-      await renderIpvgoDashboard(ns, tailLog, snapshot)
-      return
-    }
-  }
 
   let moveNumber = 0
   let gamesPlayed = 0
@@ -339,10 +288,7 @@ export async function main(ns: NS): Promise<void> {
           playAs: "X" as const,
           validMoves,
         }
-        const analysis =
-          backend === "native"
-            ? await requestIpvgoEngineMove(request)
-            : await requestIpvgoMove(worker!, request)
+        const analysis = await requestIpvgoEngineMove(request)
         thinkMs = performance.now() - started
         sims = analysis.iterations
 
@@ -354,7 +300,7 @@ export async function main(ns: NS): Promise<void> {
         ) {
           snapshot = appendIpvgoLog(
             snapshot,
-            `Move ${moveNumber}: ${backend} illegal ${formatMove(suggested)}, using ${formatMove(move)}`
+            `Move ${moveNumber}: engine illegal ${formatMove(suggested)}, using ${formatMove(move)}`
           )
         }
 
@@ -393,7 +339,7 @@ export async function main(ns: NS): Promise<void> {
 
       let opponentReply = ""
       if (result.type === "move" && result.x !== null && result.y !== null) {
-        opponentReply = `${result.x},${result.y}`
+        opponentReply = formatIpvgoPoint(result.x, result.y)
         snapshot = appendIpvgoLog(snapshot, `Opponent: ${opponentReply}`)
       } else if (result.type === "pass") {
         opponentReply = "pass"

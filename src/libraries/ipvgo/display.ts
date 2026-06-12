@@ -12,7 +12,7 @@ import {
 import { columnLabel, formatIpvgoPoint, parseIpvgoPoint, rowLabel } from "./coords.js"
 import type { IpvgoBoard, IpvgoMove, IpvgoValidMoves } from "./types.js"
 
-export type IpvgoBackend = "native" | "worker" | "pending"
+export type IpvgoBackend = "native" | "pending"
 
 export type IpvgoDashboardSnapshot = {
   opponent: GoOpponent

@@ -8,7 +8,7 @@ export type IpvgoMove = { type: "move"; x: number; y: number } | { type: "pass" 
 
 export type IpvgoValidMoves = boolean[][]
 
-export type IpvgoWorkerRequest = {
+export type IpvgoMoveRequest = {
   board: IpvgoBoard
   history: IpvgoBoard[]
   komi: number
@@ -18,7 +18,7 @@ export type IpvgoWorkerRequest = {
   validMoves: IpvgoValidMoves
 }
 
-export type IpvgoWorkerResponse = {
+export type IpvgoMoveResponse = {
   move: IpvgoMove
   iterations: number
   elapsedMs: number

@@ -1,15 +1,6 @@
-import type { IpvgoBoard, IpvgoColor, IpvgoMove, IpvgoValidMoves, IpvgoWorkerResponse } from "./types.js"
+import type { IpvgoMoveRequest, IpvgoMoveResponse } from "./types.js"
 
 const DEFAULT_ENGINE_URL = "http://localhost:3010"
-
-export type IpvgoEngineRequest = {
-  board: IpvgoBoard
-  history: IpvgoBoard[]
-  komi: number
-  iterations: number
-  playAs: IpvgoColor
-  validMoves: IpvgoValidMoves
-}
 
 export function getIpvgoEngineUrl(): string {
   return DEFAULT_ENGINE_URL
@@ -27,9 +18,9 @@ export async function isIpvgoEngineAvailable(baseUrl = getIpvgoEngineUrl()): Pro
 }
 
 export async function requestIpvgoEngineMove(
-  request: IpvgoEngineRequest,
+  request: IpvgoMoveRequest,
   baseUrl = getIpvgoEngineUrl()
-): Promise<IpvgoWorkerResponse> {
+): Promise<IpvgoMoveResponse> {
   const res = await fetch(`${baseUrl}/api/ipvgo/move`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -41,9 +32,5 @@ export async function requestIpvgoEngineMove(
     throw new Error(err.error ?? `Engine HTTP ${res.status}`)
   }
 
-  return (await res.json()) as IpvgoWorkerResponse
-}
-
-export function formatEngineMove(move: IpvgoMove): string {
-  return move.type === "pass" ? "pass" : `${move.x},${move.y}`
+  return (await res.json()) as IpvgoMoveResponse
 }
