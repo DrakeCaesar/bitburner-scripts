@@ -29,6 +29,7 @@ const DEFAULT_ITERATIONS = 4000
 const DEFAULT_BOARD_SIZE: IpvgoBoardSize = 7
 const DEFAULT_OPPONENT: GoOpponent = "Netburners"
 const LOOP_SLEEP_MS = 50
+const ENABLE_TACTICAL_MOVES = false
 
 function parseOpponent(value: string | undefined): GoOpponent {
   if (!value) return DEFAULT_OPPONENT
@@ -237,7 +238,7 @@ export async function main(ns: NS): Promise<void> {
         continue
       }
 
-      const tactical = findTacticalMove(board, validMoves, "X")
+      const tactical = ENABLE_TACTICAL_MOVES ? findTacticalMove(board, validMoves, "X") : null
       let move: IpvgoMove
       let thinkMs = 0
       let sims = 0
