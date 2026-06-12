@@ -11,6 +11,7 @@ import {
   renderIpvgoDashboard,
 } from "./libraries/ipvgo/display.js"
 import { findTacticalMove } from "./libraries/ipvgo/tactics.js"
+import { shouldPassToEndGame } from "./libraries/ipvgo/endgame.js"
 import {
   IPVGO_BOARD_SIZES,
   IPVGO_KOMI_BY_OPPONENT,
@@ -255,7 +256,18 @@ export async function main(ns: NS): Promise<void> {
       let thinkMs = 0
       let sims = 0
 
-      if (tactical) {
+      if (shouldPassToEndGame(ns, snapshot.lastOpponentMove)) {
+        move = { type: "pass" }
+        snapshot = {
+          ...syncGameState(ns, snapshot),
+          moveNumber,
+          legalCount,
+          validMoves,
+          phase: "End game",
+        }
+        await renderIpvgoDashboard(ns, tailLog, snapshot)
+        snapshot = appendIpvgoLog(snapshot, `Move ${moveNumber}: pass (end game)`)
+      } else if (tactical) {
         move = tactical
         snapshot = {
           ...syncGameState(ns, snapshot),
