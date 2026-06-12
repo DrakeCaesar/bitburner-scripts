@@ -77,3 +77,12 @@ Outputs `cpp/ipvgo.wasm.js` and `cpp/ipvgo.wasm.wasm`.
 ```
 
 `threads`: `0` = all CPU cores (default), or set an explicit count.
+
+## Blocked nodes (`#`)
+
+IPvGO boards can include blocked intersections (`#`). KataGo queries apply move restrictions from `validMoves`:
+
+- **No blocked nodes:** `allowMoves` whitelists legal IPvGO points (+ pass) at the root.
+- **With blocked nodes:** `avoidMoves` bans `#` for both players through the search tree, and bans other illegal points for the current player at the root.
+
+`pickMoveFromAnalysis` still filters through `validMoves` as a final safety check.
