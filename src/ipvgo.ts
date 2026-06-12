@@ -125,22 +125,30 @@ export async function main(ns: NS): Promise<void> {
     snapshot,
     `Usage: run ${SCRIPT_NAME} [opponent] [boardSize] [iterations] [auto]`
   )
-  snapshot = appendIpvgoLog(snapshot, "Requires native engine: pnpm run server (from repo root)")
+  snapshot = appendIpvgoLog(snapshot, "Requires engine server: pnpm run ipvgo:setup && pnpm run server")
   snapshot = { ...snapshot, phase: "Initializing" }
   await renderIpvgoDashboard(ns, tailLog, snapshot)
 
   if (!(await isIpvgoEngineAvailable())) {
     snapshot = appendIpvgoLog(
       snapshot,
-      "ERROR: native engine unavailable. Run: pnpm run server (from repo root)"
+      "ERROR: engine unavailable. Run: pnpm run ipvgo:setup && pnpm run server"
     )
     snapshot = { ...snapshot, phase: "Error" }
     await renderIpvgoDashboard(ns, tailLog, snapshot)
     return
   }
 
-  snapshot = appendIpvgoLog(snapshot, "Native engine ready (localhost:3010)")
-  snapshot = { ...snapshot, backend: "native", phase: "Ready" }
+  let engineLabel = "native"
+  try {
+    const health = (await fetch("http://localhost:3010/health").then((r) => r.json())) as { engine?: string }
+    if (health.engine === "katago" || health.engine === "native") engineLabel = health.engine
+  } catch {
+    /* use default */
+  }
+
+  snapshot = appendIpvgoLog(snapshot, `Engine ready (${engineLabel}, localhost:3010)`)
+  snapshot = { ...snapshot, backend: engineLabel as "katago" | "native", phase: "Ready" }
   await renderIpvgoDashboard(ns, tailLog, snapshot)
 
   let moveNumber = 0

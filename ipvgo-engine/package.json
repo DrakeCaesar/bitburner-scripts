@@ -7,6 +7,7 @@
   "scripts": {
     "build:wasm": "node build.js",
     "build:native": "cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release",
+    "setup": "node scripts/setup-katago.js",
     "build": "pnpm run build:wasm",
     "server": "node server.js"
   }

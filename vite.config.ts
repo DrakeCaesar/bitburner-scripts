@@ -28,6 +28,11 @@ function bitburnerImportPaths() {
 
 export default defineConfig({
   plugins: [bitburnerImportPaths()],
+  server: {
+    watch: {
+      ignored: ["**/ipvgo-engine/**"],
+    },
+  },
   resolve: {
     alias: {
       "@": resolve(__dirname, "src"),

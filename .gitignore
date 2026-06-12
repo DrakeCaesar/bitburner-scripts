@@ -13,6 +13,7 @@ ipvgo-engine/build/
 ipvgo-engine/temp/
 ipvgo-engine/cpp/*.wasm
 ipvgo-engine/cpp/ipvgo.wasm.js
+ipvgo-engine/katago/
 
 # CMake artifacts if misconfigured into repo-root build/ (legacy watch scripts live there)
 build/.cmake/

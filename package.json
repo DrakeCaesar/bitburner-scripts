@@ -27,6 +27,7 @@
     "watch:remote": "bitburner-filesync",
     "watch:transpile": "tsc -w --preserveWatchOutput",
     "server": "node ipvgo-engine/server.js",
+    "ipvgo:setup": "node ipvgo-engine/scripts/setup-katago.js",
     "ipvgo:build": "cmake --build ipvgo-engine/build --config Release"
   },
   "prettier": {

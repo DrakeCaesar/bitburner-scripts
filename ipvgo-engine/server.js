@@ -1,7 +1,6 @@
 /**
- * Local JSON API for the native IPvGO engine.
- * Run manually from a terminal (e.g. VS Code): pnpm run server
- * Bitburner ipvgo.js POSTs board state here and receives a move.
+ * Local JSON API for IPvGO move search.
+ * Prefers KataGo (GPU) when installed; falls back to native C++ MCTS.
  */
 
 import { execFile } from "child_process"
@@ -9,16 +8,25 @@ import fs from "fs"
 import http from "http"
 import path from "path"
 import { fileURLToPath } from "url"
+import { isKatagoInstalled, requestKatagoMove, shutdownKatago, warmupKatago } from "./katagoBridge.js"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const port = Number(process.env.IPVGO_PORT ?? 3010)
 const maxBodyBytes = 4 * 1024 * 1024
+const forceNative = process.env.IPVGO_FORCE_NATIVE === "1"
 
 function nativeExecutablePath() {
   const isWindows = process.platform === "win32"
   return isWindows
     ? path.join(__dirname, "build", "Release", "ipvgo_engine.exe")
     : path.join(__dirname, "build", "ipvgo_engine")
+}
+
+function activeEngine() {
+  if (!forceNative && isKatagoInstalled()) return "katago"
+  const exe = nativeExecutablePath()
+  if (fs.existsSync(exe)) return "native"
+  return "missing"
 }
 
 function sendJson(res, status, body) {
@@ -58,20 +66,64 @@ function readJsonBody(req) {
 }
 
 function handleHealth(_req, res) {
-  const exe = nativeExecutablePath()
+  const engine = activeEngine()
   sendJson(res, 200, {
     status: "ok",
-    engine: fs.existsSync(exe) ? "native" : "missing",
-    path: exe,
+    engine,
+    katago: isKatagoInstalled(),
+    nativePath: nativeExecutablePath(),
+    nativeBuilt: fs.existsSync(nativeExecutablePath()),
     timestamp: new Date().toISOString(),
   })
 }
 
-async function handleMove(req, res) {
+async function requestNativeMove(body) {
   const exe = nativeExecutablePath()
   if (!fs.existsSync(exe)) {
+    throw new Error("Native engine not built. Run: pnpm run ipvgo:build")
+  }
+
+  const tempDir = path.join(__dirname, "temp")
+  if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true })
+
+  const inputPath = path.join(tempDir, `input-${Date.now()}.json`)
+  const outputPath = path.join(tempDir, `output-${Date.now()}.json`)
+
+  fs.writeFileSync(inputPath, JSON.stringify(body))
+
+  return new Promise((resolve, reject) => {
+    execFile(exe, [inputPath, outputPath], { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 }, (error, _stdout, stderr) => {
+      try {
+        if (error) {
+          reject(new Error(`${error.message}${stderr ? `: ${stderr}` : ""}`))
+          return
+        }
+        if (!fs.existsSync(outputPath)) {
+          reject(new Error("Engine produced no output file"))
+          return
+        }
+        const result = JSON.parse(fs.readFileSync(outputPath, "utf8"))
+        resolve({ ...result, engine: "native" })
+      } catch (err) {
+        reject(err)
+      } finally {
+        for (const file of [inputPath, outputPath]) {
+          try {
+            if (fs.existsSync(file)) fs.unlinkSync(file)
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    })
+  })
+}
+
+async function handleMove(req, res) {
+  const engine = activeEngine()
+  if (engine === "missing") {
     return sendJson(res, 503, {
-      error: "Native engine not built. Run: cd ipvgo-engine && pnpm run build:native",
+      error: "No engine available. Run: pnpm run ipvgo:setup && pnpm run ipvgo:build",
     })
   }
 
@@ -82,43 +134,21 @@ async function handleMove(req, res) {
     return sendJson(res, 400, { error: err.message })
   }
 
-  const tempDir = path.join(__dirname, "temp")
-  if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true })
-
-  const inputPath = path.join(tempDir, `input-${Date.now()}.json`)
-  const outputPath = path.join(tempDir, `output-${Date.now()}.json`)
-
   try {
-    fs.writeFileSync(inputPath, JSON.stringify(body))
+    const result = engine === "katago" ? await requestKatagoMove(body) : await requestNativeMove(body)
+    sendJson(res, 200, result)
   } catch (err) {
-    return sendJson(res, 400, { error: `Failed to write input: ${err.message}` })
-  }
-
-  execFile(exe, [inputPath, outputPath], { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 }, (error, _stdout, stderr) => {
-    try {
-      if (error) {
-        console.error("ipvgo_engine error:", error.message, stderr)
-        return sendJson(res, 500, { error: error.message, stderr: stderr?.toString() })
-      }
-
-      if (!fs.existsSync(outputPath)) {
-        return sendJson(res, 500, { error: "Engine produced no output file" })
-      }
-
-      const result = JSON.parse(fs.readFileSync(outputPath, "utf8"))
-      sendJson(res, 200, result)
-    } catch (parseError) {
-      sendJson(res, 500, { error: `Invalid engine output: ${parseError.message}` })
-    } finally {
-      for (const file of [inputPath, outputPath]) {
-        try {
-          if (fs.existsSync(file)) fs.unlinkSync(file)
-        } catch {
-          /* ignore */
-        }
+    console.error(`${engine} move error:`, err.message)
+    if (engine === "katago") {
+      try {
+        const fallback = await requestNativeMove(body)
+        return sendJson(res, 200, { ...fallback, engine: "native", katagoError: err.message })
+      } catch (nativeErr) {
+        return sendJson(res, 500, { error: err.message, fallbackError: nativeErr.message })
       }
     }
-  })
+    return sendJson(res, 500, { error: err.message })
+  }
 }
 
 const server = http.createServer(async (req, res) => {
@@ -148,7 +178,25 @@ const server = http.createServer(async (req, res) => {
 })
 
 server.listen(port, () => {
+  const engine = activeEngine()
   console.log(`IPvGO engine server http://localhost:${port}`)
+  console.log(`Active engine: ${engine}`)
   console.log(`Health: http://localhost:${port}/health`)
   console.log(`Move API: POST http://localhost:${port}/api/ipvgo/move`)
+
+  if (engine === "katago") {
+    warmupKatago().catch((err) => {
+      console.error("[katago] warmup failed:", err.message)
+    })
+  }
+})
+
+process.on("SIGINT", () => {
+  shutdownKatago()
+  process.exit(0)
+})
+
+process.on("SIGTERM", () => {
+  shutdownKatago()
+  process.exit(0)
 })
