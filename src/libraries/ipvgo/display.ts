@@ -9,6 +9,7 @@ import {
   buildEmptyCell,
   type CellHighlight,
 } from "./boardSvgs.js"
+import { columnLabel, formatIpvgoPoint, parseIpvgoPoint, rowLabel } from "./coords.js"
 import type { IpvgoBoard, IpvgoMove, IpvgoValidMoves } from "./types.js"
 
 export type IpvgoBackend = "native" | "worker" | "pending"
@@ -85,17 +86,12 @@ export function appendIpvgoLog(snapshot: IpvgoDashboardSnapshot, message: string
 }
 
 function formatMove(move: IpvgoMove): string {
-  return move.type === "pass" ? "pass" : `${move.x},${move.y}`
+  return move.type === "pass" ? "pass" : formatIpvgoPoint(move.x, move.y)
 }
 
 function parseOpponentPoint(lastOpponentMove?: string): { x: number; y: number } | undefined {
-  if (!lastOpponentMove || lastOpponentMove === "pass") return undefined
-  const parts = lastOpponentMove.split(",")
-  if (parts.length !== 2) return undefined
-  const x = Number(parts[0])
-  const y = Number(parts[1])
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return undefined
-  return { x, y }
+  if (!lastOpponentMove) return undefined
+  return parseIpvgoPoint(lastOpponentMove)
 }
 
 function cellHighlight(
@@ -130,10 +126,10 @@ function buildBoardReact(
     "div",
     { key: "header", style: { display: "flex", flexDirection: "row" } },
     buildEmptyCell("corner"),
-    ...Array.from({ length: size }, (_, x) => buildCoordCell(x, `hx-${x}`))
+    ...Array.from({ length: size }, (_, x) => buildCoordCell(columnLabel(x), `hx-${x}`))
   )
 
-  // API y=0 is bottom; draw top first (y=size-1). Row labels show displayRow (0 at top).
+  // API y=0 is bottom; top row is y=size-1. Labels match in-game coords (A.5 at top-left on 5x5).
   const rows = Array.from({ length: size }, (_, displayRow) => {
     const y = size - 1 - displayRow
     const stones = Array.from({ length: size }, (_, x) => {
@@ -143,7 +139,7 @@ function buildBoardReact(
     return React.createElement(
       "div",
       { key: `row-${y}`, style: { display: "flex", flexDirection: "row" } },
-      buildCoordCell(displayRow, `hy-${displayRow}`),
+      buildCoordCell(rowLabel(y), `hy-${y}`),
       ...stones
     )
   })

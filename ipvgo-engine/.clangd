@@ -1,0 +1,6 @@
+# clangd config for ipvgo-engine (run `cmake -S . -B build` once for nlohmann in build/_deps).
+CompileFlags:
+  Add:
+    - -std=c++17
+    - -Icpp
+    - -Ibuild/_deps/nlohmann_json-src/include

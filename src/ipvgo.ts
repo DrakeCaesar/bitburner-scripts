@@ -25,6 +25,7 @@ import {
   type IpvgoMove,
   type IpvgoValidMoves,
 } from "./libraries/ipvgo/types.js"
+import { formatIpvgoPoint } from "./libraries/ipvgo/coords.js"
 import { createTailLog, openTailLog } from "./libraries/scriptLogUiLayout.js"
 
 const SCRIPT_NAME = "ipvgo.js"
@@ -59,7 +60,7 @@ function parseIterations(value: string | number | undefined): number {
 }
 
 function formatMove(move: IpvgoMove): string {
-  return move.type === "pass" ? "pass" : `${move.x},${move.y}`
+  return move.type === "pass" ? "pass" : formatIpvgoPoint(move.x, move.y)
 }
 
 function countValidMoves(validMoves: IpvgoValidMoves): number {
@@ -92,7 +93,7 @@ function pickLegalMove(validMoves: IpvgoValidMoves, preferred?: IpvgoMove): Ipvg
 function formatOpponentTurn(result: { type: string; x: number | null; y: number | null }): string {
   if (result.type === "pass") return "pass"
   if (result.type === "move" && result.x !== null && result.y !== null) {
-    return `${result.x},${result.y}`
+    return formatIpvgoPoint(result.x, result.y)
   }
   return result.type
 }

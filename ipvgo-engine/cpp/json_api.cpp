@@ -2,6 +2,9 @@
 
 #include "engine.hpp"
 
+#include <string>
+#include <vector>
+
 #include <nlohmann/json.hpp>
 
 namespace ipvgo {

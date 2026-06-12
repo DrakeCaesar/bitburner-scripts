@@ -138,18 +138,33 @@ function highlightRing(highlight: CellHighlight): ReactNode {
   })
 }
 
+function stoneSheenDot(): ReactNode {
+  const React = getReact()
+  return React.createElement("circle", {
+    cx: CENTER - 2.8,
+    cy: CENTER - 2.8,
+    r: 1.5,
+    fill: "rgba(255,255,255,0.12)",
+  })
+}
+
+function whiteStoneSheenDot(): ReactNode {
+  const React = getReact()
+  return React.createElement("circle", {
+    cx: CENTER - 2.8,
+    cy: CENTER - 2.8,
+    r: 1.5,
+    fill: "#E8E8E8",
+  })
+}
+
 function stoneLayers(kind: BoardStoneKind): ReactNode[] {
   const React = getReact()
   switch (kind) {
     case "black":
       return [
         React.createElement("circle", { cx: CENTER, cy: CENTER, r: STONE_R, fill: "#1c1c1c" }),
-        React.createElement("circle", {
-          cx: CENTER - 2.8,
-          cy: CENTER - 2.8,
-          r: 1.5,
-          fill: "rgba(255,255,255,0.12)",
-        }),
+        stoneSheenDot(),
       ]
     case "white":
       return [
@@ -157,10 +172,11 @@ function stoneLayers(kind: BoardStoneKind): ReactNode[] {
           cx: CENTER,
           cy: CENTER,
           r: STONE_R,
-          fill: "#efefef",
-          stroke: "#4a4a4a",
+          fill: "#D1D1D1",
+          stroke: "#555555",
           strokeWidth: 1.2,
         }),
+        whiteStoneSheenDot(),
       ]
     case "blocked":
       return [
@@ -187,9 +203,8 @@ function emptyDotLayer(board: IpvgoBoard, x: number, y: number): ReactNode[] {
   ]
 }
 
-export function buildCoordCell(n: number, key?: string): ReactNode {
+export function buildCoordCell(label: string, key?: string): ReactNode {
   const React = getReact()
-  const label = String(n)
   const fontSize = label.length >= 2 ? 9 : 11
   return svgRoot(BOARD_CELL_PX, key, [
     React.createElement(
