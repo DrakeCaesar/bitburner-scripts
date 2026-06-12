@@ -17,10 +17,13 @@ function getSpendCapFractions(hashRate: number): Pick<HacknetConfig, "spendCapFr
   if (hashRate < 10) {
     return { spendCapFraction: 0.1, cacheCapFraction: 0.001 }
   }
-  if (hashRate < 100) {
+  if (hashRate < 20) {
     return { spendCapFraction: 0.1, cacheCapFraction: 0.1 }
   }
-  return { spendCapFraction: 0.001, cacheCapFraction: 0.01 }
+  if (hashRate < 30) {
+    return { spendCapFraction: 0.01, cacheCapFraction: 0.01 }
+  }
+  return { spendCapFraction: 0.001, cacheCapFraction: 0.001 }
 }
 
 export async function main(ns: NS) {
