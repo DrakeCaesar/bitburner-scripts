@@ -30,6 +30,10 @@ export interface TableLayout {
   tailViewportMaxHeightPx?: number
   /** Calling script pid; used to restore scroll across tail redraws. */
   tailScriptPid?: number
+  /** Tabbed tail: tab bar stays fixed; only the panel area scrolls. */
+  tailTabbed?: boolean
+  /** Active tab id for per-tab scroll restore in tabbed tails. */
+  tailActiveTabId?: string
   sectionGapPx: number
 }
 
@@ -75,6 +79,9 @@ export function mergeLayout(partial?: Partial<TableLayout>): TableLayout {
 
 const SCRIPT_LOG_VIEWPORT_ATTR = "data-script-log-viewport"
 const SCRIPT_LOG_PID_ATTR = "data-script-log-pid"
+const SCRIPT_LOG_PANEL_ATTR = "data-script-log-panel"
+/** Opaque background so sticky tab chips cover scrolling panel content. */
+const TAB_BAR_BG = "#141414"
 
 function isVerticallyScrollable(el: HTMLElement, win: Window): boolean {
   const style = win.getComputedStyle(el)
@@ -103,6 +110,30 @@ function findActiveScrollContainer(el: HTMLElement): HTMLElement | null {
 /** Per-script scroll offset preserved across clearLog / renderTail redraws. */
 const lastScrollTopByPid = new Map<number, number>()
 
+/** Per-script, per-tab panel scroll offsets in tabbed tails. */
+const lastScrollTopByPidAndTab = new Map<number, Map<string, number>>()
+
+function getTabScrollMap(pid: number): Map<string, number> {
+  let map = lastScrollTopByPidAndTab.get(pid)
+  if (!map) {
+    map = new Map()
+    lastScrollTopByPidAndTab.set(pid, map)
+  }
+  return map
+}
+
+function readTabbedPanelScroll(pid: number, tabId: string | undefined): number | undefined {
+  if (tabId == null) return lastScrollTopByPid.get(pid)
+  const map = lastScrollTopByPidAndTab.get(pid)
+  if (map?.has(tabId)) return map.get(tabId)
+  return undefined
+}
+
+function writeTabbedPanelScroll(pid: number, tabId: string | undefined, scrollTop: number): void {
+  if (tabId != null) getTabScrollMap(pid).set(tabId, scrollTop)
+  lastScrollTopByPid.set(pid, scrollTop)
+}
+
 /** Measured or default title row from Bitburner tail chrome (h6 + control buttons). */
 let cachedTailTitleBarPx: number | null = null
 
@@ -112,13 +143,62 @@ const lastTailSizeByPid = new Map<number, { width: number; height: number }>()
 function resetTailSession(pid: number): void {
   lastTailSizeByPid.delete(pid)
   lastScrollTopByPid.delete(pid)
+  lastScrollTopByPidAndTab.delete(pid)
 }
 
-function saveTailScrollPosition(pid: number): void {
+function findTabbedPanelScrollEl(viewport: HTMLElement): HTMLElement | null {
+  const panel = viewport.querySelector(`[${SCRIPT_LOG_PANEL_ATTR}]`)
+  return panel instanceof HTMLElement ? panel : null
+}
+
+function saveTabbedPanelScroll(pid: number, tabId: string): void {
   try {
     const doc = eval("document") as Document
     const viewport = doc.querySelector(`[${SCRIPT_LOG_PID_ATTR}="${pid}"]`) as HTMLElement | null
     if (!viewport) return
+    const panel = findTabbedPanelScrollEl(viewport)
+    if (!panel) return
+    writeTabbedPanelScroll(pid, tabId, panel.scrollTop)
+  } catch {
+    // ignore
+  }
+}
+
+function restoreTabbedPanelScroll(pid: number, tabId: string | undefined, panelEl?: HTMLElement | null): void {
+  if (tabId == null) return
+  try {
+    const panel =
+      panelEl ??
+      (() => {
+        const doc = eval("document") as Document
+        const viewport = doc.querySelector(`[${SCRIPT_LOG_PID_ATTR}="${pid}"]`) as HTMLElement | null
+        return viewport ? findTabbedPanelScrollEl(viewport) : null
+      })()
+    if (!panel) return
+    const saved = readTabbedPanelScroll(pid, tabId)
+    if (saved != null) {
+      const maxScroll = Math.max(0, panel.scrollHeight - panel.clientHeight)
+      panel.scrollTop = Math.min(saved, maxScroll)
+    } else {
+      panel.scrollTop = 0
+    }
+    writeTabbedPanelScroll(pid, tabId, panel.scrollTop)
+  } catch {
+    // ignore
+  }
+}
+
+function saveTailScrollPosition(pid: number, activeTabId?: string): void {
+  try {
+    const doc = eval("document") as Document
+    const viewport = doc.querySelector(`[${SCRIPT_LOG_PID_ATTR}="${pid}"]`) as HTMLElement | null
+    if (!viewport) return
+    const win = eval("window") as Window
+    const panelEl = findTabbedPanelScrollEl(viewport)
+    if (panelEl) {
+      writeTabbedPanelScroll(pid, activeTabId, panelEl.scrollTop)
+      return
+    }
     const scrollEl = findActiveScrollContainer(viewport)
     if (!scrollEl) return
     lastScrollTopByPid.set(pid, scrollEl.scrollTop)
@@ -127,8 +207,33 @@ function saveTailScrollPosition(pid: number): void {
   }
 }
 
-function applyTailScrollPosition(containerEl: HTMLElement, pid: number | undefined): void {
+function applyTailScrollPosition(
+  containerEl: HTMLElement,
+  pid: number | undefined,
+  activeTabId?: string
+): void {
   if (pid == null) return
+
+  const viewport = containerEl.hasAttribute(SCRIPT_LOG_VIEWPORT_ATTR)
+    ? containerEl
+    : (containerEl.closest(`[${SCRIPT_LOG_VIEWPORT_ATTR}]`) as HTMLElement | null)
+  const panelEl =
+    containerEl.hasAttribute(SCRIPT_LOG_PANEL_ATTR)
+      ? containerEl
+      : viewport
+        ? findTabbedPanelScrollEl(viewport)
+        : null
+  if (panelEl) {
+    const saved = readTabbedPanelScroll(pid, activeTabId)
+    if (saved != null) {
+      const maxScroll = Math.max(0, panelEl.scrollHeight - panelEl.clientHeight)
+      panelEl.scrollTop = Math.min(saved, maxScroll)
+    } else {
+      panelEl.scrollTop = 0
+    }
+    writeTabbedPanelScroll(pid, activeTabId, panelEl.scrollTop)
+    return
+  }
 
   const saved = lastScrollTopByPid.get(pid)
   if (saved === 0) {
@@ -230,7 +335,64 @@ function setAllTailScrollToVisualTop(pid: number): void {
   }
 }
 
-function scrollTailToTopAfterLayout(pid: number): void {
+function tabbedPanelHeightPx(layout: TableLayout): number | undefined {
+  if (layout.tailViewportMaxHeightPx == null) return undefined
+  return Math.max(40, layout.tailViewportMaxHeightPx - estimateTabBarHeightPx(layout))
+}
+
+/** Enforce tabbed chrome in the live tail DOM (tab switch resize without full re-render). */
+function applyTabbedTailChrome(pid: number, layout: TableLayout): void {
+  if (layout.tailTabbed !== true || layout.tailViewportMaxHeightPx == null) return
+  try {
+    const doc = eval("document") as Document
+    const viewport = doc.querySelector(`[${SCRIPT_LOG_PID_ATTR}="${pid}"]`) as HTMLElement | null
+    if (!viewport) return
+    const contentAreaH = layout.tailViewportMaxHeightPx
+    viewport.style.height = `${contentAreaH}px`
+    viewport.style.maxHeight = `${contentAreaH}px`
+    viewport.style.overflowY = "hidden"
+
+    const panel = findTabbedPanelScrollEl(viewport)
+    const panelH = tabbedPanelHeightPx(layout)
+    if (panel && panelH != null) {
+      panel.style.height = `${panelH}px`
+      panel.style.maxHeight = `${panelH}px`
+      panel.style.overflowY = "auto"
+    }
+
+    const tabbedRoot = panel?.parentElement
+    if (tabbedRoot instanceof HTMLElement) {
+      tabbedRoot.style.display = "flex"
+      tabbedRoot.style.flexDirection = "column"
+      tabbedRoot.style.height = `${contentAreaH}px`
+      tabbedRoot.style.maxHeight = `${contentAreaH}px`
+      tabbedRoot.style.overflow = "hidden"
+      tabbedRoot.style.boxSizing = "border-box"
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function scrollTabbedPanelAfterLayout(pid: number, layout: TableLayout): void {
+  const win = eval("window") as Window
+  const tabId = layout.tailActiveTabId
+  const tick = (): void => {
+    applyTabbedTailChrome(pid, layout)
+    restoreTabbedPanelScroll(pid, tabId)
+  }
+  tick()
+  win.requestAnimationFrame(() => {
+    tick()
+    win.requestAnimationFrame(tick)
+  })
+}
+
+function scrollTailToTopAfterLayout(pid: number, layout?: TableLayout): void {
+  if (layout?.tailTabbed) {
+    scrollTabbedPanelAfterLayout(pid, layout)
+    return
+  }
   const win = eval("window") as Window
   const tick = (): void => setAllTailScrollToVisualTop(pid)
   tick()
@@ -293,15 +455,16 @@ function ViewportShell(props: ViewportShellProps): ReactNode {
     if (!containerEl) return
     const win = eval("window") as Window
     const syncScroll = (): void => {
-      applyTailScrollPosition(containerEl, props.layout.tailScriptPid)
+      applyTailScrollPosition(containerEl, props.layout.tailScriptPid, props.layout.tailActiveTabId)
     }
     syncScroll()
     const frame = win.requestAnimationFrame(syncScroll)
     return () => win.cancelAnimationFrame(frame)
-  }, [containerEl, props.layout.tailViewportMaxHeightPx, props.layout.tailScriptPid])
+  }, [containerEl, props.layout.tailViewportMaxHeightPx, props.layout.tailScriptPid, props.layout.tailActiveTabId])
 
   const viewportMax = props.layout.tailViewportMaxHeightPx
   const pid = props.layout.tailScriptPid
+  const tabbed = props.layout.tailTabbed === true
   return React.createElement(
     "div",
     {
@@ -319,7 +482,11 @@ function ViewportShell(props: ViewportShellProps): ReactNode {
         boxSizing: "border-box",
         overflowX: "auto",
         overflowAnchor: "none",
-        ...(viewportMax != null ? { maxHeight: `${viewportMax}px`, overflowY: "auto" } : {}),
+        ...(tabbed && viewportMax != null
+          ? { height: `${viewportMax}px`, maxHeight: `${viewportMax}px`, overflowY: "hidden" }
+          : viewportMax != null
+            ? { maxHeight: `${viewportMax}px`, overflowY: "auto" }
+            : {}),
       },
     },
     children
@@ -371,10 +538,13 @@ export function resolveTailSize(layout?: Partial<TableLayout>): {
 export function layoutForTailRender(layout?: Partial<TableLayout>): TableLayout {
   const base = mergeLayout(layout)
   const sized = resolveTailSize(base)
+  const titleBarPx = getTailTitleBarPx(base)
+  const contentAreaH = Math.max(40, sized.height - titleBarPx)
+  const viewportMaxHeightPx = base.tailTabbed ? contentAreaH : sized.viewportMaxHeightPx
   return mergeLayout({
     ...base,
     tailHeightPx: sized.height,
-    tailViewportMaxHeightPx: sized.viewportMaxHeightPx,
+    tailViewportMaxHeightPx: viewportMaxHeightPx,
   })
 }
 
@@ -1206,10 +1376,34 @@ function TabbedLogView(props: TabbedLogViewProps): ReactNode {
   const { tabOrder, panels, populatedTabIds, programmaticActiveId, layout, onTabChange } = props
   const populated = new Set(populatedTabIds)
   const [activeId, setActiveId] = React.useState(programmaticActiveId)
+  const [panelEl, setPanelEl] = React.useState<HTMLElement | null>(null)
 
   React.useEffect(() => {
     setActiveId(programmaticActiveId)
   }, [programmaticActiveId])
+
+  React.useEffect(() => {
+    if (!panelEl || layout.tailScriptPid == null) return
+    const pid = layout.tailScriptPid
+    const onScroll = (): void => {
+      writeTabbedPanelScroll(pid, activeId, panelEl.scrollTop)
+    }
+    panelEl.addEventListener("scroll", onScroll, { passive: true })
+    return () => panelEl.removeEventListener("scroll", onScroll)
+  }, [panelEl, activeId, layout.tailScriptPid])
+
+  React.useEffect(() => {
+    if (!panelEl) return
+    const win = eval("window") as Window
+    const syncScroll = (): void => {
+      applyTailScrollPosition(panelEl, layout.tailScriptPid, activeId)
+    }
+    syncScroll()
+    const frame = win.requestAnimationFrame(syncScroll)
+    return () => win.cancelAnimationFrame(frame)
+  }, [panelEl, layout.tailViewportMaxHeightPx, layout.tailScriptPid, activeId])
+
+  const panelMaxHeight = tabbedPanelHeightPx(layout)
 
   const tabBar = React.createElement(
     "div",
@@ -1219,6 +1413,8 @@ function TabbedLogView(props: TabbedLogViewProps): ReactNode {
         flexWrap: "wrap",
         gap: "2px",
         marginBottom: `${layout.sectionGapPx}px`,
+        flexShrink: "0",
+        backgroundColor: TAB_BAR_BG,
       },
     },
     ...tabOrder.map(({ id, label }) => {
@@ -1252,11 +1448,56 @@ function TabbedLogView(props: TabbedLogViewProps): ReactNode {
 
   const panelContent = panels[activeId] ?? buildTextBlock(EMPTY_TAB_PLACEHOLDER, layout)
 
+  const panelScroll = React.createElement(
+    "div",
+    {
+      [SCRIPT_LOG_PANEL_ATTR]: "",
+      ref: (node: unknown) => {
+        const el = node as HTMLElement | null
+        setPanelEl((prev) => (prev === el ? prev : el))
+      },
+      style: {
+        display: "block",
+        margin: "0",
+        padding: "0",
+        flex: "1 1 auto",
+        minHeight: "0",
+        overflowX: "auto",
+        overflowAnchor: "none",
+        ...(panelMaxHeight != null
+          ? {
+              height: `${panelMaxHeight}px`,
+              maxHeight: `${panelMaxHeight}px`,
+              overflowY: "auto",
+            }
+          : {}),
+      },
+    },
+    panelContent
+  )
+
   return React.createElement(
     "div",
-    { style: { display: "block", margin: "0", padding: "0", fontFamily: "monospace", fontSize: `${layout.fontSizePx}px` } },
+    {
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        margin: "0",
+        padding: "0",
+        fontFamily: "monospace",
+        fontSize: `${layout.fontSizePx}px`,
+        boxSizing: "border-box",
+        overflow: "hidden",
+        ...(layout.tailViewportMaxHeightPx != null
+          ? {
+              height: `${layout.tailViewportMaxHeightPx}px`,
+              maxHeight: `${layout.tailViewportMaxHeightPx}px`,
+            }
+          : {}),
+      },
+    },
     tabBar,
-    panelContent
+    panelScroll
   )
 }
 
@@ -1328,9 +1569,12 @@ export class TabbedScriptLogBuilder {
   async refreshLayoutIfPending(ns: NS): Promise<boolean> {
     if (!this.pendingLayoutRefresh) return false
     this.pendingLayoutRefresh = false
-    lastScrollTopByPid.set(ns.pid, 0)
-    applyTailSize(ns, this.resolveRenderLayout())
-    scrollTailToTopAfterLayout(ns.pid)
+    const renderLayout = layoutForTailRender({
+      ...this.resolveRenderLayout(),
+      tailScriptPid: ns.pid,
+    })
+    applyTailSize(ns, renderLayout)
+    scrollTabbedPanelAfterLayout(ns.pid, renderLayout)
     if (this.lazyInactivePanels) {
       await this.render(ns)
     }
@@ -1420,12 +1664,18 @@ export class TabbedScriptLogBuilder {
       ...this.layout,
       tailTableWidthPx,
       tailContentHeightPx,
+      tailTabbed: true,
+      tailActiveTabId: this.displayTabId,
     })
   }
 
   build(): ReactNode {
     const React = getReact()
-    const layout = mergeLayout(this.layout)
+    const layout = layoutForTailRender({
+      ...this.resolveRenderLayout(),
+      tailScriptPid: this.tailScriptPid,
+      tailActiveTabId: this.displayTabId,
+    })
     this.refreshPanelDimensions()
     const populatedTabIds: string[] = []
     for (const { id } of this.tabOrder) {
@@ -1455,11 +1705,11 @@ export class TabbedScriptLogBuilder {
       programmaticActiveId: this.displayTabId,
       layout,
       onTabChange: (tabId: string) => {
+        if (this.tailScriptPid != null && this.displayTabId !== tabId) {
+          saveTabbedPanelScroll(this.tailScriptPid, this.displayTabId)
+        }
         this.displayTabId = tabId
         this.pendingLayoutRefresh = true
-        if (this.tailScriptPid != null) {
-          setAllTailScrollToVisualTop(this.tailScriptPid)
-        }
       },
     })
   }
@@ -1494,13 +1744,23 @@ function syncTailSize(ns: NS, layout: TableLayout): void {
 
 export async function renderScriptLog(ns: NS, content: ReactNode, layout?: Partial<TableLayout>): Promise<void> {
   const pid = ns.pid
-  saveTailScrollPosition(pid)
-  primeTailLogChrome(mergeLayout(layout))
+  const merged = mergeLayout(layout)
+  saveTailScrollPosition(pid, merged.tailActiveTabId)
+  primeTailLogChrome(merged)
   const renderLayout = layoutForTailRender({ ...layout, tailScriptPid: pid })
   ns.clearLog()
   ns.printRaw(buildViewportShell(content, renderLayout))
   ns.ui.renderTail()
   syncTailSize(ns, renderLayout)
+  if (renderLayout.tailTabbed) {
+    const win = eval("window") as Window
+    const applyChrome = (): void => applyTabbedTailChrome(pid, renderLayout)
+    applyChrome()
+    win.requestAnimationFrame(() => {
+      applyChrome()
+      restoreTabbedPanelScroll(pid, renderLayout.tailActiveTabId)
+    })
+  }
 }
 
 export function initScriptLogTail(ns: NS, title: string, layout?: Partial<TableLayout>): void {
