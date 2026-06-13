@@ -33,6 +33,80 @@ function cellAt(board, x, y) {
   return board[x]?.[y] ?? "."
 }
 
+function boardSize(board) {
+  return board.length
+}
+
+function isFullBlockedRow(board, y) {
+  const size = boardSize(board)
+  for (let x = 0; x < size; x++) {
+    if (cellAt(board, x, y) !== "#") return false
+  }
+  return true
+}
+
+function isFullBlockedColumn(board, x) {
+  const size = boardSize(board)
+  for (let y = 0; y < size; y++) {
+    if (cellAt(board, x, y) !== "#") return false
+  }
+  return true
+}
+
+/**
+ * Strip consecutive all-# rows/columns from each board edge only.
+ * Interior full # lines are kept: removing them would merge groups separated by a wall.
+ * Matches common IPvGO layouts (removeRows) where whole blocked lines sit on an edge.
+ *
+ * @returns {null | { board, validMoves, size, toOriginal(x,y), strippedRows, strippedCols }}
+ */
+export function compressBoardForKatago(board, validMoves) {
+  const size = boardSize(board)
+  if (size < 3) return null
+
+  let xMin = 0
+  let xMax = size - 1
+  let yMin = 0
+  let yMax = size - 1
+
+  while (yMin <= yMax && isFullBlockedRow(board, yMin)) yMin++
+  while (yMin <= yMax && isFullBlockedRow(board, yMax)) yMax--
+  while (xMin <= xMax && isFullBlockedColumn(board, xMin)) xMin++
+  while (xMin <= xMax && isFullBlockedColumn(board, xMax)) xMax--
+
+  const strippedRows = yMin + (size - 1 - yMax)
+  const strippedCols = xMin + (size - 1 - xMax)
+  if (strippedRows === 0 && strippedCols === 0) return null
+
+  const width = xMax - xMin + 1
+  const height = yMax - yMin + 1
+  if (width < 2 || height < 2) return null
+
+  const compressed = []
+  const compressedValid = []
+  for (let x = xMin; x <= xMax; x++) {
+    let col = ""
+    const validCol = []
+    for (let y = yMin; y <= yMax; y++) {
+      col += cellAt(board, x, y)
+      validCol.push(validMoves?.[x]?.[y] === true)
+    }
+    compressed.push(col)
+    compressedValid.push(validCol)
+  }
+
+  return {
+    board: compressed,
+    validMoves: compressedValid,
+    size: width,
+    strippedRows,
+    strippedCols,
+    toOriginal(x, y) {
+      return { x: x + xMin, y: y + yMin }
+    },
+  }
+}
+
 function kataGoPlayer(playAs) {
   return playAs === "O" ? "W" : "B"
 }
@@ -112,13 +186,14 @@ export function buildMoveRestrictions(board, validMoves, playAs) {
   return {}
 }
 
-export function buildKataGoQuery(request, queryId) {
-  const board = request.board
+export function buildKataGoQuery(request, queryId, compression = null) {
+  const board = compression?.board ?? request.board
+  const validMoves = compression?.validMoves ?? request.validMoves
   const size = board.length
   const komi = request.komi ?? 5.5
   const playAs = kataGoPlayer(request.playAs)
   const visits = Math.max(50, Math.min(20000, Number(request.iterations) || 4000))
-  const restrictions = buildMoveRestrictions(board, request.validMoves, request.playAs)
+  const restrictions = buildMoveRestrictions(board, validMoves, request.playAs)
 
   return {
     id: queryId,
@@ -134,24 +209,36 @@ export function buildKataGoQuery(request, queryId) {
   }
 }
 
-/** Pick best legal move from KataGo moveInfos using validMoves mask. */
-export function pickMoveFromAnalysis(moveInfos, validMoves, playAs) {
+function pickLegalOnOriginal(validMoves, x, y) {
+  return validMoves?.[x]?.[y] === true
+}
+
+function mapMoveToOriginal(move, compression, validMoves) {
+  if (move.type === "pass") return move
+  const orig = compression?.toOriginal(move.x, move.y) ?? move
+  if (pickLegalOnOriginal(validMoves, orig.x, orig.y)) {
+    return { type: "move", x: orig.x, y: orig.y }
+  }
+  return null
+}
+
+/** Pick best legal move from KataGo moveInfos using validMoves mask (original board coords). */
+export function pickMoveFromAnalysis(moveInfos, validMoves, playAs, compression = null) {
   const sorted = [...(moveInfos ?? [])].sort((a, b) => (b.visits ?? 0) - (a.visits ?? 0))
 
   for (const info of sorted) {
     const parsed = fromKataGoMove(info.move)
     if (!parsed) continue
     if (parsed.type === "pass") return { type: "pass" }
-    if (validMoves?.[parsed.x]?.[parsed.y] === true) {
-      return parsed
-    }
+    const mapped = mapMoveToOriginal(parsed, compression, validMoves)
+    if (mapped) return mapped
   }
 
   for (const info of sorted) {
     const parsed = fromKataGoMove(info.move)
-    if (parsed?.type === "move" && validMoves?.[parsed.x]?.[parsed.y] === true) {
-      return parsed
-    }
+    if (parsed?.type !== "move") continue
+    const mapped = mapMoveToOriginal(parsed, compression, validMoves)
+    if (mapped) return mapped
   }
 
   return findAnyLegal(validMoves)

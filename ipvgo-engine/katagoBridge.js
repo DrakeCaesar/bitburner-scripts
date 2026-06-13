@@ -2,7 +2,7 @@ import { spawn } from "child_process"
 import fs from "fs"
 import path from "path"
 import { fileURLToPath } from "url"
-import { buildKataGoQuery, pickMoveFromAnalysis } from "./katagoConvert.js"
+import { buildKataGoQuery, compressBoardForKatago, pickMoveFromAnalysis } from "./katagoConvert.js"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const KATAGO_DIR = path.join(__dirname, "katago")
@@ -135,10 +135,10 @@ class KataGoSession {
     })
   }
 
-  async query(request) {
+  async query(request, compression = null) {
     await this.ensureStarted()
     const id = `ipvgo-${this.nextId++}`
-    const query = buildKataGoQuery(request, id)
+    const query = buildKataGoQuery(request, id, compression)
     const line = `${JSON.stringify(query)}\n`
 
     return new Promise((resolve, reject) => {
@@ -192,16 +192,20 @@ function getSession(boardSize) {
 
 export async function requestKatagoMove(request) {
   const started = performance.now()
-  const size = request.board?.length ?? 7
-  const session = getSession(size)
-  const analysis = await session.query(request)
-  const move = pickMoveFromAnalysis(analysis.moveInfos, request.validMoves, request.playAs)
+  const compression = compressBoardForKatago(request.board, request.validMoves)
+  const katagoSize = compression?.size ?? request.board?.length ?? 7
+  const session = getSession(katagoSize)
+  const analysis = await session.query(request, compression)
+  const move = pickMoveFromAnalysis(analysis.moveInfos, request.validMoves, request.playAs, compression)
 
   return {
     move,
     iterations: analysis.visits || request.iterations || 0,
     elapsedMs: performance.now() - started,
     engine: "katago",
+    ...(compression
+      ? { compressedSize: katagoSize, strippedRows: compression.strippedRows, strippedCols: compression.strippedCols }
+      : {}),
   }
 }
 
