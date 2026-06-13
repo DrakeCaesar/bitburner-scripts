@@ -298,6 +298,7 @@ export function deriveKataGoMovesFromHistory(history, currentBoard, compression 
   return {
     ok: true,
     moves: insertInferredPasses(moves),
+    states,
     startBoard: chronological[0],
   }
 }
@@ -324,9 +325,17 @@ export function toKataGoPayload(query) {
     historyMode: _historyMode,
     historyFallback: _historyFallback,
     moveCount: _moveCount,
+    replayFromPly: _replayFromPly,
     ...payload
   } = query
   return payload
+}
+
+export function parseKatagoIllegalMoveIndex(message) {
+  const match = String(message).match(/Illegal move (\d+)/)
+  if (!match) return null
+  const index = Number(match[1])
+  return Number.isFinite(index) ? index : null
 }
 
 function buildSnapshotQuery(request, queryId, compression, board, validMoves, playAs, komi, visits) {
@@ -345,7 +354,7 @@ function buildSnapshotQuery(request, queryId, compression, board, validMoves, pl
   }
 }
 
-export function buildKataGoQuery(request, queryId, compression = null) {
+export function buildKataGoQuery(request, queryId, compression = null, replayFromPly = 0) {
   const board = compression?.board ?? request.board
   const validMoves = compression?.validMoves ?? request.validMoves
   const komi = request.komi ?? 5.5
@@ -353,31 +362,32 @@ export function buildKataGoQuery(request, queryId, compression = null) {
   const visits = Math.max(50, Math.min(20000, Number(request.iterations) || 4000))
 
   const historyResult = deriveKataGoMovesFromHistory(request.history, request.board, compression)
-  if (!historyResult.ok) {
+  if (!historyResult.ok || replayFromPly >= historyResult.moves.length) {
     return {
       ...buildSnapshotQuery(request, queryId, compression, board, validMoves, playAs, komi, visits),
       historyMode: "snapshot",
-      historyFallback: historyResult.reason,
+      historyFallback: historyResult.ok ? "replay-exhausted" : historyResult.reason,
     }
   }
 
-  const queryBoard = compression
-    ? sliceBoardToCompression(historyResult.startBoard, compression)
-    : historyResult.startBoard
+  const anchorBoard = historyResult.states[replayFromPly]
+  const queryBoard = compression ? sliceBoardToCompression(anchorBoard, compression) : anchorBoard
+  const moveSlice = historyResult.moves.slice(replayFromPly)
   const restrictions = buildMoveRestrictions(board, validMoves, request.playAs)
 
   return {
     id: queryId,
     initialStones: boardToInitialStones(queryBoard, request.playAs),
-    moves: historyResult.moves,
-    initialPlayer: historyResult.moves[0]?.[0] ?? playAs,
+    moves: moveSlice,
+    initialPlayer: moveSlice[0]?.[0] ?? playAs,
     rules: "chinese",
     komi,
     boardXSize: queryBoard.length,
     boardYSize: queryBoard.length,
     maxVisits: visits,
     historyMode: "replay",
-    moveCount: historyResult.moves.length,
+    moveCount: moveSlice.length,
+    replayFromPly,
     ...restrictions,
   }
 }

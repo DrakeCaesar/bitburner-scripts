@@ -6,6 +6,8 @@ import {
   buildKataGoQuery,
   buildKataGoSnapshotQuery,
   compressBoardForKatago,
+  deriveKataGoMovesFromHistory,
+  parseKatagoIllegalMoveIndex,
   pickMoveFromAnalysis,
   toKataGoPayload,
 } from "./katagoConvert.js"
@@ -44,8 +46,8 @@ class KataGoSession {
     this.pending = new Map()
     this.nextId = 1
     this.starting = null
-    /** After a failed history replay, stick to snapshot mode until a new game starts. */
-    this.historyReplayBroken = false
+    /** Ply index to start move replay from; advances when KataGo reports illegal moves. */
+    this.replayFromPly = 0
     this.lastHistoryLen = 0
     this.cancelledIds = new Set()
   }
@@ -183,16 +185,52 @@ class KataGoSession {
     await this.ensureStarted()
     const historyLen = request.history?.length ?? 0
     if (historyLen === 0 || historyLen < this.lastHistoryLen) {
-      this.historyReplayBroken = false
+      this.replayFromPly = 0
     }
     this.lastHistoryLen = historyLen
 
     const id = request.requestId ?? `ipvgo-${this.nextId++}`
-    const query =
-      this.historyReplayBroken
-        ? buildKataGoSnapshotQuery(request, id, compression)
-        : buildKataGoQuery(request, id, compression)
-    return this.sendQuery(query, request, compression)
+    return this.sendQueryWithReplayRetries(request, compression, id)
+  }
+
+  advanceReplayFromPly(localIllegalIndex) {
+    if (this.replayFromPly > 0 && localIllegalIndex === 0) {
+      this.replayFromPly += 1
+      return
+    }
+    this.replayFromPly += localIllegalIndex
+  }
+
+  async sendQueryWithReplayRetries(request, compression, id) {
+    while (true) {
+      const derived = deriveKataGoMovesFromHistory(request.history, request.board, compression)
+      if (!derived.ok || this.replayFromPly >= (derived.moves?.length ?? 0)) {
+        const snapshot = buildKataGoSnapshotQuery(request, id, compression)
+        return this.sendQuery(snapshot)
+      }
+
+      const query = buildKataGoQuery(request, id, compression, this.replayFromPly)
+      try {
+        return await this.sendQuery(query)
+      } catch (err) {
+        const message = String(err.message ?? err)
+        if (/cancel/i.test(message)) throw err
+
+        const illegalIndex = parseKatagoIllegalMoveIndex(message)
+        if (illegalIndex == null) throw err
+
+        const previous = this.replayFromPly
+        this.advanceReplayFromPly(illegalIndex)
+        console.warn(
+          `[katago] illegal move at batch index ${illegalIndex}; next replay from ply ${this.replayFromPly} (was ${previous})`
+        )
+
+        if (this.replayFromPly >= (derived.moves?.length ?? 0)) {
+          const snapshot = buildKataGoSnapshotQuery(request, id, compression)
+          return this.sendQuery(snapshot)
+        }
+      }
+    }
   }
 
   terminateQuery(terminateId) {
@@ -207,26 +245,9 @@ class KataGoSession {
     }
   }
 
-  async sendQuery(query, request, compression) {
+  async sendQuery(query) {
     const payload = toKataGoPayload(query)
-    const id = payload.id
-
-    try {
-      return await this.writeQueryLine(`${JSON.stringify(payload)}\n`, id)
-    } catch (err) {
-      const message = String(err.message ?? err)
-      if (/cancel/i.test(message)) {
-        throw err
-      }
-      if (query.historyMode === "replay" && query.moves?.length > 0) {
-        this.historyReplayBroken = true
-        console.warn(`[katago] history replay failed (${err.message}); using snapshot for this game`)
-        const fallbackId = `ipvgo-${this.nextId++}`
-        const fallback = toKataGoPayload(buildKataGoSnapshotQuery(request, fallbackId, compression))
-        return this.writeQueryLine(`${JSON.stringify(fallback)}\n`, fallback.id)
-      }
-      throw err
-    }
+    return this.writeQueryLine(`${JSON.stringify(payload)}\n`, payload.id)
   }
 
   async writeQueryLine(line, id) {
