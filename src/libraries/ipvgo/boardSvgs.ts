@@ -119,22 +119,17 @@ function emptyDotColor(board: IpvgoBoard, x: number, y: number): string {
   return EMPTY_DOT_NEUTRAL
 }
 
-function highlightRing(highlight: CellHighlight): ReactNode {
+function highlightCircle(highlight: CellHighlight): ReactNode {
   const React = getReact()
-  const stroke =
-    highlight === "our" ? "#ffffff" : highlight === "opp" ? "#bbbbbb" : "#888888"
-  const dash = highlight === "opp" ? "3 2" : undefined
-  const width = highlight === "our" ? 2 : 1.5
-  return React.createElement("rect", {
-    x: 1.5,
-    y: 1.5,
-    width: VIEW - 3,
-    height: VIEW - 3,
+  const stroke = highlight === "our" ? "#ffffff" : "#bbbbbb"
+  const strokeWidth = 1
+  return React.createElement("circle", {
+    cx: CENTER,
+    cy: CENTER,
+    r: STONE_R + 2.5,
     fill: "none",
     stroke,
-    strokeWidth: width,
-    strokeDasharray: dash,
-    rx: 1,
+    strokeWidth,
   })
 }
 
@@ -244,14 +239,13 @@ export function buildBoardCell(
     layers.push(...emptyDotLayer(board, x, y))
   }
 
-  if (highlight) {
-    layers.push(highlightRing(highlight))
-  }
-
   const kind: BoardStoneKind =
     raw === "X" ? "black" : raw === "O" ? "white" : raw === "#" ? "blocked" : "empty"
   if (kind !== "empty") {
     layers.push(...stoneLayers(kind))
+    if (highlight) {
+      layers.push(highlightCircle(highlight))
+    }
   }
 
   return svgRoot(BOARD_CELL_PX, key, layers)
@@ -260,8 +254,10 @@ export function buildBoardCell(
 /** @deprecated Use buildBoardCell */
 export function buildStoneCell(kind: BoardStoneKind, highlight?: CellHighlight, key?: string): ReactNode {
   const layers: ReactNode[] = []
-  if (highlight) layers.push(highlightRing(highlight))
-  if (kind !== "empty") layers.push(...stoneLayers(kind))
+  if (kind !== "empty") {
+    layers.push(...stoneLayers(kind))
+    if (highlight) layers.push(highlightCircle(highlight))
+  }
   return svgRoot(BOARD_CELL_PX, key, layers)
 }
 
