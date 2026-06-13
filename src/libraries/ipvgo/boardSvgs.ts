@@ -37,7 +37,7 @@ function svgRoot(sizePx: number, key: string | undefined, children: ReactNode[])
       width: sizePx,
       height: sizePx,
       viewBox: `0 0 ${VIEW} ${VIEW}`,
-      style: { display: "block", flexShrink: 0 },
+      style: { display: "block", flexShrink: 0, overflow: "visible" },
     },
     ...children
   )
@@ -80,27 +80,52 @@ function libertyColor(player: StoneColor): string {
   return player === "O" ? LIBERTY_WHITE : LIBERTY_BLACK
 }
 
-function libertyArmLayers(arms: ConnectionArms, color: string): ReactNode[] {
+function libertyArmLayers(
+  board: IpvgoBoard,
+  x: number,
+  y: number,
+  arms: ConnectionArms,
+  color: string
+): ReactNode[] {
   const React = getReact()
   const arm = 1.2
+  const neighbors = neighborCells(board, x, y)
+  const isAlly = (cell: string | null) => cell === player
   const layers: ReactNode[] = []
 
-  if (arms.north) {
-    layers.push(React.createElement("rect", { x: CENTER - arm / 2, y: 0, width: arm, height: CENTER, fill: color }))
+  const line = (x1: number, y1: number, x2: number, y2: number, key: string) =>
+    React.createElement("line", {
+      key,
+      x1,
+      y1,
+      x2,
+      y2,
+      stroke: color,
+      strokeWidth: arm,
+      strokeLinecap: "butt",
+    })
+
+  // Ally links: one full line per edge (lower-x draws east; higher-y draws south).
+  if (arms.north && !isAlly(neighbors.north)) {
+    layers.push(line(CENTER, CENTER, CENTER, 0, "n-lib"))
   }
-  if (arms.south) {
-    layers.push(
-      React.createElement("rect", { x: CENTER - arm / 2, y: CENTER, width: arm, height: CENTER, fill: color })
-    )
+
+  if (arms.south && isAlly(neighbors.south)) {
+    layers.push(line(CENTER, CENTER, CENTER, CENTER + VIEW, "s-ally"))
+  } else if (arms.south) {
+    layers.push(line(CENTER, CENTER, CENTER, VIEW, "s-lib"))
   }
-  if (arms.east) {
-    layers.push(
-      React.createElement("rect", { x: CENTER, y: CENTER - arm / 2, width: CENTER, height: arm, fill: color })
-    )
+
+  if (arms.east && isAlly(neighbors.east)) {
+    layers.push(line(CENTER, CENTER, CENTER + VIEW, CENTER, "e-ally"))
+  } else if (arms.east) {
+    layers.push(line(CENTER, CENTER, VIEW, CENTER, "e-lib"))
   }
-  if (arms.west) {
-    layers.push(React.createElement("rect", { x: 0, y: CENTER - arm / 2, width: CENTER, height: arm, fill: color }))
+
+  if (arms.west && !isAlly(neighbors.west)) {
+    layers.push(line(CENTER, CENTER, 0, CENTER, "w-lib"))
   }
+
   return layers
 }
 
@@ -234,7 +259,7 @@ export function buildBoardCell(
 
   if (raw === "X" || raw === "O") {
     const arms = connectionArms(board, x, y, raw)
-    layers.push(...libertyArmLayers(arms, libertyColor(raw)))
+    layers.push(...libertyArmLayers(board, x, y, arms, libertyColor(raw)))
   } else if (raw === ".") {
     layers.push(...emptyDotLayer(board, x, y))
   }
