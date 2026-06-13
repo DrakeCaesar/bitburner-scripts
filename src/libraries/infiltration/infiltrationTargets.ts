@@ -95,6 +95,11 @@ export function isInfiltrationMoneyMode(ns: NS): boolean {
   return arg === "money" || arg === "cash" || arg === "m"
 }
 
+/** Any script arg `debug` enables verbose victory audit logging (e.g. money shortfall checks). */
+export function isInfiltrationDebugMode(ns: NS): boolean {
+  return ns.args.some((arg) => String(arg).toLowerCase() === "debug")
+}
+
 /**
  * Infiltration reward order:
  * 1. Pre-favor augment rep, then cash for those augments

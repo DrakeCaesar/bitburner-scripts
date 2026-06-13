@@ -5,7 +5,11 @@ import {
   getInfiltrationPurchaseFactions,
   getPreferredFactionForInfiltrationRep,
 } from "../factionWork.js"
-import { getInfiltrationRewardGoal, isInfiltrationMoneyMode } from "./infiltrationTargets.js"
+import {
+  getInfiltrationRewardGoal,
+  isInfiltrationDebugMode,
+  isInfiltrationMoneyMode,
+} from "./infiltrationTargets.js"
 import { waitForCityNavigationReady } from "./infiltrationNavigation.js"
 
 const VICTORY_TITLE = "Infiltration successful!"
@@ -518,19 +522,23 @@ function shouldLogVictoryRewardShortfall(delta: number, expected: number): boole
   return delta / expected < 0.90
 }
 
-function logVictoryRewardAudit(context: {
-  intendedFaction: string | null
-  intendedAction: VictorySubmitAction
-  actualAction: VictorySubmitAction
-  actualFaction: string | null
-  dropdownAtSubmit: string
-  factionStateAtSubmit: string
-  expected: VictoryScreenRewards
-  before: VictoryRewardSnapshot
-  after: VictoryRewardSnapshot
-  allFactionRepsBefore: Map<string, number>
-  allFactionRepsAfter: Map<string, number>
-}): void {
+function logVictoryRewardAudit(
+  ns: NS,
+  context: {
+    intendedFaction: string | null
+    intendedAction: VictorySubmitAction
+    actualAction: VictorySubmitAction
+    actualFaction: string | null
+    dropdownAtSubmit: string
+    factionStateAtSubmit: string
+    expected: VictoryScreenRewards
+    before: VictoryRewardSnapshot
+    after: VictoryRewardSnapshot
+    allFactionRepsBefore: Map<string, number>
+    allFactionRepsAfter: Map<string, number>
+  }
+): void {
+  const debug = isInfiltrationDebugMode(ns)
   const moneyDelta = context.after.money - context.before.money
   const factionDelta =
     context.before.factionRep != null && context.after.factionRep != null
@@ -539,6 +547,7 @@ function logVictoryRewardAudit(context: {
 
   if (context.actualAction === "sell") {
     if (
+      debug &&
       context.intendedAction === "sell" &&
       context.expected.sellCash != null &&
       shouldLogVictoryRewardShortfall(moneyDelta, context.expected.sellCash)
@@ -618,7 +627,7 @@ async function confirmVictoryReward(
       ns,
       audit.actualAction === "trade" ? (audit.actualFaction as FactionName | null) : null
     )
-    logVictoryRewardAudit({
+    logVictoryRewardAudit(ns, {
       ...audit,
       after,
       allFactionRepsAfter: snapshotAllFactionReps(ns),
