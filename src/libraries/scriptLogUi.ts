@@ -283,8 +283,12 @@ export function layoutForTailRender(layout?: Partial<TableLayout>): TableLayout 
   })
 }
 
+function isScriptDeathError(error: unknown): boolean {
+  return error instanceof Error && error.name === "ScriptDeath"
+}
+
 export function applyTailSize(ns: NS, layout?: Partial<TableLayout>): void {
-  syncTailSize(ns, mergeLayout(layout))
+  syncTailSize(ns, layoutForTailRender(mergeLayout(layout)))
 }
 
 export interface CellStyleState {
@@ -481,7 +485,27 @@ function estimateTextHeightPx(message: string, layout: TableLayout, contentWidth
   return totalLines * textLineBoxPx(layout)
 }
 
-const TAB_BAR_HEIGHT_PX = 36
+const EMPTY_TAB_PLACEHOLDER = "(no content yet)"
+
+function estimateTabChipHeightPx(layout: TableLayout): number {
+  return 4 + textLineBoxPx(layout) + 4 + layout.borderPx * 2
+}
+
+function estimateEmptyTabPanelHeightPx(layout: TableLayout, contentWidthPx: number): number {
+  return estimateTextHeightPx(EMPTY_TAB_PLACEHOLDER, layout, contentWidthPx) + 4
+}
+
+function estimateEmptyTabPanelWidthPx(layout: TableLayout): number {
+  return estimateTextWidthPx(EMPTY_TAB_PLACEHOLDER, layout)
+}
+
+function estimateTabLabelWidthPx(label: string, layout: TableLayout): number {
+  return label.length * getChWidthPx(layout.fontSizePx) + layout.paddingXPx * 2 + layout.borderPx * 2
+}
+
+function estimateTabBarHeightPx(layout: TableLayout): number {
+  return estimateTabChipHeightPx(layout) + layout.sectionGapPx
+}
 
 function keyValueToReactTableConfig(config: KeyValueTableConfig): ReactTableConfig {
   const { rows, title, separatorAfter = [], valueAlign = "right" } = config
@@ -975,17 +999,21 @@ export class ScriptLogBuilder {
   }
 
   /** Tallest stacked content height in px (tables, text, section headers). */
-  estimateContentHeightPx(): number {
+  measureStackHeightPx(wrapWidthPx: number): number {
     const merged = mergeLayout(this.layout)
-    const contentWidthPx = Math.max(1, this.computeContentWidthPx())
-    const { width: tailWidthPx } = resolveTailWidth({ ...merged, tailTableWidthPx: contentWidthPx })
-    const wrapWidthPx = Math.max(1, tailWidthPx)
     let height = 0
     for (const section of this.sections) {
       height += logSectionHeightPx(section, merged, wrapWidthPx)
       height += sectionBottomMarginPx(section)
     }
     return height
+  }
+
+  estimateContentHeightPx(): number {
+    const merged = mergeLayout(this.layout)
+    const contentWidthPx = Math.max(1, this.computeContentWidthPx())
+    const { width: tailWidthPx } = resolveTailWidth({ ...merged, tailTableWidthPx: contentWidthPx })
+    return this.measureStackHeightPx(Math.max(1, tailWidthPx))
   }
 
   build(resolvedLayout?: TableLayout): ReactNode {
@@ -1039,6 +1067,35 @@ export interface TabbedLogOptions {
   lazyInactivePanels?: boolean
 }
 
+/** Poll interval while waiting for a user tab switch to be handled by the main loop. */
+const TAB_LAYOUT_REFRESH_POLL_MS = 100
+
+/**
+ * Sleep up to maxMs, returning early if the user switched tabs.
+ * Netscript APIs must not run from React onClick — callers should re-render after this returns true.
+ */
+export async function sleepUntilTabLayoutRefresh(
+  ns: NS,
+  tabbedLog: TabbedScriptLogBuilder,
+  maxMs: number
+): Promise<boolean> {
+  const deadline = Date.now() + maxMs
+  while (Date.now() < deadline) {
+    if (tabbedLog.hasPendingLayoutRefresh()) {
+      await tabbedLog.refreshLayoutIfPending(ns)
+      return true
+    }
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) break
+    await ns.sleep(Math.min(TAB_LAYOUT_REFRESH_POLL_MS, remaining))
+  }
+  if (tabbedLog.hasPendingLayoutRefresh()) {
+    await tabbedLog.refreshLayoutIfPending(ns)
+    return true
+  }
+  return false
+}
+
 interface TabbedLogViewProps {
   tabOrder: TabDefinition[]
   panels: Record<string, ReactNode>
@@ -1084,6 +1141,7 @@ function TabbedLogView(props: TabbedLogViewProps): ReactNode {
             padding: `4px ${layout.paddingXPx}px`,
             fontFamily: "monospace",
             fontSize: `${layout.fontSizePx}px`,
+            lineHeight: `${textLineBoxPx(layout)}px`,
             fontWeight: isActive ? "bold" : "normal",
             backgroundColor: isActive ? ACTIVE_HEADER_BG : hasContent ? "rgba(255, 255, 255, 0.06)" : "transparent",
             border: `${layout.borderPx}px solid ${HEADER_BORDER}`,
@@ -1097,7 +1155,7 @@ function TabbedLogView(props: TabbedLogViewProps): ReactNode {
     })
   )
 
-  const panelContent = panels[activeId] ?? buildTextBlock("(no content yet)", layout)
+  const panelContent = panels[activeId] ?? buildTextBlock(EMPTY_TAB_PLACEHOLDER, layout)
 
   return React.createElement(
     "div",
@@ -1109,10 +1167,13 @@ function TabbedLogView(props: TabbedLogViewProps): ReactNode {
 
 export class TabbedScriptLogBuilder {
   private builders = new Map<string, ScriptLogBuilder>()
+  /** Content size per tab from the last build(); used for tab-switch resize. */
+  private panelDimensions = new Map<string, { widthPx: number; heightPx: number }>()
   /** Tab shown in the UI; kept across re-renders when the user picks a tab. */
   private displayTabId: string
   private layout?: Partial<TableLayout>
   private readonly lazyInactivePanels: boolean
+  private pendingLayoutRefresh = false
 
   constructor(
     private tabOrder: TabDefinition[],
@@ -1126,6 +1187,7 @@ export class TabbedScriptLogBuilder {
 
   reset(): this {
     this.builders.clear()
+    this.panelDimensions.clear()
     this.displayTabId = this.tabOrder[0]?.id ?? ""
     return this
   }
@@ -1133,6 +1195,7 @@ export class TabbedScriptLogBuilder {
   /** Clear tab panel content without changing the selected tab (for live-update loops). */
   clearPanels(): this {
     this.builders.clear()
+    this.panelDimensions.clear()
     return this
   }
 
@@ -1142,6 +1205,11 @@ export class TabbedScriptLogBuilder {
     for (const id of this.builders.keys()) {
       if (!keep.has(id)) {
         this.builders.delete(id)
+      }
+    }
+    for (const id of this.panelDimensions.keys()) {
+      if (!keep.has(id)) {
+        this.panelDimensions.delete(id)
       }
     }
     return this
@@ -1156,6 +1224,21 @@ export class TabbedScriptLogBuilder {
     return this.displayTabId
   }
 
+  hasPendingLayoutRefresh(): boolean {
+    return this.pendingLayoutRefresh
+  }
+
+  /** Re-render and resize for a user tab switch. Call from the script main loop only. */
+  async refreshLayoutIfPending(ns: NS): Promise<boolean> {
+    if (!this.pendingLayoutRefresh) return false
+    this.pendingLayoutRefresh = false
+    applyTailSize(ns, this.resolveRenderLayout())
+    if (this.lazyInactivePanels) {
+      await this.render(ns)
+    }
+    return true
+  }
+
   tab(tabId: string): ScriptLogBuilder {
     let builder = this.builders.get(tabId)
     if (!builder) {
@@ -1167,46 +1250,85 @@ export class TabbedScriptLogBuilder {
 
   private estimateTabBarWidthPx(): number {
     const merged = mergeLayout(this.layout)
-    const chPx = getChWidthPx(merged.fontSizePx)
     let width = 0
     for (const { label } of this.tabOrder) {
-      width += label.length * chPx + merged.paddingXPx * 2 + merged.borderPx * 2 + 4
+      width += estimateTabLabelWidthPx(label, merged)
     }
     width += Math.max(0, this.tabOrder.length - 1) * 2
     return Math.ceil(width)
   }
 
-  private activeTabBuilder(): ScriptLogBuilder | undefined {
-    const builder = this.builders.get(this.displayTabId)
-    return builder && !builder.isEmpty() ? builder : undefined
-  }
-
-  private resolveTailTableWidthPx(): number {
-    let width = this.estimateTabBarWidthPx()
-    const active = this.activeTabBuilder()
-    if (active) {
-      width = Math.max(width, active.computeContentWidthPx())
+  private computeSharedWrapWidthPx(merged: TableLayout): number {
+    let tailTableWidthPx = this.estimateTabBarWidthPx()
+    for (const { id } of this.tabOrder) {
+      const builder = this.builders.get(id)
+      if (builder && !builder.isEmpty()) {
+        tailTableWidthPx = Math.max(tailTableWidthPx, builder.computeContentWidthPx())
+      }
     }
-    return width > 0 ? width : mergeLayout(this.layout).tableWidthPx
+    if (tailTableWidthPx <= 0) {
+      tailTableWidthPx = merged.tableWidthPx
+    }
+    return resolveTailWidth({ ...merged, tailTableWidthPx }).width
   }
 
-  private resolveTailContentHeightPx(): number {
-    const active = this.activeTabBuilder()
-    const panelHeight = active ? active.estimateContentHeightPx() : 0
-    return panelHeight + TAB_BAR_HEIGHT_PX
+  /** Snapshot panel sizes from current builders — matches the next painted panels. */
+  private refreshPanelDimensions(): void {
+    const merged = mergeLayout(this.layout)
+    const wrapWidthPx = this.computeSharedWrapWidthPx(merged)
+    this.panelDimensions.clear()
+    for (const { id } of this.tabOrder) {
+      const builder = this.builders.get(id)
+      if (builder && !builder.isEmpty()) {
+        this.panelDimensions.set(id, {
+          widthPx: builder.computeContentWidthPx(),
+          heightPx: builder.measureStackHeightPx(wrapWidthPx),
+        })
+      }
+    }
+  }
+
+  private resolveTailDimensions(): { tailTableWidthPx: number; tailContentHeightPx: number } {
+    const merged = mergeLayout(this.layout)
+    primeChWidthPx(merged.fontSizePx)
+    primeTailLogChrome(merged)
+
+    const snapshot = this.panelDimensions.get(this.displayTabId)
+    const wrapWidthPx = this.computeSharedWrapWidthPx(merged)
+
+    let tailTableWidthPx = this.estimateTabBarWidthPx()
+    if (snapshot) {
+      tailTableWidthPx = Math.max(tailTableWidthPx, snapshot.widthPx)
+    } else {
+      tailTableWidthPx = Math.max(tailTableWidthPx, estimateEmptyTabPanelWidthPx(merged))
+    }
+    if (tailTableWidthPx <= 0) {
+      tailTableWidthPx = merged.tableWidthPx
+    }
+
+    const panelHeight = snapshot
+      ? snapshot.heightPx
+      : estimateEmptyTabPanelHeightPx(merged, wrapWidthPx)
+
+    return {
+      tailTableWidthPx,
+      tailContentHeightPx: panelHeight + estimateTabBarHeightPx(merged),
+    }
   }
 
   private resolveRenderLayout(): TableLayout {
+    const { tailTableWidthPx, tailContentHeightPx } = this.resolveTailDimensions()
     return mergeLayout({
       ...this.layout,
-      tailTableWidthPx: this.resolveTailTableWidthPx(),
-      tailContentHeightPx: this.resolveTailContentHeightPx(),
+      tailTableWidthPx,
+      tailContentHeightPx,
     })
   }
 
   build(): ReactNode {
     const React = getReact()
     const layout = mergeLayout(this.layout)
+    this.refreshPanelDimensions()
     const populatedTabIds: string[] = []
     for (const { id } of this.tabOrder) {
       const builder = this.builders.get(id)
@@ -1236,16 +1358,20 @@ export class TabbedScriptLogBuilder {
       layout,
       onTabChange: (tabId: string) => {
         this.displayTabId = tabId
+        this.pendingLayoutRefresh = true
       },
     })
   }
 
   render(ns: NS): Promise<void> {
+    this.pendingLayoutRefresh = false
     return renderScriptLog(ns, this.build(), this.resolveRenderLayout())
   }
 }
 
 function syncTailSize(ns: NS, layout: TableLayout): void {
+  primeChWidthPx(layout.fontSizePx)
+  primeTailLogChrome(layout)
   const next = resolveTailSize(layout)
   const prev = lastTailSizeByPid.get(ns.pid)
   if (
@@ -1255,8 +1381,13 @@ function syncTailSize(ns: NS, layout: TableLayout): void {
   ) {
     return
   }
-  ns.ui.resizeTail(next.width, next.height)
-  lastTailSizeByPid.set(ns.pid, next)
+  try {
+    ns.ui.resizeTail(next.width, next.height)
+    lastTailSizeByPid.set(ns.pid, next)
+  } catch (error) {
+    lastTailSizeByPid.delete(ns.pid)
+    if (!isScriptDeathError(error)) throw error
+  }
 }
 
 export async function renderScriptLog(ns: NS, content: ReactNode, layout?: Partial<TableLayout>): Promise<void> {

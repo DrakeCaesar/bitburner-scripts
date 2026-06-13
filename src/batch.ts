@@ -17,7 +17,7 @@ import { purchasePrograms, purchaseTorRouter } from "./libraries/purchaseProgram
 import { purchaseServers } from "./libraries/purchaseServer.js"
 import { sumBatchWorkerRam } from "./libraries/ramUtils.js"
 import type { ReactTableConfig } from "./libraries/scriptLogUiLayout.js"
-import { createTabbedTailLog, openTailLog, type TabDefinition } from "./libraries/scriptLogUiLayout.js"
+import { createTabbedTailLog, openTailLog, sleepUntilTabLayoutRefresh, type TabDefinition } from "./libraries/scriptLogUiLayout.js"
 import {
   getNodesForBatching,
   killAllHackingScriptsOnNodes,
@@ -47,7 +47,11 @@ export async function main(ns: NS) {
   openTailLog(ns, debug ? "Batch (debug)" : "Batch")
 
   const tabbedLog = createTabbedTailLog(BATCH_TABS)
-  const renderLog = () => tabbedLog.render(ns)
+  const renderLog = async () => {
+    await tabbedLog.refreshLayoutIfPending(ns)
+    await tabbedLog.render(ns)
+  }
+  const whileAsleep = (ms: number) => sleepUntilTabLayoutRefresh(ns, tabbedLog, ms).then(() => undefined)
   const fmtTime = (ms: number) => formatGameTimeMs(ms, (m) => ns.format.time(m))
 
   const logSetup = (message: string) => {
@@ -71,6 +75,7 @@ export async function main(ns: NS) {
   await killOtherInstances(ns)
 
   while (true) {
+    await tabbedLog.refreshLayoutIfPending(ns)
     tabbedLog.clearPanelsExcept(["results", "batch"])
 
     if (debug) {
@@ -104,7 +109,7 @@ export async function main(ns: NS) {
     if (nodes.length === 0) {
       tabbedLog.tab("setup").text("ERROR: No nodes with root access found")
       await renderLog()
-      await ns.sleep(1000)
+      await sleepUntilTabLayoutRefresh(ns, tabbedLog, 1000)
       if (debug) break
       continue
     }
@@ -225,6 +230,7 @@ export async function main(ns: NS) {
       logMessage: logBatch,
       debug,
       shareLeftoverRamWhileBatching: SHARE_LEFTOVER_RAM_WHILE_BATCHING,
+      whileAsleep,
     }
 
     const hackingScripts = getBatchHackingScripts(debug)
@@ -331,7 +337,7 @@ export async function main(ns: NS) {
     if (completeBatches == 0) {
       tabbedLog.tab("results").reset().text("ERROR: No batches were executed. Exiting.")
       await renderLog()
-      await ns.sleep(1000)
+      await sleepUntilTabLayoutRefresh(ns, tabbedLog, 1000)
       if (debug) break
       continue
     }

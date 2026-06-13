@@ -64,13 +64,15 @@ export async function collectHackIncomeWhileBatchRuns(
   batchIntervalMs: number,
   cycleStillRunning: () => boolean,
   port = BATCH_HACK_INCOME_PORT,
-  onInterval?: () => void
+  onInterval?: () => void,
+  whileAsleep?: (ms: number) => Promise<void>
 ): Promise<number> {
   if (expectedReports <= 0) return 0
 
   const drainIntervalMs = getPortDrainIntervalMs(batchIntervalMs)
   let total = 0
   let received = 0
+  const sleep = whileAsleep ?? ((ms: number) => ns.sleep(ms))
 
   const pull = () => {
     const drained = drainHackIncomePort(ns, port)
@@ -81,12 +83,12 @@ export async function collectHackIncomeWhileBatchRuns(
   pull()
   while (cycleStillRunning()) {
     onInterval?.()
-    await ns.sleep(drainIntervalMs)
+    await sleep(drainIntervalMs)
     pull()
   }
 
   while (received < expectedReports) {
-    await ns.sleep(drainIntervalMs)
+    await sleep(drainIntervalMs)
     const before = received
     pull()
     if (received === before) break
@@ -131,7 +133,8 @@ export interface BatchConfig {
   debug?: boolean
   /** Exec shareRam on idle worker RAM while waiting for the batch cycle to finish. */
   shareLeftoverRamWhileBatching?: boolean
-  logMessage?: LogFn
+  /** When set, used instead of ns.sleep while waiting for the batch cycle (e.g. tab resize polling). */
+  whileAsleep?: (ms: number) => Promise<void>
 }
 
 export function calculateBatchThreads(ns: NS, config: BatchConfig) {
@@ -245,6 +248,7 @@ export async function executeBatches(
     logMessage,
     debug = false,
     shareLeftoverRamWhileBatching = false,
+    whileAsleep,
   } = config
   const log = logMessage ?? (() => {})
   const { totalBatchRam, actualThreshold } = threads
@@ -432,7 +436,8 @@ export async function executeBatches(
       batchIntervalMs,
       cycleStillRunning,
       BATCH_HACK_INCOME_PORT,
-      shareLeftoverRam
+      shareLeftoverRam,
+      whileAsleep
     )
   }
 

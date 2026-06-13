@@ -25,6 +25,7 @@ import {
 import {
   createTabbedTailLog,
   openTailLog,
+  sleepUntilTabLayoutRefresh,
   type ReactTableConfig,
   type TabDefinition,
 } from "./libraries/scriptLogUiLayout.js"
@@ -154,7 +155,10 @@ export async function main(ns: NS): Promise<void> {
   openTailLog(ns, `Hack Grind (${options.mode})`)
 
   const tabbedLog = createTabbedTailLog(GRIND_TABS)
-  const renderLog = () => tabbedLog.render(ns)
+  const renderLog = async () => {
+    await tabbedLog.refreshLayoutIfPending(ns)
+    await tabbedLog.render(ns)
+  }
 
   const nodes = getNodesForBatching(ns, {
     workers: options.workers,
@@ -178,6 +182,7 @@ export async function main(ns: NS): Promise<void> {
   const cores = ns.getServer(nodes[0]).cpuCores
 
   while (true) {
+    await tabbedLog.refreshLayoutIfPending(ns)
     const totalRam = totalWorkerRamGb(ns, nodes)
     const now = Date.now()
     const shouldReplanAuto = options.mode === "auto" && now - lastAutoReplan >= AUTO_REPLAN_MS
@@ -194,7 +199,7 @@ export async function main(ns: NS): Promise<void> {
       tabbedLog.clearPanelsExcept([])
       tabbedLog.tab("status").text("No hackable grind targets found. Nuke more servers or raise hacking level.")
       await renderLog()
-      await ns.sleep(REDEPLOY_CHECK_MS)
+      await sleepUntilTabLayoutRefresh(ns, tabbedLog, REDEPLOY_CHECK_MS)
       continue
     }
 
@@ -219,7 +224,7 @@ export async function main(ns: NS): Promise<void> {
         tabbedLog.clearPanelsExcept([])
         tabbedLog.tab("status").text(`Failed to launch grind on ${plan.target} (no free RAM on workers).`)
         await renderLog()
-        await ns.sleep(REDEPLOY_CHECK_MS)
+        await sleepUntilTabLayoutRefresh(ns, tabbedLog, REDEPLOY_CHECK_MS)
         continue
       }
 
@@ -366,6 +371,6 @@ export async function main(ns: NS): Promise<void> {
     )
 
     await renderLog()
-    await ns.sleep(REDEPLOY_CHECK_MS)
+    await sleepUntilTabLayoutRefresh(ns, tabbedLog, REDEPLOY_CHECK_MS)
   }
 }
