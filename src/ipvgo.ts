@@ -119,10 +119,13 @@ export async function main(ns: NS): Promise<void> {
   let activeBoardSize = boardSize
 
   const tailLog = createTailLog()
-  let snapshot = {
-    ...createIpvgoSnapshot(activeOpponent, activeBoardSize, iterations),
-    phase: "Initializing",
-  }
+  let snapshot = refreshFactionStats(
+    {
+      ...createIpvgoSnapshot(activeOpponent, activeBoardSize, iterations),
+      phase: "Initializing",
+    },
+    ns
+  )
   await renderIpvgoDashboard(ns, tailLog, snapshot)
 
   if (!(await isIpvgoEngineAvailable())) {
@@ -364,17 +367,13 @@ export async function main(ns: NS): Promise<void> {
 function logGameEnd(
   ns: NS,
   snapshot: ReturnType<typeof createIpvgoSnapshot>,
-  opponent: GoOpponent
+  _opponent: GoOpponent
 ) {
-  const stats = ns.go.analysis.getStats()[opponent]
   const gameState = ns.go.getGameState()
   const won = gameState.blackScore > gameState.whiteScore
   return recordGameResult(
     {
       ...syncGameState(ns, snapshot),
-      winStreak: stats?.winStreak ?? snapshot.winStreak,
-      wins: stats?.wins ?? snapshot.wins,
-      losses: stats?.losses ?? snapshot.losses,
       phase: won ? "Win" : "Loss",
     },
     won,

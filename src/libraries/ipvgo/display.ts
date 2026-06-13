@@ -36,6 +36,14 @@ export type IpvgoGameMoveRow = {
   result?: boolean
 }
 
+export type IpvgoFactionStats = {
+  wins: number
+  losses: number
+  winStreak: number
+  bonusPercent: number
+  bonusDescription: string
+}
+
 export type IpvgoDashboardSnapshot = {
   opponent: GoOpponent
   boardSize: number
@@ -59,6 +67,8 @@ export type IpvgoDashboardSnapshot = {
   winStreak: number
   wins: number
   losses: number
+  /** Cached from ns.go.analysis.getStats(); UI must not call Netscript during render. */
+  opponentStats: Partial<Record<GoOpponent, IpvgoFactionStats>>
   gameMoves: readonly IpvgoGameMoveRow[]
 }
 
@@ -87,6 +97,7 @@ export function createIpvgoSnapshot(
     winStreak: 0,
     wins: 0,
     losses: 0,
+    opponentStats: {},
     gameMoves: [],
   }
 }
@@ -178,20 +189,20 @@ function scoreLeadText(blackScore: number, whiteScore: number): string {
   return lead > 0 ? `B+${lead.toFixed(1)}` : `W+${(-lead).toFixed(1)}`
 }
 
-function factionRecordLabel(opponent: GoOpponent, ns: NS): string {
-  const stats = ns.go.analysis.getStats()[opponent]
+function factionRecordLabel(opponent: GoOpponent, snapshot: IpvgoDashboardSnapshot): string {
+  const stats = snapshot.opponentStats[opponent]
   if (!stats) return opponent
   return `${opponent} (${stats.wins}-${stats.losses})`
 }
 
-function factionRewardLabel(ns: NS, opponent: GoOpponent): string {
-  const stats = ns.go.analysis.getStats()[opponent]
-  const reward = stats?.bonusDescription ?? IPVGO_BONUS_LABEL[opponent] ?? "-"
+function factionRewardLabel(opponent: GoOpponent, snapshot: IpvgoDashboardSnapshot): string {
+  const stats = snapshot.opponentStats[opponent]
+  const reward = stats?.bonusDescription || IPVGO_BONUS_LABEL[opponent] || "-"
   const pct = stats?.bonusPercent ?? 0
   return `+${pct.toFixed(1)}% ${reward}`
 }
 
-function buildSetupTableConfig(ns: NS, snapshot: IpvgoDashboardSnapshot): ReactTableConfig {
+function buildSetupTableConfig(snapshot: IpvgoDashboardSnapshot): ReactTableConfig {
   return {
     title: "Setup",
     columns: [
@@ -200,8 +211,8 @@ function buildSetupTableConfig(ns: NS, snapshot: IpvgoDashboardSnapshot): ReactT
       ...IPVGO_BOARD_SIZES.map((size) => col(String(size), "center", 3)),
     ],
     rows: IPVGO_OPPONENTS.map((faction) => [
-      factionRecordLabel(faction, ns),
-      factionRewardLabel(ns, faction),
+      factionRecordLabel(faction, snapshot),
+      factionRewardLabel(faction, snapshot),
       ...IPVGO_BOARD_SIZES.map((size) =>
         snapshot.opponent === faction && snapshot.boardSize === size ? "*" : ""
       ),
@@ -232,11 +243,11 @@ function buildSimsTableSizingConfig(): ReactTableConfig {
   }
 }
 
-function IpvgoSetupPicker(props: { ns: NS; snapshot: IpvgoDashboardSnapshot }): ReactNode {
+function IpvgoSetupPicker(props: { snapshot: IpvgoDashboardSnapshot }): ReactNode {
   const React = getReact()
-  const { ns, snapshot } = props
+  const { snapshot } = props
   const layout = mergeTailLayout()
-  const config = buildSetupTableConfig(ns, snapshot)
+  const config = buildSetupTableConfig(snapshot)
   const { columns } = config
   const programmaticKey = setupCellKey(snapshot.opponent, snapshot.boardSize as IpvgoBoardSize)
   const [activeKey, setActiveKey] = React.useState(programmaticKey)
@@ -272,7 +283,7 @@ function IpvgoSetupPicker(props: { ns: NS; snapshot: IpvgoDashboardSnapshot }): 
           key: "name",
           style: cellStyle(layout, { selectedRow: snapshot.opponent === faction }, "left"),
         },
-        factionRecordLabel(faction, ns)
+        factionRecordLabel(faction, snapshot)
       ),
       React.createElement(
         "td",
@@ -280,7 +291,7 @@ function IpvgoSetupPicker(props: { ns: NS; snapshot: IpvgoDashboardSnapshot }): 
           key: "reward",
           style: cellStyle(layout, { selectedRow: snapshot.opponent === faction }, "left"),
         },
-        factionRewardLabel(ns, faction)
+        factionRewardLabel(faction, snapshot)
       ),
       ...IPVGO_BOARD_SIZES.map((size) => {
         const cellKey = setupCellKey(faction, size)
@@ -411,14 +422,14 @@ function IpvgoSetupPicker(props: { ns: NS; snapshot: IpvgoDashboardSnapshot }): 
   )
 }
 
-function buildSetupPickerReact(ns: NS, snapshot: IpvgoDashboardSnapshot): ReactNode {
+function buildSetupPickerReact(snapshot: IpvgoDashboardSnapshot): ReactNode {
   const React = getReact()
-  return React.createElement(IpvgoSetupPicker, { ns, snapshot })
+  return React.createElement(IpvgoSetupPicker, { snapshot })
 }
 
-function setupPickerSize(ns: NS, snapshot: IpvgoDashboardSnapshot): { widthPx: number; heightPx: number } {
+function setupPickerSize(snapshot: IpvgoDashboardSnapshot): { widthPx: number; heightPx: number } {
   const layout = mergeTailLayout()
-  const setupConfig = buildSetupTableConfig(ns, snapshot)
+  const setupConfig = buildSetupTableConfig(snapshot)
   const simsConfig = buildSimsTableSizingConfig()
   const setupWidthPx = computeReactTableWidthPx(setupConfig, layout)
   const simsWidthPx = computeReactTableWidthPx(simsConfig, layout)
@@ -596,7 +607,7 @@ function buildTextBlockMinimal(text: string): ReactNode {
 }
 
 function populateDashboard(ns: NS, log: ScriptLogBuilder, snapshot: IpvgoDashboardSnapshot): void {
-  log.react(buildSetupPickerReact(ns, snapshot), setupPickerSize(ns, snapshot))
+  log.react(buildSetupPickerReact(snapshot), setupPickerSize(snapshot))
   log.table(buildStatusTable(snapshot))
   log.table(buildRecordTable(snapshot))
 
@@ -607,13 +618,26 @@ function populateDashboard(ns: NS, log: ScriptLogBuilder, snapshot: IpvgoDashboa
 }
 
 export function refreshFactionStats(snapshot: IpvgoDashboardSnapshot, ns: NS): IpvgoDashboardSnapshot {
-  const stats = ns.go.analysis.getStats()[snapshot.opponent]
-  if (!stats) return snapshot
+  const allStats = ns.go.analysis.getStats()
+  const opponentStats: Partial<Record<GoOpponent, IpvgoFactionStats>> = {}
+  for (const faction of IPVGO_OPPONENTS) {
+    const stats = allStats[faction]
+    if (!stats) continue
+    opponentStats[faction] = {
+      wins: stats.wins ?? 0,
+      losses: stats.losses ?? 0,
+      winStreak: stats.winStreak ?? 0,
+      bonusPercent: stats.bonusPercent ?? 0,
+      bonusDescription: stats.bonusDescription ?? "",
+    }
+  }
+  const current = opponentStats[snapshot.opponent]
   return {
     ...snapshot,
-    winStreak: stats.winStreak ?? 0,
-    wins: stats.wins ?? 0,
-    losses: stats.losses ?? 0,
+    opponentStats,
+    winStreak: current?.winStreak ?? snapshot.winStreak,
+    wins: current?.wins ?? snapshot.wins,
+    losses: current?.losses ?? snapshot.losses,
   }
 }
 
