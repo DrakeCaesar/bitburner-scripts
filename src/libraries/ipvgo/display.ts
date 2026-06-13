@@ -107,13 +107,13 @@ function upsertGameMoveRow(
 
 function formatOurTime(row: IpvgoGameMoveRow): string {
   if (row.blackMs == null) return "-"
-  if (row.blackSims != null) return `${row.blackSims} / ${row.blackMs.toFixed(0)}ms`
-  return `${row.blackMs.toFixed(0)}ms`
+  if (row.blackSims != null) return `${row.blackSims} / ${row.blackMs.toFixed(0)}`
+  return `${row.blackMs.toFixed(0)}`
 }
 
 function formatOppTime(row: IpvgoGameMoveRow): string {
   if (row.whiteMs == null) return "-"
-  return `${row.whiteMs.toFixed(0)}ms`
+  return `${row.whiteMs.toFixed(0)}`
 }
 
 export function recordOurMove(
