@@ -129,21 +129,115 @@ function saveTailScrollPosition(pid: number): void {
 
 function applyTailScrollPosition(containerEl: HTMLElement, pid: number | undefined): void {
   if (pid == null) return
-  const scrollEl = findActiveScrollContainer(containerEl)
-  if (!scrollEl) return
 
   const saved = lastScrollTopByPid.get(pid)
-  if (saved != null) {
+  if (saved === 0) {
+    setAllTailScrollToVisualTop(pid)
+    return
+  }
+
+  if (saved != null && saved > 0) {
+    const scrollEl = findActiveScrollContainer(containerEl)
+    if (!scrollEl) return
     const maxScroll = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight)
     scrollEl.scrollTop = Math.min(saved, maxScroll)
     return
   }
 
+  const hasScriptLogViewport =
+    containerEl.hasAttribute(SCRIPT_LOG_VIEWPORT_ATTR) ||
+    containerEl.querySelector(`[${SCRIPT_LOG_VIEWPORT_ATTR}]`) != null
+  if (hasScriptLogViewport) {
+    setAllTailScrollToVisualTop(pid)
+    return
+  }
+
+  const scrollEl = findActiveScrollContainer(containerEl)
+  if (!scrollEl) return
   const win = eval("window") as Window
   const flexDirection = win.getComputedStyle(scrollEl).flexDirection
   if (flexDirection === "column-reverse") {
     scrollEl.scrollTop = scrollEl.scrollHeight - scrollEl.clientHeight
   }
+}
+
+/** Collect every vertically scrollable element in this script tail window. */
+function collectTailScrollables(viewport: HTMLElement, win: Window): HTMLElement[] {
+  const seen = new Set<HTMLElement>()
+  const scrollables: HTMLElement[] = []
+  const add = (el: HTMLElement | null | undefined): void => {
+    if (!el || seen.has(el) || !isVerticallyScrollable(el, win)) return
+    seen.add(el)
+    scrollables.push(el)
+  }
+
+  let node: HTMLElement | null = viewport
+  while (node) {
+    add(node)
+    node = node.parentElement
+  }
+
+  const tailRoot = viewport.closest(".react-resizable") as HTMLElement | null
+  if (tailRoot) {
+    for (const el of Array.from(tailRoot.querySelectorAll("*"))) {
+      if (el instanceof HTMLElement) add(el)
+    }
+  }
+
+  return scrollables
+}
+
+/** True when this element or a flex ancestor up to the tail root uses column-reverse. */
+function isInColumnReverseFlex(el: HTMLElement, tailRoot: HTMLElement | null, win: Window): boolean {
+  let node: HTMLElement | null = el
+  while (node && node !== tailRoot?.parentElement) {
+    const flexDirection = win.getComputedStyle(node).flexDirection
+    if (flexDirection === "column-reverse") return true
+    node = node.parentElement
+  }
+  return false
+}
+
+/** scrollTop that shows the start of content (tab bar / table headers) in this container. */
+function setScrollableVisualTop(el: HTMLElement, win: Window, tailRoot: HTMLElement | null): void {
+  const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight)
+  if (maxScroll <= 0) return
+  if (isInColumnReverseFlex(el, tailRoot, win)) {
+    el.scrollTop = maxScroll
+  } else {
+    el.scrollTop = 0
+  }
+}
+
+/** Reset every tail scroll container so content starts at the top. */
+function setAllTailScrollToVisualTop(pid: number): void {
+  try {
+    const doc = eval("document") as Document
+    const viewport = doc.querySelector(`[${SCRIPT_LOG_PID_ATTR}="${pid}"]`) as HTMLElement | null
+    if (!viewport) return
+    const win = eval("window") as Window
+    const tailRoot = viewport.closest(".react-resizable") as HTMLElement | null
+
+    for (const el of collectTailScrollables(viewport, win)) {
+      setScrollableVisualTop(el, win, tailRoot)
+    }
+
+    viewport.firstElementChild?.scrollIntoView({ block: "start", inline: "nearest" })
+    viewport.scrollIntoView({ block: "start", inline: "nearest" })
+    lastScrollTopByPid.set(pid, 0)
+  } catch {
+    // ignore
+  }
+}
+
+function scrollTailToTopAfterLayout(pid: number): void {
+  const win = eval("window") as Window
+  const tick = (): void => setAllTailScrollToVisualTop(pid)
+  tick()
+  win.requestAnimationFrame(() => {
+    tick()
+    win.requestAnimationFrame(tick)
+  })
 }
 
 /** Parsed from Bitburner logs panel `height: calc(100% - Npx)` (see script tail DOM). */
@@ -224,6 +318,7 @@ function ViewportShell(props: ViewportShellProps): ReactNode {
         width: "max-content",
         boxSizing: "border-box",
         overflowX: "auto",
+        overflowAnchor: "none",
         ...(viewportMax != null ? { maxHeight: `${viewportMax}px`, overflowY: "auto" } : {}),
       },
     },
@@ -1174,6 +1269,7 @@ export class TabbedScriptLogBuilder {
   private layout?: Partial<TableLayout>
   private readonly lazyInactivePanels: boolean
   private pendingLayoutRefresh = false
+  private tailScriptPid?: number
 
   constructor(
     private tabOrder: TabDefinition[],
@@ -1232,7 +1328,9 @@ export class TabbedScriptLogBuilder {
   async refreshLayoutIfPending(ns: NS): Promise<boolean> {
     if (!this.pendingLayoutRefresh) return false
     this.pendingLayoutRefresh = false
+    lastScrollTopByPid.set(ns.pid, 0)
     applyTailSize(ns, this.resolveRenderLayout())
+    scrollTailToTopAfterLayout(ns.pid)
     if (this.lazyInactivePanels) {
       await this.render(ns)
     }
@@ -1359,12 +1457,16 @@ export class TabbedScriptLogBuilder {
       onTabChange: (tabId: string) => {
         this.displayTabId = tabId
         this.pendingLayoutRefresh = true
+        if (this.tailScriptPid != null) {
+          setAllTailScrollToVisualTop(this.tailScriptPid)
+        }
       },
     })
   }
 
   render(ns: NS): Promise<void> {
     this.pendingLayoutRefresh = false
+    this.tailScriptPid = ns.pid
     return renderScriptLog(ns, this.build(), this.resolveRenderLayout())
   }
 }

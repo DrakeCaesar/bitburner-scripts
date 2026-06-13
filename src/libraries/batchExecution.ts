@@ -131,6 +131,7 @@ export interface BatchConfig {
   ramThreshold: number
   nodeRamLimit: number
   debug?: boolean
+  logMessage?: LogFn
   /** Exec shareRam on idle worker RAM while waiting for the batch cycle to finish. */
   shareLeftoverRamWhileBatching?: boolean
   /** When set, used instead of ns.sleep while waiting for the batch cycle (e.g. tab resize polling). */
