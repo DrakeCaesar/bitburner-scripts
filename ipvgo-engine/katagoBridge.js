@@ -2,7 +2,13 @@ import { spawn } from "child_process"
 import fs from "fs"
 import path from "path"
 import { fileURLToPath } from "url"
-import { buildKataGoQuery, compressBoardForKatago, pickMoveFromAnalysis } from "./katagoConvert.js"
+import {
+  buildKataGoQuery,
+  buildKataGoSnapshotQuery,
+  compressBoardForKatago,
+  pickMoveFromAnalysis,
+  toKataGoPayload,
+} from "./katagoConvert.js"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const KATAGO_DIR = path.join(__dirname, "katago")
@@ -38,6 +44,35 @@ class KataGoSession {
     this.pending = new Map()
     this.nextId = 1
     this.starting = null
+    /** After a failed history replay, stick to snapshot mode until a new game starts. */
+    this.historyReplayBroken = false
+    this.lastHistoryLen = 0
+  }
+
+  rejectPending(id, message) {
+    if (!id || !this.pending.has(id)) return false
+    const { reject } = this.pending.get(id)
+    this.pending.delete(id)
+    reject(new Error(message))
+    return true
+  }
+
+  onStderr(chunk) {
+    const msg = chunk.toString().trim()
+    if (!msg) return
+    console.error("[katago]", msg)
+    if (/ready to begin handling requests/i.test(msg)) return
+
+    const jsonStart = msg.indexOf("{")
+    if (jsonStart < 0) return
+    try {
+      const payload = JSON.parse(msg.slice(jsonStart))
+      if (payload.error && payload.id) {
+        this.rejectPending(payload.id, payload.error)
+      }
+    } catch {
+      /* ignore non-json stderr */
+    }
   }
 
   async ensureStarted() {
@@ -70,9 +105,8 @@ class KataGoSession {
 
       proc.stdout.on("data", (chunk) => this.onStdout(chunk))
       proc.stderr.on("data", (chunk) => {
-        const msg = chunk.toString().trim()
-        if (msg) console.error("[katago]", msg)
-        if (/ready to begin handling requests/i.test(msg)) finish()
+        this.onStderr(chunk)
+        if (/ready to begin handling requests/i.test(chunk.toString())) finish()
       })
       proc.on("error", (err) => finish(err))
       proc.on("exit", (code) => {
@@ -111,19 +145,17 @@ class KataGoSession {
       return
     }
 
+    if (payload.warning) return
+
     if (payload.error) {
-      const id = payload.id
-      if (id && this.pending.has(id)) {
-        const { reject } = this.pending.get(id)
-        this.pending.delete(id)
-        reject(new Error(payload.error))
-      }
+      this.rejectPending(payload.id, payload.error)
       return
     }
 
     const id = payload.id
     if (!id || !this.pending.has(id)) return
     if (payload.isDuringSearch) return
+    if (!Array.isArray(payload.moveInfos)) return
 
     const { resolve, started } = this.pending.get(id)
     this.pending.delete(id)
@@ -137,10 +169,39 @@ class KataGoSession {
 
   async query(request, compression = null) {
     await this.ensureStarted()
-    const id = `ipvgo-${this.nextId++}`
-    const query = buildKataGoQuery(request, id, compression)
-    const line = `${JSON.stringify(query)}\n`
+    const historyLen = request.history?.length ?? 0
+    if (historyLen === 0 || historyLen < this.lastHistoryLen) {
+      this.historyReplayBroken = false
+    }
+    this.lastHistoryLen = historyLen
 
+    const id = `ipvgo-${this.nextId++}`
+    const query =
+      this.historyReplayBroken
+        ? buildKataGoSnapshotQuery(request, id, compression)
+        : buildKataGoQuery(request, id, compression)
+    return this.sendQuery(query, request, compression)
+  }
+
+  async sendQuery(query, request, compression) {
+    const payload = toKataGoPayload(query)
+    const id = payload.id
+
+    try {
+      return await this.writeQueryLine(`${JSON.stringify(payload)}\n`, id)
+    } catch (err) {
+      if (query.historyMode === "replay" && query.moves?.length > 0) {
+        this.historyReplayBroken = true
+        console.warn(`[katago] history replay failed (${err.message}); using snapshot for this game`)
+        const fallbackId = `ipvgo-${this.nextId++}`
+        const fallback = toKataGoPayload(buildKataGoSnapshotQuery(request, fallbackId, compression))
+        return this.writeQueryLine(`${JSON.stringify(fallback)}\n`, fallback.id)
+      }
+      throw err
+    }
+  }
+
+  async writeQueryLine(line, id) {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
