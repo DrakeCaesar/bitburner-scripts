@@ -16,6 +16,8 @@ export type IpvgoMoveRequest = {
   playAs: IpvgoColor
   /** Authoritative legal moves from ns.go.analysis.getValidMoves() for the root position. */
   validMoves: IpvgoValidMoves
+  /** Optional client id; server forwards to KataGo for cancel/terminate. */
+  requestId?: string
 }
 
 export type IpvgoMoveResponse = {

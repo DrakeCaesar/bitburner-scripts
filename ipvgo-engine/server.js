@@ -8,12 +8,15 @@ import fs from "fs"
 import http from "http"
 import path from "path"
 import { fileURLToPath } from "url"
-import { isKatagoInstalled, requestKatagoMove, shutdownKatago, warmupKatago } from "./katagoBridge.js"
+import { isKatagoInstalled, requestKatagoMove, cancelKatagoRequest, shutdownKatago, warmupKatago } from "./katagoBridge.js"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const port = Number(process.env.IPVGO_PORT ?? 3010)
 const maxBodyBytes = 4 * 1024 * 1024
 const forceNative = process.env.IPVGO_FORCE_NATIVE === "1"
+
+/** @type {import("child_process").ChildProcess | null} */
+let activeNativeChild = null
 
 function nativeExecutablePath() {
   const isWindows = process.platform === "win32"
@@ -92,31 +95,72 @@ async function requestNativeMove(body) {
   fs.writeFileSync(inputPath, JSON.stringify(body))
 
   return new Promise((resolve, reject) => {
-    execFile(exe, [inputPath, outputPath], { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 }, (error, _stdout, stderr) => {
-      try {
-        if (error) {
-          reject(new Error(`${error.message}${stderr ? `: ${stderr}` : ""}`))
-          return
-        }
-        if (!fs.existsSync(outputPath)) {
-          reject(new Error("Engine produced no output file"))
-          return
-        }
-        const result = JSON.parse(fs.readFileSync(outputPath, "utf8"))
-        resolve({ ...result, engine: "native" })
-      } catch (err) {
-        reject(err)
-      } finally {
-        for (const file of [inputPath, outputPath]) {
-          try {
-            if (fs.existsSync(file)) fs.unlinkSync(file)
-          } catch {
-            /* ignore */
+    const child = execFile(
+      exe,
+      [inputPath, outputPath],
+      { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 },
+      (error, _stdout, stderr) => {
+        if (activeNativeChild === child) activeNativeChild = null
+        try {
+          if (error) {
+            if (error.killed || error.signal) {
+              reject(new Error("Native engine cancelled"))
+              return
+            }
+            reject(new Error(`${error.message}${stderr ? `: ${stderr}` : ""}`))
+            return
+          }
+          if (!fs.existsSync(outputPath)) {
+            reject(new Error("Engine produced no output file"))
+            return
+          }
+          const result = JSON.parse(fs.readFileSync(outputPath, "utf8"))
+          resolve({ ...result, engine: "native" })
+        } catch (err) {
+          reject(err)
+        } finally {
+          for (const file of [inputPath, outputPath]) {
+            try {
+              if (fs.existsSync(file)) fs.unlinkSync(file)
+            } catch {
+              /* ignore */
+            }
           }
         }
       }
-    })
+    )
+    activeNativeChild = child
   })
+}
+
+function cancelNativeMove() {
+  if (activeNativeChild && !activeNativeChild.killed) {
+    activeNativeChild.kill()
+    activeNativeChild = null
+  }
+}
+
+async function handleCancel(req, res) {
+  let body
+  try {
+    body = await readJsonBody(req)
+  } catch (err) {
+    return sendJson(res, 400, { error: err.message })
+  }
+
+  const requestId = body?.requestId
+  if (!requestId || typeof requestId !== "string") {
+    return sendJson(res, 400, { error: "requestId required" })
+  }
+
+  const engine = activeEngine()
+  if (engine === "katago") {
+    cancelKatagoRequest(requestId)
+  } else if (engine === "native") {
+    cancelNativeMove()
+  }
+
+  sendJson(res, 200, { ok: true, requestId })
 }
 
 async function handleMove(req, res) {
@@ -166,6 +210,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/health") {
     handleHealth(req, res)
+    return
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/ipvgo/cancel") {
+    await handleCancel(req, res)
     return
   }
 

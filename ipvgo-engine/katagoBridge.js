@@ -47,6 +47,7 @@ class KataGoSession {
     /** After a failed history replay, stick to snapshot mode until a new game starts. */
     this.historyReplayBroken = false
     this.lastHistoryLen = 0
+    this.cancelledIds = new Set()
   }
 
   rejectPending(id, message) {
@@ -147,12 +148,23 @@ class KataGoSession {
 
     if (payload.warning) return
 
+    const id = payload.id
+    if (id && this.cancelledIds.has(id)) {
+      this.cancelledIds.delete(id)
+      this.rejectPending(id, new Error("Query cancelled"))
+      return
+    }
+
     if (payload.error) {
       this.rejectPending(payload.id, payload.error)
       return
     }
 
-    const id = payload.id
+    if (payload.noResults) {
+      this.rejectPending(id, new Error("Query cancelled"))
+      return
+    }
+
     if (!id || !this.pending.has(id)) return
     if (payload.isDuringSearch) return
     if (!Array.isArray(payload.moveInfos)) return
@@ -175,12 +187,24 @@ class KataGoSession {
     }
     this.lastHistoryLen = historyLen
 
-    const id = `ipvgo-${this.nextId++}`
+    const id = request.requestId ?? `ipvgo-${this.nextId++}`
     const query =
       this.historyReplayBroken
         ? buildKataGoSnapshotQuery(request, id, compression)
         : buildKataGoQuery(request, id, compression)
     return this.sendQuery(query, request, compression)
+  }
+
+  terminateQuery(terminateId) {
+    if (!terminateId || !this.proc?.stdin) return
+    this.cancelledIds.add(terminateId)
+    const ackId = `ipvgo-term-${this.nextId++}`
+    const line = `${JSON.stringify({ id: ackId, action: "terminate", terminateId })}\n`
+    try {
+      this.proc.stdin.write(line)
+    } catch {
+      /* ignore */
+    }
   }
 
   async sendQuery(query, request, compression) {
@@ -190,6 +214,10 @@ class KataGoSession {
     try {
       return await this.writeQueryLine(`${JSON.stringify(payload)}\n`, id)
     } catch (err) {
+      const message = String(err.message ?? err)
+      if (/cancel/i.test(message)) {
+        throw err
+      }
       if (query.historyMode === "replay" && query.moves?.length > 0) {
         this.historyReplayBroken = true
         console.warn(`[katago] history replay failed (${err.message}); using snapshot for this game`)
@@ -267,6 +295,13 @@ export async function requestKatagoMove(request) {
     ...(compression
       ? { compressedSize: katagoSize, strippedRows: compression.strippedRows, strippedCols: compression.strippedCols }
       : {}),
+  }
+}
+
+export function cancelKatagoRequest(requestId) {
+  if (!requestId) return
+  for (const session of sessions.values()) {
+    session.terminateQuery(requestId)
   }
 }
 

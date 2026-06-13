@@ -2,7 +2,7 @@ import { NS, type GoOpponent } from "@ns"
 import { killOtherInstances } from "./libraries/batchCalculations.js"
 import {
   isIpvgoEngineAvailable,
-  requestIpvgoEngineMove,
+  requestIpvgoEngineMoveInterruptible,
 } from "./libraries/ipvgo/engineClient.js"
 import {
   applyIpvgoSetupChange,
@@ -13,7 +13,11 @@ import {
   refreshFactionStats,
   renderIpvgoDashboard,
 } from "./libraries/ipvgo/display.js"
-import { consumeIpvgoSetupPending, sleepUntilIpvgoSetupChange } from "./libraries/ipvgo/uiControl.js"
+import {
+  consumeIpvgoSetupPending,
+  hasIpvgoSetupPending,
+  sleepUntilIpvgoSetupChange,
+} from "./libraries/ipvgo/uiControl.js"
 import { findTacticalMove } from "./libraries/ipvgo/tactics.js"
 import { shouldPassToEndGame } from "./libraries/ipvgo/endgame.js"
 import {
@@ -148,7 +152,7 @@ export async function main(ns: NS): Promise<void> {
   let moveNumber = 0
   let gamesPlayed = 0
 
-  while (true) {
+  gameLoop: while (true) {
     try {
       const pendingSetup = consumeIpvgoSetupPending()
       const setupApplied = applyIpvgoSetupChange(ns, snapshot, pendingSetup)
@@ -297,7 +301,20 @@ export async function main(ns: NS): Promise<void> {
           playAs: "X" as const,
           validMoves,
         }
-        const analysis = await requestIpvgoEngineMove(request)
+        const analysis = await requestIpvgoEngineMoveInterruptible(
+          request,
+          hasIpvgoSetupPending,
+          (ms) => ns.sleep(ms)
+        )
+        if (!analysis) {
+          snapshot = {
+            ...snapshot,
+            thinking: false,
+            phase: "Setup changed",
+          }
+          await renderIpvgoDashboard(ns, tailLog, snapshot)
+          continue gameLoop
+        }
         thinkMs = performance.now() - started
         sims = analysis.iterations
 
