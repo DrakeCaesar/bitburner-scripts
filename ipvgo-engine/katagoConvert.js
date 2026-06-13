@@ -5,6 +5,9 @@ const ROOT_MOVE_DEPTH = 1
 /** Ply depth for permanent blocked-node prohibition (both players). */
 const BLOCKED_NODE_DEPTH = 999
 
+/** Experimental: show # as opponent stones in KataGo initialStones (we play Black). */
+const PHANTOM_OPPONENT_ON_BLOCKED = true
+
 /** API board[x][y], y=0 bottom -> KataGo GTP e.g. C3 */
 export function toGtpCoord(x, y) {
   return `${COLUMN_LETTERS[x]}${y + 1}`
@@ -111,15 +114,21 @@ function kataGoPlayer(playAs) {
   return playAs === "O" ? "W" : "B"
 }
 
-/** Current position as KataGo initialStones (blocked # cells omitted). */
-export function boardToInitialStones(board) {
+/**
+ * Current position as KataGo initialStones.
+ * When PHANTOM_OPPONENT_ON_BLOCKED, each # is sent as an opponent stone so the net
+ * sees occupancy; avoidMoves still bans playing on those intersections.
+ */
+export function boardToInitialStones(board, playAs = "X") {
   const stones = []
+  const phantomOnBlocked = PHANTOM_OPPONENT_ON_BLOCKED ? kataGoPlayer(playAs === "O" ? "X" : "O") : null
   const size = board.length
   for (let x = 0; x < size; x++) {
     for (let y = 0; y < size; y++) {
       const cell = cellAt(board, x, y)
       if (cell === "X") stones.push(["B", toGtpCoord(x, y)])
       else if (cell === "O") stones.push(["W", toGtpCoord(x, y)])
+      else if (cell === "#" && phantomOnBlocked) stones.push([phantomOnBlocked, toGtpCoord(x, y)])
     }
   }
   return stones
@@ -197,7 +206,7 @@ export function buildKataGoQuery(request, queryId, compression = null) {
 
   return {
     id: queryId,
-    initialStones: boardToInitialStones(board),
+    initialStones: boardToInitialStones(board, request.playAs),
     moves: [],
     initialPlayer: playAs,
     rules: "chinese",

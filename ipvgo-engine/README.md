@@ -83,6 +83,6 @@ Outputs `cpp/ipvgo.wasm.js` and `cpp/ipvgo.wasm.wasm`.
 IPvGO boards can include blocked intersections (`#`). KataGo queries apply move restrictions from `validMoves`:
 
 - **No blocked nodes:** `allowMoves` whitelists legal IPvGO points (+ pass) at the root.
-- **With blocked nodes:** `avoidMoves` bans `#` for both players through the search tree, and bans other illegal points for the current player at the root.
+- **With blocked nodes:** `avoidMoves` bans `#` for both players through the search tree, and bans other illegal points for the current player at the root. When `PHANTOM_OPPONENT_ON_BLOCKED` is enabled in `katagoConvert.js`, `#` cells are also sent as opponent stones in `initialStones` so the net sees them as occupied (experimental).
 
 `pickMoveFromAnalysis` still filters through `validMoves` as a final safety check.
