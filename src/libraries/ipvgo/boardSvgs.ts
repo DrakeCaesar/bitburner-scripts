@@ -84,6 +84,7 @@ function libertyArmLayers(
   board: IpvgoBoard,
   x: number,
   y: number,
+  player: StoneColor,
   arms: ConnectionArms,
   color: string
 ): ReactNode[] {
@@ -259,7 +260,7 @@ export function buildBoardCell(
 
   if (raw === "X" || raw === "O") {
     const arms = connectionArms(board, x, y, raw)
-    layers.push(...libertyArmLayers(board, x, y, arms, libertyColor(raw)))
+    layers.push(...libertyArmLayers(board, x, y, raw, arms, libertyColor(raw)))
   } else if (raw === ".") {
     layers.push(...emptyDotLayer(board, x, y))
   }
