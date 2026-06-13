@@ -2,6 +2,13 @@
 import { defineConfig } from "viteburner"
 import { resolve } from "path"
 
+/** Rewrite /src/libraries/*.ts paths to /libraries/*.js for Bitburner home. */
+function rewriteGameImportPaths(code: string): string {
+  let next = code.replace(/\/src\/libraries\//g, "/libraries/")
+  next = next.replace(/(\/libraries\/[^'"]+)\.ts(?=['"])/g, "$1.js")
+  return next
+}
+
 /**
  * Vite resolves imports to /src/.../*.ts. viteburner fixImport only rewrites
  * top-level `import` declarations — not `export from` or dynamic `import()`.
@@ -16,9 +23,7 @@ function bitburnerImportPaths() {
       if (!/\.[jt]sx?$/.test(id)) return
       if (!id.replace(/\\/g, "/").includes("/src/")) return
 
-      let next = code.replace(/\/src\/libraries\//g, "/libraries/")
-      next = next.replace(/(\/libraries\/[^'"]+)\.ts(?=['"])/g, "$1.js")
-
+      const next = rewriteGameImportPaths(code)
       if (next !== code) {
         return { code: next, map: null }
       }
