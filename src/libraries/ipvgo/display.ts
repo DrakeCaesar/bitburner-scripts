@@ -1,7 +1,14 @@
 import { NS, type ReactNode } from "@ns"
 import type { GoOpponent } from "@ns"
-import { col, ScriptLogBuilder } from "@/libraries/scriptLogUiLayout.js"
-import { getReact, type ReactTableConfig } from "@/libraries/scriptLogUi.js"
+import { col, mergeTailLayout, ScriptLogBuilder } from "@/libraries/scriptLogUiLayout.js"
+import {
+  cellStyle,
+  computeReactTableWidthPx,
+  estimateReactTableHeightPx,
+  getReact,
+  headerCellStyle,
+  type ReactTableConfig,
+} from "@/libraries/scriptLogUi.js"
 import {
   boardGridSizePx,
   buildBoardCell,
@@ -10,7 +17,9 @@ import {
   type CellHighlight,
 } from "./boardSvgs.js"
 import { columnLabel, formatIpvgoPoint, parseIpvgoPoint, rowLabel } from "./coords.js"
-import type { IpvgoBoard, IpvgoMove, IpvgoValidMoves } from "./types.js"
+import type { IpvgoBoard, IpvgoBoardSize, IpvgoMove, IpvgoValidMoves } from "./types.js"
+import { IPVGO_BOARD_SIZES, IPVGO_BONUS_LABEL, IPVGO_ITERATION_PRESETS, IPVGO_ITERATIONS_PER_TABLE_ROW, IPVGO_OPPONENTS } from "./types.js"
+import { markIpvgoSetupPending, type IpvgoSetupSelection } from "./uiControl.js"
 
 export type IpvgoBackend = "katago" | "native" | "pending"
 
@@ -31,7 +40,6 @@ export type IpvgoDashboardSnapshot = {
   opponent: GoOpponent
   boardSize: number
   iterations: number
-  autoReset: boolean
   backend: IpvgoBackend
   gamesPlayed: number
   moveNumber: number
@@ -57,14 +65,12 @@ export type IpvgoDashboardSnapshot = {
 export function createIpvgoSnapshot(
   opponent: GoOpponent,
   boardSize: number,
-  iterations: number,
-  autoReset: boolean
+  iterations: number
 ): IpvgoDashboardSnapshot {
   return {
     opponent,
     boardSize,
     iterations,
-    autoReset,
     backend: "pending",
     gamesPlayed: 0,
     moveNumber: 0,
@@ -172,6 +178,258 @@ function scoreLeadText(blackScore: number, whiteScore: number): string {
   return lead > 0 ? `B+${lead.toFixed(1)}` : `W+${(-lead).toFixed(1)}`
 }
 
+function factionRecordLabel(opponent: GoOpponent, ns: NS): string {
+  const stats = ns.go.analysis.getStats()[opponent]
+  if (!stats) return opponent
+  return `${opponent} (${stats.wins}-${stats.losses})`
+}
+
+function factionRewardLabel(ns: NS, opponent: GoOpponent): string {
+  const stats = ns.go.analysis.getStats()[opponent]
+  const reward = stats?.bonusDescription ?? IPVGO_BONUS_LABEL[opponent] ?? "-"
+  const pct = stats?.bonusPercent ?? 0
+  return `+${pct.toFixed(1)}% ${reward}`
+}
+
+function buildSetupTableConfig(ns: NS, snapshot: IpvgoDashboardSnapshot): ReactTableConfig {
+  return {
+    title: "Setup",
+    columns: [
+      col("Faction", "left", 22),
+      col("Reward", "left", 30),
+      ...IPVGO_BOARD_SIZES.map((size) => col(String(size), "center", 3)),
+    ],
+    rows: IPVGO_OPPONENTS.map((faction) => [
+      factionRecordLabel(faction, ns),
+      factionRewardLabel(ns, faction),
+      ...IPVGO_BOARD_SIZES.map((size) =>
+        snapshot.opponent === faction && snapshot.boardSize === size ? "*" : ""
+      ),
+    ]),
+  }
+}
+
+function setupCellKey(faction: GoOpponent, size: IpvgoBoardSize): string {
+  return `${faction}:${size}`
+}
+
+function iterationPresetRows(): number[][] {
+  const rows: number[][] = []
+  for (let i = 0; i < IPVGO_ITERATION_PRESETS.length; i += IPVGO_ITERATIONS_PER_TABLE_ROW) {
+    rows.push([...IPVGO_ITERATION_PRESETS.slice(i, i + IPVGO_ITERATIONS_PER_TABLE_ROW)])
+  }
+  return rows
+}
+
+function buildSimsTableSizingConfig(): ReactTableConfig {
+  const presetRows = iterationPresetRows()
+  const width = Math.max(...presetRows.map((row) => row.length))
+  const columns = Array.from({ length: width }, () => col("20000", "center", 5))
+  return {
+    title: "Sims",
+    columns,
+    rows: presetRows.flatMap((row) => [row.map((preset) => String(preset)), row.map(() => "*")]),
+  }
+}
+
+function IpvgoSetupPicker(props: { ns: NS; snapshot: IpvgoDashboardSnapshot }): ReactNode {
+  const React = getReact()
+  const { ns, snapshot } = props
+  const layout = mergeTailLayout()
+  const config = buildSetupTableConfig(ns, snapshot)
+  const { columns } = config
+  const programmaticKey = setupCellKey(snapshot.opponent, snapshot.boardSize as IpvgoBoardSize)
+  const [activeKey, setActiveKey] = React.useState(programmaticKey)
+  const [activeIterations, setActiveIterations] = React.useState(snapshot.iterations)
+
+  React.useEffect(() => {
+    setActiveKey(programmaticKey)
+  }, [programmaticKey])
+
+  React.useEffect(() => {
+    setActiveIterations(snapshot.iterations)
+  }, [snapshot.iterations])
+
+  const pickSetup = (faction: GoOpponent, size: IpvgoBoardSize, iterations: number) => {
+    setActiveKey(setupCellKey(faction, size))
+    setActiveIterations(iterations)
+    markIpvgoSetupPending(faction, size, iterations)
+  }
+
+  const headerCells = columns.map((column, idx) =>
+    React.createElement(
+      "th",
+      { key: `h-${idx}`, style: headerCellStyle(layout) },
+      column.header
+    )
+  )
+
+  const bodyRows = IPVGO_OPPONENTS.map((faction, rowIdx) => {
+    const cells = [
+      React.createElement(
+        "td",
+        {
+          key: "name",
+          style: cellStyle(layout, { selectedRow: snapshot.opponent === faction }, "left"),
+        },
+        factionRecordLabel(faction, ns)
+      ),
+      React.createElement(
+        "td",
+        {
+          key: "reward",
+          style: cellStyle(layout, { selectedRow: snapshot.opponent === faction }, "left"),
+        },
+        factionRewardLabel(ns, faction)
+      ),
+      ...IPVGO_BOARD_SIZES.map((size) => {
+        const cellKey = setupCellKey(faction, size)
+        const selected = cellKey === activeKey
+        return React.createElement(
+          "td",
+          {
+            key: `size-${size}`,
+            style: {
+              ...cellStyle(layout, { highlight: selected, selectedRow: selected }, "center"),
+              cursor: "pointer",
+            },
+            onClick: () => pickSetup(faction, size, activeIterations),
+          },
+          selected ? "*" : ""
+        )
+      }),
+    ]
+    return React.createElement("tr", { key: `faction-${rowIdx}` }, ...cells)
+  })
+
+  const table = React.createElement(
+    "table",
+    {
+      style: {
+        borderCollapse: "collapse",
+        tableLayout: "fixed",
+        width: "max-content",
+        margin: "0",
+        fontFamily: "monospace",
+        fontSize: `${layout.fontSizePx}px`,
+      },
+    },
+    React.createElement("thead", null, React.createElement("tr", null, ...headerCells)),
+    React.createElement("tbody", null, ...bodyRows)
+  )
+
+  const simsPresetRows = iterationPresetRows()
+  const simsCols = Math.max(...simsPresetRows.map((row) => row.length))
+  const simsBandRows = simsPresetRows.flatMap((row, bandIdx) => {
+    const headerCells = Array.from({ length: simsCols }, (_, colIdx) => {
+      const preset = row[colIdx]
+      return React.createElement(
+        "th",
+        {
+          key: `sims-h-${bandIdx}-${colIdx}`,
+          style: headerCellStyle(layout),
+        },
+        preset != null ? String(preset) : ""
+      )
+    })
+    const bodyCells = Array.from({ length: simsCols }, (_, colIdx) => {
+      const preset = row[colIdx]
+      if (preset == null) {
+        return React.createElement(
+          "td",
+          { key: `sims-e-${bandIdx}-${colIdx}`, style: cellStyle(layout, {}, "center") },
+          ""
+        )
+      }
+      const selected = activeIterations === preset
+      return React.createElement(
+        "td",
+        {
+          key: `sims-b-${bandIdx}-${colIdx}`,
+          style: {
+            ...cellStyle(layout, { highlight: selected, selectedRow: selected }, "center"),
+            cursor: "pointer",
+          },
+          onClick: () =>
+            pickSetup(snapshot.opponent, snapshot.boardSize as IpvgoBoardSize, preset),
+        },
+        selected ? "*" : ""
+      )
+    })
+    return [
+      React.createElement("tr", { key: `sims-header-${bandIdx}` }, ...headerCells),
+      React.createElement("tr", { key: `sims-body-${bandIdx}` }, ...bodyCells),
+    ]
+  })
+
+  const simsTable = React.createElement(
+    "table",
+    {
+      style: {
+        borderCollapse: "collapse",
+        tableLayout: "fixed",
+        width: "max-content",
+        margin: "4px 0 0 0",
+        fontFamily: "monospace",
+        fontSize: `${layout.fontSizePx}px`,
+      },
+    },
+    React.createElement("tbody", null, ...simsBandRows)
+  )
+
+  return React.createElement(
+    "div",
+    { style: { display: "block", margin: "0 0 4px 0", padding: "0" } },
+    React.createElement(
+      "div",
+      {
+        style: {
+          fontFamily: "monospace",
+          fontSize: `${layout.fontSizePx}px`,
+          lineHeight: `${layout.fontSizePx + 4}px`,
+          marginBottom: "4px",
+          fontWeight: "bold",
+        },
+      },
+      "=== Setup ==="
+    ),
+    table,
+    React.createElement(
+      "div",
+      {
+        style: {
+          fontFamily: "monospace",
+          fontSize: `${layout.fontSizePx}px`,
+          lineHeight: `${layout.fontSizePx + 4}px`,
+          margin: "4px 0 4px 0",
+          fontWeight: "bold",
+        },
+      },
+      "=== Sims ==="
+    ),
+    simsTable
+  )
+}
+
+function buildSetupPickerReact(ns: NS, snapshot: IpvgoDashboardSnapshot): ReactNode {
+  const React = getReact()
+  return React.createElement(IpvgoSetupPicker, { ns, snapshot })
+}
+
+function setupPickerSize(ns: NS, snapshot: IpvgoDashboardSnapshot): { widthPx: number; heightPx: number } {
+  const layout = mergeTailLayout()
+  const setupConfig = buildSetupTableConfig(ns, snapshot)
+  const simsConfig = buildSimsTableSizingConfig()
+  const setupWidthPx = computeReactTableWidthPx(setupConfig, layout)
+  const simsWidthPx = computeReactTableWidthPx(simsConfig, layout)
+  const setupHeightPx = estimateReactTableHeightPx({ layout, ...setupConfig }, layout, setupWidthPx)
+  const simsHeightPx = estimateReactTableHeightPx({ layout, ...simsConfig }, layout, simsWidthPx)
+  return {
+    widthPx: Math.max(setupWidthPx, simsWidthPx),
+    heightPx: setupHeightPx + simsHeightPx + 4,
+  }
+}
+
 function buildStatusTable(snapshot: IpvgoDashboardSnapshot): ReactTableConfig {
   const thinking =
     snapshot.thinking ? `yes (${snapshot.iterations} sims)` : snapshot.thinkMs > 0 ? `${snapshot.sims} sims / ${snapshot.thinkMs.toFixed(0)}ms` : "no"
@@ -184,8 +442,7 @@ function buildStatusTable(snapshot: IpvgoDashboardSnapshot): ReactTableConfig {
     ],
     rows: [
       ["Phase", snapshot.phase],
-      ["Opponent", snapshot.opponent],
-      ["Board", `${snapshot.boardSize}x${snapshot.boardSize}`],
+      ["Match", `${snapshot.opponent} ${snapshot.boardSize}x${snapshot.boardSize} / ${snapshot.iterations} sims`],
       ["Engine", snapshot.backend],
       ["Turn", snapshot.currentPlayer],
       ["Score", `B ${snapshot.blackScore.toFixed(1)} / W ${snapshot.whiteScore.toFixed(1)} (${scoreLeadText(snapshot.blackScore, snapshot.whiteScore)})`],
@@ -193,7 +450,7 @@ function buildStatusTable(snapshot: IpvgoDashboardSnapshot): ReactTableConfig {
       ["Legal", String(snapshot.legalCount)],
       ["Thinking", thinking],
     ],
-    separatorAfter: [4],
+    separatorAfter: [3],
   }
 }
 
@@ -338,7 +595,8 @@ function buildTextBlockMinimal(text: string): ReactNode {
   )
 }
 
-function populateDashboard(log: ScriptLogBuilder, snapshot: IpvgoDashboardSnapshot): void {
+function populateDashboard(ns: NS, log: ScriptLogBuilder, snapshot: IpvgoDashboardSnapshot): void {
+  log.react(buildSetupPickerReact(ns, snapshot), setupPickerSize(ns, snapshot))
   log.table(buildStatusTable(snapshot))
   log.table(buildRecordTable(snapshot))
 
@@ -365,6 +623,55 @@ export async function renderIpvgoDashboard(
   snapshot: IpvgoDashboardSnapshot
 ): Promise<void> {
   log.reset()
-  populateDashboard(log, snapshot)
+  populateDashboard(ns, log, snapshot)
   await log.render(ns)
+}
+
+export function applyIpvgoSetupChange(
+  ns: NS,
+  snapshot: IpvgoDashboardSnapshot,
+  pending: IpvgoSetupSelection | null
+): { snapshot: IpvgoDashboardSnapshot; changed: boolean } {
+  if (!pending) return { snapshot, changed: false }
+  if (
+    pending.opponent === snapshot.opponent &&
+    pending.boardSize === snapshot.boardSize &&
+    pending.iterations === snapshot.iterations
+  ) {
+    return { snapshot, changed: false }
+  }
+
+  const boardChanged =
+    pending.opponent !== snapshot.opponent || pending.boardSize !== snapshot.boardSize
+
+  if (boardChanged) {
+    ns.go.resetBoardState(pending.opponent, pending.boardSize)
+  }
+
+  const phase = boardChanged
+    ? `${pending.opponent} ${pending.boardSize}x${pending.boardSize}`
+    : `Sims ${pending.iterations}`
+
+  const next = refreshFactionStats(
+    {
+      ...snapshot,
+      opponent: pending.opponent,
+      boardSize: pending.boardSize,
+      iterations: pending.iterations,
+      ...(boardChanged
+        ? {
+            moveNumber: 0,
+            gameMoves: [],
+            lastOurMove: undefined,
+            lastOpponentMove: undefined,
+            thinkMs: 0,
+            sims: 0,
+            thinking: false,
+          }
+        : {}),
+      phase,
+    },
+    ns
+  )
+  return { snapshot: next, changed: true }
 }

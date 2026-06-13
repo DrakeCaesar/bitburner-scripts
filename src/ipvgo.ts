@@ -5,6 +5,7 @@ import {
   requestIpvgoEngineMove,
 } from "./libraries/ipvgo/engineClient.js"
 import {
+  applyIpvgoSetupChange,
   createIpvgoSnapshot,
   recordGameResult,
   recordOpponentMove,
@@ -12,10 +13,12 @@ import {
   refreshFactionStats,
   renderIpvgoDashboard,
 } from "./libraries/ipvgo/display.js"
+import { consumeIpvgoSetupPending, sleepUntilIpvgoSetupChange } from "./libraries/ipvgo/uiControl.js"
 import { findTacticalMove } from "./libraries/ipvgo/tactics.js"
 import { shouldPassToEndGame } from "./libraries/ipvgo/endgame.js"
 import {
   IPVGO_BOARD_SIZES,
+  IPVGO_DEFAULT_ITERATIONS,
   IPVGO_KOMI_BY_OPPONENT,
   IPVGO_OPPONENTS,
   type IpvgoBoardSize,
@@ -25,7 +28,6 @@ import {
 import { formatIpvgoPoint } from "./libraries/ipvgo/coords.js"
 import { createTailLog, openTailLog } from "./libraries/scriptLogUiLayout.js"
 
-const DEFAULT_ITERATIONS = 4000
 const DEFAULT_BOARD_SIZE: IpvgoBoardSize = 7
 const DEFAULT_OPPONENT: GoOpponent = "Netburners"
 const LOOP_SLEEP_MS = 50
@@ -49,7 +51,7 @@ function parseBoardSize(value: string | number | undefined): IpvgoBoardSize {
 }
 
 function parseIterations(value: string | number | undefined): number {
-  const iterations = Number(value ?? DEFAULT_ITERATIONS)
+  const iterations = Number(value ?? IPVGO_DEFAULT_ITERATIONS)
   if (!Number.isFinite(iterations) || iterations < 100) {
     throw new Error(`Iterations must be a number >= 100 (got ${value})`)
   }
@@ -112,10 +114,15 @@ export async function main(ns: NS): Promise<void> {
   const opponent = parseOpponent(ns.args[0] as string | undefined)
   const boardSize = parseBoardSize(ns.args[1] as string | number | undefined)
   const iterations = parseIterations(ns.args[2] as string | number | undefined)
-  const autoReset = ns.args.includes("auto")
+
+  let activeOpponent = opponent
+  let activeBoardSize = boardSize
 
   const tailLog = createTailLog()
-  let snapshot = { ...createIpvgoSnapshot(opponent, boardSize, iterations, autoReset), phase: "Initializing" }
+  let snapshot = {
+    ...createIpvgoSnapshot(activeOpponent, activeBoardSize, iterations),
+    phase: "Initializing",
+  }
   await renderIpvgoDashboard(ns, tailLog, snapshot)
 
   if (!(await isIpvgoEngineAvailable())) {
@@ -140,16 +147,22 @@ export async function main(ns: NS): Promise<void> {
 
   while (true) {
     try {
+      const pendingSetup = consumeIpvgoSetupPending()
+      const setupApplied = applyIpvgoSetupChange(ns, snapshot, pendingSetup)
+      snapshot = setupApplied.snapshot
+      if (setupApplied.changed) {
+        activeOpponent = snapshot.opponent
+        activeBoardSize = snapshot.boardSize as IpvgoBoardSize
+        moveNumber = snapshot.moveNumber
+        await renderIpvgoDashboard(ns, tailLog, snapshot)
+        continue
+      }
+
       const currentOpponent = ns.go.getOpponent()
       const currentPlayer = ns.go.getCurrentPlayer()
 
-      if (currentOpponent !== opponent || currentPlayer === "None") {
-        if (!autoReset && currentPlayer === "None") {
-          snapshot = { ...syncGameState(ns, snapshot), phase: "Stopped" }
-          await renderIpvgoDashboard(ns, tailLog, snapshot)
-          break
-        }
-        ns.go.resetBoardState(opponent, boardSize)
+      if (currentOpponent !== activeOpponent || currentPlayer === "None") {
+        ns.go.resetBoardState(activeOpponent, activeBoardSize)
         gamesPlayed++
         moveNumber = 0
         snapshot = {
@@ -164,7 +177,7 @@ export async function main(ns: NS): Promise<void> {
           sims: 0,
         }
         await renderIpvgoDashboard(ns, tailLog, snapshot)
-        await ns.sleep(LOOP_SLEEP_MS)
+        await sleepUntilIpvgoSetupChange(ns, LOOP_SLEEP_MS)
         continue
       }
 
@@ -182,13 +195,9 @@ export async function main(ns: NS): Promise<void> {
         const waitResult = await ns.go.opponentNextTurn(false)
         const oppMs = performance.now() - oppStarted
         if (waitResult.type === "gameOver") {
-          snapshot = logGameEnd(ns, snapshot, opponent)
-          if (!autoReset) {
-            await renderIpvgoDashboard(ns, tailLog, snapshot)
-            break
-          }
+          snapshot = logGameEnd(ns, snapshot, activeOpponent)
           await renderIpvgoDashboard(ns, tailLog, snapshot)
-          await ns.sleep(500)
+          await sleepUntilIpvgoSetupChange(ns, 500)
           continue
         }
 
@@ -202,14 +211,14 @@ export async function main(ns: NS): Promise<void> {
           validMoves: undefined,
         }
         await renderIpvgoDashboard(ns, tailLog, snapshot)
-        await ns.sleep(LOOP_SLEEP_MS)
+        await sleepUntilIpvgoSetupChange(ns, LOOP_SLEEP_MS)
         continue
       }
 
       const board = ns.go.getBoardState()
       const history = ns.go.getMoveHistory()
       const gameState = ns.go.getGameState()
-      const komi = gameState.komi || IPVGO_KOMI_BY_OPPONENT[opponent] || 5.5
+      const komi = gameState.komi || IPVGO_KOMI_BY_OPPONENT[activeOpponent] || 5.5
       const validMoves = ns.go.analysis.getValidMoves()
       const legalCount = countValidMoves(validMoves)
       moveNumber++
@@ -228,15 +237,11 @@ export async function main(ns: NS): Promise<void> {
 
         const passResult = await ns.go.passTurn()
         if (passResult.type === "gameOver") {
-          snapshot = logGameEnd(ns, snapshot, opponent)
-          if (!autoReset) {
-            await renderIpvgoDashboard(ns, tailLog, snapshot)
-            break
-          }
+          snapshot = logGameEnd(ns, snapshot, activeOpponent)
         }
         snapshot = syncGameState(ns, snapshot)
         await renderIpvgoDashboard(ns, tailLog, snapshot)
-        await ns.sleep(LOOP_SLEEP_MS)
+        await sleepUntilIpvgoSetupChange(ns, LOOP_SLEEP_MS)
         continue
       }
 
@@ -285,7 +290,7 @@ export async function main(ns: NS): Promise<void> {
           board,
           history,
           komi,
-          iterations,
+          iterations: snapshot.iterations,
           playAs: "X" as const,
           validMoves,
         }
@@ -309,7 +314,7 @@ export async function main(ns: NS): Promise<void> {
       }
 
       if (result.type === "gameOver") {
-        snapshot = logGameEnd(ns, snapshot, opponent)
+        snapshot = logGameEnd(ns, snapshot, activeOpponent)
         snapshot = {
           ...snapshot,
           lastOurMove: move,
@@ -317,12 +322,8 @@ export async function main(ns: NS): Promise<void> {
           sims,
           thinking: false,
         }
-        if (!autoReset) {
-          await renderIpvgoDashboard(ns, tailLog, snapshot)
-          break
-        }
         await renderIpvgoDashboard(ns, tailLog, snapshot)
-        await ns.sleep(500)
+        await sleepUntilIpvgoSetupChange(ns, 500)
         continue
       }
 
@@ -350,12 +351,12 @@ export async function main(ns: NS): Promise<void> {
         phase: "Our move played",
       }
       await renderIpvgoDashboard(ns, tailLog, snapshot)
-      await ns.sleep(LOOP_SLEEP_MS)
+      await sleepUntilIpvgoSetupChange(ns, LOOP_SLEEP_MS)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       snapshot = { ...syncGameState(ns, snapshot), phase: `Error: ${message}`, thinking: false }
       await renderIpvgoDashboard(ns, tailLog, snapshot)
-      await ns.sleep(1000)
+      await sleepUntilIpvgoSetupChange(ns, 1000)
     }
   }
 }

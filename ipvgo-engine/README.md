@@ -14,7 +14,7 @@ pnpm run server        # http://localhost:3010
 In Bitburner:
 
 ```bash
-run ipvgo.js Netburners 7 8000 auto
+run ipvgo.js
 ```
 
 `ipvgo:setup` downloads:

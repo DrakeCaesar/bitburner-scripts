@@ -27,6 +27,17 @@ export type IpvgoMoveResponse = {
 export const IPVGO_BOARD_SIZES = [5, 7, 9, 13] as const
 export type IpvgoBoardSize = (typeof IPVGO_BOARD_SIZES)[number]
 
+export const IPVGO_DEFAULT_ITERATIONS = 4000
+
+/** KataGo maxVisits presets selectable in the tail UI (100-20000). */
+export const IPVGO_ITERATION_PRESETS = [
+  100, 200, 300, 500, 700, 1000, 1500, 2000, 2500, 3000, 4000,
+  5000, 6000, 7000, 8000, 10000, 12000, 14000, 16000, 18000, 20000,
+] as const
+
+/** Presets per row in the Sims setup table. */
+export const IPVGO_ITERATIONS_PER_TABLE_ROW = 11
+
 export const IPVGO_OPPONENTS: GoOpponent[] = [
   "Netburners",
   "Slum Snakes",
@@ -45,4 +56,15 @@ export const IPVGO_KOMI_BY_OPPONENT: Record<string, number> = {
   Daedalus: 5.5,
   Illuminati: 7.5,
   "????????????": 9.5,
+}
+
+/** IPvGO subnet reward type per faction (matches in-game opponentDetails). */
+export const IPVGO_BONUS_LABEL: Record<string, string> = {
+  Netburners: "hacknet production",
+  "Slum Snakes": "crime success",
+  "The Black Hand": "hack money",
+  Tetrads: "combat stats",
+  Daedalus: "reputation",
+  Illuminati: "hack/grow/weaken",
+  "????????????": "hack level",
 }
