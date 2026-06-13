@@ -178,7 +178,9 @@ export async function main(ns: NS): Promise<void> {
         }
         await renderIpvgoDashboard(ns, tailLog, snapshot)
 
+        const oppStarted = performance.now()
         const waitResult = await ns.go.opponentNextTurn(false)
+        const oppMs = performance.now() - oppStarted
         if (waitResult.type === "gameOver") {
           snapshot = logGameEnd(ns, snapshot, opponent)
           if (!autoReset) {
@@ -191,7 +193,7 @@ export async function main(ns: NS): Promise<void> {
         }
 
         const opponentMove = formatOpponentTurn(waitResult)
-        snapshot = recordOpponentMove(snapshot, moveNumber, opponentMove)
+        snapshot = recordOpponentMove(snapshot, moveNumber, opponentMove, oppMs)
         snapshot = {
           ...syncGameState(ns, snapshot),
           lastOpponentMove: opponentMove,
@@ -213,7 +215,7 @@ export async function main(ns: NS): Promise<void> {
       moveNumber++
 
       if (legalCount === 0) {
-        snapshot = recordOurMove(snapshot, moveNumber, { type: "pass" }, "forced pass")
+        snapshot = recordOurMove(snapshot, moveNumber, { type: "pass" }, { thinkMs: 0 })
         snapshot = {
           ...syncGameState(ns, snapshot),
           moveNumber,
@@ -243,9 +245,9 @@ export async function main(ns: NS): Promise<void> {
       let thinkMs = 0
       let sims = 0
 
-      if (shouldPassToEndGame(ns, snapshot.lastOpponentMove)) {
+      if (shouldPassToEndGame(ns)) {
         move = { type: "pass" }
-        snapshot = recordOurMove(snapshot, moveNumber, move, "end game")
+        snapshot = recordOurMove(snapshot, moveNumber, move, { thinkMs: 0 })
         snapshot = {
           ...syncGameState(ns, snapshot),
           moveNumber,
@@ -256,7 +258,7 @@ export async function main(ns: NS): Promise<void> {
         await renderIpvgoDashboard(ns, tailLog, snapshot)
       } else if (tactical) {
         move = tactical
-        snapshot = recordOurMove(snapshot, moveNumber, move, "tactical")
+        snapshot = recordOurMove(snapshot, moveNumber, move, { thinkMs: 0 })
         snapshot = {
           ...syncGameState(ns, snapshot),
           moveNumber,
@@ -293,15 +295,10 @@ export async function main(ns: NS): Promise<void> {
 
         const suggested = analysis.move
         move = pickLegalMove(validMoves, suggested)
-        const illegal =
-          suggested.type === "move" &&
-          (move.type === "pass" || move.x !== suggested.x || move.y !== suggested.y)
-        const note = illegal
-          ? `${sims} sims / ${thinkMs.toFixed(0)}ms fallback`
-          : `${sims} sims / ${thinkMs.toFixed(0)}ms`
-        snapshot = recordOurMove(snapshot, moveNumber, move, note)
+        snapshot = recordOurMove(snapshot, moveNumber, move, { thinkMs, sims })
       }
 
+      const oppStarted = performance.now()
       let result
       if (move.type === "pass") {
         result = await ns.go.passTurn()
@@ -329,13 +326,15 @@ export async function main(ns: NS): Promise<void> {
         continue
       }
 
+      const oppMs = performance.now() - oppStarted
+
       let opponentReply = ""
       if (result.type === "move" && result.x !== null && result.y !== null) {
         opponentReply = formatIpvgoPoint(result.x, result.y)
-        snapshot = recordOpponentMove(snapshot, moveNumber, opponentReply)
+        snapshot = recordOpponentMove(snapshot, moveNumber, opponentReply, oppMs)
       } else if (result.type === "pass") {
         opponentReply = "pass"
-        snapshot = recordOpponentMove(snapshot, moveNumber, opponentReply)
+        snapshot = recordOpponentMove(snapshot, moveNumber, opponentReply, oppMs)
       }
 
       snapshot = {

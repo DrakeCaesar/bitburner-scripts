@@ -1,21 +1,18 @@
 import type { NS } from "@ns"
 
-/** Empty node not clearly owned by either player (see ns.go.analysis.getControlledEmptyNodes). */
-const DISPUTED_EMPTY = "?"
-
 /**
- * True when the opponent just passed and all empty territory is settled.
- * Matches in-game "End Game" (passCount > 0 and no contested points).
+ * True when the in-game "End Game" pass is available: opponent passed and it is our turn.
+ *
+ * Uses ns.go.getGameState().previousMove (null after a pass per API docs) instead of
+ * tracking move strings or disputed territory — the UI enables End Game on passCount alone,
+ * even if empty nodes are still contested or the opponent still has routers on the board.
  */
-export function shouldPassToEndGame(ns: NS, lastOpponentMove: string | undefined): boolean {
-  if (lastOpponentMove !== "pass") return false
-  return !hasDisputedTerritory(ns)
-}
+export function shouldPassToEndGame(ns: NS): boolean {
+  if (ns.go.getCurrentPlayer() !== "Black") return false
 
-function hasDisputedTerritory(ns: NS): boolean {
-  const controlled = ns.go.analysis.getControlledEmptyNodes()
-  for (const column of controlled) {
-    if (column.includes(DISPUTED_EMPTY)) return true
-  }
-  return false
+  const { previousMove } = ns.go.getGameState()
+  if (previousMove !== null) return false
+
+  // previousMove is also null before the first move; require at least one prior board state.
+  return ns.go.getMoveHistory().length > 0
 }

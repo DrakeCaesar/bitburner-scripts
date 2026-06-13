@@ -16,9 +16,15 @@ export type IpvgoBackend = "katago" | "native" | "pending"
 
 export type IpvgoGameMoveRow = {
   number: number
-  black: string
+  /** Opponent (White). */
   white: string
-  note?: string
+  whiteMs?: number
+  /** Us (Black). */
+  black: string
+  blackMs?: number
+  blackSims?: number
+  /** Result row marker. */
+  result?: boolean
 }
 
 export type IpvgoDashboardSnapshot = {
@@ -96,29 +102,45 @@ function upsertGameMoveRow(
     rows[idx] = { ...rows[idx], ...patch }
     return rows
   }
-  return [...rows, { number, black: "", white: "", ...patch }]
+  return [...rows, { number, white: "", black: "", ...patch }]
+}
+
+function formatOurTime(row: IpvgoGameMoveRow): string {
+  if (row.blackMs == null) return "-"
+  if (row.blackSims != null) return `${row.blackSims} / ${row.blackMs.toFixed(0)}ms`
+  return `${row.blackMs.toFixed(0)}ms`
+}
+
+function formatOppTime(row: IpvgoGameMoveRow): string {
+  if (row.whiteMs == null) return "-"
+  return `${row.whiteMs.toFixed(0)}ms`
 }
 
 export function recordOurMove(
   snapshot: IpvgoDashboardSnapshot,
   moveNumber: number,
   move: IpvgoMove,
-  note?: string
+  timing?: { thinkMs?: number; sims?: number }
 ): IpvgoDashboardSnapshot {
   return {
     ...snapshot,
-    gameMoves: upsertGameMoveRow(snapshot.gameMoves, moveNumber, { black: formatMove(move), note }),
+    gameMoves: upsertGameMoveRow(snapshot.gameMoves, moveNumber, {
+      black: formatMove(move),
+      blackMs: timing?.thinkMs,
+      blackSims: timing?.sims,
+    }),
   }
 }
 
 export function recordOpponentMove(
   snapshot: IpvgoDashboardSnapshot,
   moveNumber: number,
-  move: string
+  move: string,
+  thinkMs?: number
 ): IpvgoDashboardSnapshot {
   return {
     ...snapshot,
-    gameMoves: upsertGameMoveRow(snapshot.gameMoves, moveNumber, { white: move }),
+    gameMoves: upsertGameMoveRow(snapshot.gameMoves, moveNumber, { white: move, whiteMs: thinkMs }),
   }
 }
 
@@ -131,9 +153,9 @@ export function recordGameResult(
   const rows = [...snapshot.gameMoves]
   rows.push({
     number: rows.length + 1,
-    black: won ? "WIN" : "LOSS",
     white: `B ${blackScore.toFixed(1)} / W ${whiteScore.toFixed(1)}`,
-    note: "result",
+    black: won ? "WIN" : "LOSS",
+    result: true,
   })
   return { ...snapshot, gameMoves: rows }
 }
@@ -198,10 +220,16 @@ function buildCurrentGameTable(snapshot: IpvgoDashboardSnapshot): ReactTableConf
   const rows = [...snapshot.gameMoves]
     .sort((a, b) => a.number - b.number)
     .slice(-MAX_MOVE_ROWS)
-    .map((row) => [String(row.number), row.black || "-", row.white || "-", row.note ?? ""])
+    .map((row) => [
+      String(row.number),
+      row.white || "-",
+      formatOppTime(row),
+      row.black || "-",
+      formatOurTime(row),
+    ])
 
   const lastMoveRow = [...snapshot.gameMoves]
-    .filter((row) => row.note !== "result")
+    .filter((row) => !row.result)
     .sort((a, b) => a.number - b.number)
     .at(-1)
   const selectedRowIndex = lastMoveRow
@@ -212,11 +240,12 @@ function buildCurrentGameTable(snapshot: IpvgoDashboardSnapshot): ReactTableConf
     title: "Current game",
     columns: [
       col("#", "right", 3),
-      col("Black", "left", 8),
-      col("White", "left", 8),
-      col("Note", "left", 18),
+      col("Opp", "left", 8),
+      col("Opp ms", "right", 10),
+      col("Us", "left", 8),
+      col("Us ms", "right", 14),
     ],
-    rows: rows.length > 0 ? rows : [["-", "-", "-", "(waiting for first move)"]],
+    rows: rows.length > 0 ? rows : [["-", "-", "-", "-", "-"]],
     selectedRowIndex: selectedRowIndex !== undefined && selectedRowIndex >= 0 ? selectedRowIndex : undefined,
   }
 }
