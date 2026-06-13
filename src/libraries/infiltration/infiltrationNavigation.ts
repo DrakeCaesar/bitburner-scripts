@@ -3,7 +3,7 @@ import {
   invokeStartInfiltration,
   invokeTrustedClick,
 } from "./infiltrationGameBridge.js"
-import type { LocationName, NS } from "@ns"
+import type { CityName, LocationName, NS } from "@ns"
 
 const SIDEBAR_CITY_PAGE = "City"
 const VICTORY_TITLE = "Infiltration successful!"
@@ -155,7 +155,20 @@ export interface VisitInfiltrationDomResult {
   detail?: string
 }
 
-function visitInfiltrationIntro(ns: NS, locationName: string, startRun: boolean): VisitInfiltrationDomResult {
+function visitInfiltrationIntro(
+  ns: NS,
+  locationName: string,
+  city: CityName,
+  startRun: boolean
+): VisitInfiltrationDomResult {
+  if (ns.getPlayer().city !== city) {
+    return {
+      ok: false,
+      step: "wrong city",
+      detail: `${ns.getPlayer().city} (need ${city})`,
+    }
+  }
+
   if (isInfiltrationActive()) {
     return startRun
       ? { ok: true, step: "already active", detail: locationName }
@@ -185,11 +198,19 @@ function visitInfiltrationIntro(ns: NS, locationName: string, startRun: boolean)
 }
 
 /** Navigate to the company, open intro, and start the run when already on intro. */
-export function visitInfiltrationTargetDom(ns: NS, locationName: string): VisitInfiltrationDomResult {
-  return visitInfiltrationIntro(ns, locationName, true)
+export function visitInfiltrationTargetDom(
+  ns: NS,
+  locationName: string,
+  city: CityName
+): VisitInfiltrationDomResult {
+  return visitInfiltrationIntro(ns, locationName, city, true)
 }
 
 /** Navigate to the infiltration intro screen without starting the run. */
-export function visitInfiltrationIntroDom(ns: NS, locationName: string): VisitInfiltrationDomResult {
-  return visitInfiltrationIntro(ns, locationName, false)
+export function visitInfiltrationIntroDom(
+  ns: NS,
+  locationName: string,
+  city: CityName
+): VisitInfiltrationDomResult {
+  return visitInfiltrationIntro(ns, locationName, city, false)
 }

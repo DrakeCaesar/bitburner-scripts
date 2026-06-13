@@ -48,8 +48,20 @@ export async function travelToInfiltrationCity(ns: NS, city: CityName): Promise<
     return false
   }
 
-  await ns.sleep(500)
-  return true
+  const deadline = Date.now() + 10000
+  while (Date.now() < deadline) {
+    await ns.sleep(200)
+    if (ns.getPlayer().city === city) {
+      await ns.sleep(300)
+      return true
+    }
+  }
+
+  const playerCity = ns.getPlayer().city
+  if (playerCity !== city) {
+    ns.print(`ERROR: travelToCity(${city}) did not stick (player in ${playerCity})`)
+  }
+  return playerCity === city
 }
 
 export async function runInfiltrationForTarget(
@@ -83,6 +95,11 @@ export async function runInfiltrationForTarget(
     return "travel_failed"
   }
 
+  if (ns.getPlayer().city !== target.city) {
+    ns.print(`ERROR: still in ${ns.getPlayer().city} after travel to ${target.city}`)
+    return "travel_failed"
+  }
+
   if (!(await waitForCityNavigationReady(ns, 5000))) {
     ns.print(`Waiting for city UI after travel to ${target.city}...`)
     await waitForCityNavigationReady(ns)
@@ -94,6 +111,13 @@ export async function runInfiltrationForTarget(
   let victoryHandled = false
   let infiltrationStarted = isInfiltrationActive()
   const solver = options.solver
+  if (solver) {
+    // Stale wasActive from a prior victory looks like a cancel during visit/travel.
+    solver.wasActive = false
+    solver.victoryHandled = false
+    solver.session = null
+    clearInfiltrationRunOutcome()
+  }
 
   async function waitTick(): Promise<InfiltrationRunOutcome | null> {
     if (solver) {
@@ -186,15 +210,24 @@ export async function runInfiltrationForTarget(
       continue
     }
 
-    const result = visitInfiltrationTargetDom(ns, target.name)
+    const result = visitInfiltrationTargetDom(ns, target.name, target.city)
     if (result.step !== lastStep) {
       ns.print(`Step: ${result.step}${result.detail ? ` (${result.detail})` : ""}`)
       lastStep = result.step
     }
 
     if (!result.ok) {
-      if (result.step === "go to location failed") {
-        ns.print(`Singularity goToLocation(${target.name}) failed; waiting...`)
+      if (result.step === "wrong city" || result.step === "go to location failed") {
+        if (ns.getPlayer().city !== target.city) {
+          ns.print(`Need ${target.city} for ${target.name}; traveling from ${ns.getPlayer().city}...`)
+          if (!(await travelToInfiltrationCity(ns, target.city))) {
+            ns.print(`ERROR: travelToCity(${target.city}) failed`)
+            return "travel_failed"
+          }
+          await waitForCityNavigationReady(ns, 5000)
+        } else {
+          ns.print(`Singularity goToLocation(${target.name}) failed; waiting...`)
+        }
         const tickOutcome = await waitTick()
         if (tickOutcome) return tickOutcome
         continue

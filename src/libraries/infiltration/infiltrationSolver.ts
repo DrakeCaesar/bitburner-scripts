@@ -196,6 +196,7 @@ export async function tickInfiltrationSolver(
   if (isInfiltrationVictoryScreen()) {
     if (state.victoryHandled) {
       if (await waitForCityNavigationReady(ns)) {
+        state.wasActive = false
         restoreDocumentKeyboard()
         return "victory"
       }
@@ -207,6 +208,7 @@ export async function tickInfiltrationSolver(
       const reward = await collectInfiltrationVictoryReward(ns)
       if (reward.ok) {
         state.victoryHandled = true
+        state.wasActive = false
         setInfiltrationRunOutcome("victory")
         ns.print(`Victory reward: ${reward.detail}`)
         restoreDocumentKeyboard()
