@@ -320,7 +320,6 @@ export function isStudyingLeadershipAtVolhaven(ns: NS): boolean {
 function meetsPositionRequirements(player: Player, position: JobName, company: CompanyName, ns: NS): boolean {
   const skills = ns.singularity.getCompanyPositionInfo(company, position).requiredSkills
 
-  if (skills.defense !== 0) return false
   if (skills.hacking > player.skills.hacking) return false
   if (skills.strength > player.skills.strength) return false
   if (skills.defense > player.skills.defense) return false
