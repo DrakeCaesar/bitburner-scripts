@@ -55,6 +55,30 @@ export const ACTIVE_HEADER_BG = "rgba(0, 255, 0, 0.12)"
 const BODY_BORDER = "rgba(255, 255, 255, 0.08)"
 const HEADER_BORDER = "rgba(255, 255, 255, 0.15)"
 const HEADER_BG = "rgba(255, 255, 255, 0.04)"
+/** Prefer text glyphs over color emoji in monospace tail UI. */
+const TAIL_EMOJI_TEXT_STYLE: Record<string, string> = {
+  fontVariantEmoji: "text",
+}
+
+function appendTextPresentationSelector(ch: string): string {
+  return ch.endsWith("\uFE0E") ? ch : `${ch}\uFE0E`
+}
+
+const TAIL_EMOJI_CHAR_RE: RegExp = (() => {
+  try {
+    return new RegExp("\\p{Extended_Pictographic}", "gu")
+  } catch {
+    // Enclosed Alphanumeric Supplement (squared letters/digits in darknet hostnames)
+    return /[\u{1F100}-\u{1F1FF}]/gu
+  }
+})()
+
+/** Force pictographic code points to render as plain text (not color emoji). */
+export function tailDisplayText(text: string): string {
+  let s = text.replace(/\uFE0F/g, "\uFE0E")
+  s = s.replace(TAIL_EMOJI_CHAR_RE, appendTextPresentationSelector)
+  return s
+}
 
 type ReactComponent<P = Record<string, unknown>> = (props: P) => ReactNode
 
@@ -589,6 +613,7 @@ function baseCellStyle(
     verticalAlign: "middle",
     backgroundColor,
     whiteSpace: "nowrap",
+    ...TAIL_EMOJI_TEXT_STYLE,
   }
 }
 
@@ -820,7 +845,7 @@ export function buildReactTable(config: ReactTableConfig): ReactNode {
         key: `h-${idx}`,
         style: headerCellStyle(layout, config.activeHeaderColumns?.has(idx) ?? false),
       },
-      col.header
+      tailDisplayText(col.header)
     )
   )
 
@@ -839,7 +864,7 @@ export function buildReactTable(config: ReactTableConfig): ReactNode {
           key: `c-${rowIdx}-${colIdx}`,
           style,
         },
-        cell ?? ""
+        tailDisplayText(cell ?? "")
       )
     })
 
@@ -867,6 +892,7 @@ export function buildReactTable(config: ReactTableConfig): ReactNode {
         margin: "0",
         fontFamily: "monospace",
         fontSize: `${layout.fontSizePx}px`,
+        ...TAIL_EMOJI_TEXT_STYLE,
       },
     },
     colgroup,
@@ -888,9 +914,10 @@ export function buildReactTable(config: ReactTableConfig): ReactNode {
           lineHeight: `${textLineBoxPx(layout)}px`,
           marginBottom: "4px",
           fontWeight: "bold",
+          ...TAIL_EMOJI_TEXT_STYLE,
         },
       },
-      `=== ${title} ===`
+      tailDisplayText(`=== ${title} ===`)
     ),
     table
   )
@@ -920,6 +947,8 @@ export interface TreeTableConfig {
   columns: ColumnConfig[]
   rows: TreeTableRow[]
   rootIds?: string[]
+  /** One tbody row: column headers in thead, all data lines in a single merged cell. */
+  singleBodyRow?: boolean
 }
 
 const TREE_PIPE = "\u2502  "
@@ -1015,18 +1044,161 @@ export function measureTreeTableHostChars(
   return Math.max(...flat.map(({ row, treePrefix }) => formatTreeCellLabel(row.label, treePrefix).length))
 }
 
-export function buildReactTreeTable(config: TreeTableConfig): ReactNode {
+function padPreCell(text: string, widthCh: number, align: Alignment): string {
+  const pad = Math.max(0, widthCh - text.length)
+  if (align === "right") {
+    return " ".repeat(pad) + text
+  }
+  if (align === "center") {
+    const left = Math.floor(pad / 2)
+    return " ".repeat(left) + text + " ".repeat(pad - left)
+  }
+  return text + " ".repeat(pad)
+}
+
+function treeTableColumnsAndRows(config: TreeTableConfig): {
+  flat: FlatTreeRow[]
+  columns: ColumnConfig[]
+  preRows: string[][]
+  reactRows: string[][]
+} {
   const flat = flattenTreeRows(config.rows, config.rootIds)
   const treeMin = config.treeMinWidth ?? 16
-  const maxTreeChars = Math.max(
-    treeMin,
-    ...flat.map(({ row, treePrefix }) => formatTreeCellLabel(row.label, treePrefix).length)
-  )
+  const hostLengths = flat.map(({ row, treePrefix }) => formatTreeCellLabel(row.label, treePrefix).length)
+  const maxTreeChars = Math.max(treeMin, ...(hostLengths.length > 0 ? hostLengths : [0]))
   const columns: ColumnConfig[] = [
     { header: config.treeColumnHeader ?? "Host", align: "left", minWidth: maxTreeChars },
     ...config.columns,
   ]
-  const tableRows = flat.map(({ row, treePrefix }) => [formatTreeCellLabel(row.label, treePrefix), ...row.cells])
+  const preRows: string[][] = []
+  const reactRows: string[][] = []
+  for (const { row, treePrefix } of flat) {
+    const host = formatTreeCellLabel(row.label, treePrefix)
+    preRows.push([(row.highlight ? ">" : " ") + host, ...row.cells])
+    reactRows.push([host, ...row.cells])
+  }
+  return { flat, columns, preRows, reactRows }
+}
+
+function formatPreTreeTableBodyLines(columns: ColumnConfig[], bodyRows: string[][], layout: TableLayout): string[] {
+  const tableConfig: TableConfig = { columns, rows: bodyRows }
+  const widthsCh = computeColumnWidthsCh(tableConfig)
+  const alignments = columns.map((col, idx) => col.align ?? (idx === 0 ? "left" : "right"))
+  return bodyRows.map((row) =>
+    row.map((cell, idx) => padPreCell(tailDisplayText(cell), widthsCh[idx]!, alignments[idx])).join(" ")
+  )
+}
+
+function mergedBodyCellStyle(layout: TableLayout): Record<string, string> {
+  return {
+    ...cellStyle(layout, {}, "left"),
+    whiteSpace: "pre",
+    height: "auto",
+    lineHeight: `${textLineBoxPx(layout)}px`,
+    verticalAlign: "top",
+  }
+}
+
+function buildSingleRowTreeTable(
+  config: TreeTableConfig,
+  columns: ColumnConfig[],
+  preRows: string[][],
+  flat: FlatTreeRow[]
+): ReactNode {
+  const React = getReact()
+  const layout = mergeLayout(config.layout)
+  const tableConfig: ReactTableConfig = { columns, rows: preRows }
+  const colWidthsPx = computeColumnWidthsPx(computeColumnWidthsCh(tableConfig), layout)
+  const bodyLines = formatPreTreeTableBodyLines(columns, preRows, layout)
+  const activeHeaderColumns = new Set<number>()
+  const hasActive = flat.some(({ row }) => row.highlight)
+  if (hasActive) {
+    const actColIdx = columns.findIndex((col) => col.header === "Act")
+    if (actColIdx >= 0) activeHeaderColumns.add(actColIdx)
+  }
+
+  const headerCells = columns.map((col, idx) =>
+    React.createElement(
+      "th",
+      {
+        key: `h-${idx}`,
+        style: headerCellStyle(layout, activeHeaderColumns.has(idx)),
+      },
+      tailDisplayText(col.header)
+    )
+  )
+
+  const bodyRow = React.createElement(
+    "tr",
+    { key: "merged-body" },
+    React.createElement(
+      "td",
+      {
+        key: "merged-body-cell",
+        colSpan: columns.length,
+        style: mergedBodyCellStyle(layout),
+      },
+      bodyLines.join("\n")
+    )
+  )
+
+  const colgroup = React.createElement(
+    "colgroup",
+    null,
+    ...colWidthsPx.map((widthPx, idx) =>
+      React.createElement("col", {
+        key: `col-${idx}`,
+        style: { width: `${widthPx}px` },
+      })
+    )
+  )
+
+  const table = React.createElement(
+    "table",
+    {
+      style: {
+        borderCollapse: "collapse",
+        tableLayout: "fixed",
+        width: "max-content",
+        margin: "0",
+        fontFamily: "monospace",
+        fontSize: `${layout.fontSizePx}px`,
+        ...TAIL_EMOJI_TEXT_STYLE,
+      },
+    },
+    colgroup,
+    React.createElement("thead", null, React.createElement("tr", null, ...headerCells)),
+    React.createElement("tbody", null, bodyRow)
+  )
+
+  if (!config.title) return table
+
+  return React.createElement(
+    "div",
+    { style: { display: "block", margin: "0", padding: "0" } },
+    React.createElement(
+      "div",
+      {
+        style: {
+          fontFamily: "monospace",
+          fontSize: `${layout.fontSizePx}px`,
+          lineHeight: `${textLineBoxPx(layout)}px`,
+          marginBottom: "4px",
+          fontWeight: "bold",
+          ...TAIL_EMOJI_TEXT_STYLE,
+        },
+      },
+      tailDisplayText(`=== ${config.title} ===`)
+    ),
+    table
+  )
+}
+
+export function buildReactTreeTable(config: TreeTableConfig): ReactNode {
+  const { flat, columns, preRows, reactRows } = treeTableColumnsAndRows(config)
+  if (config.singleBodyRow) {
+    return buildSingleRowTreeTable(config, columns, preRows, flat)
+  }
   const highlightCells = new Set<string>()
   const activeHeaderColumns = new Set<number>()
   let hasActive = false
@@ -1045,23 +1217,31 @@ export function buildReactTreeTable(config: TreeTableConfig): ReactNode {
     layout: config.layout,
     title: config.title,
     columns,
-    rows: tableRows,
+    rows: reactRows,
     highlightCells,
     activeHeaderColumns,
   })
 }
 
 export function estimateReactTreeTableWidthPx(config: TreeTableConfig, layout?: Partial<TableLayout>): number {
-  const flat = flattenTreeRows(config.rows, config.rootIds)
-  const treeMin = config.treeMinWidth ?? 16
-  const maxTreeChars = Math.max(
-    treeMin,
-    ...flat.map(({ row, treePrefix }) => formatTreeCellLabel(row.label, treePrefix).length)
-  )
+  const merged = mergeLayout(config.layout ?? layout)
+  const { columns, preRows, reactRows } = treeTableColumnsAndRows(config)
+  if (config.singleBodyRow) {
+    const bodyLines = formatPreTreeTableBodyLines(columns, preRows, merged)
+    const maxChars = bodyLines.reduce((max, line) => Math.max(max, line.length), 0)
+    let width = Math.max(
+      computeReactTableWidthPx({ columns, rows: preRows }, config.layout ?? layout),
+      computeStringWidthPx(" ".repeat(maxChars), merged)
+    )
+    if (config.title) {
+      width = Math.max(width, computeStringWidthPx(`=== ${config.title} ===`, merged))
+    }
+    return width
+  }
   const tableConfig: ReactTableConfig = {
     layout: config.layout ?? layout,
-    columns: [{ header: config.treeColumnHeader ?? "Host", align: "left", minWidth: maxTreeChars }, ...config.columns],
-    rows: flat.map(({ row, treePrefix }) => [formatTreeCellLabel(row.label, treePrefix), ...row.cells]),
+    columns,
+    rows: reactRows,
   }
   return computeReactTableWidthPx(tableConfig, config.layout ?? layout)
 }
@@ -1071,9 +1251,16 @@ export function estimateReactTreeTableHeightPx(
   layout?: Partial<TableLayout>,
   contentWidthPx?: number
 ): number {
-  const flat = flattenTreeRows(config.rows, config.rootIds)
   const merged = mergeLayout(config.layout ?? layout)
-  let height = merged.headerRowHeightPx + flat.length * merged.bodyRowHeightPx
+  const { columns, preRows, reactRows } = treeTableColumnsAndRows(config)
+  if (config.singleBodyRow) {
+    let height = merged.headerRowHeightPx + preRows.length * textLineBoxPx(merged) + 4
+    if (config.title) {
+      height += estimateTitleBlockHeightPx(config.title, merged, contentWidthPx ?? merged.tableWidthPx)
+    }
+    return height
+  }
+  let height = merged.headerRowHeightPx + reactRows.length * merged.bodyRowHeightPx
   if (config.title) {
     height += estimateTitleBlockHeightPx(config.title, merged, contentWidthPx ?? merged.tableWidthPx)
   }
@@ -1092,9 +1279,10 @@ export function buildSectionHeader(title: string, layout?: Partial<TableLayout>)
         lineHeight: `${textLineBoxPx(merged)}px`,
         fontWeight: "bold",
         margin: `${merged.sectionGapPx}px 0 4px 0`,
+        ...TAIL_EMOJI_TEXT_STYLE,
       },
     },
-    `=== ${title} ===`
+    tailDisplayText(`=== ${title} ===`)
   )
 }
 
@@ -1111,9 +1299,10 @@ export function buildTextBlock(text: string, layout?: Partial<TableLayout>): Rea
         margin: "0 0 4px 0",
         padding: "0",
         whiteSpace: "pre-wrap",
+        ...TAIL_EMOJI_TEXT_STYLE,
       },
     },
-    text
+    tailDisplayText(text)
   )
 }
 
@@ -1122,7 +1311,16 @@ export function buildStack(children: ReactNode[], layout?: Partial<TableLayout>)
   const merged = mergeLayout(layout)
   return React.createElement(
     "div",
-    { style: { display: "block", margin: "0", padding: "0", fontFamily: "monospace", fontSize: `${merged.fontSizePx}px` } },
+    {
+      style: {
+        display: "block",
+        margin: "0",
+        padding: "0",
+        fontFamily: "monospace",
+        fontSize: `${merged.fontSizePx}px`,
+        ...TAIL_EMOJI_TEXT_STYLE,
+      },
+    },
     ...children
   )
 }
@@ -1439,9 +1637,10 @@ function TabbedLogView(props: TabbedLogViewProps): ReactNode {
             opacity: hasContent || isActive ? 1 : 0.45,
             cursor: "pointer",
             userSelect: "none",
+            ...TAIL_EMOJI_TEXT_STYLE,
           },
         },
-        label
+        tailDisplayText(label)
       )
     })
   )
@@ -1486,6 +1685,7 @@ function TabbedLogView(props: TabbedLogViewProps): ReactNode {
         padding: "0",
         fontFamily: "monospace",
         fontSize: `${layout.fontSizePx}px`,
+        ...TAIL_EMOJI_TEXT_STYLE,
         boxSizing: "border-box",
         overflow: "hidden",
         ...(layout.tailViewportMaxHeightPx != null

@@ -49,7 +49,6 @@ const TREE_DATA_COLUMNS = [
   col("Ses", "center", W.ses),
   col("Gss", "right", W.gss),
   col(ACT_COLUMN_HEADER, "left", ACT_COLUMN_MIN_CHARS),
-  col("On", "center", W.on),
   col("D", "right", W.dCol),
   col("Diff", "right", W.diff),
   col("Model", "left", W.model),
@@ -98,6 +97,15 @@ function activeOpsByTarget(activeOps: readonly CrawlStatusReport[]): Map<string,
   return byTarget
 }
 
+function countOnlineHosts(dnet: DarknetApi, reports: ReadonlyMap<string, CrawlHostReport>): number {
+  let n = 0
+  for (const hostname of reports.keys()) {
+    const details = safeGetServerDetails(dnet, hostname)
+    if (details?.isOnline) n++
+  }
+  return n
+}
+
 function buildDarknetTreeRows(
   ns: NS,
   dnet: DarknetApi,
@@ -108,7 +116,7 @@ function buildDarknetTreeRows(
 
   return [...reports.keys()].flatMap((hostname) => {
     const details = safeGetServerDetails(dnet, hostname)
-    if (!details) {
+    if (!details?.isOnline) {
       return []
     }
     const server = ns.getServer(hostname)
@@ -131,7 +139,6 @@ function buildDarknetTreeRows(
           ses,
           formatAuthGuesses(report, op),
           op ? formatCrawlOpShort(op) : "",
-          details.isOnline ? "Y" : "N",
           String(details.depth),
           String(details.difficulty),
           details.modelId || "-",
@@ -174,10 +181,10 @@ function appendDarknetTreeTable(
   activeOps: readonly CrawlStatusReport[],
   title: string
 ): void {
-  if (reports.size === 0) {
+  const rows = buildDarknetTreeRows(ns, dnet, reports, activeOps)
+  if (rows.length === 0) {
     return
   }
-  const rows = buildDarknetTreeRows(ns, dnet, reports, activeOps)
   const rootIds = reports.has("darkweb") ? ["darkweb"] : undefined
   bumpActColumnMax(rows)
   bumpHostColumnMax(rows, rootIds)
@@ -187,6 +194,7 @@ function appendDarknetTreeTable(
     treeMinWidth: hostColumnMaxChars,
     columns: treeDataColumns(),
     rows,
+    singleBodyRow: true,
   })
 }
 
@@ -266,6 +274,7 @@ async function renderCrawlProgress(
 ): Promise<void> {
   const displayReports = mergeRegistryWithCrawl(registry, state.reports)
   const auth = countAuthStats(displayReports)
+  const onlineCount = countOnlineHosts(dnet, displayReports)
   const status = state.workerRunning ? "running" : "done"
   const activeCount = state.activeOps.length
   const knownPw = countRegistryPasswords(registry)
@@ -280,7 +289,7 @@ async function renderCrawlProgress(
     state.activeOps,
     cacheOpens,
     `Crawl #${crawlNum} ${status} | registry ${Object.keys(registry.servers).length} host(s), ${knownPw} password(s) | ` +
-      `shown ${displayReports.size} | auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped}` +
+      `shown ${onlineCount} online | auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped}` +
       (activeCount > 0 ? ` | active ${activeCount}` : "") +
       ` | caches ${cacheOpens.length}`
   )
@@ -297,6 +306,7 @@ async function renderRegistrySummary(
 ): Promise<void> {
   const displayReports = mergeRegistryWithCrawl(registry, crawlReports)
   const auth = countAuthStats(displayReports)
+  const onlineCount = countOnlineHosts(dnet, displayReports)
   const knownPw = countRegistryPasswords(registry)
 
   await renderDashboard(
@@ -308,7 +318,7 @@ async function renderRegistrySummary(
     [],
     sessionCacheOpens,
     `Crawl #${crawlNum} done | registry ${Object.keys(registry.servers).length} host(s), ${knownPw} password(s) saved to ${DARKNET_REGISTRY_FILE} | ` +
-      `auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped} | caches ${sessionCacheOpens.length}`
+      `shown ${onlineCount} online | auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped} | caches ${sessionCacheOpens.length}`
   )
 }
 
