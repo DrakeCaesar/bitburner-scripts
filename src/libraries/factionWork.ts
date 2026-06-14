@@ -372,7 +372,7 @@ function getPendingAugmentsInBucket(
 
 type BucketGrindNeed = "rep" | "money"
 
-/** Next unowned augment in purchase order that still needs infiltration rep or money. */
+/** Next unowned augment in purchase order that still needs rep or cash (purchase not required). */
 function getBucketGrindHead(
   ns: NS,
   purchaseFactions: readonly FactionName[],
@@ -472,9 +472,9 @@ function isRegularAugmentPipelineComplete(
   targetFavor: number,
   repForDonation: number
 ): boolean {
-  if (getPendingAugmentsInBucket(ns, purchaseFactions, "pre-favor").length > 0) return false
+  if (getBucketGrindHead(ns, purchaseFactions, "pre-favor") != null) return false
   if (hasPendingFavorGrind(ns, workableFactions, targetFavor, repForDonation)) return false
-  if (getPendingAugmentsInBucket(ns, purchaseFactions, "post-favor").length > 0) return false
+  if (getBucketGrindHead(ns, purchaseFactions, "post-favor") != null) return false
   return true
 }
 
@@ -534,14 +534,12 @@ export function getInfiltrationMoneyTier(
   const preFavorHead = getBucketGrindHead(ns, purchaseFactions, "pre-favor")
   if (preFavorHead?.need === "rep") return null
   if (preFavorHead?.need === "money") return "pre-favor-aug"
-  if (getPendingAugmentsInBucket(ns, purchaseFactions, "pre-favor").length > 0) return null
 
   if (hasPendingFavorGrind(ns, workableFactions, targetFavor, repForDonation)) return null
 
   const postFavorHead = getBucketGrindHead(ns, purchaseFactions, "post-favor")
   if (postFavorHead?.need === "rep") return null
   if (postFavorHead?.need === "money") return "post-favor-aug"
-  if (getPendingAugmentsInBucket(ns, purchaseFactions, "post-favor").length > 0) return null
 
   if (
     isRegularAugmentPipelineComplete(
@@ -603,12 +601,7 @@ export function prioritizeInfiltrationRepTargets(
     )
     if (target) return [target]
   }
-  if (
-    preFavorHead?.need === "money" ||
-    getPendingAugmentsInBucket(ns, purchaseFactions, "pre-favor").length > 0
-  ) {
-    return []
-  }
+  if (preFavorHead?.need === "money") return []
 
   const favorTargets: InfiltrationGrindTarget[] = []
   for (const faction of workableFactions) {
@@ -632,12 +625,7 @@ export function prioritizeInfiltrationRepTargets(
     )
     if (target) return [target]
   }
-  if (
-    postFavorHead?.need === "money" ||
-    getPendingAugmentsInBucket(ns, purchaseFactions, "post-favor").length > 0
-  ) {
-    return []
-  }
+  if (postFavorHead?.need === "money") return []
 
   if (
     !isRegularAugmentPipelineComplete(
