@@ -179,6 +179,11 @@ export function stopFactionWorkIfActive(ns: NS): boolean {
   return ns.singularity.stopAction()
 }
 
+export function isWorkingForFactionOrCompany(ns: NS): boolean {
+  const work = ns.singularity.getCurrentWork()
+  return work?.type === "FACTION" || work?.type === "COMPANY"
+}
+
 /** ETA to reach augment rep target via hacking contracts (assumes continuous work). */
 export function estimateAugmentRepEta(
   ns: NS,

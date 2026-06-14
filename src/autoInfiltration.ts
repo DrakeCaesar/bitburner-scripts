@@ -1,8 +1,19 @@
 import { NS } from "@ns"
-import { getPreferredFactionForInfiltrationRep } from "./libraries/factionWork.js"
+import { getPreferredFactionForInfiltrationRep, isWorkingForFactionOrCompany } from "./libraries/factionWork.js"
+import {
+  GYM_CITY,
+  GYM_NAME,
+  getCombatGymSkillLevel,
+  getLowestCombatGymSkill,
+  workoutUntilLevelUp,
+  type CombatGymSkill,
+} from "./libraries/gymWorkout.js"
 import { disableTrustedKeyInjection, syncTrustedKeyInjection } from "./libraries/infiltration/infiltrationKeyInput.js"
 import { isInfiltrationActive } from "./libraries/infiltration/infiltrationNavigation.js"
-import { runInfiltrationForTarget } from "./libraries/infiltration/infiltrationRun.js"
+import {
+  runInfiltrationForTarget,
+  travelToInfiltrationCity,
+} from "./libraries/infiltration/infiltrationRun.js"
 import { InfiltrationRunStatsTracker } from "./libraries/infiltration/infiltrationRunStats.js"
 import { setupInfiltrationSolver, shutdownInfiltrationSolver } from "./libraries/infiltration/infiltrationSolver.js"
 import {
@@ -21,6 +32,66 @@ const SHOW_MINIGAME_INFO = false
 
 const CHECK_INTERVAL_MS = 2000
 const BETWEEN_RUNS_MS = 1000
+const WORKOUT_SCRIPT = "workout.js"
+
+function killConflictingScripts(ns: NS): void {
+  const scriptName = ns.getScriptName()
+  for (const proc of ns.ps(ns.getHostname())) {
+    if (proc.pid === ns.pid) continue
+    if (proc.filename === scriptName || proc.filename === WORKOUT_SCRIPT) {
+      ns.kill(proc.pid)
+    }
+  }
+}
+
+async function prepareGymWorkout(ns: NS, trainingStat: CombatGymSkill): Promise<void> {
+  if (isWorkingForFactionOrCompany(ns)) {
+    ns.print("Skipping gym workout; faction or company work active")
+    return
+  }
+
+  if (ns.getPlayer().city !== GYM_CITY) {
+    if (!canAffordInfiltrationTravel(ns)) {
+      ns.print(`Skipping gym workout; cannot afford travel to ${GYM_CITY}`)
+      return
+    }
+    ns.print(`Traveling to ${GYM_CITY} for gym workout (${trainingStat})`)
+    if (!(await travelToInfiltrationCity(ns, GYM_CITY))) {
+      ns.print(`Travel to ${GYM_CITY} failed; skipping gym workout`)
+      return
+    }
+  }
+
+  const levelBefore = getCombatGymSkillLevel(ns, trainingStat)
+  ns.print(`Gym: ${GYM_NAME} (${trainingStat}, level ${levelBefore})`)
+  await workoutUntilLevelUp(ns, trainingStat, ns.singularity.isFocused())
+}
+
+async function maybeSwitchGymTraining(
+  ns: NS,
+  trainingStat: CombatGymSkill
+): Promise<CombatGymSkill> {
+  const lowest = getLowestCombatGymSkill(ns)
+  if (lowest === trainingStat) return trainingStat
+
+  if (ns.getPlayer().city !== GYM_CITY && !canAffordInfiltrationTravel(ns)) {
+    ns.print(
+      `Lowest stat is now ${lowest}; cannot afford travel (${ns.format.number(INFILTRATION_TRAVEL_COST)}) to switch gym training`
+    )
+    return trainingStat
+  }
+
+  if (ns.getPlayer().city !== GYM_CITY) {
+    ns.print(`Lowest stat is now ${lowest}; traveling to ${GYM_CITY} to switch gym training`)
+    if (!(await travelToInfiltrationCity(ns, GYM_CITY))) {
+      ns.print(`Travel to ${GYM_CITY} failed; keeping gym training on ${trainingStat}`)
+      return trainingStat
+    }
+  }
+
+  ns.print(`Switching gym training from ${trainingStat} to ${lowest}`)
+  return lowest
+}
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("sleep")
@@ -33,12 +104,15 @@ export async function main(ns: NS): Promise<void> {
     return
   }
 
+  killConflictingScripts(ns)
+
   const solver = setupInfiltrationSolver(ns, {
     showDomWindow: SHOW_INFILTRATION_DOM_WINDOW,
     showMinigameInfo: SHOW_MINIGAME_INFO,
   })
   const runStats = new InfiltrationRunStatsTracker()
   solver.runStats = runStats
+  let trainingStat = getLowestCombatGymSkill(ns)
 
   try {
     while (true) {
@@ -90,12 +164,15 @@ export async function main(ns: NS): Promise<void> {
         ns.print("Infiltration already in progress; waiting for completion...")
       }
 
+      await prepareGymWorkout(ns, trainingStat)
+
       runStats.beginCycle(target, rewardGoal, grindFaction)
       const outcome = await runInfiltrationForTarget(ns, target, { solver })
 
       switch (outcome) {
         case "victory":
           runStats.completeCycle()
+          trainingStat = await maybeSwitchGymTraining(ns, trainingStat)
           ns.print(`Done: ${target.name}. Re-running best ${rewardGoal} target.`)
           break
         case "cancelled":
