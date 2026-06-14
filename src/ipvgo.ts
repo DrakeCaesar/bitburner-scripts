@@ -9,10 +9,18 @@ import {
   createIpvgoSnapshot,
   recordGameResult,
   recordOpponentMove,
+  recordOurCheat,
   recordOurMove,
   refreshFactionStats,
   renderIpvgoDashboard,
 } from "./libraries/ipvgo/display.js"
+import {
+  executeCheat,
+  findCheatAction,
+  readCheatStats,
+  shouldAttemptCheat,
+  type CheatAction,
+} from "./libraries/ipvgo/cheats.js"
 import {
   consumeIpvgoSetupPending,
   hasIpvgoSetupPending,
@@ -36,6 +44,7 @@ const DEFAULT_BOARD_SIZE: IpvgoBoardSize = 7
 const DEFAULT_OPPONENT: GoOpponent = "Netburners"
 const LOOP_SLEEP_MS = 50
 const ENABLE_TACTICAL_MOVES = false
+const ENABLE_CHEATS = true
 
 function parseOpponent(value: string | undefined): GoOpponent {
   if (!value) return DEFAULT_OPPONENT
@@ -99,6 +108,7 @@ function formatOpponentTurn(result: { type: string; x: number | null; y: number 
 
 function syncGameState(ns: NS, snapshot: ReturnType<typeof createIpvgoSnapshot>) {
   const gameState = ns.go.getGameState()
+  const cheatStats = readCheatStats(ns)
   return {
     ...refreshFactionStats(snapshot, ns),
     currentPlayer: ns.go.getCurrentPlayer(),
@@ -106,7 +116,17 @@ function syncGameState(ns: NS, snapshot: ReturnType<typeof createIpvgoSnapshot>)
     blackScore: gameState.blackScore,
     whiteScore: gameState.whiteScore,
     board: ns.go.getBoardState(),
+    cheatAvailable: cheatStats.available,
+    cheatCount: cheatStats.count,
+    cheatSuccessChance: cheatStats.successChance,
   }
+}
+
+function formatCheatLabel(action: CheatAction, succeeded: boolean, successChance: number): string {
+  const point = formatIpvgoPoint(action.x, action.y)
+  const verb = action.kind === "repair" ? "repair" : "remove"
+  const outcome = succeeded ? "OK" : "FAIL"
+  return `${verb} ${point} ${outcome} (${Math.round(successChance * 100)}%)`
 }
 
 export async function main(ns: NS): Promise<void> {
@@ -229,6 +249,64 @@ export async function main(ns: NS): Promise<void> {
       const validMoves = ns.go.analysis.getValidMoves()
       const legalCount = countValidMoves(validMoves)
       moveNumber++
+
+      if (ENABLE_CHEATS) {
+        const cheatStats = readCheatStats(ns)
+        const cheatAction = shouldAttemptCheat(cheatStats) ? findCheatAction(board, validMoves) : null
+        if (cheatAction) {
+          snapshot = {
+            ...syncGameState(ns, snapshot),
+            moveNumber,
+            legalCount,
+            validMoves,
+            phase: `Cheat ${cheatAction.kind}`,
+            thinking: false,
+          }
+          await renderIpvgoDashboard(ns, tailLog, snapshot)
+
+          ns.go.analysis.highlightPoint(cheatAction.x, cheatAction.y, "hack", cheatAction.kind)
+          const cheatStarted = performance.now()
+          const { result: cheatResult, succeeded } = await executeCheat(ns, cheatAction, board)
+          ns.go.analysis.clearAllPointHighlights()
+          const cheatMs = performance.now() - cheatStarted
+          const cheatLabel = formatCheatLabel(cheatAction, succeeded, cheatStats.successChance)
+
+          snapshot = recordOurCheat(snapshot, moveNumber, cheatLabel, cheatMs)
+
+          if (cheatResult.type === "gameOver") {
+            snapshot = logGameEnd(ns, snapshot, activeOpponent)
+            await renderIpvgoDashboard(ns, tailLog, snapshot)
+            await sleepUntilIpvgoSetupChange(ns, 500)
+            continue
+          }
+
+          let opponentReply = ""
+          if (cheatResult.type === "move" && cheatResult.x !== null && cheatResult.y !== null) {
+            opponentReply = formatIpvgoPoint(cheatResult.x, cheatResult.y)
+            snapshot = recordOpponentMove(snapshot, moveNumber, opponentReply)
+          } else if (cheatResult.type === "pass") {
+            opponentReply = "pass"
+            snapshot = recordOpponentMove(snapshot, moveNumber, opponentReply)
+          }
+
+          const ourMove: IpvgoMove = { type: "move", x: cheatAction.x, y: cheatAction.y }
+          snapshot = {
+            ...syncGameState(ns, snapshot),
+            moveNumber,
+            legalCount,
+            validMoves: undefined,
+            lastOurMove: ourMove,
+            lastOpponentMove: opponentReply || snapshot.lastOpponentMove,
+            thinkMs: 0,
+            sims: 0,
+            thinking: false,
+            phase: succeeded ? "Cheat succeeded" : "Cheat failed",
+          }
+          await renderIpvgoDashboard(ns, tailLog, snapshot)
+          await sleepUntilIpvgoSetupChange(ns, LOOP_SLEEP_MS)
+          continue
+        }
+      }
 
       if (legalCount === 0) {
         snapshot = recordOurMove(snapshot, moveNumber, { type: "pass" }, { thinkMs: 0 })

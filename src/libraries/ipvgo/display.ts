@@ -70,6 +70,9 @@ export type IpvgoDashboardSnapshot = {
   /** Cached from ns.go.analysis.getStats(); UI must not call Netscript during render. */
   opponentStats: Partial<Record<GoOpponent, IpvgoFactionStats>>
   gameMoves: readonly IpvgoGameMoveRow[]
+  cheatAvailable: boolean
+  cheatCount: number
+  cheatSuccessChance: number
 }
 
 export function createIpvgoSnapshot(
@@ -99,6 +102,9 @@ export function createIpvgoSnapshot(
     losses: 0,
     opponentStats: {},
     gameMoves: [],
+    cheatAvailable: false,
+    cheatCount: 0,
+    cheatSuccessChance: 0,
   }
 }
 
@@ -145,6 +151,21 @@ export function recordOurMove(
       black: formatMove(move),
       blackMs: timing?.thinkMs,
       blackSims: timing?.sims,
+    }),
+  }
+}
+
+export function recordOurCheat(
+  snapshot: IpvgoDashboardSnapshot,
+  moveNumber: number,
+  label: string,
+  elapsedMs?: number
+): IpvgoDashboardSnapshot {
+  return {
+    ...snapshot,
+    gameMoves: upsertGameMoveRow(snapshot.gameMoves, moveNumber, {
+      black: label,
+      blackMs: elapsedMs,
     }),
   }
 }
@@ -442,9 +463,6 @@ function setupPickerSize(snapshot: IpvgoDashboardSnapshot): { widthPx: number; h
 }
 
 function buildStatusTable(snapshot: IpvgoDashboardSnapshot): ReactTableConfig {
-  const thinking =
-    snapshot.thinking ? `yes (${snapshot.iterations} sims)` : snapshot.thinkMs > 0 ? `${snapshot.sims} sims / ${snapshot.thinkMs.toFixed(0)}ms` : "no"
-
   return {
     title: "IPvGO",
     columns: [
@@ -452,16 +470,32 @@ function buildStatusTable(snapshot: IpvgoDashboardSnapshot): ReactTableConfig {
       col("", "left", 18),
     ],
     rows: [
-      ["Phase", snapshot.phase],
       ["Match", `${snapshot.opponent} ${snapshot.boardSize}x${snapshot.boardSize} / ${snapshot.iterations} sims`],
-      ["Engine", snapshot.backend],
       ["Turn", snapshot.currentPlayer],
       ["Score", `B ${snapshot.blackScore.toFixed(1)} / W ${snapshot.whiteScore.toFixed(1)} (${scoreLeadText(snapshot.blackScore, snapshot.whiteScore)})`],
       ["Move", String(snapshot.moveNumber)],
       ["Legal", String(snapshot.legalCount)],
-      ["Thinking", thinking],
     ],
-    separatorAfter: [3],
+    separatorAfter: [1],
+  }
+}
+
+function buildCheatTable(snapshot: IpvgoDashboardSnapshot): ReactTableConfig {
+  const available = snapshot.cheatAvailable ? "yes" : "no"
+  const count = snapshot.cheatAvailable ? String(snapshot.cheatCount) : "-"
+  const chance = snapshot.cheatAvailable ? `${(snapshot.cheatSuccessChance * 100).toFixed(0)}%` : "-"
+
+  return {
+    title: "Cheat",
+    columns: [
+      col("", "left", 10),
+      col("", "left", 12),
+    ],
+    rows: [
+      ["Available", available],
+      ["This game", count],
+      ["Next %", chance],
+    ],
   }
 }
 
@@ -510,7 +544,7 @@ function buildCurrentGameTable(snapshot: IpvgoDashboardSnapshot): ReactTableConf
       col("#", "right", 3),
       col("Opp", "left", 8),
       col("Opp ms", "right", 10),
-      col("Us", "left", 8),
+      col("Us", "left", 22),
       col("Us ms", "right", 14),
     ],
     rows: rows.length > 0 ? rows : [["-", "-", "-", "-", "-"]],
@@ -609,6 +643,7 @@ function buildTextBlockMinimal(text: string): ReactNode {
 function populateDashboard(ns: NS, log: ScriptLogBuilder, snapshot: IpvgoDashboardSnapshot): void {
   log.react(buildSetupPickerReact(snapshot), setupPickerSize(snapshot))
   log.table(buildStatusTable(snapshot))
+  log.table(buildCheatTable(snapshot))
   log.table(buildRecordTable(snapshot))
 
   const boardSizePx = boardGridSizePx(snapshot.board.length || snapshot.boardSize)
