@@ -134,7 +134,6 @@ function buildDarknetTreeRows(
         id: hostname,
         parentId: report?.parentHost ?? null,
         label: hostname,
-        highlight: op != null,
         cells: [
           ses,
           formatAuthGuesses(report, op),
