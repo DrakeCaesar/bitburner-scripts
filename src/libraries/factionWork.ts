@@ -6,7 +6,7 @@ import {
   getAugmentData,
   getAugmentNamesFromFaction,
   getNextNeuroFluxLevel,
-  getNextUnaffordablePlannedAugment,
+  getInfiltrationMoneyTargetPlan,
   getOwnedAugmentationNames,
   isAugmentPurchaseExcludedFaction,
   isNeuroFluxAugment,
@@ -397,7 +397,7 @@ function getBucketGrindHead(
   }
 
   const repQualified = pending.filter((aug) => augmentMeetsRep(aug, factionReps))
-  const moneyTarget = getNextUnaffordablePlannedAugment(repQualified, playerMoney)
+  const moneyTarget = getInfiltrationMoneyTargetPlan(repQualified, playerMoney)
   if (moneyTarget) return { aug: moneyTarget.aug, need: "money" }
 
   return null
@@ -585,7 +585,7 @@ function bucketMoneyGoal(
   const pending = getPendingAugmentsInBucket(ns, purchaseFactions, bucket)
   const { factionReps, playerMoney } = getAugmentData(ns, [...purchaseFactions])
   const repQualified = pending.filter((aug) => augmentMeetsRep(aug, factionReps))
-  const next = getNextUnaffordablePlannedAugment(repQualified, playerMoney)
+  const next = getInfiltrationMoneyTargetPlan(repQualified, playerMoney)
   if (!next) return null
 
   return {

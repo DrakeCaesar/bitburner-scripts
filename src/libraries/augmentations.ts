@@ -255,6 +255,45 @@ export function buildAffordablePurchasePlan(
   return { affordable: planned, skippedHasRep: [...remaining.values()] }
 }
 
+/** Money grind target at its ideal queue slot, ignoring opportunistic lower-rep greedy buys. */
+export function getInfiltrationMoneyTargetPlan(
+  repQualified: AugmentInfo[],
+  playerMoney: number
+): { aug: AugmentInfo; targetPrice: number; moneyNeeded: number } | null {
+  const { affordable } = buildAffordablePurchasePlan(repQualified, playerMoney)
+  const plannedNames = new Set(affordable.map((aug) => aug.name))
+  const remaining = new Map(
+    repQualified.filter((aug) => !plannedNames.has(aug.name)).map((aug) => [aug.name, aug])
+  )
+  if (remaining.size === 0) return null
+
+  const available = [...remaining.values()].filter((aug) =>
+    aug.prereqs.every((prereq) => plannedNames.has(prereq) || !remaining.has(prereq))
+  )
+  if (available.length === 0) return null
+
+  const graph = buildPurchaseGraph([...remaining.values()])
+  const target = pickNextByChainPrice(available, graph)
+
+  // Greedy affordable buys below target rep are opportunistic and do not consume its slot.
+  const canonical = affordable.filter((aug) => aug.repReq >= target.repReq)
+  const slot = canonical.length
+  const targetPrice = target.price * Math.pow(AUGMENT_QUEUE_PRICE_MULT, slot)
+
+  let budget = playerMoney
+  for (let i = 0; i < canonical.length; i++) {
+    budget -= canonical[i].price * Math.pow(AUGMENT_QUEUE_PRICE_MULT, i)
+  }
+
+  if (budget >= targetPrice) return null
+
+  return {
+    aug: target,
+    targetPrice,
+    moneyNeeded: targetPrice - budget,
+  }
+}
+
 /** Next rep-qualified augment the purchase plan cannot afford at its queue slot. */
 export function getNextUnaffordablePlannedAugment(
   repQualified: AugmentInfo[],
