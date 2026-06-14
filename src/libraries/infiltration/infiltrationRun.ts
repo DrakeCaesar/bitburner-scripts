@@ -3,8 +3,8 @@ import {
   clickStartInfiltration,
   isInfiltrationActive,
   isOnInfiltrationIntro,
+  tryPrepareCityNavigation,
   visitInfiltrationTargetDom,
-  waitForCityNavigationReady,
 } from "./infiltrationNavigation.js"
 import type { InfiltrationTarget } from "./infiltrationTargets.js"
 import {
@@ -48,20 +48,7 @@ export async function travelToInfiltrationCity(ns: NS, city: CityName): Promise<
     return false
   }
 
-  const deadline = Date.now() + 10000
-  while (Date.now() < deadline) {
-    await ns.sleep(200)
-    if (ns.getPlayer().city === city) {
-      await ns.sleep(300)
-      return true
-    }
-  }
-
-  const playerCity = ns.getPlayer().city
-  if (playerCity !== city) {
-    ns.print(`ERROR: travelToCity(${city}) did not stick (player in ${playerCity})`)
-  }
-  return playerCity === city
+  return ns.getPlayer().city === city
 }
 
 export async function runInfiltrationForTarget(
@@ -73,20 +60,10 @@ export async function runInfiltrationForTarget(
   const runTimeoutMs = options.runTimeoutMs ?? DEFAULT_RUN_TIMEOUT_MS
 
   async function finishVictory(): Promise<InfiltrationRunOutcome> {
-    if (await waitForCityNavigationReady(ns)) {
-      return "victory"
-    }
-    ns.print(`ERROR: Victory UI did not close in time at ${target.name}`)
-    return "timeout"
+    return "victory"
   }
 
-  if (!(await waitForCityNavigationReady(ns))) {
-    ns.print(`Waiting for infiltration UI to close before visiting ${target.name}...`)
-    if (!(await waitForCityNavigationReady(ns))) {
-      ns.print("ERROR: Infiltration UI still blocking navigation")
-      return "visit_failed"
-    }
-  }
+  tryPrepareCityNavigation()
 
   if (isInfiltrationActive()) {
     ns.print(`Infiltration already active; waiting for ${target.name}`)
@@ -100,10 +77,7 @@ export async function runInfiltrationForTarget(
     return "travel_failed"
   }
 
-  if (!(await waitForCityNavigationReady(ns, 5000))) {
-    ns.print(`Waiting for city UI after travel to ${target.city}...`)
-    await waitForCityNavigationReady(ns)
-  }
+  tryPrepareCityNavigation()
 
   const visitDeadline = Date.now() + stepTimeoutMs
   const runDeadline = Date.now() + runTimeoutMs
@@ -224,7 +198,7 @@ export async function runInfiltrationForTarget(
             ns.print(`ERROR: travelToCity(${target.city}) failed`)
             return "travel_failed"
           }
-          await waitForCityNavigationReady(ns, 5000)
+          tryPrepareCityNavigation()
         } else {
           ns.print(`Singularity goToLocation(${target.name}) failed; waiting...`)
         }

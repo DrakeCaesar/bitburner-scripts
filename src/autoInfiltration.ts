@@ -5,7 +5,7 @@ import {
   GYM_NAME,
   getCombatGymSkillLevel,
   getLowestCombatGymSkill,
-  workoutUntilLevelUp,
+  startGymWorkout,
   type CombatGymSkill,
 } from "./libraries/gymWorkout.js"
 import { disableTrustedKeyInjection, syncTrustedKeyInjection } from "./libraries/infiltration/infiltrationKeyInput.js"
@@ -31,7 +31,6 @@ const SHOW_INFILTRATION_DOM_WINDOW = true
 const SHOW_MINIGAME_INFO = false
 
 const CHECK_INTERVAL_MS = 2000
-const BETWEEN_RUNS_MS = 1000
 const WORKOUT_SCRIPT = "workout.js"
 
 function killConflictingScripts(ns: NS): void {
@@ -62,33 +61,14 @@ async function prepareGymWorkout(ns: NS, trainingStat: CombatGymSkill): Promise<
     }
   }
 
-  const levelBefore = getCombatGymSkillLevel(ns, trainingStat)
-  ns.print(`Gym: ${GYM_NAME} (${trainingStat}, level ${levelBefore})`)
-  await workoutUntilLevelUp(ns, trainingStat, ns.singularity.isFocused())
+  const level = getCombatGymSkillLevel(ns, trainingStat)
+  ns.print(`Gym: ${GYM_NAME} (${trainingStat}, level ${level})`)
+  startGymWorkout(ns, trainingStat, ns.singularity.isFocused())
 }
 
-async function maybeSwitchGymTraining(
-  ns: NS,
-  trainingStat: CombatGymSkill
-): Promise<CombatGymSkill> {
+function maybeSwitchGymTraining(ns: NS, trainingStat: CombatGymSkill): CombatGymSkill {
   const lowest = getLowestCombatGymSkill(ns)
   if (lowest === trainingStat) return trainingStat
-
-  if (ns.getPlayer().city !== GYM_CITY && !canAffordInfiltrationTravel(ns)) {
-    ns.print(
-      `Lowest stat is now ${lowest}; cannot afford travel (${ns.format.number(INFILTRATION_TRAVEL_COST)}) to switch gym training`
-    )
-    return trainingStat
-  }
-
-  if (ns.getPlayer().city !== GYM_CITY) {
-    ns.print(`Lowest stat is now ${lowest}; traveling to ${GYM_CITY} to switch gym training`)
-    if (!(await travelToInfiltrationCity(ns, GYM_CITY))) {
-      ns.print(`Travel to ${GYM_CITY} failed; keeping gym training on ${trainingStat}`)
-      return trainingStat
-    }
-  }
-
   ns.print(`Switching gym training from ${trainingStat} to ${lowest}`)
   return lowest
 }
@@ -172,7 +152,7 @@ export async function main(ns: NS): Promise<void> {
       switch (outcome) {
         case "victory":
           runStats.completeCycle()
-          trainingStat = await maybeSwitchGymTraining(ns, trainingStat)
+          trainingStat = maybeSwitchGymTraining(ns, trainingStat)
           ns.print(`Done: ${target.name}. Re-running best ${rewardGoal} target.`)
           break
         case "cancelled":
@@ -193,7 +173,6 @@ export async function main(ns: NS): Promise<void> {
           break
       }
 
-      await ns.sleep(BETWEEN_RUNS_MS)
       syncTrustedKeyInjection()
     }
   } finally {

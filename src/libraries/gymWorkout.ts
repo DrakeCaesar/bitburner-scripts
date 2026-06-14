@@ -77,6 +77,10 @@ export function getLowestCombatGymSkill(ns: NS): CombatGymSkill {
   }).name
 }
 
+export function startGymWorkout(ns: NS, gymType: GymType, focus = ns.singularity.isFocused()): void {
+  ns.singularity.gymWorkout(GYM_NAME, gymType, focus)
+}
+
 export async function workoutUntilLevelUp(
   ns: NS,
   gymType: GymType,

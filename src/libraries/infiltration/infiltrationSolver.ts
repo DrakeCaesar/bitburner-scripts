@@ -33,7 +33,6 @@ import {
   collectInfiltrationVictoryReward,
   isInfiltrationVictoryScreen,
 } from "./infiltrationVictory.js"
-import { waitForCityNavigationReady } from "./infiltrationNavigation.js"
 import {
   formatInfiltrationRunViewLines,
   type InfiltrationRunStatsTracker,
@@ -195,13 +194,9 @@ export async function tickInfiltrationSolver(
 
   if (isInfiltrationVictoryScreen()) {
     if (state.victoryHandled) {
-      if (await waitForCityNavigationReady(ns)) {
-        state.wasActive = false
-        restoreDocumentKeyboard()
-        return "victory"
-      }
-      syncTrustedKeyInjection()
-      return "continue"
+      state.wasActive = false
+      restoreDocumentKeyboard()
+      return "victory"
     }
 
     if (!state.victoryHandled) {

@@ -130,6 +130,13 @@ export function isInfiltrationUiBlockingNavigation(): boolean {
   return isInfiltrationVictoryScreenVisible() || isInfiltrationActive() || isOnAnyInfiltrationIntro()
 }
 
+/** One-shot city prep; does not block. */
+export function tryPrepareCityNavigation(): boolean {
+  if (isInfiltrationUiBlockingNavigation()) return false
+  openCityPage()
+  return isCitySidebarAvailable()
+}
+
 /** Wait for victory/infiltration UI to close and the City sidebar to be usable again. */
 export async function waitForCityNavigationReady(
   ns: NS,
