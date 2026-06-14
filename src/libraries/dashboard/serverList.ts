@@ -98,11 +98,11 @@ export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor
     }
   }
 
-  // Sort by hacking level; darknet hosts last
+  // Sort by hacking level; darknet hosts first
   items = new Map(
     [...items].sort((a, b) => {
-      const levelA = a[1].level ?? Number.POSITIVE_INFINITY
-      const levelB = b[1].level ?? Number.POSITIVE_INFINITY
+      const levelA = a[1].level ?? Number.NEGATIVE_INFINITY
+      const levelB = b[1].level ?? Number.NEGATIVE_INFINITY
       return levelA - levelB || a[0].localeCompare(b[0])
     })
   )
