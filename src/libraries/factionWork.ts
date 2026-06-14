@@ -6,9 +6,11 @@ import {
   getAugmentData,
   getAugmentNamesFromFaction,
   getNextNeuroFluxLevel,
+  getNextUnaffordablePlannedAugment,
   getOwnedAugmentationNames,
   isAugmentPurchaseExcludedFaction,
   isNeuroFluxAugment,
+  neuroFluxPurchaseCost,
   type AugmentInfo,
 } from "./augmentations.js"
 import { col, W, type ReactTableConfig } from "./scriptLogUiLayout.js"
@@ -392,9 +394,11 @@ function getBucketGrindHead(
   const { factionReps, playerMoney } = getAugmentData(ns, [...purchaseFactions])
   for (const aug of sortAugmentsForInfiltrationGrind(pending)) {
     if (!augmentMeetsRep(aug, factionReps)) return { aug, need: "rep" }
-    const adjustedPrice = aug.price * Math.pow(AUGMENT_QUEUE_PRICE_MULT, 0)
-    if (playerMoney < adjustedPrice) return { aug, need: "money" }
   }
+
+  const repQualified = pending.filter((aug) => augmentMeetsRep(aug, factionReps))
+  const moneyTarget = getNextUnaffordablePlannedAugment(repQualified, playerMoney)
+  if (moneyTarget) return { aug: moneyTarget.aug, need: "money" }
 
   return null
 }
@@ -563,6 +567,81 @@ export function getInfiltrationMoneyTier(
   }
 
   return null
+}
+
+export interface InfiltrationMoneyGoal {
+  label: string
+  tier: InfiltrationMoneyTier
+  targetPrice: number
+  moneyNeeded: number
+}
+
+function bucketMoneyGoal(
+  ns: NS,
+  purchaseFactions: readonly FactionName[],
+  bucket: InfiltrationAugmentBucket,
+  tier: InfiltrationMoneyTier
+): InfiltrationMoneyGoal | null {
+  const pending = getPendingAugmentsInBucket(ns, purchaseFactions, bucket)
+  const { factionReps, playerMoney } = getAugmentData(ns, [...purchaseFactions])
+  const repQualified = pending.filter((aug) => augmentMeetsRep(aug, factionReps))
+  const next = getNextUnaffordablePlannedAugment(repQualified, playerMoney)
+  if (!next) return null
+
+  return {
+    label: next.aug.name,
+    tier,
+    targetPrice: next.targetPrice,
+    moneyNeeded: next.moneyNeeded,
+  }
+}
+
+function neuroFluxMoneyGoal(
+  ns: NS,
+  workableFactions: readonly FactionName[]
+): InfiltrationMoneyGoal | null {
+  const purchaseFactions = getInfiltrationPurchaseFactions(ns)
+  const grindFactions = infiltrationNeuroFluxGrindFactions(workableFactions, purchaseFactions)
+  const next = getNextNeuroFluxLevel(ns, purchaseFactions, grindFactions)
+  if (next?.need !== "money") return null
+
+  const { affordableSorted, neuroFluxInfo, playerMoney } = getAugmentData(ns, [...purchaseFactions])
+  if (!neuroFluxInfo) return null
+
+  let budget = playerMoney
+  for (let i = 0; i < affordableSorted.length; i++) {
+    budget -= affordableSorted[i].price * Math.pow(AUGMENT_QUEUE_PRICE_MULT, i)
+  }
+
+  const positionOffset = affordableSorted.length
+  for (let i = 0; i < next.levelIndex; i++) {
+    const { price } = neuroFluxPurchaseCost(neuroFluxInfo, positionOffset, i)
+    budget -= price
+  }
+
+  const label = next.levelIndex > 0 ? `NeuroFlux Governor +${next.levelIndex}` : "NeuroFlux Governor"
+  return {
+    label,
+    tier: "neuroflux",
+    targetPrice: next.price,
+    moneyNeeded: Math.max(0, next.price - budget),
+  }
+}
+
+/** Augment or NeuroFlux purchase the current money grind is saving for. */
+export function getInfiltrationMoneyGoal(ns: NS): InfiltrationMoneyGoal | null {
+  const purchaseFactions = getInfiltrationPurchaseFactions(ns)
+  const workableFactions = filterWorkableFactions(ns, purchaseFactions)
+  const tier = getInfiltrationMoneyTier(ns, workableFactions)
+  if (tier == null) return null
+
+  if (tier === "pre-favor-aug") {
+    return bucketMoneyGoal(ns, purchaseFactions, "pre-favor", tier)
+  }
+  if (tier === "post-favor-aug") {
+    return bucketMoneyGoal(ns, purchaseFactions, "post-favor", tier)
+  }
+  return neuroFluxMoneyGoal(ns, workableFactions)
 }
 
 function infiltrationNeuroFluxGrindFactions(

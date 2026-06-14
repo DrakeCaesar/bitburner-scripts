@@ -1,10 +1,8 @@
 import type { FactionName, NS } from "@ns"
 import {
-  filterWorkableFactions,
   getInfiltrationGrindTarget,
-  getInfiltrationMoneyTier,
-  getInfiltrationPurchaseFactions,
-  type InfiltrationMoneyTier,
+  getInfiltrationMoneyGoal,
+  type InfiltrationMoneyGoal,
   type InfiltrationRepTier,
 } from "../factionWork.js"
 import type { InfiltrationRewardGoal, InfiltrationTarget } from "./infiltrationTargets.js"
@@ -28,6 +26,7 @@ export interface InfiltrationRunView {
   faction: FactionName | null
   predictedReward: number
   repGoal: InfiltrationRepGoal | null
+  moneyGoal: InfiltrationMoneyGoal | null
   roundCount: number
   lastCycleMs: number | null
   avgCycleMs: number | null
@@ -102,6 +101,7 @@ export class InfiltrationRunStatsTracker {
       this.rewardGoal === "reputation" && this.faction != null
         ? getInfiltrationRepGoal(ns, this.faction)
         : null
+    const moneyGoal = this.rewardGoal === "money" ? getInfiltrationMoneyGoal(ns) : null
 
     const roundCount = this.samples.length
     const lastCycleMs = roundCount > 0 ? this.samples[roundCount - 1].durationMs : null
@@ -131,6 +131,16 @@ export class InfiltrationRunStatsTracker {
       if (avgCycleMs != null && avgCycleMs > 0) {
         etaMs = etaRuns * avgCycleMs
       }
+    } else if (
+      this.rewardGoal === "money" &&
+      moneyGoal != null &&
+      moneyGoal.moneyNeeded > 0 &&
+      this.predictedReward > 0
+    ) {
+      etaRuns = Math.ceil(moneyGoal.moneyNeeded / this.predictedReward)
+      if (avgCycleMs != null && avgCycleMs > 0) {
+        etaMs = etaRuns * avgCycleMs
+      }
     }
 
     return {
@@ -140,6 +150,7 @@ export class InfiltrationRunStatsTracker {
       faction: this.faction,
       predictedReward: this.predictedReward,
       repGoal,
+      moneyGoal,
       roundCount,
       lastCycleMs,
       avgCycleMs,
@@ -165,7 +176,7 @@ function formatInfiltrationTierLabel(tier: InfiltrationRepTier): string {
   }
 }
 
-function formatInfiltrationMoneyTierLabel(tier: InfiltrationMoneyTier): string {
+function formatInfiltrationMoneyTierLabel(tier: InfiltrationMoneyGoal["tier"]): string {
   switch (tier) {
     case "pre-favor-aug":
       return "pre-favor augments"
@@ -187,13 +198,18 @@ export function formatInfiltrationRunViewLines(ns: NS, view: InfiltrationRunView
   lines.push(`Location: ${view.location}`)
 
   if (view.rewardGoal === "money") {
-    const workable = filterWorkableFactions(ns, getInfiltrationPurchaseFactions(ns))
-    const moneyTier = getInfiltrationMoneyTier(ns, workable)
-    lines.push(
-      moneyTier != null
-        ? `Grinding: money (${formatInfiltrationMoneyTierLabel(moneyTier)})`
-        : "Grinding: money"
-    )
+    if (view.moneyGoal) {
+      lines.push("Grinding: money")
+      lines.push(`Target: ${view.moneyGoal.label} (${formatInfiltrationMoneyTierLabel(view.moneyGoal.tier)})`)
+      lines.push(`Price: ${ns.format.number(view.moneyGoal.targetPrice)}`)
+      if (view.moneyGoal.moneyNeeded > 0) {
+        lines.push(`Need: ${ns.format.number(view.moneyGoal.moneyNeeded)} more`)
+      } else {
+        lines.push("Need: affordable now")
+      }
+    } else {
+      lines.push("Grinding: money (no augment target)")
+    }
     lines.push(`Predicted: ${ns.format.number(view.predictedReward)}`)
   } else if (view.faction) {
     lines.push(`Grinding: ${view.faction} reputation`)
@@ -248,6 +264,19 @@ export function formatInfiltrationRunViewLines(ns: NS, view: InfiltrationRunView
         lines.push(`Est: ${ns.format.time(view.etaMs)} (${view.etaRuns} runs)`)
       } else {
         lines.push(`Est: ${view.etaRuns} runs (${ns.format.number(view.predictedReward)} rep/run predicted)`)
+        lines.push("Time: need 1 completed round at this location")
+      }
+    }
+  } else if (view.rewardGoal === "money" && view.moneyGoal && view.moneyGoal.moneyNeeded > 0) {
+    lines.push("")
+    lines.push("--- ETA ---")
+    lines.push(`Goal: ${view.moneyGoal.label}`)
+    lines.push(`Need: ${ns.format.number(view.moneyGoal.moneyNeeded)}`)
+    if (view.etaRuns != null) {
+      if (view.etaMs != null) {
+        lines.push(`Est: ${ns.format.time(view.etaMs)} (${view.etaRuns} runs)`)
+      } else {
+        lines.push(`Est: ${view.etaRuns} runs (${ns.format.number(view.predictedReward)}/round predicted)`)
         lines.push("Time: need 1 completed round at this location")
       }
     }

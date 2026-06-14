@@ -255,6 +255,42 @@ export function buildAffordablePurchasePlan(
   return { affordable: planned, skippedHasRep: [...remaining.values()] }
 }
 
+/** Next rep-qualified augment the purchase plan cannot afford at its queue slot. */
+export function getNextUnaffordablePlannedAugment(
+  repQualified: AugmentInfo[],
+  playerMoney: number
+): { aug: AugmentInfo; targetPrice: number; moneyNeeded: number } | null {
+  const { affordable } = buildAffordablePurchasePlan(repQualified, playerMoney)
+  const slot = affordable.length
+  const plannedNames = new Set(affordable.map((aug) => aug.name))
+  const remaining = new Map(
+    repQualified.filter((aug) => !plannedNames.has(aug.name)).map((aug) => [aug.name, aug])
+  )
+  if (remaining.size === 0) return null
+
+  const available = [...remaining.values()].filter((aug) =>
+    aug.prereqs.every((prereq) => plannedNames.has(prereq) || !remaining.has(prereq))
+  )
+  if (available.length === 0) return null
+
+  const graph = buildPurchaseGraph([...remaining.values()])
+  const next = pickNextByChainPrice(available, graph)
+  const targetPrice = next.price * Math.pow(AUGMENT_QUEUE_PRICE_MULT, slot)
+
+  let budget = playerMoney
+  for (let i = 0; i < affordable.length; i++) {
+    budget -= affordable[i].price * Math.pow(AUGMENT_QUEUE_PRICE_MULT, i)
+  }
+
+  if (budget >= targetPrice) return null
+
+  return {
+    aug: next,
+    targetPrice,
+    moneyNeeded: targetPrice - budget,
+  }
+}
+
 /** Simulated NeuroFlux price/rep when regular augs are not actually queued (dry run / dashboard). */
 export function neuroFluxPurchaseCost(
   neuroFluxInfo: AugmentInfo,
