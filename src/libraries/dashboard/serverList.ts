@@ -1,10 +1,11 @@
 import { NS } from "@ns"
-import { crawl } from "../crawl"
+import { crawl, isDarknetServer } from "../crawl"
 import { createStandardContainer, FloatingWindow } from "../floatingWindow"
 import { isAtMinSecurity } from "../removeSecurity.js"
 import { formatTableRow, getTableBorders } from "../tableBuilder"
 
 function formatServerListSecurity(ns: NS, hostname: string): string {
+  if (isDarknetServer(hostname)) return "-"
   const minSec = ns.getServerMinSecurityLevel(hostname)
   const currentSec = ns.getServerSecurityLevel(hostname)
   const value = currentSec.toFixed(2)
@@ -82,20 +83,29 @@ function tFormat(time: number = 0): { html: string; length: number } {
 }
 
 export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor: string): void {
-  const knownServers = crawl(ns)
+  const knownServers = new Set(crawl(ns))
+  if (ns.hasTorRouter()) {
+    knownServers.add("darkweb")
+  }
   const player = ns.getPlayer()
 
   // Build server data with nuking
-  let items = new Map<string, { level: number; server: any }>()
+  let items = new Map<string, { level: number | null; server: any }>()
   for (const key of knownServers) {
-    if (!key.includes("node") && !key.includes("hacknet") && key !== "home" && key !== "darkweb") {
-      const level = ns.getServerRequiredHackingLevel(key)
+    if (!key.includes("node") && !key.includes("hacknet") && key !== "home") {
+      const level = isDarknetServer(key) ? null : ns.getServerRequiredHackingLevel(key)
       items.set(key, { level, server: ns.getServer(key) })
     }
   }
 
-  // Sort by hacking level
-  items = new Map([...items].sort((a, b) => a[1].level - b[1].level))
+  // Sort by hacking level; darknet hosts last
+  items = new Map(
+    [...items].sort((a, b) => {
+      const levelA = a[1].level ?? Number.POSITIVE_INFINITY
+      const levelB = b[1].level ?? Number.POSITIVE_INFINITY
+      return levelA - levelB || a[0].localeCompare(b[0])
+    })
+  )
 
   // Calculate column widths
   const nameCol = "Server"
@@ -118,7 +128,7 @@ export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor
 
   for (const [target, { level, server }] of items) {
     nameLen = Math.max(nameLen, target.length)
-    lvlLen = Math.max(lvlLen, (level.toString() + " X").length)
+    lvlLen = Math.max(lvlLen, level === null ? 1 : (level.toString() + " X").length)
     rootLen = Math.max(rootLen, 1)
     backdoorLen = Math.max(backdoorLen, 1)
     secLen = Math.max(secLen, formatServerListSecurity(ns, target).length)
@@ -152,13 +162,15 @@ export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor
 
   // Add rows
   for (const [target, { level, server }] of items) {
-    const hackable = level <= player.skills.hacking ? " " : "X"
+    const levelDisplay = level === null ? "-" : `${level} ${level <= player.skills.hacking ? " " : "X"}`
     const hasRoot = server.hasAdminRights ? " " : "X"
     const hasBackdoor = server.backdoorInstalled ? " " : "X"
     const secDisplay = formatServerListSecurity(ns, target)
     const ram = ns.format.ram(server.maxRam, 0)
     const money = formatNumber(ns, server.moneyMax ?? 0)
-    const timeFormatted = tFormat(ns.getWeakenTime(target))
+    const timeFormatted = isDarknetServer(target)
+      ? { html: "-".padStart(timeLen), length: timeLen }
+      : tFormat(ns.getWeakenTime(target))
 
     // Pad the time HTML to the correct width by adding leading spaces
     const timePadding = " ".repeat(Math.max(0, timeLen - timeFormatted.length))
@@ -167,7 +179,7 @@ export function updateServerList(ns: NS, containerDiv: HTMLElement, primaryColor
     const rowSpan = document.createElement("span")
     rowSpan.innerHTML = formatTableRow([
       target.padEnd(nameLen),
-      `${level} ${hackable}`.padStart(lvlLen),
+      levelDisplay.padStart(lvlLen),
       hasRoot.padStart(rootLen),
       hasBackdoor.padStart(backdoorLen),
       secDisplay.padStart(secLen),
