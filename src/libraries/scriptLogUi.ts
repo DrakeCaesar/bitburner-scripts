@@ -1044,16 +1044,18 @@ export function measureTreeTableHostChars(
   return Math.max(...flat.map(({ row, treePrefix }) => formatTreeCellLabel(row.label, treePrefix).length))
 }
 
-function padPreCell(text: string, widthCh: number, align: Alignment): string {
-  const pad = Math.max(0, widthCh - text.length)
-  if (align === "right") {
-    return " ".repeat(pad) + text
+function multilineBodyCellStyle(layout: TableLayout, align: Alignment): Record<string, string> {
+  return {
+    ...cellStyle(layout, {}, align),
+    whiteSpace: "pre",
+    height: "auto",
+    lineHeight: `${textLineBoxPx(layout)}px`,
+    verticalAlign: "top",
   }
-  if (align === "center") {
-    const left = Math.floor(pad / 2)
-    return " ".repeat(left) + text + " ".repeat(pad - left)
-  }
-  return text + " ".repeat(pad)
+}
+
+function columnCellLines(bodyRows: string[][], colIdx: number): string {
+  return bodyRows.map((row) => tailDisplayText(row[colIdx] ?? "")).join("\n")
 }
 
 function treeTableColumnsAndRows(config: TreeTableConfig): {
@@ -1080,25 +1082,6 @@ function treeTableColumnsAndRows(config: TreeTableConfig): {
   return { flat, columns, preRows, reactRows }
 }
 
-function formatPreTreeTableBodyLines(columns: ColumnConfig[], bodyRows: string[][], layout: TableLayout): string[] {
-  const tableConfig: TableConfig = { columns, rows: bodyRows }
-  const widthsCh = computeColumnWidthsCh(tableConfig)
-  const alignments = columns.map((col, idx) => col.align ?? (idx === 0 ? "left" : "right"))
-  return bodyRows.map((row) =>
-    row.map((cell, idx) => padPreCell(tailDisplayText(cell), widthsCh[idx]!, alignments[idx])).join(" ")
-  )
-}
-
-function mergedBodyCellStyle(layout: TableLayout): Record<string, string> {
-  return {
-    ...cellStyle(layout, {}, "left"),
-    whiteSpace: "pre",
-    height: "auto",
-    lineHeight: `${textLineBoxPx(layout)}px`,
-    verticalAlign: "top",
-  }
-}
-
 function buildSingleRowTreeTable(
   config: TreeTableConfig,
   columns: ColumnConfig[],
@@ -1109,7 +1092,7 @@ function buildSingleRowTreeTable(
   const layout = mergeLayout(config.layout)
   const tableConfig: ReactTableConfig = { columns, rows: preRows }
   const colWidthsPx = computeColumnWidthsPx(computeColumnWidthsCh(tableConfig), layout)
-  const bodyLines = formatPreTreeTableBodyLines(columns, preRows, layout)
+  const alignments = columns.map((col, idx) => col.align ?? (idx === 0 ? "left" : "right"))
   const activeHeaderColumns = new Set<number>()
   const hasActive = flat.some(({ row }) => row.highlight)
   if (hasActive) {
@@ -1128,19 +1111,18 @@ function buildSingleRowTreeTable(
     )
   )
 
-  const bodyRow = React.createElement(
-    "tr",
-    { key: "merged-body" },
+  const bodyCells = columns.map((col, colIdx) =>
     React.createElement(
       "td",
       {
-        key: "merged-body-cell",
-        colSpan: columns.length,
-        style: mergedBodyCellStyle(layout),
+        key: `merged-c-${colIdx}`,
+        style: multilineBodyCellStyle(layout, alignments[colIdx]),
       },
-      bodyLines.join("\n")
+      columnCellLines(preRows, colIdx)
     )
   )
+
+  const bodyRow = React.createElement("tr", { key: "merged-body" }, ...bodyCells)
 
   const colgroup = React.createElement(
     "colgroup",
@@ -1227,12 +1209,7 @@ export function estimateReactTreeTableWidthPx(config: TreeTableConfig, layout?: 
   const merged = mergeLayout(config.layout ?? layout)
   const { columns, preRows, reactRows } = treeTableColumnsAndRows(config)
   if (config.singleBodyRow) {
-    const bodyLines = formatPreTreeTableBodyLines(columns, preRows, merged)
-    const maxChars = bodyLines.reduce((max, line) => Math.max(max, line.length), 0)
-    let width = Math.max(
-      computeReactTableWidthPx({ columns, rows: preRows }, config.layout ?? layout),
-      computeStringWidthPx(" ".repeat(maxChars), merged)
-    )
+    let width = computeReactTableWidthPx({ columns, rows: preRows }, config.layout ?? layout)
     if (config.title) {
       width = Math.max(width, computeStringWidthPx(`=== ${config.title} ===`, merged))
     }
