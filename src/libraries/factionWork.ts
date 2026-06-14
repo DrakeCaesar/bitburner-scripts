@@ -9,7 +9,6 @@ import {
   getOwnedAugmentationNames,
   isAugmentPurchaseExcludedFaction,
   isNeuroFluxAugment,
-  sortAugmentsForPurchase,
   type AugmentInfo,
 } from "./augmentations.js"
 import { col, W, type ReactTableConfig } from "./scriptLogUiLayout.js"
@@ -377,7 +376,11 @@ function getPendingAugmentsInBucket(
 
 type BucketGrindNeed = "rep" | "money"
 
-/** Next unowned augment in purchase order that still needs rep or cash (purchase not required). */
+function sortAugmentsForInfiltrationGrind(augs: AugmentInfo[]): AugmentInfo[] {
+  return [...augs].sort((a, b) => a.repReq - b.repReq || a.price - b.price || a.name.localeCompare(b.name))
+}
+
+/** Next unowned augment (lowest rep req first) that still needs rep or cash. */
 function getBucketGrindHead(
   ns: NS,
   purchaseFactions: readonly FactionName[],
@@ -387,7 +390,7 @@ function getBucketGrindHead(
   if (pending.length === 0) return null
 
   const { factionReps, playerMoney } = getAugmentData(ns, [...purchaseFactions])
-  for (const aug of sortAugmentsForPurchase(pending)) {
+  for (const aug of sortAugmentsForInfiltrationGrind(pending)) {
     if (!augmentMeetsRep(aug, factionReps)) return { aug, need: "rep" }
     const adjustedPrice = aug.price * Math.pow(AUGMENT_QUEUE_PRICE_MULT, 0)
     if (playerMoney < adjustedPrice) return { aug, need: "money" }
@@ -582,9 +585,9 @@ export function needsInfiltrationMoneyForAugments(
 
 /**
  * Infiltration grind order:
- * 1. Pre-favor augments - rep then money for each augment in purchase order
+ * 1. Pre-favor augments - rep then money for each augment (lowest rep req first)
  * 2. Donation favor (factions with unowned post-favor augments only) - reputation
- * 3. Post-favor augments - rep then money for each augment in purchase order
+ * 3. Post-favor augments - rep then money for each augment (lowest rep req first)
  * 4. NeuroFlux Governor - reputation, then money
  */
 export function prioritizeInfiltrationRepTargets(
