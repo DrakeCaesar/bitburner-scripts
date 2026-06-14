@@ -1,9 +1,4 @@
 import { NS } from "@ns"
-import {
-  darkwebHostDigitPool,
-  darkwebPasswordCandidates,
-  mergeDarkwebDigitPools,
-} from "./libraries/darkwebPasswordIntel.js"
 
 // --- config ---
 
@@ -91,6 +86,127 @@ export interface DarknetRegistry {
   version: 1
   servers: Record<string, DarknetRegistryEntry>
 }
+
+// #region darkweb-password-intel
+// Password clues from darkweb archive files (home/darkweb/*.data.txt).
+// Pulled locally under data/darkweb/ for reference; baked in here for in-game use.
+
+/** Sources: password.data.txt, credentials.data.txt, access.data.txt */
+const DARKWEB_COMMON_PASSWORDS: readonly string[] = [
+  "jessica",
+  "pepper",
+  "1111",
+  "zxcvbn",
+  "555555",
+  "11111111",
+  "131313",
+  "freedom",
+  "777777",
+  "pass",
+  "maggie",
+  "159753",
+  "aaaaaa",
+  "ginger",
+  "princess",
+  "cheese",
+  "amanda",
+  "summer",
+  "love",
+  "ashley",
+  "6969",
+  "nicole",
+  "chelsea",
+  "biteme",
+  "matthew",
+  "access",
+  "yankees",
+  "987654321",
+  "dallas",
+  "austin",
+]
+
+/** Source: key.data.txt ("Remember this password: …") */
+const DARKWEB_KNOWN_PASSWORDS: readonly string[] = ["27974"]
+
+/**
+ * Host -> digits known to appear in the password.
+ * Sources: login.data.txt, admin.data.txt, secrets.data.txt, root.data.txt
+ */
+const DARKWEB_HOST_DIGIT_HINTS: Readonly<Record<string, readonly string[]>> = {
+  "6969": ["5", "8"],
+  "hacker-services": ["5", "6"],
+  "speakers_for_the_dead:5801": ["1", "3"],
+  apexsanctuary: ["0", "7"],
+}
+
+const DARKWEB_NUMERIC_RE = /^\d+$/
+const DARKWEB_ALPHA_RE = /^[a-z]+$/
+const DARKWEB_ALNUM_RE = /^[a-z0-9]+$/
+
+function normalizeDarkwebHost(host: string): string {
+  return host.toLowerCase()
+}
+
+function darkwebHostDigitPool(host: string): string | null {
+  const hints = DARKWEB_HOST_DIGIT_HINTS[normalizeDarkwebHost(host)]
+  if (!hints || hints.length === 0) {
+    return null
+  }
+  return hints.join("")
+}
+
+/** Union of digit characters from archive hint and server password hint text. */
+function mergeDarkwebDigitPools(...pools: string[]): string {
+  const digits = new Set<string>()
+  for (const pool of pools) {
+    for (const ch of pool.replace(/\D/g, "")) {
+      digits.add(ch)
+    }
+  }
+  return [...digits].sort().join("")
+}
+
+function darkwebKnownPasswordCandidates(length: number): string[] {
+  return DARKWEB_KNOWN_PASSWORDS.filter((password) => password.length === length)
+}
+
+function darkwebCommonPasswordCandidates(length: number, format: DarknetPasswordFormat): string[] {
+  const out: string[] = []
+  for (const word of DARKWEB_COMMON_PASSWORDS) {
+    if (word.length !== length) {
+      continue
+    }
+    if (format === "numeric" && !DARKWEB_NUMERIC_RE.test(word)) {
+      continue
+    }
+    if (format === "alphabetic" && !DARKWEB_ALPHA_RE.test(word)) {
+      continue
+    }
+    if (format === "alphanumeric" && !DARKWEB_ALNUM_RE.test(word)) {
+      continue
+    }
+    out.push(word)
+  }
+  return out
+}
+
+/** Archive-based guesses for a host (known literals + common-word list), deduped in order. */
+function darkwebPasswordCandidates(length: number, format: DarknetPasswordFormat): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const password of [
+    ...darkwebKnownPasswordCandidates(length),
+    ...darkwebCommonPasswordCandidates(length, format),
+  ]) {
+    if (seen.has(password)) {
+      continue
+    }
+    seen.add(password)
+    out.push(password)
+  }
+  return out
+}
+// #endregion darkweb-password-intel
 
 export function loadDarknetRegistry(ns: NS): DarknetRegistry {
   if (!ns.fileExists(DARKNET_REGISTRY_FILE, "home")) {
@@ -1216,7 +1332,9 @@ async function copyCrawlScript(ns: NS, target: string, source: string): Promise<
   if (!ns.fileExists(DARKNET_CRAWL_SCRIPT, source)) {
     throw new Error(`${DARKNET_CRAWL_SCRIPT} not found on ${source}`)
   }
-  await ns.scp(DARKNET_CRAWL_SCRIPT, target, source)
+  if (!ns.scp(DARKNET_CRAWL_SCRIPT, target, source)) {
+    throw new Error(`Failed to scp ${DARKNET_CRAWL_SCRIPT} to ${target} from ${source}`)
+  }
 }
 
 async function copyCrawlAssets(ns: NS, target: string, source: string): Promise<void> {
