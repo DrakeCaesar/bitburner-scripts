@@ -8,12 +8,9 @@ export const MAX_PROBE_DEPTH = 10
 export const DEFAULT_CRAWL_INTERVAL_MS = 60_000
 export const CRAWL_REPORT_PORT = 45107
 const WORKER_MODE_ARG = "worker"
-const OPEN_CACHES_MODE_ARG = "openCaches"
 export const DARKWEB = "darkweb"
 /** Flat archive folder on home for copied darknet .txt files and opened .cache rewards. */
 export const DARKWEB_ARCHIVE_DIR = "darkweb"
-/** Temp copy on a crawl worker while reading a remote file (never left on home). */
-const ARCHIVE_STAGING_DIR = "_crawl_archive"
 
 // --- types ---
 
@@ -244,6 +241,45 @@ export function saveDarknetRegistry(ns: NS, registry: DarknetRegistry): void {
   ns.write(DARKNET_REGISTRY_FILE, JSON.stringify(registry), "w")
 }
 
+function registryToPasswordMap(registry: DarknetRegistry): Map<string, string> {
+  const map = new Map<string, string>()
+  for (const entry of Object.values(registry.servers)) {
+    if (entry.password != null) {
+      map.set(entry.hostname, entry.password)
+    }
+  }
+  return map
+}
+
+function serializePasswordMap(cache: Map<string, string>): string {
+  return JSON.stringify(Object.fromEntries(cache))
+}
+
+function parsePasswordMapArg(raw: unknown): Map<string, string> {
+  const cache = new Map<string, string>()
+  if (typeof raw !== "string" || raw.length === 0) {
+    return cache
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== "object" || parsed === null) {
+      return cache
+    }
+    for (const [hostname, password] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof hostname === "string" && typeof password === "string") {
+        cache.set(hostname, password)
+      }
+    }
+  } catch {
+    // ignore malformed registry arg
+  }
+  return cache
+}
+
+function loadWorkerPasswordCache(ns: NS): Map<string, string> {
+  return parsePasswordMapArg(ns.args[4])
+}
+
 export function mergeCrawlReportsIntoRegistry(
   registry: DarknetRegistry,
   reports: ReadonlyMap<string, CrawlHostReport>
@@ -290,33 +326,6 @@ export function mergeRegistryWithCrawl(
     })
   }
   return merged
-}
-
-function loadLocalPasswordCache(ns: NS): Map<string, string> {
-  const cache = new Map<string, string>()
-  const host = ns.getHostname()
-  if (!ns.fileExists(DARKNET_REGISTRY_FILE, host)) {
-    return cache
-  }
-  try {
-    const parsed: unknown = JSON.parse(ns.read(DARKNET_REGISTRY_FILE))
-    if (typeof parsed !== "object" || parsed === null) {
-      return cache
-    }
-    const row = parsed as Record<string, unknown>
-    if (typeof row.servers !== "object" || row.servers === null) {
-      return cache
-    }
-    for (const raw of Object.values(row.servers as Record<string, unknown>)) {
-      if (typeof raw !== "object" || raw === null) continue
-      const entry = raw as Record<string, unknown>
-      if (typeof entry.hostname !== "string" || typeof entry.password !== "string") continue
-      cache.set(entry.hostname, entry.password)
-    }
-  } catch {
-    // ignore corrupt local registry copy
-  }
-  return cache
 }
 
 export interface DarknetCrawlApi {
@@ -1337,11 +1346,34 @@ async function copyCrawlScript(ns: NS, target: string, source: string): Promise<
   }
 }
 
-async function copyCrawlAssets(ns: NS, target: string, source: string): Promise<void> {
-  await copyCrawlScript(ns, target, source)
-  if (ns.fileExists(DARKNET_REGISTRY_FILE, source)) {
-    await ns.scp(DARKNET_REGISTRY_FILE, target, source)
+function crawlWorkerArgs(
+  remainingDepth: number,
+  registryJson: string,
+  waitForChildren: boolean
+): (string | number)[] {
+  return [WORKER_MODE_ARG, CRAWL_REPORT_PORT, remainingDepth, waitForChildren ? 1 : 0, registryJson]
+}
+
+async function spawnCrawlWorkerOnHost(
+  ns: NS,
+  host: string,
+  remainingDepth: number,
+  passwordCache: Map<string, string>,
+  assetSource: string,
+  waitForChildren: boolean
+): Promise<number> {
+  await copyCrawlScript(ns, host, assetSource)
+  const workerRam = ns.getScriptRam(DARKNET_CRAWL_SCRIPT, host)
+  const freeRam = ns.getServerMaxRam(host) - ns.getServerUsedRam(host)
+  if (workerRam > freeRam) {
+    return 0
   }
+  return ns.exec(
+    DARKNET_CRAWL_SCRIPT,
+    host,
+    1,
+    ...crawlWorkerArgs(remainingDepth, serializePasswordMap(passwordCache), waitForChildren)
+  )
 }
 
 function isArchivableTextFile(fileName: string): boolean {
@@ -1416,37 +1448,6 @@ function finalizeArchiveContent(ns: NS, fileName: string, content: string): void
   ns.write(destPath, content, "w")
 }
 
-/** Read file bytes on sourceHost; remote reads use a temp copy on the worker, not home. */
-function readFileFromHost(ns: NS, file: string, sourceHost: string): string | null {
-  const workerHost = ns.getHostname()
-  try {
-    if (workerHost === sourceHost) {
-      return ns.fileExists(file) ? ns.read(file) : null
-    }
-    const staging = `${ARCHIVE_STAGING_DIR}/${flatFileName(file)}`
-    if (!ns.scp(file, workerHost, sourceHost)) {
-      return null
-    }
-    if (!ns.fileExists(staging)) {
-      return null
-    }
-    const content = ns.read(staging)
-    ns.rm(staging)
-    return content
-  } catch {
-    return null
-  }
-}
-
-function finalizeArchiveFile(ns: NS, fileName: string): void {
-  if (!ns.fileExists(fileName, "home")) {
-    return
-  }
-  const content = ns.read(fileName)
-  ns.rm(fileName)
-  finalizeArchiveContent(ns, fileName, content)
-}
-
 function queueArchiveContent(
   ns: NS,
   fileName: string,
@@ -1516,67 +1517,41 @@ async function openCacheFilesOnCurrentHost(
   }
 }
 
-async function execOpenCachesOnHost(
-  ns: NS,
-  host: string,
-  reportPort: number | undefined
-): Promise<void> {
-  if (!ns.fileExists(DARKNET_CRAWL_SCRIPT, host)) {
-    await copyCrawlScript(ns, host, ns.getHostname())
-  }
-  const port = reportPort ?? 0
-  const pid = ns.exec(DARKNET_CRAWL_SCRIPT, host, 1, OPEN_CACHES_MODE_ARG, port)
-  if (pid === 0) {
-    return
-  }
-  while (ns.isRunning(pid)) {
-    await ns.sleep(50)
-  }
-}
-
-async function archiveServerFiles(
+async function archiveLocalServerFiles(
   ns: NS,
   dnet: DarknetCrawlApi,
-  sourceHost: string,
   reportPort?: number,
   cacheOpens?: CrawlCacheOpen[]
 ): Promise<void> {
+  const hostname = ns.getHostname()
   let files: string[]
   try {
-    files = ns.ls(sourceHost)
+    files = ns.ls(hostname)
   } catch {
     return
   }
 
-  const onSource = ns.getHostname() === sourceHost
-
   for (const file of files) {
-    const base = flatFileName(file)
     if (!isLiteratureFile(file) && !isArchivableTextFile(file)) {
       continue
     }
-    const content = readFileFromHost(ns, file, sourceHost)
-    if (content === null) {
+    if (!ns.fileExists(file)) {
       continue
     }
-    queueArchiveContent(ns, base, content, reportPort)
+    queueArchiveContent(ns, flatFileName(file), ns.read(file), reportPort)
   }
 
-  if (onSource) {
-    await openCacheFilesOnCurrentHost(ns, dnet, reportPort, cacheOpens)
-  } else if (dnet.getServerDetails(sourceHost).hasSession) {
-    await execOpenCachesOnHost(ns, sourceHost, reportPort)
-  }
+  await openCacheFilesOnCurrentHost(ns, dnet, reportPort, cacheOpens)
 }
 
 async function runOneCrawlPass(
   ns: NS,
   reportPort: number,
   remainingDepth: number,
-  intervalMs: number,
-  dnet: DarknetCrawlApi
+  dnet: DarknetCrawlApi,
+  passwordCache: Map<string, string>,
+  waitForChildren: boolean
 ): Promise<void> {
-  const passwordCache = loadLocalPasswordCache(ns)
   const hostname = ns.getHostname()
 
   await ensureSessionOnSelf(ns, dnet, passwordCache)
@@ -1588,7 +1563,7 @@ async function runOneCrawlPass(
   })
 
   if (dnet.getServerDetails(hostname).hasSession) {
-    await archiveServerFiles(ns, dnet, hostname, reportPort)
+    await archiveLocalServerFiles(ns, dnet, reportPort)
   }
 
   if (remainingDepth <= 0) {
@@ -1596,7 +1571,6 @@ async function runOneCrawlPass(
   }
 
   const childPids: number[] = []
-  const continuous = intervalMs > 0
 
   writeCrawlStatus(ns, reportPort, {
     workerHost: hostname,
@@ -1614,6 +1588,9 @@ async function runOneCrawlPass(
       neighbor,
       passwordCache.get(neighbor) ?? null
     )
+    if (auth.password != null) {
+      passwordCache.set(neighbor, auth.password)
+    }
     writeCrawlReport(ns, reportPort, {
       hostname: neighbor,
       parentHost: hostname,
@@ -1622,11 +1599,12 @@ async function runOneCrawlPass(
       authGuesses: auth.authGuesses,
     })
 
-    if (dnet.getServerDetails(neighbor).hasSession) {
-      await archiveServerFiles(ns, dnet, neighbor, reportPort)
+    if (!dnet.getServerDetails(neighbor).hasSession) {
+      continue
     }
 
-    if (!dnet.getServerDetails(neighbor).hasSession || remainingDepth <= 1) {
+    const childDepth = remainingDepth - 1
+    if (childDepth < 0) {
       continue
     }
 
@@ -1635,28 +1613,23 @@ async function runOneCrawlPass(
       targetHost: neighbor,
       phase: "spawn",
       etaMs: 0,
-      detail: `depth ${remainingDepth - 1}`,
+      detail: childDepth === 0 ? "archive" : `depth ${childDepth}`,
     })
 
-    if (continuous) {
-      await ensureCrawlWorkerOnHost(ns, neighbor, remainingDepth - 1, intervalMs, hostname)
-    } else {
-      await copyCrawlAssets(ns, neighbor, hostname)
-      const pid = ns.exec(
-        DARKNET_CRAWL_SCRIPT,
-        neighbor,
-        1,
-        WORKER_MODE_ARG,
-        reportPort,
-        remainingDepth - 1
-      )
-      if (pid > 0) {
-        childPids.push(pid)
-      }
+    const pid = await spawnCrawlWorkerOnHost(
+      ns,
+      neighbor,
+      childDepth,
+      passwordCache,
+      hostname,
+      waitForChildren
+    )
+    if (pid > 0 && waitForChildren) {
+      childPids.push(pid)
     }
   }
 
-  if (!continuous && childPids.length > 0) {
+  if (waitForChildren && childPids.length > 0) {
     writeCrawlStatus(ns, reportPort, {
       workerHost: hostname,
       targetHost: hostname,
@@ -1671,7 +1644,7 @@ async function runOneCrawlPass(
 async function runCrawlWorker(ns: NS): Promise<void> {
   const reportPort = Number(ns.args[1])
   const remainingDepth = Number(ns.args[2])
-  const intervalMs = Number(ns.args[3] ?? 0)
+  const waitForChildren = Number(ns.args[3]) === 1
   if (!Number.isInteger(reportPort) || reportPort <= 0 || !Number.isInteger(remainingDepth)) {
     return
   }
@@ -1681,17 +1654,11 @@ async function runCrawlWorker(ns: NS): Promise<void> {
     return
   }
 
-  if (intervalMs > 0) {
-    while (true) {
-      await runOneCrawlPass(ns, reportPort, remainingDepth, intervalMs, dnet)
-      if (ns.getHostname() === DARKWEB) {
-        writeCrawlCycleComplete(ns, reportPort)
-      }
-      await ns.sleep(intervalMs)
-    }
+  const passwordCache = loadWorkerPasswordCache(ns)
+  await runOneCrawlPass(ns, reportPort, remainingDepth, dnet, passwordCache, waitForChildren)
+  if (ns.getHostname() === DARKWEB) {
+    writeCrawlCycleComplete(ns, reportPort)
   }
-
-  await runOneCrawlPass(ns, reportPort, remainingDepth, intervalMs, dnet)
 }
 
 // --- crawl-master ---
@@ -1813,12 +1780,8 @@ function applyCrawlPortMessage(
       finalizeArchiveContent(ns, cacheOpen.file, cacheOpen.message)
       return
     }
-    if (row.type === "archive" && typeof row.file === "string") {
-      if (typeof row.content === "string") {
-        finalizeArchiveContent(ns, row.file, row.content)
-      } else {
-        finalizeArchiveFile(ns, row.file)
-      }
+    if (row.type === "archive" && typeof row.file === "string" && typeof row.content === "string") {
+      finalizeArchiveContent(ns, row.file, row.content)
       return
     }
     const status = parseCrawlStatus(row)
@@ -1923,65 +1886,34 @@ async function authenticateDarkwebEntry(
   }
 }
 
-async function copyCrawlRegistry(ns: NS, target: string, source: string): Promise<void> {
-  if (ns.fileExists(DARKNET_REGISTRY_FILE, source)) {
-    await ns.scp(DARKNET_REGISTRY_FILE, target, source)
-  }
-}
-
-function findCrawlWorkerPid(
+async function launchDarkwebCrawlWorker(
   ns: NS,
-  host: string,
-  remainingDepth: number,
-  intervalMs: number
-): number {
-  for (const proc of ns.ps(host)) {
-    if (!proc.filename.endsWith(DARKNET_CRAWL_SCRIPT)) {
-      continue
-    }
-    const args = proc.args
-    if (args[0] !== WORKER_MODE_ARG) {
-      continue
-    }
-    if (Number(args[1]) !== CRAWL_REPORT_PORT) {
-      continue
-    }
-    if (Number(args[2]) !== remainingDepth) {
-      continue
-    }
-    if (Number(args[3] ?? 0) !== intervalMs) {
-      continue
-    }
-    return proc.pid
-  }
-  return 0
-}
-
-function crawlWorkerArgs(remainingDepth: number, intervalMs: number): (string | number)[] {
-  return intervalMs > 0
-    ? [WORKER_MODE_ARG, CRAWL_REPORT_PORT, remainingDepth, intervalMs]
-    : [WORKER_MODE_ARG, CRAWL_REPORT_PORT, remainingDepth]
-}
-
-async function ensureCrawlWorkerOnHost(
-  ns: NS,
-  host: string,
-  remainingDepth: number,
-  intervalMs: number,
-  assetSource: string
-): Promise<void> {
-  if (findCrawlWorkerPid(ns, host, remainingDepth, intervalMs) > 0) {
-    await copyCrawlRegistry(ns, host, assetSource)
-    return
-  }
-
-  await copyCrawlAssets(ns, host, assetSource)
-  const workerRam = ns.getScriptRam(DARKNET_CRAWL_SCRIPT, host)
-  const freeRam = ns.getServerMaxRam(host) - ns.getServerUsedRam(host)
+  source: string,
+  maxDepth: number,
+  registry: DarknetRegistry | undefined,
+  waitForChildren: boolean
+): Promise<number> {
+  await copyCrawlScript(ns, DARKWEB, source)
+  const registryJson = registry
+    ? serializePasswordMap(registryToPasswordMap(registry))
+    : "{}"
+  const workerRam = ns.getScriptRam(DARKNET_CRAWL_SCRIPT, DARKWEB)
+  const freeRam = ns.getServerMaxRam(DARKWEB) - ns.getServerUsedRam(DARKWEB)
   if (workerRam > freeRam) {
-    return
+    throw new Error(
+      `Not enough RAM on ${DARKWEB} for ${DARKNET_CRAWL_SCRIPT} (need ${ns.format.ram(workerRam)}, free ${ns.format.ram(freeRam)})`
+    )
   }
-  ns.exec(DARKNET_CRAWL_SCRIPT, host, 1, ...crawlWorkerArgs(remainingDepth, intervalMs))
+  const pid = ns.exec(
+    DARKNET_CRAWL_SCRIPT,
+    DARKWEB,
+    1,
+    ...crawlWorkerArgs(maxDepth, registryJson, waitForChildren)
+  )
+  if (pid === 0) {
+    throw new Error(`Could not exec ${DARKNET_CRAWL_SCRIPT} on ${DARKWEB}`)
+  }
+  return pid
 }
 
 async function ensureSessionOnSelf(
@@ -2061,22 +1993,9 @@ export async function runDarknetCrawl(
   await killAllCrawlWorkers(ns, dnet, registry)
   await ns.sleep(5000)
 
-  await copyCrawlAssets(ns, DARKWEB, source)
   ns.clearPort(CRAWL_REPORT_PORT)
 
-  const workerArgs = crawlWorkerArgs(maxDepth, intervalMs)
-  const workerRam = ns.getScriptRam(DARKNET_CRAWL_SCRIPT, DARKWEB)
-  const freeRam = ns.getServerMaxRam(DARKWEB) - ns.getServerUsedRam(DARKWEB)
-  if (workerRam > freeRam) {
-    throw new Error(
-      `Not enough RAM on ${DARKWEB} for ${DARKNET_CRAWL_SCRIPT} (need ${ns.format.ram(workerRam)}, free ${ns.format.ram(freeRam)})`
-    )
-  }
-
-  const pid = ns.exec(DARKNET_CRAWL_SCRIPT, DARKWEB, 1, ...workerArgs)
-  if (pid === 0) {
-    throw new Error(`Could not exec ${DARKNET_CRAWL_SCRIPT} on ${DARKWEB}`)
-  }
+  let pid = await launchDarkwebCrawlWorker(ns, source, maxDepth, registry, !continuous)
 
   const reports = new Map<string, CrawlHostReport>()
   const activeOps = new Map<string, CrawlStatusReport>()
@@ -2111,11 +2030,13 @@ export async function runDarknetCrawl(
         }
         if (registry) {
           saveDarknetRegistry(ns, registry)
-          await copyCrawlRegistry(ns, DARKWEB, source)
         }
         reports.clear()
         activeOps.clear()
         cacheOpens.length = 0
+        await killAllCrawlWorkers(ns, dnet, registry)
+        await ns.sleep(intervalMs)
+        pid = await launchDarkwebCrawlWorker(ns, source, maxDepth, registry, false)
       }
       await emitProgress(true)
       if (!ns.isRunning(pid)) {
@@ -2137,22 +2058,10 @@ export async function runDarknetCrawl(
   return { reports, cacheOpens }
 }
 
-async function runOpenCachesWorker(ns: NS): Promise<void> {
-  const reportPort = Number(ns.args[1])
-  const dnet = (ns as NS & { dnet?: DarknetCrawlApi }).dnet
-  if (!dnet) {
-    return
-  }
-  const port = Number.isInteger(reportPort) && reportPort > 0 ? reportPort : undefined
-  await openCacheFilesOnCurrentHost(ns, dnet, port)
-}
-
 // --- entry ---
 
 export async function main(ns: NS): Promise<void> {
   if (ns.args[0] === WORKER_MODE_ARG) {
     await runCrawlWorker(ns)
-  } else if (ns.args[0] === OPEN_CACHES_MODE_ARG) {
-    await runOpenCachesWorker(ns)
   }
 }
