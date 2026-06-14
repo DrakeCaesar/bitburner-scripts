@@ -1,27 +1,17 @@
 /* eslint-env node */
-import { existsSync } from "fs"
 import { defineConfig } from "viteburner"
 import { resolve } from "path"
 
-const repoRoot = __dirname
-
-/** True for files managed in src/ and pushed to home (not downloaded). */
-function isPushedScriptFile(file: string): boolean {
-  const normalized = file.replace(/\\/g, "/").replace(/^\/+/, "")
-  const lower = normalized.toLowerCase()
-  if (lower.endsWith(".js") || lower.endsWith(".script")) {
-    return true
-  }
-  if (lower.endsWith(".txt") && existsSync(resolve(repoRoot, "src", normalized))) {
-    return true
-  }
-  return false
+/** Game scripts pushed from src/ — do not download back into data/. */
+function isGameScriptFile(file: string): boolean {
+  const lower = file.replace(/\\/g, "/").replace(/^\/+/, "").toLowerCase()
+  return lower.endsWith(".js") || lower.endsWith(".script")
 }
 
-/** Map home files to data/; skip scripts that live in src/. */
+/** Map home files to data/; skip .js/.script only. */
 function homeDownloadLocation(file: string, _server: string): string | null {
   const normalized = file.replace(/\\/g, "/").replace(/^\/+/, "")
-  if (isPushedScriptFile(normalized)) {
+  if (isGameScriptFile(normalized)) {
     return null
   }
   return `data/${normalized}`

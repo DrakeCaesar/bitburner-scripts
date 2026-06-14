@@ -1,4 +1,9 @@
 import { NS } from "@ns"
+import {
+  darkwebHostDigitPool,
+  darkwebPasswordCandidates,
+  mergeDarkwebDigitPools,
+} from "./libraries/darkwebPasswordIntel.js"
 
 // --- config ---
 
@@ -12,6 +17,8 @@ const OPEN_CACHES_MODE_ARG = "openCaches"
 export const DARKWEB = "darkweb"
 /** Flat archive folder on home for copied darknet .txt files and opened .cache rewards. */
 export const DARKWEB_ARCHIVE_DIR = "darkweb"
+/** Temp copy on a crawl worker while reading a remote file (never left on home). */
+const ARCHIVE_STAGING_DIR = "_crawl_archive"
 
 // --- types ---
 
@@ -456,12 +463,12 @@ function isPhp54Model(details: ReturnType<DarknetCrawlApi["getServerDetails"]>):
   return details.modelId === PHP54_MODEL && details.passwordFormat === "numeric"
 }
 
-function php54NumericCandidates(hint: string, length: number): string[] {
-  const numerals = hint.replace(/\D/g, "")
-  if (numerals.length < length) {
+function php54NumericCandidates(host: string, hint: string, length: number): string[] {
+  const pool = mergeDarkwebDigitPools(darkwebHostDigitPool(host) ?? "", hint)
+  if (pool.length < length) {
     return []
   }
-  return permutationsFromDigitPool(numerals, length)
+  return permutationsFromDigitPool(pool, length)
 }
 
 const ACCOUNTS_MANAGER_MODEL = "AccountsManager_4.2"
@@ -1049,6 +1056,28 @@ async function authenticateCandidates(
   }
 }
 
+async function tryDarkwebArchivePasswords(
+  ns: NS,
+  port: number,
+  dnet: DarknetCrawlApi,
+  host: string,
+  details: ReturnType<DarknetCrawlApi["getServerDetails"]>
+): Promise<{ password: string | null; authenticated: boolean; authGuesses: number } | null> {
+  const candidates = darkwebPasswordCandidates(details.passwordLength, details.passwordFormat)
+  if (candidates.length === 0) {
+    return null
+  }
+  const auth = await authenticateCandidates(ns, port, dnet, host, candidates)
+  if (!auth.authenticated && auth.password === null) {
+    return null
+  }
+  return {
+    password: auth.password,
+    authenticated: auth.authenticated,
+    authGuesses: auth.authGuesses,
+  }
+}
+
 async function tryAuthNeighbor(
   ns: NS,
   port: number,
@@ -1093,7 +1122,7 @@ async function tryAuthNeighbor(
   }
 
   if (isPhp54Model(details)) {
-    const candidates = php54NumericCandidates(details.passwordHint, details.passwordLength)
+    const candidates = php54NumericCandidates(neighbor, details.passwordHint, details.passwordLength)
     if (candidates.length === 0) {
       return { password: null, authenticated: null, authGuesses: null }
     }
@@ -1116,6 +1145,15 @@ async function tryAuthNeighbor(
   }
 
   if (isDeepGreenModel(details)) {
+    const archiveAuth = await tryDarkwebArchivePasswords(ns, port, dnet, neighbor, details)
+    if (archiveAuth?.authenticated) {
+      return {
+        password: archiveAuth.password,
+        authenticated: true,
+        authGuesses: archiveAuth.authGuesses,
+      }
+    }
+
     const scrapedLogs = await scrapeHeartbleedLogs(ns, port, dnet, neighbor)
     const logCandidates = deepGreenLogPermutationCandidates(
       scrapedLogs,
@@ -1151,6 +1189,15 @@ async function tryAuthNeighbor(
   if (password !== null) {
     const result = await authenticateWithStatus(ns, port, dnet, neighbor, password, null, 1)
     return { password, authenticated: result.success, authGuesses: 1 }
+  }
+
+  const archiveAuth = await tryDarkwebArchivePasswords(ns, port, dnet, neighbor, details)
+  if (archiveAuth != null) {
+    return {
+      password: archiveAuth.password,
+      authenticated: archiveAuth.authenticated ? true : archiveAuth.password !== null ? false : null,
+      authGuesses: archiveAuth.authGuesses,
+    }
   }
 
   return { password: null, authenticated: null, authGuesses: null }
@@ -1197,26 +1244,47 @@ function flatFileName(fileName: string): string {
 
 function archiveDestPath(fileName: string, suffix: number | null): string {
   const base = flatFileName(fileName)
+  if (suffix === null) {
+    return `${DARKWEB_ARCHIVE_DIR}/${base}`
+  }
   const dot = base.lastIndexOf(".")
   if (dot <= 0) {
-    return suffix === null ? `${DARKWEB_ARCHIVE_DIR}/${base}` : `${DARKWEB_ARCHIVE_DIR}/${base} (${suffix})`
+    return `${DARKWEB_ARCHIVE_DIR}/${base}.${suffix}`
   }
   const stem = base.slice(0, dot)
   const ext = base.slice(dot)
-  return suffix === null
-    ? `${DARKWEB_ARCHIVE_DIR}/${base}`
-    : `${DARKWEB_ARCHIVE_DIR}/${stem} (${suffix})${ext}`
+  return `${DARKWEB_ARCHIVE_DIR}/${stem}.${suffix}${ext}`
+}
+
+function listArchivePaths(ns: NS, fileName: string): string[] {
+  const paths: string[] = []
+  const basePath = archiveDestPath(fileName, null)
+  if (ns.fileExists(basePath, "home")) {
+    paths.push(basePath)
+  }
+  let suffix = 1
+  while (true) {
+    const path = archiveDestPath(fileName, suffix)
+    if (!ns.fileExists(path, "home")) {
+      break
+    }
+    paths.push(path)
+    suffix++
+  }
+  return paths
 }
 
 function resolveArchiveWritePath(ns: NS, fileName: string, content: string): string | null {
+  for (const path of listArchivePaths(ns, fileName)) {
+    if (ns.read(path) === content) {
+      return null
+    }
+  }
   let suffix: number | null = null
   while (true) {
     const path = archiveDestPath(fileName, suffix)
     if (!ns.fileExists(path, "home")) {
       return path
-    }
-    if (ns.read(path) === content) {
-      return null
     }
     suffix = suffix === null ? 1 : suffix + 1
   }
@@ -1230,6 +1298,28 @@ function finalizeArchiveContent(ns: NS, fileName: string, content: string): void
   ns.write(destPath, content, "w")
 }
 
+/** Read file bytes on sourceHost; remote reads use a temp copy on the worker, not home. */
+function readFileFromHost(ns: NS, file: string, sourceHost: string): string | null {
+  const workerHost = ns.getHostname()
+  try {
+    if (workerHost === sourceHost) {
+      return ns.fileExists(file) ? ns.read(file) : null
+    }
+    const staging = `${ARCHIVE_STAGING_DIR}/${flatFileName(file)}`
+    if (!ns.scp(file, workerHost, sourceHost)) {
+      return null
+    }
+    if (!ns.fileExists(staging)) {
+      return null
+    }
+    const content = ns.read(staging)
+    ns.rm(staging)
+    return content
+  } catch {
+    return null
+  }
+}
+
 function finalizeArchiveFile(ns: NS, fileName: string): void {
   if (!ns.fileExists(fileName, "home")) {
     return
@@ -1239,15 +1329,19 @@ function finalizeArchiveFile(ns: NS, fileName: string): void {
   finalizeArchiveContent(ns, fileName, content)
 }
 
-function queueArchiveFile(
+function queueArchiveContent(
   ns: NS,
   fileName: string,
+  content: string,
   reportPort: number | undefined
 ): void {
+  const base = flatFileName(fileName)
   if (ns.getHostname() === "home") {
-    finalizeArchiveFile(ns, fileName)
-  } else if (reportPort != null && reportPort > 0) {
-    ns.writePort(reportPort, JSON.stringify({ type: "archive", file: flatFileName(fileName) }))
+    finalizeArchiveContent(ns, base, content)
+    return
+  }
+  if (reportPort != null && reportPort > 0) {
+    ns.writePort(reportPort, JSON.stringify({ type: "archive", file: base, content }))
   }
 }
 
@@ -1336,28 +1430,18 @@ async function archiveServerFiles(
     return
   }
 
-  const onHome = ns.getHostname() === "home"
   const onSource = ns.getHostname() === sourceHost
 
   for (const file of files) {
     const base = flatFileName(file)
-    if (isLiteratureFile(file)) {
-      if (!ns.fileExists(base, "home")) {
-        ns.scp(file, "home", sourceHost)
-      }
+    if (!isLiteratureFile(file) && !isArchivableTextFile(file)) {
       continue
     }
-    if (!isArchivableTextFile(file)) {
+    const content = readFileFromHost(ns, file, sourceHost)
+    if (content === null) {
       continue
     }
-    if (!ns.scp(file, "home", sourceHost)) {
-      continue
-    }
-    if (onHome) {
-      finalizeArchiveFile(ns, base)
-    } else if (reportPort != null) {
-      queueArchiveFile(ns, base, reportPort)
-    }
+    queueArchiveContent(ns, base, content, reportPort)
   }
 
   if (onSource) {
@@ -1612,7 +1696,11 @@ function applyCrawlPortMessage(
       return
     }
     if (row.type === "archive" && typeof row.file === "string") {
-      finalizeArchiveFile(ns, row.file)
+      if (typeof row.content === "string") {
+        finalizeArchiveContent(ns, row.file, row.content)
+      } else {
+        finalizeArchiveFile(ns, row.file)
+      }
       return
     }
     const status = parseCrawlStatus(row)
