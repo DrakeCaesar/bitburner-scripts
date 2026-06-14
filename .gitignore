@@ -31,8 +31,10 @@ build/Debug/
 # MacOS folder attributes
 .DS_Store
 
-# Netscript definitions is pulled automatically
-NetscriptDefinitions.d.ts
+# Game save data pulled from home (registry, darkweb archive, etc.)
+/data/*
+!/data/.gitkeep
+
 NetScriptDefinitions.d.ts
 
 # https://github.com/github/gitignore/blob/main/Node.gitignore

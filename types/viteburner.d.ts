@@ -4,7 +4,13 @@ declare module "viteburner" {
       pattern: string
       transform?: boolean
     }>
-    sourcemap?: string
+    sourcemap?: string | boolean
+    download?: {
+      server?: string | string[]
+      location?: (file: string, server: string) => string | null | undefined
+      ignoreTs?: boolean
+      ignoreSourcemap?: boolean
+    }
   }
 
   export interface Config {

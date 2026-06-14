@@ -1,6 +1,31 @@
 /* eslint-env node */
+import { existsSync } from "fs"
 import { defineConfig } from "viteburner"
 import { resolve } from "path"
+
+const repoRoot = __dirname
+
+/** True for files managed in src/ and pushed to home (not downloaded). */
+function isPushedScriptFile(file: string): boolean {
+  const normalized = file.replace(/\\/g, "/").replace(/^\/+/, "")
+  const lower = normalized.toLowerCase()
+  if (lower.endsWith(".js") || lower.endsWith(".script")) {
+    return true
+  }
+  if (lower.endsWith(".txt") && existsSync(resolve(repoRoot, "src", normalized))) {
+    return true
+  }
+  return false
+}
+
+/** Map home files to data/; skip scripts that live in src/. */
+function homeDownloadLocation(file: string, _server: string): string | null {
+  const normalized = file.replace(/\\/g, "/").replace(/^\/+/, "")
+  if (isPushedScriptFile(normalized)) {
+    return null
+  }
+  return `data/${normalized}`
+}
 
 /** Rewrite /src/libraries/*.ts paths to /libraries/*.js for Bitburner home. */
 function rewriteGameImportPaths(code: string): string {
@@ -55,5 +80,9 @@ export default defineConfig({
       { pattern: "src/**/*.{script,txt}" },
     ],
     sourcemap: false,
+    download: {
+      server: "home",
+      location: homeDownloadLocation,
+    },
   },
 })
