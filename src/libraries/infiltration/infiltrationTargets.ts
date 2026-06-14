@@ -102,9 +102,9 @@ export function isInfiltrationDebugMode(ns: NS): boolean {
 
 /**
  * Infiltration reward order:
- * 1. Pre-favor augment rep, then cash for those augments
+ * 1. Pre-favor augment rep, then cash for that augment (repeat per augment in purchase order)
  * 2. Donation favor rep (factions with unowned post-favor augments only)
- * 3. Post-favor augment rep, then cash for those augments
+ * 3. Post-favor augment rep, then cash for that augment (repeat per augment in purchase order)
  * 4. NeuroFlux Governor rep, then cash for the next level
  */
 export function getInfiltrationRewardGoal(ns: NS): InfiltrationRewardGoal {

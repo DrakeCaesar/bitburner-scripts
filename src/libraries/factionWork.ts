@@ -1,6 +1,6 @@
 import { FactionName, FactionWorkType, NS } from "@ns"
 import {
-  buildAffordablePurchasePlan,
+  AUGMENT_QUEUE_PRICE_MULT,
   filterAugmentPurchaseFactions,
   getAugmentCatalog,
   getAugmentData,
@@ -9,6 +9,7 @@ import {
   getOwnedAugmentationNames,
   isAugmentPurchaseExcludedFaction,
   isNeuroFluxAugment,
+  sortAugmentsForPurchase,
   type AugmentInfo,
 } from "./augmentations.js"
 import { col, W, type ReactTableConfig } from "./scriptLogUiLayout.js"
@@ -353,24 +354,76 @@ function augmentInBucket(aug: AugmentInfo, repForDonation: number, bucket: Infil
   return bucket === "pre-favor" ? aug.repReq < repForDonation : aug.repReq >= repForDonation
 }
 
-function needsMoneyForAugmentBucket(
+function augmentMeetsRep(aug: AugmentInfo, factionReps: Map<string, number>): boolean {
+  return aug.factions.some((faction) => (factionReps.get(faction) ?? 0) >= aug.repReq)
+}
+
+function getPendingAugmentsInBucket(
   ns: NS,
   purchaseFactions: readonly FactionName[],
   bucket: InfiltrationAugmentBucket
-): boolean {
+): AugmentInfo[] {
   const repForDonation = repForTargetFavor(ns)
-  const { allAugs, factionReps, playerMoney } = getAugmentData(ns, [...purchaseFactions])
-  const pending = allAugs.filter(
+  const { allAugs } = getAugmentData(ns, [...purchaseFactions])
+  return allAugs.filter(
     (aug) => augmentInBucket(aug, repForDonation, bucket) && isPurchasePlannedAugment(aug)
   )
-  if (pending.length === 0) return false
+}
 
-  const repQualified = pending.filter((aug) =>
-    aug.factions.some((faction) => (factionReps.get(faction) ?? 0) >= aug.repReq)
-  )
-  if (repQualified.length === 0) return false
+type BucketGrindNeed = "rep" | "money"
 
-  return buildAffordablePurchasePlan(repQualified, playerMoney).skippedHasRep.length > 0
+/** Next unowned augment in purchase order that still needs infiltration rep or money. */
+function getBucketGrindHead(
+  ns: NS,
+  purchaseFactions: readonly FactionName[],
+  bucket: InfiltrationAugmentBucket
+): { aug: AugmentInfo; need: BucketGrindNeed } | null {
+  const pending = getPendingAugmentsInBucket(ns, purchaseFactions, bucket)
+  if (pending.length === 0) return null
+
+  const { factionReps, playerMoney } = getAugmentData(ns, [...purchaseFactions])
+  for (const aug of sortAugmentsForPurchase(pending)) {
+    if (!augmentMeetsRep(aug, factionReps)) return { aug, need: "rep" }
+    const adjustedPrice = aug.price * Math.pow(AUGMENT_QUEUE_PRICE_MULT, 0)
+    if (playerMoney < adjustedPrice) return { aug, need: "money" }
+  }
+
+  return null
+}
+
+function buildInfiltrationTargetForAugment(
+  ns: NS,
+  aug: AugmentInfo,
+  workableFactions: readonly FactionName[],
+  tier: InfiltrationRepTier
+): InfiltrationGrindTarget | null {
+  let best: InfiltrationGrindTarget | null = null
+
+  for (const faction of aug.factions) {
+    if (!workableFactions.includes(faction)) continue
+    if (!factionOffersWork(ns, faction)) continue
+
+    const currentRep = ns.singularity.getFactionRep(faction)
+    if (currentRep >= aug.repReq) continue
+
+    const favor = ns.singularity.getFactionFavor(faction)
+    const favorGain = ns.singularity.getFactionFavorGain(faction)
+    const target: InfiltrationGrindTarget = {
+      augmentName: aug.name,
+      faction,
+      currentRep,
+      requiredRep: aug.repReq,
+      repGap: aug.repReq - currentRep,
+      favor,
+      favorGain,
+      predictedFavor: favor + favorGain,
+      tier,
+    }
+
+    if (!best || target.repGap < best.repGap) best = target
+  }
+
+  return best
 }
 
 /** Unowned augments from this faction that need rep at or above the donation-favor threshold. */
@@ -417,14 +470,11 @@ function isRegularAugmentPipelineComplete(
   workableFactions: readonly FactionName[],
   purchaseFactions: readonly FactionName[],
   targetFavor: number,
-  repForDonation: number,
-  repTargets: AugmentTarget[]
+  repForDonation: number
 ): boolean {
-  if (repTargets.some((target) => target.requiredRep < repForDonation)) return false
-  if (needsMoneyForAugmentBucket(ns, purchaseFactions, "pre-favor")) return false
+  if (getPendingAugmentsInBucket(ns, purchaseFactions, "pre-favor").length > 0) return false
   if (hasPendingFavorGrind(ns, workableFactions, targetFavor, repForDonation)) return false
-  if (repTargets.some((target) => target.requiredRep >= repForDonation)) return false
-  if (needsMoneyForAugmentBucket(ns, purchaseFactions, "post-favor")) return false
+  if (getPendingAugmentsInBucket(ns, purchaseFactions, "post-favor").length > 0) return false
   return true
 }
 
@@ -479,18 +529,19 @@ export function getInfiltrationMoneyTier(
   const purchaseFactions = getInfiltrationPurchaseFactions(ns)
   const targetFavor = getTargetFavor(ns)
   const repForDonation = repForTargetFavor(ns, targetFavor)
-  const all = gatherAugmentTargets(ns, workableFactions)
   const neuroFluxGrindFactions = infiltrationNeuroFluxGrindFactions(workableFactions, purchaseFactions)
 
-  const preFavorRepPending = all.some((target) => target.requiredRep < repForDonation)
-  if (preFavorRepPending) return null
-  if (needsMoneyForAugmentBucket(ns, purchaseFactions, "pre-favor")) return "pre-favor-aug"
+  const preFavorHead = getBucketGrindHead(ns, purchaseFactions, "pre-favor")
+  if (preFavorHead?.need === "rep") return null
+  if (preFavorHead?.need === "money") return "pre-favor-aug"
+  if (getPendingAugmentsInBucket(ns, purchaseFactions, "pre-favor").length > 0) return null
 
   if (hasPendingFavorGrind(ns, workableFactions, targetFavor, repForDonation)) return null
 
-  const postFavorRepPending = all.some((target) => target.requiredRep >= repForDonation)
-  if (postFavorRepPending) return null
-  if (needsMoneyForAugmentBucket(ns, purchaseFactions, "post-favor")) return "post-favor-aug"
+  const postFavorHead = getBucketGrindHead(ns, purchaseFactions, "post-favor")
+  if (postFavorHead?.need === "rep") return null
+  if (postFavorHead?.need === "money") return "post-favor-aug"
+  if (getPendingAugmentsInBucket(ns, purchaseFactions, "post-favor").length > 0) return null
 
   if (
     isRegularAugmentPipelineComplete(
@@ -498,8 +549,7 @@ export function getInfiltrationMoneyTier(
       workableFactions,
       purchaseFactions,
       targetFavor,
-      repForDonation,
-      all
+      repForDonation
     ) &&
     getNextNeuroFluxLevel(ns, purchaseFactions, neuroFluxGrindFactions)?.need === "money"
   ) {
@@ -529,12 +579,10 @@ export function needsInfiltrationMoneyForAugments(
 
 /**
  * Infiltration grind order:
- * 1. Pre-favor augments (rep below donation threshold) - reputation
- * 2. Pre-favor augments - money
- * 3. Donation favor (factions with unowned post-favor augments only) - reputation
- * 4. Post-favor augments - reputation
- * 5. Post-favor augments - money
- * 6. NeuroFlux Governor - reputation, then money
+ * 1. Pre-favor augments - rep then money for each augment in purchase order
+ * 2. Donation favor (factions with unowned post-favor augments only) - reputation
+ * 3. Post-favor augments - rep then money for each augment in purchase order
+ * 4. NeuroFlux Governor - reputation, then money
  */
 export function prioritizeInfiltrationRepTargets(
   ns: NS,
@@ -544,15 +592,23 @@ export function prioritizeInfiltrationRepTargets(
   const neuroFluxGrindFactions = infiltrationNeuroFluxGrindFactions(workableFactions, purchaseFactions)
   const targetFavor = getTargetFavor(ns)
   const repForDonation = repForTargetFavor(ns, targetFavor)
-  const all = gatherAugmentTargets(ns, workableFactions)
 
-  const preFavorRep = all
-    .filter((target) => target.requiredRep < repForDonation)
-    .sort((a, b) => a.repGap - b.repGap)
-    .map((target) => ({ ...target, tier: "pre-favor-aug" as const }))
-  if (preFavorRep.length > 0) return preFavorRep
-
-  if (needsMoneyForAugmentBucket(ns, purchaseFactions, "pre-favor")) return []
+  const preFavorHead = getBucketGrindHead(ns, purchaseFactions, "pre-favor")
+  if (preFavorHead?.need === "rep") {
+    const target = buildInfiltrationTargetForAugment(
+      ns,
+      preFavorHead.aug,
+      workableFactions,
+      "pre-favor-aug"
+    )
+    if (target) return [target]
+  }
+  if (
+    preFavorHead?.need === "money" ||
+    getPendingAugmentsInBucket(ns, purchaseFactions, "pre-favor").length > 0
+  ) {
+    return []
+  }
 
   const favorTargets: InfiltrationGrindTarget[] = []
   for (const faction of workableFactions) {
@@ -566,13 +622,22 @@ export function prioritizeInfiltrationRepTargets(
   favorTargets.sort((a, b) => targetFavor - a.predictedFavor - (targetFavor - b.predictedFavor))
   if (favorTargets.length > 0) return favorTargets
 
-  const postFavorRep = all
-    .filter((target) => target.requiredRep >= repForDonation)
-    .sort((a, b) => a.repGap - b.repGap)
-    .map((target) => ({ ...target, tier: "post-favor-aug" as const }))
-  if (postFavorRep.length > 0) return postFavorRep
-
-  if (needsMoneyForAugmentBucket(ns, purchaseFactions, "post-favor")) return []
+  const postFavorHead = getBucketGrindHead(ns, purchaseFactions, "post-favor")
+  if (postFavorHead?.need === "rep") {
+    const target = buildInfiltrationTargetForAugment(
+      ns,
+      postFavorHead.aug,
+      workableFactions,
+      "post-favor-aug"
+    )
+    if (target) return [target]
+  }
+  if (
+    postFavorHead?.need === "money" ||
+    getPendingAugmentsInBucket(ns, purchaseFactions, "post-favor").length > 0
+  ) {
+    return []
+  }
 
   if (
     !isRegularAugmentPipelineComplete(
@@ -580,8 +645,7 @@ export function prioritizeInfiltrationRepTargets(
       workableFactions,
       purchaseFactions,
       targetFavor,
-      repForDonation,
-      all
+      repForDonation
     )
   ) {
     return []
