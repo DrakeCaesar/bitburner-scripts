@@ -15,10 +15,10 @@ const MAX_CACHE_LEVEL = 15
 /** Spend caps scale with hash/s: aggressive early, conservative on production at high rates. */
 function getSpendCapFractions(hashRate: number): Pick<HacknetConfig, "spendCapFraction" | "cacheCapFraction"> {
   if (hashRate < 10) {
-    return { spendCapFraction: 0.1, cacheCapFraction: 0.001 }
+    return { spendCapFraction: 0.01, cacheCapFraction: 0.001 }
   }
   if (hashRate < 20) {
-    return { spendCapFraction: 0.1, cacheCapFraction: 0.1 }
+    return { spendCapFraction: 0.01, cacheCapFraction: 0.01 }
   }
   if (hashRate < 30) {
     return { spendCapFraction: 0.01, cacheCapFraction: 0.01 }
