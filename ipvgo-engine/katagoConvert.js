@@ -5,8 +5,11 @@ const ROOT_MOVE_DEPTH = 1
 /** Ply depth for permanent blocked-node prohibition (both players). */
 const BLOCKED_NODE_DEPTH = 999
 
-/** Experimental: show # as opponent stones in KataGo initialStones (we play Black). */
-const PHANTOM_OPPONENT_ON_BLOCKED = true
+/**
+ * Represent # in initialStones so KataGo does not treat them as empty liberties.
+ * Color is chosen per cell so neither side falsely connects through offline nodes.
+ */
+const PHANTOM_ON_BLOCKED = true
 
 /** API board[x][y], y=0 bottom -> KataGo GTP e.g. C3 */
 export function toGtpCoord(x, y) {
@@ -120,21 +123,60 @@ function kataGoPlayer(playAs) {
   return playAs === "O" ? "W" : "B"
 }
 
+function neighborStoneCounts(board, x, y) {
+  const size = board.length
+  let xCount = 0
+  let oCount = 0
+  const adjacent = [
+    [x, y - 1],
+    [x + 1, y],
+    [x, y + 1],
+    [x - 1, y],
+  ]
+  for (const [nx, ny] of adjacent) {
+    if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue
+    const cell = cellAt(board, nx, ny)
+    if (cell === "X") xCount++
+    else if (cell === "O") oCount++
+  }
+  return { xCount, oCount }
+}
+
+/**
+ * Pick B/W phantom for # so offline nodes are occupied but do not bridge chains.
+ * - Touching only our stones: opponent color (no merge with us).
+ * - Touching only enemy stones: our color (no merge with them).
+ * - Mixed or isolated #: checkerboard so neither color connects across the wall.
+ */
+function phantomStoneColor(board, x, y, playAs) {
+  const { xCount, oCount } = neighborStoneCounts(board, x, y)
+  const weAreBlack = playAs !== "O"
+
+  if (xCount > 0 && oCount === 0) {
+    return weAreBlack ? "W" : "B"
+  }
+  if (oCount > 0 && xCount === 0) {
+    return weAreBlack ? "B" : "W"
+  }
+  return (x + y) % 2 === 0 ? "B" : "W"
+}
+
 /**
  * Current position as KataGo initialStones.
- * When PHANTOM_OPPONENT_ON_BLOCKED, each # is sent as an opponent stone so the net
- * sees occupancy; avoidMoves still bans playing on those intersections.
+ * When PHANTOM_ON_BLOCKED, each # is occupied in the net's view; avoidMoves still
+ * bans playing on those intersections.
  */
 export function boardToInitialStones(board, playAs = "X") {
   const stones = []
-  const phantomOnBlocked = PHANTOM_OPPONENT_ON_BLOCKED ? kataGoPlayer(playAs === "O" ? "X" : "O") : null
   const size = board.length
   for (let x = 0; x < size; x++) {
     for (let y = 0; y < size; y++) {
       const cell = cellAt(board, x, y)
       if (cell === "X") stones.push(["B", toGtpCoord(x, y)])
       else if (cell === "O") stones.push(["W", toGtpCoord(x, y)])
-      else if (cell === "#" && phantomOnBlocked) stones.push([phantomOnBlocked, toGtpCoord(x, y)])
+      else if (cell === "#" && PHANTOM_ON_BLOCKED) {
+        stones.push([phantomStoneColor(board, x, y, playAs), toGtpCoord(x, y)])
+      }
     }
   }
   return stones

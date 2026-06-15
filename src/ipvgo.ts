@@ -44,7 +44,7 @@ import { createTailLog, openTailLog } from "./libraries/scriptLogUiLayout.js"
 const DEFAULT_BOARD_SIZE: IpvgoBoardSize = 7
 const DEFAULT_OPPONENT: GoOpponent = "Netburners"
 const LOOP_SLEEP_MS = 50
-const ENABLE_TACTICAL_MOVES = false
+const ENABLE_TACTICAL_MOVES = true
 const ENABLE_CHEATS = true
 
 function parseOpponent(value: string | undefined): GoOpponent {
