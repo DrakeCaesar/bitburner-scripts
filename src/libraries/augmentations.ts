@@ -185,13 +185,18 @@ function pickNextByChainPrice(available: AugmentInfo[], graph: PurchaseGraph): A
   )
 }
 
-/**
- * Purchase order: prerequisites before dependents, expensive-first by *chain* price.
- * A cheap prereq ranks at max(own price, dependents' prices) so pairs like
- * BrachiBlades + Graphene upgrade stay together and the upgrade does not land
- * in a late 1.9x queue slot.
- */
-export function sortAugmentsForPurchase(augs: AugmentInfo[]): AugmentInfo[] {
+function pickNextByBasePrice(available: AugmentInfo[]): AugmentInfo {
+  return available.reduce((best, aug) =>
+    aug.price > best.price || (aug.price === best.price && aug.name.localeCompare(best.name) < 0)
+      ? aug
+      : best
+  )
+}
+
+function buildTopologicalAugmentQueue(
+  augs: AugmentInfo[],
+  pickNext: (available: AugmentInfo[], graph: PurchaseGraph) => AugmentInfo
+): AugmentInfo[] {
   const graph = buildPurchaseGraph(augs)
   const prereqCount = new Map<string, number>()
   for (const aug of augs) {
@@ -202,10 +207,12 @@ export function sortAugmentsForPurchase(augs: AugmentInfo[]): AugmentInfo[] {
   const result: AugmentInfo[] = []
 
   while (result.length < augs.length) {
-    const available = augs.filter((aug) => !visited.has(aug.name) && (prereqCount.get(aug.name) ?? 0) === 0)
+    const available = augs.filter(
+      (aug) => !visited.has(aug.name) && (prereqCount.get(aug.name) ?? 0) === 0
+    )
     if (available.length === 0) break
 
-    const next = pickNextByChainPrice(available, graph)
+    const next = pickNext(available, graph)
     visited.add(next.name)
     result.push(next)
 
@@ -215,6 +222,51 @@ export function sortAugmentsForPurchase(augs: AugmentInfo[]): AugmentInfo[] {
   }
 
   return result
+}
+
+/**
+ * Purchase order: prerequisites before dependents, expensive-first by *chain* price.
+ * A cheap prereq ranks at max(own price, dependents' prices) so pairs like
+ * BrachiBlades + Graphene upgrade stay together and the upgrade does not land
+ * in a late 1.9x queue slot.
+ */
+export function sortAugmentsForPurchase(augs: AugmentInfo[]): AugmentInfo[] {
+  return buildTopologicalAugmentQueue(augs, (available, graph) =>
+    pickNextByChainPrice(available, graph)
+  )
+}
+
+/**
+ * Infiltration money queue: base price descending (matches augments dashboard order).
+ * Separate from the greedy buy queue in buildAffordablePurchasePlan.
+ */
+export function buildInfiltrationPurchaseQueue(augs: AugmentInfo[]): AugmentInfo[] {
+  return [...augs].sort((a, b) => b.price - a.price || a.name.localeCompare(b.name))
+}
+
+/** Next augment the infiltration price queue cannot afford at its slot. */
+export function getInfiltrationMoneyTargetPlan(
+  repQualified: AugmentInfo[],
+  playerMoney: number
+): { aug: AugmentInfo; targetPrice: number; moneyNeeded: number; queueSlot: number } | null {
+  const queue = buildInfiltrationPurchaseQueue(repQualified)
+  let budget = playerMoney
+
+  for (let slot = 0; slot < queue.length; slot++) {
+    const aug = queue[slot]
+    const targetPrice = aug.price * Math.pow(AUGMENT_QUEUE_PRICE_MULT, slot)
+    if (budget < targetPrice) {
+      return {
+        aug,
+        targetPrice,
+        moneyNeeded: targetPrice - budget,
+        queueSlot: slot + 1,
+      }
+    }
+    budget -= targetPrice
+  }
+
+  return null
 }
 
 /**
@@ -255,46 +307,7 @@ export function buildAffordablePurchasePlan(
   return { affordable: planned, skippedHasRep: [...remaining.values()] }
 }
 
-/** Money grind target at its ideal queue slot, ignoring opportunistic lower-rep greedy buys. */
-export function getInfiltrationMoneyTargetPlan(
-  repQualified: AugmentInfo[],
-  playerMoney: number
-): { aug: AugmentInfo; targetPrice: number; moneyNeeded: number } | null {
-  const { affordable } = buildAffordablePurchasePlan(repQualified, playerMoney)
-  const plannedNames = new Set(affordable.map((aug) => aug.name))
-  const remaining = new Map(
-    repQualified.filter((aug) => !plannedNames.has(aug.name)).map((aug) => [aug.name, aug])
-  )
-  if (remaining.size === 0) return null
-
-  const available = [...remaining.values()].filter((aug) =>
-    aug.prereqs.every((prereq) => plannedNames.has(prereq) || !remaining.has(prereq))
-  )
-  if (available.length === 0) return null
-
-  const graph = buildPurchaseGraph([...remaining.values()])
-  const target = pickNextByChainPrice(available, graph)
-
-  // Greedy affordable buys below target rep are opportunistic and do not consume its slot.
-  const canonical = affordable.filter((aug) => aug.repReq >= target.repReq)
-  const slot = canonical.length
-  const targetPrice = target.price * Math.pow(AUGMENT_QUEUE_PRICE_MULT, slot)
-
-  let budget = playerMoney
-  for (let i = 0; i < canonical.length; i++) {
-    budget -= canonical[i].price * Math.pow(AUGMENT_QUEUE_PRICE_MULT, i)
-  }
-
-  if (budget >= targetPrice) return null
-
-  return {
-    aug: target,
-    targetPrice,
-    moneyNeeded: targetPrice - budget,
-  }
-}
-
-/** Next rep-qualified augment the purchase plan cannot afford at its queue slot. */
+/** Next rep-qualified augment the greedy buy queue cannot afford at its slot. */
 export function getNextUnaffordablePlannedAugment(
   repQualified: AugmentInfo[],
   playerMoney: number

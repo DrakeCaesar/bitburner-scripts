@@ -200,7 +200,9 @@ export function formatInfiltrationRunViewLines(ns: NS, view: InfiltrationRunView
   if (view.rewardGoal === "money") {
     if (view.moneyGoal) {
       lines.push("Grinding: money")
-      lines.push(`Target: ${view.moneyGoal.label} (${formatInfiltrationMoneyTierLabel(view.moneyGoal.tier)})`)
+      lines.push(
+        `Target: ${view.moneyGoal.label} (infiltration queue slot ${view.moneyGoal.queueSlot}, ${formatInfiltrationMoneyTierLabel(view.moneyGoal.tier)})`
+      )
       lines.push(`Price: ${ns.format.number(view.moneyGoal.targetPrice)}`)
       if (view.moneyGoal.moneyNeeded > 0) {
         lines.push(`Need: ${ns.format.number(view.moneyGoal.moneyNeeded)} more`)

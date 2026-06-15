@@ -539,30 +539,14 @@ export function getInfiltrationMoneyTier(
   workableFactions: readonly FactionName[]
 ): InfiltrationMoneyTier | null {
   const purchaseFactions = getInfiltrationPurchaseFactions(ns)
-  const targetFavor = getTargetFavor(ns)
-  const repForDonation = repForTargetFavor(ns, targetFavor)
   const neuroFluxGrindFactions = infiltrationNeuroFluxGrindFactions(workableFactions, purchaseFactions)
 
-  const preFavorHead = getBucketGrindHead(ns, purchaseFactions, "pre-favor")
-  if (preFavorHead?.need === "rep") return null
-  if (preFavorHead?.need === "money") return "pre-favor-aug"
+  if (prioritizeInfiltrationRepTargets(ns, workableFactions).length > 0) return null
 
-  if (hasPendingFavorGrind(ns, workableFactions, targetFavor, repForDonation)) return null
+  const augmentGoal = augmentMoneyGoal(ns, purchaseFactions)
+  if (augmentGoal) return augmentGoal.tier
 
-  const postFavorHead = getBucketGrindHead(ns, purchaseFactions, "post-favor")
-  if (postFavorHead?.need === "rep") return null
-  if (postFavorHead?.need === "money") return "post-favor-aug"
-
-  if (
-    isRegularAugmentPipelineComplete(
-      ns,
-      workableFactions,
-      purchaseFactions,
-      targetFavor,
-      repForDonation
-    ) &&
-    getNextNeuroFluxLevel(ns, purchaseFactions, neuroFluxGrindFactions)?.need === "money"
-  ) {
+  if (getNextNeuroFluxLevel(ns, purchaseFactions, neuroFluxGrindFactions)?.need === "money") {
     return "neuroflux"
   }
 
@@ -572,25 +556,37 @@ export function getInfiltrationMoneyTier(
 export interface InfiltrationMoneyGoal {
   label: string
   tier: InfiltrationMoneyTier
+  queueSlot: number
   targetPrice: number
   moneyNeeded: number
 }
 
-function bucketMoneyGoal(
+function getRepQualifiedPendingAugments(
   ns: NS,
-  purchaseFactions: readonly FactionName[],
-  bucket: InfiltrationAugmentBucket,
-  tier: InfiltrationMoneyTier
+  purchaseFactions: readonly FactionName[]
+): AugmentInfo[] {
+  const { affordableSorted, tooExpensiveCumulative } = getAugmentData(ns, [...purchaseFactions])
+  return [...affordableSorted, ...tooExpensiveCumulative]
+}
+
+function augmentMoneyTier(aug: AugmentInfo, repForDonation: number): InfiltrationMoneyTier {
+  return aug.repReq >= repForDonation ? "post-favor-aug" : "pre-favor-aug"
+}
+
+function augmentMoneyGoal(
+  ns: NS,
+  purchaseFactions: readonly FactionName[]
 ): InfiltrationMoneyGoal | null {
-  const pending = getPendingAugmentsInBucket(ns, purchaseFactions, bucket)
-  const { factionReps, playerMoney } = getAugmentData(ns, [...purchaseFactions])
-  const repQualified = pending.filter((aug) => augmentMeetsRep(aug, factionReps))
+  const repForDonation = repForTargetFavor(ns)
+  const repQualified = getRepQualifiedPendingAugments(ns, purchaseFactions)
+  const { playerMoney } = getAugmentData(ns, [...purchaseFactions])
   const next = getInfiltrationMoneyTargetPlan(repQualified, playerMoney)
   if (!next) return null
 
   return {
     label: next.aug.name,
-    tier,
+    tier: augmentMoneyTier(next.aug, repForDonation),
+    queueSlot: next.queueSlot,
     targetPrice: next.targetPrice,
     moneyNeeded: next.moneyNeeded,
   }
@@ -620,9 +616,12 @@ function neuroFluxMoneyGoal(
   }
 
   const label = next.levelIndex > 0 ? `NeuroFlux Governor +${next.levelIndex}` : "NeuroFlux Governor"
+  const queueSlot = positionOffset + next.levelIndex + 1
+
   return {
     label,
     tier: "neuroflux",
+    queueSlot,
     targetPrice: next.price,
     moneyNeeded: Math.max(0, next.price - budget),
   }
@@ -635,13 +634,10 @@ export function getInfiltrationMoneyGoal(ns: NS): InfiltrationMoneyGoal | null {
   const tier = getInfiltrationMoneyTier(ns, workableFactions)
   if (tier == null) return null
 
-  if (tier === "pre-favor-aug") {
-    return bucketMoneyGoal(ns, purchaseFactions, "pre-favor", tier)
+  if (tier === "neuroflux") {
+    return neuroFluxMoneyGoal(ns, workableFactions)
   }
-  if (tier === "post-favor-aug") {
-    return bucketMoneyGoal(ns, purchaseFactions, "post-favor", tier)
-  }
-  return neuroFluxMoneyGoal(ns, workableFactions)
+  return augmentMoneyGoal(ns, purchaseFactions)
 }
 
 function infiltrationNeuroFluxGrindFactions(
