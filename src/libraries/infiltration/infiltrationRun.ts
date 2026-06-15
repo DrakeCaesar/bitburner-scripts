@@ -1,6 +1,7 @@
 import type { CityName, NS } from "@ns"
 import {
   clickStartInfiltration,
+  dismissInfiltrationFailureModal,
   isInfiltrationActive,
   isOnInfiltrationIntro,
   tryPrepareCityNavigation,
@@ -23,6 +24,7 @@ import {
 } from "./infiltrationSolver.js"
 
 const POLL_MS = 200
+const MODAL_DISMISS_SETTLE_MS = 250
 const DEFAULT_STEP_TIMEOUT_MS = 15000
 const DEFAULT_RUN_TIMEOUT_MS = 600000
 
@@ -79,7 +81,7 @@ export async function runInfiltrationForTarget(
 
   tryPrepareCityNavigation()
 
-  const visitDeadline = Date.now() + stepTimeoutMs
+  let visitDeadline = Date.now() + stepTimeoutMs
   const runDeadline = Date.now() + runTimeoutMs
   let lastStep = ""
   let victoryHandled = false
@@ -94,10 +96,37 @@ export async function runInfiltrationForTarget(
     clearInfiltrationRunOutcome()
   }
 
+  function prepareInfiltrationRetry(reason: string): void {
+    ns.print(`${reason} at ${target.name}; starting another attempt`)
+    infiltrationStarted = false
+    lastStep = ""
+    visitDeadline = Date.now() + stepTimeoutMs
+    if (solver) {
+      solver.wasActive = false
+      solver.inactiveStreak = 0
+      solver.victoryHandled = false
+      solver.session = null
+    }
+    clearInfiltrationRunOutcome()
+    tryPrepareCityNavigation()
+  }
+
+  async function handleInfiltrationRetry(reason: string): Promise<null> {
+    prepareInfiltrationRetry(reason)
+    await ns.sleep(MODAL_DISMISS_SETTLE_MS)
+    return null
+  }
+
   async function waitTick(): Promise<InfiltrationRunOutcome | null> {
     if (solver) {
       const solverResult = await tickInfiltrationSolver(ns, solver)
+      if (solverResult === "failed") {
+        return handleInfiltrationRetry("Infiltration run failed")
+      }
       if (solverResult === "cancelled") {
+        if (dismissInfiltrationFailureModal()) {
+          return handleInfiltrationRetry("Infiltration run failed")
+        }
         clearInfiltrationRunOutcome()
         ns.print(`Infiltration cancelled at ${target.name}`)
         return "cancelled"
@@ -114,6 +143,12 @@ export async function runInfiltrationForTarget(
   }
 
   while (Date.now() < runDeadline) {
+    if (dismissInfiltrationFailureModal()) {
+      const tickOutcome = await handleInfiltrationRetry("Infiltration run failed")
+      if (tickOutcome) return tickOutcome
+      continue
+    }
+
     if (!solver && isInfiltrationVictoryScreen()) {
       if (!victoryHandled) {
         const reward = await collectInfiltrationVictoryReward(ns)
@@ -142,6 +177,11 @@ export async function runInfiltrationForTarget(
     if (infiltrationStarted && !isInfiltrationActive() && !isInfiltrationVictoryScreen()) {
       const sharedOutcome = peekInfiltrationRunOutcome()
       if (sharedOutcome === "cancelled") {
+        if (dismissInfiltrationFailureModal()) {
+          const tickOutcome = await handleInfiltrationRetry("Infiltration run failed")
+          if (tickOutcome) return tickOutcome
+          continue
+        }
         clearInfiltrationRunOutcome()
         ns.print(`Infiltration cancelled at ${target.name}`)
         return "cancelled"

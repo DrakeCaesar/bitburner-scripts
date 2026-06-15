@@ -32,6 +32,7 @@ import {
 import {
   isInfiltrationActive,
   isOnAnyInfiltrationIntro,
+  dismissInfiltrationFailureModal,
 } from "./infiltrationNavigation.js"
 import {
   collectInfiltrationVictoryReward,
@@ -42,7 +43,7 @@ import {
   type InfiltrationRunStatsTracker,
 } from "./infiltrationRunStats.js"
 
-export type InfiltrationSolverTickResult = "continue" | "cancelled" | "victory"
+export type InfiltrationSolverTickResult = "continue" | "cancelled" | "failed" | "victory"
 
 interface SolveSession {
   phaseKey: string
@@ -56,6 +57,8 @@ export interface InfiltrationSolverOptions {
   showDomWindow?: boolean
   /** Task/solver debug in the overlay; off by default for run-stats-only view. */
   showMinigameInfo?: boolean
+  /** When false, do not send keys; wait for minigames to fail on their own. */
+  solveMinigames?: boolean
 }
 
 export interface InfiltrationSolverState {
@@ -67,6 +70,7 @@ export interface InfiltrationSolverState {
   victoryHandled: boolean
   runStats: InfiltrationRunStatsTracker | null
   showMinigameInfo: boolean
+  solveMinigames: boolean
 }
 
 function describeSendState(
@@ -144,6 +148,7 @@ export function setupInfiltrationSolver(
 ): InfiltrationSolverState {
   const showDomWindow = options.showDomWindow ?? true
   const showMinigameInfo = options.showMinigameInfo ?? false
+  const solveMinigames = options.solveMinigames ?? true
   disableTrustedKeyInjection()
   ns.atExit(() => disableTrustedKeyInjection())
 
@@ -183,6 +188,7 @@ export function setupInfiltrationSolver(
     victoryHandled: false,
     runStats: null,
     showMinigameInfo,
+    solveMinigames,
   }
 }
 
@@ -193,11 +199,30 @@ export function shutdownInfiltrationSolver(state: InfiltrationSolverState): void
   restoreDocumentKeyboard()
 }
 
+function resetSolverAfterRunFailure(state: InfiltrationSolverState): void {
+  clearInfiltrationKeyHandler()
+  clearRememberedMines()
+  state.session = null
+  state.wasActive = false
+  state.inactiveStreak = 0
+  restoreDocumentKeyboard()
+}
+
 export async function tickInfiltrationSolver(
   ns: NS,
   state: InfiltrationSolverState
 ): Promise<InfiltrationSolverTickResult> {
-  syncTrustedKeyInjection()
+  if (state.solveMinigames) {
+    syncTrustedKeyInjection()
+  } else {
+    disableTrustedKeyInjection()
+  }
+
+  if (dismissInfiltrationFailureModal()) {
+    resetSolverAfterRunFailure(state)
+    ns.print("Infiltration failed; closed failure modal")
+    return "failed"
+  }
 
   if (isInfiltrationVictoryScreen()) {
     if (state.victoryHandled) {
@@ -231,18 +256,26 @@ export async function tickInfiltrationSolver(
   if (state.wasActive && !infiltrationUiActive) {
     state.inactiveStreak++
 
+    if (dismissInfiltrationFailureModal()) {
+      resetSolverAfterRunFailure(state)
+      ns.print("Infiltration failed; closed failure modal")
+      return "failed"
+    }
+
     if (
-      state.inactiveStreak >= 2 &&
+      state.inactiveStreak >= 4 &&
       !isInfiltrationVictoryScreen() &&
       peekInfiltrationRunOutcome() !== "victory"
     ) {
-      clearInfiltrationKeyHandler()
-      clearRememberedMines()
-      state.session = null
-      state.inactiveStreak = 0
+      if (dismissInfiltrationFailureModal()) {
+        resetSolverAfterRunFailure(state)
+        ns.print("Infiltration failed; closed failure modal")
+        return "failed"
+      }
+
+      resetSolverAfterRunFailure(state)
       setInfiltrationRunOutcome("cancelled")
-      ns.print("Infiltration cancelled. Stopping script.")
-      restoreDocumentKeyboard()
+      ns.print("Infiltration cancelled.")
       return "cancelled"
     }
   } else {
@@ -253,7 +286,9 @@ export async function tickInfiltrationSolver(
   }
   state.wasActive = infiltrationUiActive
 
-  if (!phaseKey) {
+  if (!state.solveMinigames) {
+    state.session = null
+  } else if (!phaseKey) {
     state.session = null
   } else if (!state.session || state.session.phaseKey !== phaseKey) {
     if (canSolve) {
@@ -287,7 +322,12 @@ export async function tickInfiltrationSolver(
     updateInfiltrationDomView(state.window.container, viewExtras)
   }
 
-  if (state.session && phaseKey && state.session.nextKeyIndex < state.session.pendingKeys.length) {
+  if (
+    state.solveMinigames &&
+    state.session &&
+    phaseKey &&
+    state.session.nextKeyIndex < state.session.pendingKeys.length
+  ) {
     if (!isInfiltrationKeyInputReady()) {
       syncTrustedKeyInjection()
       return "continue"
@@ -315,7 +355,11 @@ export async function tickInfiltrationSolver(
     }
   }
 
-  syncTrustedKeyInjection()
+  if (state.solveMinigames) {
+    syncTrustedKeyInjection()
+  } else {
+    disableTrustedKeyInjection()
+  }
   return "continue"
 }
 

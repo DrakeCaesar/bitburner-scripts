@@ -126,8 +126,62 @@ function isInfiltrationVictoryScreenVisible(): boolean {
   return false
 }
 
+const INFILTRATION_FAILURE_MODAL_PREFIX = "Infiltration was cancelled"
+
+function findInfiltrationFailureModalRoot(): HTMLElement | null {
+  for (const modal of Array.from(document.querySelectorAll(".MuiModal-root"))) {
+    const text = normalizeText(modal.textContent ?? "")
+    if (text.includes(INFILTRATION_FAILURE_MODAL_PREFIX)) {
+      return modal instanceof HTMLElement ? modal : null
+    }
+  }
+  return null
+}
+
+export function isInfiltrationFailureModalVisible(): boolean {
+  return findInfiltrationFailureModalRoot() != null
+}
+
+function findInfiltrationFailureModalCloseButton(modal: HTMLElement): HTMLButtonElement | null {
+  const byTestId = modal.querySelector('[data-testid="CloseIcon"]')?.closest("button")
+  if (byTestId instanceof HTMLButtonElement) {
+    return byTestId
+  }
+
+  for (const button of Array.from(modal.querySelectorAll("button"))) {
+    if (button.querySelector('[data-testid="CloseIcon"]')) {
+      return button
+    }
+    if (Array.from(button.classList).some((name) => name.includes("closeButton"))) {
+      return button
+    }
+  }
+
+  return null
+}
+
+/** Close the post-failure modal (e.g. hospitalized). Returns true when dismissed. */
+export function dismissInfiltrationFailureModal(): boolean {
+  const modal = findInfiltrationFailureModalRoot()
+  if (!modal) {
+    return false
+  }
+
+  const closeButton = findInfiltrationFailureModalCloseButton(modal)
+  if (!closeButton) {
+    return false
+  }
+
+  return invokeTrustedClick(closeButton)
+}
+
 export function isInfiltrationUiBlockingNavigation(): boolean {
-  return isInfiltrationVictoryScreenVisible() || isInfiltrationActive() || isOnAnyInfiltrationIntro()
+  return (
+    isInfiltrationVictoryScreenVisible() ||
+    isInfiltrationActive() ||
+    isOnAnyInfiltrationIntro() ||
+    isInfiltrationFailureModalVisible()
+  )
 }
 
 /** One-shot city prep; does not block. */

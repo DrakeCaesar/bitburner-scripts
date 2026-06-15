@@ -29,6 +29,8 @@ import {
 
 const SHOW_INFILTRATION_DOM_WINDOW = true
 const SHOW_MINIGAME_INFO = false
+/** Set false to let minigames time out without sending keys (testing). */
+const SOLVE_MINIGAMES = true
 
 const CHECK_INTERVAL_MS = 2000
 const WORKOUT_SCRIPT = "workout.js"
@@ -89,7 +91,11 @@ export async function main(ns: NS): Promise<void> {
   const solver = setupInfiltrationSolver(ns, {
     showDomWindow: SHOW_INFILTRATION_DOM_WINDOW,
     showMinigameInfo: SHOW_MINIGAME_INFO,
+    solveMinigames: SOLVE_MINIGAMES,
   })
+  if (!SOLVE_MINIGAMES) {
+    ns.print("Minigame solver disabled; waiting for minigames to fail")
+  }
   const runStats = new InfiltrationRunStatsTracker()
   solver.runStats = runStats
   let trainingStat = getLowestCombatGymSkill(ns)
