@@ -170,3 +170,4 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
+Trace-*.json
