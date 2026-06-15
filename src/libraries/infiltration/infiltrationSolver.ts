@@ -30,6 +30,10 @@ import {
   setInfiltrationRunOutcome,
 } from "./infiltrationRunState.js"
 import {
+  isInfiltrationActive,
+  isOnAnyInfiltrationIntro,
+} from "./infiltrationNavigation.js"
+import {
   collectInfiltrationVictoryReward,
   isInfiltrationVictoryScreen,
 } from "./infiltrationVictory.js"
@@ -58,6 +62,8 @@ export interface InfiltrationSolverState {
   window: InfiltrationDomWindow | null
   session: SolveSession | null
   wasActive: boolean
+  /** Consecutive ticks with infiltration UI inactive after a prior active tick. */
+  inactiveStreak: number
   victoryHandled: boolean
   runStats: InfiltrationRunStatsTracker | null
   showMinigameInfo: boolean
@@ -173,6 +179,7 @@ export function setupInfiltrationSolver(
     window: domWindow,
     session: null,
     wasActive: false,
+    inactiveStreak: 0,
     victoryHandled: false,
     runStats: null,
     showMinigameInfo,
@@ -218,22 +225,33 @@ export async function tickInfiltrationSolver(
   const domState = readInfiltrationDomState()
   const phaseKey = getMinigamePhaseKey(domState)
   const canSolve = canSolveInfiltrationTask(domState)
+  const infiltrationUiActive =
+    domState.active || isInfiltrationActive() || isOnAnyInfiltrationIntro()
 
-  if (state.wasActive && !domState.active) {
-    clearInfiltrationKeyHandler()
-    clearRememberedMines()
-    state.session = null
+  if (state.wasActive && !infiltrationUiActive) {
+    state.inactiveStreak++
 
-    if (!isInfiltrationVictoryScreen() && peekInfiltrationRunOutcome() !== "victory") {
+    if (
+      state.inactiveStreak >= 2 &&
+      !isInfiltrationVictoryScreen() &&
+      peekInfiltrationRunOutcome() !== "victory"
+    ) {
+      clearInfiltrationKeyHandler()
+      clearRememberedMines()
+      state.session = null
+      state.inactiveStreak = 0
       setInfiltrationRunOutcome("cancelled")
       ns.print("Infiltration cancelled. Stopping script.")
       restoreDocumentKeyboard()
       return "cancelled"
     }
-
-    clearInfiltrationRunOutcome()
+  } else {
+    state.inactiveStreak = 0
+    if (!state.wasActive && infiltrationUiActive) {
+      clearInfiltrationRunOutcome()
+    }
   }
-  state.wasActive = domState.active
+  state.wasActive = infiltrationUiActive
 
   if (!phaseKey) {
     state.session = null

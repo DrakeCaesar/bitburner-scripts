@@ -1,6 +1,19 @@
 interface DocumentWithKeyWrap extends Document {
   _addEventListener?: typeof document.addEventListener
+  _removeEventListener?: typeof document.removeEventListener
   _dispatchEvent?: typeof document.dispatchEvent
+  _keydownWrapperMap?: WeakMap<EventListenerOrEventListenerObject, EventListenerOrEventListenerObject>
+}
+
+function getKeydownWrapperMap(): WeakMap<
+  EventListenerOrEventListenerObject,
+  EventListenerOrEventListenerObject
+> {
+  const doc = document as DocumentWithKeyWrap
+  if (!doc._keydownWrapperMap) {
+    doc._keydownWrapperMap = new WeakMap()
+  }
+  return doc._keydownWrapperMap
 }
 
 interface KeyboardLikeEvent {
@@ -340,12 +353,89 @@ function dispatchDomKeyboardEvent(key: string, target?: HTMLElement | null): boo
   return document.dispatchEvent(rawEvent)
 }
 
+function wrapKeydownListener(callback: EventListenerOrEventListenerObject): EventListenerOrEventListenerObject {
+  const keydownWrapperMap = getKeydownWrapperMap()
+  const existing = keydownWrapperMap.get(callback)
+  if (existing) {
+    return existing
+  }
+
+  if (typeof callback === "function") {
+    const listener = callback as (event: KeyboardEvent) => void
+    const wrapped = function (this: Document, event: Event) {
+      if (event instanceof KeyboardEvent && !event.isTrusted) {
+        return listener.call(this, upgradeUntrustedKeyboardEvent(event))
+      }
+      return listener.call(this, event as KeyboardEvent)
+    }
+    keydownWrapperMap.set(callback, wrapped)
+    return wrapped
+  }
+
+  const wrapped: EventListenerObject = {
+    handleEvent(event: Event) {
+      if (event instanceof KeyboardEvent && !event.isTrusted) {
+        return callback.handleEvent(upgradeUntrustedKeyboardEvent(event))
+      }
+      return callback.handleEvent(event)
+    },
+  }
+  keydownWrapperMap.set(callback, wrapped)
+  return wrapped
+}
+
+function resolveKeydownWrappedListener(
+  callback: EventListenerOrEventListenerObject | null
+): EventListenerOrEventListenerObject | null {
+  if (!callback) {
+    return null
+  }
+  return getKeydownWrapperMap().get(callback) ?? callback
+}
+
+/**
+ * Keep removeEventListener patched for the page lifetime so React/MUI cleanup
+ * can detach wrapped keydown handlers after disableTrustedKeyInjection restores add.
+ */
+function ensureKeydownRemoveEventListenerPatch(): void {
+  const doc = document as DocumentWithKeyWrap
+  if (doc._removeEventListener) {
+    return
+  }
+
+  doc._removeEventListener = doc.removeEventListener.bind(doc)
+
+  doc.removeEventListener = function (
+    type: string,
+    callback: EventListenerOrEventListenerObject | null,
+    options?: boolean | EventListenerOptions
+  ): void {
+    if (!callback) {
+      return
+    }
+
+    if (type !== "keydown") {
+      doc._removeEventListener!(type, callback, options)
+      return
+    }
+
+    const wrapped = resolveKeydownWrappedListener(callback)!
+    doc._removeEventListener!(type, wrapped, options)
+    const keydownWrapperMap = getKeydownWrapperMap()
+    if (keydownWrapperMap.get(callback) === wrapped) {
+      keydownWrapperMap.delete(callback)
+    }
+  }
+}
+
 /**
  * Patch document.addEventListener / dispatchEvent so synthetic keydowns reach
  * the infiltration minigame as trusted KeyboardEvents.
  */
 export function enableTrustedKeyInjection(): void {
   const doc = document as DocumentWithKeyWrap
+  ensureKeydownRemoveEventListenerPatch()
+
   if (doc._addEventListener) {
     disableTrustedKeyInjection()
   }
@@ -370,24 +460,16 @@ export function enableTrustedKeyInjection(): void {
       return
     }
 
-    if (type !== "keydown" || typeof callback !== "function") {
+    if (type !== "keydown") {
       doc._addEventListener!(type, callback, options)
       return
     }
 
-    if (isOnInfiltrationPage()) {
+    if (typeof callback === "function" && isOnInfiltrationPage()) {
       infiltrationKeyHandler = callback as (event: KeyboardEvent) => void
     }
 
-    const listener = callback as (event: KeyboardEvent) => void
-    const wrapped = function (this: Document, event: Event) {
-      if (event instanceof KeyboardEvent && !event.isTrusted) {
-        return listener.call(this, upgradeUntrustedKeyboardEvent(event))
-      }
-      return listener.call(this, event as KeyboardEvent)
-    }
-
-    doc._addEventListener!(type, wrapped, options)
+    doc._addEventListener!(type, wrapKeydownListener(callback), options)
   }
 }
 
@@ -418,7 +500,7 @@ export function restoreDocumentKeyboard(): void {
 
 /** Enable patching during minigames only (victory uses trusted clicks, not keys). */
 export function syncTrustedKeyInjection(): void {
-  if (isInfiltrationMinigameActive()) {
+  if (isInfiltrationMinigameActive() && !isInfiltrationVictoryScreenActive()) {
     enableTrustedKeyInjection()
     return
   }

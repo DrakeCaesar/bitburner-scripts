@@ -197,6 +197,10 @@ function visitInfiltrationIntro(
     return { ok: true, step: "opened intro", detail: locationName }
   }
 
+  if (isInfiltrationUiBlockingNavigation()) {
+    return { ok: true, step: "waiting for infiltration ui", detail: locationName }
+  }
+
   if (goToCompanyLocation(ns, locationName)) {
     return { ok: true, step: "opened company", detail: locationName }
   }

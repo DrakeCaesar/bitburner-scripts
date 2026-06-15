@@ -88,6 +88,7 @@ export async function runInfiltrationForTarget(
   if (solver) {
     // Stale wasActive from a prior victory looks like a cancel during visit/travel.
     solver.wasActive = false
+    solver.inactiveStreak = 0
     solver.victoryHandled = false
     solver.session = null
     clearInfiltrationRunOutcome()
@@ -179,6 +180,13 @@ export async function runInfiltrationForTarget(
     }
 
     if (Date.now() >= visitDeadline && infiltrationStarted) {
+      const tickOutcome = await waitTick()
+      if (tickOutcome) return tickOutcome
+      continue
+    }
+
+    // After start (or victory), never goToLocation again -- it leaves the run and looks like cancel.
+    if (infiltrationStarted) {
       const tickOutcome = await waitTick()
       if (tickOutcome) return tickOutcome
       continue
