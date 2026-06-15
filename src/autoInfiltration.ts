@@ -8,7 +8,7 @@ import {
   startGymWorkout,
   type CombatGymSkill,
 } from "./libraries/gymWorkout.js"
-import { disableTrustedKeyInjection, syncTrustedKeyInjection } from "./libraries/infiltration/infiltrationKeyInput.js"
+import { syncTrustedKeyInjection } from "./libraries/infiltration/infiltrationKeyInput.js"
 import { isInfiltrationActive } from "./libraries/infiltration/infiltrationNavigation.js"
 import {
   runInfiltrationForTarget,
@@ -77,9 +77,6 @@ function maybeSwitchGymTraining(ns: NS, trainingStat: CombatGymSkill): CombatGym
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("sleep")
-  ns.atExit(() => disableTrustedKeyInjection())
-  ns.ui.openTail()
-  ns.ui.setTailTitle(isInfiltrationMoneyMode(ns) ? "Auto Infiltration (money)" : "Auto Infiltration")
 
   if (!getInfiltrationApi(ns)) {
     ns.print("ERROR: ns.infiltration API is not available")
@@ -93,6 +90,9 @@ export async function main(ns: NS): Promise<void> {
     showMinigameInfo: SHOW_MINIGAME_INFO,
     solveMinigames: SOLVE_MINIGAMES,
   })
+  ns.atExit(() => shutdownInfiltrationSolver(solver))
+  ns.ui.openTail()
+  ns.ui.setTailTitle(isInfiltrationMoneyMode(ns) ? "Auto Infiltration (money)" : "Auto Infiltration")
   if (!SOLVE_MINIGAMES) {
     ns.print("Minigame solver disabled; waiting for minigames to fail")
   }

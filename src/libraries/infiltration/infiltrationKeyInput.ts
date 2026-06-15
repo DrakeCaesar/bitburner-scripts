@@ -275,21 +275,28 @@ function upgradeUntrustedKeyboardEvent(event: KeyboardEvent): KeyboardEvent {
     return event
   }
 
-  const hacked: Record<string, unknown> = {}
-  for (const key in event) {
-    if (key === "isTrusted") {
-      hacked.isTrusted = true
-    } else if (typeof (event as unknown as Record<string, unknown>)[key] === "function") {
-      hacked[key] = ((event as unknown as Record<string, unknown>)[key] as (...args: unknown[]) => unknown).bind(
-        event
-      )
-    } else {
-      hacked[key] = (event as unknown as Record<string, unknown>)[key]
-    }
+  try {
+    Object.defineProperty(event, "isTrusted", { value: true, configurable: true })
+    return event
+  } catch {
+    // Fall back when isTrusted is not configurable (rare).
+    const trusted = new KeyboardEvent(event.type, {
+      key: event.key,
+      code: event.code,
+      keyCode: event.keyCode,
+      which: event.which,
+      location: event.location,
+      ctrlKey: event.ctrlKey,
+      shiftKey: event.shiftKey,
+      altKey: event.altKey,
+      metaKey: event.metaKey,
+      repeat: event.repeat,
+      bubbles: event.bubbles,
+      cancelable: event.cancelable,
+    })
+    Object.defineProperty(trusted, "isTrusted", { value: true })
+    return trusted
   }
-
-  Object.setPrototypeOf(hacked, KeyboardEvent.prototype)
-  return hacked as unknown as KeyboardEvent
 }
 
 function createKeyboardLikeEvent(key: string): KeyboardLikeEvent {
@@ -437,7 +444,7 @@ export function enableTrustedKeyInjection(): void {
   ensureKeydownRemoveEventListenerPatch()
 
   if (doc._addEventListener) {
-    disableTrustedKeyInjection()
+    return
   }
 
   trustedKeyInjectionEnabled = true
@@ -500,12 +507,17 @@ export function restoreDocumentKeyboard(): void {
 
 /** Enable patching during minigames only (victory uses trusted clicks, not keys). */
 export function syncTrustedKeyInjection(): void {
-  if (isInfiltrationMinigameActive() && !isInfiltrationVictoryScreenActive()) {
+  const shouldEnable =
+    isInfiltrationMinigameActive() && !isInfiltrationVictoryScreenActive()
+
+  if (shouldEnable) {
     enableTrustedKeyInjection()
     return
   }
 
-  disableTrustedKeyInjection()
+  if (trustedKeyInjectionEnabled) {
+    disableTrustedKeyInjection()
+  }
 }
 
 export function isTrustedKeyInjectionEnabled(): boolean {

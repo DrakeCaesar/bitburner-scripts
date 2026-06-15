@@ -94,6 +94,9 @@ export class FloatingWindow {
   private isDragging = false
   private dragOffset = { x: 0, y: 0 }
   private isCollapsed = false
+  private onMouseMove: ((e: MouseEvent) => void) | null = null
+  private onMouseUp: (() => void) | null = null
+  private resizeObserver: ResizeObserver | null = null
   private title: string
   private content: string | HTMLElement
   private x: number
@@ -398,7 +401,7 @@ export class FloatingWindow {
       e.preventDefault()
     })
 
-    document.addEventListener("mousemove", (e) => {
+    this.onMouseMove = (e) => {
       if (!this.isDragging || !this.element) return
 
       let x = e.clientX - this.dragOffset.x
@@ -422,19 +425,23 @@ export class FloatingWindow {
       }
 
       this.element.style.transform = `translate(${x}px, ${y}px)`
-    })
+    }
 
-    document.addEventListener("mouseup", () => {
+    document.addEventListener("mousemove", this.onMouseMove)
+
+    this.onMouseUp = () => {
       this.isDragging = false
-    })
+    }
+
+    document.addEventListener("mouseup", this.onMouseUp)
 
     // Handle parent container resize
     const parent = this.element.parentElement
     if (parent) {
-      const resizeObserver = new ResizeObserver(() => {
+      this.resizeObserver = new ResizeObserver(() => {
         this.constrainToParentBounds()
       })
-      resizeObserver.observe(parent)
+      this.resizeObserver.observe(parent)
     }
   }
 
@@ -523,6 +530,17 @@ export class FloatingWindow {
   }
 
   public close(): void {
+    if (this.onMouseMove) {
+      document.removeEventListener("mousemove", this.onMouseMove)
+      this.onMouseMove = null
+    }
+    if (this.onMouseUp) {
+      document.removeEventListener("mouseup", this.onMouseUp)
+      this.onMouseUp = null
+    }
+    this.resizeObserver?.disconnect()
+    this.resizeObserver = null
+
     if (this.element && this.element.parentNode) {
       this.element.parentNode.removeChild(this.element)
       this.element = null
