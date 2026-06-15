@@ -107,6 +107,34 @@ function formatOpponentTurn(result: { type: string; x: number | null; y: number 
   return result.type
 }
 
+type InProgressGame = {
+  opponent: GoOpponent
+  boardSize: IpvgoBoardSize
+  moveNumber: number
+}
+
+/** Adopt a live IPvGO game instead of resetBoardState (abandon = loss). */
+function detectInProgressGame(ns: NS): InProgressGame | null {
+  if (ns.go.getCurrentPlayer() === "None") return null
+
+  const board = ns.go.getBoardState()
+  if (board.length === 0) return null
+
+  const opponent = ns.go.getOpponent()
+  if (opponent === "No AI") return null
+
+  const boardSize = board.length
+  if (!IPVGO_BOARD_SIZES.includes(boardSize as IpvgoBoardSize) && opponent !== "????????????") {
+    return null
+  }
+
+  return {
+    opponent,
+    boardSize: boardSize as IpvgoBoardSize,
+    moveNumber: Math.floor(ns.go.getMoveHistory().length / 2),
+  }
+}
+
 function syncGameState(ns: NS, snapshot: ReturnType<typeof createIpvgoSnapshot>) {
   const gameState = ns.go.getGameState()
   const cheatStats = readCheatStats(ns)
@@ -195,15 +223,19 @@ export async function main(ns: NS): Promise<void> {
   const boardSize = parseBoardSize(ns.args[1] as string | number | undefined)
   const iterations = parseIterations(ns.args[2] as string | number | undefined)
 
-  let activeOpponent = opponent
-  let activeBoardSize = boardSize
+  const inProgress = detectInProgressGame(ns)
+  let activeOpponent = inProgress?.opponent ?? opponent
+  let activeBoardSize = inProgress?.boardSize ?? boardSize
 
   const tailLog = createTailLog()
+  const baseSnapshot = createIpvgoSnapshot(activeOpponent, activeBoardSize, iterations)
   let snapshot = refreshFactionStats(
-    {
-      ...createIpvgoSnapshot(activeOpponent, activeBoardSize, iterations),
-      phase: "Initializing",
-    },
+    inProgress
+      ? {
+          ...syncGameState(ns, baseSnapshot),
+          phase: `Resumed ${activeOpponent} ${activeBoardSize}x${activeBoardSize}`,
+        }
+      : { ...baseSnapshot, phase: "Initializing" },
     ns
   )
   await renderIpvgoDashboard(ns, tailLog, snapshot)
@@ -225,7 +257,7 @@ export async function main(ns: NS): Promise<void> {
   snapshot = { ...snapshot, backend: engineLabel as "katago" | "native", phase: "Ready" }
   await renderIpvgoDashboard(ns, tailLog, snapshot)
 
-  let moveNumber = 0
+  let moveNumber = inProgress?.moveNumber ?? 0
   let gamesPlayed = 0
 
   gameLoop: while (true) {
@@ -243,8 +275,9 @@ export async function main(ns: NS): Promise<void> {
 
       const currentOpponent = ns.go.getOpponent()
       const currentPlayer = ns.go.getCurrentPlayer()
+      const liveBoardSize = ns.go.getBoardState().length as IpvgoBoardSize
 
-      if (currentOpponent !== activeOpponent || currentPlayer === "None") {
+      if (currentPlayer === "None") {
         ns.go.resetBoardState(activeOpponent, activeBoardSize)
         gamesPlayed++
         moveNumber = 0
@@ -261,6 +294,20 @@ export async function main(ns: NS): Promise<void> {
         }
         await renderIpvgoDashboard(ns, tailLog, snapshot)
         await sleepUntilIpvgoSetupChange(ns, LOOP_SLEEP_MS)
+        continue
+      }
+
+      if (currentOpponent !== activeOpponent || liveBoardSize !== activeBoardSize) {
+        activeOpponent = currentOpponent
+        activeBoardSize = liveBoardSize
+        snapshot = {
+          ...syncGameState(ns, snapshot),
+          opponent: activeOpponent,
+          boardSize: activeBoardSize,
+          moveNumber,
+          phase: `Synced ${activeOpponent} ${activeBoardSize}x${activeBoardSize}`,
+        }
+        await renderIpvgoDashboard(ns, tailLog, snapshot)
         continue
       }
 

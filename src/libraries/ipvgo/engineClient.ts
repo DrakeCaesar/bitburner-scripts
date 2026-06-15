@@ -72,7 +72,7 @@ export async function requestIpvgoEngineMove(
 export async function requestIpvgoEngineMoveInterruptible(
   request: IpvgoMoveRequest,
   shouldInterrupt: () => boolean,
-  sleep: (ms: number) => Promise<void>,
+  sleep: (ms: number) => Promise<unknown>,
   baseUrl = getIpvgoEngineUrl()
 ): Promise<IpvgoMoveResponse | null> {
   const requestId = createRequestId()
