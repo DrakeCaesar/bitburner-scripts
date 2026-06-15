@@ -1,5 +1,7 @@
 const COLUMN_LETTERS = "ABCDEFGHJKLMNOPQRSTUVWXYZ"
 
+import { phantomStoneColor } from "./phantomStones.js"
+
 /** Ply depth for root-only move mask (current player). */
 const ROOT_MOVE_DEPTH = 1
 /** Ply depth for permanent blocked-node prohibition (both players). */
