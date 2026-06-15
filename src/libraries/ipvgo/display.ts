@@ -19,7 +19,13 @@ import {
 import { columnLabel, formatIpvgoPoint, parseIpvgoPoint, rowLabel } from "./coords.js"
 import type { IpvgoBoard, IpvgoBoardSize, IpvgoMove, IpvgoValidMoves } from "./types.js"
 import { IPVGO_BOARD_SIZES, IPVGO_BONUS_LABEL, IPVGO_ITERATION_PRESETS, IPVGO_ITERATIONS_PER_TABLE_ROW, IPVGO_OPPONENTS } from "./types.js"
-import { markIpvgoSetupPending, type IpvgoSetupSelection } from "./uiControl.js"
+import {
+  getDeferredSetup,
+  queueSetupBoardClick,
+  queueSetupSimsChange,
+  setupCellKey,
+  type IpvgoSetupSelection,
+} from "./uiControl.js"
 
 export type IpvgoBackend = "katago" | "native" | "pending"
 
@@ -73,6 +79,8 @@ export type IpvgoDashboardSnapshot = {
   cheatAvailable: boolean
   cheatCount: number
   cheatSuccessChance: number
+  /** Queued opponent/size after the current game finishes. */
+  deferredSetup?: IpvgoSetupSelection | null
 }
 
 export function createIpvgoSnapshot(
@@ -224,6 +232,11 @@ function factionRewardLabel(opponent: GoOpponent, snapshot: IpvgoDashboardSnapsh
 }
 
 function buildSetupTableConfig(snapshot: IpvgoDashboardSnapshot): ReactTableConfig {
+  const playingKey = setupCellKey(snapshot.opponent, snapshot.boardSize as IpvgoBoardSize)
+  const displayKey = snapshot.deferredSetup
+    ? setupCellKey(snapshot.deferredSetup.opponent, snapshot.deferredSetup.boardSize)
+    : playingKey
+
   return {
     title: "Setup",
     columns: [
@@ -234,15 +247,14 @@ function buildSetupTableConfig(snapshot: IpvgoDashboardSnapshot): ReactTableConf
     rows: IPVGO_OPPONENTS.map((faction) => [
       factionRecordLabel(faction, snapshot),
       factionRewardLabel(faction, snapshot),
-      ...IPVGO_BOARD_SIZES.map((size) =>
-        snapshot.opponent === faction && snapshot.boardSize === size ? "*" : ""
-      ),
+      ...IPVGO_BOARD_SIZES.map((size) => {
+        const cellKey = setupCellKey(faction, size)
+        const queued = cellKey === displayKey
+        const marker = queued ? (snapshot.deferredSetup ? ">" : "*") : ""
+        return marker
+      }),
     ]),
   }
-}
-
-function setupCellKey(faction: GoOpponent, size: IpvgoBoardSize): string {
-  return `${faction}:${size}`
 }
 
 function iterationPresetRows(): number[][] {
@@ -270,23 +282,12 @@ function IpvgoSetupPicker(props: { snapshot: IpvgoDashboardSnapshot }): ReactNod
   const layout = mergeTailLayout()
   const config = buildSetupTableConfig(snapshot)
   const { columns } = config
-  const programmaticKey = setupCellKey(snapshot.opponent, snapshot.boardSize as IpvgoBoardSize)
-  const [activeKey, setActiveKey] = React.useState(programmaticKey)
-  const [activeIterations, setActiveIterations] = React.useState(snapshot.iterations)
-
-  React.useEffect(() => {
-    setActiveKey(programmaticKey)
-  }, [programmaticKey])
-
-  React.useEffect(() => {
-    setActiveIterations(snapshot.iterations)
-  }, [snapshot.iterations])
-
-  const pickSetup = (faction: GoOpponent, size: IpvgoBoardSize, iterations: number) => {
-    setActiveKey(setupCellKey(faction, size))
-    setActiveIterations(iterations)
-    markIpvgoSetupPending(faction, size, iterations)
-  }
+  const playingKey = setupCellKey(snapshot.opponent, snapshot.boardSize as IpvgoBoardSize)
+  const deferredKey = snapshot.deferredSetup
+    ? setupCellKey(snapshot.deferredSetup.opponent, snapshot.deferredSetup.boardSize)
+    : null
+  const displayKey = deferredKey ?? playingKey
+  const displayIterations = snapshot.deferredSetup?.iterations ?? snapshot.iterations
 
   const headerCells = columns.map((column, idx) =>
     React.createElement(
@@ -316,7 +317,8 @@ function IpvgoSetupPicker(props: { snapshot: IpvgoDashboardSnapshot }): ReactNod
       ),
       ...IPVGO_BOARD_SIZES.map((size) => {
         const cellKey = setupCellKey(faction, size)
-        const selected = cellKey === activeKey
+        const selected = cellKey === displayKey
+        const marker = selected ? (snapshot.deferredSetup ? ">" : "*") : ""
         return React.createElement(
           "td",
           {
@@ -325,9 +327,17 @@ function IpvgoSetupPicker(props: { snapshot: IpvgoDashboardSnapshot }): ReactNod
               ...cellStyle(layout, { highlight: selected, selectedRow: selected }, "center"),
               cursor: "pointer",
             },
-            onClick: () => pickSetup(faction, size, activeIterations),
+            onClick: () =>
+              queueSetupBoardClick(
+                faction,
+                size,
+                displayIterations,
+                playingKey,
+                deferredKey,
+                cellKey
+              ),
           },
-          selected ? "*" : ""
+          marker
         )
       }),
     ]
@@ -353,7 +363,7 @@ function IpvgoSetupPicker(props: { snapshot: IpvgoDashboardSnapshot }): ReactNod
   const simsPresetRows = iterationPresetRows()
   const simsCols = Math.max(...simsPresetRows.map((row) => row.length))
   const simsBandRows = simsPresetRows.flatMap((row, bandIdx) => {
-    const headerCells = Array.from({ length: simsCols }, (_, colIdx) => {
+    const simsHeaderCells = Array.from({ length: simsCols }, (_, colIdx) => {
       const preset = row[colIdx]
       return React.createElement(
         "th",
@@ -373,7 +383,7 @@ function IpvgoSetupPicker(props: { snapshot: IpvgoDashboardSnapshot }): ReactNod
           ""
         )
       }
-      const selected = activeIterations === preset
+      const selected = displayIterations === preset
       return React.createElement(
         "td",
         {
@@ -383,13 +393,13 @@ function IpvgoSetupPicker(props: { snapshot: IpvgoDashboardSnapshot }): ReactNod
             cursor: "pointer",
           },
           onClick: () =>
-            pickSetup(snapshot.opponent, snapshot.boardSize as IpvgoBoardSize, preset),
+            queueSetupSimsChange(snapshot.opponent, snapshot.boardSize as IpvgoBoardSize, preset),
         },
         selected ? "*" : ""
       )
     })
     return [
-      React.createElement("tr", { key: `sims-header-${bandIdx}` }, ...headerCells),
+      React.createElement("tr", { key: `sims-header-${bandIdx}` }, ...simsHeaderCells),
       React.createElement("tr", { key: `sims-body-${bandIdx}` }, ...bodyCells),
     ]
   })
@@ -689,10 +699,12 @@ export async function renderIpvgoDashboard(
 export function applyIpvgoSetupChange(
   ns: NS,
   snapshot: IpvgoDashboardSnapshot,
-  pending: IpvgoSetupSelection | null
+  pending: IpvgoSetupSelection | null,
+  options?: { forceReset?: boolean }
 ): { snapshot: IpvgoDashboardSnapshot; changed: boolean } {
   if (!pending) return { snapshot, changed: false }
   if (
+    !options?.forceReset &&
     pending.opponent === snapshot.opponent &&
     pending.boardSize === snapshot.boardSize &&
     pending.iterations === snapshot.iterations
@@ -702,12 +714,13 @@ export function applyIpvgoSetupChange(
 
   const boardChanged =
     pending.opponent !== snapshot.opponent || pending.boardSize !== snapshot.boardSize
+  const needsReset = boardChanged || options?.forceReset === true
 
-  if (boardChanged) {
+  if (needsReset) {
     ns.go.resetBoardState(pending.opponent, pending.boardSize)
   }
 
-  const phase = boardChanged
+  const phase = needsReset
     ? `${pending.opponent} ${pending.boardSize}x${pending.boardSize}`
     : `Sims ${pending.iterations}`
 
@@ -717,7 +730,8 @@ export function applyIpvgoSetupChange(
       opponent: pending.opponent,
       boardSize: pending.boardSize,
       iterations: pending.iterations,
-      ...(boardChanged
+      deferredSetup: null,
+      ...(needsReset
         ? {
             moveNumber: 0,
             gameMoves: [],
@@ -733,4 +747,18 @@ export function applyIpvgoSetupChange(
     ns
   )
   return { snapshot: next, changed: true }
+}
+
+export function syncDeferredSetupSnapshot(snapshot: IpvgoDashboardSnapshot): IpvgoDashboardSnapshot {
+  const deferred = getDeferredSetup()
+  const prev = snapshot.deferredSetup
+  const same =
+    (deferred == null && prev == null) ||
+    (deferred != null &&
+      prev != null &&
+      deferred.opponent === prev.opponent &&
+      deferred.boardSize === prev.boardSize &&
+      deferred.iterations === prev.iterations)
+  if (same) return snapshot
+  return { ...snapshot, deferredSetup: deferred ?? undefined }
 }

@@ -13,6 +13,7 @@ import {
   recordOurMove,
   refreshFactionStats,
   renderIpvgoDashboard,
+  syncDeferredSetupSnapshot,
 } from "./libraries/ipvgo/display.js"
 import {
   executeCheat,
@@ -22,9 +23,12 @@ import {
   type CheatAction,
 } from "./libraries/ipvgo/cheats.js"
 import {
-  consumeIpvgoSetupPending,
+  consumeDeferUiWake,
+  consumeImmediateSetup,
+  consumeSimsSetup,
   hasIpvgoSetupPending,
   sleepUntilIpvgoSetupChange,
+  takeDeferredSetup,
 } from "./libraries/ipvgo/uiControl.js"
 import { findTacticalMove } from "./libraries/ipvgo/tactics.js"
 import { shouldPassToEndGame } from "./libraries/ipvgo/endgame.js"
@@ -262,10 +266,10 @@ export async function main(ns: NS): Promise<void> {
 
   gameLoop: while (true) {
     try {
-      const pendingSetup = consumeIpvgoSetupPending()
-      const setupApplied = applyIpvgoSetupChange(ns, snapshot, pendingSetup)
-      snapshot = setupApplied.snapshot
-      if (setupApplied.changed) {
+      const immediate = consumeImmediateSetup()
+      if (immediate) {
+        const setupApplied = applyIpvgoSetupChange(ns, snapshot, immediate, { forceReset: true })
+        snapshot = setupApplied.snapshot
         activeOpponent = snapshot.opponent
         activeBoardSize = snapshot.boardSize as IpvgoBoardSize
         moveNumber = snapshot.moveNumber
@@ -273,16 +277,44 @@ export async function main(ns: NS): Promise<void> {
         continue
       }
 
+      const simsChange = consumeSimsSetup()
+      if (simsChange) {
+        const setupApplied = applyIpvgoSetupChange(ns, snapshot, simsChange)
+        snapshot = setupApplied.snapshot
+        if (setupApplied.changed) {
+          await renderIpvgoDashboard(ns, tailLog, snapshot)
+          continue
+        }
+      }
+
+      const syncedDeferred = syncDeferredSetupSnapshot(snapshot)
+      if (syncedDeferred !== snapshot) {
+        consumeDeferUiWake()
+        snapshot = syncedDeferred
+        await renderIpvgoDashboard(ns, tailLog, snapshot)
+        continue
+      }
+      consumeDeferUiWake()
+
       const currentOpponent = ns.go.getOpponent()
       const currentPlayer = ns.go.getCurrentPlayer()
       const liveBoardSize = ns.go.getBoardState().length as IpvgoBoardSize
 
       if (currentPlayer === "None") {
-        ns.go.resetBoardState(activeOpponent, activeBoardSize)
+        const deferred = takeDeferredSetup()
+        if (deferred) {
+          const setupApplied = applyIpvgoSetupChange(ns, snapshot, deferred)
+          snapshot = setupApplied.snapshot
+          activeOpponent = snapshot.opponent
+          activeBoardSize = snapshot.boardSize as IpvgoBoardSize
+        } else {
+          ns.go.resetBoardState(activeOpponent, activeBoardSize)
+          snapshot = syncGameState(ns, snapshot)
+        }
         gamesPlayed++
         moveNumber = 0
         snapshot = {
-          ...syncGameState(ns, snapshot),
+          ...snapshot,
           gamesPlayed,
           moveNumber,
           phase: `Game ${gamesPlayed}`,
@@ -291,6 +323,7 @@ export async function main(ns: NS): Promise<void> {
           gameMoves: [],
           thinkMs: 0,
           sims: 0,
+          deferredSetup: undefined,
         }
         await renderIpvgoDashboard(ns, tailLog, snapshot)
         await sleepUntilIpvgoSetupChange(ns, LOOP_SLEEP_MS)
