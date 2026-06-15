@@ -33,6 +33,7 @@ import {
   IPVGO_DEFAULT_ITERATIONS,
   IPVGO_KOMI_BY_OPPONENT,
   IPVGO_OPPONENTS,
+  type IpvgoBoard,
   type IpvgoBoardSize,
   type IpvgoMove,
   type IpvgoValidMoves,
@@ -127,6 +128,61 @@ function formatCheatLabel(action: CheatAction, succeeded: boolean, successChance
   const verb = action.kind === "repair" ? "repair" : "remove"
   const outcome = succeeded ? "OK" : "FAIL"
   return `${verb} ${point} ${outcome} (${Math.round(successChance * 100)}%)`
+}
+
+function boardNeighbors(size: number, x: number, y: number): Array<[number, number]> {
+  const out: Array<[number, number]> = []
+  if (y > 0) out.push([x, y - 1])
+  if (x < size - 1) out.push([x + 1, y])
+  if (y < size - 1) out.push([x, y + 1])
+  if (x > 0) out.push([x - 1, y])
+  return out
+}
+
+/** Preview board with our stone placed (makeMove blocks until opponent replies). */
+function applyOurMoveToBoard(board: IpvgoBoard, x: number, y: number): IpvgoBoard {
+  const size = board.length
+  const rows = board.map((row) => row.split(""))
+  rows[x][y] = "X"
+
+  const get = (cx: number, cy: number): string => rows[cx]?.[cy] ?? "."
+
+  function collectChain(sx: number, sy: number): Array<[number, number]> {
+    const chain: Array<[number, number]> = []
+    const stack: Array<[number, number]> = [[sx, sy]]
+    const seen = new Set<string>()
+    while (stack.length > 0) {
+      const [cx, cy] = stack.pop()!
+      const key = `${cx},${cy}`
+      if (seen.has(key) || get(cx, cy) !== "O") continue
+      seen.add(key)
+      chain.push([cx, cy])
+      for (const [nx, ny] of boardNeighbors(size, cx, cy)) {
+        if (!seen.has(`${nx},${ny}`) && get(nx, ny) === "O") stack.push([nx, ny])
+      }
+    }
+    return chain
+  }
+
+  function chainLiberties(chain: Array<[number, number]>): number {
+    const liberties = new Set<string>()
+    for (const [cx, cy] of chain) {
+      for (const [nx, ny] of boardNeighbors(size, cx, cy)) {
+        if (get(nx, ny) === ".") liberties.add(`${nx},${ny}`)
+      }
+    }
+    return liberties.size
+  }
+
+  for (const [nx, ny] of boardNeighbors(size, x, y)) {
+    if (get(nx, ny) !== "O") continue
+    const chain = collectChain(nx, ny)
+    if (chainLiberties(chain) === 0) {
+      for (const [cx, cy] of chain) rows[cx][cy] = "."
+    }
+  }
+
+  return rows.map((row) => row.join(""))
 }
 
 export async function main(ns: NS): Promise<void> {
@@ -338,25 +394,9 @@ export async function main(ns: NS): Promise<void> {
       if (shouldPassToEndGame(ns)) {
         move = { type: "pass" }
         snapshot = recordOurMove(snapshot, moveNumber, move, { thinkMs: 0 })
-        snapshot = {
-          ...syncGameState(ns, snapshot),
-          moveNumber,
-          legalCount,
-          validMoves,
-          phase: "End game",
-        }
-        await renderIpvgoDashboard(ns, tailLog, snapshot)
       } else if (tactical) {
         move = tactical
         snapshot = recordOurMove(snapshot, moveNumber, move, { thinkMs: 0 })
-        snapshot = {
-          ...syncGameState(ns, snapshot),
-          moveNumber,
-          legalCount,
-          validMoves,
-          phase: "Tactical move",
-        }
-        await renderIpvgoDashboard(ns, tailLog, snapshot)
       } else {
         snapshot = {
           ...syncGameState(ns, snapshot),
@@ -400,6 +440,20 @@ export async function main(ns: NS): Promise<void> {
         move = pickLegalMove(validMoves, suggested)
         snapshot = recordOurMove(snapshot, moveNumber, move, { thinkMs, sims })
       }
+
+      const synced = syncGameState(ns, snapshot)
+      snapshot = {
+        ...synced,
+        board: move.type === "move" ? applyOurMoveToBoard(synced.board, move.x, move.y) : synced.board,
+        moveNumber,
+        legalCount,
+        validMoves: undefined,
+        lastOurMove: move,
+        thinkMs,
+        sims,
+        thinking: false,
+      }
+      await renderIpvgoDashboard(ns, tailLog, snapshot)
 
       const oppStarted = performance.now()
       let result
