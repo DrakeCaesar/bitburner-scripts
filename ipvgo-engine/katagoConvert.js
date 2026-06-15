@@ -1,6 +1,6 @@
-const COLUMN_LETTERS = "ABCDEFGHJKLMNOPQRSTUVWXYZ"
-
 import { phantomStoneColor } from "./phantomStones.js"
+
+const COLUMN_LETTERS = "ABCDEFGHJKLMNOPQRSTUVWXYZ"
 
 /** Ply depth for root-only move mask (current player). */
 const ROOT_MOVE_DEPTH = 1
@@ -123,44 +123,6 @@ export function compressBoardForKatago(board, validMoves) {
 
 function kataGoPlayer(playAs) {
   return playAs === "O" ? "W" : "B"
-}
-
-function neighborStoneCounts(board, x, y) {
-  const size = board.length
-  let xCount = 0
-  let oCount = 0
-  const adjacent = [
-    [x, y - 1],
-    [x + 1, y],
-    [x, y + 1],
-    [x - 1, y],
-  ]
-  for (const [nx, ny] of adjacent) {
-    if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue
-    const cell = cellAt(board, nx, ny)
-    if (cell === "X") xCount++
-    else if (cell === "O") oCount++
-  }
-  return { xCount, oCount }
-}
-
-/**
- * Pick B/W phantom for # so offline nodes are occupied but do not bridge chains.
- * - Touching only our stones: opponent color (no merge with us).
- * - Touching only enemy stones: our color (no merge with them).
- * - Mixed or isolated #: checkerboard so neither color connects across the wall.
- */
-function phantomStoneColor(board, x, y, playAs) {
-  const { xCount, oCount } = neighborStoneCounts(board, x, y)
-  const weAreBlack = playAs !== "O"
-
-  if (xCount > 0 && oCount === 0) {
-    return weAreBlack ? "W" : "B"
-  }
-  if (oCount > 0 && xCount === 0) {
-    return weAreBlack ? "B" : "W"
-  }
-  return (x + y) % 2 === 0 ? "B" : "W"
 }
 
 /**

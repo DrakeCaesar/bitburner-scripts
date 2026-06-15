@@ -1,6 +1,7 @@
 import type { ReactNode } from "@ns"
 import { getReact } from "@/libraries/scriptLogUi.js"
 import type { IpvgoBoard } from "./types.js"
+import { phantomStoneColor } from "./phantomStones.js"
 
 /** Square cell size in px (stones, coords, and labels all match). */
 export const BOARD_CELL_PX = 48
@@ -179,7 +180,38 @@ function whiteStoneSheenDot(): ReactNode {
   })
 }
 
-function stoneLayers(kind: BoardStoneKind): ReactNode[] {
+function blockedLayers(board: IpvgoBoard, x: number, y: number): ReactNode[] {
+  const React = getReact()
+  const phantom = phantomStoneColor(board, x, y, "X")
+  const dotR = 3.2
+  const dotFill = phantom === "B" ? "#1c1c1c" : "#D1D1D1"
+  const layers: ReactNode[] = [
+    React.createElement("rect", { x: 5, y: 5, width: 14, height: 14, fill: "#2a2a2a", rx: 1.5 }),
+    React.createElement("line", { x1: 7, y1: 7, x2: 17, y2: 17, stroke: "#555", strokeWidth: 1.2 }),
+    React.createElement("line", { x1: 17, y1: 7, x2: 7, y2: 17, stroke: "#555", strokeWidth: 1.2 }),
+    React.createElement("circle", {
+      cx: CENTER,
+      cy: CENTER,
+      r: dotR,
+      fill: dotFill,
+      stroke: phantom === "W" ? "#555555" : undefined,
+      strokeWidth: phantom === "W" ? 0.8 : 0,
+    }),
+  ]
+  if (phantom === "B") {
+    layers.push(
+      React.createElement("circle", {
+        cx: CENTER - 1.2,
+        cy: CENTER - 1.2,
+        r: 0.9,
+        fill: "rgba(255,255,255,0.12)",
+      })
+    )
+  }
+  return layers
+}
+
+function stoneLayers(kind: BoardStoneKind, board?: IpvgoBoard, x?: number, y?: number): ReactNode[] {
   const React = getReact()
   switch (kind) {
     case "black":
@@ -200,7 +232,7 @@ function stoneLayers(kind: BoardStoneKind): ReactNode[] {
         whiteStoneSheenDot(),
       ]
     case "blocked":
-      return [
+      return board != null && x != null && y != null ? blockedLayers(board, x, y) : [
         React.createElement("rect", { x: 5, y: 5, width: 14, height: 14, fill: "#2a2a2a", rx: 1.5 }),
         React.createElement("line", { x1: 7, y1: 7, x2: 17, y2: 17, stroke: "#555", strokeWidth: 1.2 }),
         React.createElement("line", { x1: 17, y1: 7, x2: 7, y2: 17, stroke: "#555", strokeWidth: 1.2 }),
@@ -268,7 +300,7 @@ export function buildBoardCell(
   const kind: BoardStoneKind =
     raw === "X" ? "black" : raw === "O" ? "white" : raw === "#" ? "blocked" : "empty"
   if (kind !== "empty") {
-    layers.push(...stoneLayers(kind))
+    layers.push(...stoneLayers(kind, board, x, y))
     if (highlight) {
       layers.push(highlightCircle(highlight))
     }
