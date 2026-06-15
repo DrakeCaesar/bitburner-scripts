@@ -1,5 +1,5 @@
 import { NS } from "@ns"
-import { col, TabbedScriptLogBuilder, W, type TabDefinition } from "@/libraries/scriptLogUiLayout.js"
+import { col, renderTabbedTailLog, TabbedScriptLogBuilder, W, type TabDefinition } from "@/libraries/scriptLogUiLayout.js"
 import { formatSnapshotMoney } from "@/libraries/stock/trader.js"
 import type { StockSymbolSnapshot, StockTraderSnapshot } from "@/libraries/stock/types.js"
 
@@ -98,5 +98,5 @@ export async function renderStockTraderDashboard(
   populateOverviewTab(ns, tabbedLog, snapshot)
   populatePositionsTab(ns, tabbedLog, snapshot)
   populateLogTab(tabbedLog, snapshot)
-  await tabbedLog.render(ns)
+  await renderTabbedTailLog(ns, tabbedLog)
 }

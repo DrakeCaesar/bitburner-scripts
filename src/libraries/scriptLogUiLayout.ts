@@ -6,7 +6,7 @@
  * Patterns:
  * - Single table:  createTailLog().table(config).render(ns)
  * - Stacked:       createTailLog().text(...).table(...).render(ns)
- * - Tabbed:        createTabbedTailLog(TABS).tab("id").table(...); tabbed.render(ns)
+ * - Tabbed:        createTabbedTailLog(TABS).tab("id").table(...); renderTabbedTailLog(ns, tabbed)
  */
 
 import { NS } from "@ns"
@@ -77,4 +77,14 @@ export function openTailLog(ns: NS, title: string, overrides?: Partial<TableLayo
 /** Render one table in the tail (sugar over createTailLog). */
 export async function renderTailTable(ns: NS, config: ReactTableConfig, overrides?: Partial<TableLayout>): Promise<void> {
   await createTailLog(overrides).table(config).render(ns)
+}
+
+/**
+ * Render a tabbed tail after applying any pending user tab switch (resize + redraw).
+ * Use instead of tabbedLog.render(ns) so tab clicks resize the window reliably.
+ */
+export async function renderTabbedTailLog(ns: NS, tabbedLog: TabbedScriptLogBuilder): Promise<void> {
+  if (!(await tabbedLog.refreshLayoutIfPending(ns))) {
+    await tabbedLog.render(ns)
+  }
 }

@@ -3,7 +3,7 @@ import {
   buildAugmentCatalogTableConfig,
   buildAugmentStatsTableConfig,
 } from "./libraries/augmentStatsDisplay.js"
-import { createTabbedTailLog, openTailLog, type TabDefinition } from "./libraries/scriptLogUiLayout.js"
+import { createTabbedTailLog, openTailLog, renderTabbedTailLog, sleepUntilTabLayoutRefresh, type TabDefinition } from "./libraries/scriptLogUiLayout.js"
 
 const AUGMENT_STATS_TABS: TabDefinition[] = [
   { id: "planner", label: "Planner" },
@@ -24,7 +24,7 @@ export async function main(ns: NS): Promise<void> {
 
   const { summary, ...table } = buildAugmentStatsTableConfig(ns)
   tabbedLog.tab("planner").text(summary).table(table)
-  await tabbedLog.render(ns)
+  await renderTabbedTailLog(ns, tabbedLog)
 
   let lastActiveTab = tabbedLog.getActiveTabId()
 
@@ -34,7 +34,7 @@ export async function main(ns: NS): Promise<void> {
     lastActiveTab = activeTab
 
     if (activeTab === "catalog" && !tabChanged) {
-      await ns.sleep(PLANNER_REFRESH_MS)
+      await sleepUntilTabLayoutRefresh(ns, tabbedLog, PLANNER_REFRESH_MS)
       continue
     }
 
@@ -42,7 +42,7 @@ export async function main(ns: NS): Promise<void> {
     const { summary: plannerSummary, ...plannerTable } = buildAugmentStatsTableConfig(ns)
     tabbedLog.tab("planner").text(plannerSummary).table(plannerTable)
 
-    await tabbedLog.render(ns)
-    await ns.sleep(PLANNER_REFRESH_MS)
+    await renderTabbedTailLog(ns, tabbedLog)
+    await sleepUntilTabLayoutRefresh(ns, tabbedLog, PLANNER_REFRESH_MS)
   }
 }

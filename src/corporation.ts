@@ -14,7 +14,7 @@ import { manageTobaccoPlantsSupply } from "@/libraries/corporation/tobaccoSuppli
 import { CorpPerfCollector, pushPerfHistory, type CorpPerfReport } from "@/libraries/corporation/perf.js"
 import { captureCorporationSnapshot } from "@/libraries/corporation/simulation/snapshot.js"
 import { validateCorpStage, type ValidationRun } from "@/libraries/corporation/simulation/validate.js"
-import { createTabbedTailLog, openTailLog } from "@/libraries/scriptLogUiLayout.js"
+import { createTabbedTailLog, openTailLog, sleepUntilTabLayoutRefresh } from "@/libraries/scriptLogUiLayout.js"
 
 const SIM_HISTORY_MAX = 12
 
@@ -40,6 +40,7 @@ export async function main(ns: NS): Promise<void> {
 
   while (true) {
     try {
+      await tabbedLog.refreshLayoutIfPending(ns)
       perfCycle += 1
       const perf = new CorpPerfCollector()
       perf.startLoop()
@@ -76,7 +77,7 @@ export async function main(ns: NS): Promise<void> {
           }
         }
       } else {
-        await ns.sleep(5000)
+        await sleepUntilTabLayoutRefresh(ns, tabbedLog, 5000)
       }
 
       const headcountPlans = [

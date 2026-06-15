@@ -25,6 +25,7 @@ import {
 import {
   createTabbedTailLog,
   openTailLog,
+  renderTabbedTailLog,
   sleepUntilTabLayoutRefresh,
   type ReactTableConfig,
   type TabDefinition,
@@ -155,10 +156,7 @@ export async function main(ns: NS): Promise<void> {
   openTailLog(ns, `Hack Grind (${options.mode})`)
 
   const tabbedLog = createTabbedTailLog(GRIND_TABS)
-  const renderLog = async () => {
-    await tabbedLog.refreshLayoutIfPending(ns)
-    await tabbedLog.render(ns)
-  }
+  const renderLog = () => renderTabbedTailLog(ns, tabbedLog)
 
   const nodes = getNodesForBatching(ns, {
     workers: options.workers,

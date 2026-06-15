@@ -24,6 +24,7 @@ import {
   createTabbedTailLog,
   measureTreeTableHostChars,
   openTailLog,
+  renderTabbedTailLog,
   W,
   type TabDefinition,
   type TabbedScriptLogBuilder,
@@ -259,7 +260,7 @@ async function renderDashboard(
   tabbedLog.tab("crawl").text(summaryLine)
   appendDarknetTreeTable(tabbedLog, ns, dnet, displayReports, activeOps, "Darknet crawl")
   appendCacheOpenTable(tabbedLog, cacheOpens)
-  await tabbedLog.render(ns)
+  await renderTabbedTailLog(ns, tabbedLog)
 }
 
 async function renderCrawlProgress(
@@ -341,17 +342,17 @@ export async function main(ns: NS): Promise<void> {
   const dnet = getDarknetApi(ns)
   if (!dnet) {
     tabbedLog.tab("crawl").text("ERROR: ns.dnet API not available")
-    await tabbedLog.render(ns)
+    await renderTabbedTailLog(ns, tabbedLog)
     return
   }
   if (!ns.hasTorRouter()) {
     tabbedLog.tab("crawl").text("ERROR: Need a TOR router")
-    await tabbedLog.render(ns)
+    await renderTabbedTailLog(ns, tabbedLog)
     return
   }
   if (!ns.fileExists(DARKSCAPE_NAV, "home")) {
     tabbedLog.tab("crawl").text(`ERROR: Need ${DARKSCAPE_NAV} on home`)
-    await tabbedLog.render(ns)
+    await renderTabbedTailLog(ns, tabbedLog)
     return
   }
 
@@ -385,6 +386,6 @@ export async function main(ns: NS): Promise<void> {
   } catch (err) {
     tabbedLog.clearPanels()
     tabbedLog.tab("crawl").text(`ERROR: ${String(err)}`)
-    await tabbedLog.render(ns)
+    await renderTabbedTailLog(ns, tabbedLog)
   }
 }

@@ -1,6 +1,7 @@
 import { CorpMaterialName, NS } from "@ns"
 import {
   col,
+  renderTabbedTailLog,
   ScriptLogBuilder,
   TabbedScriptLogBuilder,
   W,
@@ -582,7 +583,7 @@ export async function renderCorporationDashboard(
   perf.measure("ui tab Log", () => populateLogTab(tabbedLog, statusLines, simMismatchWarning))
 
   populatePerformanceTab(tabbedLog, perf.peekReport(perfCycle), perfHistory, "pre-render")
-  await perf.measureAsync("ui render React", () => tabbedLog.render(ns))
+  await perf.measureAsync("ui render React", () => renderTabbedTailLog(ns, tabbedLog))
   return perf.finishLoop(perfCycle)
 }
 

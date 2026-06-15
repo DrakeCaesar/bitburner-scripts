@@ -17,7 +17,13 @@ import { purchasePrograms, purchaseTorRouter } from "./libraries/purchaseProgram
 import { purchaseServers } from "./libraries/purchaseServer.js"
 import { sumBatchWorkerRam } from "./libraries/ramUtils.js"
 import type { ReactTableConfig } from "./libraries/scriptLogUiLayout.js"
-import { createTabbedTailLog, openTailLog, sleepUntilTabLayoutRefresh, type TabDefinition } from "./libraries/scriptLogUiLayout.js"
+import {
+  createTabbedTailLog,
+  openTailLog,
+  renderTabbedTailLog,
+  sleepUntilTabLayoutRefresh,
+  type TabDefinition,
+} from "./libraries/scriptLogUiLayout.js"
 import {
   getNodesForBatching,
   killAllHackingScriptsOnNodes,
@@ -47,10 +53,7 @@ export async function main(ns: NS) {
   openTailLog(ns, debug ? "Batch (debug)" : "Batch")
 
   const tabbedLog = createTabbedTailLog(BATCH_TABS)
-  const renderLog = async () => {
-    await tabbedLog.refreshLayoutIfPending(ns)
-    await tabbedLog.render(ns)
-  }
+  const renderLog = () => renderTabbedTailLog(ns, tabbedLog)
   const whileAsleep = (ms: number) => sleepUntilTabLayoutRefresh(ns, tabbedLog, ms).then(() => undefined)
   const fmtTime = (ms: number) => formatGameTimeMs(ms, (m) => ns.format.time(m))
 

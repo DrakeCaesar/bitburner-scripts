@@ -412,6 +412,36 @@ function scrollTabbedPanelAfterLayout(pid: number, layout: TableLayout): void {
   })
 }
 
+/**
+ * Resize the script tail window from the live DOM (no Netscript APIs).
+ * Used on tab clicks so the window resizes immediately without waiting for the main loop.
+ */
+function applyDomTailWindowSize(pid: number, layout: TableLayout): void {
+  primeChWidthPx(layout.fontSizePx)
+  primeTailLogChrome(layout)
+  const renderLayout = layoutForTailRender({ ...layout, tailScriptPid: pid })
+  const next = resolveTailSize(renderLayout)
+  try {
+    const doc = eval("document") as Document
+    const viewport = doc.querySelector(`[${SCRIPT_LOG_PID_ATTR}="${pid}"]`) as HTMLElement | null
+    if (!viewport) return
+    const tailRoot = viewport.closest(".react-resizable") as HTMLElement | null
+    if (tailRoot) {
+      tailRoot.style.width = `${next.width}px`
+      tailRoot.style.height = `${next.height}px`
+    }
+    lastTailSizeByPid.set(pid, next)
+    applyTabbedTailChrome(pid, renderLayout)
+  } catch {
+    // ignore
+  }
+}
+
+function syncTabbedTailLayoutDom(pid: number, layout: TableLayout): void {
+  applyDomTailWindowSize(pid, layout)
+  scrollTabbedPanelAfterLayout(pid, layout)
+}
+
 function scrollTailToTopAfterLayout(pid: number, layout?: TableLayout): void {
   if (layout?.tailTabbed) {
     scrollTabbedPanelAfterLayout(pid, layout)
@@ -1543,12 +1573,14 @@ interface TabbedLogViewProps {
   programmaticActiveId: string
   layout: TableLayout
   onTabChange?: (tabId: string) => void
+  /** After the active tab panel paints, sync tail size from cached per-tab dimensions. */
+  onActiveTabLayout?: (tabId: string) => void
 }
 
 /** Stateful tab UI — uses React hooks (no document/window DOM). Clicks may not work in all game versions. */
 function TabbedLogView(props: TabbedLogViewProps): ReactNode {
   const React = getReact()
-  const { tabOrder, panels, populatedTabIds, programmaticActiveId, layout, onTabChange } = props
+  const { tabOrder, panels, populatedTabIds, programmaticActiveId, layout, onTabChange, onActiveTabLayout } = props
   const populated = new Set(populatedTabIds)
   const [activeId, setActiveId] = React.useState(programmaticActiveId)
   const [panelEl, setPanelEl] = React.useState<HTMLElement | null>(null)
@@ -1556,6 +1588,21 @@ function TabbedLogView(props: TabbedLogViewProps): ReactNode {
   React.useEffect(() => {
     setActiveId(programmaticActiveId)
   }, [programmaticActiveId])
+
+  React.useEffect(() => {
+    if (!onActiveTabLayout) return
+    const win = eval("window") as Window
+    let frame2 = 0
+    const frame1 = win.requestAnimationFrame(() => {
+      frame2 = win.requestAnimationFrame(() => {
+        onActiveTabLayout(activeId)
+      })
+    })
+    return () => {
+      win.cancelAnimationFrame(frame1)
+      if (frame2) win.cancelAnimationFrame(frame2)
+    }
+  }, [activeId, onActiveTabLayout])
 
   React.useEffect(() => {
     if (!panelEl || layout.tailScriptPid == null) return
@@ -1746,16 +1793,28 @@ export class TabbedScriptLogBuilder {
   async refreshLayoutIfPending(ns: NS): Promise<boolean> {
     if (!this.pendingLayoutRefresh) return false
     this.pendingLayoutRefresh = false
+    if (this.lazyInactivePanels) {
+      if (this.tailScriptPid != null) {
+        lastTailSizeByPid.delete(this.tailScriptPid)
+      }
+      await this.render(ns)
+      return true
+    }
+    this.syncDomLayoutForActiveTab()
+    return true
+  }
+
+  /** Resize tail window for the active tab using cached panel metrics (DOM only). */
+  private syncDomLayoutForActiveTab(): void {
+    const pid = this.tailScriptPid
+    if (pid == null) return
+    lastTailSizeByPid.delete(pid)
     const renderLayout = layoutForTailRender({
       ...this.resolveRenderLayout(),
-      tailScriptPid: ns.pid,
+      tailScriptPid: pid,
+      tailActiveTabId: this.displayTabId,
     })
-    applyTailSize(ns, renderLayout)
-    scrollTabbedPanelAfterLayout(ns.pid, renderLayout)
-    if (this.lazyInactivePanels) {
-      await this.render(ns)
-    }
-    return true
+    syncTabbedTailLayoutDom(pid, renderLayout)
   }
 
   tab(tabId: string): ScriptLogBuilder {
@@ -1848,12 +1907,12 @@ export class TabbedScriptLogBuilder {
 
   build(): ReactNode {
     const React = getReact()
+    this.refreshPanelDimensions()
     const layout = layoutForTailRender({
       ...this.resolveRenderLayout(),
       tailScriptPid: this.tailScriptPid,
       tailActiveTabId: this.displayTabId,
     })
-    this.refreshPanelDimensions()
     const populatedTabIds: string[] = []
     for (const { id } of this.tabOrder) {
       const builder = this.builders.get(id)
@@ -1875,6 +1934,10 @@ export class TabbedScriptLogBuilder {
       }
     }
 
+    const syncTabLayout = (): void => {
+      this.syncDomLayoutForActiveTab()
+    }
+
     return React.createElement(TabbedLogView, {
       tabOrder: this.tabOrder,
       panels,
@@ -1886,8 +1949,12 @@ export class TabbedScriptLogBuilder {
           saveTabbedPanelScroll(this.tailScriptPid, this.displayTabId)
         }
         this.displayTabId = tabId
-        this.pendingLayoutRefresh = true
+        if (this.lazyInactivePanels) {
+          this.pendingLayoutRefresh = true
+        }
+        syncTabLayout()
       },
+      onActiveTabLayout: syncTabLayout,
     })
   }
 
