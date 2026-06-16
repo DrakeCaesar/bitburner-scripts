@@ -21,6 +21,8 @@ function homeDownloadLocation(file: string, _server: string): string | null {
 function rewriteGameImportPaths(code: string): string {
   let next = code.replace(/\/src\/libraries\//g, "/libraries/")
   next = next.replace(/(\/libraries\/[^'"]+)\.ts(?=['"])/g, "$1.js")
+  // Vite dev may emit .ts and ?t= cache-bust query strings; home only has .js modules.
+  // next = next.replace(/(\/libraries\/[^'"]+?)\.ts(\?[^'"]*)?(?=['"])/g, "$1.js")
   return next
 }
 
