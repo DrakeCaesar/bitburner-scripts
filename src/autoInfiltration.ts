@@ -17,7 +17,6 @@ import {
 import { InfiltrationRunStatsTracker } from "./libraries/infiltration/infiltrationRunStats.js"
 import { setupInfiltrationSolver, shutdownInfiltrationSolver } from "./libraries/infiltration/infiltrationSolver.js"
 import {
-  areAllInfiltrationsDoable,
   canAffordInfiltrationTravel,
   getBestInfiltrationTarget,
   getBestInfiltrationTargetForPlayer,
@@ -27,7 +26,6 @@ import {
   INFILTRATION_TRAVEL_COST,
   isInfiltrationMoneyMode,
 } from "./libraries/infiltration/infiltrationTargets.js"
-import { getActiveMegacorp } from "./libraries/megacorpWork.js"
 import { openTailLog } from "./libraries/scriptLogUiLayout.js"
 
 const SHOW_INFILTRATION_DOM_WINDOW = true
@@ -82,17 +80,6 @@ export async function main(ns: NS): Promise<void> {
 
   try {
     while (true) {
-      if (areAllInfiltrationsDoable(ns) && getActiveMegacorp(ns) != null) {
-        trainingStat = getLowestCombatGymSkill(ns)
-        if (SHOW_COMBAT_TRAINING_TABLE) {
-          await renderCombatSkillTrainingTable(ns, trainingStat)
-        }
-        await prepareCombatSkillTraining(ns, trainingStat)
-        syncTrustedKeyInjection()
-        await ns.sleep(CHECK_INTERVAL_MS)
-        continue
-      }
-
       const rewardGoal = getInfiltrationRewardGoal(ns)
       const grindFaction =
         rewardGoal === "reputation" ? getPreferredFactionForInfiltrationRep(ns) : null
@@ -173,6 +160,7 @@ export async function main(ns: NS): Promise<void> {
           break
       }
 
+      await prepareCombatSkillTraining(ns, trainingStat)
       syncTrustedKeyInjection()
     }
   } finally {
