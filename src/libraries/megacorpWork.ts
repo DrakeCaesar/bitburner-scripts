@@ -1,8 +1,15 @@
 import type { CompanyName, FactionName, JobField, JobName, Player } from "@ns"
 import { NS } from "@ns"
+import {
+  CYCLES_PER_SECOND,
+  COMBAT_GYM_SKILLS,
+  EXP_GAIN_BY_GYM,
+  combinedGymCombatExpPerSecond,
+  type CombatGymSkill,
+} from "./gymWorkout.js"
 import { col, W, type ReactTableConfig } from "./scriptLogUiLayout.js"
 
-const CYCLES_PER_SECOND = 1000 / 200
+const UNFOCUSED_FOCUS_MULT = 0.8
 
 export const DEFAULT_REQUIRED_REP = 400000
 
@@ -38,6 +45,165 @@ export function isMegacorpFactionUnlocked(ns: NS, company: CompanyName): boolean
   return ns.getPlayer().factions.includes(getFactionName(company))
 }
 
+/** First megacorp autoWorkMegacorps would still be grinding (not faction-joined). */
+export function getActiveMegacorp(ns: NS): CompanyName | null {
+  for (const company of getMegacorps(ns)) {
+    if (!isMegacorpFactionUnlocked(ns, company)) {
+      return company
+    }
+  }
+  return null
+}
+
+export interface MegacorpSkillTrainingOffer {
+  company: CompanyName
+  field: JobField
+  position: JobName
+  expPerSecond: number
+  gymBaseline: number
+  skillsBreakdown: string
+}
+
+export interface CombinedCombatExp {
+  total: number
+  gymBaseline: number
+  skills: CombatGymSkill[]
+  breakdown: string
+  bySkill: Partial<Record<CombatGymSkill, number>>
+}
+
+function focusMultiplier(focus: boolean): number {
+  return focus ? 1 : UNFOCUSED_FOCUS_MULT
+}
+
+/** Combat skill exp/s from a company job (formulas API, same assumptions as rep/s display). */
+export function combatSkillExpPerSecondFromCompany(
+  ns: NS,
+  company: CompanyName,
+  position: JobName,
+  skill: CombatGymSkill,
+  focus = ns.singularity.isFocused()
+): number | null {
+  try {
+    const favor = ns.singularity.getCompanyFavor(company)
+    const gains = ns.formulas.work.companyGains(ns.getPlayer(), company, position, favor)
+    const expPerCycle = gains[EXP_GAIN_BY_GYM[skill]]
+    if (expPerCycle <= 0) return null
+    return expPerCycle * CYCLES_PER_SECOND * focusMultiplier(focus)
+  } catch {
+    return null
+  }
+}
+
+/** Sum combat skill exp/s from a job for every stat it trains, plus per-stat gym baseline. */
+export function getCombinedCombatExpFromCompany(
+  ns: NS,
+  company: CompanyName,
+  position: JobName,
+  focus = ns.singularity.isFocused()
+): CombinedCombatExp {
+  const empty: CombinedCombatExp = {
+    total: 0,
+    gymBaseline: 0,
+    skills: [],
+    breakdown: "",
+    bySkill: {},
+  }
+
+  try {
+    const favor = ns.singularity.getCompanyFavor(company)
+    const gains = ns.formulas.work.companyGains(ns.getPlayer(), company, position, favor)
+    const bySkill: Partial<Record<CombatGymSkill, number>> = {}
+    const skills: CombatGymSkill[] = []
+    let total = 0
+
+    for (const skill of COMBAT_GYM_SKILLS) {
+      const expPerCycle = gains[EXP_GAIN_BY_GYM[skill]]
+      if (expPerCycle > 0) {
+        const rate = expPerCycle * CYCLES_PER_SECOND * focusMultiplier(focus)
+        bySkill[skill] = rate
+        skills.push(skill)
+        total += rate
+      }
+    }
+
+    return {
+      total,
+      gymBaseline: combinedGymCombatExpPerSecond(ns, skills, focus),
+      skills,
+      breakdown: skills.join("+"),
+      bySkill,
+    }
+  } catch {
+    return empty
+  }
+}
+
+/**
+ * Megacorp job autoWorkMegacorps would pick for the active company, rated by combined combat exp/s.
+ * Returns null when no qualified position or the job grants no combat exp.
+ */
+export function getMegacorpSkillTrainingOffer(
+  ns: NS,
+  focus = ns.singularity.isFocused()
+): MegacorpSkillTrainingOffer | null {
+  const company = getActiveMegacorp(ns)
+  if (!company) return null
+
+  const positions = ns.singularity.getCompanyPositions(company)
+  if (positions.length === 0) return null
+
+  const player = ns.getPlayer()
+  const companyRep = ns.singularity.getCompanyRep(company)
+  const companyFavor = ns.singularity.getCompanyFavor(company)
+  const best = pickBestCompanyField(ns, company, positions, player, companyFavor, companyRep)
+  if (!best) return null
+
+  const combined = getCombinedCombatExpFromCompany(ns, company, best.positionName, focus)
+  if (combined.total <= 0) return null
+
+  return {
+    company,
+    field: best.field,
+    position: best.positionName,
+    expPerSecond: combined.total,
+    gymBaseline: combined.gymBaseline,
+    skillsBreakdown: combined.breakdown,
+  }
+}
+
+/** Apply and start the megacorp job autoWorkMegacorps would use for the active company. */
+export function ensureMegacorpSkillWork(
+  ns: NS,
+  company: CompanyName,
+  focus = ns.singularity.isFocused()
+): boolean {
+  const positions = ns.singularity.getCompanyPositions(company)
+  if (positions.length === 0) return false
+
+  const player = ns.getPlayer()
+  const companyRep = ns.singularity.getCompanyRep(company)
+  const companyFavor = ns.singularity.getCompanyFavor(company)
+  const best = pickBestCompanyField(ns, company, positions, player, companyFavor, companyRep)
+  if (!best) return false
+
+  const currentJob = player.jobs[company]
+  const currentField = currentJob
+    ? ns.singularity.getCompanyPositionInfo(company, currentJob).field
+    : null
+
+  if (currentJob == null || currentField !== best.field) {
+    const applied = ns.singularity.applyToCompany(company, best.field)
+    if (!applied && currentJob == null) return false
+  }
+
+  if (!isWorkingAtCompany(ns, company)) {
+    return ns.singularity.workForCompany(company, focus)
+  }
+
+  return true
+}
+
 export interface MegacorpRow {
   company: CompanyName
   faction: FactionName
@@ -60,6 +226,24 @@ export interface MegacorpPositionRow {
   repPerSecond: string
   fieldPick: string
   isSelected: boolean
+  note: string
+}
+
+export interface CombatSkillPositionRow {
+  position: JobName
+  field: JobField
+  requiredRep: string
+  qualified: string
+  skillsBreakdown: string
+  combinedExpPerSecond: number
+  combinedExpLabel: string
+  gymBaseline: number
+  repPerSecond: string
+  vsGym: string
+  fieldPick: string
+  isRepPick: boolean
+  isBestCombined: boolean
+  isTrainingPick: boolean
   note: string
 }
 
@@ -253,6 +437,180 @@ export function buildMegacorpPositionTableConfig(
       row.fieldPick,
       row.note,
     ]),
+    selectedRowIndex: selectedRowIndex >= 0 ? selectedRowIndex : undefined,
+    highlightCells,
+  }
+}
+
+function formatVsGym(skillExpPerSecond: number, gymExpPerSecond: number): string {
+  if (skillExpPerSecond <= 0) return "—"
+  const delta = skillExpPerSecond - gymExpPerSecond
+  if (Math.abs(delta) < 0.005) return "0"
+  return delta > 0 ? `+${delta.toFixed(2)}` : delta.toFixed(2)
+}
+
+/** All company positions with combined combat exp/s vs gym, including unqualified jobs. */
+export function buildCombatSkillPositionRows(
+  ns: NS,
+  company: CompanyName,
+  options?: { focus?: boolean; trainingPosition?: JobName | null }
+): CombatSkillPositionRow[] {
+  if (isMegacorpFactionUnlocked(ns, company)) return []
+
+  const positions = ns.singularity.getCompanyPositions(company)
+  if (positions.length === 0) return []
+
+  const focus = options?.focus ?? ns.singularity.isFocused()
+  const trainingPosition = options?.trainingPosition ?? null
+  const player = ns.getPlayer()
+  const companyRep = ns.singularity.getCompanyRep(company)
+  const companyFavor = ns.singularity.getCompanyFavor(company)
+  const qualifiedByField = qualifiedPositionByField(ns, company, positions, player, companyRep)
+  const best = pickBestCompanyField(ns, company, positions, player, companyFavor, companyRep)
+  const rows: CombatSkillPositionRow[] = []
+
+  let bestCombinedExp = -1
+  let bestCombinedPosition: JobName | null = null
+
+  for (const position of positions) {
+    const combined = getCombinedCombatExpFromCompany(ns, company, position, focus)
+    if (combined.total > bestCombinedExp) {
+      bestCombinedExp = combined.total
+      bestCombinedPosition = position
+    }
+  }
+
+  for (const position of positions) {
+    const info = ns.singularity.getCompanyPositionInfo(company, position)
+    const skillsOk = meetsPositionRequirements(player, position, company, ns)
+    const repOk = meetsPositionReputation(companyRep, info.requiredReputation)
+    const qualified = skillsOk && repOk
+    const fieldCandidate = qualifiedByField.get(info.field) === position
+    const isRepPick = best?.positionName === position
+    const combined = getCombinedCombatExpFromCompany(ns, company, position, focus)
+    const repRate = qualified
+      ? companyRepPerSecond(ns, company, position, companyFavor)
+      : null
+
+    let note = ""
+    if (combined.total <= 0) {
+      note = "No combat exp from job"
+    } else if (!skillsOk) {
+      note = "Skill requirements not met"
+    } else if (!repOk) {
+      note = `Need ${ns.format.number(info.requiredReputation)} company rep`
+    } else if (!fieldCandidate) {
+      note = "Not top qualified in field"
+    } else if (!isRepPick && best) {
+      note = `Lower rep/s than ${best.field}`
+    }
+
+    rows.push({
+      position,
+      field: info.field,
+      requiredRep: ns.format.number(info.requiredReputation),
+      qualified: qualified ? "yes" : skillsOk ? "low rep" : "no",
+      skillsBreakdown: combined.breakdown || "—",
+      combinedExpPerSecond: combined.total,
+      combinedExpLabel: combined.total > 0 ? combined.total.toFixed(2) : "—",
+      gymBaseline: combined.gymBaseline,
+      repPerSecond: repRate != null ? repRate.toFixed(2) : "—",
+      vsGym: formatVsGym(combined.total, combined.gymBaseline),
+      fieldPick: fieldCandidate ? "yes" : "—",
+      isRepPick,
+      isBestCombined: bestCombinedPosition === position && combined.total > 0,
+      isTrainingPick: trainingPosition === position,
+      note,
+    })
+  }
+
+  return rows.sort((a, b) => {
+    if (a.isTrainingPick) return -1
+    if (b.isTrainingPick) return 1
+    if (a.isBestCombined) return -1
+    if (b.isBestCombined) return 1
+    if (a.combinedExpPerSecond !== b.combinedExpPerSecond) {
+      return b.combinedExpPerSecond - a.combinedExpPerSecond
+    }
+    const aRep = a.repPerSecond === "—" ? -1 : Number(a.repPerSecond)
+    const bRep = b.repPerSecond === "—" ? -1 : Number(b.repPerSecond)
+    if (aRep !== bRep) return bRep - aRep
+    return a.position.localeCompare(b.position)
+  })
+}
+
+export function buildCombatSkillPositionTableConfig(
+  ns: NS,
+  rows: CombatSkillPositionRow[],
+  skill: CombatGymSkill,
+  company: CompanyName,
+  gymExpPerSecond: number,
+  trainingMode: "gym" | "megacorp"
+): ReactTableConfig {
+  const selectedRowIndex = rows.findIndex((row) => row.isTrainingPick)
+  const highlightCells =
+    selectedRowIndex >= 0
+      ? new Set([
+          `${selectedRowIndex},0`,
+          `${selectedRowIndex},1`,
+          `${selectedRowIndex},5`,
+          `${selectedRowIndex},6`,
+          `${selectedRowIndex},7`,
+        ])
+      : undefined
+
+  const trainingRow = rows.find((row) => row.isTrainingPick)
+  const bestCombinedRow = rows.find((row) => row.isBestCombined)
+  const pickLabel =
+    trainingMode === "gym"
+      ? `gym ${gymExpPerSecond.toFixed(2)}/s (${skill})`
+      : trainingRow != null
+        ? `${trainingRow.position} ${trainingRow.skillsBreakdown} ${trainingRow.combinedExpLabel}/s`
+        : "megacorp"
+
+  const titleParts = [
+    `Combat ${skill} @ ${company}`,
+    `gym ${skill} ${gymExpPerSecond.toFixed(2)}/s`,
+    bestCombinedRow != null && bestCombinedRow.combinedExpPerSecond > 0
+      ? `best job ${bestCombinedRow.skillsBreakdown} ${bestCombinedRow.combinedExpLabel}/s`
+      : null,
+    `pick ${pickLabel}`,
+  ].filter(Boolean)
+
+  return {
+    title: titleParts.join(" — "),
+    columns: [
+      col("Pick", "center", W.pick),
+      col("Position", "left", W.position),
+      col("Field", "left", W.field),
+      col("Req rep", "right"),
+      col("Qualified", "center", W.job),
+      col("Stats", "left", W.stat),
+      col("XP/s", "right", W.xp),
+      col("vs gym", "right", W.num),
+      col("Rep/s", "right", W.num),
+      col("Field pick", "center", W.job),
+      col("Why", "left", W.why),
+    ],
+    rows: rows.map((row) => {
+      const pickParts: string[] = []
+      if (row.isTrainingPick) pickParts.push("->")
+      if (row.isBestCombined) pickParts.push("*")
+      if (row.isRepPick && !row.isTrainingPick) pickParts.push("R")
+      return [
+        pickParts.join(" "),
+        row.position,
+        row.field,
+        row.requiredRep,
+        row.qualified,
+        row.skillsBreakdown,
+        row.combinedExpLabel,
+        row.vsGym,
+        row.repPerSecond,
+        row.fieldPick,
+        row.note,
+      ]
+    }),
     selectedRowIndex: selectedRowIndex >= 0 ? selectedRowIndex : undefined,
     highlightCells,
   }

@@ -5,10 +5,12 @@ export const GYM_NAME = "Powerhouse Gym"
 
 const MILLI_PER_CYCLE = 200
 const LEVEL_POLL_MS = 50
+export const CYCLES_PER_SECOND = 1000 / MILLI_PER_CYCLE
+const UNFOCUSED_FOCUS_MULT = 0.8
 
 export type CombatGymSkill = "str" | "def" | "dex" | "agi"
 type CombatSkill = "strength" | "defense" | "dexterity" | "agility"
-type CombatExp = "strExp" | "defExp" | "dexExp" | "agiExp"
+export type CombatExpField = "strExp" | "defExp" | "dexExp" | "agiExp"
 
 const SKILL_BY_GYM: Record<CombatGymSkill, CombatSkill> = {
   str: "strength",
@@ -17,12 +19,14 @@ const SKILL_BY_GYM: Record<CombatGymSkill, CombatSkill> = {
   agi: "agility",
 }
 
-const EXP_GAIN_BY_GYM: Record<CombatGymSkill, CombatExp> = {
+export const EXP_GAIN_BY_GYM: Record<CombatGymSkill, CombatExpField> = {
   str: "strExp",
   def: "defExp",
   dex: "dexExp",
   agi: "agiExp",
 }
+
+export const COMBAT_GYM_SKILLS: readonly CombatGymSkill[] = ["str", "def", "dex", "agi"]
 
 const ORDER_PREFERENCE: Record<CombatGymSkill, number> = {
   str: 0,
@@ -75,6 +79,43 @@ export function getLowestCombatGymSkill(ns: NS): CombatGymSkill {
     }
     return min
   }).name
+}
+
+function focusMultiplier(focus: boolean): number {
+  return focus ? 1 : UNFOCUSED_FOCUS_MULT
+}
+
+/** Focused combat skill exp/s at the infiltration gym. */
+export function combatGymExpPerSecond(
+  ns: NS,
+  gymType: CombatGymSkill,
+  focus = ns.singularity.isFocused()
+): number | null {
+  try {
+    const gains = ns.formulas.work.gymGains(ns.getPlayer(), gymType, GYM_NAME)
+    const expPerCycle = gains[EXP_GAIN_BY_GYM[gymType]]
+    if (expPerCycle <= 0) return null
+    return expPerCycle * CYCLES_PER_SECOND * focusMultiplier(focus)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Gym baseline for a multi-stat job. Gym trains one stat at a time, so compare against
+ * the mean gym rate across the job's stats (sum / N), not the sum of all gym rates.
+ */
+export function combinedGymCombatExpPerSecond(
+  ns: NS,
+  skills: readonly CombatGymSkill[],
+  focus = ns.singularity.isFocused()
+): number {
+  if (skills.length === 0) return 0
+  let total = 0
+  for (const skill of skills) {
+    total += combatGymExpPerSecond(ns, skill, focus) ?? 0
+  }
+  return total / skills.length
 }
 
 export function startGymWorkout(ns: NS, gymType: GymType, focus = ns.singularity.isFocused()): void {

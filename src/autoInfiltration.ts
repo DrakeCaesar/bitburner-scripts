@@ -1,11 +1,11 @@
 import { NS } from "@ns"
-import { getPreferredFactionForInfiltrationRep, isWorkingForFactionOrCompany } from "./libraries/factionWork.js"
 import {
-  GYM_CITY,
-  GYM_NAME,
-  getCombatGymSkillLevel,
+  prepareCombatSkillTraining,
+  renderCombatSkillTrainingTable,
+} from "./libraries/combatSkillTraining.js"
+import { getPreferredFactionForInfiltrationRep } from "./libraries/factionWork.js"
+import {
   getLowestCombatGymSkill,
-  startGymWorkout,
   type CombatGymSkill,
 } from "./libraries/gymWorkout.js"
 import { syncTrustedKeyInjection } from "./libraries/infiltration/infiltrationKeyInput.js"
@@ -26,8 +26,10 @@ import {
   INFILTRATION_TRAVEL_COST,
   isInfiltrationMoneyMode,
 } from "./libraries/infiltration/infiltrationTargets.js"
+import { openTailLog } from "./libraries/scriptLogUiLayout.js"
 
 const SHOW_INFILTRATION_DOM_WINDOW = true
+const SHOW_COMBAT_TRAINING_TABLE = true
 const SHOW_MINIGAME_INFO = false
 /** Set false to let minigames time out without sending keys (testing). */
 const SOLVE_MINIGAMES = true
@@ -45,33 +47,10 @@ function killConflictingScripts(ns: NS): void {
   }
 }
 
-async function prepareGymWorkout(ns: NS, trainingStat: CombatGymSkill): Promise<void> {
-  if (isWorkingForFactionOrCompany(ns)) {
-    ns.print("Skipping gym workout; faction or company work active")
-    return
-  }
-
-  if (ns.getPlayer().city !== GYM_CITY) {
-    if (!canAffordInfiltrationTravel(ns)) {
-      ns.print(`Skipping gym workout; cannot afford travel to ${GYM_CITY}`)
-      return
-    }
-    ns.print(`Traveling to ${GYM_CITY} for gym workout (${trainingStat})`)
-    if (!(await travelToInfiltrationCity(ns, GYM_CITY))) {
-      ns.print(`Travel to ${GYM_CITY} failed; skipping gym workout`)
-      return
-    }
-  }
-
-  const level = getCombatGymSkillLevel(ns, trainingStat)
-  ns.print(`Gym: ${GYM_NAME} (${trainingStat}, level ${level})`)
-  startGymWorkout(ns, trainingStat, ns.singularity.isFocused())
-}
-
 function maybeSwitchGymTraining(ns: NS, trainingStat: CombatGymSkill): CombatGymSkill {
   const lowest = getLowestCombatGymSkill(ns)
   if (lowest === trainingStat) return trainingStat
-  ns.print(`Switching gym training from ${trainingStat} to ${lowest}`)
+  ns.print(`Switching combat training from ${trainingStat} to ${lowest}`)
   return lowest
 }
 
@@ -91,8 +70,7 @@ export async function main(ns: NS): Promise<void> {
     solveMinigames: SOLVE_MINIGAMES,
   })
   ns.atExit(() => shutdownInfiltrationSolver(solver))
-  ns.ui.openTail()
-  ns.ui.setTailTitle(isInfiltrationMoneyMode(ns) ? "Auto Infiltration (money)" : "Auto Infiltration")
+  openTailLog(ns, isInfiltrationMoneyMode(ns) ? "Auto Infiltration (money)" : "Auto Infiltration")
   if (!SOLVE_MINIGAMES) {
     ns.print("Minigame solver disabled; waiting for minigames to fail")
   }
@@ -150,7 +128,10 @@ export async function main(ns: NS): Promise<void> {
         ns.print("Infiltration already in progress; waiting for completion...")
       }
 
-      await prepareGymWorkout(ns, trainingStat)
+      if (SHOW_COMBAT_TRAINING_TABLE) {
+        await renderCombatSkillTrainingTable(ns, trainingStat)
+      }
+      await prepareCombatSkillTraining(ns, trainingStat)
 
       runStats.beginCycle(target, rewardGoal, grindFaction)
       const outcome = await runInfiltrationForTarget(ns, target, { solver })
