@@ -4,6 +4,11 @@
 
 import { NS, ReactNode } from "@ns"
 import type { Alignment, ColumnConfig, KeyValueTableConfig, TableConfig, ThreeColumnTableConfig } from "./tableBuilder.js"
+import {
+  applyScriptTailScreenRect,
+  probeScriptTailScreenRect,
+  type WindowScreenRect,
+} from "./scriptLogWindowCoords.js"
 
 export interface TableLayout {
   fontSizePx: number
@@ -1513,14 +1518,24 @@ export class ScriptLogBuilder {
     return this.sections.length === 0
   }
 
-  render(ns: NS): Promise<void> {
+  /** Content and layout passed to renderScriptLog / floating DOM sinks. */
+  prepareRender(ns?: NS): { content: ReactNode; layout: Partial<TableLayout> } {
     const contentWidthPx = this.computeContentWidthPx()
     const contentHeightPx = this.estimateContentHeightPx()
-    return renderScriptLog(ns, this.build(), {
-      ...this.layout,
-      tailTableWidthPx: contentWidthPx,
-      tailContentHeightPx: contentHeightPx,
-    })
+    return {
+      content: this.build(),
+      layout: {
+        ...this.layout,
+        tailTableWidthPx: contentWidthPx,
+        tailContentHeightPx: contentHeightPx,
+        tailScriptPid: ns?.pid,
+      },
+    }
+  }
+
+  render(ns: NS): Promise<void> {
+    const { content, layout } = this.prepareRender(ns)
+    return renderScriptLog(ns, content, layout)
   }
 }
 
@@ -1983,6 +1998,150 @@ function syncTailSize(ns: NS, layout: TableLayout): void {
   } catch (error) {
     lastTailSizeByPid.delete(ns.pid)
     if (!isScriptDeathError(error)) throw error
+  }
+}
+
+export type ScriptLogWindowRect = WindowScreenRect
+
+type ScriptLogTailRoots = {
+  draggable: HTMLElement
+  resizable: HTMLElement
+  viewport: HTMLElement
+}
+
+function findScriptTailRoots(pid: number): ScriptLogTailRoots | null {
+  try {
+    const doc = eval("document") as Document
+    const viewport = doc.querySelector(`[${SCRIPT_LOG_PID_ATTR}="${pid}"]`) as HTMLElement | null
+    if (!viewport) return null
+    const resizable = viewport.closest(".react-resizable") as HTMLElement | null
+    const draggable = viewport.closest(".react-draggable") as HTMLElement | null
+    if (!resizable || !draggable) return null
+    return { draggable, resizable, viewport }
+  } catch {
+    return null
+  }
+}
+
+function isScriptTailCollapsed(roots: ScriptLogTailRoots): boolean {
+  const papers = roots.resizable.querySelectorAll(".MuiPaper-root")
+  for (const paper of Array.from(papers)) {
+    if (!(paper instanceof HTMLElement)) continue
+    if (paper.classList.contains("drag")) continue
+    if (window.getComputedStyle(paper).display === "none") return true
+  }
+  return false
+}
+
+/** Screen-space bounds of this script's tail window (null when hidden or not open). */
+export function probeScriptTailWindow(pid: number): ScriptLogWindowRect | null {
+  const roots = findScriptTailRoots(pid)
+  if (!roots) return null
+  const dragRect = roots.draggable.getBoundingClientRect()
+  if (dragRect.width <= 0 && dragRect.height <= 0) return null
+  return probeScriptTailScreenRect(roots.draggable, roots.resizable, isScriptTailCollapsed(roots))
+}
+
+/** Restore tail window position/size after switching back from a floating DOM sink. */
+export function applyScriptTailWindowRect(pid: number, rect: ScriptLogWindowRect): void {
+  const roots = findScriptTailRoots(pid)
+  if (!roots) return
+  applyScriptTailScreenRect(roots.draggable, roots.resizable, rect)
+  lastTailSizeByPid.set(pid, { width: rect.width, height: rect.height })
+  const win = eval("window") as Window
+  const tick = (): void => {
+    applyScriptTailScreenRect(roots.draggable, roots.resizable, rect)
+  }
+  tick()
+  win.requestAnimationFrame(tick)
+}
+
+type ReactDomRef = {
+  createRoot?: (el: HTMLElement) => { render(node: unknown): void; unmount(): void }
+  render?: (node: unknown, el: HTMLElement) => void
+  unmountComponentAtNode?: (el: HTMLElement) => void
+}
+
+function getReactDom(): ReactDomRef {
+  return eval("ReactDOM") as ReactDomRef
+}
+
+const reactRootsByContainer = new WeakMap<HTMLElement, { render(node: unknown): void; unmount(): void }>()
+
+function mountScriptLogReactRoot(container: HTMLElement): { render(node: unknown): void; unmount(): void } {
+  let root = reactRootsByContainer.get(container)
+  if (!root) {
+    const ReactDOM = getReactDom()
+    if (ReactDOM.createRoot) {
+      const domRoot = ReactDOM.createRoot(container)
+      root = { render: (node) => domRoot.render(node), unmount: () => domRoot.unmount() }
+    } else if (ReactDOM.render && ReactDOM.unmountComponentAtNode) {
+      root = {
+        render: (node) => ReactDOM.render!(node, container),
+        unmount: () => ReactDOM.unmountComponentAtNode!(container),
+      }
+    } else {
+      throw new Error("ReactDOM is not available for script log rendering")
+    }
+    reactRootsByContainer.set(container, root)
+  }
+  return root
+}
+
+export function unmountScriptLogContainer(container: HTMLElement): void {
+  const root = reactRootsByContainer.get(container)
+  root?.unmount()
+  reactRootsByContainer.delete(container)
+}
+
+/** Render script-log React content into a DOM container (floating window sink). */
+/** Measured painted script-log content (use after render for floating window sizing). */
+export function measureScriptLogViewportSize(container: HTMLElement): { widthPx: number; heightPx: number } {
+  try {
+    const viewport = container.querySelector(`[${SCRIPT_LOG_VIEWPORT_ATTR}]`) as HTMLElement | null
+    const el = viewport ?? container
+    return {
+      widthPx: Math.ceil(Math.max(el.scrollWidth, el.offsetWidth)),
+      heightPx: Math.ceil(Math.max(el.scrollHeight, el.offsetHeight)),
+    }
+  } catch {
+    return { widthPx: 0, heightPx: 0 }
+  }
+}
+
+export async function renderScriptLogToContainer(
+  ns: NS,
+  container: HTMLElement,
+  content: ReactNode,
+  layout?: Partial<TableLayout>
+): Promise<void> {
+  const pid = ns.pid
+  const merged = mergeLayout(layout)
+  saveTailScrollPosition(pid, merged.tailActiveTabId)
+  primeTailLogChrome(merged)
+  const renderLayout = layoutForTailRender({ ...layout, tailScriptPid: pid })
+  container.setAttribute(SCRIPT_LOG_VIEWPORT_ATTR, "")
+  container.setAttribute(SCRIPT_LOG_PID_ATTR, String(pid))
+  container.style.boxSizing = "border-box"
+  container.style.width = "100%"
+  container.style.overflow = "auto"
+  const contentAreaH = renderLayout.tailViewportMaxHeightPx
+  if (contentAreaH != null) {
+    container.style.height = `${contentAreaH}px`
+    container.style.maxHeight = `${contentAreaH}px`
+  } else {
+    container.style.height = ""
+    container.style.maxHeight = ""
+  }
+  mountScriptLogReactRoot(container).render(buildViewportShell(content, renderLayout))
+  if (renderLayout.tailTabbed) {
+    const win = eval("window") as Window
+    const applyChrome = (): void => applyTabbedTailChrome(pid, renderLayout)
+    applyChrome()
+    win.requestAnimationFrame(() => {
+      applyChrome()
+      restoreTabbedPanelScroll(pid, renderLayout.tailActiveTabId)
+    })
   }
 }
 

@@ -88,3 +88,11 @@ export async function renderTabbedTailLog(ns: NS, tabbedLog: TabbedScriptLogBuil
     await tabbedLog.render(ns)
   }
 }
+
+import {
+  createAdaptiveTailLog,
+  type AdaptiveTailLogHandle,
+  type AdaptiveTailLogOptions,
+} from "./scriptLogUiAdaptive.js"
+
+export { createAdaptiveTailLog, type AdaptiveTailLogHandle, type AdaptiveTailLogOptions }

@@ -1,3 +1,9 @@
+import {
+  applyDraggableScreenPosition,
+  probeDraggableScreenRect,
+  type WindowScreenRect,
+} from "./scriptLogWindowCoords.js"
+
 interface FloatingWindowOptions {
   title?: string
   content?: string | HTMLElement
@@ -359,26 +365,19 @@ export class FloatingWindow {
       this.element.id = this.options.id
     }
 
-    // Position the window
-    this.positionWindow(overviewElement)
-
-    // Create drag container
     const dragContainer = document.createElement("div")
     dragContainer.className = `drag MuiBox-root ${CSS_CLASSES.dragContainer}`
 
-    // Create and add header
     const header = this.createHeader()
     dragContainer.appendChild(header)
 
-    // Create content area
     const contentArea = this.createContentArea()
 
-    // Assemble the window
     this.element.appendChild(dragContainer)
     this.element.appendChild(contentArea)
 
-    // Insert as sibling after the overview element
     overviewElement.parentNode!.insertBefore(this.element, overviewElement.nextSibling)
+    this.positionWindow(overviewElement)
   }
 
   private attachEventListeners(): void {
@@ -598,14 +597,86 @@ export class FloatingWindow {
   }
 
   public setPosition(x: number, y: number): void {
+    this.x = x
+    this.y = y
     if (this.element) {
       this.element.style.transform = `translate(${x}px, ${y}px)`
+    }
+  }
+
+  /** Viewport top-left from tail handoff; does not force outer height. */
+  public setScreenRect(rect: WindowScreenRect): void {
+    if (!this.element) return
+    this.setScreenPosition(rect.x, rect.y)
+    this.element.style.width = `${rect.width}px`
+    this.element.style.maxWidth = `${rect.width}px`
+    this.element.style.height = "auto"
+    if (rect.height > 0) {
+      this.element.style.maxHeight = `${rect.height}px`
+    }
+  }
+
+  /** Viewport x/y only — used after width changes so the left edge stays put. */
+  public setScreenPosition(x: number, y: number): void {
+    if (!this.element) return
+    applyDraggableScreenPosition(this.element, x, y)
+  }
+
+  /** Content width cap; height follows content. */
+  public setSize(width: number, height?: number): void {
+    this.width = width
+    this.options.width = width
+    if (height != null) {
+      this.height = height
+      this.options.height = height
+    }
+    if (!this.element) return
+    this.element.style.width = `${width}px`
+    this.element.style.maxWidth = `${width}px`
+    this.element.style.height = "auto"
+    if (height != null && height > 0) {
+      this.element.style.maxHeight = `${height}px`
     }
   }
 
   public getElement(): HTMLElement | null {
     return this.element
   }
+}
+
+/** Transform translate from a floating/overview-style window element. */
+export function getFloatingWindowPosition(element: HTMLElement | null): { x: number; y: number } | null {
+  if (!element) return null
+  const style = window.getComputedStyle(element)
+  const matrix = new DOMMatrix(style.transform)
+  return { x: matrix.m41 || 0, y: matrix.m42 || 0 }
+}
+
+/** True when the MuiCollapse content area is not expanded. */
+export function getFloatingWindowCollapsed(element: HTMLElement | null): boolean {
+  if (!element) return false
+  const contentArea = element.querySelector('[class*="MuiCollapse-root"]')
+  if (!contentArea) return false
+  return !contentArea.classList.contains("MuiCollapse-entered")
+}
+
+export type FloatingWindowRect = WindowScreenRect
+
+/** Screen-space bounds for a floating window root element. */
+export function probeFloatingWindowRect(element: HTMLElement | null): FloatingWindowRect | null {
+  if (!element) return null
+  const rect = element.getBoundingClientRect()
+  if (rect.width <= 0 && rect.height <= 0) return null
+  return probeDraggableScreenRect(element, {
+    collapsed: getFloatingWindowCollapsed(element),
+  })
+}
+
+/** Primary theme color from the game UI (fallback green). */
+export function readPrimaryUiColor(): string {
+  const primaryElement = document.querySelector('[class*="css-"][class*="-primary"]') as HTMLElement | null
+  if (!primaryElement) return "#0f0"
+  return window.getComputedStyle(primaryElement).color || "#0f0"
 }
 
 // Convenience function for quick window creation

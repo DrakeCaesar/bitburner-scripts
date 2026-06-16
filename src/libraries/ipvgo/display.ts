@@ -1,6 +1,6 @@
 import { NS, type ReactNode } from "@ns"
 import type { GoOpponent } from "@ns"
-import { col, mergeTailLayout, ScriptLogBuilder } from "@/libraries/scriptLogUiLayout.js"
+import { col, mergeTailLayout, ScriptLogBuilder, type AdaptiveTailLogHandle } from "@/libraries/scriptLogUiLayout.js"
 import {
   cellStyle,
   computeReactTableWidthPx,
@@ -689,11 +689,16 @@ export function refreshFactionStats(snapshot: IpvgoDashboardSnapshot, ns: NS): I
 export async function renderIpvgoDashboard(
   ns: NS,
   log: ScriptLogBuilder,
-  snapshot: IpvgoDashboardSnapshot
+  snapshot: IpvgoDashboardSnapshot,
+  adaptive?: AdaptiveTailLogHandle
 ): Promise<void> {
   log.reset()
   populateDashboard(ns, log, snapshot)
-  await log.render(ns)
+  if (adaptive) {
+    await adaptive.render(ns, log)
+  } else {
+    await log.render(ns)
+  }
 }
 
 export function applyIpvgoSetupChange(

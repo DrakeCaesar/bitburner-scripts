@@ -43,7 +43,8 @@ import {
   type IpvgoValidMoves,
 } from "./libraries/ipvgo/types.js"
 import { formatIpvgoPoint } from "./libraries/ipvgo/coords.js"
-import { createTailLog, openTailLog } from "./libraries/scriptLogUiLayout.js"
+import { isInfiltrationUiBlockingNavigation } from "./libraries/infiltration/infiltrationNavigation.js"
+import { createAdaptiveTailLog, createTailLog, openTailLog } from "./libraries/scriptLogUiLayout.js"
 
 const DEFAULT_BOARD_SIZE: IpvgoBoardSize = 7
 const DEFAULT_OPPONENT: GoOpponent = "Netburners"
@@ -231,7 +232,13 @@ export async function main(ns: NS): Promise<void> {
   let activeOpponent = inProgress?.opponent ?? opponent
   let activeBoardSize = inProgress?.boardSize ?? boardSize
 
-  const tailLog = createTailLog()
+  const adaptiveLog = createAdaptiveTailLog(createTailLog(), {
+    windowId: "ipvgo-script-log",
+    title: "IPvGO Bot",
+    shouldUseFloating: isInfiltrationUiBlockingNavigation,
+  })
+  const tailLog = adaptiveLog.log
+  ns.atExit(() => adaptiveLog.dispose())
   const baseSnapshot = createIpvgoSnapshot(activeOpponent, activeBoardSize, iterations)
   let snapshot = refreshFactionStats(
     inProgress
@@ -242,11 +249,11 @@ export async function main(ns: NS): Promise<void> {
       : { ...baseSnapshot, phase: "Initializing" },
     ns
   )
-  await renderIpvgoDashboard(ns, tailLog, snapshot)
+  await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
 
   if (!(await isIpvgoEngineAvailable())) {
     snapshot = { ...snapshot, phase: "Error: engine unavailable" }
-    await renderIpvgoDashboard(ns, tailLog, snapshot)
+    await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
     return
   }
 
@@ -259,7 +266,7 @@ export async function main(ns: NS): Promise<void> {
   }
 
   snapshot = { ...snapshot, backend: engineLabel as "katago" | "native", phase: "Ready" }
-  await renderIpvgoDashboard(ns, tailLog, snapshot)
+  await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
 
   let moveNumber = inProgress?.moveNumber ?? 0
   let gamesPlayed = 0
@@ -273,7 +280,7 @@ export async function main(ns: NS): Promise<void> {
         activeOpponent = snapshot.opponent
         activeBoardSize = snapshot.boardSize as IpvgoBoardSize
         moveNumber = snapshot.moveNumber
-        await renderIpvgoDashboard(ns, tailLog, snapshot)
+        await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
         continue
       }
 
@@ -282,7 +289,7 @@ export async function main(ns: NS): Promise<void> {
         const setupApplied = applyIpvgoSetupChange(ns, snapshot, simsChange)
         snapshot = setupApplied.snapshot
         if (setupApplied.changed) {
-          await renderIpvgoDashboard(ns, tailLog, snapshot)
+          await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
           continue
         }
       }
@@ -291,7 +298,7 @@ export async function main(ns: NS): Promise<void> {
       if (syncedDeferred !== snapshot) {
         consumeDeferUiWake()
         snapshot = syncedDeferred
-        await renderIpvgoDashboard(ns, tailLog, snapshot)
+        await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
         continue
       }
       consumeDeferUiWake()
@@ -325,7 +332,7 @@ export async function main(ns: NS): Promise<void> {
           sims: 0,
           deferredSetup: undefined,
         }
-        await renderIpvgoDashboard(ns, tailLog, snapshot)
+        await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
         await sleepUntilIpvgoSetupChange(ns, LOOP_SLEEP_MS)
         continue
       }
@@ -340,7 +347,7 @@ export async function main(ns: NS): Promise<void> {
           moveNumber,
           phase: `Synced ${activeOpponent} ${activeBoardSize}x${activeBoardSize}`,
         }
-        await renderIpvgoDashboard(ns, tailLog, snapshot)
+        await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
         continue
       }
 
@@ -352,14 +359,14 @@ export async function main(ns: NS): Promise<void> {
           thinking: false,
           validMoves: undefined,
         }
-        await renderIpvgoDashboard(ns, tailLog, snapshot)
+        await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
 
         const oppStarted = performance.now()
         const waitResult = await ns.go.opponentNextTurn(false)
         const oppMs = performance.now() - oppStarted
         if (waitResult.type === "gameOver") {
           snapshot = logGameEnd(ns, snapshot, activeOpponent)
-          await renderIpvgoDashboard(ns, tailLog, snapshot)
+          await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
           await sleepUntilIpvgoSetupChange(ns, 500)
           continue
         }
@@ -373,7 +380,7 @@ export async function main(ns: NS): Promise<void> {
           moveNumber,
           validMoves: undefined,
         }
-        await renderIpvgoDashboard(ns, tailLog, snapshot)
+        await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
         await sleepUntilIpvgoSetupChange(ns, LOOP_SLEEP_MS)
         continue
       }
@@ -398,7 +405,7 @@ export async function main(ns: NS): Promise<void> {
             phase: `Cheat ${cheatAction.kind}`,
             thinking: false,
           }
-          await renderIpvgoDashboard(ns, tailLog, snapshot)
+          await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
 
           ns.go.analysis.highlightPoint(cheatAction.x, cheatAction.y, "hack", cheatAction.kind)
           const cheatStarted = performance.now()
@@ -411,7 +418,7 @@ export async function main(ns: NS): Promise<void> {
 
           if (cheatResult.type === "gameOver") {
             snapshot = logGameEnd(ns, snapshot, activeOpponent)
-            await renderIpvgoDashboard(ns, tailLog, snapshot)
+            await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
             await sleepUntilIpvgoSetupChange(ns, 500)
             continue
           }
@@ -438,7 +445,7 @@ export async function main(ns: NS): Promise<void> {
             thinking: false,
             phase: succeeded ? "Cheat succeeded" : "Cheat failed",
           }
-          await renderIpvgoDashboard(ns, tailLog, snapshot)
+          await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
           await sleepUntilIpvgoSetupChange(ns, LOOP_SLEEP_MS)
           continue
         }
@@ -454,14 +461,14 @@ export async function main(ns: NS): Promise<void> {
           phase: "Passing",
           thinking: false,
         }
-        await renderIpvgoDashboard(ns, tailLog, snapshot)
+        await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
 
         const passResult = await ns.go.passTurn()
         if (passResult.type === "gameOver") {
           snapshot = logGameEnd(ns, snapshot, activeOpponent)
         }
         snapshot = syncGameState(ns, snapshot)
-        await renderIpvgoDashboard(ns, tailLog, snapshot)
+        await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
         await sleepUntilIpvgoSetupChange(ns, LOOP_SLEEP_MS)
         continue
       }
@@ -488,7 +495,7 @@ export async function main(ns: NS): Promise<void> {
           thinkMs: 0,
           sims: 0,
         }
-        await renderIpvgoDashboard(ns, tailLog, snapshot)
+        await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
 
         const started = performance.now()
         const request = {
@@ -510,7 +517,7 @@ export async function main(ns: NS): Promise<void> {
             thinking: false,
             phase: "Setup changed",
           }
-          await renderIpvgoDashboard(ns, tailLog, snapshot)
+          await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
           continue gameLoop
         }
         thinkMs = performance.now() - started
@@ -533,7 +540,7 @@ export async function main(ns: NS): Promise<void> {
         sims,
         thinking: false,
       }
-      await renderIpvgoDashboard(ns, tailLog, snapshot)
+      await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
 
       const oppStarted = performance.now()
       let result
@@ -554,7 +561,7 @@ export async function main(ns: NS): Promise<void> {
           sims,
           thinking: false,
         }
-        await renderIpvgoDashboard(ns, tailLog, snapshot)
+        await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
         await sleepUntilIpvgoSetupChange(ns, 500)
         continue
       }
@@ -582,12 +589,12 @@ export async function main(ns: NS): Promise<void> {
         thinking: false,
         phase: "Our move played",
       }
-      await renderIpvgoDashboard(ns, tailLog, snapshot)
+      await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
       await sleepUntilIpvgoSetupChange(ns, LOOP_SLEEP_MS)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       snapshot = { ...syncGameState(ns, snapshot), phase: `Error: ${message}`, thinking: false }
-      await renderIpvgoDashboard(ns, tailLog, snapshot)
+      await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
       await sleepUntilIpvgoSetupChange(ns, 1000)
     }
   }
