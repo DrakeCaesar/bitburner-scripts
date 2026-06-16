@@ -10,6 +10,7 @@ import {
 import { col, W, type ReactTableConfig } from "./scriptLogUiLayout.js"
 
 const UNFOCUSED_FOCUS_MULT = 0.8
+const CHARISMA_GRIND_THRESHOLD = 500
 
 export const DEFAULT_REQUIRED_REP = 400000
 
@@ -53,6 +54,18 @@ export function getActiveMegacorp(ns: NS): CompanyName | null {
     }
   }
   return null
+}
+
+export interface InfiltrationMegacorpWorkTickResult {
+  ok: boolean
+  company: CompanyName | null
+  message: string
+  position?: JobName
+  field?: JobField
+  charismaGrind?: boolean
+  traveling?: boolean
+  companyComplete?: boolean
+  working?: boolean
 }
 
 export interface MegacorpSkillTrainingOffer {
@@ -168,24 +181,67 @@ export function getMegacorpSkillTrainingOffer(
     position: best.positionName,
     expPerSecond: combined.total,
     gymBaseline: combined.gymBaseline,
-    skillsBreakdown: combined.breakdown,
+    skillsBreakdown: combined.breakdown || "—",
   }
 }
 
-/** Apply and start the megacorp job autoWorkMegacorps would use for the active company. */
-export function ensureMegacorpSkillWork(
+/**
+ * One tick of autoWorkMegacorps logic for infiltration: charisma, 400k rep, rep/s job pick.
+ */
+export function tickInfiltrationMegacorpWork(
   ns: NS,
-  company: CompanyName,
   focus = ns.singularity.isFocused()
-): boolean {
+): InfiltrationMegacorpWorkTickResult {
+  const company = getActiveMegacorp(ns)
+  if (!company) {
+    return { ok: false, company: null, message: "All megacorp factions joined" }
+  }
+
+  const factionName = getFactionName(company)
+  const requiredRep = getRequiredRep(company)
+  const currentRep = ns.singularity.getCompanyRep(company)
+
+  if (ns.getPlayer().skills.charisma < CHARISMA_GRIND_THRESHOLD) {
+    if (!isStudyingLeadershipAtVolhaven(ns)) {
+      ns.singularity.universityCourse(
+        ns.enums.LocationName.VolhavenZBInstituteOfTechnology,
+        ns.enums.UniversityClassType.leadership,
+        focus
+      )
+    }
+    return { ok: true, company, charismaGrind: true, message: "Training charisma (Volhaven)" }
+  }
+
+  if (currentRep >= requiredRep) {
+    const invitations = ns.singularity.checkFactionInvitations()
+    if (invitations.includes(factionName)) {
+      ns.singularity.joinFaction(factionName)
+      return {
+        ok: true,
+        company,
+        companyComplete: true,
+        message: `Joined ${factionName}`,
+      }
+    }
+    return {
+      ok: true,
+      company,
+      companyComplete: true,
+      message: `Waiting for ${factionName} invite`,
+    }
+  }
+
   const positions = ns.singularity.getCompanyPositions(company)
-  if (positions.length === 0) return false
+  if (positions.length === 0) {
+    return { ok: false, company, message: `No positions at ${company}` }
+  }
 
   const player = ns.getPlayer()
-  const companyRep = ns.singularity.getCompanyRep(company)
   const companyFavor = ns.singularity.getCompanyFavor(company)
-  const best = pickBestCompanyField(ns, company, positions, player, companyFavor, companyRep)
-  if (!best) return false
+  const best = pickBestCompanyField(ns, company, positions, player, companyFavor, currentRep)
+  if (!best) {
+    return { ok: false, company, message: `No qualified job at ${company}` }
+  }
 
   const currentJob = player.jobs[company]
   const currentField = currentJob
@@ -194,14 +250,47 @@ export function ensureMegacorpSkillWork(
 
   if (currentJob == null || currentField !== best.field) {
     const applied = ns.singularity.applyToCompany(company, best.field)
-    if (!applied && currentJob == null) return false
+    if (!applied && currentJob == null) {
+      return {
+        ok: false,
+        company,
+        position: best.positionName,
+        field: best.field,
+        message: `Cannot apply ${best.field}`,
+      }
+    }
   }
 
   if (!isWorkingAtCompany(ns, company)) {
-    return ns.singularity.workForCompany(company, focus)
+    const working = ns.singularity.workForCompany(company, focus)
+    if (!working) {
+      return {
+        ok: false,
+        company,
+        position: best.positionName,
+        field: best.field,
+        message: `Failed to work at ${company}`,
+      }
+    }
   }
 
-  return true
+  return {
+    ok: true,
+    company,
+    position: best.positionName,
+    field: best.field,
+    working: true,
+    message: `Working ${best.positionName} @ ${company}`,
+  }
+}
+
+/** @deprecated Use tickInfiltrationMegacorpWork */
+export function ensureMegacorpSkillWork(
+  ns: NS,
+  _company: CompanyName,
+  focus = ns.singularity.isFocused()
+): boolean {
+  return tickInfiltrationMegacorpWork(ns, focus).ok
 }
 
 export interface MegacorpRow {
@@ -466,7 +555,8 @@ export function buildCombatSkillPositionRows(
   const companyRep = ns.singularity.getCompanyRep(company)
   const companyFavor = ns.singularity.getCompanyFavor(company)
   const qualifiedByField = qualifiedPositionByField(ns, company, positions, player, companyRep)
-  const best = pickBestCompanyField(ns, company, positions, player, companyFavor, companyRep)
+  const repPick = pickBestCompanyField(ns, company, positions, player, companyFavor, companyRep)
+  const activeTrainingPosition = trainingPosition ?? repPick?.positionName ?? null
   const rows: CombatSkillPositionRow[] = []
 
   let bestCombinedExp = -1
@@ -486,7 +576,7 @@ export function buildCombatSkillPositionRows(
     const repOk = meetsPositionReputation(companyRep, info.requiredReputation)
     const qualified = skillsOk && repOk
     const fieldCandidate = qualifiedByField.get(info.field) === position
-    const isRepPick = best?.positionName === position
+    const isRepPick = repPick?.positionName === position
     const combined = getCombinedCombatExpFromCompany(ns, company, position, focus)
     const repRate = qualified
       ? companyRepPerSecond(ns, company, position, companyFavor)
@@ -501,8 +591,8 @@ export function buildCombatSkillPositionRows(
       note = `Need ${ns.format.number(info.requiredReputation)} company rep`
     } else if (!fieldCandidate) {
       note = "Not top qualified in field"
-    } else if (!isRepPick && best) {
-      note = `Lower rep/s than ${best.field}`
+    } else if (!isRepPick && repPick) {
+      note = `Lower rep/s than ${repPick.field}`
     }
 
     rows.push({
@@ -519,7 +609,7 @@ export function buildCombatSkillPositionRows(
       fieldPick: fieldCandidate ? "yes" : "—",
       isRepPick,
       isBestCombined: bestCombinedPosition === position && combined.total > 0,
-      isTrainingPick: trainingPosition === position,
+      isTrainingPick: activeTrainingPosition === position,
       note,
     })
   }

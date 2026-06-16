@@ -231,6 +231,13 @@ export function getAllInfiltrationTargets(ns: NS): InfiltrationTarget[] {
   return targets
 }
 
+/** True when every infiltration location is startable (intro rating below 100 / not blocked). */
+export function areAllInfiltrationsDoable(ns: NS): boolean {
+  const targets = getAllInfiltrationTargets(ns)
+  if (targets.length === 0) return false
+  return targets.every((target) => !isBlockedDifficulty(target.difficulty))
+}
+
 export interface InfiltrationCityGroup {
   city: CityName
   targets: InfiltrationTarget[]

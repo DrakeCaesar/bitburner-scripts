@@ -10,12 +10,15 @@ import {
 import {
   buildCombatSkillPositionRows,
   buildCombatSkillPositionTableConfig,
-  ensureMegacorpSkillWork,
   getActiveMegacorp,
   getMegacorpSkillTrainingOffer,
+  tickInfiltrationMegacorpWork,
 } from "./megacorpWork.js"
 import { travelToInfiltrationCity } from "./infiltration/infiltrationRun.js"
-import { canAffordInfiltrationTravel } from "./infiltration/infiltrationTargets.js"
+import {
+  areAllInfiltrationsDoable,
+  canAffordInfiltrationTravel,
+} from "./infiltration/infiltrationTargets.js"
 import { createTailLog } from "./scriptLogUiLayout.js"
 
 export type CombatSkillTrainingMode = "gym" | "megacorp"
@@ -39,24 +42,20 @@ export function getCombatSkillTrainingPlan(ns: NS, skill: CombatGymSkill): Comba
   const megacorp = getMegacorpSkillTrainingOffer(ns, focus)
   const megacorpExpPerSecond = megacorp?.expPerSecond ?? null
   const megacorpGymBaseline = megacorp?.gymBaseline ?? null
+  const activeCompany = getActiveMegacorp(ns)
 
-  if (
-    megacorp != null &&
-    megacorpExpPerSecond != null &&
-    megacorpGymBaseline != null &&
-    megacorpExpPerSecond > megacorpGymBaseline
-  ) {
+  if (areAllInfiltrationsDoable(ns) && activeCompany != null) {
     return {
       skill,
       mode: "megacorp",
-      expPerSecond: megacorpExpPerSecond,
+      expPerSecond: megacorpExpPerSecond ?? 0,
       gymExpPerSecond,
       megacorpExpPerSecond,
       megacorpGymBaseline,
-      skillsBreakdown: megacorp.skillsBreakdown,
-      company: megacorp.company,
-      position: megacorp.position,
-      field: megacorp.field,
+      skillsBreakdown: megacorp?.skillsBreakdown ?? null,
+      company: megacorp?.company ?? activeCompany,
+      position: megacorp?.position,
+      field: megacorp?.field,
     }
   }
 
@@ -108,7 +107,7 @@ export async function renderCombatSkillTrainingTable(ns: NS, skill: CombatGymSki
   await log.render(ns)
 }
 
-/** Train lowest combat stat via gym or megacorp work, whichever yields more skill exp/s. */
+/** Train combat via gym until all infiltrations doable, then megacorp rep grind. */
 export async function prepareCombatSkillTraining(ns: NS, skill: CombatGymSkill): Promise<void> {
   if (ns.singularity.getCurrentWork()?.type === "FACTION") {
     ns.print("Skipping combat training; faction work active")
@@ -118,15 +117,17 @@ export async function prepareCombatSkillTraining(ns: NS, skill: CombatGymSkill):
   const plan = getCombatSkillTrainingPlan(ns, skill)
   const focus = ns.singularity.isFocused()
 
-  if (plan.mode === "megacorp" && plan.company) {
-    if (ensureMegacorpSkillWork(ns, plan.company, focus)) {
-      const breakdown = plan.skillsBreakdown ?? plan.skill
-      const gymBaseline = plan.megacorpGymBaseline ?? plan.gymExpPerSecond
-      ns.print(
-        `Megacorp: ${plan.company} ${plan.position} (${breakdown} ${ns.format.number(plan.expPerSecond)}/s vs gym ${ns.format.number(gymBaseline)}/s)`
-      )
+  if (plan.mode === "megacorp") {
+    const result = tickInfiltrationMegacorpWork(ns, focus)
+    if (result.ok) {
+      const jobLabel =
+        result.position != null && result.company != null
+          ? `${result.company} ${result.position}`
+          : (result.company ?? "megacorp")
+      ns.print(`Megacorp (all infiltrations doable): ${jobLabel} — ${result.message}`)
       return
     }
+    ns.print(`Megacorp work failed: ${result.message}; falling back to gym`)
   }
 
   if (ns.getPlayer().city !== GYM_CITY) {
