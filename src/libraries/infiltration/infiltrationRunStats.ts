@@ -1,10 +1,26 @@
-import type { FactionName, NS } from "@ns"
+import type { CompanyName, FactionName, NS } from "@ns"
 import {
   getInfiltrationGrindTarget,
   getInfiltrationMoneyGoal,
   type InfiltrationMoneyGoal,
   type InfiltrationRepTier,
 } from "../factionWork.js"
+import {
+  GYM_NAME,
+  combatGymExpPerSecond,
+  getLowestCombatGymSkill,
+  type CombatGymSkill,
+} from "../gymWorkout.js"
+import {
+  CHARISMA_GRIND_THRESHOLD,
+  getActiveMegacorp,
+  getRequiredRep,
+  isStudyingLeadershipAtVolhaven,
+  isWorkingAtCompany,
+  pickBestCompanyField,
+  VOLHAVEN_CITY,
+} from "../megacorpWork.js"
+import { areAllInfiltrationsDoable } from "./infiltrationTargets.js"
 import type { InfiltrationRewardGoal, InfiltrationTarget } from "./infiltrationTargets.js"
 
 const MAX_CYCLE_SAMPLES = 5
@@ -185,6 +201,75 @@ function formatInfiltrationMoneyTierLabel(tier: InfiltrationMoneyGoal["tier"]): 
     case "neuroflux":
       return "NeuroFlux Governor"
   }
+}
+
+function describeMegacorpJobName(ns: NS, company: CompanyName): string {
+  const currentJob = ns.getPlayer().jobs[company]
+  if (currentJob) return currentJob
+
+  const positions = ns.singularity.getCompanyPositions(company)
+  if (positions.length === 0) return ""
+
+  const player = ns.getPlayer()
+  const best = pickBestCompanyField(
+    ns,
+    company,
+    positions,
+    player,
+    ns.singularity.getCompanyFavor(company),
+    ns.singularity.getCompanyRep(company)
+  )
+  return best?.positionName ?? ""
+}
+
+/** Combat training pick for the infiltration DOM overlay. */
+export function formatCombatSkillTrainingDomLines(
+  ns: NS,
+  skill: CombatGymSkill = getLowestCombatGymSkill(ns)
+): string[] {
+  const lines: string[] = ["--- Training ---"]
+  const work = ns.singularity.getCurrentWork()
+
+  if (work?.type === "FACTION") {
+    lines.push("Pick: faction work (skipped)")
+    return lines
+  }
+
+  if (isStudyingLeadershipAtVolhaven(ns)) {
+    const company = getActiveMegacorp(ns)
+    lines.push("Pick: studying charisma (leadership)")
+    if (company) lines.push(`Next: megacorp ${company}`)
+    return lines
+  }
+
+  const company = getActiveMegacorp(ns)
+  const megacorpMode = areAllInfiltrationsDoable(ns) && company != null
+
+  if (megacorpMode && company) {
+    if (ns.getPlayer().skills.charisma < CHARISMA_GRIND_THRESHOLD) {
+      if (ns.getPlayer().city !== VOLHAVEN_CITY) {
+        lines.push(`Pick: travel to ${VOLHAVEN_CITY} for charisma study`)
+      } else {
+        lines.push("Pick: studying charisma (leadership)")
+      }
+      lines.push(`Next: megacorp ${company}`)
+    } else if (ns.singularity.getCompanyRep(company) >= getRequiredRep(company)) {
+      lines.push(`Pick: megacorp ${company} (faction invite)`)
+    } else if (isWorkingAtCompany(ns, company)) {
+      const job = describeMegacorpJobName(ns, company)
+      lines.push(`Pick: megacorp ${company}${job ? ` ${job}` : ""}`)
+    } else {
+      const job = describeMegacorpJobName(ns, company)
+      lines.push(`Pick: megacorp ${company}${job ? ` ${job}` : ""} (rep grind)`)
+    }
+    lines.push("Mode: all infiltrations doable")
+    return lines
+  }
+
+  const gymRate = combatGymExpPerSecond(ns, skill, ns.singularity.isFocused()) ?? 0
+  lines.push(`Pick: gym ${skill} @ ${GYM_NAME} (${ns.format.number(gymRate)}/s)`)
+  lines.push("Mode: combat for infiltrations")
+  return lines
 }
 
 export function formatInfiltrationRunViewLines(ns: NS, view: InfiltrationRunView | null): string[] {

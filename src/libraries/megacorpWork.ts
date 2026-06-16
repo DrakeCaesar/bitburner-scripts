@@ -1,4 +1,4 @@
-import type { CompanyName, FactionName, JobField, JobName, Player } from "@ns"
+import type { CityName, CompanyName, FactionName, JobField, JobName, Player } from "@ns"
 import { NS } from "@ns"
 import {
   CYCLES_PER_SECOND,
@@ -10,7 +10,8 @@ import {
 import { col, W, type ReactTableConfig } from "./scriptLogUiLayout.js"
 
 const UNFOCUSED_FOCUS_MULT = 0.8
-const CHARISMA_GRIND_THRESHOLD = 500
+export const CHARISMA_GRIND_THRESHOLD = 500
+export const VOLHAVEN_CITY: CityName = "Volhaven"
 
 export const DEFAULT_REQUIRED_REP = 400000
 

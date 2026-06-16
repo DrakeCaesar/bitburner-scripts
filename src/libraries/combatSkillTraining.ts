@@ -10,9 +10,11 @@ import {
 import {
   buildCombatSkillPositionRows,
   buildCombatSkillPositionTableConfig,
+  CHARISMA_GRIND_THRESHOLD,
   getActiveMegacorp,
   getMegacorpSkillTrainingOffer,
   tickInfiltrationMegacorpWork,
+  VOLHAVEN_CITY,
 } from "./megacorpWork.js"
 import { travelToInfiltrationCity } from "./infiltration/infiltrationRun.js"
 import {
@@ -118,6 +120,21 @@ export async function prepareCombatSkillTraining(ns: NS, skill: CombatGymSkill):
   const focus = ns.singularity.isFocused()
 
   if (plan.mode === "megacorp") {
+    const activeCompany = getActiveMegacorp(ns)
+    if (activeCompany && ns.getPlayer().skills.charisma < CHARISMA_GRIND_THRESHOLD) {
+      if (ns.getPlayer().city !== VOLHAVEN_CITY) {
+        if (!canAffordInfiltrationTravel(ns)) {
+          ns.print(`Skipping charisma study; cannot afford travel to ${VOLHAVEN_CITY}`)
+          return
+        }
+        ns.print(`Traveling to ${VOLHAVEN_CITY} for charisma study`)
+        if (!(await travelToInfiltrationCity(ns, VOLHAVEN_CITY))) {
+          ns.print(`Travel to ${VOLHAVEN_CITY} failed; skipping charisma study`)
+          return
+        }
+      }
+    }
+
     const result = tickInfiltrationMegacorpWork(ns, focus)
     if (result.ok) {
       const jobLabel =

@@ -526,7 +526,12 @@ function formatMinigameSection(
 function formatStateText(state: InfiltrationDomState, extras?: InfiltrationDomViewExtras): string {
   const lines: string[] = []
 
+  if (extras?.trainingViewLines?.length) {
+    lines.push(...extras.trainingViewLines)
+  }
+
   if (extras?.runViewLines?.length) {
+    if (lines.length > 0) lines.push("")
     lines.push(...extras.runViewLines)
   }
 
@@ -555,6 +560,7 @@ export interface InfiltrationSendStatus {
 }
 
 export interface InfiltrationDomViewExtras {
+  trainingViewLines?: string[]
   runViewLines?: string[]
   showMinigameInfo?: boolean
   solverPreview?: string

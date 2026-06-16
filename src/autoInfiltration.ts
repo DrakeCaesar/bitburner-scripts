@@ -15,7 +15,12 @@ import {
   travelToInfiltrationCity,
 } from "./libraries/infiltration/infiltrationRun.js"
 import { InfiltrationRunStatsTracker } from "./libraries/infiltration/infiltrationRunStats.js"
-import { setupInfiltrationSolver, shutdownInfiltrationSolver } from "./libraries/infiltration/infiltrationSolver.js"
+import {
+  refreshInfiltrationDomWindow,
+  setupInfiltrationSolver,
+  shutdownInfiltrationSolver,
+  type InfiltrationSolverState,
+} from "./libraries/infiltration/infiltrationSolver.js"
 import {
   canAffordInfiltrationTravel,
   getBestInfiltrationTarget,
@@ -54,6 +59,11 @@ function maybeSwitchGymTraining(ns: NS, trainingStat: CombatGymSkill): CombatGym
   return lowest
 }
 
+function syncTrainingDom(ns: NS, solver: InfiltrationSolverState, trainingStat: CombatGymSkill): void {
+  solver.trainingSkill = trainingStat
+  refreshInfiltrationDomWindow(ns, solver)
+}
+
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("sleep")
 
@@ -77,9 +87,12 @@ export async function main(ns: NS): Promise<void> {
   const runStats = new InfiltrationRunStatsTracker()
   solver.runStats = runStats
   let trainingStat = getLowestCombatGymSkill(ns)
+  syncTrainingDom(ns, solver, trainingStat)
 
   try {
     while (true) {
+      syncTrainingDom(ns, solver, trainingStat)
+
       const rewardGoal = getInfiltrationRewardGoal(ns)
       const grindFaction =
         rewardGoal === "reputation" ? getPreferredFactionForInfiltrationRep(ns) : null
@@ -132,6 +145,7 @@ export async function main(ns: NS): Promise<void> {
         await renderCombatSkillTrainingTable(ns, trainingStat)
       }
       await prepareCombatSkillTraining(ns, trainingStat)
+      syncTrainingDom(ns, solver, trainingStat)
 
       runStats.beginCycle(target, rewardGoal, grindFaction)
       const outcome = await runInfiltrationForTarget(ns, target, { solver })
@@ -161,6 +175,7 @@ export async function main(ns: NS): Promise<void> {
       }
 
       await prepareCombatSkillTraining(ns, trainingStat)
+      syncTrainingDom(ns, solver, trainingStat)
       syncTrustedKeyInjection()
     }
   } finally {

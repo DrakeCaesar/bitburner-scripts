@@ -1,4 +1,5 @@
 import type { NS } from "@ns"
+import type { CombatGymSkill } from "../gymWorkout.js"
 import {
   canSolveInfiltrationTask,
   createInfiltrationDomWindow,
@@ -20,6 +21,11 @@ import {
   syncTrustedKeyInjection,
 } from "./infiltrationKeyInput.js"
 import {
+  formatCombatSkillTrainingDomLines,
+  formatInfiltrationRunViewLines,
+  type InfiltrationRunStatsTracker,
+} from "./infiltrationRunStats.js"
+import {
   formatSentKeySequence,
   formatSolverPreview,
   solveInfiltrationTask,
@@ -38,10 +44,6 @@ import {
   collectInfiltrationVictoryReward,
   isInfiltrationVictoryScreen,
 } from "./infiltrationVictory.js"
-import {
-  formatInfiltrationRunViewLines,
-  type InfiltrationRunStatsTracker,
-} from "./infiltrationRunStats.js"
 
 export type InfiltrationSolverTickResult = "continue" | "cancelled" | "failed" | "victory"
 
@@ -69,6 +71,7 @@ export interface InfiltrationSolverState {
   inactiveStreak: number
   victoryHandled: boolean
   runStats: InfiltrationRunStatsTracker | null
+  trainingSkill: CombatGymSkill | null
   showMinigameInfo: boolean
   solveMinigames: boolean
 }
@@ -92,24 +95,27 @@ function describeSendState(
 
 function buildViewExtras(
   ns: NS,
-  state: ReturnType<typeof readInfiltrationDomState>,
+  domState: ReturnType<typeof readInfiltrationDomState>,
   phaseKey: string,
   session: SolveSession | null,
   canSolve: boolean,
-  runStats: InfiltrationRunStatsTracker | null,
-  showMinigameInfo: boolean
+  solverState: InfiltrationSolverState
 ) {
   const handlerReady = isInfiltrationKeyInputReady()
   const handlerMode = getInfiltrationKeyInputMode()
   const pendingKeys = session?.pendingKeys ?? []
   const sentKeys = session?.sentKeys ?? []
+  const showMinigameInfo = solverState.showMinigameInfo
+  const runStats = solverState.runStats
+  const trainingSkill = solverState.trainingSkill
 
   return {
+    trainingViewLines: formatCombatSkillTrainingDomLines(ns, trainingSkill ?? undefined),
     runViewLines: runStats ? formatInfiltrationRunViewLines(ns, runStats.getView(ns)) : undefined,
     showMinigameInfo,
     solverPreview:
       showMinigameInfo && phaseKey
-        ? formatSolverPreview(state.taskTitle, session?.pendingKeys ?? null)
+        ? formatSolverPreview(domState.taskTitle, session?.pendingKeys ?? null)
         : undefined,
     sendStatus:
       showMinigameInfo && phaseKey
@@ -123,9 +129,20 @@ function buildViewExtras(
           }
         : undefined,
     formatSentKeys: showMinigameInfo
-      ? (keys: string[]) => formatSentKeySequence(state.taskTitle, keys)
+      ? (keys: string[]) => formatSentKeySequence(domState.taskTitle, keys)
       : undefined,
   }
+}
+
+export function refreshInfiltrationDomWindow(ns: NS, state: InfiltrationSolverState): void {
+  if (!state.window) return
+
+  const domState = readInfiltrationDomState()
+  const phaseKey = getMinigamePhaseKey(domState)
+  updateInfiltrationDomView(
+    state.window.container,
+    buildViewExtras(ns, domState, phaseKey, state.session, canSolveInfiltrationTask(domState), state)
+  )
 }
 
 function getWindowPosition(element: HTMLElement | null): { x: number; y: number } | null {
@@ -187,6 +204,7 @@ export function setupInfiltrationSolver(
     inactiveStreak: 0,
     victoryHandled: false,
     runStats: null,
+    trainingSkill: null,
     showMinigameInfo,
     solveMinigames,
   }
@@ -310,15 +328,7 @@ export async function tickInfiltrationSolver(
   }
 
   if (state.window) {
-    const viewExtras = buildViewExtras(
-      ns,
-      domState,
-      phaseKey,
-      state.session,
-      canSolve,
-      state.runStats,
-      state.showMinigameInfo
-    )
+    const viewExtras = buildViewExtras(ns, domState, phaseKey, state.session, canSolve, state)
     updateInfiltrationDomView(state.window.container, viewExtras)
   }
 
@@ -342,15 +352,7 @@ export async function tickInfiltrationSolver(
     if (state.window) {
       updateInfiltrationDomView(
         state.window.container,
-        buildViewExtras(
-          ns,
-          domState,
-          phaseKey,
-          state.session,
-          canSolve,
-          state.runStats,
-          state.showMinigameInfo
-        )
+        buildViewExtras(ns, domState, phaseKey, state.session, canSolve, state)
       )
     }
   }
