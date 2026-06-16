@@ -180,15 +180,22 @@ function whiteStoneSheenDot(): ReactNode {
   })
 }
 
+function blockedMarkerOnly(): ReactNode[] {
+  const React = getReact()
+  return [
+    React.createElement("rect", { x: 5, y: 5, width: 14, height: 14, fill: "#2a2a2a", rx: 1.5 }),
+    React.createElement("line", { x1: 7, y1: 7, x2: 17, y2: 17, stroke: "#555", strokeWidth: 1.2 }),
+    React.createElement("line", { x1: 17, y1: 7, x2: 7, y2: 17, stroke: "#555", strokeWidth: 1.2 }),
+  ]
+}
+
 function blockedLayers(board: IpvgoBoard, x: number, y: number): ReactNode[] {
   const React = getReact()
   const phantom = phantomStoneColor(board, x, y, "X")
   const dotR = 3.2
   const dotFill = phantom === "B" ? "#1c1c1c" : "#D1D1D1"
   const layers: ReactNode[] = [
-    React.createElement("rect", { x: 5, y: 5, width: 14, height: 14, fill: "#2a2a2a", rx: 1.5 }),
-    React.createElement("line", { x1: 7, y1: 7, x2: 17, y2: 17, stroke: "#555", strokeWidth: 1.2 }),
-    React.createElement("line", { x1: 17, y1: 7, x2: 7, y2: 17, stroke: "#555", strokeWidth: 1.2 }),
+    ...blockedMarkerOnly(),
     React.createElement("circle", {
       cx: CENTER,
       cy: CENTER,
@@ -232,11 +239,7 @@ function stoneLayers(kind: BoardStoneKind, board?: IpvgoBoard, x?: number, y?: n
         whiteStoneSheenDot(),
       ]
     case "blocked":
-      return board != null && x != null && y != null ? blockedLayers(board, x, y) : [
-        React.createElement("rect", { x: 5, y: 5, width: 14, height: 14, fill: "#2a2a2a", rx: 1.5 }),
-        React.createElement("line", { x1: 7, y1: 7, x2: 17, y2: 17, stroke: "#555", strokeWidth: 1.2 }),
-        React.createElement("line", { x1: 17, y1: 7, x2: 7, y2: 17, stroke: "#555", strokeWidth: 1.2 }),
-      ]
+      return board != null && x != null && y != null ? blockedLayers(board, x, y) : blockedMarkerOnly()
     case "empty":
       return []
   }
