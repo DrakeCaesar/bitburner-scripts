@@ -20,9 +20,19 @@ import { columnLabel, formatIpvgoPoint, parseIpvgoPoint, rowLabel } from "./coor
 import type { IpvgoBoard, IpvgoBoardSize, IpvgoMove, IpvgoValidMoves } from "./types.js"
 import { IPVGO_BOARD_SIZES, IPVGO_BONUS_LABEL, IPVGO_ITERATION_PRESETS, IPVGO_ITERATIONS_PER_TABLE_ROW, IPVGO_OPPONENTS } from "./types.js"
 import {
+  getFactionSims,
+  isFactionEnabled,
+  estimateNodePowerByFaction,
+  pickLowestNodePowerFaction,
+  type IpvgoFactionConfig,
+} from "./factionConfig.js"
+import {
+  getSimEditFaction,
   getDeferredSetup,
+  queueFactionEnabledToggle,
+  queueFactionSimsChange,
   queueSetupBoardClick,
-  queueSetupSimsChange,
+  queueSimEditFaction,
   setupCellKey,
   type IpvgoSetupSelection,
 } from "./uiControl.js"
@@ -81,6 +91,16 @@ export type IpvgoDashboardSnapshot = {
   cheatSuccessChance: number
   /** Queued opponent/size after the current game finishes. */
   deferredSetup?: IpvgoSetupSelection | null
+  /** Per-faction KataGo visit count (from ipvgo-settings.json). */
+  factionSims: Partial<Record<GoOpponent, number>>
+  /** Per-faction auto-rotation enable (from ipvgo-settings.json). */
+  factionEnabled: Partial<Record<GoOpponent, boolean>>
+  /** Estimated node power used to pick the auto opponent. */
+  nodePowerByFaction: Partial<Record<GoOpponent, number>>
+  /** Faction with lowest node power (auto target for next game). */
+  autoOpponent: GoOpponent
+  /** Faction row selected for sim preset clicks. */
+  simEditFaction: GoOpponent
 }
 
 export function createIpvgoSnapshot(
@@ -113,6 +133,11 @@ export function createIpvgoSnapshot(
     cheatAvailable: false,
     cheatCount: 0,
     cheatSuccessChance: 0,
+    factionSims: {},
+    factionEnabled: {},
+    nodePowerByFaction: {},
+    autoOpponent: opponent,
+    simEditFaction: opponent,
   }
 }
 
@@ -218,10 +243,21 @@ function scoreLeadText(blackScore: number, whiteScore: number): string {
   return lead > 0 ? `B+${lead.toFixed(1)}` : `W+${(-lead).toFixed(1)}`
 }
 
-function factionRecordLabel(opponent: GoOpponent, snapshot: IpvgoDashboardSnapshot): string {
+function factionRecordLabel(
+  opponent: GoOpponent,
+  snapshot: IpvgoDashboardSnapshot,
+  options?: { auto?: boolean }
+): string {
   const stats = snapshot.opponentStats[opponent]
-  if (!stats) return opponent
-  return `${opponent} (${stats.wins}-${stats.losses})`
+  const autoMark = options?.auto ? " A" : ""
+  if (!stats) return `${opponent}${autoMark}`
+  return `${opponent} (${stats.wins}-${stats.losses})${autoMark}`
+}
+
+function formatNodePower(snapshot: IpvgoDashboardSnapshot, faction: GoOpponent): string {
+  const np = snapshot.nodePowerByFaction[faction]
+  if (np == null) return "-"
+  return np >= 1000 ? `${(np / 1000).toFixed(1)}k` : String(Math.round(np))
 }
 
 function factionRewardLabel(opponent: GoOpponent, snapshot: IpvgoDashboardSnapshot): string {
@@ -238,15 +274,23 @@ function buildSetupTableConfig(snapshot: IpvgoDashboardSnapshot): ReactTableConf
     : playingKey
 
   return {
-    title: "Setup",
+    title: "Setup (A=auto, On=click)",
     columns: [
+      col("On", "center", 3),
       col("Faction", "left", 22),
-      col("Reward", "left", 30),
+      col("Reward", "left", 28),
+      col("Sims", "right", 5),
+      col("NP", "right", 5),
       ...IPVGO_BOARD_SIZES.map((size) => col(String(size), "center", 3)),
     ],
     rows: IPVGO_OPPONENTS.map((faction) => [
-      factionRecordLabel(faction, snapshot),
+      snapshot.factionEnabled[faction] === false ? "off" : "on",
+      factionRecordLabel(faction, snapshot, {
+        auto: faction === snapshot.autoOpponent && snapshot.factionEnabled[faction] !== false,
+      }),
       factionRewardLabel(faction, snapshot),
+      String(snapshot.factionSims[faction] ?? "-"),
+      formatNodePower(snapshot, faction),
       ...IPVGO_BOARD_SIZES.map((size) => {
         const cellKey = setupCellKey(faction, size)
         const queued = cellKey === displayKey
@@ -255,6 +299,10 @@ function buildSetupTableConfig(snapshot: IpvgoDashboardSnapshot): ReactTableConf
       }),
     ]),
   }
+}
+
+function factionSimsFor(snapshot: IpvgoDashboardSnapshot, faction: GoOpponent): number {
+  return snapshot.factionSims[faction] ?? snapshot.iterations
 }
 
 function iterationPresetRows(): number[][] {
@@ -287,7 +335,8 @@ function IpvgoSetupPicker(props: { snapshot: IpvgoDashboardSnapshot }): ReactNod
     ? setupCellKey(snapshot.deferredSetup.opponent, snapshot.deferredSetup.boardSize)
     : null
   const displayKey = deferredKey ?? playingKey
-  const displayIterations = snapshot.deferredSetup?.iterations ?? snapshot.iterations
+  const simEditFaction = snapshot.simEditFaction
+  const simEditSims = factionSimsFor(snapshot, simEditFaction)
 
   const headerCells = columns.map((column, idx) =>
     React.createElement(
@@ -298,22 +347,78 @@ function IpvgoSetupPicker(props: { snapshot: IpvgoDashboardSnapshot }): ReactNod
   )
 
   const bodyRows = IPVGO_OPPONENTS.map((faction, rowIdx) => {
+    const enabled = snapshot.factionEnabled[faction] !== false
+    const simEditing = faction === simEditFaction
+    const autoTarget = enabled && faction === snapshot.autoOpponent
     const cells = [
       React.createElement(
         "td",
         {
-          key: "name",
-          style: cellStyle(layout, { selectedRow: snapshot.opponent === faction }, "left"),
+          key: "on",
+          style: {
+            ...cellStyle(layout, { highlight: !enabled, selectedRow: !enabled }, "center"),
+            cursor: "pointer",
+            opacity: enabled ? "1" : "0.45",
+          },
+          onClick: () => queueFactionEnabledToggle(faction),
         },
-        factionRecordLabel(faction, snapshot)
+        enabled ? "on" : "off"
+      ),
+      React.createElement(
+        "td",
+        {
+          key: "name",
+          style: {
+            ...cellStyle(
+              layout,
+              { selectedRow: snapshot.opponent === faction || simEditing },
+              "left"
+            ),
+            cursor: "pointer",
+            opacity: enabled ? "1" : "0.45",
+          },
+          onClick: () => queueSimEditFaction(faction),
+        },
+        factionRecordLabel(faction, snapshot, { auto: autoTarget })
       ),
       React.createElement(
         "td",
         {
           key: "reward",
-          style: cellStyle(layout, { selectedRow: snapshot.opponent === faction }, "left"),
+          style: {
+            ...cellStyle(layout, { selectedRow: snapshot.opponent === faction }, "left"),
+            opacity: enabled ? "1" : "0.45",
+          },
         },
         factionRewardLabel(faction, snapshot)
+      ),
+      React.createElement(
+        "td",
+        {
+          key: "sims",
+          style: {
+            ...cellStyle(layout, { highlight: simEditing, selectedRow: simEditing }, "right"),
+            cursor: "pointer",
+            opacity: enabled ? "1" : "0.45",
+          },
+          onClick: () => queueSimEditFaction(faction),
+        },
+        String(factionSimsFor(snapshot, faction))
+      ),
+      React.createElement(
+        "td",
+        {
+          key: "np",
+          style: {
+            ...cellStyle(
+              layout,
+              { highlight: autoTarget, selectedRow: autoTarget },
+              "right"
+            ),
+            opacity: enabled ? "1" : "0.45",
+          },
+        },
+        formatNodePower(snapshot, faction)
       ),
       ...IPVGO_BOARD_SIZES.map((size) => {
         const cellKey = setupCellKey(faction, size)
@@ -331,7 +436,7 @@ function IpvgoSetupPicker(props: { snapshot: IpvgoDashboardSnapshot }): ReactNod
               queueSetupBoardClick(
                 faction,
                 size,
-                displayIterations,
+                factionSimsFor(snapshot, faction),
                 playingKey,
                 deferredKey,
                 cellKey
@@ -383,7 +488,7 @@ function IpvgoSetupPicker(props: { snapshot: IpvgoDashboardSnapshot }): ReactNod
           ""
         )
       }
-      const selected = displayIterations === preset
+      const selected = simEditSims === preset
       return React.createElement(
         "td",
         {
@@ -392,8 +497,7 @@ function IpvgoSetupPicker(props: { snapshot: IpvgoDashboardSnapshot }): ReactNod
             ...cellStyle(layout, { highlight: selected, selectedRow: selected }, "center"),
             cursor: "pointer",
           },
-          onClick: () =>
-            queueSetupSimsChange(snapshot.opponent, snapshot.boardSize as IpvgoBoardSize, preset),
+          onClick: () => queueFactionSimsChange(simEditFaction, preset),
         },
         selected ? "*" : ""
       )
@@ -447,7 +551,7 @@ function IpvgoSetupPicker(props: { snapshot: IpvgoDashboardSnapshot }): ReactNod
           fontWeight: "bold",
         },
       },
-      "=== Sims ==="
+      `=== Sims (${simEditFaction}) ===`
     ),
     simsTable
   )
@@ -481,6 +585,7 @@ function buildStatusTable(snapshot: IpvgoDashboardSnapshot): ReactTableConfig {
     ],
     rows: [
       ["Match", `${snapshot.opponent} ${snapshot.boardSize}x${snapshot.boardSize} / ${snapshot.iterations} sims`],
+      ["Auto", `${snapshot.autoOpponent} (lowest NP)`],
       ["Turn", snapshot.currentPlayer],
       ["Score", `B ${snapshot.blackScore.toFixed(1)} / W ${snapshot.whiteScore.toFixed(1)} (${scoreLeadText(snapshot.blackScore, snapshot.whiteScore)})`],
       ["Move", String(snapshot.moveNumber)],
@@ -660,6 +765,31 @@ function populateDashboard(ns: NS, log: ScriptLogBuilder, snapshot: IpvgoDashboa
   log.react(buildBoardReact(snapshot.board, snapshot.lastOurMove, snapshot.lastOpponentMove), boardSizePx)
 
   log.table(buildCurrentGameTable(snapshot))
+}
+
+export function enrichSnapshotWithFactionConfig(
+  ns: NS,
+  snapshot: IpvgoDashboardSnapshot,
+  config: IpvgoFactionConfig
+): IpvgoDashboardSnapshot {
+  const nodePowerByFaction = estimateNodePowerByFaction(ns, snapshot.opponentStats)
+  const autoOpponent = pickLowestNodePowerFaction(nodePowerByFaction, config)
+  const factionSims: Partial<Record<GoOpponent, number>> = {}
+  const factionEnabled: Partial<Record<GoOpponent, boolean>> = {}
+  for (const faction of IPVGO_OPPONENTS) {
+    factionSims[faction] = getFactionSims(config, faction)
+    factionEnabled[faction] = isFactionEnabled(config, faction)
+  }
+  const simEditFaction = getSimEditFaction() ?? snapshot.simEditFaction ?? snapshot.opponent
+  return {
+    ...snapshot,
+    factionSims,
+    factionEnabled,
+    nodePowerByFaction,
+    autoOpponent,
+    simEditFaction,
+    iterations: getFactionSims(config, snapshot.opponent),
+  }
 }
 
 export function refreshFactionStats(snapshot: IpvgoDashboardSnapshot, ns: NS): IpvgoDashboardSnapshot {

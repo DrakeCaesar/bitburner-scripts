@@ -7,6 +7,7 @@ import {
 import {
   applyIpvgoSetupChange,
   createIpvgoSnapshot,
+  enrichSnapshotWithFactionConfig,
   recordGameResult,
   recordOpponentMove,
   recordOurCheat,
@@ -16,6 +17,17 @@ import {
   syncDeferredSetupSnapshot,
 } from "./libraries/ipvgo/display.js"
 import {
+  bumpFactionSimsOnLoss,
+  estimateNodePowerByFaction,
+  getFactionSims,
+  loadFactionConfig,
+  pickLowestNodePowerFaction,
+  saveFactionConfig,
+  setFactionSims,
+  toggleFactionEnabled,
+  type IpvgoFactionConfig,
+} from "./libraries/ipvgo/factionConfig.js"
+import {
   executeCheat,
   findCheatAction,
   readCheatStats,
@@ -24,8 +36,9 @@ import {
 } from "./libraries/ipvgo/cheats.js"
 import {
   consumeDeferUiWake,
+  consumeFactionEnabledToggle,
+  consumeFactionSimsChange,
   consumeImmediateSetup,
-  consumeSimsSetup,
   hasIpvgoSetupPending,
   sleepUntilIpvgoSetupChange,
   takeDeferredSetup,
@@ -69,12 +82,36 @@ function parseBoardSize(value: string | number | undefined): IpvgoBoardSize {
   return size as IpvgoBoardSize
 }
 
-function parseIterations(value: string | number | undefined): number {
-  const iterations = Number(value ?? IPVGO_DEFAULT_ITERATIONS)
+function parseIterations(value: string | number | undefined): number | undefined {
+  if (value == null || value === "") return undefined
+  const iterations = Number(value)
   if (!Number.isFinite(iterations) || iterations < 100) {
     throw new Error(`Iterations must be a number >= 100 (got ${value})`)
   }
   return Math.floor(iterations)
+}
+
+function buildAutoSetup(
+  ns: NS,
+  snapshot: ReturnType<typeof createIpvgoSnapshot>,
+  config: IpvgoFactionConfig,
+  boardSize: IpvgoBoardSize
+) {
+  const nodePowerByFaction = estimateNodePowerByFaction(ns, snapshot.opponentStats)
+  const opponent = pickLowestNodePowerFaction(nodePowerByFaction, config)
+  return {
+    opponent,
+    boardSize,
+    iterations: getFactionSims(config, opponent),
+  }
+}
+
+function withFactionConfig(
+  ns: NS,
+  snapshot: ReturnType<typeof createIpvgoSnapshot>,
+  config: IpvgoFactionConfig
+) {
+  return enrichSnapshotWithFactionConfig(ns, refreshFactionStats(snapshot, ns), config)
 }
 
 function countValidMoves(validMoves: IpvgoValidMoves): number {
@@ -226,11 +263,18 @@ export async function main(ns: NS): Promise<void> {
 
   const opponent = parseOpponent(ns.args[0] as string | undefined)
   const boardSize = parseBoardSize(ns.args[1] as string | number | undefined)
-  const iterations = parseIterations(ns.args[2] as string | number | undefined)
+  const argIterations = parseIterations(ns.args[2] as string | number | undefined)
+
+  let factionConfig = loadFactionConfig(ns)
 
   const inProgress = detectInProgressGame(ns)
   let activeOpponent = inProgress?.opponent ?? opponent
   let activeBoardSize = inProgress?.boardSize ?? boardSize
+
+  if (argIterations != null) {
+    factionConfig = setFactionSims(factionConfig, activeOpponent, argIterations)
+    saveFactionConfig(ns, factionConfig)
+  }
 
   const adaptiveLog = createAdaptiveTailLog(createTailLog(), {
     windowId: "ipvgo-script-log",
@@ -239,16 +283,30 @@ export async function main(ns: NS): Promise<void> {
   })
   const tailLog = adaptiveLog.log
   ns.atExit(() => adaptiveLog.dispose())
-  const baseSnapshot = createIpvgoSnapshot(activeOpponent, activeBoardSize, iterations)
-  let snapshot = refreshFactionStats(
+
+  if (!inProgress) {
+    const autoSetup = buildAutoSetup(
+      ns,
+      createIpvgoSnapshot(activeOpponent, activeBoardSize, IPVGO_DEFAULT_ITERATIONS),
+      factionConfig,
+      activeBoardSize
+    )
+    activeOpponent = autoSetup.opponent
+  }
+
+  const initialIterations = getFactionSims(factionConfig, activeOpponent)
+  const baseSnapshot = createIpvgoSnapshot(activeOpponent, activeBoardSize, initialIterations)
+  let snapshot = withFactionConfig(
+    ns,
     inProgress
       ? {
           ...syncGameState(ns, baseSnapshot),
           phase: `Resumed ${activeOpponent} ${activeBoardSize}x${activeBoardSize}`,
         }
       : { ...baseSnapshot, phase: "Initializing" },
-    ns
+    factionConfig
   )
+  let pendingGameResult: boolean | null = null
   await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
 
   if (!(await isIpvgoEngineAvailable())) {
@@ -276,7 +334,7 @@ export async function main(ns: NS): Promise<void> {
       const immediate = consumeImmediateSetup()
       if (immediate) {
         const setupApplied = applyIpvgoSetupChange(ns, snapshot, immediate, { forceReset: true })
-        snapshot = setupApplied.snapshot
+        snapshot = withFactionConfig(ns, setupApplied.snapshot, factionConfig)
         activeOpponent = snapshot.opponent
         activeBoardSize = snapshot.boardSize as IpvgoBoardSize
         moveNumber = snapshot.moveNumber
@@ -284,14 +342,38 @@ export async function main(ns: NS): Promise<void> {
         continue
       }
 
-      const simsChange = consumeSimsSetup()
+      const simsChange = consumeFactionSimsChange()
       if (simsChange) {
-        const setupApplied = applyIpvgoSetupChange(ns, snapshot, simsChange)
-        snapshot = setupApplied.snapshot
-        if (setupApplied.changed) {
-          await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
-          continue
+        factionConfig = setFactionSims(factionConfig, simsChange.faction, simsChange.iterations)
+        saveFactionConfig(ns, factionConfig)
+        const pending =
+          simsChange.faction === snapshot.opponent
+            ? {
+                opponent: snapshot.opponent,
+                boardSize: snapshot.boardSize as IpvgoBoardSize,
+                iterations: simsChange.iterations,
+              }
+            : null
+        if (pending) {
+          const setupApplied = applyIpvgoSetupChange(ns, snapshot, pending)
+          snapshot = withFactionConfig(ns, setupApplied.snapshot, factionConfig)
+          if (setupApplied.changed) {
+            await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
+            continue
+          }
         }
+        snapshot = withFactionConfig(ns, snapshot, factionConfig)
+        await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
+        continue
+      }
+
+      const enabledToggle = consumeFactionEnabledToggle()
+      if (enabledToggle) {
+        factionConfig = toggleFactionEnabled(factionConfig, enabledToggle)
+        saveFactionConfig(ns, factionConfig)
+        snapshot = withFactionConfig(ns, snapshot, factionConfig)
+        await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
+        continue
       }
 
       const syncedDeferred = syncDeferredSetupSnapshot(snapshot)
@@ -308,15 +390,25 @@ export async function main(ns: NS): Promise<void> {
       const liveBoardSize = ns.go.getBoardState().length as IpvgoBoardSize
 
       if (currentPlayer === "None") {
+        if (pendingGameResult === false) {
+          factionConfig = bumpFactionSimsOnLoss(factionConfig, activeOpponent)
+          saveFactionConfig(ns, factionConfig)
+        }
+        pendingGameResult = null
+
         const deferred = takeDeferredSetup()
         if (deferred) {
           const setupApplied = applyIpvgoSetupChange(ns, snapshot, deferred)
-          snapshot = setupApplied.snapshot
+          snapshot = withFactionConfig(ns, setupApplied.snapshot, factionConfig)
           activeOpponent = snapshot.opponent
           activeBoardSize = snapshot.boardSize as IpvgoBoardSize
         } else {
-          ns.go.resetBoardState(activeOpponent, activeBoardSize)
-          snapshot = syncGameState(ns, snapshot)
+          snapshot = withFactionConfig(ns, refreshFactionStats(snapshot, ns), factionConfig)
+          const autoSetup = buildAutoSetup(ns, snapshot, factionConfig, activeBoardSize)
+          const setupApplied = applyIpvgoSetupChange(ns, snapshot, autoSetup)
+          snapshot = withFactionConfig(ns, setupApplied.snapshot, factionConfig)
+          activeOpponent = snapshot.opponent
+          activeBoardSize = snapshot.boardSize as IpvgoBoardSize
         }
         gamesPlayed++
         moveNumber = 0
@@ -365,7 +457,9 @@ export async function main(ns: NS): Promise<void> {
         const waitResult = await ns.go.opponentNextTurn(false)
         const oppMs = performance.now() - oppStarted
         if (waitResult.type === "gameOver") {
-          snapshot = logGameEnd(ns, snapshot, activeOpponent)
+          snapshot = logGameEnd(ns, snapshot, activeOpponent, (won) => {
+            pendingGameResult = won
+          })
           await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
           await sleepUntilIpvgoSetupChange(ns, 500)
           continue
@@ -417,7 +511,9 @@ export async function main(ns: NS): Promise<void> {
           snapshot = recordOurCheat(snapshot, moveNumber, cheatLabel, cheatMs)
 
           if (cheatResult.type === "gameOver") {
-            snapshot = logGameEnd(ns, snapshot, activeOpponent)
+            snapshot = logGameEnd(ns, snapshot, activeOpponent, (won) => {
+            pendingGameResult = won
+          })
             await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
             await sleepUntilIpvgoSetupChange(ns, 500)
             continue
@@ -465,7 +561,9 @@ export async function main(ns: NS): Promise<void> {
 
         const passResult = await ns.go.passTurn()
         if (passResult.type === "gameOver") {
-          snapshot = logGameEnd(ns, snapshot, activeOpponent)
+          snapshot = logGameEnd(ns, snapshot, activeOpponent, (won) => {
+            pendingGameResult = won
+          })
         }
         snapshot = syncGameState(ns, snapshot)
         await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
@@ -553,7 +651,9 @@ export async function main(ns: NS): Promise<void> {
       }
 
       if (result.type === "gameOver") {
-        snapshot = logGameEnd(ns, snapshot, activeOpponent)
+        snapshot = logGameEnd(ns, snapshot, activeOpponent, (won) => {
+          pendingGameResult = won
+        })
         snapshot = {
           ...snapshot,
           lastOurMove: move,
@@ -603,10 +703,12 @@ export async function main(ns: NS): Promise<void> {
 function logGameEnd(
   ns: NS,
   snapshot: ReturnType<typeof createIpvgoSnapshot>,
-  _opponent: GoOpponent
+  _opponent: GoOpponent,
+  onResult?: (won: boolean) => void
 ) {
   const gameState = ns.go.getGameState()
   const won = gameState.blackScore > gameState.whiteScore
+  onResult?.(won)
   return recordGameResult(
     {
       ...syncGameState(ns, snapshot),
