@@ -95,13 +95,13 @@ function buildAutoSetup(
   ns: NS,
   snapshot: ReturnType<typeof createIpvgoSnapshot>,
   config: IpvgoFactionConfig,
-  boardSize: IpvgoBoardSize
 ) {
   const nodePowerByFaction = estimateNodePowerByFaction(ns, snapshot.opponentStats)
   const opponent = pickLowestNodePowerFaction(nodePowerByFaction, config)
+  const largestBoardSize = Math.max(...IPVGO_BOARD_SIZES) as IpvgoBoardSize
   return {
     opponent,
-    boardSize,
+    boardSize: largestBoardSize,
     iterations: getFactionSims(config, opponent),
   }
 }
@@ -289,9 +289,9 @@ export async function main(ns: NS): Promise<void> {
       ns,
       createIpvgoSnapshot(activeOpponent, activeBoardSize, IPVGO_DEFAULT_ITERATIONS),
       factionConfig,
-      activeBoardSize
     )
     activeOpponent = autoSetup.opponent
+    activeBoardSize = autoSetup.boardSize as IpvgoBoardSize
   }
 
   const initialIterations = getFactionSims(factionConfig, activeOpponent)
@@ -398,14 +398,14 @@ export async function main(ns: NS): Promise<void> {
 
         const deferred = takeDeferredSetup()
         if (deferred) {
-          const setupApplied = applyIpvgoSetupChange(ns, snapshot, deferred)
+          const setupApplied = applyIpvgoSetupChange(ns, snapshot, deferred, { forceReset: true })
           snapshot = withFactionConfig(ns, setupApplied.snapshot, factionConfig)
           activeOpponent = snapshot.opponent
           activeBoardSize = snapshot.boardSize as IpvgoBoardSize
         } else {
           snapshot = withFactionConfig(ns, refreshFactionStats(snapshot, ns), factionConfig)
-          const autoSetup = buildAutoSetup(ns, snapshot, factionConfig, activeBoardSize)
-          const setupApplied = applyIpvgoSetupChange(ns, snapshot, autoSetup)
+          const autoSetup = buildAutoSetup(ns, snapshot, factionConfig)
+          const setupApplied = applyIpvgoSetupChange(ns, snapshot, autoSetup, { forceReset: true })
           snapshot = withFactionConfig(ns, setupApplied.snapshot, factionConfig)
           activeOpponent = snapshot.opponent
           activeBoardSize = snapshot.boardSize as IpvgoBoardSize
