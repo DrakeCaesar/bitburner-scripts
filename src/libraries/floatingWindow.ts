@@ -18,6 +18,8 @@ interface FloatingWindowOptions {
   id?: string
   isVisible?: boolean
   isCollapsed?: boolean
+  /** overview = character overview table chrome; tail = script log window (no inner padding). */
+  contentChrome?: "overview" | "tail"
 }
 
 // Function to extract CSS classes from the existing overview element
@@ -111,9 +113,11 @@ export class FloatingWindow {
   private height: number | string = "auto"
   private isVisible: boolean
   private hasCustomPosition: boolean
-  private options: Required<Omit<FloatingWindowOptions, "attachTo" | "id">> & {
+  private contentHost: HTMLElement | null = null
+  private options: Required<Omit<FloatingWindowOptions, "attachTo" | "id" | "contentChrome">> & {
     attachTo?: HTMLElement
     id?: string
+    contentChrome: "overview" | "tail"
   }
 
   constructor(options: FloatingWindowOptions) {
@@ -147,6 +151,7 @@ export class FloatingWindow {
       isCollapsed: this.isCollapsed,
       attachTo: options.attachTo,
       id: options.id,
+      contentChrome: options.contentChrome ?? "overview",
     }
 
     this.createElement()
@@ -250,6 +255,55 @@ export class FloatingWindow {
     return header
   }
 
+  private mountContent(host: HTMLElement, content: string | HTMLElement): void {
+    host.replaceChildren()
+    if (typeof content === "string") {
+      const paragraph = document.createElement("p")
+      paragraph.className = `MuiTypography-root MuiTypography-body1 ${CSS_CLASSES.typography}`
+      paragraph.style.margin = "0"
+      paragraph.style.padding = "0"
+      paragraph.innerHTML = content
+      host.appendChild(paragraph)
+    } else {
+      host.appendChild(content)
+    }
+  }
+
+  private applyTailChrome(): void {
+    if (!this.element || this.options.contentChrome !== "tail") return
+
+    this.element.style.padding = "0"
+    this.element.style.margin = "0"
+    this.element.style.boxSizing = "border-box"
+
+    const logShell = document.querySelector(".react-draggable .react-resizable")?.parentElement
+    if (logShell instanceof HTMLElement) {
+      const shellStyle = window.getComputedStyle(logShell)
+      if (shellStyle.borderTopWidth !== "0px") {
+        this.element.style.border = shellStyle.border
+      }
+    }
+
+    const contentArea = this.element.children[1] as HTMLElement | undefined
+    if (contentArea) {
+      contentArea.style.margin = "0"
+    }
+
+    for (const el of Array.from(
+      this.element.querySelectorAll(".MuiCollapse-wrapper, .MuiCollapse-wrapperInner, .floating-window-content")
+    )) {
+      if (el instanceof HTMLElement) {
+        el.style.padding = "0"
+        el.style.margin = "0"
+      }
+    }
+
+    if (this.contentHost) {
+      this.contentHost.style.padding = "0"
+      this.contentHost.style.margin = "0"
+    }
+  }
+
   private createContentArea(): HTMLElement {
     const contentArea = document.createElement("div")
     contentArea.style.minHeight = "0px"
@@ -274,41 +328,46 @@ export class FloatingWindow {
     const wrapperInner = document.createElement("div")
     wrapperInner.className = `MuiCollapse-wrapperInner MuiCollapse-vertical ${CSS_CLASSES.collapseWrapperInner}`
 
-    // Create MUI table structure
-    const table = document.createElement("table")
-    table.className = `MuiTable-root ${CSS_CLASSES.table}`
-
-    const tbody = document.createElement("tbody")
-    tbody.className = `MuiTableBody-root ${CSS_CLASSES.tableBody}`
-
-    // Create a sample table row (you can customize this)
-    const tableRow = document.createElement("tr")
-    tableRow.className = `MuiTableRow-root ${CSS_CLASSES.tableRow}`
-
-    // Add content to the table row (you can modify this based on your needs)
-    const tableCell = document.createElement("th")
-    tableCell.className = `MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium ${CSS_CLASSES.tableCell}`
-    tableCell.setAttribute("scope", "row")
-
-    // Handle both string and HTMLElement content
-    if (typeof this.options.content === "string") {
-      // Create paragraph with MUI Typography classes for string content
-      const paragraph = document.createElement("p")
-      paragraph.className = `MuiTypography-root MuiTypography-body1 ${CSS_CLASSES.typography}`
-      paragraph.innerHTML = this.options.content
-      tableCell.appendChild(paragraph)
+    if (this.options.contentChrome === "tail") {
+      const contentHost = document.createElement("div")
+      contentHost.className = "floating-window-content"
+      contentHost.style.padding = "0"
+      contentHost.style.margin = "0"
+      contentHost.style.width = "100%"
+      contentHost.style.boxSizing = "border-box"
+      this.contentHost = contentHost
+      this.mountContent(contentHost, this.options.content)
+      wrapperInner.appendChild(contentHost)
     } else {
-      // For HTMLElement content, append directly
-      tableCell.appendChild(this.options.content as HTMLElement)
+      // Create MUI table structure (overview-style)
+      const table = document.createElement("table")
+      table.className = `MuiTable-root ${CSS_CLASSES.table}`
+
+      const tbody = document.createElement("tbody")
+      tbody.className = `MuiTableBody-root ${CSS_CLASSES.tableBody}`
+
+      const tableRow = document.createElement("tr")
+      tableRow.className = `MuiTableRow-root ${CSS_CLASSES.tableRow}`
+
+      const tableCell = document.createElement("th")
+      tableCell.className = `MuiTableCell-root MuiTableCell-body MuiTableCell-sizeMedium ${CSS_CLASSES.tableCell}`
+      tableCell.setAttribute("scope", "row")
+      tableCell.style.padding = "0"
+      tableCell.style.margin = "0"
+      tableCell.style.border = "none"
+      this.contentHost = tableCell
+      this.mountContent(tableCell, this.options.content)
+
+      tableRow.appendChild(tableCell)
+      tbody.appendChild(tableRow)
+      table.appendChild(tbody)
+      table.style.borderCollapse = "collapse"
+      table.style.borderSpacing = "0"
+      table.style.width = "100%"
+      wrapperInner.appendChild(table)
     }
-    tableRow.appendChild(tableCell)
 
-    // Assemble table structure
-    tbody.appendChild(tableRow)
-    table.appendChild(tbody)
-
-    // Assemble the structure: contentArea > collapseWrapper > wrapperInner > table
-    wrapperInner.appendChild(table)
+    // Assemble the structure: contentArea > collapseWrapper > wrapperInner > content
     collapseWrapper.appendChild(wrapperInner)
     contentArea.appendChild(collapseWrapper)
 
@@ -378,6 +437,7 @@ export class FloatingWindow {
 
     overviewElement.parentNode!.insertBefore(this.element, overviewElement.nextSibling)
     this.positionWindow(overviewElement)
+    this.applyTailChrome()
   }
 
   private attachEventListeners(): void {
@@ -487,15 +547,21 @@ export class FloatingWindow {
         contentArea.style.minHeight = "0px"
         contentArea.style.overflow = "hidden"
         contentArea.style.borderTop = "none"
-        contentArea.style.marginBottom = "1px"
+        contentArea.style.marginBottom = this.options.contentChrome === "tail" ? "0" : "1px"
         contentArea.className = `MuiCollapse-root MuiCollapse-vertical ${CSS_CLASSES.collapse}`
       } else {
         // Expand: restore height, show content, and update classes
         contentArea.style.height = "auto"
         contentArea.style.minHeight = "0px"
         contentArea.style.overflow = "visible"
-        contentArea.style.borderTop = ""
-        contentArea.style.marginBottom = "0px"
+        if (this.options.contentChrome === "tail") {
+          contentArea.style.borderTop = "none"
+          contentArea.style.marginBottom = "0"
+          contentArea.style.margin = "0"
+        } else {
+          contentArea.style.borderTop = ""
+          contentArea.style.marginBottom = "0px"
+        }
         contentArea.className = `MuiCollapse-root MuiCollapse-vertical MuiCollapse-entered ${CSS_CLASSES.collapse}`
       }
     }
@@ -559,32 +625,8 @@ export class FloatingWindow {
   }
 
   public updateContent(newContent: string | HTMLElement): void {
-    if (!this.element) return
-
-    // Navigate through the nested structure to find the content in the table header cell
-    const contentArea = this.element.children[1] // Second child is content area (MuiCollapse)
-    const collapseWrapper = contentArea?.children[0] as HTMLElement // MuiCollapse-wrapper
-    const wrapperInner = collapseWrapper?.children[0] as HTMLElement // MuiCollapse-wrapperInner
-    const table = wrapperInner?.children[0] as HTMLElement // MuiTable-root
-    const tbody = table?.children[0] as HTMLElement // MuiTableBody-root
-    const tableRow = tbody?.children[0] as HTMLElement // MuiTableRow-root
-    const tableCell = tableRow?.children[0] as HTMLElement // Table header cell
-
-    if (tableCell) {
-      // Clear existing content
-      tableCell.innerHTML = ""
-
-      if (typeof newContent === "string") {
-        // Create paragraph with MUI Typography classes for string content
-        const paragraph = document.createElement("p")
-        paragraph.className = `MuiTypography-root MuiTypography-body1 ${CSS_CLASSES.typography}`
-        paragraph.innerHTML = newContent
-        tableCell.appendChild(paragraph)
-      } else {
-        // For HTMLElement content, append directly
-        tableCell.appendChild(newContent)
-      }
-    }
+    if (!this.contentHost) return
+    this.mountContent(this.contentHost, newContent)
   }
 
   public updateTitle(newTitle: string): void {
@@ -623,7 +665,7 @@ export class FloatingWindow {
   }
 
   /** Content width cap; height follows content. */
-  public setSize(width: number, height?: number): void {
+  public setSize(width: number, height?: number, clipContent = false): void {
     this.width = width
     this.options.width = width
     if (height != null) {
@@ -637,6 +679,8 @@ export class FloatingWindow {
     if (height != null && height > 0) {
       this.element.style.maxHeight = `${height}px`
     }
+    this.element.style.overflowX = "hidden"
+    this.element.style.overflowY = clipContent ? "hidden" : "visible"
   }
 
   public getElement(): HTMLElement | null {

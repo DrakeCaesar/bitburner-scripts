@@ -2094,7 +2094,6 @@ export function unmountScriptLogContainer(container: HTMLElement): void {
   reactRootsByContainer.delete(container)
 }
 
-/** Render script-log React content into a DOM container (floating window sink). */
 /** Measured painted script-log content (use after render for floating window sizing). */
 export function measureScriptLogViewportSize(container: HTMLElement): { widthPx: number; heightPx: number } {
   try {
@@ -2109,6 +2108,45 @@ export function measureScriptLogViewportSize(container: HTMLElement): { widthPx:
   }
 }
 
+/** Apply tail viewport scroll constraints to a floating-window mount (after paint measure). */
+export function syncScriptLogContainerLayout(container: HTMLElement, layout: TableLayout): void {
+  const viewportMax = layout.tailViewportMaxHeightPx
+  const tabbed = layout.tailTabbed === true
+
+  if (viewportMax != null) {
+    container.style.height = `${viewportMax}px`
+    container.style.maxHeight = `${viewportMax}px`
+    container.style.overflowY = "auto"
+  } else {
+    container.style.height = ""
+    container.style.maxHeight = ""
+    container.style.overflowY = "auto"
+  }
+  container.style.overflowX = "auto"
+  container.style.boxSizing = "border-box"
+  container.style.width = "100%"
+
+  const viewport = container.querySelector(`[${SCRIPT_LOG_VIEWPORT_ATTR}]`) as HTMLElement | null
+  if (!viewport || viewport === container) return
+
+  viewport.style.display = "block"
+  viewport.style.overflowX = "auto"
+  viewport.style.overflowAnchor = "none"
+  if (tabbed && viewportMax != null) {
+    viewport.style.height = `${viewportMax}px`
+    viewport.style.maxHeight = `${viewportMax}px`
+    viewport.style.overflowY = "hidden"
+  } else if (viewportMax != null) {
+    viewport.style.height = ""
+    viewport.style.maxHeight = `${viewportMax}px`
+    viewport.style.overflowY = "auto"
+  } else {
+    viewport.style.height = ""
+    viewport.style.maxHeight = ""
+    viewport.style.overflowY = ""
+  }
+}
+
 export async function renderScriptLogToContainer(
   ns: NS,
   container: HTMLElement,
@@ -2120,19 +2158,8 @@ export async function renderScriptLogToContainer(
   saveTailScrollPosition(pid, merged.tailActiveTabId)
   primeTailLogChrome(merged)
   const renderLayout = layoutForTailRender({ ...layout, tailScriptPid: pid })
-  container.setAttribute(SCRIPT_LOG_VIEWPORT_ATTR, "")
   container.setAttribute(SCRIPT_LOG_PID_ATTR, String(pid))
-  container.style.boxSizing = "border-box"
-  container.style.width = "100%"
-  container.style.overflow = "auto"
-  const contentAreaH = renderLayout.tailViewportMaxHeightPx
-  if (contentAreaH != null) {
-    container.style.height = `${contentAreaH}px`
-    container.style.maxHeight = `${contentAreaH}px`
-  } else {
-    container.style.height = ""
-    container.style.maxHeight = ""
-  }
+  syncScriptLogContainerLayout(container, renderLayout)
   mountScriptLogReactRoot(container).render(buildViewportShell(content, renderLayout))
   if (renderLayout.tailTabbed) {
     const win = eval("window") as Window

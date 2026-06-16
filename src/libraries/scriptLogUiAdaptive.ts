@@ -11,10 +11,13 @@ import {
 } from "./floatingWindow.js"
 import {
   applyScriptTailWindowRect,
+  layoutForTailRender,
   measureScriptLogViewportSize,
+  mergeLayout,
   probeScriptTailWindow,
   renderScriptLogToContainer,
   resolveTailSize,
+  syncScriptLogContainerLayout,
   unmountScriptLogContainer,
   type ScriptLogBuilder,
   type ScriptLogWindowRect,
@@ -97,6 +100,7 @@ export function createAdaptiveTailLog(
       closable: false,
       collapsible: true,
       isCollapsed: rect?.collapsed,
+      contentChrome: "tail",
     })
 
     if (rect) {
@@ -120,22 +124,50 @@ export function createAdaptiveTailLog(
     floatingAnchor = null
   }
 
-  const measureFloatingWindowSize = (
+  const measureFloatingLayout = (
+    ns: NS,
     mergedLayout: Partial<TableLayout>,
     container: HTMLElement,
     floatRoot: HTMLElement
-  ): { width: number; height: number } => {
-    const estimated = resolveTailSize(mergedLayout)
+  ): { renderLayout: TableLayout; sized: ReturnType<typeof resolveTailSize> } => {
     const painted = measureScriptLogViewportSize(container)
+    const merged = mergeLayout(mergedLayout)
     const headerPx =
-      (floatRoot.querySelector(".drag") as HTMLElement | null)?.offsetHeight ??
-      estimated.height - (mergedLayout.tailContentHeightPx ?? 0)
+      (floatRoot.querySelector(".drag") as HTMLElement | null)?.offsetHeight ?? merged.tailTitleBarPx
+    const maxTotal = Math.floor(window.innerHeight * 0.95)
+    const contentHeightPx = Math.max(mergedLayout.tailContentHeightPx ?? 0, painted.heightPx)
+    const renderLayout = layoutForTailRender({
+      ...mergedLayout,
+      tailContentHeightPx: contentHeightPx,
+      tailMaxHeightPx: maxTotal,
+      tailScriptPid: ns.pid,
+    })
+    const sized = resolveTailSize(renderLayout)
+    // When capped, ensure viewport height matches chrome so inner scroll activates.
+    if (contentHeightPx + headerPx > maxTotal && sized.viewportMaxHeightPx == null) {
+      const capped = mergeLayout({
+        ...renderLayout,
+        tailHeightPx: maxTotal,
+        tailViewportMaxHeightPx: Math.max(40, maxTotal - headerPx),
+      })
+      return { renderLayout: capped, sized: resolveTailSize(capped) }
+    }
+    return { renderLayout, sized }
+  }
 
-    const width = Math.max(estimated.width, painted.widthPx)
-    const contentHeight = Math.max(mergedLayout.tailContentHeightPx ?? 0, painted.heightPx)
-    const maxHeight = Math.floor(window.innerHeight * 0.95)
-    const height = Math.min(Math.max(headerPx + contentHeight, headerPx + 40), maxHeight)
-    return { width, height }
+  const applyFloatingLayout = (
+    ns: NS,
+    mergedLayout: Partial<TableLayout>,
+    container: HTMLElement,
+    floatRoot: HTMLElement
+  ): void => {
+    const { renderLayout, sized } = measureFloatingLayout(ns, mergedLayout, container, floatRoot)
+    syncScriptLogContainerLayout(container, renderLayout)
+    const scrollable = sized.viewportMaxHeightPx != null
+    floatWindow?.setSize(sized.width, sized.height, scrollable)
+    if (floatingAnchor) {
+      floatWindow?.setScreenPosition(floatingAnchor.x, floatingAnchor.y)
+    }
   }
 
   const renderFloating = async (ns: NS, builder: ScriptLogBuilder): Promise<void> => {
@@ -151,11 +183,7 @@ export function createAdaptiveTailLog(
     if (floatRoot && mountContainer) {
       const win = eval("window") as Window
       const applyLayout = (): void => {
-        const next = measureFloatingWindowSize(mergedLayout, mountContainer!, floatRoot)
-        floatWindow?.setSize(next.width, next.height)
-        if (floatingAnchor) {
-          floatWindow?.setScreenPosition(floatingAnchor.x, floatingAnchor.y)
-        }
+        applyFloatingLayout(ns, mergedLayout, mountContainer!, floatRoot)
       }
       applyLayout()
       win.requestAnimationFrame(() => {
