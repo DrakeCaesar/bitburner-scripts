@@ -47,10 +47,42 @@ export function isMegacorpFactionUnlocked(ns: NS, company: CompanyName): boolean
   return ns.getPlayer().factions.includes(getFactionName(company))
 }
 
-/** First megacorp autoWorkMegacorps would still be grinding (not faction-joined). */
+/**
+ * True when company-rep work is still needed. 400k rep is a one-time unlock; faction
+ * can be joined later (including after augment installs) once invited.
+ */
+export function needsMegacorpCompanyRepGrind(ns: NS, company: CompanyName): boolean {
+  if (isMegacorpFactionUnlocked(ns, company)) return false
+
+  const factionName = getFactionName(company)
+  if (ns.singularity.checkFactionInvitations().includes(factionName)) return false
+
+  if (ns.singularity.getCompanyRep(company) >= getRequiredRep(company)) return false
+
+  return true
+}
+
+/** Join any megacorp faction the player has already been invited to. */
+export function joinAvailableMegacorpFactionInvites(ns: NS): FactionName[] {
+  const invitations = ns.singularity.checkFactionInvitations()
+  const joined: FactionName[] = []
+
+  for (const company of getMegacorps(ns)) {
+    const factionName = getFactionName(company)
+    if (isMegacorpFactionUnlocked(ns, company)) continue
+    if (!invitations.includes(factionName)) continue
+
+    ns.singularity.joinFaction(factionName)
+    joined.push(factionName)
+  }
+
+  return joined
+}
+
+/** First megacorp that still needs company-rep grinding. */
 export function getActiveMegacorp(ns: NS): CompanyName | null {
   for (const company of getMegacorps(ns)) {
-    if (!isMegacorpFactionUnlocked(ns, company)) {
+    if (needsMegacorpCompanyRepGrind(ns, company)) {
       return company
     }
   }
@@ -193,13 +225,21 @@ export function tickInfiltrationMegacorpWork(
   ns: NS,
   focus = ns.singularity.isFocused()
 ): InfiltrationMegacorpWorkTickResult {
+  const joinedFactions = joinAvailableMegacorpFactionInvites(ns)
   const company = getActiveMegacorp(ns)
+
   if (!company) {
-    return { ok: false, company: null, message: "All megacorp factions joined" }
+    if (joinedFactions.length > 0) {
+      return {
+        ok: true,
+        company: null,
+        companyComplete: true,
+        message: `Joined ${joinedFactions.join(", ")}`,
+      }
+    }
+    return { ok: false, company: null, message: "All megacorp factions joined or rep complete" }
   }
 
-  const factionName = getFactionName(company)
-  const requiredRep = getRequiredRep(company)
   const currentRep = ns.singularity.getCompanyRep(company)
 
   if (ns.getPlayer().skills.charisma < CHARISMA_GRIND_THRESHOLD) {
@@ -211,25 +251,6 @@ export function tickInfiltrationMegacorpWork(
       )
     }
     return { ok: true, company, charismaGrind: true, message: "Training charisma (Volhaven)" }
-  }
-
-  if (currentRep >= requiredRep) {
-    const invitations = ns.singularity.checkFactionInvitations()
-    if (invitations.includes(factionName)) {
-      ns.singularity.joinFaction(factionName)
-      return {
-        ok: true,
-        company,
-        companyComplete: true,
-        message: `Joined ${factionName}`,
-      }
-    }
-    return {
-      ok: true,
-      company,
-      companyComplete: true,
-      message: `Waiting for ${factionName} invite`,
-    }
   }
 
   const positions = ns.singularity.getCompanyPositions(company)
