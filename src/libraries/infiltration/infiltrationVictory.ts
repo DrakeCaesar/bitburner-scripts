@@ -379,7 +379,7 @@ async function invokeVictorySelectChange(ns: NS, factionName: string): Promise<b
     }
   }
 
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let tryIndex = 0; tryIndex < 3; tryIndex++) {
     if (await setVictoryFactionState(ns, factionName)) {
       return true
     }
@@ -682,13 +682,13 @@ export async function collectInfiltrationVictoryReward(
   await ns.sleep(VICTORY_REWARD_SELECT_DELAY_MS)
 
   if (faction) {
-    for (let attempt = 0; attempt < 3 && !isVictoryFactionReadyForTrade(faction); attempt++) {
+    for (let tryIndex = 0; tryIndex < 3 && !isVictoryFactionReadyForTrade(faction); tryIndex++) {
       const selected = await invokeVictorySelectChange(ns, faction)
       const state = readVictoryFactionState() ?? "?"
       const dropdown = getVictoryComboboxDisplayValue() || "none"
       const stateOk = state === faction
       ns.print(
-        `Victory reward: set ${faction} attempt ${attempt + 1}` +
+        `Victory reward: set ${faction} try ${tryIndex + 1}` +
           ` (${selected ? "handler ok" : "handler pending"}, useState "${state}"${stateOk ? "" : " MISMATCH"}, display "${dropdown}")`
       )
       await ns.sleep(VICTORY_STATE_SETTLE_MS)

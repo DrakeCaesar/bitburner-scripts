@@ -477,7 +477,7 @@ function probeBitburnerTitleBarPx(): number | null {
   try {
     const doc = eval("document") as Document
     for (const el of Array.from(doc.querySelectorAll("div"))) {
-      const match = LOGS_HEIGHT_CALC_RE.exec(el.style.height)
+      const match = el.style.height.match(LOGS_HEIGHT_CALC_RE)
       if (match) {
         const px = Math.round(parseFloat(match[1]))
         if (px >= 24 && px <= 56) return px
@@ -491,9 +491,9 @@ function probeBitburnerTitleBarPx(): number | null {
 
 /** Prime title bar from Bitburner tail DOM (calc(100% - Npx)) before first render when possible. */
 function primeTailLogChrome(layout: TableLayout): void {
-  const probed = probeBitburnerTitleBarPx()
-  if (probed != null) {
-    cachedTailTitleBarPx = probed
+  const measuredPx = probeBitburnerTitleBarPx()
+  if (measuredPx != null) {
+    cachedTailTitleBarPx = measuredPx
   } else if (cachedTailTitleBarPx == null) {
     cachedTailTitleBarPx = defaultTailTitleBarPx(layout)
   }
@@ -692,17 +692,17 @@ function primeChWidthPx(fontSizePx: number): void {
 
   try {
     const doc = eval("document") as Document
-    const probe = doc.createElement("div")
-    probe.style.position = "absolute"
-    probe.style.visibility = "hidden"
-    probe.style.pointerEvents = "none"
-    probe.style.fontFamily = "monospace"
-    probe.style.fontSize = `${fontSizePx}px`
-    probe.style.width = "1ch"
-    probe.style.height = "1px"
-    doc.body.appendChild(probe)
-    const chPx = probe.getBoundingClientRect().width
-    doc.body.removeChild(probe)
+    const chMeasureEl = doc.createElement("div")
+    chMeasureEl.style.position = "absolute"
+    chMeasureEl.style.visibility = "hidden"
+    chMeasureEl.style.pointerEvents = "none"
+    chMeasureEl.style.fontFamily = "monospace"
+    chMeasureEl.style.fontSize = `${fontSizePx}px`
+    chMeasureEl.style.width = "1ch"
+    chMeasureEl.style.height = "1px"
+    doc.body.appendChild(chMeasureEl)
+    const chPx = chMeasureEl.getBoundingClientRect().width
+    doc.body.removeChild(chMeasureEl)
     if (chPx > 0) {
       chWidthPxByFontSize.set(fontSizePx, chPx)
     }

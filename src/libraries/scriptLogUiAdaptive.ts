@@ -71,8 +71,8 @@ export function createAdaptiveTailLog(
   let floatingAnchor: { x: number; y: number } | null = null
 
   const rememberTailRect = (ns: NS): void => {
-    const probed = probeScriptTailWindow(ns.pid)
-    if (probed) savedTailRect = probed
+    const measuredRect = probeScriptTailWindow(ns.pid)
+    if (measuredRect) savedTailRect = measuredRect
   }
 
   const closeFloating = (): void => {
@@ -112,12 +112,12 @@ export function createAdaptiveTailLog(
   }
 
   const exitFloating = (): void => {
-    const probed = probeFloatingWindowRect(floatWindow?.getElement() ?? null)
-    if (probed) {
+    const measuredRect = probeFloatingWindowRect(floatWindow?.getElement() ?? null)
+    if (measuredRect) {
       pendingTailRestore = {
-        ...probed,
-        width: savedTailRect?.width ?? probed.width,
-        height: savedTailRect?.height ?? probed.height,
+        ...measuredRect,
+        width: savedTailRect?.width ?? measuredRect.width,
+        height: savedTailRect?.height ?? measuredRect.height,
       }
     }
     closeFloating()
