@@ -11,6 +11,7 @@ import {
   isMegacorpFactionUnlocked,
   isStudyingLeadershipAtVolhaven,
   isWorkingAtCompany,
+  needsMegacorpJobApply,
   pickBestCompanyField,
   type MegacorpWorkSnapshot,
 } from "./libraries/megacorpWork.js"
@@ -125,11 +126,8 @@ export async function main(ns: NS): Promise<void> {
       }
 
       const currentJob = player.jobs[company]
-      const currentField = currentJob
-        ? ns.singularity.getCompanyPositionInfo(company, currentJob).field
-        : null
       const alreadyWorking = isWorkingAtCompany(ns, company)
-      const needsApply = currentJob == null || currentField !== best.field
+      const needsApply = needsMegacorpJobApply(ns, company, best)
 
       snapshot = {
         ...snapshot,

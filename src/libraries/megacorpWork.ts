@@ -266,11 +266,8 @@ export function tickInfiltrationMegacorpWork(
   }
 
   const currentJob = player.jobs[company]
-  const currentField = currentJob
-    ? ns.singularity.getCompanyPositionInfo(company, currentJob).field
-    : null
 
-  if (currentJob == null || currentField !== best.field) {
+  if (needsMegacorpJobApply(ns, company, best)) {
     const applied = ns.singularity.applyToCompany(company, best.field)
     if (!applied && currentJob == null) {
       return {
@@ -902,4 +899,14 @@ export function pickBestCompanyField(
   if (bestField == null || bestPositionName == null) return null
 
   return { field: bestField, positionName: bestPositionName, repPerSecond: bestRepPerSecond }
+}
+
+/** True when applyToCompany should run (new field or higher rep/s job in the same field). */
+export function needsMegacorpJobApply(
+  ns: NS,
+  company: CompanyName,
+  best: { field: JobField; positionName: JobName }
+): boolean {
+  const currentJob = ns.getPlayer().jobs[company]
+  return currentJob == null || currentJob !== best.positionName
 }
