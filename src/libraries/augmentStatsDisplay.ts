@@ -6,7 +6,9 @@ import {
   getAugmentCatalog,
   getAugmentData,
   getOwnedAugmentationNames,
+  getOwnedNeuroFluxLevel,
   isNeuroFluxAugment,
+  neuroFluxIntrinsicPurchaseCost,
   neuroFluxPurchaseCost,
   type AugmentCatalogEntry,
 } from "./augmentations.js"
@@ -257,11 +259,12 @@ export function gatherAugmentStatsDisplayRows(ns: NS): {
     let remainingMoney = playerMoney - lastAffordableCost
     const positionOffset = affordableSorted.length
     let neuroFluxCumulative = lastAffordableCost
-    let neuroFluxIndex = 0
+    let neuroFluxIndex = getOwnedNeuroFluxLevel(ns)
     const maxFactionRep = Math.max(...neuroFluxInfo.factions.map((f) => factionReps.get(f) ?? 0))
 
     while (true) {
       const { price: currentPrice, repReq: currentRepReq } = neuroFluxPurchaseCost(
+        ns,
         neuroFluxInfo,
         positionOffset,
         neuroFluxIndex
@@ -269,7 +272,7 @@ export function gatherAugmentStatsDisplayRows(ns: NS): {
       if (remainingMoney < currentPrice || maxFactionRep < currentRepReq) break
 
       neuroFluxCumulative += currentPrice
-      const levelBasePrice = currentPrice / Math.pow(AUGMENT_QUEUE_PRICE_MULT, positionOffset + neuroFluxIndex)
+      const levelBasePrice = neuroFluxIntrinsicPurchaseCost(ns, neuroFluxInfo, neuroFluxIndex).price
       const nfFactionsAtLevel = factionsMeetingRepReq(neuroFluxInfo.factions, factionReps, currentRepReq)
 
       rows.push({
@@ -293,12 +296,13 @@ export function gatherAugmentStatsDisplayRows(ns: NS): {
     }
 
     const { price: nextPrice, repReq: nextRepReq } = neuroFluxPurchaseCost(
+      ns,
       neuroFluxInfo,
       positionOffset,
       neuroFluxIndex
     )
     const nextCumulative = neuroFluxCumulative + nextPrice
-    const levelBasePrice = nextPrice / Math.pow(AUGMENT_QUEUE_PRICE_MULT, positionOffset + neuroFluxIndex)
+    const levelBasePrice = neuroFluxIntrinsicPurchaseCost(ns, neuroFluxInfo, neuroFluxIndex).price
     const canAffordMoney = remainingMoney >= nextPrice
     const hasEnoughRep = maxFactionRep >= nextRepReq
 

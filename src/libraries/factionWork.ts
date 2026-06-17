@@ -8,6 +8,8 @@ import {
   getNextNeuroFluxLevel,
   getInfiltrationMoneyTargetPlan,
   getOwnedAugmentationNames,
+  getOwnedNeuroFluxLevel,
+  formatNeuroFluxGovernorLabel,
   isAugmentPurchaseExcludedFaction,
   isNeuroFluxAugment,
   neuroFluxPurchaseCost,
@@ -502,7 +504,7 @@ function buildNeuroFluxGrindTarget(
   const favorGain = ns.singularity.getFactionFavorGain(faction)
 
   return {
-    augmentName: levelIndex > 0 ? `NeuroFlux Governor +${levelIndex}` : "NeuroFlux Governor",
+    augmentName: formatNeuroFluxGovernorLabel(levelIndex),
     faction,
     currentRep,
     requiredRep: repReq,
@@ -610,12 +612,13 @@ function neuroFluxMoneyGoal(
   }
 
   const positionOffset = affordableSorted.length
-  for (let i = 0; i < next.levelIndex; i++) {
-    const { price } = neuroFluxPurchaseCost(neuroFluxInfo, positionOffset, i)
+  const ownedNeuroFluxLevel = getOwnedNeuroFluxLevel(ns)
+  for (let i = ownedNeuroFluxLevel; i < next.levelIndex; i++) {
+    const { price } = neuroFluxPurchaseCost(ns, neuroFluxInfo, positionOffset, i)
     budget -= price
   }
 
-  const label = next.levelIndex > 0 ? `NeuroFlux Governor +${next.levelIndex}` : "NeuroFlux Governor"
+  const label = formatNeuroFluxGovernorLabel(next.levelIndex)
   const queueSlot = positionOffset + next.levelIndex + 1
 
   return {

@@ -7,7 +7,9 @@ import {
   AUGMENT_QUEUE_PRICE_MULT,
   filterAugmentPurchaseFactions,
   getAugmentData,
+  getOwnedNeuroFluxLevel,
   isNeuroFluxAugment,
+  neuroFluxIntrinsicPurchaseCost,
   neuroFluxPurchaseCost,
 } from "../augmentations.js"
 import { createStandardContainer, FloatingWindow } from "../floatingWindow"
@@ -155,17 +157,20 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
   }
 
   // Pre-calculate NeuroFlux count for order column width
+  const ownedNeuroFluxLevel = neuroFluxInfo ? getOwnedNeuroFluxLevel(ns) : 0
   let neuroFluxCount = 0
   if (neuroFluxInfo) {
     const lastAffordableCost = affordableSorted.length > 0 ? cumulativeCosts[affordableSorted.length - 1] : 0
     let remainingMoney = playerMoney - lastAffordableCost
     const positionOffset = affordableSorted.length
     const maxFactionRep = Math.max(...neuroFluxInfo.factions.map((f) => factionReps.get(f) ?? 0))
+    let neuroFluxIndex = ownedNeuroFluxLevel
 
     while (true) {
-      const { price, repReq } = neuroFluxPurchaseCost(neuroFluxInfo, positionOffset, neuroFluxCount)
+      const { price, repReq } = neuroFluxPurchaseCost(ns, neuroFluxInfo, positionOffset, neuroFluxIndex)
       if (remainingMoney < price || maxFactionRep < repReq) break
       neuroFluxCount++
+      neuroFluxIndex++
       remainingMoney -= price
     }
   }
@@ -191,9 +196,9 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
 
   if (neuroFluxInfo) {
     nameLen = Math.max(nameLen, neuroFluxInfo.name.length)
-    for (let i = 0; i < neuroFluxCount + 1; i++) {
-      const { price, repReq } = neuroFluxPurchaseCost(neuroFluxInfo, affordableSorted.length, i)
-      const levelBasePrice = price / Math.pow(AUGMENT_PRICE_MULT, affordableSorted.length + i)
+    for (let i = ownedNeuroFluxLevel; i < ownedNeuroFluxLevel + neuroFluxCount + 1; i++) {
+      const { price, repReq } = neuroFluxPurchaseCost(ns, neuroFluxInfo, affordableSorted.length, i)
+      const levelBasePrice = neuroFluxIntrinsicPurchaseCost(ns, neuroFluxInfo, i).price
       priceLen = Math.max(priceLen, ns.format.number(levelBasePrice).length)
       repLen = Math.max(repLen, ns.format.number(repReq).length)
       adjustedLen = Math.max(adjustedLen, ns.format.number(price).length)
@@ -284,7 +289,7 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
     // Calculate position offset (number of affordable augments purchased affects price multiplier)
     const positionOffset = affordableSorted.length
     let neuroFluxCumulative = lastAffordableCost
-    let neuroFluxIndex = 0
+    let neuroFluxIndex = ownedNeuroFluxLevel
 
     // Get max rep across all factions offering NeuroFlux
     const maxFactionRep = Math.max(...neuroFluxInfo.factions.map((f) => factionReps.get(f) ?? 0))
@@ -292,6 +297,7 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
     // Create a row for each NeuroFlux purchase we can afford
     while (true) {
       const { price: currentPrice, repReq: currentRepReq } = neuroFluxPurchaseCost(
+        ns,
         neuroFluxInfo,
         positionOffset,
         neuroFluxIndex
@@ -299,7 +305,7 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
       if (remainingMoney < currentPrice || maxFactionRep < currentRepReq) break
 
       neuroFluxCumulative += currentPrice
-      const levelBasePrice = currentPrice / Math.pow(AUGMENT_PRICE_MULT, positionOffset + neuroFluxIndex)
+      const levelBasePrice = neuroFluxIntrinsicPurchaseCost(ns, neuroFluxInfo, neuroFluxIndex).price
 
       const nfFactionsAtLevel = factionsMeetingRepReq(neuroFluxInfo.factions, factionReps, currentRepReq)
 
@@ -326,12 +332,13 @@ export function updateAugmentsView(ns: NS, containerDiv: HTMLElement, primaryCol
 
     // Next NeuroFlux level we cannot buy yet (first if none affordable, otherwise one past last affordable)
     const { price: nextPrice, repReq: nextRepReq } = neuroFluxPurchaseCost(
+      ns,
       neuroFluxInfo,
       positionOffset,
       neuroFluxIndex
     )
     const nextCumulative = neuroFluxCumulative + nextPrice
-    const levelBasePrice = nextPrice / Math.pow(AUGMENT_PRICE_MULT, positionOffset + neuroFluxIndex)
+    const levelBasePrice = neuroFluxIntrinsicPurchaseCost(ns, neuroFluxInfo, neuroFluxIndex).price
     const canAffordMoney = remainingMoney >= nextPrice
     const hasEnoughRep = maxFactionRep >= nextRepReq
 

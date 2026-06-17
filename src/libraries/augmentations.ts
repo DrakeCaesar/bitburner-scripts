@@ -115,6 +115,22 @@ export function isNeuroFluxAugment(name: string): boolean {
   return name.startsWith("NeuroFlux Governor")
 }
 
+/**
+ * Installed NeuroFlux level from reset info. Also the 0-based index for the next purchase
+ * (level 64 installed => next purchase uses neuroFluxPurchaseCost index 64).
+ */
+export function getOwnedNeuroFluxLevel(ns: NS): number {
+  for (const [name, level] of ns.getResetInfo().ownedAugs) {
+    if (isNeuroFluxAugment(name)) return level
+  }
+  return 0
+}
+
+/** Display label matching in-game UI (purchase index 64 => "NeuroFlux Governor - Level 65"). */
+export function formatNeuroFluxGovernorLabel(purchaseIndex: number): string {
+  return `NeuroFlux Governor - Level ${purchaseIndex + 1}`
+}
+
 export function getOwnedAugmentationNames(ns: NS): Set<string> {
   return new Set(ns.singularity.getOwnedAugmentations(true))
 }
@@ -343,18 +359,46 @@ export function getNextUnaffordablePlannedAugment(
   }
 }
 
-/** Simulated NeuroFlux price/rep when regular augs are not actually queued (dry run / dashboard). */
+/** Simulated NeuroFlux price/rep for queue planning. Next purchase uses live API values. */
+export function neuroFluxIntrinsicPurchaseCost(
+  ns: NS,
+  neuroFluxInfo: AugmentInfo,
+  neuroFluxIndex: number
+): { price: number; repReq: number } {
+  const ownedLevel = getOwnedNeuroFluxLevel(ns)
+  let price = ns.singularity.getAugmentationPrice(neuroFluxInfo.name)
+  let repReq = ns.singularity.getAugmentationRepReq(neuroFluxInfo.name)
+
+  const levelsBeyondNext = neuroFluxIndex - ownedLevel
+  if (levelsBeyondNext > 0) {
+    const levelMult = Math.pow(NEUROFLUX_LEVEL_MULT, levelsBeyondNext)
+    price *= levelMult
+    repReq *= levelMult
+  }
+
+  return { price, repReq }
+}
+
+function neuroFluxQueueSlot(
+  ns: NS,
+  regularAugmentsAhead: number,
+  neuroFluxIndex: number
+): number {
+  return regularAugmentsAhead + (neuroFluxIndex - getOwnedNeuroFluxLevel(ns))
+}
+
+/** Queue-adjusted NeuroFlux price/rep (regular augments ahead + optional future levels in dry run). */
 export function neuroFluxPurchaseCost(
+  ns: NS,
   neuroFluxInfo: AugmentInfo,
   regularAugmentsAhead: number,
   neuroFluxIndex: number
 ): { price: number; repReq: number } {
+  const { price: intrinsic, repReq } = neuroFluxIntrinsicPurchaseCost(ns, neuroFluxInfo, neuroFluxIndex)
+  const queueSlot = neuroFluxQueueSlot(ns, regularAugmentsAhead, neuroFluxIndex)
   return {
-    price:
-      neuroFluxInfo.price *
-      Math.pow(AUGMENT_QUEUE_PRICE_MULT, regularAugmentsAhead) *
-      Math.pow(NEUROFLUX_PRICE_STEP_MULT, neuroFluxIndex),
-    repReq: neuroFluxInfo.repReq * Math.pow(NEUROFLUX_LEVEL_MULT, neuroFluxIndex),
+    price: intrinsic * Math.pow(AUGMENT_QUEUE_PRICE_MULT, queueSlot),
+    repReq,
   }
 }
 
@@ -439,9 +483,10 @@ export function getNextNeuroFluxLevel(
     budget -= affordableSorted[i].price * Math.pow(AUGMENT_QUEUE_PRICE_MULT, i)
   }
 
-  let levelIndex = 0
-  for (; levelIndex < MAX_NEUROFLUX_SIM_LEVELS; levelIndex++) {
-    const { price, repReq } = neuroFluxPurchaseCost(neuroFluxInfo, positionOffset, levelIndex)
+  let levelIndex = getOwnedNeuroFluxLevel(ns)
+  const stopAt = levelIndex + MAX_NEUROFLUX_SIM_LEVELS
+  for (; levelIndex < stopAt; levelIndex++) {
+    const { price, repReq } = neuroFluxPurchaseCost(ns, neuroFluxInfo, positionOffset, levelIndex)
     const tradeFaction = bestNeuroFluxTradeFaction(neuroFluxInfo, factionReps, repReq)
 
     if (!tradeFaction) {
@@ -502,7 +547,7 @@ export function getAugmentData(ns: NS, playerFactions: FactionName[]): AugmentDa
           name: entry.name,
           factions: [...factions],
           price,
-          repReq: entry.repReq,
+          repReq: ns.singularity.getAugmentationRepReq(entry.name),
           owned,
           prereqs: entry.prereqs,
         }
@@ -648,13 +693,13 @@ export async function purchaseAugmentations(ns: NS, buyFlux: boolean, dryRun = f
   // If buyFlux is true, top up with NeuroFlux Governor
   if (buyFlux && neuroFluxInfo) {
     let currentMoney = dryRun ? ns.getPlayer().money - totalSpent : ns.getPlayer().money
-    let neuroFluxIndex = 0
-    let { price: currentPrice, repReq: currentRepReq } = dryRun
-      ? neuroFluxPurchaseCost(neuroFluxInfo, affordableSorted.length, neuroFluxIndex)
-      : {
-          price: ns.singularity.getAugmentationPrice(neuroFluxInfo.name),
-          repReq: ns.singularity.getAugmentationRepReq(neuroFluxInfo.name),
-        }
+    let neuroFluxIndex = getOwnedNeuroFluxLevel(ns)
+    let { price: currentPrice, repReq: currentRepReq } = neuroFluxPurchaseCost(
+      ns,
+      neuroFluxInfo,
+      affordableSorted.length,
+      neuroFluxIndex
+    )
 
     while (currentMoney >= currentPrice) {
       const currentValidFactions = neuroFluxInfo.factions.filter(
@@ -680,6 +725,7 @@ export async function purchaseAugmentations(ns: NS, buyFlux: boolean, dryRun = f
         currentMoney -= currentPrice
         neuroFluxIndex++
         ;({ price: currentPrice, repReq: currentRepReq } = neuroFluxPurchaseCost(
+          ns,
           neuroFluxInfo,
           affordableSorted.length,
           neuroFluxIndex
