@@ -17,7 +17,6 @@ import {
   syncDeferredSetupSnapshot,
 } from "./libraries/ipvgo/display.js"
 import {
-  bumpFactionSimsOnLoss,
   estimateNodePowerByFaction,
   getFactionSims,
   loadFactionConfig,
@@ -390,10 +389,6 @@ export async function main(ns: NS): Promise<void> {
       const liveBoardSize = ns.go.getBoardState().length as IpvgoBoardSize
 
       if (currentPlayer === "None") {
-        if (pendingGameResult === false) {
-          factionConfig = bumpFactionSimsOnLoss(factionConfig, activeOpponent)
-          saveFactionConfig(ns, factionConfig)
-        }
         pendingGameResult = null
 
         const deferred = takeDeferredSetup()
