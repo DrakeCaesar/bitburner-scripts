@@ -8,11 +8,6 @@ import {
   visitInfiltrationTargetDom,
 } from "./infiltrationNavigation.js"
 import type { InfiltrationTarget } from "./infiltrationTargets.js"
-import { travelToInfiltrationCity } from "./infiltrationTargets.js"
-import {
-  collectInfiltrationVictoryReward,
-  isInfiltrationVictoryScreen,
-} from "./infiltrationVictory.js"
 import {
   clearInfiltrationRunOutcome,
   peekInfiltrationRunOutcome,
@@ -23,34 +18,36 @@ import {
   tickInfiltrationSolver,
   type InfiltrationSolverState,
 } from "./infiltrationSolver.js"
+import { travelToInfiltrationCity } from "./infiltrationTargets.js"
 
-const POLL_MS = 200
 const MODAL_DISMISS_SETTLE_MS = 250
 const DEFAULT_STEP_TIMEOUT_MS = 15000
 const DEFAULT_RUN_TIMEOUT_MS = 600000
 
-export type InfiltrationRunOutcome =
+export type InfiltrationRunLightOutcome =
   | "victory"
   | "cancelled"
   | "timeout"
   | "visit_failed"
   | "travel_failed"
 
-export interface InfiltrationRunOptions {
+export interface InfiltrationRunLightOptions {
   stepTimeoutMs?: number
   runTimeoutMs?: number
-  solver?: InfiltrationSolverState
+  solver: InfiltrationSolverState
 }
 
-export async function runInfiltrationForTarget(
+/** Infiltration run loop without full victory/faction modules (solver handles rewards). */
+export async function runInfiltrationForTargetLight(
   ns: NS,
   target: InfiltrationTarget,
-  options: InfiltrationRunOptions = {}
-): Promise<InfiltrationRunOutcome> {
+  options: InfiltrationRunLightOptions
+): Promise<InfiltrationRunLightOutcome> {
   const stepTimeoutMs = options.stepTimeoutMs ?? DEFAULT_STEP_TIMEOUT_MS
   const runTimeoutMs = options.runTimeoutMs ?? DEFAULT_RUN_TIMEOUT_MS
+  const solver = options.solver
 
-  async function finishVictory(): Promise<InfiltrationRunOutcome> {
+  async function finishVictory(): Promise<InfiltrationRunLightOutcome> {
     return "victory"
   }
 
@@ -73,29 +70,23 @@ export async function runInfiltrationForTarget(
   let visitDeadline = Date.now() + stepTimeoutMs
   const runDeadline = Date.now() + runTimeoutMs
   let lastStep = ""
-  let victoryHandled = false
   let infiltrationStarted = isInfiltrationActive()
-  const solver = options.solver
-  if (solver) {
-    // Stale wasActive from a prior victory looks like a cancel during visit/travel.
+
+  solver.wasActive = false
+  solver.inactiveStreak = 0
+  solver.victoryHandled = false
+  solver.session = null
+  clearInfiltrationRunOutcome()
+
+  function prepareInfiltrationRetry(reason: string): void {
+    ns.print(`${reason} at ${target.name}; starting another run`)
+    infiltrationStarted = false
+    lastStep = ""
+    visitDeadline = Date.now() + stepTimeoutMs
     solver.wasActive = false
     solver.inactiveStreak = 0
     solver.victoryHandled = false
     solver.session = null
-    clearInfiltrationRunOutcome()
-  }
-
-  function prepareInfiltrationRetry(reason: string): void {
-    ns.print(`${reason} at ${target.name}; starting another attempt`)
-    infiltrationStarted = false
-    lastStep = ""
-    visitDeadline = Date.now() + stepTimeoutMs
-    if (solver) {
-      solver.wasActive = false
-      solver.inactiveStreak = 0
-      solver.victoryHandled = false
-      solver.session = null
-    }
     clearInfiltrationRunOutcome()
     tryPrepareCityNavigation()
   }
@@ -106,28 +97,23 @@ export async function runInfiltrationForTarget(
     return null
   }
 
-  async function waitTick(): Promise<InfiltrationRunOutcome | null> {
-    if (solver) {
-      const solverResult = await tickInfiltrationSolver(ns, solver)
-      if (solverResult === "failed") {
+  async function waitTick(): Promise<InfiltrationRunLightOutcome | null> {
+    const solverResult = await tickInfiltrationSolver(ns, solver)
+    if (solverResult === "failed") {
+      return handleInfiltrationRetry("Infiltration run failed")
+    }
+    if (solverResult === "cancelled") {
+      if (dismissInfiltrationFailureModal()) {
         return handleInfiltrationRetry("Infiltration run failed")
       }
-      if (solverResult === "cancelled") {
-        if (dismissInfiltrationFailureModal()) {
-          return handleInfiltrationRetry("Infiltration run failed")
-        }
-        clearInfiltrationRunOutcome()
-        ns.print(`Infiltration cancelled at ${target.name}`)
-        return "cancelled"
-      }
-      if (solverResult === "victory") {
-        return finishVictory()
-      }
-      await ns.sleep(getInfiltrationSolverPollMs(solver))
-      return null
+      clearInfiltrationRunOutcome()
+      ns.print(`Infiltration cancelled at ${target.name}`)
+      return "cancelled"
     }
-
-    await ns.sleep(POLL_MS)
+    if (solverResult === "victory") {
+      return finishVictory()
+    }
+    await ns.sleep(getInfiltrationSolverPollMs(solver))
     return null
   }
 
@@ -138,32 +124,13 @@ export async function runInfiltrationForTarget(
       continue
     }
 
-    if (!solver && isInfiltrationVictoryScreen()) {
-      if (!victoryHandled) {
-        const reward = await collectInfiltrationVictoryReward(ns)
-        if (reward.ok) {
-          victoryHandled = true
-          setInfiltrationRunOutcome("victory")
-          ns.print(`Victory at ${target.name}: ${reward.detail}`)
-          return finishVictory()
-        }
-        ns.print(`Victory reward failed at ${target.name}: ${reward.detail}`)
-      }
-      const tickOutcome = await waitTick()
-      if (tickOutcome) return tickOutcome
-      continue
-    }
-    if (!solver) {
-      victoryHandled = false
-    }
-
     if (infiltrationStarted && isInfiltrationActive()) {
       const tickOutcome = await waitTick()
       if (tickOutcome) return tickOutcome
       continue
     }
 
-    if (infiltrationStarted && !isInfiltrationActive() && !isInfiltrationVictoryScreen()) {
+    if (infiltrationStarted && !isInfiltrationActive() && !solver.isVictoryScreen()) {
       const sharedOutcome = peekInfiltrationRunOutcome()
       if (sharedOutcome === "cancelled") {
         if (dismissInfiltrationFailureModal()) {
@@ -214,7 +181,6 @@ export async function runInfiltrationForTarget(
       continue
     }
 
-    // After start (or victory), never goToLocation again -- it leaves the run and looks like cancel.
     if (infiltrationStarted) {
       const tickOutcome = await waitTick()
       if (tickOutcome) return tickOutcome

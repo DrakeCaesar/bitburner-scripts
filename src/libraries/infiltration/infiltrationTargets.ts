@@ -1,5 +1,4 @@
 import type { CityName, NS } from "@ns"
-import { getPreferredFactionForInfiltrationRep } from "../factionWork.js"
 
 /** Matches in-game MaxDifficultyForInfiltration (Intro screen uses rating out of 100). */
 export const MAX_INFILTRATION_DIFFICULTY = 3.5
@@ -100,18 +99,6 @@ export function isInfiltrationDebugMode(ns: NS): boolean {
   return ns.args.some((arg) => String(arg).toLowerCase() === "debug")
 }
 
-/**
- * Infiltration reward order:
- * 1. Pre-favor augment rep, then cash for that augment (repeat lowest rep req first)
- * 2. Donation favor rep (factions with unowned post-favor augments only)
- * 3. Post-favor augment rep, then cash for that augment (repeat lowest rep req first)
- * 4. NeuroFlux Governor rep, then cash for the next level
- */
-export function getInfiltrationRewardGoal(ns: NS): InfiltrationRewardGoal {
-  if (isInfiltrationMoneyMode(ns)) return "money"
-  return getPreferredFactionForInfiltrationRep(ns) != null ? "reputation" : "money"
-}
-
 export function getInfiltrationRewardPerLevel(
   target: InfiltrationTarget,
   goal: InfiltrationRewardGoal
@@ -125,6 +112,18 @@ export const INFILTRATION_TRAVEL_COST = 200_000
 
 export function canAffordInfiltrationTravel(ns: NS): boolean {
   return ns.getPlayer().money >= INFILTRATION_TRAVEL_COST
+}
+
+export async function travelToInfiltrationCity(ns: NS, city: CityName): Promise<boolean> {
+  if (ns.getPlayer().city === city) {
+    return true
+  }
+
+  if (!ns.singularity.travelToCity(city)) {
+    return false
+  }
+
+  return ns.getPlayer().city === city
 }
 
 function pickBestInfiltrationTarget(

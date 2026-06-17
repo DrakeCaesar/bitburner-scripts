@@ -16,7 +16,7 @@ import {
   tickInfiltrationMegacorpWork,
   VOLHAVEN_CITY,
 } from "./megacorpWork.js"
-import { travelToInfiltrationCity } from "./infiltration/infiltrationRun.js"
+import { travelToInfiltrationCity } from "./infiltration/infiltrationTargets.js"
 import {
   areAllInfiltrationsDoable,
   canAffordInfiltrationTravel,

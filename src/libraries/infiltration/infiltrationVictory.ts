@@ -6,10 +6,10 @@ import {
   getPreferredFactionForInfiltrationRep,
 } from "../factionWork.js"
 import {
-  getInfiltrationRewardGoal,
   isInfiltrationDebugMode,
   isInfiltrationMoneyMode,
 } from "./infiltrationTargets.js"
+import { getInfiltrationRewardGoal } from "./infiltrationFactionGoals.js"
 import { waitForCityNavigationReady } from "./infiltrationNavigation.js"
 
 const VICTORY_TITLE = "Infiltration successful!"

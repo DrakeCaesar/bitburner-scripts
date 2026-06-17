@@ -1,23 +1,11 @@
 import { NS } from "@ns"
 import {
-  prepareCombatSkillTraining,
-  renderCombatSkillTrainingTable,
-} from "./libraries/combatSkillTraining.js"
-import { getPreferredFactionForInfiltrationRep } from "./libraries/factionWork.js"
-import {
-  getLowestCombatGymSkill,
-  type CombatGymSkill,
-} from "./libraries/gymWorkout.js"
+  formatGymTrainingDomLines,
+  prepareInfiltrationGymTraining,
+} from "./libraries/infiltration/infiltrationGymTraining.js"
 import { syncTrustedKeyInjection } from "./libraries/infiltration/infiltrationKeyInput.js"
 import { isInfiltrationActive } from "./libraries/infiltration/infiltrationNavigation.js"
-import {
-  runInfiltrationForTarget,
-} from "./libraries/infiltration/infiltrationRun.js"
-import {
-  InfiltrationRunStatsTracker,
-  formatCombatSkillTrainingDomLines,
-  formatInfiltrationRunViewLines,
-} from "./libraries/infiltration/infiltrationRunStats.js"
+import { runInfiltrationForTargetLight } from "./libraries/infiltration/infiltrationRunLight.js"
 import {
   refreshInfiltrationDomWindow,
   setupInfiltrationSolver,
@@ -31,21 +19,21 @@ import {
   getInfiltrationApi,
   getInfiltrationRewardPerLevel,
   INFILTRATION_TRAVEL_COST,
-  isInfiltrationMoneyMode,
+  type InfiltrationRewardGoal,
 } from "./libraries/infiltration/infiltrationTargets.js"
-import { getInfiltrationRewardGoal } from "./libraries/infiltration/infiltrationFactionGoals.js"
 import {
-  collectInfiltrationVictoryReward,
+  collectInfiltrationVictoryRewardMoney,
   isInfiltrationVictoryScreen,
-} from "./libraries/infiltration/infiltrationVictory.js"
-import { openTailLog } from "./libraries/scriptLogUiLayout.js"
+} from "./libraries/infiltration/infiltrationVictoryMoney.js"
+import {
+  getLowestCombatGymSkill,
+  type CombatGymSkill,
+} from "./libraries/gymWorkout.js"
 
+const REWARD_GOAL: InfiltrationRewardGoal = "money"
 const SHOW_INFILTRATION_DOM_WINDOW = true
-const SHOW_COMBAT_TRAINING_TABLE = true
 const SHOW_MINIGAME_INFO = false
-/** Set false to let minigames time out without sending keys (testing). */
 const SOLVE_MINIGAMES = true
-
 const CHECK_INTERVAL_MS = 2000
 const WORKOUT_SCRIPT = "workout.js"
 
@@ -73,6 +61,7 @@ function syncTrainingDom(ns: NS, solver: InfiltrationSolverState, trainingStat: 
 
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("sleep")
+  ns.ui.openTail()
 
   if (!getInfiltrationApi(ns)) {
     ns.print("ERROR: ns.infiltration API is not available")
@@ -85,18 +74,16 @@ export async function main(ns: NS): Promise<void> {
     showDomWindow: SHOW_INFILTRATION_DOM_WINDOW,
     showMinigameInfo: SHOW_MINIGAME_INFO,
     solveMinigames: SOLVE_MINIGAMES,
-    collectVictoryReward: collectInfiltrationVictoryReward,
+    collectVictoryReward: collectInfiltrationVictoryRewardMoney,
     isVictoryScreen: isInfiltrationVictoryScreen,
-    formatTrainingLines: formatCombatSkillTrainingDomLines,
+    formatTrainingLines: formatGymTrainingDomLines,
   })
   ns.atExit(() => shutdownInfiltrationSolver(solver))
-  openTailLog(ns, isInfiltrationMoneyMode(ns) ? "Auto Infiltration (money)" : "Auto Infiltration")
+
   if (!SOLVE_MINIGAMES) {
     ns.print("Minigame solver disabled; waiting for minigames to fail")
   }
-  const runStats = new InfiltrationRunStatsTracker()
-  solver.runStats = runStats
-  solver.formatRunViewLines = (viewNs) => formatInfiltrationRunViewLines(viewNs, runStats.getView(viewNs))
+
   let trainingStat = getLowestCombatGymSkill(ns)
   syncTrainingDom(ns, solver, trainingStat)
 
@@ -104,12 +91,9 @@ export async function main(ns: NS): Promise<void> {
     while (true) {
       syncTrainingDom(ns, solver, trainingStat)
 
-      const rewardGoal = getInfiltrationRewardGoal(ns)
-      const grindFaction =
-        rewardGoal === "reputation" ? getPreferredFactionForInfiltrationRep(ns) : null
-      const globalBest = getBestInfiltrationTarget(ns, rewardGoal)
+      const globalBest = getBestInfiltrationTarget(ns, REWARD_GOAL)
       const playerCity = ns.getPlayer().city
-      const target = getBestInfiltrationTargetForPlayer(ns, rewardGoal)
+      const target = getBestInfiltrationTargetForPlayer(ns, REWARD_GOAL)
 
       if (!target) {
         if (
@@ -139,53 +123,41 @@ export async function main(ns: NS): Promise<void> {
         )
       }
 
-      const rewardPerLevel = getInfiltrationRewardPerLevel(target, rewardGoal)
-      const rewardLabel =
-        rewardGoal === "reputation"
-          ? `rep ${ns.format.number(target.data.reward.tradeRep)} (${ns.format.number(rewardPerLevel)}/lvl, ${target.data.maxClearanceLevel} lvls)`
-          : `cash ${ns.format.number(target.data.reward.sellCash)} (${ns.format.number(rewardPerLevel)}/lvl, ${target.data.maxClearanceLevel} lvls)`
+      const rewardPerLevel = getInfiltrationRewardPerLevel(target, REWARD_GOAL)
       ns.print(
-        `Target: ${target.name} (${target.city}, ${target.tier}, rating ${target.rating.toFixed(0)}, ${rewardLabel})`
+        `Target: ${target.name} (${target.city}, ${target.tier}, rating ${target.rating.toFixed(0)}, ` +
+          `cash ${ns.format.number(target.data.reward.sellCash)} (${ns.format.number(rewardPerLevel)}/lvl, ${target.data.maxClearanceLevel} lvls))`
       )
 
       if (isInfiltrationActive()) {
         ns.print("Infiltration already in progress; waiting for completion...")
       }
 
-      if (SHOW_COMBAT_TRAINING_TABLE) {
-        await renderCombatSkillTrainingTable(ns, trainingStat)
-      }
-      await prepareCombatSkillTraining(ns, trainingStat)
+      await prepareInfiltrationGymTraining(ns, trainingStat)
       syncTrainingDom(ns, solver, trainingStat)
 
-      runStats.beginCycle(target, rewardGoal, grindFaction)
-      const outcome = await runInfiltrationForTarget(ns, target, { solver })
+      const outcome = await runInfiltrationForTargetLight(ns, target, { solver })
 
       switch (outcome) {
         case "victory":
-          runStats.completeCycle()
           trainingStat = maybeSwitchGymTraining(ns, trainingStat)
-          ns.print(`Done: ${target.name}. Re-running best ${rewardGoal} target.`)
+          ns.print(`Done: ${target.name}. Re-running best cash target.`)
           break
         case "cancelled":
-          runStats.abandonCycle()
           ns.print("Infiltration cancelled. Stopping auto script.")
           return
         case "travel_failed":
-          runStats.abandonCycle()
           ns.print(`Travel failed for ${target.city}. Retrying.`)
           break
         case "visit_failed":
-          runStats.abandonCycle()
           ns.print(`Visit failed for ${target.name}. Retrying.`)
           break
         case "timeout":
-          runStats.abandonCycle()
           ns.print(`Timed out on ${target.name}. Retrying.`)
           break
       }
 
-      await prepareCombatSkillTraining(ns, trainingStat)
+      await prepareInfiltrationGymTraining(ns, trainingStat)
       syncTrainingDom(ns, solver, trainingStat)
       syncTrustedKeyInjection()
     }

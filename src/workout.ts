@@ -4,7 +4,7 @@ import {
   getLowestCombatGymSkill,
   workoutUntilLevelUp,
 } from "./libraries/gymWorkout.js"
-import { travelToInfiltrationCity } from "./libraries/infiltration/infiltrationRun.js"
+import { travelToInfiltrationCity } from "./libraries/infiltration/infiltrationTargets.js"
 import { canAffordInfiltrationTravel } from "./libraries/infiltration/infiltrationTargets.js"
 
 const SKILL_GAP_TRAVEL_THRESHOLD = 100

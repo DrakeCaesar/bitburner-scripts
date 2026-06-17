@@ -20,11 +20,7 @@ import {
   INFILTRATION_KEY_DELAY_MS,
   syncTrustedKeyInjection,
 } from "./infiltrationKeyInput.js"
-import {
-  formatCombatSkillTrainingDomLines,
-  formatInfiltrationRunViewLines,
-  type InfiltrationRunStatsTracker,
-} from "./infiltrationRunStats.js"
+import type { InfiltrationRunStatsTracker } from "./infiltrationRunStats.js"
 import {
   formatSentKeySequence,
   formatSolverPreview,
@@ -40,10 +36,12 @@ import {
   isOnAnyInfiltrationIntro,
   dismissInfiltrationFailureModal,
 } from "./infiltrationNavigation.js"
-import {
-  collectInfiltrationVictoryReward,
-  isInfiltrationVictoryScreen,
-} from "./infiltrationVictory.js"
+
+export type InfiltrationVictoryRewardResult = { ok: boolean; detail: string }
+export type InfiltrationTrainingLinesFn = (ns: NS, skill?: CombatGymSkill) => string[]
+export type InfiltrationRunViewLinesFn = (ns: NS) => string[] | undefined
+export type InfiltrationVictoryRewardFn = (ns: NS) => Promise<InfiltrationVictoryRewardResult>
+export type InfiltrationVictoryScreenFn = () => boolean
 
 export type InfiltrationSolverTickResult = "continue" | "cancelled" | "failed" | "victory"
 
@@ -61,6 +59,10 @@ export interface InfiltrationSolverOptions {
   showMinigameInfo?: boolean
   /** When false, do not send keys; wait for minigames to fail on their own. */
   solveMinigames?: boolean
+  collectVictoryReward: InfiltrationVictoryRewardFn
+  isVictoryScreen: InfiltrationVictoryScreenFn
+  formatTrainingLines: InfiltrationTrainingLinesFn
+  formatRunViewLines?: InfiltrationRunViewLinesFn
 }
 
 export interface InfiltrationSolverState {
@@ -74,6 +76,10 @@ export interface InfiltrationSolverState {
   trainingSkill: CombatGymSkill | null
   showMinigameInfo: boolean
   solveMinigames: boolean
+  collectVictoryReward: InfiltrationVictoryRewardFn
+  isVictoryScreen: InfiltrationVictoryScreenFn
+  formatTrainingLines: InfiltrationTrainingLinesFn
+  formatRunViewLines?: InfiltrationRunViewLinesFn
 }
 
 function describeSendState(
@@ -106,12 +112,11 @@ function buildViewExtras(
   const pendingKeys = session?.pendingKeys ?? []
   const sentKeys = session?.sentKeys ?? []
   const showMinigameInfo = solverState.showMinigameInfo
-  const runStats = solverState.runStats
   const trainingSkill = solverState.trainingSkill
 
   return {
-    trainingViewLines: formatCombatSkillTrainingDomLines(ns, trainingSkill ?? undefined),
-    runViewLines: runStats ? formatInfiltrationRunViewLines(ns, runStats.getView(ns)) : undefined,
+    trainingViewLines: solverState.formatTrainingLines(ns, trainingSkill ?? undefined),
+    runViewLines: solverState.formatRunViewLines?.(ns),
     showMinigameInfo,
     solverPreview:
       showMinigameInfo && phaseKey
@@ -207,6 +212,10 @@ export function setupInfiltrationSolver(
     trainingSkill: null,
     showMinigameInfo,
     solveMinigames,
+    collectVictoryReward: options.collectVictoryReward,
+    isVictoryScreen: options.isVictoryScreen,
+    formatTrainingLines: options.formatTrainingLines,
+    formatRunViewLines: options.formatRunViewLines,
   }
 }
 
@@ -242,7 +251,7 @@ export async function tickInfiltrationSolver(
     return "failed"
   }
 
-  if (isInfiltrationVictoryScreen()) {
+  if (state.isVictoryScreen()) {
     if (state.victoryHandled) {
       state.wasActive = false
       restoreDocumentKeyboard()
@@ -250,7 +259,7 @@ export async function tickInfiltrationSolver(
     }
 
     if (!state.victoryHandled) {
-      const reward = await collectInfiltrationVictoryReward(ns)
+      const reward = await state.collectVictoryReward(ns)
       if (reward.ok) {
         state.victoryHandled = true
         state.wasActive = false
@@ -282,7 +291,7 @@ export async function tickInfiltrationSolver(
 
     if (
       state.inactiveStreak >= 4 &&
-      !isInfiltrationVictoryScreen() &&
+      !state.isVictoryScreen() &&
       peekInfiltrationRunOutcome() !== "victory"
     ) {
       if (dismissInfiltrationFailureModal()) {
