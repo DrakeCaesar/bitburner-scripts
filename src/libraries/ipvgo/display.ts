@@ -27,7 +27,7 @@ import {
   type IpvgoFactionConfig,
 } from "./factionConfig.js"
 import {
-  getSimEditFaction,
+  resolveSimEditFaction,
   getDeferredSetup,
   queueFactionEnabledToggle,
   queueFactionSimsChange,
@@ -780,7 +780,7 @@ export function enrichSnapshotWithFactionConfig(
     factionSims[faction] = getFactionSims(config, faction)
     factionEnabled[faction] = isFactionEnabled(config, faction)
   }
-  const simEditFaction = getSimEditFaction() ?? snapshot.simEditFaction ?? snapshot.opponent
+  const simEditFaction = resolveSimEditFaction(snapshot.opponent)
   return {
     ...snapshot,
     factionSims,

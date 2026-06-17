@@ -34,6 +34,7 @@ import {
   type CheatAction,
 } from "./libraries/ipvgo/cheats.js"
 import {
+  clearSimEditFactionPin,
   consumeDeferUiWake,
   consumeFactionEnabledToggle,
   consumeFactionSimsChange,
@@ -275,6 +276,8 @@ export async function main(ns: NS): Promise<void> {
     saveFactionConfig(ns, factionConfig)
   }
 
+  clearSimEditFactionPin()
+
   const adaptiveLog = createAdaptiveTailLog(createTailLog(), {
     windowId: "ipvgo-script-log",
     title: "IPvGO Bot",
@@ -337,6 +340,7 @@ export async function main(ns: NS): Promise<void> {
         activeOpponent = snapshot.opponent
         activeBoardSize = snapshot.boardSize as IpvgoBoardSize
         moveNumber = snapshot.moveNumber
+        clearSimEditFactionPin()
         await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
         continue
       }
@@ -397,6 +401,7 @@ export async function main(ns: NS): Promise<void> {
           snapshot = withFactionConfig(ns, setupApplied.snapshot, factionConfig)
           activeOpponent = snapshot.opponent
           activeBoardSize = snapshot.boardSize as IpvgoBoardSize
+          clearSimEditFactionPin()
         } else {
           snapshot = withFactionConfig(ns, refreshFactionStats(snapshot, ns), factionConfig)
           const autoSetup = buildAutoSetup(ns, snapshot, factionConfig)
@@ -404,6 +409,7 @@ export async function main(ns: NS): Promise<void> {
           snapshot = withFactionConfig(ns, setupApplied.snapshot, factionConfig)
           activeOpponent = snapshot.opponent
           activeBoardSize = snapshot.boardSize as IpvgoBoardSize
+          clearSimEditFactionPin()
         }
         gamesPlayed++
         moveNumber = 0
@@ -427,6 +433,7 @@ export async function main(ns: NS): Promise<void> {
       if (currentOpponent !== activeOpponent || liveBoardSize !== activeBoardSize) {
         activeOpponent = currentOpponent
         activeBoardSize = liveBoardSize
+        clearSimEditFactionPin()
         snapshot = {
           ...syncGameState(ns, snapshot),
           opponent: activeOpponent,

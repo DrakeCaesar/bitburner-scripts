@@ -15,6 +15,8 @@ let pendingImmediate: IpvgoSetupSelection | null = null
 let pendingFactionSims: { faction: GoOpponent; iterations: number } | null = null
 let pendingFactionEnabledToggle: GoOpponent | null = null
 let simEditFaction: GoOpponent | null = null
+/** When false, sim presets target the current match opponent. */
+let simEditPinned = false
 let pendingDeferUi = false
 
 export function setupCellKey(opponent: GoOpponent, boardSize: IpvgoBoardSize): string {
@@ -46,11 +48,23 @@ export function queueSetupBoardClick(
 /** Select which faction row receives sim preset clicks. */
 export function queueSimEditFaction(faction: GoOpponent): void {
   simEditFaction = faction
+  simEditPinned = true
   pendingDeferUi = true
 }
 
 export function getSimEditFaction(): GoOpponent | null {
   return simEditFaction
+}
+
+/** Follow the active match opponent for sim presets until a faction row is clicked. */
+export function clearSimEditFactionPin(): void {
+  simEditPinned = false
+  simEditFaction = null
+}
+
+export function resolveSimEditFaction(currentOpponent: GoOpponent): GoOpponent {
+  if (!simEditPinned) return currentOpponent
+  return simEditFaction ?? currentOpponent
 }
 
 /** Toggle whether a faction is included in auto-rotation. */
@@ -68,7 +82,6 @@ export function consumeFactionEnabledToggle(): GoOpponent | null {
 /** Sims preset click: overwrite stored sims for the selected faction. */
 export function queueFactionSimsChange(faction: GoOpponent, iterations: number): void {
   pendingFactionSims = { faction, iterations }
-  simEditFaction = faction
   if (deferredSetup && deferredSetup.opponent === faction) {
     deferredSetup = { ...deferredSetup, iterations }
   }
