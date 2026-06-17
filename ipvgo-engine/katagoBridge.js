@@ -19,6 +19,8 @@ const MODELS_DIR = path.join(KATAGO_DIR, "models")
 const QUERY_TIMEOUT_MS = 180_000
 /** First OpenCL/CUDA launch may GPU-autotune for several minutes before "ready". */
 const STARTUP_TIMEOUT_MS = 600_000
+/** Cap replay trim attempts per think; then fall back to board snapshot. */
+const MAX_REPLAY_TRIM_ATTEMPTS = 128
 
 function katagoExePath() {
   const isWindows = process.platform === "win32"
@@ -193,23 +195,43 @@ class KataGoSession {
     return this.sendQueryWithReplayRetries(request, compression, id)
   }
 
-  advanceReplayFromPly(localIllegalIndex) {
-    if (this.replayFromPly > 0 && localIllegalIndex === 0) {
+  /**
+   * Drop replayed moves from the start of the batch through the illegal move.
+   * Illegal move index 0 means the first move in the batch failed; trim it and retry later.
+   */
+  advanceReplayFromPly(illegalIndex) {
+    if (illegalIndex === 0) {
       this.replayFromPly += 1
       return
     }
-    this.replayFromPly += localIllegalIndex
+    this.replayFromPly += illegalIndex
   }
 
   async sendQueryWithReplayRetries(request, compression, id) {
+    let attempt = 0
     while (true) {
       const derived = deriveKataGoMovesFromHistory(request.history, request.board, compression)
-      if (!derived.ok || this.replayFromPly >= (derived.moves?.length ?? 0)) {
-        const snapshot = buildKataGoSnapshotQuery(request, id, compression)
+      const moveCount = derived.moves?.length ?? 0
+
+      if (!derived.ok || this.replayFromPly >= moveCount) {
+        const snapshot = buildKataGoSnapshotQuery(request, `${id}-snap-${attempt++}`, compression)
         return this.sendQuery(snapshot)
       }
 
-      const query = buildKataGoQuery(request, id, compression, this.replayFromPly)
+      if (attempt >= MAX_REPLAY_TRIM_ATTEMPTS) {
+        console.warn(
+          `[katago] replay trim exceeded ${MAX_REPLAY_TRIM_ATTEMPTS} attempts (ply ${this.replayFromPly}); using board snapshot`
+        )
+        const snapshot = buildKataGoSnapshotQuery(request, `${id}-snap-${attempt++}`, compression)
+        return this.sendQuery(snapshot)
+      }
+
+      const query = buildKataGoQuery(
+        request,
+        `${id}-r${this.replayFromPly}-${attempt++}`,
+        compression,
+        this.replayFromPly
+      )
       try {
         return await this.sendQuery(query)
       } catch (err) {
@@ -225,8 +247,8 @@ class KataGoSession {
           `[katago] illegal move at batch index ${illegalIndex}; next replay from ply ${this.replayFromPly} (was ${previous})`
         )
 
-        if (this.replayFromPly >= (derived.moves?.length ?? 0)) {
-          const snapshot = buildKataGoSnapshotQuery(request, id, compression)
+        if (this.replayFromPly >= moveCount) {
+          const snapshot = buildKataGoSnapshotQuery(request, `${id}-snap-${attempt++}`, compression)
           return this.sendQuery(snapshot)
         }
       }
