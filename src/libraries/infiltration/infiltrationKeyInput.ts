@@ -270,33 +270,79 @@ function findStageOnKeyUncached(): ((event: KeyboardLikeEvent) => void) | null {
   return null
 }
 
-function upgradeUntrustedKeyboardEvent(event: KeyboardEvent): KeyboardEvent {
+const upgradedKeyboardEvents = new WeakMap<KeyboardEvent, KeyboardEvent>()
+
+function cloneKeyboardEvent(event: KeyboardEvent): KeyboardEvent {
+  return new KeyboardEvent(event.type, {
+    key: event.key,
+    code: event.code,
+    keyCode: event.keyCode,
+    which: event.which,
+    location: event.location,
+    ctrlKey: event.ctrlKey,
+    shiftKey: event.shiftKey,
+    altKey: event.altKey,
+    metaKey: event.metaKey,
+    repeat: event.repeat,
+    bubbles: event.bubbles,
+    cancelable: event.cancelable,
+  })
+}
+
+/** Patch isTrusted when the engine allows it; never throws. */
+function markKeyboardEventTrusted(event: KeyboardEvent): boolean {
   if (event.isTrusted) {
-    return event
+    return true
   }
 
   try {
     Object.defineProperty(event, "isTrusted", { value: true, configurable: true })
-    return event
+    return event.isTrusted
   } catch {
-    // Fall back when isTrusted is not configurable (rare).
-    const trusted = new KeyboardEvent(event.type, {
-      key: event.key,
-      code: event.code,
-      keyCode: event.keyCode,
-      which: event.which,
-      location: event.location,
-      ctrlKey: event.ctrlKey,
-      shiftKey: event.shiftKey,
-      altKey: event.altKey,
-      metaKey: event.metaKey,
-      repeat: event.repeat,
-      bubbles: event.bubbles,
-      cancelable: event.cancelable,
-    })
-    Object.defineProperty(trusted, "isTrusted", { value: true })
-    return trusted
+    return false
   }
+}
+
+/** Present isTrusted as true when defineProperty is blocked (Electron/Chromium). */
+function proxyTrustedKeyboardEvent(event: KeyboardEvent): KeyboardEvent {
+  return new Proxy(event, {
+    get(target, prop, receiver) {
+      if (prop === "isTrusted") {
+        return true
+      }
+      const value = Reflect.get(target, prop, receiver)
+      if (typeof value === "function") {
+        return value.bind(target)
+      }
+      return value
+    },
+  }) as KeyboardEvent
+}
+
+function upgradeUntrustedKeyboardEvent(event: KeyboardEvent): KeyboardEvent {
+  const cached = upgradedKeyboardEvents.get(event)
+  if (cached) {
+    return cached
+  }
+
+  if (event.isTrusted) {
+    return event
+  }
+
+  if (markKeyboardEventTrusted(event)) {
+    upgradedKeyboardEvents.set(event, event)
+    return event
+  }
+
+  const cloned = cloneKeyboardEvent(event)
+  if (markKeyboardEventTrusted(cloned)) {
+    upgradedKeyboardEvents.set(event, cloned)
+    return cloned
+  }
+
+  const proxied = proxyTrustedKeyboardEvent(cloned)
+  upgradedKeyboardEvents.set(event, proxied)
+  return proxied
 }
 
 function createKeyboardLikeEvent(key: string): KeyboardLikeEvent {
