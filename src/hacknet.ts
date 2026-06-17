@@ -10,7 +10,7 @@ interface HacknetConfig {
   cacheCapFraction: number
 }
 
-const MAX_CACHE_LEVEL = 15
+type HacknetLimits = ReturnType<NS["formulas"]["hacknetServers"]["constants"]>
 
 /** Spend caps scale with hash/s: aggressive early, conservative on production at high rates. */
 function getSpendCapFractions(hashRate: number): Pick<HacknetConfig, "spendCapFraction" | "cacheCapFraction"> {
@@ -36,6 +36,7 @@ export async function main(ns: NS) {
     // moneyReserve: 200_005_000_000_000,
     moneyReserve: 0,
   }
+  const limits = ns.formulas.hacknetServers.constants()
 
   for (;;) {
     await spendHashes(ns)
@@ -45,8 +46,8 @@ export async function main(ns: NS) {
         ...config,
         ...getSpendCapFractions(calculateTotalHashRate(ns)),
       }
-      await handleCacheUpgrades(ns, purchaseConfig)
-      await handlePurchasing(ns, purchaseConfig)
+      await handleCacheUpgrades(ns, purchaseConfig, limits)
+      await handlePurchasing(ns, purchaseConfig, limits)
     }
 
     await ns.sleep(10)
@@ -90,7 +91,11 @@ async function spendHashes(ns: NS): Promise<void> {
   }
 }
 
-async function handleCacheUpgrades(ns: NS, config: HacknetConfig): Promise<void> {
+async function handleCacheUpgrades(
+  ns: NS,
+  config: HacknetConfig,
+  limits: HacknetLimits
+): Promise<void> {
   if (ns.hacknet.hashCapacity() === 0) return
 
   const availableMoney = Math.max(0, ns.getServerMoneyAvailable("home") - config.moneyReserve)
@@ -100,7 +105,7 @@ async function handleCacheUpgrades(ns: NS, config: HacknetConfig): Promise<void>
 
   for (let i = 0; i < ns.hacknet.numNodes(); i++) {
     const cache = ns.hacknet.getNodeStats(i).cache ?? 0
-    if (cache >= MAX_CACHE_LEVEL) continue
+    if (cache >= limits.MaxCache) continue
 
     const cost = ns.hacknet.getCacheUpgradeCost(i, 1)
     if (!Number.isFinite(cost) || cost <= 0 || cost > cacheSpendCap) continue
@@ -120,7 +125,11 @@ async function handleCacheUpgrades(ns: NS, config: HacknetConfig): Promise<void>
   }
 }
 
-async function handlePurchasing(ns: NS, config: HacknetConfig): Promise<void> {
+async function handlePurchasing(
+  ns: NS,
+  config: HacknetConfig,
+  limits: HacknetLimits
+): Promise<void> {
   interface UpgradeOption {
     nodeIndex: number
     type: string
@@ -146,7 +155,7 @@ async function handlePurchasing(ns: NS, config: HacknetConfig): Promise<void> {
     const node = ns.hacknet.getNodeStats(i)
 
     // Level upgrade
-    if (node.level < 200) {
+    if (node.level < limits.MaxLevel) {
       const profit = calculateLevelUpgradeProfit(ns, i)
       const cost = ns.hacknet.getLevelUpgradeCost(i, 1)
       upgradeOptions.push({
@@ -158,7 +167,7 @@ async function handlePurchasing(ns: NS, config: HacknetConfig): Promise<void> {
     }
 
     // RAM upgrade
-    if (node.ram < Math.pow(2, 20)) {
+    if (node.ram < limits.MaxRam) {
       const profit = calculateRamUpgradeProfit(ns, i)
       const cost = ns.hacknet.getRamUpgradeCost(i, 1)
       upgradeOptions.push({
@@ -170,7 +179,7 @@ async function handlePurchasing(ns: NS, config: HacknetConfig): Promise<void> {
     }
 
     // Core upgrade
-    if (node.cores < 32) {
+    if (node.cores < limits.MaxCores) {
       const profit = calculateCoreUpgradeProfit(ns, i)
       const cost = ns.hacknet.getCoreUpgradeCost(i, 1)
       upgradeOptions.push({
