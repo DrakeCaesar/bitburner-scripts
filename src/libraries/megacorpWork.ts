@@ -15,6 +15,53 @@ export const VOLHAVEN_CITY: CityName = "Volhaven"
 
 export const DEFAULT_REQUIRED_REP = 400000
 
+export type MegacorpWorkMode = "faction" | "positions"
+
+const MEGACORP_EXECUTIVE_POSITIONS: readonly JobName[] = [
+  "Chief Executive Officer",
+  "Chief Financial Officer",
+  "Chief Technology Officer",
+]
+
+/** Default: 400k rep + faction join. `positions`: unlock full job tree at every megacorp. */
+export function parseMegacorpWorkMode(ns: NS): MegacorpWorkMode {
+  const arg = String(ns.args[0] ?? "").toLowerCase()
+  if (arg === "positions" || arg === "unlock" || arg === "allpositions") {
+    return "positions"
+  }
+  return "faction"
+}
+
+/** Highest company-rep requirement among positions currently offered. */
+export function getCompanyTopPositionRepReq(ns: NS, company: CompanyName): number {
+  const positions = ns.singularity.getCompanyPositions(company)
+  let max = 0
+  for (const position of positions) {
+    max = Math.max(max, ns.singularity.getCompanyPositionInfo(company, position).requiredReputation)
+  }
+  return max
+}
+
+/** True when executive roles are on offer and company rep meets the top listed requirement. */
+export function isMegacorpPositionTreeFullyUnlocked(ns: NS, company: CompanyName): boolean {
+  const positions = ns.singularity.getCompanyPositions(company)
+  if (positions.length === 0) return false
+
+  const companyRep = ns.singularity.getCompanyRep(company)
+  let topReq = 0
+  let hasExecutive = false
+
+  for (const position of positions) {
+    const info = ns.singularity.getCompanyPositionInfo(company, position)
+    topReq = Math.max(topReq, info.requiredReputation)
+    if (MEGACORP_EXECUTIVE_POSITIONS.includes(position)) {
+      hasExecutive = true
+    }
+  }
+
+  return hasExecutive && companyRep >= topReq
+}
+
 export const REQUIRED_REP_OVERRIDES: Record<string, number> = {
   MegaCorp: 400000,
 }
@@ -366,6 +413,7 @@ export interface MegacorpWorkSnapshot {
   alreadyWorking: boolean
   needsApply: boolean
   message: string
+  workMode?: MegacorpWorkMode
 }
 
 export function buildMegacorpRows(ns: NS, snapshot: MegacorpWorkSnapshot, megacorps: CompanyName[]): MegacorpRow[] {
@@ -375,16 +423,19 @@ export function buildMegacorpRows(ns: NS, snapshot: MegacorpWorkSnapshot, megaco
   for (const company of megacorps) {
     const faction = getFactionName(company)
     const requiredRep = getRequiredRep(company)
+    const positionTarget = getCompanyTopPositionRepReq(ns, company)
     const currentRep = ns.singularity.getCompanyRep(company)
     const favor = ns.singularity.getCompanyFavor(company)
     const job = player.jobs[company] ?? "—"
     const field = job !== "—" ? ns.singularity.getCompanyPositionInfo(company, job).field : "—"
 
     let status = "Pending"
-    if (isMegacorpFactionUnlocked(ns, company)) {
+    if (snapshot.workMode === "positions" && isMegacorpPositionTreeFullyUnlocked(ns, company)) {
+      status = "Unlocked"
+    } else if (isMegacorpFactionUnlocked(ns, company)) {
       status = "Joined"
     } else if (snapshot.completedCompanies.includes(company)) {
-      status = "Done"
+      status = snapshot.workMode === "positions" ? "Unlocked" : "Done"
     } else if (company === snapshot.currentCompany) {
       status = snapshot.charismaGrind ? "Charisma" : snapshot.alreadyWorking ? "Working" : "Setup"
     }
@@ -410,7 +461,7 @@ export function buildMegacorpRows(ns: NS, snapshot: MegacorpWorkSnapshot, megaco
       field,
       repPerSecond,
       rep: ns.format.number(currentRep),
-      target: ns.format.number(requiredRep),
+      target: ns.format.number(snapshot.workMode === "positions" ? positionTarget : requiredRep),
       favor: favor.toFixed(1),
       isSelected: company === snapshot.currentCompany,
       note,

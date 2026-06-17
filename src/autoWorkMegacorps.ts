@@ -9,10 +9,13 @@ import {
   getMegacorps,
   getRequiredRep,
   isMegacorpFactionUnlocked,
+  isMegacorpPositionTreeFullyUnlocked,
   isStudyingLeadershipAtVolhaven,
   isWorkingAtCompany,
   needsMegacorpJobApply,
+  parseMegacorpWorkMode,
   pickBestCompanyField,
+  type MegacorpWorkMode,
   type MegacorpWorkSnapshot,
 } from "./libraries/megacorpWork.js"
 import { createTailLog, openTailLog } from "./libraries/scriptLogUiLayout.js"
@@ -20,7 +23,19 @@ import { createTailLog, openTailLog } from "./libraries/scriptLogUiLayout.js"
 const ACTIVE_INTERVAL_MS = 1000
 const STABLE_INTERVAL_MS = 5000
 
-async function renderMegacorpTable(ns: NS, snapshot: MegacorpWorkSnapshot, megacorps: CompanyName[]): Promise<void> {
+/**
+ * Megacorp company work automation.
+ *
+ * Usage:
+ *   run autoWorkMegacorps.js              - 400k rep + faction join per company (default)
+ *   run autoWorkMegacorps.js positions    - unlock full job tree at every megacorp
+ */
+
+async function renderMegacorpTable(
+  ns: NS,
+  snapshot: MegacorpWorkSnapshot,
+  megacorps: CompanyName[]
+): Promise<void> {
   const log = createTailLog()
   const rows = buildMegacorpRows(ns, snapshot, megacorps)
   log.table(buildMegacorpTableConfig(ns, rows, snapshot))
@@ -33,9 +48,18 @@ async function renderMegacorpTable(ns: NS, snapshot: MegacorpWorkSnapshot, megac
   await log.render(ns)
 }
 
+function isCompanyComplete(ns: NS, company: CompanyName, mode: MegacorpWorkMode): boolean {
+  if (mode === "positions") {
+    return isMegacorpPositionTreeFullyUnlocked(ns, company)
+  }
+  return isMegacorpFactionUnlocked(ns, company)
+}
+
 export async function main(ns: NS): Promise<void> {
   await killOtherInstances(ns)
-  openTailLog(ns, "Megacorp Work")
+
+  const workMode = parseMegacorpWorkMode(ns)
+  openTailLog(ns, workMode === "positions" ? "Megacorp Work (positions)" : "Megacorp Work")
 
   const megacorps = getMegacorps(ns)
   const completedCompanies: CompanyName[] = []
@@ -43,7 +67,7 @@ export async function main(ns: NS): Promise<void> {
   for (const company of megacorps) {
     const factionName = getFactionName(company)
 
-    if (isMegacorpFactionUnlocked(ns, company)) {
+    if (isCompanyComplete(ns, company, workMode)) {
       completedCompanies.push(company)
       const skipSnapshot: MegacorpWorkSnapshot = {
         currentCompany: company,
@@ -55,7 +79,11 @@ export async function main(ns: NS): Promise<void> {
         bestRepPerSecond: null,
         alreadyWorking: false,
         needsApply: false,
-        message: `Already in ${factionName} — skipping`,
+        workMode,
+        message:
+          workMode === "positions"
+            ? `All positions unlocked at ${company}`
+            : `Already in ${factionName} — skipping`,
       }
       await renderMegacorpTable(ns, skipSnapshot, megacorps)
       continue
@@ -79,6 +107,7 @@ export async function main(ns: NS): Promise<void> {
         bestRepPerSecond: null,
         alreadyWorking: isWorkingAtCompany(ns, company),
         needsApply: false,
+        workMode,
         message: charismaGrind ? "Training charisma (Volhaven)" : "",
       }
 
@@ -95,7 +124,14 @@ export async function main(ns: NS): Promise<void> {
         continue
       }
 
-      if (currentRep >= requiredRep) {
+      if (workMode === "positions") {
+        if (isMegacorpPositionTreeFullyUnlocked(ns, company)) {
+          snapshot.message = `All positions unlocked at ${company}`
+          completedCompanies.push(company)
+          await renderMegacorpTable(ns, snapshot, megacorps)
+          break
+        }
+      } else if (currentRep >= requiredRep) {
         const invitations = ns.singularity.checkFactionInvitations()
         if (invitations.includes(factionName)) {
           ns.singularity.joinFaction(factionName)
@@ -173,8 +209,15 @@ export async function main(ns: NS): Promise<void> {
     bestRepPerSecond: null,
     alreadyWorking: false,
     needsApply: false,
-    message: "All megacorps done — starting faction work",
+    workMode,
+    message:
+      workMode === "positions"
+        ? "All megacorp positions unlocked"
+        : "All megacorps done — starting faction work",
   }
   await renderMegacorpTable(ns, doneSnapshot, megacorps)
-  ns.exec("autoWorkFactions.js", "home")
+
+  if (workMode === "faction") {
+    ns.exec("autoWorkFactions.js", "home")
+  }
 }
