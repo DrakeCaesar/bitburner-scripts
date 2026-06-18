@@ -252,14 +252,22 @@ function extractStoneMove(before, after) {
 /** IPvGO does not snapshot passes; same player twice in a row implies an omitted pass. */
 function insertInferredPasses(moves) {
   const fixed = []
+  /** Board-state index in `states` before each KataGo move (passes do not advance). */
+  const stateBeforePly = []
+  let stateIdx = 0
+
   for (const move of moves) {
     if (fixed.length > 0 && fixed[fixed.length - 1][0] === move[0]) {
       const passer = move[0] === "B" ? "W" : "B"
       fixed.push([passer, "pass"])
+      stateBeforePly.push(stateIdx)
     }
     fixed.push(move)
+    stateBeforePly.push(stateIdx)
+    stateIdx++
   }
-  return fixed
+
+  return { moves: fixed, stateBeforePly }
 }
 
 function mapGtpThroughCompression(x, y, compression) {
@@ -301,9 +309,12 @@ export function deriveKataGoMovesFromHistory(history, currentBoard, compression 
     moves.push([step.player, gtp])
   }
 
+  const { moves: kataGoMoves, stateBeforePly } = insertInferredPasses(moves)
+
   return {
     ok: true,
-    moves: insertInferredPasses(moves),
+    moves: kataGoMoves,
+    stateBeforePly,
     states,
     startBoard: chronological[0],
   }
@@ -344,7 +355,10 @@ export function parseKatagoIllegalMoveIndex(message) {
   return Number.isFinite(index) ? index : null
 }
 
-function buildSnapshotQuery(request, queryId, compression, board, validMoves, playAs, komi, visits) {
+function buildSnapshotQuery(request, queryId, compression, board, validMoves, playAs, komi, visits, fallback) {
+  if (!board?.length) {
+    throw new Error(`Cannot build KataGo snapshot: board is empty (${fallback ?? "unknown"})`)
+  }
   const restrictions = buildMoveRestrictions(board, validMoves, request.playAs)
   return {
     id: queryId,
@@ -356,6 +370,8 @@ function buildSnapshotQuery(request, queryId, compression, board, validMoves, pl
     boardXSize: board.length,
     boardYSize: board.length,
     maxVisits: visits,
+    historyMode: "snapshot",
+    ...(fallback ? { historyFallback: fallback } : {}),
     ...restrictions,
   }
 }
@@ -368,17 +384,61 @@ export function buildKataGoQuery(request, queryId, compression = null, replayFro
   const visits = Math.max(50, Math.min(20000, Number(request.iterations) || 4000))
 
   const historyResult = deriveKataGoMovesFromHistory(request.history, request.board, compression)
-  if (!historyResult.ok || replayFromPly >= historyResult.moves.length) {
+  const moves = historyResult.moves ?? []
+  const stateBeforePly = historyResult.stateBeforePly ?? []
+
+  if (!historyResult.ok || replayFromPly >= moves.length) {
     return {
-      ...buildSnapshotQuery(request, queryId, compression, board, validMoves, playAs, komi, visits),
-      historyMode: "snapshot",
-      historyFallback: historyResult.ok ? "replay-exhausted" : historyResult.reason,
+      ...buildSnapshotQuery(
+        request,
+        queryId,
+        compression,
+        board,
+        validMoves,
+        playAs,
+        komi,
+        visits,
+        historyResult.ok ? "replay-exhausted" : historyResult.reason
+      ),
     }
   }
 
-  const anchorBoard = historyResult.states[replayFromPly]
+  const stateIdx = stateBeforePly[replayFromPly]
+  const anchorBoard = historyResult.states?.[stateIdx]
+  if (stateIdx == null || !anchorBoard?.length) {
+    return {
+      ...buildSnapshotQuery(
+        request,
+        queryId,
+        compression,
+        board,
+        validMoves,
+        playAs,
+        komi,
+        visits,
+        "missing-anchor-state"
+      ),
+    }
+  }
+
   const queryBoard = compression ? sliceBoardToCompression(anchorBoard, compression) : anchorBoard
-  const moveSlice = historyResult.moves.slice(replayFromPly)
+  if (!queryBoard?.length) {
+    return {
+      ...buildSnapshotQuery(
+        request,
+        queryId,
+        compression,
+        board,
+        validMoves,
+        playAs,
+        komi,
+        visits,
+        "anchor-outside-compression"
+      ),
+    }
+  }
+
+  const moveSlice = moves.slice(replayFromPly)
   const restrictions = buildMoveRestrictions(board, validMoves, request.playAs)
 
   return {
@@ -405,10 +465,7 @@ export function buildKataGoSnapshotQuery(request, queryId, compression = null) {
   const komi = request.komi ?? 5.5
   const playAs = kataGoPlayer(request.playAs)
   const visits = Math.max(50, Math.min(20000, Number(request.iterations) || 4000))
-  return {
-    ...buildSnapshotQuery(request, queryId, compression, board, validMoves, playAs, komi, visits),
-    historyMode: "snapshot",
-  }
+  return buildSnapshotQuery(request, queryId, compression, board, validMoves, playAs, komi, visits)
 }
 
 function pickLegalOnOriginal(validMoves, x, y) {
@@ -447,10 +504,12 @@ export function pickMoveFromAnalysis(moveInfos, validMoves, playAs, compression 
 }
 
 function findAnyLegal(validMoves) {
-  if (!validMoves) return { type: "pass" }
+  if (!validMoves?.length) return { type: "pass" }
   for (let x = 0; x < validMoves.length; x++) {
-    for (let y = 0; y < validMoves[x].length; y++) {
-      if (validMoves[x][y]) return { type: "move", x, y }
+    const column = validMoves[x]
+    if (!column?.length) continue
+    for (let y = 0; y < column.length; y++) {
+      if (column[y]) return { type: "move", x, y }
     }
   }
   return { type: "pass" }
