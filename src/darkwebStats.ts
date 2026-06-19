@@ -19,6 +19,7 @@ import {
   type DarknetRegistry,
   type DarknetServerDetailsForFormulas,
 } from "./darknetCrawl.js"
+import { DARKSCAPE_NAVIGATOR, purchaseDarkscapeNavigator, purchaseTorRouter } from "./libraries/purchasePrograms.js"
 import {
   col,
   createTabbedTailLog,
@@ -32,8 +33,6 @@ import {
 } from "./libraries/scriptLogUiLayout.js"
 
 // --- config ---
-
-const DARKSCAPE_NAV = "DarkscapeNavigator.exe"
 
 const DARKWEB_TABS: TabDefinition[] = [
   { id: "crawl", label: "Crawl" },
@@ -339,19 +338,31 @@ export async function main(ns: NS): Promise<void> {
 
   const tabbedLog = createTabbedTailLog(DARKWEB_TABS)
 
-  const dnet = getDarknetApi(ns)
-  if (!dnet) {
-    tabbedLog.tab("crawl").text("ERROR: ns.dnet API not available")
-    await renderTabbedTailLog(ns, tabbedLog)
-    return
+  const logCrawl = (message: string) => {
+    tabbedLog.tab("crawl").text(message)
   }
+
+  if (!ns.hasTorRouter()) {
+    purchaseTorRouter(ns, logCrawl)
+  }
+  if (!ns.fileExists(DARKSCAPE_NAVIGATOR, "home")) {
+    purchaseDarkscapeNavigator(ns, logCrawl)
+  }
+
   if (!ns.hasTorRouter()) {
     tabbedLog.tab("crawl").text("ERROR: Need a TOR router")
     await renderTabbedTailLog(ns, tabbedLog)
     return
   }
-  if (!ns.fileExists(DARKSCAPE_NAV, "home")) {
-    tabbedLog.tab("crawl").text(`ERROR: Need ${DARKSCAPE_NAV} on home`)
+  if (!ns.fileExists(DARKSCAPE_NAVIGATOR, "home")) {
+    tabbedLog.tab("crawl").text(`ERROR: Need ${DARKSCAPE_NAVIGATOR} on home`)
+    await renderTabbedTailLog(ns, tabbedLog)
+    return
+  }
+
+  const dnet = getDarknetApi(ns)
+  if (!dnet) {
+    tabbedLog.tab("crawl").text("ERROR: ns.dnet API not available")
     await renderTabbedTailLog(ns, tabbedLog)
     return
   }

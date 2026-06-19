@@ -1,6 +1,9 @@
 import type { ProgramName } from "@ns"
 import { NS } from "@ns"
 
+export const DARKSCAPE_NAVIGATOR: ProgramName = "DarkscapeNavigator.exe"
+const DARKSCAPE_NAVIGATOR_COST = 50_000_000
+
 interface Program {
   name: ProgramName
   cost: number
@@ -16,7 +19,7 @@ const PROGRAMS: Program[] = [
   { name: "DeepscanV1.exe", cost: 500000 },
   { name: "DeepscanV2.exe", cost: 25000000 },
   { name: "AutoLink.exe", cost: 1000000 },
-  { name: "DarkscapeNavigator.exe", cost: 50000000 },
+  { name: DARKSCAPE_NAVIGATOR, cost: DARKSCAPE_NAVIGATOR_COST },
 ]
 
 import type { LogFn } from "./logFn.js"
@@ -30,6 +33,24 @@ export function purchaseTorRouter(ns: NS, logMessage?: LogFn): boolean {
       logMessage?.("Purchased TOR router")
       return true
     }
+  }
+  return false
+}
+
+/** Buy DarkscapeNavigator.exe from the dark web when missing and affordable. Requires a TOR router. */
+export function purchaseDarkscapeNavigator(ns: NS, logMessage?: LogFn): boolean {
+  if (ns.fileExists(DARKSCAPE_NAVIGATOR, "home")) return true
+
+  if (!ns.hasTorRouter()) {
+    purchaseTorRouter(ns, logMessage)
+  }
+  if (!ns.hasTorRouter()) return false
+
+  if (ns.getPlayer().money < DARKSCAPE_NAVIGATOR_COST) return false
+
+  if (ns.singularity.purchaseProgram(DARKSCAPE_NAVIGATOR)) {
+    logMessage?.(`Purchased ${DARKSCAPE_NAVIGATOR}`)
+    return true
   }
   return false
 }
