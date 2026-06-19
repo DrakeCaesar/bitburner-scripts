@@ -762,7 +762,7 @@ export async function purchaseAugmentations(ns: NS, buyFlux: boolean, dryRun = f
   if (purchaseCount > 0 && !dryRun) {
     const installNow = await ns.prompt("Install augmentations now and restart?")
     if (installNow) {
-      ns.singularity.installAugmentations("/startBatchHome.js")
+      ns.singularity.installAugmentations("/orchestrator.js")
     }
   }
 }
