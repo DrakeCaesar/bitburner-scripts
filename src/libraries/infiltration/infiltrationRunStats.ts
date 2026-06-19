@@ -20,7 +20,7 @@ import {
   pickBestCompanyField,
   VOLHAVEN_CITY,
 } from "../megacorpWork.js"
-import { areAllInfiltrationsDoable } from "./infiltrationTargets.js"
+import { areAllInfiltrationsDoable, getEffectiveInfiltrationRepReward } from "./infiltrationTargets.js"
 import type { InfiltrationRewardGoal, InfiltrationTarget } from "./infiltrationTargets.js"
 
 const MAX_CYCLE_SAMPLES = 5
@@ -79,7 +79,12 @@ export class InfiltrationRunStatsTracker {
   private faction: FactionName | null = null
   private predictedReward = 0
 
-  beginCycle(target: InfiltrationTarget, goal: InfiltrationRewardGoal, faction: FactionName | null): void {
+  beginCycle(
+    ns: NS,
+    target: InfiltrationTarget,
+    goal: InfiltrationRewardGoal,
+    faction: FactionName | null
+  ): void {
     const key = locationKey(target)
     if (key !== this.activeLocationKey) {
       this.samples = []
@@ -91,7 +96,11 @@ export class InfiltrationRunStatsTracker {
     this.rewardGoal = goal
     this.faction = faction
     this.predictedReward =
-      goal === "money" ? target.data.reward.sellCash : target.data.reward.tradeRep
+      goal === "money"
+        ? target.data.reward.sellCash
+        : faction != null
+          ? getEffectiveInfiltrationRepReward(ns, target, faction)
+          : target.data.reward.tradeRep
     this.cycleStartMs = Date.now()
   }
 

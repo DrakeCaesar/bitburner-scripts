@@ -8,6 +8,7 @@ import {
 import {
   isInfiltrationDebugMode,
   isInfiltrationMoneyMode,
+  shouldSellAndDonateForRep,
 } from "./infiltrationTargets.js"
 import { getInfiltrationRewardGoal } from "./infiltrationFactionGoals.js"
 import { waitForCityNavigationReady } from "./infiltrationNavigation.js"
@@ -648,6 +649,22 @@ async function confirmVictoryReward(
   return { ok: true, detail }
 }
 
+async function donateInfiltrationProceeds(
+  ns: NS,
+  faction: FactionName,
+  amount: number
+): Promise<{ ok: boolean; donated: number; repGain: number | null }> {
+  if (amount <= 0) return { ok: false, donated: 0, repGain: null }
+
+  const beforeRep = ns.singularity.getFactionRep(faction)
+  const affordable = Math.min(amount, ns.getPlayer().money)
+  if (affordable <= 0) return { ok: false, donated: 0, repGain: null }
+
+  const ok = ns.singularity.donateToFaction(faction, affordable)
+  const afterRep = ns.singularity.getFactionRep(faction)
+  return { ok, donated: ok ? affordable : 0, repGain: ok ? afterRep - beforeRep : null }
+}
+
 export async function collectInfiltrationVictoryReward(
   ns: NS
 ): Promise<{ ok: boolean; detail: string }> {
@@ -656,13 +673,24 @@ export async function collectInfiltrationVictoryReward(
   }
 
   const rewardGoal = getInfiltrationRewardGoal(ns)
-  const faction = VICTORY_TEST_CYCLE_FACTIONS
-    ? getVictoryTestCycleFaction(ns)
-    : rewardGoal === "reputation"
+  const grindFaction =
+    rewardGoal === "reputation" && !VICTORY_TEST_CYCLE_FACTIONS
       ? getPreferredFactionForInfiltrationRep(ns)
       : null
   const expected = readVictoryScreenRewards()
-  const before = snapshotPlayerRewards(ns, faction)
+  const sellAndDonate =
+    grindFaction != null &&
+    expected.sellCash != null &&
+    expected.tradeRep != null &&
+    shouldSellAndDonateForRep(ns, expected.sellCash, expected.tradeRep, grindFaction)
+  const faction = VICTORY_TEST_CYCLE_FACTIONS
+    ? getVictoryTestCycleFaction(ns)
+    : sellAndDonate
+      ? null
+      : rewardGoal === "reputation"
+        ? grindFaction
+        : null
+  const before = snapshotPlayerRewards(ns, faction ?? grindFaction)
   const allFactionRepsBefore = snapshotAllFactionReps(ns)
   const intendedAction: VictorySubmitAction = faction != null ? "trade" : "sell"
   const auditBase = {
@@ -740,6 +768,10 @@ export async function collectInfiltrationVictoryReward(
 
   if (isInfiltrationMoneyMode(ns)) {
     ns.print("Victory reward: money mode; will sell for money")
+  } else if (sellAndDonate && grindFaction != null) {
+    ns.print(
+      `Victory reward: sell and donate to ${grindFaction} (more rep than trade at ${expected.tradeRep})`
+    )
   } else {
     const moneyTier = getInfiltrationMoneyTier(
       ns,
@@ -763,13 +795,29 @@ export async function collectInfiltrationVictoryReward(
   const factionStateAtSubmit = readVictoryFactionState() ?? ""
   const sold = clickVictoryButton("Sell for")
   if (sold.ok) {
-    return confirmVictoryReward(ns, "sold for money", {
+    const result = await confirmVictoryReward(ns, "sold for money", {
       ...auditBase,
       actualAction: "sell",
       actualFaction: null,
       dropdownAtSubmit,
       factionStateAtSubmit,
     })
+    if (result.ok && sellAndDonate && grindFaction != null && expected.sellCash != null) {
+      const donation = await donateInfiltrationProceeds(ns, grindFaction, expected.sellCash)
+      if (donation.ok && donation.repGain != null) {
+        return {
+          ok: true,
+          detail: `sold and donated ${ns.format.number(donation.donated)} to ${grindFaction} (+${ns.format.number(donation.repGain)} rep)`,
+        }
+      }
+      if (!donation.ok) {
+        return {
+          ok: true,
+          detail: `sold for money (donation to ${grindFaction} failed)`,
+        }
+      }
+    }
+    return result
   }
   return sold
 }

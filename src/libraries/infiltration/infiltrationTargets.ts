@@ -1,4 +1,5 @@
-import type { CityName, NS } from "@ns"
+import type { CityName, FactionName, NS } from "@ns"
+import { getTargetFavor } from "../factionWork.js"
 
 /** Matches in-game MaxDifficultyForInfiltration (Intro screen uses rating out of 100). */
 export const MAX_INFILTRATION_DIFFICULTY = 3.5
@@ -107,6 +108,51 @@ export function getInfiltrationRewardPerLevel(
   return reward / target.data.maxClearanceLevel
 }
 
+/** True when predicted favor meets the donation threshold (e.g. 150 favor). */
+export function factionCanDonateForRep(ns: NS, faction: FactionName): boolean {
+  const favor =
+    ns.singularity.getFactionFavor(faction) + ns.singularity.getFactionFavorGain(faction)
+  return favor >= getTargetFavor(ns)
+}
+
+export function repFromInfiltrationSellCash(ns: NS, sellCash: number): number {
+  try {
+    return ns.formulas.reputation.repFromDonation(sellCash, ns.getPlayer())
+  } catch {
+    return 0
+  }
+}
+
+/** Rep gained from this infiltration when grinding faction rep (trade vs sell then donate). */
+export function getEffectiveInfiltrationRepReward(
+  ns: NS,
+  target: InfiltrationTarget,
+  faction: FactionName
+): number {
+  const tradeRep = target.data.reward.tradeRep
+  if (!factionCanDonateForRep(ns, faction)) return tradeRep
+  return Math.max(tradeRep, repFromInfiltrationSellCash(ns, target.data.reward.sellCash))
+}
+
+export function getEffectiveInfiltrationRepPerLevel(
+  ns: NS,
+  target: InfiltrationTarget,
+  faction: FactionName
+): number {
+  return getEffectiveInfiltrationRepReward(ns, target, faction) / target.data.maxClearanceLevel
+}
+
+/** Sell cash and donate when that yields more rep than trading directly. */
+export function shouldSellAndDonateForRep(
+  ns: NS,
+  sellCash: number,
+  tradeRep: number,
+  faction: FactionName
+): boolean {
+  if (!factionCanDonateForRep(ns, faction)) return false
+  return repFromInfiltrationSellCash(ns, sellCash) > tradeRep
+}
+
 /** Bitburner city travel cost (CONSTANTS.TravelCost). */
 export const INFILTRATION_TRAVEL_COST = 200_000
 
@@ -127,28 +173,43 @@ export async function travelToInfiltrationCity(ns: NS, city: CityName): Promise<
 }
 
 function pickBestInfiltrationTarget(
+  ns: NS,
   targets: readonly InfiltrationTarget[],
-  goal: InfiltrationRewardGoal
+  goal: InfiltrationRewardGoal,
+  repGrindFaction?: FactionName | null
 ): InfiltrationTarget | null {
   if (targets.length === 0) return null
 
+  const useEffectiveRep =
+    goal === "reputation" &&
+    repGrindFaction != null &&
+    factionCanDonateForRep(ns, repGrindFaction)
+
   let best = targets[0]
-  let bestRate = getInfiltrationRewardPerLevel(best, goal)
+  let bestRate = useEffectiveRep
+    ? getEffectiveInfiltrationRepPerLevel(ns, best, repGrindFaction)
+    : getInfiltrationRewardPerLevel(best, goal)
+  let bestTotal = useEffectiveRep
+    ? getEffectiveInfiltrationRepReward(ns, best, repGrindFaction)
+    : best.data.reward[goal === "money" ? "sellCash" : "tradeRep"]
 
   for (let i = 1; i < targets.length; i++) {
     const target = targets[i]
-    const rate = getInfiltrationRewardPerLevel(target, goal)
-    const rewardKey = goal === "money" ? "sellCash" : "tradeRep"
-    const bestTotalReward = best.data.reward[rewardKey]
-    const totalReward = target.data.reward[rewardKey]
+    const rate = useEffectiveRep
+      ? getEffectiveInfiltrationRepPerLevel(ns, target, repGrindFaction)
+      : getInfiltrationRewardPerLevel(target, goal)
+    const totalReward = useEffectiveRep
+      ? getEffectiveInfiltrationRepReward(ns, target, repGrindFaction)
+      : target.data.reward[goal === "money" ? "sellCash" : "tradeRep"]
 
     if (
       rate > bestRate ||
-      (rate === bestRate && totalReward > bestTotalReward) ||
-      (rate === bestRate && totalReward === bestTotalReward && target.difficulty > best.difficulty)
+      (rate === bestRate && totalReward > bestTotal) ||
+      (rate === bestRate && totalReward === bestTotal && target.difficulty > best.difficulty)
     ) {
       best = target
       bestRate = rate
+      bestTotal = totalReward
     }
   }
 
@@ -159,11 +220,12 @@ function pickBestInfiltrationTarget(
 export function getBestInfiltrationTarget(
   ns: NS,
   goal: InfiltrationRewardGoal,
-  city?: CityName
+  city?: CityName,
+  repGrindFaction?: FactionName | null
 ): InfiltrationTarget | null {
   const targets = getAvailableInfiltrationTargets(ns)
   const filtered = city != null ? targets.filter((target) => target.city === city) : targets
-  return pickBestInfiltrationTarget(filtered, goal)
+  return pickBestInfiltrationTarget(ns, filtered, goal, repGrindFaction)
 }
 
 /**
@@ -171,13 +233,14 @@ export function getBestInfiltrationTarget(
  */
 export function getBestInfiltrationTargetForPlayer(
   ns: NS,
-  goal: InfiltrationRewardGoal
+  goal: InfiltrationRewardGoal,
+  repGrindFaction?: FactionName | null
 ): InfiltrationTarget | null {
   const playerCity = ns.getPlayer().city
-  const best = getBestInfiltrationTarget(ns, goal)
+  const best = getBestInfiltrationTarget(ns, goal, undefined, repGrindFaction)
   if (best == null) return null
   if (best.city === playerCity || canAffordInfiltrationTravel(ns)) return best
-  return getBestInfiltrationTarget(ns, goal, playerCity)
+  return getBestInfiltrationTarget(ns, goal, playerCity, repGrindFaction)
 }
 
 /** Available targets, hardest first. */

@@ -28,10 +28,13 @@ import {
   canAffordInfiltrationTravel,
   getBestInfiltrationTarget,
   getBestInfiltrationTargetForPlayer,
+  getEffectiveInfiltrationRepPerLevel,
+  getEffectiveInfiltrationRepReward,
   getInfiltrationApi,
   getInfiltrationRewardPerLevel,
   INFILTRATION_TRAVEL_COST,
   isInfiltrationMoneyMode,
+  shouldSellAndDonateForRep,
 } from "./libraries/infiltration/infiltrationTargets.js"
 import { getInfiltrationRewardGoal } from "./libraries/infiltration/infiltrationFactionGoals.js"
 import {
@@ -107,9 +110,9 @@ export async function main(ns: NS): Promise<void> {
       const rewardGoal = getInfiltrationRewardGoal(ns)
       const grindFaction =
         rewardGoal === "reputation" ? getPreferredFactionForInfiltrationRep(ns) : null
-      const globalBest = getBestInfiltrationTarget(ns, rewardGoal)
+      const globalBest = getBestInfiltrationTarget(ns, rewardGoal, undefined, grindFaction)
       const playerCity = ns.getPlayer().city
-      const target = getBestInfiltrationTargetForPlayer(ns, rewardGoal)
+      const target = getBestInfiltrationTargetForPlayer(ns, rewardGoal, grindFaction)
 
       if (!target) {
         if (
@@ -139,10 +142,23 @@ export async function main(ns: NS): Promise<void> {
         )
       }
 
-      const rewardPerLevel = getInfiltrationRewardPerLevel(target, rewardGoal)
+      const rewardPerLevel =
+        rewardGoal === "reputation" && grindFaction != null
+          ? getEffectiveInfiltrationRepPerLevel(ns, target, grindFaction)
+          : getInfiltrationRewardPerLevel(target, rewardGoal)
       const rewardLabel =
-        rewardGoal === "reputation"
-          ? `rep ${ns.format.number(target.data.reward.tradeRep)} (${ns.format.number(rewardPerLevel)}/lvl, ${target.data.maxClearanceLevel} lvls)`
+        rewardGoal === "reputation" && grindFaction != null
+          ? (() => {
+              const effectiveRep = getEffectiveInfiltrationRepReward(ns, target, grindFaction)
+              const viaDonation = shouldSellAndDonateForRep(
+                ns,
+                target.data.reward.sellCash,
+                target.data.reward.tradeRep,
+                grindFaction
+              )
+              const method = viaDonation ? "donate" : "trade"
+              return `rep ${ns.format.number(effectiveRep)} (${method}, ${ns.format.number(rewardPerLevel)}/lvl, ${target.data.maxClearanceLevel} lvls)`
+            })()
           : `cash ${ns.format.number(target.data.reward.sellCash)} (${ns.format.number(rewardPerLevel)}/lvl, ${target.data.maxClearanceLevel} lvls)`
       ns.print(
         `Target: ${target.name} (${target.city}, ${target.tier}, rating ${target.rating.toFixed(0)}, ${rewardLabel})`
@@ -158,7 +174,7 @@ export async function main(ns: NS): Promise<void> {
       await prepareCombatSkillTraining(ns, trainingStat)
       syncTrainingDom(ns, solver, trainingStat)
 
-      runStats.beginCycle(target, rewardGoal, grindFaction)
+      runStats.beginCycle(ns, target, rewardGoal, grindFaction)
       const outcome = await runInfiltrationForTarget(ns, target, { solver })
 
       switch (outcome) {
