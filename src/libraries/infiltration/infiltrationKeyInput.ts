@@ -306,11 +306,12 @@ function markKeyboardEventTrusted(event: KeyboardEvent): boolean {
 /** Present isTrusted as true when defineProperty is blocked (Electron/Chromium). */
 function proxyTrustedKeyboardEvent(event: KeyboardEvent): KeyboardEvent {
   return new Proxy(event, {
-    get(target, prop, receiver) {
+    get(target, prop) {
       if (prop === "isTrusted") {
         return true
       }
-      const value = Reflect.get(target, prop, receiver)
+      // Event getters require the real Event as `this`; using the Proxy as receiver throws.
+      const value = Reflect.get(target, prop, target)
       if (typeof value === "function") {
         return value.bind(target)
       }
@@ -340,9 +341,14 @@ function upgradeUntrustedKeyboardEvent(event: KeyboardEvent): KeyboardEvent {
     return cloned
   }
 
-  const proxied = proxyTrustedKeyboardEvent(cloned)
-  upgradedKeyboardEvents.set(event, proxied)
-  return proxied
+  try {
+    const proxied = proxyTrustedKeyboardEvent(cloned)
+    upgradedKeyboardEvents.set(event, proxied)
+    return proxied
+  } catch {
+    upgradedKeyboardEvents.set(event, cloned)
+    return cloned
+  }
 }
 
 function createKeyboardLikeEvent(key: string): KeyboardLikeEvent {
@@ -383,7 +389,11 @@ function dispatchDomKeyboardEvent(key: string, target?: HTMLElement | null): boo
   const rawEvent = createKeyboardEvent(key)
 
   if (infiltrationKeyHandler) {
-    infiltrationKeyHandler(upgradeUntrustedKeyboardEvent(rawEvent))
+    try {
+      infiltrationKeyHandler(upgradeUntrustedKeyboardEvent(rawEvent))
+    } catch {
+      infiltrationKeyHandler(rawEvent)
+    }
     return true
   }
 
