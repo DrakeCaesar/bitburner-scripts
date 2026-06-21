@@ -26,7 +26,7 @@ import {
   isInfiltrationVictoryScreen,
 } from "./libraries/infiltration/infiltrationVictoryMoney.js"
 import {
-  getLowestCombatGymSkill,
+  getSoonestLevelCombatGymSkill,
   type CombatGymSkill,
 } from "./libraries/gymWorkout.js"
 
@@ -48,10 +48,10 @@ function killConflictingScripts(ns: NS): void {
 }
 
 function maybeSwitchGymTraining(ns: NS, trainingStat: CombatGymSkill): CombatGymSkill {
-  const lowest = getLowestCombatGymSkill(ns)
-  if (lowest === trainingStat) return trainingStat
-  ns.print(`Switching combat training from ${trainingStat} to ${lowest}`)
-  return lowest
+  const next = getSoonestLevelCombatGymSkill(ns)
+  if (next === trainingStat) return trainingStat
+  ns.print(`Switching combat training from ${trainingStat} to ${next} (soonest level-up)`)
+  return next
 }
 
 function syncTrainingDom(ns: NS, solver: InfiltrationSolverState, trainingStat: CombatGymSkill): void {
@@ -84,11 +84,12 @@ export async function main(ns: NS): Promise<void> {
     ns.print("Minigame solver disabled; waiting for minigames to fail")
   }
 
-  let trainingStat = getLowestCombatGymSkill(ns)
+  let trainingStat = getSoonestLevelCombatGymSkill(ns)
   syncTrainingDom(ns, solver, trainingStat)
 
   try {
     while (true) {
+      trainingStat = maybeSwitchGymTraining(ns, trainingStat)
       syncTrainingDom(ns, solver, trainingStat)
 
       const globalBest = getBestInfiltrationTarget(ns, REWARD_GOAL)

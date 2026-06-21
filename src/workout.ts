@@ -1,7 +1,7 @@
 import { NS } from "@ns"
 import {
   GYM_CITY,
-  getLowestCombatGymSkill,
+  getSoonestLevelCombatGymSkill,
   workoutUntilLevelUp,
 } from "./libraries/gymWorkout.js"
 import { travelToInfiltrationCity } from "./libraries/infiltration/infiltrationTargets.js"
@@ -24,7 +24,7 @@ export async function main(ns: NS): Promise<void> {
   while (true) {
     const focus = ns.singularity.isFocused()
     const player = ns.getPlayer()
-    const lowestSkill = getLowestCombatGymSkill(ns)
+    const trainingSkill = getSoonestLevelCombatGymSkill(ns, focus)
 
     const skillLevels = [
       player.skills.agility,
@@ -54,6 +54,6 @@ export async function main(ns: NS): Promise<void> {
       }
     }
 
-    await workoutUntilLevelUp(ns, lowestSkill, focus)
+    await workoutUntilLevelUp(ns, trainingSkill, focus)
   }
 }

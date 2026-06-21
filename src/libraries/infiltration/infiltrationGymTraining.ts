@@ -4,7 +4,7 @@ import {
   GYM_NAME,
   combatGymExpPerSecond,
   getCombatGymSkillLevel,
-  getLowestCombatGymSkill,
+  getSoonestLevelCombatGymSkill,
   startGymWorkout,
   type CombatGymSkill,
 } from "../gymWorkout.js"
@@ -15,7 +15,7 @@ import {
 
 /** Gym-only training lines for the infiltration DOM overlay. */
 export function formatGymTrainingDomLines(ns: NS, skill?: CombatGymSkill): string[] {
-  const gymSkill = skill ?? getLowestCombatGymSkill(ns)
+  const gymSkill = skill ?? getSoonestLevelCombatGymSkill(ns)
   const rate = combatGymExpPerSecond(ns, gymSkill, ns.singularity.isFocused()) ?? 0
   return [
     "--- Training ---",

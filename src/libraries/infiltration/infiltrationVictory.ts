@@ -8,7 +8,9 @@ import {
 import {
   isInfiltrationDebugMode,
   isInfiltrationMoneyMode,
-  shouldSellAndDonateForRep,
+  getInfiltrationVictoryRewardPaths,
+  repFromInfiltrationSellCash,
+  type InfiltrationRewardGoal,
 } from "./infiltrationTargets.js"
 import { getInfiltrationRewardGoal } from "./infiltrationFactionGoals.js"
 import { waitForCityNavigationReady } from "./infiltrationNavigation.js"
@@ -64,6 +66,134 @@ interface VictoryRewardSnapshot {
 }
 
 type VictorySubmitAction = "sell" | "trade"
+
+type VictoryRepIntent = "none" | "trade" | "donate"
+
+interface VictoryRewardPlan {
+  rewardGoal: InfiltrationRewardGoal
+  grindFaction: FactionName | null
+  tradeFaction: FactionName | null
+  repIntent: VictoryRepIntent
+  reason: string
+}
+
+function describeVictorySellReason(ns: NS, rewardGoal: InfiltrationRewardGoal): string {
+  if (isInfiltrationMoneyMode(ns)) return "money mode script arg"
+  if (rewardGoal === "reputation") return "no faction rep grind target"
+  const moneyTier = getInfiltrationMoneyTier(
+    ns,
+    filterWorkableFactions(ns, getInfiltrationPurchaseFactions(ns))
+  )
+  if (moneyTier === "pre-favor-aug") return "saving for pre-favor augment"
+  if (moneyTier === "post-favor-aug") return "saving for post-favor augment"
+  if (moneyTier === "neuroflux") return "saving for NeuroFlux Governor"
+  return "no rep grind target"
+}
+
+function resolveVictoryRewardPlan(
+  ns: NS,
+  expected: VictoryScreenRewards
+): VictoryRewardPlan {
+  const rewardGoal = getInfiltrationRewardGoal(ns)
+  const grindFaction =
+    rewardGoal === "reputation" && !VICTORY_TEST_CYCLE_FACTIONS
+      ? getPreferredFactionForInfiltrationRep(ns)
+      : null
+
+  if (VICTORY_TEST_CYCLE_FACTIONS) {
+    const testFaction = getVictoryTestCycleFaction(ns)
+    return {
+      rewardGoal,
+      grindFaction,
+      tradeFaction: testFaction,
+      repIntent: testFaction != null ? "trade" : "none",
+      reason: "victory test cycle",
+    }
+  }
+
+  if (
+    rewardGoal === "reputation" &&
+    grindFaction != null &&
+    expected.sellCash != null &&
+    expected.tradeRep != null
+  ) {
+    const paths = getInfiltrationVictoryRewardPaths(
+      ns,
+      expected.sellCash,
+      expected.tradeRep,
+      rewardGoal,
+      grindFaction
+    )
+    if (paths.chosenPath === "donate") {
+      return {
+        rewardGoal,
+        grindFaction,
+        tradeFaction: null,
+        repIntent: "donate",
+        reason:
+          `rep via donate to ${grindFaction} (${paths.donateRep} rep from cash vs ${expected.tradeRep} trade rep)`,
+      }
+    }
+    return {
+      rewardGoal,
+      grindFaction,
+      tradeFaction: grindFaction,
+      repIntent: "trade",
+      reason: `rep via trade for ${grindFaction}`,
+    }
+  }
+
+  if (rewardGoal === "reputation" && grindFaction != null) {
+    return {
+      rewardGoal,
+      grindFaction,
+      tradeFaction: grindFaction,
+      repIntent: "trade",
+      reason: `rep via trade for ${grindFaction}`,
+    }
+  }
+
+  return {
+    rewardGoal,
+    grindFaction,
+    tradeFaction: null,
+    repIntent: "none",
+    reason: describeVictorySellReason(ns, rewardGoal),
+  }
+}
+
+function logVictoryRewardPlan(ns: NS, plan: VictoryRewardPlan, expected: VictoryScreenRewards): void {
+  const screen =
+    expected.sellCash != null || expected.tradeRep != null
+      ? `screen sell=${expected.sellCash ?? "?"} trade=${expected.tradeRep ?? "?"}`
+      : "screen rewards unreadable"
+  const summary =
+    plan.repIntent === "trade"
+      ? `Trade for ${plan.tradeFaction} rep`
+      : plan.repIntent === "donate"
+        ? `Sell then donate to ${plan.grindFaction} for rep`
+        : "Sell for money"
+  ns.print(`Victory reward plan: ${summary} (${plan.reason}; ${screen})`)
+}
+
+function logDonationRepAudit(
+  ns: NS,
+  faction: FactionName,
+  donated: number,
+  repGain: number,
+  expectedRep: number | null
+): void {
+  if (expectedRep == null || expectedRep <= 0) return
+  if (!shouldLogVictoryRewardShortfall(repGain, expectedRep)) return
+
+  console.log(
+    "[infiltration victory] donation rep shortfall:" +
+      ` faction ${faction},` +
+      ` donated ${donated},` +
+      ` expected >= ${expectedRep} rep,` +
+      ` gained ${repGain} (${formatVictoryDeltaPercent(repGain, expectedRep)})`
+  )
+}
 
 function getReactFiber(node: Element): ReactFiberLike | null {
   for (const key of Object.keys(node)) {
@@ -672,29 +802,19 @@ export async function collectInfiltrationVictoryReward(
     return { ok: false, detail: "not on victory screen" }
   }
 
-  const rewardGoal = getInfiltrationRewardGoal(ns)
-  const grindFaction =
-    rewardGoal === "reputation" && !VICTORY_TEST_CYCLE_FACTIONS
-      ? getPreferredFactionForInfiltrationRep(ns)
-      : null
   const expected = readVictoryScreenRewards()
-  const sellAndDonate =
-    grindFaction != null &&
-    expected.sellCash != null &&
-    expected.tradeRep != null &&
-    shouldSellAndDonateForRep(ns, expected.sellCash, expected.tradeRep, grindFaction)
-  const faction = VICTORY_TEST_CYCLE_FACTIONS
-    ? getVictoryTestCycleFaction(ns)
-    : sellAndDonate
-      ? null
-      : rewardGoal === "reputation"
-        ? grindFaction
-        : null
+  const plan = resolveVictoryRewardPlan(ns, expected)
+  const faction = plan.tradeFaction
+  const { grindFaction } = plan
+  const sellAndDonate = plan.repIntent === "donate"
+  logVictoryRewardPlan(ns, plan, expected)
+
   const before = snapshotPlayerRewards(ns, faction ?? grindFaction)
   const allFactionRepsBefore = snapshotAllFactionReps(ns)
-  const intendedAction: VictorySubmitAction = faction != null ? "trade" : "sell"
+  const intendedAction: VictorySubmitAction =
+    plan.repIntent === "trade" ? "trade" : "sell"
   const auditBase = {
-    intendedFaction: faction,
+    intendedFaction: plan.repIntent === "trade" ? faction : grindFaction,
     intendedAction,
     expected,
     before,
@@ -702,11 +822,9 @@ export async function collectInfiltrationVictoryReward(
   }
 
   logVictoryTestCycleFaction(faction, "selected")
-  ns.print(
-    VICTORY_TEST_CYCLE_FACTIONS
-      ? `Victory reward: TEST cycle -> ${faction ?? "none"}`
-      : "Victory reward: selecting faction"
-  )
+  if (VICTORY_TEST_CYCLE_FACTIONS) {
+    ns.print(`Victory reward: TEST cycle -> ${faction ?? "none"}`)
+  }
   await ns.sleep(VICTORY_REWARD_SELECT_DELAY_MS)
 
   if (faction) {
@@ -766,28 +884,8 @@ export async function collectInfiltrationVictoryReward(
     return traded
   }
 
-  if (isInfiltrationMoneyMode(ns)) {
-    ns.print("Victory reward: money mode; will sell for money")
-  } else if (sellAndDonate && grindFaction != null) {
-    ns.print(
-      `Victory reward: sell and donate to ${grindFaction} (more rep than trade at ${expected.tradeRep})`
-    )
-  } else {
-    const moneyTier = getInfiltrationMoneyTier(
-      ns,
-      filterWorkableFactions(ns, getInfiltrationPurchaseFactions(ns))
-    )
-    if (moneyTier != null) {
-      const label =
-        moneyTier === "pre-favor-aug"
-          ? "pre-favor augments"
-          : moneyTier === "post-favor-aug"
-            ? "post-favor augments"
-            : "NeuroFlux Governor"
-      ns.print(`Victory reward: saving for ${label}; will sell for money`)
-    } else {
-      ns.print("Victory reward: no faction needs reputation; will sell for money")
-    }
+  if (plan.repIntent === "none") {
+    ns.print(`Victory reward: ${plan.reason}; will sell for money`)
   }
 
   await ns.sleep(VICTORY_REWARD_CONFIRM_DELAY_MS)
@@ -802,19 +900,28 @@ export async function collectInfiltrationVictoryReward(
       dropdownAtSubmit,
       factionStateAtSubmit,
     })
-    if (result.ok && sellAndDonate && grindFaction != null && expected.sellCash != null) {
-      const donation = await donateInfiltrationProceeds(ns, grindFaction, expected.sellCash)
+    if (result.ok && sellAndDonate && grindFaction != null) {
+      const proceeds = ns.getPlayer().money - before.money
+      const expectedDonateRep =
+        expected.sellCash != null
+          ? repFromInfiltrationSellCash(ns, expected.sellCash)
+          : repFromInfiltrationSellCash(ns, proceeds)
+      const donation = await donateInfiltrationProceeds(ns, grindFaction, proceeds)
       if (donation.ok && donation.repGain != null) {
+        logDonationRepAudit(ns, grindFaction, donation.donated, donation.repGain, expectedDonateRep)
         return {
           ok: true,
           detail: `sold and donated ${ns.format.number(donation.donated)} to ${grindFaction} (+${ns.format.number(donation.repGain)} rep)`,
         }
       }
-      if (!donation.ok) {
-        return {
-          ok: true,
-          detail: `sold for money (donation to ${grindFaction} failed)`,
-        }
+      console.log(
+        "[infiltration victory] intended donate rep but donation failed:" +
+          ` faction ${grindFaction}, proceeds ${proceeds},` +
+          ` expected ~${expectedDonateRep ?? "?"} rep`
+      )
+      return {
+        ok: true,
+        detail: `sold for money (donation to ${grindFaction} failed)`,
       }
     }
     return result

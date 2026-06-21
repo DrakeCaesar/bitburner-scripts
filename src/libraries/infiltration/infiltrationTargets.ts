@@ -108,11 +108,21 @@ export function getInfiltrationRewardPerLevel(
   return reward / target.data.maxClearanceLevel
 }
 
-/** True when predicted favor meets the donation threshold (e.g. 150 favor). */
+export type InfiltrationVictoryRewardPath = "sell" | "trade" | "donate"
+
+export interface InfiltrationVictoryRewardPaths {
+  sellCash: number
+  tradeRep: number
+  donateRep: number
+  /** Donation unlocked by installed favor only (not banked favor gain). */
+  canDonate: boolean
+  effectiveRep: number
+  chosenPath: InfiltrationVictoryRewardPath
+}
+
+/** Installed favor meets donation threshold; banked favor gain does not count. */
 export function factionCanDonateForRep(ns: NS, faction: FactionName): boolean {
-  const favor =
-    ns.singularity.getFactionFavor(faction) + ns.singularity.getFactionFavorGain(faction)
-  return favor >= getTargetFavor(ns)
+  return ns.singularity.getFactionFavor(faction) >= getTargetFavor(ns)
 }
 
 export function repFromInfiltrationSellCash(ns: NS, sellCash: number): number {
@@ -123,34 +133,71 @@ export function repFromInfiltrationSellCash(ns: NS, sellCash: number): number {
   }
 }
 
-/** Rep gained from this infiltration when grinding faction rep (trade vs sell then donate). */
-export function getEffectiveInfiltrationRepReward(
+export function getInfiltrationVictoryRewardPaths(
   ns: NS,
-  target: InfiltrationTarget,
-  faction: FactionName
-): number {
-  const tradeRep = target.data.reward.tradeRep
-  if (!factionCanDonateForRep(ns, faction)) return tradeRep
-  return Math.max(tradeRep, repFromInfiltrationSellCash(ns, target.data.reward.sellCash))
+  sellCash: number,
+  tradeRep: number,
+  rewardGoal: InfiltrationRewardGoal,
+  faction: FactionName | null
+): InfiltrationVictoryRewardPaths {
+  const donateRep = repFromInfiltrationSellCash(ns, sellCash)
+  const canDonate = faction != null && factionCanDonateForRep(ns, faction)
+
+  if (rewardGoal !== "reputation" || faction == null) {
+    return {
+      sellCash,
+      tradeRep,
+      donateRep,
+      canDonate,
+      effectiveRep: tradeRep,
+      chosenPath: "sell",
+    }
+  }
+
+  if (canDonate && donateRep > tradeRep) {
+    return {
+      sellCash,
+      tradeRep,
+      donateRep,
+      canDonate,
+      effectiveRep: donateRep,
+      chosenPath: "donate",
+    }
+  }
+
+  return {
+    sellCash,
+    tradeRep,
+    donateRep,
+    canDonate,
+    effectiveRep: tradeRep,
+    chosenPath: "trade",
+  }
 }
 
-export function getEffectiveInfiltrationRepPerLevel(
+export function getInfiltrationVictoryRewardPathsForTarget(
   ns: NS,
   target: InfiltrationTarget,
-  faction: FactionName
-): number {
-  return getEffectiveInfiltrationRepReward(ns, target, faction) / target.data.maxClearanceLevel
+  rewardGoal: InfiltrationRewardGoal,
+  faction: FactionName | null
+): InfiltrationVictoryRewardPaths {
+  return getInfiltrationVictoryRewardPaths(
+    ns,
+    target.data.reward.sellCash,
+    target.data.reward.tradeRep,
+    rewardGoal,
+    faction
+  )
 }
 
-/** Sell cash and donate when that yields more rep than trading directly. */
 export function shouldSellAndDonateForRep(
   ns: NS,
   sellCash: number,
   tradeRep: number,
   faction: FactionName
 ): boolean {
-  if (!factionCanDonateForRep(ns, faction)) return false
-  return repFromInfiltrationSellCash(ns, sellCash) > tradeRep
+  const paths = getInfiltrationVictoryRewardPaths(ns, sellCash, tradeRep, "reputation", faction)
+  return paths.chosenPath === "donate"
 }
 
 /** Bitburner city travel cost (CONSTANTS.TravelCost). */
@@ -180,26 +227,27 @@ function pickBestInfiltrationTarget(
 ): InfiltrationTarget | null {
   if (targets.length === 0) return null
 
-  const useEffectiveRep =
-    goal === "reputation" &&
-    repGrindFaction != null &&
-    factionCanDonateForRep(ns, repGrindFaction)
+  const useEffectiveRep = goal === "reputation" && repGrindFaction != null
 
   let best = targets[0]
+  let bestPaths = useEffectiveRep
+    ? getInfiltrationVictoryRewardPathsForTarget(ns, best, goal, repGrindFaction)
+    : null
   let bestRate = useEffectiveRep
-    ? getEffectiveInfiltrationRepPerLevel(ns, best, repGrindFaction)
+    ? bestPaths!.effectiveRep / best.data.maxClearanceLevel
     : getInfiltrationRewardPerLevel(best, goal)
-  let bestTotal = useEffectiveRep
-    ? getEffectiveInfiltrationRepReward(ns, best, repGrindFaction)
-    : best.data.reward[goal === "money" ? "sellCash" : "tradeRep"]
+  let bestTotal = useEffectiveRep ? bestPaths!.effectiveRep : best.data.reward[goal === "money" ? "sellCash" : "tradeRep"]
 
   for (let i = 1; i < targets.length; i++) {
     const target = targets[i]
+    const paths = useEffectiveRep
+      ? getInfiltrationVictoryRewardPathsForTarget(ns, target, goal, repGrindFaction)
+      : null
     const rate = useEffectiveRep
-      ? getEffectiveInfiltrationRepPerLevel(ns, target, repGrindFaction)
+      ? paths!.effectiveRep / target.data.maxClearanceLevel
       : getInfiltrationRewardPerLevel(target, goal)
     const totalReward = useEffectiveRep
-      ? getEffectiveInfiltrationRepReward(ns, target, repGrindFaction)
+      ? paths!.effectiveRep
       : target.data.reward[goal === "money" ? "sellCash" : "tradeRep"]
 
     if (
@@ -208,6 +256,7 @@ function pickBestInfiltrationTarget(
       (rate === bestRate && totalReward === bestTotal && target.difficulty > best.difficulty)
     ) {
       best = target
+      bestPaths = paths
       bestRate = rate
       bestTotal = totalReward
     }

@@ -8,7 +8,7 @@ import {
 import {
   GYM_NAME,
   combatGymExpPerSecond,
-  getLowestCombatGymSkill,
+  getSoonestLevelCombatGymSkill,
   type CombatGymSkill,
 } from "../gymWorkout.js"
 import {
@@ -20,7 +20,8 @@ import {
   pickBestCompanyField,
   VOLHAVEN_CITY,
 } from "../megacorpWork.js"
-import { areAllInfiltrationsDoable, getEffectiveInfiltrationRepReward } from "./infiltrationTargets.js"
+import { areAllInfiltrationsDoable, getInfiltrationVictoryRewardPathsForTarget, type InfiltrationVictoryRewardPaths } from "./infiltrationTargets.js"
+import { getTargetFavor } from "../factionWork.js"
 import type { InfiltrationRewardGoal, InfiltrationTarget } from "./infiltrationTargets.js"
 
 const MAX_CYCLE_SAMPLES = 5
@@ -41,6 +42,7 @@ export interface InfiltrationRunView {
   rewardGoal: InfiltrationRewardGoal
   faction: FactionName | null
   predictedReward: number
+  rewardPaths: InfiltrationVictoryRewardPaths | null
   repGoal: InfiltrationRepGoal | null
   moneyGoal: InfiltrationMoneyGoal | null
   roundCount: number
@@ -78,6 +80,7 @@ export class InfiltrationRunStatsTracker {
   private rewardGoal: InfiltrationRewardGoal = "money"
   private faction: FactionName | null = null
   private predictedReward = 0
+  private rewardPaths: InfiltrationVictoryRewardPaths | null = null
 
   beginCycle(
     ns: NS,
@@ -95,12 +98,9 @@ export class InfiltrationRunStatsTracker {
     this.location = target.name
     this.rewardGoal = goal
     this.faction = faction
+    this.rewardPaths = getInfiltrationVictoryRewardPathsForTarget(ns, target, goal, faction)
     this.predictedReward =
-      goal === "money"
-        ? target.data.reward.sellCash
-        : faction != null
-          ? getEffectiveInfiltrationRepReward(ns, target, faction)
-          : target.data.reward.tradeRep
+      goal === "money" ? this.rewardPaths.sellCash : this.rewardPaths.effectiveRep
     this.cycleStartMs = Date.now()
   }
 
@@ -174,6 +174,7 @@ export class InfiltrationRunStatsTracker {
       rewardGoal: this.rewardGoal,
       faction: this.faction,
       predictedReward: this.predictedReward,
+      rewardPaths: this.rewardPaths,
       repGoal,
       moneyGoal,
       roundCount,
@@ -234,7 +235,7 @@ function describeMegacorpJobName(ns: NS, company: CompanyName): string {
 /** Combat training pick for the infiltration DOM overlay. */
 export function formatCombatSkillTrainingDomLines(
   ns: NS,
-  skill: CombatGymSkill = getLowestCombatGymSkill(ns)
+  skill: CombatGymSkill = getSoonestLevelCombatGymSkill(ns)
 ): string[] {
   const lines: string[] = ["--- Training ---"]
   const work = ns.singularity.getCurrentWork()
@@ -281,6 +282,44 @@ export function formatCombatSkillTrainingDomLines(
   return lines
 }
 
+function formatVictoryRewardPathLabel(path: InfiltrationVictoryRewardPaths["chosenPath"]): string {
+  switch (path) {
+    case "sell":
+      return "sell (money)"
+    case "trade":
+      return "trade (rep)"
+    case "donate":
+      return "sell + donate (rep)"
+  }
+}
+
+function formatInfiltrationVictoryRewardPathLines(
+  ns: NS,
+  paths: InfiltrationVictoryRewardPaths,
+  faction: FactionName | null
+): string[] {
+  const lines = [
+    "--- Rewards ---",
+    `Sell: ${ns.format.number(paths.sellCash)}`,
+    `Trade: ${ns.format.number(paths.tradeRep)} rep`,
+  ]
+
+  if (faction == null) {
+    lines.push(`Donate: ${ns.format.number(paths.donateRep)} rep (no faction)`)
+  } else if (!paths.canDonate) {
+    const favor = ns.singularity.getFactionFavor(faction)
+    const favorRequired = getTargetFavor(ns)
+    lines.push(
+      `Donate: ${ns.format.number(paths.donateRep)} rep (locked, favor ${favor}/${favorRequired})`
+    )
+  } else {
+    lines.push(`Donate: ${ns.format.number(paths.donateRep)} rep`)
+  }
+
+  lines.push(`Pick: ${formatVictoryRewardPathLabel(paths.chosenPath)}`)
+  return lines
+}
+
 export function formatInfiltrationRunViewLines(ns: NS, view: InfiltrationRunView | null): string[] {
   if (!view || !view.location) {
     return ["Run: waiting for target..."]
@@ -290,6 +329,11 @@ export function formatInfiltrationRunViewLines(ns: NS, view: InfiltrationRunView
 
   lines.push(`City: ${view.city}`)
   lines.push(`Location: ${view.location}`)
+
+  if (view.rewardPaths) {
+    lines.push(...formatInfiltrationVictoryRewardPathLines(ns, view.rewardPaths, view.faction))
+    lines.push("")
+  }
 
   if (view.rewardGoal === "money") {
     if (view.moneyGoal) {
@@ -313,7 +357,7 @@ export function formatInfiltrationRunViewLines(ns: NS, view: InfiltrationRunView
     if (grind?.faction === view.faction) {
       lines.push(`Target: ${grind.augmentName} (${formatInfiltrationTierLabel(grind.tier)})`)
     }
-    lines.push(`Predicted: ${ns.format.number(view.predictedReward)} rep`)
+    lines.push(`Predicted: ${ns.format.number(view.predictedReward)} rep (${formatVictoryRewardPathLabel(view.rewardPaths?.chosenPath ?? "trade")})`)
   } else {
     lines.push("Grinding: money (no faction target)")
     lines.push(`Predicted: ${ns.format.number(view.predictedReward)}`)

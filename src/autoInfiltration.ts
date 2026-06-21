@@ -5,7 +5,7 @@ import {
 } from "./libraries/combatSkillTraining.js"
 import { getPreferredFactionForInfiltrationRep } from "./libraries/factionWork.js"
 import {
-  getLowestCombatGymSkill,
+  getSoonestLevelCombatGymSkill,
   type CombatGymSkill,
 } from "./libraries/gymWorkout.js"
 import { syncTrustedKeyInjection } from "./libraries/infiltration/infiltrationKeyInput.js"
@@ -28,13 +28,11 @@ import {
   canAffordInfiltrationTravel,
   getBestInfiltrationTarget,
   getBestInfiltrationTargetForPlayer,
-  getEffectiveInfiltrationRepPerLevel,
-  getEffectiveInfiltrationRepReward,
   getInfiltrationApi,
+  getInfiltrationVictoryRewardPathsForTarget,
   getInfiltrationRewardPerLevel,
   INFILTRATION_TRAVEL_COST,
   isInfiltrationMoneyMode,
-  shouldSellAndDonateForRep,
 } from "./libraries/infiltration/infiltrationTargets.js"
 import { getInfiltrationRewardGoal } from "./libraries/infiltration/infiltrationFactionGoals.js"
 import {
@@ -63,10 +61,10 @@ function killConflictingScripts(ns: NS): void {
 }
 
 function maybeSwitchGymTraining(ns: NS, trainingStat: CombatGymSkill): CombatGymSkill {
-  const lowest = getLowestCombatGymSkill(ns)
-  if (lowest === trainingStat) return trainingStat
-  ns.print(`Switching combat training from ${trainingStat} to ${lowest}`)
-  return lowest
+  const next = getSoonestLevelCombatGymSkill(ns)
+  if (next === trainingStat) return trainingStat
+  ns.print(`Switching combat training from ${trainingStat} to ${next} (soonest level-up)`)
+  return next
 }
 
 function syncTrainingDom(ns: NS, solver: InfiltrationSolverState, trainingStat: CombatGymSkill): void {
@@ -100,11 +98,12 @@ export async function main(ns: NS): Promise<void> {
   const runStats = new InfiltrationRunStatsTracker()
   solver.runStats = runStats
   solver.formatRunViewLines = (viewNs) => formatInfiltrationRunViewLines(viewNs, runStats.getView(viewNs))
-  let trainingStat = getLowestCombatGymSkill(ns)
+  let trainingStat = getSoonestLevelCombatGymSkill(ns)
   syncTrainingDom(ns, solver, trainingStat)
 
   try {
     while (true) {
+      trainingStat = maybeSwitchGymTraining(ns, trainingStat)
       syncTrainingDom(ns, solver, trainingStat)
 
       const rewardGoal = getInfiltrationRewardGoal(ns)
@@ -142,23 +141,14 @@ export async function main(ns: NS): Promise<void> {
         )
       }
 
+      const rewardPaths = getInfiltrationVictoryRewardPathsForTarget(ns, target, rewardGoal, grindFaction)
       const rewardPerLevel =
-        rewardGoal === "reputation" && grindFaction != null
-          ? getEffectiveInfiltrationRepPerLevel(ns, target, grindFaction)
+        rewardGoal === "reputation"
+          ? rewardPaths.effectiveRep / target.data.maxClearanceLevel
           : getInfiltrationRewardPerLevel(target, rewardGoal)
       const rewardLabel =
-        rewardGoal === "reputation" && grindFaction != null
-          ? (() => {
-              const effectiveRep = getEffectiveInfiltrationRepReward(ns, target, grindFaction)
-              const viaDonation = shouldSellAndDonateForRep(
-                ns,
-                target.data.reward.sellCash,
-                target.data.reward.tradeRep,
-                grindFaction
-              )
-              const method = viaDonation ? "donate" : "trade"
-              return `rep ${ns.format.number(effectiveRep)} (${method}, ${ns.format.number(rewardPerLevel)}/lvl, ${target.data.maxClearanceLevel} lvls)`
-            })()
+        rewardGoal === "reputation"
+          ? `rep ${ns.format.number(rewardPaths.effectiveRep)} (${rewardPaths.chosenPath}, ${ns.format.number(rewardPerLevel)}/lvl, ${target.data.maxClearanceLevel} lvls)`
           : `cash ${ns.format.number(target.data.reward.sellCash)} (${ns.format.number(rewardPerLevel)}/lvl, ${target.data.maxClearanceLevel} lvls)`
       ns.print(
         `Target: ${target.name} (${target.city}, ${target.tier}, rating ${target.rating.toFixed(0)}, ${rewardLabel})`

@@ -39,17 +39,23 @@ function getCombatSkillLevel(ns: NS, gymType: GymType): number {
   return ns.getPlayer().skills[SKILL_BY_GYM[gymType as CombatGymSkill]]
 }
 
-function estimateMsToNextLevel(ns: NS, gymType: GymType): number | null {
+/** Estimated ms until the next level at the infiltration gym. */
+export function estimateCombatGymMsToNextLevel(
+  ns: NS,
+  gymType: CombatGymSkill,
+  focus = ns.singularity.isFocused()
+): number | null {
   try {
     const player = ns.getPlayer()
-    const skill = SKILL_BY_GYM[gymType as CombatGymSkill]
+    const skill = SKILL_BY_GYM[gymType]
     const level = player.skills[skill]
     const mult = player.mults[skill]
     const expNeeded = ns.formulas.skills.calculateExp(level + 1, mult) - player.exp[skill]
     if (expNeeded <= 0) return 0
 
     const gains = ns.formulas.work.gymGains(player, gymType, GYM_NAME)
-    const expPerCycle = gains[EXP_GAIN_BY_GYM[gymType as CombatGymSkill]]
+    const expPerCycle =
+      gains[EXP_GAIN_BY_GYM[gymType]] * focusMultiplier(focus)
     if (expPerCycle <= 0) return null
 
     return (expNeeded / expPerCycle) * MILLI_PER_CYCLE
@@ -79,6 +85,25 @@ export function getLowestCombatGymSkill(ns: NS): CombatGymSkill {
     }
     return min
   }).name
+}
+
+/** Combat stat that will level up soonest at the gym; str < def < dex < agi on ties. */
+export function getSoonestLevelCombatGymSkill(
+  ns: NS,
+  focus = ns.singularity.isFocused()
+): CombatGymSkill {
+  let best: CombatGymSkill = COMBAT_GYM_SKILLS[0]
+  let bestMs = Infinity
+
+  for (const gymType of COMBAT_GYM_SKILLS) {
+    const ms = estimateCombatGymMsToNextLevel(ns, gymType, focus) ?? Infinity
+    if (ms < bestMs || (ms === bestMs && ORDER_PREFERENCE[gymType] < ORDER_PREFERENCE[best])) {
+      best = gymType
+      bestMs = ms
+    }
+  }
+
+  return bestMs === Infinity ? getLowestCombatGymSkill(ns) : best
 }
 
 function focusMultiplier(focus: boolean): number {
@@ -130,7 +155,7 @@ export async function workoutUntilLevelUp(
   const startLevel = getCombatSkillLevel(ns, gymType)
   ns.singularity.gymWorkout(GYM_NAME, gymType, focus)
 
-  const estimate = estimateMsToNextLevel(ns, gymType)
+  const estimate = estimateCombatGymMsToNextLevel(ns, gymType as CombatGymSkill, focus)
   if (estimate != null && estimate > 0) {
     await ns.sleep(Math.max(0, estimate - MILLI_PER_CYCLE))
   }
