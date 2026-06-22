@@ -12,7 +12,7 @@ export type CombatGymSkill = "str" | "def" | "dex" | "agi"
 type CombatSkill = "strength" | "defense" | "dexterity" | "agility"
 export type CombatExpField = "strExp" | "defExp" | "dexExp" | "agiExp"
 
-const SKILL_BY_GYM: Record<CombatGymSkill, CombatSkill> = {
+export const SKILL_BY_GYM: Record<CombatGymSkill, CombatSkill> = {
   str: "strength",
   def: "defense",
   dex: "dexterity",
@@ -27,6 +27,24 @@ export const EXP_GAIN_BY_GYM: Record<CombatGymSkill, CombatExpField> = {
 }
 
 export const COMBAT_GYM_SKILLS: readonly CombatGymSkill[] = ["str", "def", "dex", "agi"]
+
+type BitNodeLevelMultiplierKey = "StrengthLevelMultiplier" | "DefenseLevelMultiplier" | "DexterityLevelMultiplier" | "AgilityLevelMultiplier"
+
+const BN_LEVEL_MULT_KEY: Record<CombatGymSkill, BitNodeLevelMultiplierKey> = {
+  str: "StrengthLevelMultiplier",
+  def: "DefenseLevelMultiplier",
+  dex: "DexterityLevelMultiplier",
+  agi: "AgilityLevelMultiplier",
+}
+
+/** Effective level multiplier for calculateSkill/calculateExp — matches the
+ *  game's Person.ts and StatsProgressBar: player.mults[skill] * currentNodeMults */
+export function getCombatSkillLevelMult(ns: NS, gymType: CombatGymSkill): number {
+  const player = ns.getPlayer()
+  const skillName = SKILL_BY_GYM[gymType]
+  const bnMults = ns.getBitNodeMultipliers()
+  return player.mults[skillName] * bnMults[BN_LEVEL_MULT_KEY[gymType]]
+}
 
 const ORDER_PREFERENCE: Record<CombatGymSkill, number> = {
   str: 0,
@@ -48,8 +66,8 @@ export function estimateCombatGymMsToNextLevel(
   try {
     const player = ns.getPlayer()
     const skill = SKILL_BY_GYM[gymType]
-    const level = player.skills[skill]
-    const mult = player.mults[skill]
+    const mult = getCombatSkillLevelMult(ns, gymType)
+    const level = ns.formulas.skills.calculateSkill(player.exp[skill], mult)
     const expNeeded = ns.formulas.skills.calculateExp(level + 1, mult) - player.exp[skill]
     if (expNeeded <= 0) return 0
 

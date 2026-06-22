@@ -3,9 +3,15 @@ import {
   GYM_CITY,
   getSoonestLevelCombatGymSkill,
   workoutUntilLevelUp,
+  COMBAT_GYM_SKILLS,
+  estimateCombatGymMsToNextLevel,
+  combatGymExpPerSecond,
+  type CombatGymSkill,
 } from "./libraries/gymWorkout.js"
 import { travelToInfiltrationCity } from "./libraries/infiltration/infiltrationTargets.js"
 import { canAffordInfiltrationTravel } from "./libraries/infiltration/infiltrationTargets.js"
+import { openTailLog } from "./libraries/scriptLogUiLayout.js"
+import { renderGymDashboard, type GymDashboardData } from "./libraries/gymDashboard.js"
 
 const SKILL_GAP_TRAVEL_THRESHOLD = 100
 const MIN_TRAVEL_MONEY = 100_000_000
@@ -18,6 +24,9 @@ export async function main(ns: NS): Promise<void> {
       ns.kill(proc.pid)
     }
   }
+
+  ns.disableLog("ALL")
+  openTailLog(ns, "Gym Workout")
 
   let lastTravelAt = 0
 
@@ -34,25 +43,106 @@ export async function main(ns: NS): Promise<void> {
     ]
     const skillGap = Math.max(...skillLevels) - Math.min(...skillLevels)
     const now = Date.now()
-    if (
+    const needsTravel =
       skillGap >= SKILL_GAP_TRAVEL_THRESHOLD &&
       player.city !== GYM_CITY &&
       player.money >= MIN_TRAVEL_MONEY &&
       now - lastTravelAt >= TRAVEL_COOLDOWN_MS
-    ) {
+
+    if (needsTravel) {
       ns.singularity.travelToCity(GYM_CITY)
       lastTravelAt = now
       await ns.sleep(500)
     }
 
-    if (ns.getPlayer().city !== GYM_CITY) {
+    const isTraveling = player.city !== GYM_CITY
+    if (isTraveling) {
       if (canAffordInfiltrationTravel(ns)) {
         await travelToInfiltrationCity(ns, GYM_CITY)
       } else {
+        // Build dashboard before sleeping so the UI shows the travel state
+        const estimatesMs: Record<string, number | null> = {}
+        const expPerSecond: Record<string, number | null> = {}
+        for (const skill of COMBAT_GYM_SKILLS) {
+          estimatesMs[skill] = estimateCombatGymMsToNextLevel(ns, skill, focus)
+          expPerSecond[skill] = combatGymExpPerSecond(ns, skill, focus)
+        }
+        const d: GymDashboardData = {
+          levels: {
+            str: player.skills.strength,
+            def: player.skills.defense,
+            dex: player.skills.dexterity,
+            agi: player.skills.agility,
+          },
+          exp: {
+            str: player.exp.strength,
+            def: player.exp.defense,
+            dex: player.exp.dexterity,
+            agi: player.exp.agility,
+          },
+          estimatesMs,
+          expPerSecond,
+          training: trainingSkill,
+          selectionMethod: "soonest",
+          tiedSkills: [],
+          city: player.city,
+          focused: focus,
+          skillGap,
+          traveling: true,
+        }
+        await renderGymDashboard(ns, d)
         await ns.sleep(2000)
         continue
       }
     }
+
+    // Compute dashboard data before training
+    const estimatesMs: Record<string, number | null> = {}
+    const expPerSecond: Record<string, number | null> = {}
+    let bestMs = Infinity
+    const tiedSkills: CombatGymSkill[] = []
+
+    for (const skill of COMBAT_GYM_SKILLS) {
+      const ms = estimateCombatGymMsToNextLevel(ns, skill, focus)
+      estimatesMs[skill] = ms
+      expPerSecond[skill] = combatGymExpPerSecond(ns, skill, focus)
+
+      if (ms != null && ms < bestMs) {
+        bestMs = ms
+        tiedSkills.length = 0
+        tiedSkills.push(skill)
+      } else if (ms != null && ms === bestMs) {
+        tiedSkills.push(skill)
+      }
+    }
+
+    // If all estimates were null, log that we're using the fallback
+    const allNull = estimatesMs.str == null && estimatesMs.def == null && estimatesMs.dex == null && estimatesMs.agi == null
+    const prevPlayer = ns.getPlayer()
+    const d: GymDashboardData = {
+      levels: {
+        str: prevPlayer.skills.strength,
+        def: prevPlayer.skills.defense,
+        dex: prevPlayer.skills.dexterity,
+        agi: prevPlayer.skills.agility,
+      },
+      exp: {
+        str: prevPlayer.exp.strength,
+        def: prevPlayer.exp.defense,
+        dex: prevPlayer.exp.dexterity,
+        agi: prevPlayer.exp.agility,
+      },
+      estimatesMs,
+      expPerSecond,
+      training: trainingSkill,
+      selectionMethod: allNull ? "lowest" : "soonest",
+      tiedSkills,
+      city: prevPlayer.city,
+      focused: focus,
+      skillGap,
+      traveling: false,
+    }
+    await renderGymDashboard(ns, d)
 
     await workoutUntilLevelUp(ns, trainingSkill, focus)
   }
