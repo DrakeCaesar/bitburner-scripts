@@ -577,7 +577,7 @@ export function createInfiltrationDomWindow(
   showMinigameInfo = false
 ): InfiltrationDomWindow {
   const container = createStandardContainer(primaryColor)
-  container.style.maxHeight = showMinigameInfo ? "480px" : "360px"
+  container.style.maxHeight = showMinigameInfo ? "520px" : "460px"
   container.textContent = formatStateText(readInfiltrationDomState(), { showMinigameInfo })
 
   const window = new FloatingWindow({
@@ -587,7 +587,7 @@ export function createInfiltrationDomWindow(
     x: position?.x ?? 1050,
     y: position?.y ?? 50,
     width: 420,
-    height: showMinigameInfo ? 580 : 360,
+    height: showMinigameInfo ? 620 : 520,
   })
 
   if (isCollapsed) {
