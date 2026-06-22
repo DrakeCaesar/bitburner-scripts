@@ -57,7 +57,7 @@ function getCombatSkillLevel(ns: NS, gymType: GymType): number {
   return ns.getPlayer().skills[SKILL_BY_GYM[gymType as CombatGymSkill]]
 }
 
-/** Estimated ms until the next level at the infiltration gym. */
+/** Estimated ms for a full 0%→100% level at the gym (ignores current progress). */
 export function estimateCombatGymMsToNextLevel(
   ns: NS,
   gymType: CombatGymSkill,
@@ -68,15 +68,15 @@ export function estimateCombatGymMsToNextLevel(
     const skill = SKILL_BY_GYM[gymType]
     const mult = getCombatSkillLevelMult(ns, gymType)
     const level = ns.formulas.skills.calculateSkill(player.exp[skill], mult)
-    const expNeeded = ns.formulas.skills.calculateExp(level + 1, mult) - player.exp[skill]
-    if (expNeeded <= 0) return 0
+    const totalExp = ns.formulas.skills.calculateExp(level + 1, mult) - ns.formulas.skills.calculateExp(level, mult)
+    if (totalExp <= 0) return 0
 
     const gains = ns.formulas.work.gymGains(player, gymType, GYM_NAME)
     const expPerCycle =
       gains[EXP_GAIN_BY_GYM[gymType]] * focusMultiplier(focus)
     if (expPerCycle <= 0) return null
 
-    return (expNeeded / expPerCycle) * MILLI_PER_CYCLE
+    return (totalExp / expPerCycle) * MILLI_PER_CYCLE
   } catch {
     return null
   }
@@ -173,7 +173,25 @@ export async function workoutUntilLevelUp(
   const startLevel = getCombatSkillLevel(ns, gymType)
   ns.singularity.gymWorkout(GYM_NAME, gymType, focus)
 
-  const estimate = estimateCombatGymMsToNextLevel(ns, gymType as CombatGymSkill, focus)
+  // Estimate remaining time from current progress (not full-level time)
+  let estimate: number | null = null
+  try {
+    const player = ns.getPlayer()
+    const skill = SKILL_BY_GYM[gymType as CombatGymSkill]
+    const mult = getCombatSkillLevelMult(ns, gymType as CombatGymSkill)
+    const level = ns.formulas.skills.calculateSkill(player.exp[skill], mult)
+    const expRemaining = ns.formulas.skills.calculateExp(level + 1, mult) - player.exp[skill]
+    if (expRemaining > 0) {
+      const gains = ns.formulas.work.gymGains(player, gymType, GYM_NAME)
+      const expPerCycle = gains[EXP_GAIN_BY_GYM[gymType as CombatGymSkill]] * focusMultiplier(focus)
+      if (expPerCycle > 0) {
+        estimate = (expRemaining / expPerCycle) * MILLI_PER_CYCLE
+      }
+    }
+  } catch {
+    // use polling fallback
+  }
+
   if (estimate != null && estimate > 0) {
     await ns.sleep(Math.max(0, estimate - MILLI_PER_CYCLE))
   }
