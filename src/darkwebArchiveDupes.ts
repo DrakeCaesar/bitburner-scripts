@@ -1,14 +1,12 @@
 import { NS } from "@ns"
 import { col, createTailLog, openTailLog, W } from "./libraries/scriptLogUiLayout.js"
+import { isLoreFile } from "./darknetCrawl.js"
 
 const DARKWEB_ARCHIVE_DIR = "darkweb"
 const CONTENT_PREVIEW_LENGTH = 140
 
 /** Separate from darknet-registry.json — deduplicated journaling/social hint content. */
 export const DARKNET_TEXT_FILE = "darknet-lore.json"
-
-/** Groups whose filenames contain one of these substrings go in the first table. */
-const JOURNALING_FILE_KEYWORDS = ["dreams", "journal", "notes", "search_history", "the_truth", "thoughts"]
 
 const DUPE_TABLE_COLUMNS = [
   col("Content", "left", W.notesWide),
@@ -54,11 +52,6 @@ function truncateContent(content: string): string {
     return trimmed
   }
   return trimmed.slice(0, CONTENT_PREVIEW_LENGTH) + "..."
-}
-
-function isJournalingFile(fileName: string): boolean {
-  const lower = fileName.toLowerCase()
-  return JOURNALING_FILE_KEYWORDS.some((kw) => lower.includes(kw))
 }
 
 function dedupeBucket(ns: NS, bucketFiles: string[]): ContentGroup[] {
@@ -480,7 +473,7 @@ export async function main(ns: NS): Promise<void> {
   const journalingFiles: string[] = []
   const otherFiles: string[] = []
   for (const file of files) {
-    (isJournalingFile(fileBaseName(file)) ? journalingFiles : otherFiles).push(file)
+    (isLoreFile(fileBaseName(file)) ? journalingFiles : otherFiles).push(file)
   }
 
   const journalingGroups = dedupeBucket(ns, journalingFiles)

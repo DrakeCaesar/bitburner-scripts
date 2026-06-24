@@ -11,11 +11,15 @@ export const DARKWEB = "darkweb"
 
 // ---- file categorization (mirrored in darkwebArchiveDupes.ts via import) ----
 
-export const JOURNALING_FILE_KEYWORDS = ["dreams", "journal", "notes", "search_history", "the_truth", "thoughts"]
+/** Files whose basename contains one of these go to the lore port → darknet-lore.json. */
+export const LORE_FILE_KEYWORDS = ["dreams", "journal", "notes", "search_history", "the_truth", "thoughts"]
 
-export function isJournalingFile(fileName: string): boolean {
+/** Files whose basename contains one of these go to per-file archive. */
+export const PASSWORD_FILE_KEYWORDS = ["access", "admin", "credentials", "key", "login", "password", "root", "secrets"]
+
+export function isLoreFile(fileName: string): boolean {
   const lower = fileName.toLowerCase()
-  return JOURNALING_FILE_KEYWORDS.some((kw) => lower.includes(kw))
+  return LORE_FILE_KEYWORDS.some((kw) => lower.includes(kw))
 }
 
 export function flatFileName(fileName: string): string {
@@ -1553,7 +1557,7 @@ function queueArchiveContent(
   reportPort: number | undefined,
   lorePort: number | undefined
 ): void {
-  if (isJournalingFile(flatFileName(fileName))) {
+  if (isLoreFile(flatFileName(fileName))) {
     // journaling files go to lore port → darknet-lore.json
     if (lorePort != null && lorePort > 0) {
       ns.writePort(lorePort, content)
