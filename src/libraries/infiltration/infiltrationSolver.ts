@@ -59,9 +59,9 @@ export interface InfiltrationSolverOptions {
   showMinigameInfo?: boolean
   /** When false, do not send keys; wait for minigames to fail on their own. */
   solveMinigames?: boolean
-  collectVictoryReward: InfiltrationVictoryRewardFn
-  isVictoryScreen: InfiltrationVictoryScreenFn
-  formatTrainingLines: InfiltrationTrainingLinesFn
+  collectVictoryReward?: InfiltrationVictoryRewardFn
+  isVictoryScreen?: InfiltrationVictoryScreenFn
+  formatTrainingLines?: InfiltrationTrainingLinesFn
   formatRunViewLines?: InfiltrationRunViewLinesFn
 }
 
@@ -76,9 +76,9 @@ export interface InfiltrationSolverState {
   trainingSkill: CombatGymSkill | null
   showMinigameInfo: boolean
   solveMinigames: boolean
-  collectVictoryReward: InfiltrationVictoryRewardFn
-  isVictoryScreen: InfiltrationVictoryScreenFn
-  formatTrainingLines: InfiltrationTrainingLinesFn
+  collectVictoryReward?: InfiltrationVictoryRewardFn
+  isVictoryScreen?: InfiltrationVictoryScreenFn
+  formatTrainingLines?: InfiltrationTrainingLinesFn
   formatRunViewLines?: InfiltrationRunViewLinesFn
 }
 
@@ -115,7 +115,7 @@ function buildViewExtras(
   const trainingSkill = solverState.trainingSkill
 
   return {
-    trainingViewLines: solverState.formatTrainingLines(ns, trainingSkill ?? undefined),
+    trainingViewLines: solverState.formatTrainingLines?.(ns, trainingSkill ?? undefined),
     runViewLines: solverState.formatRunViewLines?.(ns),
     showMinigameInfo,
     solverPreview:
@@ -251,7 +251,7 @@ export async function tickInfiltrationSolver(
     return "failed"
   }
 
-  if (state.isVictoryScreen()) {
+  if (state.isVictoryScreen?.()) {
     if (state.victoryHandled) {
       state.wasActive = false
       restoreDocumentKeyboard()
@@ -259,8 +259,8 @@ export async function tickInfiltrationSolver(
     }
 
     if (!state.victoryHandled) {
-      const reward = await state.collectVictoryReward(ns)
-      if (reward.ok) {
+      const reward = await state.collectVictoryReward?.(ns)
+      if (reward?.ok) {
         state.victoryHandled = true
         state.wasActive = false
         setInfiltrationRunOutcome("victory")
@@ -291,7 +291,7 @@ export async function tickInfiltrationSolver(
 
     if (
       state.inactiveStreak >= 4 &&
-      !state.isVictoryScreen() &&
+      !state.isVictoryScreen?.() &&
       peekInfiltrationRunOutcome() !== "victory"
     ) {
       if (dismissInfiltrationFailureModal()) {

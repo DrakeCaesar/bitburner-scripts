@@ -130,7 +130,7 @@ export async function runInfiltrationForTargetLight(
       continue
     }
 
-    if (infiltrationStarted && !isInfiltrationActive() && !solver.isVictoryScreen()) {
+    if (infiltrationStarted && !isInfiltrationActive() && !solver.isVictoryScreen?.()) {
       const sharedOutcome = peekInfiltrationRunOutcome()
       if (sharedOutcome === "cancelled") {
         if (dismissInfiltrationFailureModal()) {
