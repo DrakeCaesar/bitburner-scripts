@@ -52,7 +52,8 @@ export interface GymDashboardData {
 
 function formatMs(ms: number | null): string {
   if (ms == null) return "???  "
-  if (ms <= 0) return "now!"
+  if (ms <= 0) return "0ms "
+  if (ms < 1000) return `${ms.toFixed(0)}ms`
   const seconds = Math.round(ms / 1000)
   if (seconds < 60) return `${seconds}s  `
   const mins = Math.floor(seconds / 60)
@@ -63,7 +64,9 @@ function formatMs(ms: number | null): string {
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
-  return n.toFixed(0)
+  if (n >= 10) return n.toFixed(0)
+  if (n > 0 && n < 10) return n.toFixed(1)
+  return "0"
 }
 
 /** Matches the game's own calculateSkillProgress from skill.ts. */
