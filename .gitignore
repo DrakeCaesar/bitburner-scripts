@@ -35,6 +35,7 @@ build/Debug/
 /data/*
 !/data/.gitkeep
 !/data/darknet-text.json
+!/data/darknet-lore.json
 
 NetScriptDefinitions.d.ts
 
