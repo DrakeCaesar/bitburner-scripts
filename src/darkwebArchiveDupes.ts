@@ -80,7 +80,116 @@ function sortGroups(groups: ContentGroup[]): ContentGroup[] {
   return groups.sort((a, b) => a.preview.localeCompare(b.preview))
 }
 
-// --- password list extraction ---
+// --- host password vs hint reconciliation ---
+
+const HOST_PASSWORD_RE = /^Server:\s+(.+?)\s+Password:\s*"(\S+?)"/gm
+const HOST_HINT_RE = /^The password for (.+?) contains (\d+)\s+and\s+(\d+)/gm
+
+interface HostPasswordEntry {
+  password: string
+  files: string[]
+}
+
+interface HostHintEntry {
+  digits: string[]
+  files: string[]
+}
+
+interface HostReconciliationRow {
+  hostname: string
+  password: string
+  passwordDigits: string
+  expectedDigits: string
+  match: string
+  files: string
+}
+
+const HOST_CHECK_COLUMNS = [
+  col("Host", "left", W.host),
+  col("Password", "left", W.num),
+  col("In PW", "left", W.ok),
+  col("Hints", "left", W.ok),
+  col("OK?", "left", W.ok),
+  col("Sources", "left", W.notes),
+]
+
+function extractHostPasswords(groups: ContentGroup[]): Map<string, HostPasswordEntry> {
+  const map = new Map<string, HostPasswordEntry>()
+  for (const group of groups) {
+    HOST_PASSWORD_RE.lastIndex = 0
+    let match: RegExpExecArray | null
+    while ((match = HOST_PASSWORD_RE.exec(group.fullContent)) !== null) {
+      const hostname = match[1]!.trim()
+      const password = match[2]!
+      map.set(hostname, { password, files: group.files.slice().sort() })
+    }
+  }
+  return map
+}
+
+function extractHostHints(groups: ContentGroup[]): Map<string, HostHintEntry> {
+  const map = new Map<string, HostHintEntry>()
+  for (const group of groups) {
+    HOST_HINT_RE.lastIndex = 0
+    let match: RegExpExecArray | null
+    while ((match = HOST_HINT_RE.exec(group.fullContent)) !== null) {
+      const hostname = match[1]!.trim()
+      const digit1 = match[2]!
+      const digit2 = match[3]!
+      const existing = map.get(hostname)
+      if (existing) {
+        const allDigits = [...new Set([...existing.digits, digit1, digit2])].sort()
+        const allFiles = [...new Set([...existing.files, ...group.files])].sort()
+        map.set(hostname, { digits: allDigits, files: allFiles })
+      } else {
+        map.set(hostname, {
+          digits: [digit1, digit2].sort(),
+          files: group.files.slice().sort(),
+        })
+      }
+    }
+  }
+  return map
+}
+
+function renderHostCheckSection(
+  log: ReturnType<typeof createTailLog>,
+  groups: ContentGroup[]
+): void {
+  const passwords = extractHostPasswords(groups)
+  const hints = extractHostHints(groups)
+
+  const rows: HostReconciliationRow[] = []
+  for (const [hostname, pw] of passwords) {
+    const hint = hints.get(hostname)
+    if (!hint) continue
+    const pwDigits = [...new Set(pw.password.replace(/\D/g, "").split(""))].sort()
+    const missing = hint.digits.filter((d) => !pwDigits.includes(d))
+    const extra = pwDigits.filter((d) => !hint.digits.includes(d))
+    let match = "OK"
+    if (missing.length > 0 && extra.length > 0) match = "MISMATCH"
+    else if (missing.length > 0) match = "STALE?"
+    else if (extra.length > 0) match = "EXTRA"
+    rows.push({
+      hostname,
+      password: pw.password,
+      passwordDigits: pwDigits.join(""),
+      expectedDigits: hint.digits.join(""),
+      match,
+      files: [...new Set([...pw.files, ...hint.files])].sort().map(fileBaseName).join(", "),
+    })
+  }
+
+  if (rows.length === 0) return
+
+  rows.sort((a, b) => a.hostname.localeCompare(b.hostname))
+
+  log.section(`Host Password vs Hint Check (${rows.length} host(s))`)
+  log.table({
+    columns: HOST_CHECK_COLUMNS,
+    rows: rows.map((r) => [r.hostname, r.password, r.passwordDigits, r.expectedDigits, r.match, r.files]),
+  })
+}
 
 interface PasswordListSource {
   words: string[]
@@ -361,6 +470,8 @@ export async function main(ns: NS): Promise<void> {
   ]
 
   renderPasswordListSection(log, otherGroups)
+
+  renderHostCheckSection(log, otherGroups)
 
   if (shown.every((n) => n === 0)) {
     log.text("No content groups to display.")
