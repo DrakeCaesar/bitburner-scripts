@@ -46,6 +46,16 @@ export function getCombatSkillLevelMult(ns: NS, gymType: CombatGymSkill): number
   return player.mults[skillName] * bnMults[BN_LEVEL_MULT_KEY[gymType]]
 }
 
+/** Total exp for a full 0%→100% level at the current level (ignores progress). */
+export function getCombatSkillTotalLevelExp(ns: NS, gymType: CombatGymSkill): number {
+  const player = ns.getPlayer()
+  const skill = SKILL_BY_GYM[gymType]
+  const mult = getCombatSkillLevelMult(ns, gymType)
+  const level = ns.formulas.skills.calculateSkill(player.exp[skill], mult)
+  const totalExp = ns.formulas.skills.calculateExp(level + 1, mult) - ns.formulas.skills.calculateExp(level, mult)
+  return Math.max(0, totalExp)
+}
+
 const ORDER_PREFERENCE: Record<CombatGymSkill, number> = {
   str: 0,
   def: 1,

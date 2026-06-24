@@ -6,6 +6,8 @@ import {
   COMBAT_GYM_SKILLS,
   estimateCombatGymMsToNextLevel,
   combatGymExpPerSecond,
+  getCombatSkillLevelMult,
+  getCombatSkillTotalLevelExp,
   type CombatGymSkill,
 } from "./libraries/gymWorkout.js"
 import { travelToInfiltrationCity } from "./libraries/infiltration/infiltrationTargets.js"
@@ -63,9 +65,13 @@ export async function main(ns: NS): Promise<void> {
         // Build dashboard before sleeping so the UI shows the travel state
         const estimatesMs: Record<string, number | null> = {}
         const expPerSecond: Record<string, number | null> = {}
+        const totalLevelExp: Record<string, number> = {}
+        const levelMults: Record<string, number> = {}
         for (const skill of COMBAT_GYM_SKILLS) {
           estimatesMs[skill] = estimateCombatGymMsToNextLevel(ns, skill, focus)
           expPerSecond[skill] = combatGymExpPerSecond(ns, skill, focus)
+          totalLevelExp[skill] = getCombatSkillTotalLevelExp(ns, skill)
+          levelMults[skill] = getCombatSkillLevelMult(ns, skill)
         }
         const d: GymDashboardData = {
           levels: {
@@ -82,6 +88,8 @@ export async function main(ns: NS): Promise<void> {
           },
           estimatesMs,
           expPerSecond,
+          totalLevelExp,
+          levelMults,
           training: trainingSkill,
           selectionMethod: "soonest",
           tiedSkills: [],
@@ -99,6 +107,8 @@ export async function main(ns: NS): Promise<void> {
     // Compute dashboard data before training
     const estimatesMs: Record<string, number | null> = {}
     const expPerSecond: Record<string, number | null> = {}
+    const totalLevelExp: Record<string, number> = {}
+    const levelMults: Record<string, number> = {}
     let bestMs = Infinity
     const tiedSkills: CombatGymSkill[] = []
 
@@ -106,6 +116,8 @@ export async function main(ns: NS): Promise<void> {
       const ms = estimateCombatGymMsToNextLevel(ns, skill, focus)
       estimatesMs[skill] = ms
       expPerSecond[skill] = combatGymExpPerSecond(ns, skill, focus)
+      totalLevelExp[skill] = getCombatSkillTotalLevelExp(ns, skill)
+      levelMults[skill] = getCombatSkillLevelMult(ns, skill)
 
       if (ms != null && ms < bestMs) {
         bestMs = ms
@@ -134,6 +146,8 @@ export async function main(ns: NS): Promise<void> {
       },
       estimatesMs,
       expPerSecond,
+      totalLevelExp,
+      levelMults,
       training: trainingSkill,
       selectionMethod: allNull ? "lowest" : "soonest",
       tiedSkills,

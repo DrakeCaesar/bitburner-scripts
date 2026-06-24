@@ -30,6 +30,10 @@ export interface GymDashboardData {
   estimatesMs: Record<CombatGymSkill, number | null>
   /** Exp gain per second for each skill. */
   expPerSecond: Record<CombatGymSkill, number | null>
+  /** Total exp required for a full 0%→100% level on each skill. */
+  totalLevelExp: Record<CombatGymSkill, number>
+  /** Effective level multiplier (player.mults * bitnode mults) for each skill. */
+  levelMults: Record<CombatGymSkill, number>
   /** The skill currently being trained. */
   training: CombatGymSkill
   /** How training was selected: "soonest" = estimateCombatGymMsToNextLevel, "lowest" = fallback. */
@@ -56,10 +60,10 @@ function formatMs(ms: number | null): string {
   return `${mins}m${String(secs).padStart(2, "0")}`
 }
 
-function formatExp(exp: number | null): string {
-  if (exp == null) return "???"
-  if (exp >= 1000) return `${(exp / 1000).toFixed(1)}k`
-  return exp.toFixed(1)
+function formatNumber(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
+  return n.toFixed(0)
 }
 
 /** Matches the game's own calculateSkillProgress from skill.ts. */
@@ -105,15 +109,19 @@ export function buildGymDashboard(ns: NS, d: GymDashboardData): ReactTableConfig
     const level = d.levels[skill]
     const progress = estimateProgress(d.exp[skill], skill, ns)
     const estStr = formatMs(d.estimatesMs[skill])
-    const expStr = formatExp(d.expPerSecond[skill])
+    const expStr = formatNumber(d.expPerSecond[skill] ?? 0)
+    const totalExpStr = formatNumber(d.totalLevelExp[skill])
+    const multStr = d.levelMults[skill].toFixed(2)
     const progressBar = buildProgressBar(progress)
 
     const row: string[] = [
       SKILL_LABELS[skill],
       String(level),
       `${progressBar} ${progress.toFixed(0)}%`,
-      estStr,
+      multStr,
+      totalExpStr,
       `${expStr}/s`,
+      estStr,
     ]
     rows.push(row)
   }
@@ -123,10 +131,12 @@ export function buildGymDashboard(ns: NS, d: GymDashboardData): ReactTableConfig
   return {
     columns: [
       col("Skill", "left", W.stat + 2),
-      col("Level", "right", 6),
+      col("Lvl", "right", 4),
       col("Progress", "left", 16),
+      col("Mult", "right", 6),
+      col("XP/lvl", "right", 8),
+      col("Gain", "right", 8),
       col("ETA", "right", 7),
-      col("Gain", "right", 10),
     ],
     rows,
     selectedRowIndex: trainedIdx >= 0 ? trainedIdx : undefined,
