@@ -151,15 +151,33 @@ function readBackwardTask(
 ): Pick<InfiltrationDomState, "taskTitle" | "assignmentLines" | "assignmentMirrored"> {
   const taskTitle = taskRoot.querySelector("h4")?.textContent?.trim() ?? ""
 
+  // First pass: mirrored variant (scaleX(-1))
   for (const paragraph of Array.from(taskRoot.querySelectorAll("p"))) {
     if (!(paragraph instanceof HTMLElement)) continue
-    if (!paragraph.style.transform.includes("scaleX(-1)")) continue
-
     const text = paragraph.textContent?.trim() ?? ""
+    if (!text) continue
+
+    if (paragraph.style.transform.includes("scaleX(-1)")) {
+      return {
+        taskTitle,
+        assignmentLines: [text],
+        assignmentMirrored: true,
+      }
+    }
+  }
+
+  // Second pass: non-mirrored variant (transform: none, or absent)
+  for (const paragraph of Array.from(taskRoot.querySelectorAll("p"))) {
+    if (!(paragraph instanceof HTMLElement)) continue
+    const text = paragraph.textContent?.trim() ?? ""
+    if (!text) continue
+    // Skip empty placeholder paragraphs (e.g. <p>&nbsp;</p>).
+    if (text === "") continue
+
     return {
       taskTitle,
-      assignmentLines: text ? [text] : [],
-      assignmentMirrored: true,
+      assignmentLines: [text],
+      assignmentMirrored: false,
     }
   }
 
