@@ -5,7 +5,7 @@ const DARKWEB_ARCHIVE_DIR = "darkweb"
 const CONTENT_PREVIEW_LENGTH = 140
 
 /** Separate from darknet-registry.json — deduplicated journaling/social hint content. */
-export const DARKNET_TEXT_FILE = "darknet-text.json"
+export const DARKNET_TEXT_FILE = "darknet-lore.json"
 
 /** Groups whose filenames contain one of these substrings go in the first table. */
 const JOURNALING_FILE_KEYWORDS = ["dreams", "journal", "notes", "search_history", "the_truth", "thoughts"]
