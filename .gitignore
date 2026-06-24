@@ -34,6 +34,7 @@ build/Debug/
 # Game save data pulled from home (registry, darkweb archive, etc.)
 /data/*
 !/data/.gitkeep
+!/data/darknet-text.json
 
 NetScriptDefinitions.d.ts
 
