@@ -426,12 +426,27 @@ interface DarknetSocialFile {
   entries: string[]
 }
 
-function saveJournalingJson(ns: NS, groups: ContentGroup[]): void {
-  const entries = groups
+function saveJournalingJson(ns: NS, groups: ContentGroup[]): number {
+  const current = groups
     .map((g) => g.fullContent.trim())
     .filter(Boolean)
-    .sort()
-  ns.write(DARKNET_TEXT_FILE, JSON.stringify(entries, null, 2), "w")
+
+  // Merge with existing entries so we never lose previously discovered strings
+  const existing = loadTextFile(ns)
+  const merged = [...new Set([...existing, ...current])].sort()
+  ns.write(DARKNET_TEXT_FILE, JSON.stringify(merged, null, 2), "w")
+  return merged.length
+}
+
+function loadTextFile(ns: NS): string[] {
+  if (!ns.fileExists(DARKNET_TEXT_FILE, "home")) return []
+  try {
+    const parsed: unknown = JSON.parse(ns.read(DARKNET_TEXT_FILE))
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((item): item is string => typeof item === "string")
+  } catch {
+    return []
+  }
 }
 
 function renderGroupTable(
@@ -471,13 +486,16 @@ export async function main(ns: NS): Promise<void> {
   const journalingGroups = dedupeBucket(ns, journalingFiles)
   const otherGroups = dedupeBucket(ns, otherFiles)
 
-  // Persist deduplicated journaling/social hints as a separate ordered JSON file
+  let mergedTextCount = 0
   if (journalingGroups.length > 0) {
-    saveJournalingJson(ns, journalingGroups)
+    const added = saveJournalingJson(ns, journalingGroups)
+    mergedTextCount = added
+  } else {
+    mergedTextCount = loadTextFile(ns).length
   }
 
   const total = files.length
-  const socialCount = journalingGroups.length
+  const newTextEntries = journalingGroups.length
   const allGroups = [...journalingGroups, ...otherGroups]
   const uniqueContents = allGroups.length
   const allDuplicateGroups = allGroups.filter((g) => g.files.length > 1)
@@ -494,8 +512,8 @@ export async function main(ns: NS): Promise<void> {
   log.text(
     `home/${DARKWEB_ARCHIVE_DIR}/  |  ${total} files  |  ${uniqueContents} unique  |  ${duplicateGroupCount} dup groups  |  ${uniqueFiles} standalone  |  ${filesWithDuplicateContent} share content`
   )
-  if (socialCount > 0) {
-    log.text(`Saved ${socialCount} unique entries to ${DARKNET_TEXT_FILE}`)
+  if (mergedTextCount > 0) {
+    log.text(`Text entries: ${newTextEntries} new + ${mergedTextCount - newTextEntries} existing = ${mergedTextCount} total in ${DARKNET_TEXT_FILE}`)
   }
 
   const shown = [
