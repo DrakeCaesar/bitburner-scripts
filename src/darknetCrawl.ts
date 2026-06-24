@@ -6,11 +6,10 @@ export const DARKNET_CRAWL_SCRIPT = "darknetCrawl.js"
 export const DARKNET_REGISTRY_FILE = "darknet-registry.json"
 export const MAX_PROBE_DEPTH = 10
 export const DEFAULT_CRAWL_INTERVAL_MS = 60_000
-export const CRAWL_REPORT_PORT = 45107
 const WORKER_MODE_ARG = "worker"
 export const DARKWEB = "darkweb"
-/** Flat archive folder on home for copied darknet .txt files and opened .cache rewards. */
-export const DARKWEB_ARCHIVE_DIR = "darkweb"
+
+const DARKNET_TEXT_FILE = "darknet-text.json"
 
 // --- types ---
 
@@ -1410,16 +1409,20 @@ async function copyCrawlScript(ns: NS, target: string, source: string): Promise<
 }
 
 function crawlWorkerArgs(
+  reportPort: number,
+  textPort: number,
   remainingDepth: number,
   registryJson: string,
   waitForChildren: boolean
 ): (string | number)[] {
-  return [WORKER_MODE_ARG, CRAWL_REPORT_PORT, remainingDepth, waitForChildren ? 1 : 0, registryJson]
+  return [WORKER_MODE_ARG, reportPort, textPort, remainingDepth, waitForChildren ? 1 : 0, registryJson]
 }
 
 async function spawnCrawlWorkerOnHost(
   ns: NS,
   host: string,
+  reportPort: number,
+  textPort: number,
   remainingDepth: number,
   passwordCache: Map<string, string>,
   assetSource: string,
@@ -1435,7 +1438,7 @@ async function spawnCrawlWorkerOnHost(
     DARKNET_CRAWL_SCRIPT,
     host,
     1,
-    ...crawlWorkerArgs(remainingDepth, serializePasswordMap(passwordCache), waitForChildren)
+    ...crawlWorkerArgs(reportPort, textPort, remainingDepth, serializePasswordMap(passwordCache), waitForChildren)
   )
 }
 
@@ -1455,75 +1458,33 @@ function flatFileName(fileName: string): string {
   return fileName.includes("/") ? (fileName.split("/").pop() ?? fileName) : fileName
 }
 
-function archiveDestPath(fileName: string, suffix: number | null): string {
-  const base = flatFileName(fileName)
-  if (suffix === null) {
-    return `${DARKWEB_ARCHIVE_DIR}/${base}`
-  }
-  const dot = base.lastIndexOf(".")
-  if (dot <= 0) {
-    return `${DARKWEB_ARCHIVE_DIR}/${base}.${suffix}`
-  }
-  const stem = base.slice(0, dot)
-  const ext = base.slice(dot)
-  return `${DARKWEB_ARCHIVE_DIR}/${stem}.${suffix}${ext}`
-}
+// --- text-file json merge (replaces per-file archiving) ---
 
-function listArchivePaths(ns: NS, fileName: string): string[] {
-  const paths: string[] = []
-  const basePath = archiveDestPath(fileName, null)
-  if (ns.fileExists(basePath, "home")) {
-    paths.push(basePath)
-  }
-  let suffix = 1
-  while (true) {
-    const path = archiveDestPath(fileName, suffix)
-    if (!ns.fileExists(path, "home")) {
-      break
-    }
-    paths.push(path)
-    suffix++
-  }
-  return paths
-}
-
-function resolveArchiveWritePath(ns: NS, fileName: string, content: string): string | null {
-  for (const path of listArchivePaths(ns, fileName)) {
-    if (ns.read(path) === content) {
-      return null
-    }
-  }
-  let suffix: number | null = null
-  while (true) {
-    const path = archiveDestPath(fileName, suffix)
-    if (!ns.fileExists(path, "home")) {
-      return path
-    }
-    suffix = suffix === null ? 1 : suffix + 1
+function loadDarknetTextSet(ns: NS): Set<string> {
+  if (!ns.fileExists(DARKNET_TEXT_FILE, "home")) return new Set()
+  try {
+    const parsed: unknown = JSON.parse(ns.read(DARKNET_TEXT_FILE))
+    if (!Array.isArray(parsed)) return new Set()
+    return new Set(parsed.filter((item): item is string => typeof item === "string"))
+  } catch {
+    return new Set()
   }
 }
 
-function finalizeArchiveContent(ns: NS, fileName: string, content: string): void {
-  const destPath = resolveArchiveWritePath(ns, fileName, content)
-  if (destPath === null) {
-    return
-  }
-  ns.write(destPath, content, "w")
+function syncDarknetTextFile(ns: NS, textSet: Set<string>): void {
+  const sorted = [...textSet].sort()
+  ns.write(DARKNET_TEXT_FILE, JSON.stringify(sorted, null, 2), "w")
 }
 
 function queueArchiveContent(
   ns: NS,
-  fileName: string,
+  _fileName: string,
   content: string,
-  reportPort: number | undefined
+  _reportPort: number | undefined,
+  textPort: number | undefined
 ): void {
-  const base = flatFileName(fileName)
-  if (ns.getHostname() === "home") {
-    finalizeArchiveContent(ns, base, content)
-    return
-  }
-  if (reportPort != null && reportPort > 0) {
-    ns.writePort(reportPort, JSON.stringify({ type: "archive", file: base, content }))
+  if (textPort != null && textPort > 0) {
+    ns.writePort(textPort, content)
   }
 }
 
@@ -1533,6 +1494,7 @@ function reportCacheOpen(
   fileName: string,
   result: { message: string; karmaLoss: number },
   reportPort: number | undefined,
+  textPort: number | undefined,
   cacheOpens?: CrawlCacheOpen[]
 ): void {
   const entry: CrawlCacheOpen = {
@@ -1543,14 +1505,13 @@ function reportCacheOpen(
     openedAt: Date.now(),
   }
 
-  if (ns.getHostname() === "home") {
-    finalizeArchiveContent(ns, entry.file, result.message)
-    cacheOpens?.push(entry)
-    return
-  }
+  cacheOpens?.push(entry)
 
   if (reportPort != null && reportPort > 0) {
     ns.writePort(reportPort, JSON.stringify({ type: "cacheOpen", ...entry }))
+  }
+  if (textPort != null && textPort > 0) {
+    ns.writePort(textPort, result.message)
   }
 }
 
@@ -1558,6 +1519,7 @@ async function openCacheFilesOnCurrentHost(
   ns: NS,
   dnet: DarknetCrawlApi,
   reportPort: number | undefined,
+  textPort: number | undefined,
   cacheOpens?: CrawlCacheOpen[]
 ): Promise<void> {
   const hostname = ns.getHostname()
@@ -1576,7 +1538,7 @@ async function openCacheFilesOnCurrentHost(
     if (!result.success) {
       continue
     }
-    reportCacheOpen(ns, hostname, file, result, reportPort, cacheOpens)
+    reportCacheOpen(ns, hostname, file, result, reportPort, textPort, cacheOpens)
   }
 }
 
@@ -1584,6 +1546,7 @@ async function archiveLocalServerFiles(
   ns: NS,
   dnet: DarknetCrawlApi,
   reportPort?: number,
+  textPort?: number,
   cacheOpens?: CrawlCacheOpen[]
 ): Promise<void> {
   const hostname = ns.getHostname()
@@ -1601,10 +1564,10 @@ async function archiveLocalServerFiles(
     if (!ns.fileExists(file)) {
       continue
     }
-    queueArchiveContent(ns, flatFileName(file), ns.read(file), reportPort)
+    queueArchiveContent(ns, flatFileName(file), ns.read(file), reportPort, textPort)
   }
 
-  await openCacheFilesOnCurrentHost(ns, dnet, reportPort, cacheOpens)
+  await openCacheFilesOnCurrentHost(ns, dnet, reportPort, textPort, cacheOpens)
 }
 
 function safeGetSessionDetails(
@@ -1621,6 +1584,7 @@ function safeGetSessionDetails(
 async function runOneCrawlPass(
   ns: NS,
   reportPort: number,
+  textPort: number,
   remainingDepth: number,
   dnet: DarknetCrawlApi,
   passwordCache: Map<string, string>,
@@ -1646,7 +1610,7 @@ async function runOneCrawlPass(
   })
 
   if (selfDetails.hasSession) {
-    await archiveLocalServerFiles(ns, dnet, reportPort)
+    await archiveLocalServerFiles(ns, dnet, reportPort, textPort)
   }
 
   if (remainingDepth <= 0) {
@@ -1710,6 +1674,8 @@ async function runOneCrawlPass(
     const pid = await spawnCrawlWorkerOnHost(
       ns,
       neighbor,
+      reportPort,
+      textPort,
       childDepth,
       passwordCache,
       hostname,
@@ -1734,9 +1700,10 @@ async function runOneCrawlPass(
 
 async function runCrawlWorker(ns: NS): Promise<void> {
   const reportPort = Number(ns.args[1])
-  const remainingDepth = Number(ns.args[2])
-  const waitForChildren = Number(ns.args[3]) === 1
-  if (!Number.isInteger(reportPort) || reportPort <= 0 || !Number.isInteger(remainingDepth)) {
+  const textPort = Number(ns.args[2])
+  const remainingDepth = Number(ns.args[3])
+  const waitForChildren = Number(ns.args[4]) === 1
+  if (!Number.isInteger(reportPort) || reportPort <= 0 || !Number.isInteger(textPort) || textPort <= 0 || !Number.isInteger(remainingDepth)) {
     return
   }
 
@@ -1746,7 +1713,7 @@ async function runCrawlWorker(ns: NS): Promise<void> {
   }
 
   const passwordCache = loadWorkerPasswordCache(ns)
-  await runOneCrawlPass(ns, reportPort, remainingDepth, dnet, passwordCache, waitForChildren)
+  await runOneCrawlPass(ns, reportPort, textPort, remainingDepth, dnet, passwordCache, waitForChildren)
   if (ns.getHostname() === DARKWEB) {
     writeCrawlCycleComplete(ns, reportPort)
   }
@@ -1868,11 +1835,6 @@ function applyCrawlPortMessage(
     const cacheOpen = parseCacheOpen(row)
     if (cacheOpen) {
       cacheOpens.push(cacheOpen)
-      finalizeArchiveContent(ns, cacheOpen.file, cacheOpen.message)
-      return
-    }
-    if (row.type === "archive" && typeof row.file === "string" && typeof row.content === "string") {
-      finalizeArchiveContent(ns, row.file, row.content)
       return
     }
     const status = parseCrawlStatus(row)
@@ -1933,6 +1895,29 @@ function pollCrawlPort(
   }
 }
 
+function pollTextPort(ns: NS, port: number, textSet: Set<string>): void {
+  while (true) {
+    const raw = ns.peek(port)
+    if (raw === "NULL PORT DATA") break
+    ns.readPort(port)
+    if (typeof raw !== "string") continue
+    if (textSet.has(raw)) continue
+    textSet.add(raw)
+    syncDarknetTextFile(ns, textSet)
+  }
+}
+
+function drainTextPort(ns: NS, port: number, textSet: Set<string>): void {
+  while (true) {
+    const raw = ns.readPort(port)
+    if (raw === "NULL PORT DATA") break
+    if (typeof raw !== "string") continue
+    if (textSet.has(raw)) continue
+    textSet.add(raw)
+    syncDarknetTextFile(ns, textSet)
+  }
+}
+
 export function formatEtaMs(etaMs: number): string {
   if (etaMs <= 0) {
     return "-"
@@ -1979,6 +1964,8 @@ async function authenticateDarkwebEntry(
 
 async function launchDarkwebCrawlWorker(
   ns: NS,
+  reportPort: number,
+  textPort: number,
   source: string,
   maxDepth: number,
   registry: DarknetRegistry | undefined,
@@ -1999,7 +1986,7 @@ async function launchDarkwebCrawlWorker(
     DARKNET_CRAWL_SCRIPT,
     DARKWEB,
     1,
-    ...crawlWorkerArgs(maxDepth, registryJson, waitForChildren)
+    ...crawlWorkerArgs(reportPort, textPort, maxDepth, registryJson, waitForChildren)
   )
   if (pid === 0) {
     throw new Error(`Could not exec ${DARKNET_CRAWL_SCRIPT} on ${DARKWEB}`)
@@ -2066,6 +2053,8 @@ export async function killAllCrawlWorkers(
 export async function runDarknetCrawl(
   ns: NS,
   dnet: DarknetCrawlApi,
+  reportPort: number,
+  textPort: number,
   maxDepth = MAX_PROBE_DEPTH,
   onProgress?: CrawlProgressHandler,
   registry?: DarknetRegistry,
@@ -2085,9 +2074,12 @@ export async function runDarknetCrawl(
   await killAllCrawlWorkers(ns, dnet, registry)
   await ns.sleep(5000)
 
-  ns.clearPort(CRAWL_REPORT_PORT)
+  ns.clearPort(reportPort)
+  ns.clearPort(textPort)
 
-  let pid = await launchDarkwebCrawlWorker(ns, source, maxDepth, registry, !continuous)
+  const textSet = loadDarknetTextSet(ns)
+
+  let pid = await launchDarkwebCrawlWorker(ns, reportPort, textPort, source, maxDepth, registry, !continuous)
 
   const reports = new Map<string, CrawlHostReport>()
   const activeOps = new Map<string, CrawlStatusReport>()
@@ -2110,7 +2102,8 @@ export async function runDarknetCrawl(
 
   if (continuous) {
     while (true) {
-      pollCrawlPort(ns, CRAWL_REPORT_PORT, reports, activeOps, cacheOpens, cycleComplete)
+      pollCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, cycleComplete)
+      pollTextPort(ns, textPort, textSet)
       if (cycleComplete.value) {
         cycleComplete.value = false
         const result: DarknetCrawlResult = {
@@ -2128,7 +2121,7 @@ export async function runDarknetCrawl(
         cacheOpens.length = 0
         await killAllCrawlWorkers(ns, dnet, registry)
         await ns.sleep(intervalMs)
-        pid = await launchDarkwebCrawlWorker(ns, source, maxDepth, registry, false)
+        pid = await launchDarkwebCrawlWorker(ns, reportPort, textPort, source, maxDepth, registry, false)
       }
       await emitProgress(true)
       if (!ns.isRunning(pid)) {
@@ -2138,9 +2131,10 @@ export async function runDarknetCrawl(
           await authenticateDarkwebEntry(ns, dnet, registry?.servers[DARKWEB]?.password)
           reports.clear()
           activeOps.clear()
-          ns.clearPort(CRAWL_REPORT_PORT)
+  ns.clearPort(reportPort)
+  ns.clearPort(textPort)
           await ns.sleep(5000)
-          pid = await launchDarkwebCrawlWorker(ns, source, maxDepth, registry, false)
+          pid = await launchDarkwebCrawlWorker(ns, reportPort, textPort, source, maxDepth, registry, false)
         } catch (restartErr) {
           onWorkerError?.(`Failed to restart crawl worker: ${String(restartErr)} — retrying in 30s`)
           await ns.sleep(30000)
@@ -2152,12 +2146,14 @@ export async function runDarknetCrawl(
   }
 
   while (ns.isRunning(pid)) {
-    pollCrawlPort(ns, CRAWL_REPORT_PORT, reports, activeOps, cacheOpens)
+    pollCrawlPort(ns, reportPort, reports, activeOps, cacheOpens)
+    pollTextPort(ns, textPort, textSet)
     await emitProgress(true)
     await ns.sleep(100)
   }
 
-  drainCrawlPort(ns, CRAWL_REPORT_PORT, reports, activeOps, cacheOpens)
+  drainCrawlPort(ns, reportPort, reports, activeOps, cacheOpens)
+  drainTextPort(ns, textPort, textSet)
   await emitProgress(false)
 
   return { reports, cacheOpens }

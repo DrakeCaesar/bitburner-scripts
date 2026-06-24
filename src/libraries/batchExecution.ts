@@ -15,12 +15,9 @@ import {
 import { getEffectiveMaxRam } from "./ramUtils.js"
 import type { LogFn } from "./logFn.js"
 import { distributeBatchesAcrossNodes } from "./serverManagement.js"
+import { BATCH_HACK_INCOME_PORT, HACK_INCOME_PORT_CAPACITY } from "./ports.js"
 
-/** Parent port: each hack.js writes ns.hack() return value here (exec cannot return to parent). */
-export const BATCH_HACK_INCOME_PORT = 21
-
-/** Bitburner port queue capacity; one hack completion = one write. */
-export const HACK_INCOME_PORT_CAPACITY = 50
+export { BATCH_HACK_INCOME_PORT, HACK_INCOME_PORT_CAPACITY }
 
 const EMPTY_PORT_DATA = "NULL PORT DATA"
 
