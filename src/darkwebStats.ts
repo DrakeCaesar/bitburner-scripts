@@ -12,6 +12,7 @@ import {
   safeGetServerDetails,
   saveDarknetRegistry,
   type CrawlCacheOpen,
+  type CrawlErrorHandler,
   type CrawlHostReport,
   type CrawlProgressState,
   type CrawlStatusReport,
@@ -392,7 +393,8 @@ export async function main(ns: NS): Promise<void> {
         saveDarknetRegistry(ns, registry)
         sessionCacheOpens.push(...result.cacheOpens)
         await renderRegistrySummary(ns, dnet, tabbedLog, registry, result.reports, crawlNum, sessionCacheOpens)
-      }
+      },
+      logCrawl
     )
   } catch (err) {
     tabbedLog.clearPanels()

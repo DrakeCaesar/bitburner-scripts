@@ -72,6 +72,8 @@ export type CrawlProgressHandler = (state: CrawlProgressState) => void | Promise
 
 export type CrawlCycleCompleteHandler = (result: DarknetCrawlResult) => void | Promise<void>
 
+export type CrawlErrorHandler = (message: string) => void
+
 export interface DarknetRegistryEntry {
   hostname: string
   parentHost: string | null
@@ -1544,6 +1546,17 @@ async function archiveLocalServerFiles(
   await openCacheFilesOnCurrentHost(ns, dnet, reportPort, cacheOpens)
 }
 
+function safeGetSessionDetails(
+  dnet: DarknetCrawlApi,
+  host: string
+): DarknetServerDetailsForFormulas | null {
+  try {
+    return dnet.getServerDetails(host)
+  } catch {
+    return null
+  }
+}
+
 async function runOneCrawlPass(
   ns: NS,
   reportPort: number,
@@ -1554,15 +1567,24 @@ async function runOneCrawlPass(
 ): Promise<void> {
   const hostname = ns.getHostname()
 
-  await ensureSessionOnSelf(ns, dnet, passwordCache)
+  try {
+    await ensureSessionOnSelf(ns, dnet, passwordCache)
+  } catch {
+    return
+  }
+
+  const selfDetails = safeGetSessionDetails(dnet, hostname)
+  if (!selfDetails) {
+    return
+  }
 
   writeCrawlReport(ns, reportPort, {
     hostname,
-    authenticated: dnet.getServerDetails(hostname).hasSession ? true : null,
+    authenticated: selfDetails.hasSession ? true : null,
     password: null,
   })
 
-  if (dnet.getServerDetails(hostname).hasSession) {
+  if (selfDetails.hasSession) {
     await archiveLocalServerFiles(ns, dnet, reportPort)
   }
 
@@ -1580,7 +1602,14 @@ async function runOneCrawlPass(
     detail: null,
   })
 
-  for (const neighbor of dnet.probe()) {
+  let neighbors: string[]
+  try {
+    neighbors = dnet.probe()
+  } catch {
+    return
+  }
+
+  for (const neighbor of neighbors) {
     const auth = await tryAuthNeighbor(
       ns,
       reportPort,
@@ -1599,7 +1628,8 @@ async function runOneCrawlPass(
       authGuesses: auth.authGuesses,
     })
 
-    if (!dnet.getServerDetails(neighbor).hasSession) {
+    const neighborDetails = safeGetSessionDetails(dnet, neighbor)
+    if (!neighborDetails?.hasSession) {
       continue
     }
 
@@ -1979,7 +2009,8 @@ export async function runDarknetCrawl(
   onProgress?: CrawlProgressHandler,
   registry?: DarknetRegistry,
   intervalMs = 0,
-  onCycleComplete?: CrawlCycleCompleteHandler
+  onCycleComplete?: CrawlCycleCompleteHandler,
+  onWorkerError?: CrawlErrorHandler
 ): Promise<DarknetCrawlResult> {
   const source = ns.getHostname()
   const continuous = intervalMs > 0
@@ -2040,7 +2071,20 @@ export async function runDarknetCrawl(
       }
       await emitProgress(true)
       if (!ns.isRunning(pid)) {
-        throw new Error(`${DARKNET_CRAWL_SCRIPT} worker on ${DARKWEB} stopped unexpectedly`)
+        onWorkerError?.(`${DARKNET_CRAWL_SCRIPT} worker on ${DARKWEB} stopped unexpectedly — restarting crawl`)
+        try {
+          await killAllCrawlWorkers(ns, dnet, registry)
+          await authenticateDarkwebEntry(ns, dnet, registry?.servers[DARKWEB]?.password)
+          reports.clear()
+          activeOps.clear()
+          ns.clearPort(CRAWL_REPORT_PORT)
+          await ns.sleep(5000)
+          pid = await launchDarkwebCrawlWorker(ns, source, maxDepth, registry, false)
+        } catch (restartErr) {
+          onWorkerError?.(`Failed to restart crawl worker: ${String(restartErr)} — retrying in 30s`)
+          await ns.sleep(30000)
+          continue
+        }
       }
       await ns.sleep(100)
     }
