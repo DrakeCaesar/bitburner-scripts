@@ -1,13 +1,13 @@
 import { NS } from "@ns"
 import {
   GYM_CITY,
-  getSoonestLevelCombatGymSkill,
   workoutUntilLevelUp,
   COMBAT_GYM_SKILLS,
   estimateCombatGymMsToNextLevel,
   combatGymExpPerSecond,
   getCombatSkillLevelMult,
   getCombatSkillTotalLevelExp,
+  getLowestCombatGymSkill,
   type CombatGymSkill,
 } from "./libraries/gymWorkout.js"
 import { travelToInfiltrationCity } from "./libraries/infiltration/infiltrationTargets.js"
@@ -18,6 +18,7 @@ import { renderGymDashboard, type GymDashboardData } from "./libraries/gymDashbo
 const SKILL_GAP_TRAVEL_THRESHOLD = 100
 const MIN_TRAVEL_MONEY = 100_000_000
 const TRAVEL_COOLDOWN_MS = 60_000
+const SKILL_PICK_INTERVAL_MS = 1000
 
 export async function main(ns: NS): Promise<void> {
   const scriptName = ns.getScriptName()
@@ -31,12 +32,15 @@ export async function main(ns: NS): Promise<void> {
   openTailLog(ns, "Gym Workout")
 
   let lastTravelAt = 0
+  let lastSkillPickAt = 0
+  let trainingSkill: CombatGymSkill = "str"
 
   while (true) {
     const focus = ns.singularity.isFocused()
     const player = ns.getPlayer()
-    const trainingSkill = getSoonestLevelCombatGymSkill(ns, focus)
+    const now = Date.now()
 
+    // Travel logic — cheap checks every iteration
     const skillLevels = [
       player.skills.agility,
       player.skills.dexterity,
@@ -44,7 +48,6 @@ export async function main(ns: NS): Promise<void> {
       player.skills.strength,
     ]
     const skillGap = Math.max(...skillLevels) - Math.min(...skillLevels)
-    const now = Date.now()
     const needsTravel =
       skillGap >= SKILL_GAP_TRAVEL_THRESHOLD &&
       player.city !== GYM_CITY &&
@@ -57,106 +60,104 @@ export async function main(ns: NS): Promise<void> {
       await ns.sleep(500)
     }
 
-    const isTraveling = player.city !== GYM_CITY
-    if (isTraveling) {
+    if (player.city !== GYM_CITY) {
       if (canAffordInfiltrationTravel(ns)) {
         await travelToInfiltrationCity(ns, GYM_CITY)
-      } else {
-        // Build dashboard before sleeping so the UI shows the travel state
-        const estimatesMs: Record<string, number | null> = {}
-        const expPerSecond: Record<string, number | null> = {}
-        const totalLevelExp: Record<string, number> = {}
-        const levelMults: Record<string, number> = {}
-        for (const skill of COMBAT_GYM_SKILLS) {
-          estimatesMs[skill] = estimateCombatGymMsToNextLevel(ns, skill, focus)
-          expPerSecond[skill] = combatGymExpPerSecond(ns, skill, focus)
-          totalLevelExp[skill] = getCombatSkillTotalLevelExp(ns, skill)
-          levelMults[skill] = getCombatSkillLevelMult(ns, skill)
-        }
-        const d: GymDashboardData = {
-          levels: {
-            str: player.skills.strength,
-            def: player.skills.defense,
-            dex: player.skills.dexterity,
-            agi: player.skills.agility,
-          },
-          exp: {
-            str: player.exp.strength,
-            def: player.exp.defense,
-            dex: player.exp.dexterity,
-            agi: player.exp.agility,
-          },
-          estimatesMs,
-          expPerSecond,
-          totalLevelExp,
-          levelMults,
-          training: trainingSkill,
-          selectionMethod: "soonest",
-          tiedSkills: [],
-          city: player.city,
-          focused: focus,
-          skillGap,
-          traveling: true,
-        }
-        await renderGymDashboard(ns, d)
-        await ns.sleep(2000)
         continue
       }
-    }
-
-    // Compute dashboard data before training
-    const estimatesMs: Record<string, number | null> = {}
-    const expPerSecond: Record<string, number | null> = {}
-    const totalLevelExp: Record<string, number> = {}
-    const levelMults: Record<string, number> = {}
-    let bestMs = Infinity
-    const tiedSkills: CombatGymSkill[] = []
-
-    for (const skill of COMBAT_GYM_SKILLS) {
-      const ms = estimateCombatGymMsToNextLevel(ns, skill, focus)
-      estimatesMs[skill] = ms
-      expPerSecond[skill] = combatGymExpPerSecond(ns, skill, focus)
-      totalLevelExp[skill] = getCombatSkillTotalLevelExp(ns, skill)
-      levelMults[skill] = getCombatSkillLevelMult(ns, skill)
-
-      if (ms != null && ms < bestMs) {
-        bestMs = ms
-        tiedSkills.length = 0
-        tiedSkills.push(skill)
-      } else if (ms != null && ms === bestMs) {
-        tiedSkills.push(skill)
+      // Can't afford travel — show dashboard and wait
+      const d: GymDashboardData = {
+        levels: {
+          str: player.skills.strength,
+          def: player.skills.defense,
+          dex: player.skills.dexterity,
+          agi: player.skills.agility,
+        },
+        exp: {
+          str: player.exp.strength,
+          def: player.exp.defense,
+          dex: player.exp.dexterity,
+          agi: player.exp.agility,
+        },
+        estimatesMs: { str: null, def: null, dex: null, agi: null },
+        expPerSecond: { str: null, def: null, dex: null, agi: null },
+        totalLevelExp: { str: 0, def: 0, dex: 0, agi: 0 },
+        levelMults: { str: 0, def: 0, dex: 0, agi: 0 },
+        training: trainingSkill,
+        selectionMethod: "soonest",
+        tiedSkills: [],
+        city: player.city,
+        focused: focus,
+        skillGap,
+        traveling: true,
       }
+      await renderGymDashboard(ns, d)
+      await ns.sleep(2000)
+      continue
     }
 
-    // If all estimates were null, log that we're using the fallback
-    const allNull = estimatesMs.str == null && estimatesMs.def == null && estimatesMs.dex == null && estimatesMs.agi == null
-    const prevPlayer = ns.getPlayer()
-    const d: GymDashboardData = {
-      levels: {
-        str: prevPlayer.skills.strength,
-        def: prevPlayer.skills.defense,
-        dex: prevPlayer.skills.dexterity,
-        agi: prevPlayer.skills.agility,
-      },
-      exp: {
-        str: prevPlayer.exp.strength,
-        def: prevPlayer.exp.defense,
-        dex: prevPlayer.exp.dexterity,
-        agi: prevPlayer.exp.agility,
-      },
-      estimatesMs,
-      expPerSecond,
-      totalLevelExp,
-      levelMults,
-      training: trainingSkill,
-      selectionMethod: allNull ? "lowest" : "soonest",
-      tiedSkills,
-      city: prevPlayer.city,
-      focused: focus,
-      skillGap,
-      traveling: false,
+    // Re-evaluate skill pick, compute dashboard data, and render GUI at most once per second.
+    // On other iterations just keep training the same stat — no NS API calls, no rendering.
+    if (now - lastSkillPickAt >= SKILL_PICK_INTERVAL_MS) {
+      lastSkillPickAt = now
+      const freshPlayer = ns.getPlayer()
+
+      const estimatesMs: Record<string, number | null> = {}
+      const expPerSecond: Record<string, number | null> = {}
+      const totalLevelExp: Record<string, number> = {}
+      const levelMults: Record<string, number> = {}
+      let bestMs = Infinity
+      const tiedSkills: CombatGymSkill[] = []
+
+      for (const skill of COMBAT_GYM_SKILLS) {
+        const ms = estimateCombatGymMsToNextLevel(ns, skill, focus)
+        estimatesMs[skill] = ms
+        expPerSecond[skill] = combatGymExpPerSecond(ns, skill, focus)
+        totalLevelExp[skill] = getCombatSkillTotalLevelExp(ns, skill)
+        levelMults[skill] = getCombatSkillLevelMult(ns, skill)
+        if (ms != null && ms < bestMs) {
+          bestMs = ms
+          tiedSkills.length = 0
+          tiedSkills.push(skill)
+        } else if (ms != null && ms === bestMs) {
+          tiedSkills.push(skill)
+        }
+      }
+
+      trainingSkill = bestMs === Infinity
+        ? getLowestCombatGymSkill(ns)
+        : tiedSkills[0]
+
+      const allNull =
+        estimatesMs.str == null && estimatesMs.def == null &&
+        estimatesMs.dex == null && estimatesMs.agi == null
+      const d: GymDashboardData = {
+        levels: {
+          str: freshPlayer.skills.strength,
+          def: freshPlayer.skills.defense,
+          dex: freshPlayer.skills.dexterity,
+          agi: freshPlayer.skills.agility,
+        },
+        exp: {
+          str: freshPlayer.exp.strength,
+          def: freshPlayer.exp.defense,
+          dex: freshPlayer.exp.dexterity,
+          agi: freshPlayer.exp.agility,
+        },
+        estimatesMs,
+        expPerSecond,
+        totalLevelExp,
+        levelMults,
+        training: trainingSkill,
+        selectionMethod: allNull ? "lowest" : "soonest",
+        tiedSkills,
+        city: freshPlayer.city,
+        focused: focus,
+        skillGap,
+        traveling: false,
+      }
+      await renderGymDashboard(ns, d)
     }
-    await renderGymDashboard(ns, d)
 
     await workoutUntilLevelUp(ns, trainingSkill, focus)
   }
