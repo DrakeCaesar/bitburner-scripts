@@ -77,9 +77,7 @@ function dedupeBucket(ns: NS, bucketFiles: string[]): ContentGroup[] {
 }
 
 function sortGroups(groups: ContentGroup[]): ContentGroup[] {
-  return groups.sort(
-    (a, b) => b.files.length - a.files.length || fileBaseName(a.files[0]).localeCompare(fileBaseName(b.files[0]))
-  )
+  return groups.sort((a, b) => a.preview.localeCompare(b.preview))
 }
 
 // --- password list extraction ---
