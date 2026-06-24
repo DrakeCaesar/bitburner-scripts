@@ -399,6 +399,15 @@ function renderPasswordListSection(
     columns: PASSWORD_LIST_COLUMNS,
     rows,
   })
+
+  // Emit the longest joined list as a copy-paste TypeScript array
+  // if (sorted.length > 0) {
+  //   const best = sorted[0]!
+  //   const lines = best.words.map((w) => `  "${w}",`)
+  //   const block = `// ${best.words.length} password(s) merged from ${sources.length} snapshot(s)\nconst DARKWEB_COMMON_PASSWORDS: readonly string[] = [\n${lines.join("\n")}\n]`
+  //   log.text("Copy-paste into darknetCrawl.ts DARKWEB_COMMON_PASSWORDS:")
+  //   log.text(block)
+  // }
 }
 
 function buildRows(groups: ContentGroup[]): string[][] {
