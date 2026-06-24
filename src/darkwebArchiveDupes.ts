@@ -4,6 +4,9 @@ import { col, createTailLog, openTailLog, W } from "./libraries/scriptLogUiLayou
 const DARKWEB_ARCHIVE_DIR = "darkweb"
 const CONTENT_PREVIEW_LENGTH = 140
 
+/** Separate from darknet-registry.json — deduplicated journaling/social hint content. */
+export const DARKNET_TEXT_FILE = "darknet-text.json"
+
 /** Groups whose filenames contain one of these substrings go in the first table. */
 const JOURNALING_FILE_KEYWORDS = ["dreams", "journal", "notes", "search_history", "the_truth", "thoughts"]
 
@@ -401,13 +404,13 @@ function renderPasswordListSection(
   })
 
   // Emit the longest joined list as a copy-paste TypeScript array
-  // if (sorted.length > 0) {
-  //   const best = sorted[0]!
-  //   const lines = best.words.map((w) => `  "${w}",`)
-  //   const block = `// ${best.words.length} password(s) merged from ${sources.length} snapshot(s)\nconst DARKWEB_COMMON_PASSWORDS: readonly string[] = [\n${lines.join("\n")}\n]`
-  //   log.text("Copy-paste into darknetCrawl.ts DARKWEB_COMMON_PASSWORDS:")
-  //   log.text(block)
-  // }
+  if (sorted.length > 0) {
+    const best = sorted[0]!
+    const lines = best.words.map((w) => `  "${w}",`)
+    const block = `// ${best.words.length} password(s) merged from ${sources.length} snapshot(s)\nconst DARKWEB_COMMON_PASSWORDS: readonly string[] = [\n${lines.join("\n")}\n]`
+    log.text("Copy-paste into darknetCrawl.ts DARKWEB_COMMON_PASSWORDS:")
+    log.text(block)
+  }
 }
 
 function buildRows(groups: ContentGroup[]): string[][] {
@@ -416,6 +419,19 @@ function buildRows(groups: ContentGroup[]): string[][] {
     String(group.files.length),
     group.files.map(fileBaseName).join(", "),
   ])
+}
+
+interface DarknetSocialFile {
+  version: 1
+  entries: string[]
+}
+
+function saveJournalingJson(ns: NS, groups: ContentGroup[]): void {
+  const entries = groups
+    .map((g) => g.fullContent.trim())
+    .filter(Boolean)
+    .sort()
+  ns.write(DARKNET_TEXT_FILE, JSON.stringify(entries, null, 2), "w")
 }
 
 function renderGroupTable(
@@ -455,7 +471,13 @@ export async function main(ns: NS): Promise<void> {
   const journalingGroups = dedupeBucket(ns, journalingFiles)
   const otherGroups = dedupeBucket(ns, otherFiles)
 
+  // Persist deduplicated journaling/social hints as a separate ordered JSON file
+  if (journalingGroups.length > 0) {
+    saveJournalingJson(ns, journalingGroups)
+  }
+
   const total = files.length
+  const socialCount = journalingGroups.length
   const allGroups = [...journalingGroups, ...otherGroups]
   const uniqueContents = allGroups.length
   const allDuplicateGroups = allGroups.filter((g) => g.files.length > 1)
@@ -472,6 +494,9 @@ export async function main(ns: NS): Promise<void> {
   log.text(
     `home/${DARKWEB_ARCHIVE_DIR}/  |  ${total} files  |  ${uniqueContents} unique  |  ${duplicateGroupCount} dup groups  |  ${uniqueFiles} standalone  |  ${filesWithDuplicateContent} share content`
   )
+  if (socialCount > 0) {
+    log.text(`Saved ${socialCount} unique entries to ${DARKNET_TEXT_FILE}`)
+  }
 
   const shown = [
     renderGroupTable(log, "Journaling", journalingGroups, journalingDupGroups.length, journalingTotalFiles),

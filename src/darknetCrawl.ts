@@ -82,7 +82,6 @@ export interface DarknetRegistryEntry {
 }
 
 export interface DarknetRegistry {
-  version: 1
   servers: Record<string, DarknetRegistryEntry>
 }
 
@@ -270,19 +269,20 @@ function darkwebPasswordCandidates(length: number, format: DarknetPasswordFormat
 
 export function loadDarknetRegistry(ns: NS): DarknetRegistry {
   if (!ns.fileExists(DARKNET_REGISTRY_FILE, "home")) {
-    return { version: 1, servers: {} }
+    return { servers: {} }
   }
   try {
     const parsed: unknown = JSON.parse(ns.read(DARKNET_REGISTRY_FILE))
     if (typeof parsed !== "object" || parsed === null) {
-      return { version: 1, servers: {} }
+      return { servers: {} }
     }
     const row = parsed as Record<string, unknown>
-    if (row.version !== 1 || typeof row.servers !== "object" || row.servers === null) {
-      return { version: 1, servers: {} }
+    const serversRaw = (row.servers ?? row) as Record<string, unknown>
+    if (typeof serversRaw !== "object" || serversRaw === null || Array.isArray(serversRaw)) {
+      return { servers: {} }
     }
     const servers: Record<string, DarknetRegistryEntry> = {}
-    for (const [hostname, raw] of Object.entries(row.servers as Record<string, unknown>)) {
+    for (const [hostname, raw] of Object.entries(serversRaw)) {
       if (typeof raw !== "object" || raw === null) continue
       const entry = raw as Record<string, unknown>
       if (typeof entry.hostname !== "string") continue
@@ -294,14 +294,14 @@ export function loadDarknetRegistry(ns: NS): DarknetRegistry {
         lastUpdated: typeof entry.lastUpdated === "number" ? entry.lastUpdated : 0,
       }
     }
-    return { version: 1, servers }
+    return { servers }
   } catch {
-    return { version: 1, servers: {} }
+    return { servers: {} }
   }
 }
 
 export function saveDarknetRegistry(ns: NS, registry: DarknetRegistry): void {
-  ns.write(DARKNET_REGISTRY_FILE, JSON.stringify(registry), "w")
+  ns.write(DARKNET_REGISTRY_FILE, JSON.stringify(registry, null, 2), "w")
 }
 
 function registryToPasswordMap(registry: DarknetRegistry): Map<string, string> {
