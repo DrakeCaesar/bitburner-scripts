@@ -93,15 +93,33 @@ export type CrawlCycleCompleteHandler = (result: DarknetCrawlResult) => void | P
 
 export type CrawlErrorHandler = (message: string) => void
 
+/** A single hint discovery: "The password for X contains 7 and 8" */
+interface PasswordHintRecord {
+  /** Sorted unique characters (digits or letters). */
+  chars: string
+  timestamp: number
+}
+
 export interface DarknetRegistryEntry {
   hostname: string
   parentHost: string | null
   password: string | null
-  lastUpdated: number
+  /** When the password was last discovered from a file (explicit) or confirmed via auth. */
+  timestamp: number | null
+  /** Accumulated hint discoveries, each with its own timestamp. */
+  passwordHints: PasswordHintRecord[]
+}
+
+export interface DarknetRememberedPassword {
+  password: string
+  sourceHost: string
+  neighborHosts: string[]
+  timestamp: number
 }
 
 export interface DarknetRegistry {
   servers: Record<string, DarknetRegistryEntry>
+  rememberedPasswords: DarknetRememberedPassword[]
 }
 
 // #region darkweb-password-intel
@@ -288,34 +306,61 @@ function darkwebPasswordCandidates(length: number, format: DarknetPasswordFormat
 
 export function loadDarknetRegistry(ns: NS): DarknetRegistry {
   if (!ns.fileExists(DARKNET_REGISTRY_FILE, "home")) {
-    return { servers: {} }
+    return { servers: {}, rememberedPasswords: [] }
   }
   try {
     const parsed: unknown = JSON.parse(ns.read(DARKNET_REGISTRY_FILE))
     if (typeof parsed !== "object" || parsed === null) {
-      return { servers: {} }
+      return { servers: {}, rememberedPasswords: [] }
     }
     const row = parsed as Record<string, unknown>
     const serversRaw = (row.servers ?? row) as Record<string, unknown>
     if (typeof serversRaw !== "object" || serversRaw === null || Array.isArray(serversRaw)) {
-      return { servers: {} }
+      return { servers: {}, rememberedPasswords: [] }
     }
     const servers: Record<string, DarknetRegistryEntry> = {}
     for (const [hostname, raw] of Object.entries(serversRaw)) {
       if (typeof raw !== "object" || raw === null) continue
       const entry = raw as Record<string, unknown>
       if (typeof entry.hostname !== "string") continue
+      const hints: PasswordHintRecord[] = []
+      if (Array.isArray(entry.passwordHints)) {
+        for (const h of entry.passwordHints) {
+          const r = h as Record<string, unknown>
+          if (typeof r.chars === "string" && typeof r.timestamp === "number") {
+            hints.push({ chars: r.chars, timestamp: r.timestamp })
+          }
+        }
+      }
       servers[hostname] = {
         hostname: entry.hostname,
         parentHost:
           typeof entry.parentHost === "string" ? entry.parentHost : entry.parentHost === null ? null : null,
         password: typeof entry.password === "string" ? entry.password : null,
-        lastUpdated: typeof entry.lastUpdated === "number" ? entry.lastUpdated : 0,
+        timestamp:
+          typeof entry.timestamp === "number" ? entry.timestamp : null,
+        passwordHints: hints,
       }
     }
-    return { servers }
+    const rememberedPasswords: DarknetRememberedPassword[] = []
+    if (Array.isArray(row.rememberedPasswords)) {
+      for (const rp of row.rememberedPasswords) {
+        const r = rp as Record<string, unknown>
+        if (typeof r.password !== "string") continue
+        if (typeof r.sourceHost !== "string") continue
+        if (!Array.isArray(r.neighborHosts)) continue
+        if (typeof r.timestamp !== "number") continue
+        rememberedPasswords.push({
+          password: r.password,
+          sourceHost: r.sourceHost,
+          neighborHosts: r.neighborHosts.filter((h): h is string => typeof h === "string"),
+          timestamp: r.timestamp,
+        })
+      }
+    }
+    return { servers, rememberedPasswords }
   } catch {
-    return { servers: {} }
+    return { servers: {}, rememberedPasswords: [] }
   }
 }
 
@@ -369,16 +414,22 @@ export function mergeCrawlReportsIntoRegistry(
   const now = Date.now()
   for (const report of reports.values()) {
     const existing = registry.servers[report.hostname]
+    const password =
+      report.authenticated === true
+        ? (report.password ?? existing?.password ?? null)
+        : report.authenticated === false
+          ? null
+          : (existing?.password ?? null)
+    const timestamp =
+      report.authenticated === true && report.password != null
+        ? now
+        : existing?.timestamp ?? null
     registry.servers[report.hostname] = {
       hostname: report.hostname,
       parentHost: report.parentHost != null ? report.parentHost : (existing?.parentHost ?? null),
-      password:
-        report.authenticated === true
-          ? (report.password ?? existing?.password ?? null)
-          : report.authenticated === false
-            ? null
-            : (existing?.password ?? null),
-      lastUpdated: now,
+      password,
+      timestamp,
+      passwordHints: existing?.passwordHints ?? [],
     }
   }
 }
@@ -1550,12 +1601,90 @@ function finalizeArchiveContent(ns: NS, fileName: string, content: string): void
   ns.write(destPath, content, "w")
 }
 
+// ---- password file content parsing ----
+
+const COMMON_PASSWORDS_PREFIX_NOSPACE = "Some common passwords include"
+const REMEMBER_PASSWORD_RE = /^Remember this password:\s*(\S+)/im
+const EXPLICIT_PASSWORD_RE = /^Server:\s+(.+?)\s+Password:\s*"(\S+?)"/gm
+const HOST_HINT_RE = /^The password for (.+?) contains (\d+)\s+and\s+(\d+)/gm
+
+interface PasswordFileIntel {
+  kind: "explicit" | "remember" | "hint"
+  /** Target hostname (null for "remember" — we don't know which neighbor yet). */
+  host: string | null
+  password: string | null
+  /** Sorted unique hint digits/letters. */
+  chars: string | null
+}
+
+function parsePasswordFileContent(
+  content: string,
+  sourceHost: string,
+  neighbors: string[],
+  timestamp: number
+): { cleanContent: string; intel: PasswordFileIntel[]; intelJson: string } {
+  const intel: PasswordFileIntel[] = []
+  const lines = content.split("\n")
+  const cleanLines: string[] = []
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+
+    // Type 1 — discard common password lists
+    if (trimmed.startsWith(COMMON_PASSWORDS_PREFIX_NOSPACE)) {
+      continue
+    }
+
+    // Type 2 — "Remember this password: XXXX"
+    const rememberMatch = REMEMBER_PASSWORD_RE.exec(trimmed)
+    if (rememberMatch) {
+      const pw = rememberMatch[1]!
+      intel.push({ kind: "remember", host: null, password: pw, chars: null })
+      cleanLines.push(line)
+      continue
+    }
+
+    // Type 3 — "Server: HOST Password: \"PW\""
+    EXPLICIT_PASSWORD_RE.lastIndex = 0
+    const explicitMatch = EXPLICIT_PASSWORD_RE.exec(trimmed)
+    if (explicitMatch) {
+      intel.push({ kind: "explicit", host: explicitMatch[1]!.trim(), password: explicitMatch[2]!, chars: null })
+      cleanLines.push(line)
+      continue
+    }
+
+    // Type 4 — "The password for HOST contains X and Y"
+    HOST_HINT_RE.lastIndex = 0
+    const hintMatch = HOST_HINT_RE.exec(trimmed)
+    if (hintMatch) {
+      const chars = [...new Set([hintMatch[2]!, hintMatch[3]!])].sort().join("")
+      intel.push({ kind: "hint", host: hintMatch[1]!.trim(), password: null, chars })
+      cleanLines.push(line)
+      continue
+    }
+
+    cleanLines.push(line)
+  }
+
+  const cleanContent = cleanLines.join("\n")
+  const intelJson = JSON.stringify({
+    type: "passwordIntel",
+    sourceHost,
+    neighbors,
+    timestamp,
+    entries: intel,
+  })
+
+  return { cleanContent, intel, intelJson }
+}
+
 function queueArchiveContent(
   ns: NS,
   fileName: string,
   content: string,
   reportPort: number | undefined,
-  lorePort: number | undefined
+  lorePort: number | undefined,
+  neighbors: string[] | undefined
 ): void {
   if (isLoreFile(flatFileName(fileName))) {
     // journaling files go to lore port → darknet-lore.json
@@ -1564,14 +1693,28 @@ function queueArchiveContent(
     }
     return
   }
-  // non-journaling files go to per-file archive on home
+  // non-journaling files: parse for password intel, strip type-1, archive the rest
   const base = flatFileName(fileName)
-  if (ns.getHostname() === "home") {
-    finalizeArchiveContent(ns, base, content)
+  const hostname = ns.getHostname()
+
+  const { cleanContent, intelJson } = parsePasswordFileContent(
+    content,
+    hostname,
+    neighbors ?? [],
+    Date.now()
+  )
+
+  if (hostname === "home") {
+    finalizeArchiveContent(ns, base, cleanContent)
+    // On home, apply password intel directly to the in-memory registry
+    // (handled by caller via return value or by archiving)
     return
   }
+
+  // On workers: send cleaned content for archiving + parsed password intel
   if (reportPort != null && reportPort > 0) {
-    ns.writePort(reportPort, JSON.stringify({ type: "archive", file: base, content }))
+    ns.writePort(reportPort, JSON.stringify({ type: "archive", file: base, content: cleanContent }))
+    ns.writePort(reportPort, intelJson)
   }
 }
 
@@ -1608,6 +1751,7 @@ async function openCacheFilesOnCurrentHost(
   dnet: DarknetCrawlApi,
   reportPort: number | undefined,
   lorePort: number | undefined,
+  neighbors: string[] | undefined,
   cacheOpens?: CrawlCacheOpen[]
 ): Promise<void> {
   const hostname = ns.getHostname()
@@ -1635,6 +1779,7 @@ async function archiveLocalServerFiles(
   dnet: DarknetCrawlApi,
   reportPort?: number,
   lorePort?: number,
+  neighbors?: string[],
   cacheOpens?: CrawlCacheOpen[]
 ): Promise<void> {
   const hostname = ns.getHostname()
@@ -1652,10 +1797,10 @@ async function archiveLocalServerFiles(
     if (!ns.fileExists(file)) {
       continue
     }
-    queueArchiveContent(ns, flatFileName(file), ns.read(file), reportPort, lorePort)
+    queueArchiveContent(ns, flatFileName(file), ns.read(file), reportPort, lorePort, neighbors)
   }
 
-  await openCacheFilesOnCurrentHost(ns, dnet, reportPort, lorePort, cacheOpens)
+  await openCacheFilesOnCurrentHost(ns, dnet, reportPort, lorePort, neighbors, cacheOpens)
 }
 
 function safeGetSessionDetails(
@@ -1697,11 +1842,10 @@ async function runOneCrawlPass(
     password: null,
   })
 
-  if (selfDetails.hasSession) {
-    await archiveLocalServerFiles(ns, dnet, reportPort, lorePort)
-  }
-
   if (remainingDepth <= 0) {
+    if (selfDetails.hasSession) {
+      await archiveLocalServerFiles(ns, dnet, reportPort, lorePort)
+    }
     return
   }
 
@@ -1720,6 +1864,11 @@ async function runOneCrawlPass(
     neighbors = dnet.probe()
   } catch {
     return
+  }
+
+  // Archive files after probe so we have neighbors for password-intel parsing
+  if (selfDetails.hasSession) {
+    await archiveLocalServerFiles(ns, dnet, reportPort, lorePort, neighbors)
   }
 
   for (const neighbor of neighbors) {
@@ -1904,13 +2053,91 @@ function parseCacheOpen(row: Record<string, unknown>): CrawlCacheOpen | null {
   }
 }
 
+function applyPasswordIntel(registry: DarknetRegistry, raw: unknown): void {
+  const parsed = raw as Record<string, unknown>
+  if (!Array.isArray(parsed.entries)) return
+  const msgTimestamp = typeof parsed.timestamp === "number" ? parsed.timestamp : Date.now()
+  const sourceHost = typeof parsed.sourceHost === "string" ? parsed.sourceHost : "unknown"
+  const neighbors: string[] = Array.isArray(parsed.neighbors)
+    ? parsed.neighbors.filter((n): n is string => typeof n === "string")
+    : []
+
+  for (const entry of parsed.entries) {
+    const e = entry as Record<string, unknown>
+    const kind = e.kind as string | undefined
+
+    if (kind === "explicit" || kind === "remember") {
+      const password = typeof e.password === "string" ? e.password : null
+      if (!password) continue
+
+      if (kind === "explicit") {
+        const host = typeof e.host === "string" ? e.host.trim() : null
+        if (!host) continue
+        const server = registry.servers[host]
+        // Only overwrite if we have newer data
+        if (server) {
+          if (server.timestamp != null && server.timestamp >= msgTimestamp) continue
+          server.password = password
+          server.timestamp = msgTimestamp
+        } else {
+          registry.servers[host] = {
+            hostname: host,
+            parentHost: null,
+            password,
+            timestamp: msgTimestamp,
+            passwordHints: [],
+          }
+        }
+      } else {
+        // "remember" — password for one of the neighbors
+        const dedupKey = `${password}|${sourceHost}`
+        const exists = registry.rememberedPasswords.some(
+          (rp) => `${rp.password}|${rp.sourceHost}` === dedupKey
+        )
+        if (!exists) {
+          registry.rememberedPasswords.push({
+            password,
+            sourceHost,
+            neighborHosts: neighbors,
+            timestamp: msgTimestamp,
+          })
+        }
+      }
+    } else if (kind === "hint") {
+      const host = typeof e.host === "string" ? e.host.trim() : null
+      const chars = typeof e.chars === "string" ? e.chars : null
+      if (!host || !chars) continue
+      const server = registry.servers[host]
+      // Check if this exact hint was already recorded at the same or newer time
+      const duplicate = server?.passwordHints.some(
+        (h) => h.chars === chars && h.timestamp >= msgTimestamp
+      )
+      if (!duplicate) {
+        const record: PasswordHintRecord = { chars, timestamp: msgTimestamp }
+        if (server) {
+          server.passwordHints.push(record)
+        } else {
+          registry.servers[host] = {
+            hostname: host,
+            parentHost: null,
+            password: null,
+            timestamp: null,
+            passwordHints: [record],
+          }
+        }
+      }
+    }
+  }
+}
+
 function applyCrawlPortMessage(
   ns: NS,
   raw: unknown,
   reports: Map<string, CrawlHostReport>,
   activeOps: Map<string, CrawlStatusReport>,
   cacheOpens: CrawlCacheOpen[],
-  cycleComplete?: { value: boolean }
+  cycleComplete?: { value: boolean },
+  registry?: DarknetRegistry
 ): void {
   try {
     const parsed: unknown = typeof raw === "string" ? JSON.parse(raw) : raw
@@ -1931,6 +2158,10 @@ function applyCrawlPortMessage(
     }
     if (row.type === "archive" && typeof row.file === "string" && typeof row.content === "string") {
       finalizeArchiveContent(ns, row.file, row.content)
+      return
+    }
+    if (row.type === "passwordIntel" && registry) {
+      applyPasswordIntel(registry, parsed)
       return
     }
     const status = parseCrawlStatus(row)
@@ -1966,12 +2197,13 @@ function drainCrawlPort(
   reports: Map<string, CrawlHostReport>,
   activeOps: Map<string, CrawlStatusReport>,
   cacheOpens: CrawlCacheOpen[],
-  cycleComplete?: { value: boolean }
+  cycleComplete?: { value: boolean },
+  registry?: DarknetRegistry
 ): void {
   while (true) {
     const raw = ns.readPort(port)
     if (raw === "NULL PORT DATA") break
-    applyCrawlPortMessage(ns, raw, reports, activeOps, cacheOpens, cycleComplete)
+    applyCrawlPortMessage(ns, raw, reports, activeOps, cacheOpens, cycleComplete, registry)
   }
 }
 
@@ -1981,13 +2213,14 @@ function pollCrawlPort(
   reports: Map<string, CrawlHostReport>,
   activeOps: Map<string, CrawlStatusReport>,
   cacheOpens: CrawlCacheOpen[],
-  cycleComplete?: { value: boolean }
+  cycleComplete?: { value: boolean },
+  registry?: DarknetRegistry
 ): void {
   while (true) {
     const raw = ns.peek(port)
     if (raw === "NULL PORT DATA") break
     ns.readPort(port)
-    applyCrawlPortMessage(ns, raw, reports, activeOps, cacheOpens, cycleComplete)
+    applyCrawlPortMessage(ns, raw, reports, activeOps, cacheOpens, cycleComplete, registry)
   }
 }
 
@@ -2198,7 +2431,7 @@ export async function runDarknetCrawl(
 
   if (continuous) {
     while (true) {
-      pollCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, cycleComplete)
+      pollCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, cycleComplete, registry)
       pollTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
       if (cycleComplete.value) {
         cycleComplete.value = false
@@ -2242,13 +2475,13 @@ export async function runDarknetCrawl(
   }
 
   while (ns.isRunning(pid)) {
-    pollCrawlPort(ns, reportPort, reports, activeOps, cacheOpens)
+    pollCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, undefined, registry)
     pollTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
     await emitProgress(true)
     await ns.sleep(100)
   }
 
-  drainCrawlPort(ns, reportPort, reports, activeOps, cacheOpens)
+  drainCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, undefined, registry)
   drainTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
   await emitProgress(false)
 
