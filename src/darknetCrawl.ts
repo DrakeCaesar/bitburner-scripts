@@ -14,12 +14,17 @@ export const DARKWEB = "darkweb"
 /** Files whose basename contains one of these go to the lore port → darknet-lore.json. */
 export const LORE_FILE_KEYWORDS = ["dreams", "journal", "notes", "search_history", "the_truth", "thoughts"]
 
-/** Files whose basename contains one of these go to per-file archive. */
+/** Files whose basename contains one of these are parsed for password intel but NOT archived to disk. */
 export const PASSWORD_FILE_KEYWORDS = ["access", "admin", "credentials", "key", "login", "password", "root", "secrets"]
 
 export function isLoreFile(fileName: string): boolean {
   const lower = fileName.toLowerCase()
   return LORE_FILE_KEYWORDS.some((kw) => lower.includes(kw))
+}
+
+export function isPasswordFile(fileName: string): boolean {
+  const lower = fileName.toLowerCase()
+  return PASSWORD_FILE_KEYWORDS.some((kw) => lower.includes(kw))
 }
 
 export function flatFileName(fileName: string): string {
@@ -219,6 +224,7 @@ const DARKWEB_COMMON_PASSWORDS: readonly string[] = [
   "austin",
   "thunder",
   "taylor",
+  "matrix",
 ]
 
 /** Source: key.data.txt ("Remember this password: …") */
@@ -1693,28 +1699,28 @@ function queueArchiveContent(
     }
     return
   }
-  // non-journaling files: parse for password intel, strip type-1, archive the rest
-  const base = flatFileName(fileName)
-  const hostname = ns.getHostname()
 
-  const { cleanContent, intelJson } = parsePasswordFileContent(
-    content,
-    hostname,
-    neighbors ?? [],
-    Date.now()
-  )
-
-  if (hostname === "home") {
-    finalizeArchiveContent(ns, base, cleanContent)
-    // On home, apply password intel directly to the in-memory registry
-    // (handled by caller via return value or by archiving)
+  // password files: extract intel for registry, do NOT archive to disk
+  if (isPasswordFile(flatFileName(fileName))) {
+    const hostname = ns.getHostname()
+    const { intelJson } = parsePasswordFileContent(content, hostname, neighbors ?? [], Date.now())
+    if (reportPort != null && reportPort > 0) {
+      ns.writePort(reportPort, intelJson)
+    }
     return
   }
 
-  // On workers: send cleaned content for archiving + parsed password intel
+  // other files: store as-is, no parsing
+  const base = flatFileName(fileName)
+  const hostname = ns.getHostname()
+
+  if (hostname === "home") {
+    finalizeArchiveContent(ns, base, content)
+    return
+  }
+
   if (reportPort != null && reportPort > 0) {
-    ns.writePort(reportPort, JSON.stringify({ type: "archive", file: base, content: cleanContent }))
-    ns.writePort(reportPort, intelJson)
+    ns.writePort(reportPort, JSON.stringify({ type: "archive", file: base, content }))
   }
 }
 
