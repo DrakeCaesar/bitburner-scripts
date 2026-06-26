@@ -2,7 +2,6 @@ import { NS } from "@ns"
 import {
   DEFAULT_CRAWL_INTERVAL_MS,
   DARKNET_REGISTRY_FILE,
-  MAX_PROBE_DEPTH,
   formatCrawlOpShort,
   loadDarknetRegistry,
   mergeCrawlReportsIntoRegistry,
@@ -384,7 +383,6 @@ export async function main(ns: NS): Promise<void> {
       dnet,
       CRAWL_REPORT_PORT,
       DARKNET_LORE_PORT,
-      MAX_PROBE_DEPTH,
       async (state) => {
         await renderCrawlProgress(ns, dnet, tabbedLog, registry, state, crawlNum, sessionCacheOpens)
       },
