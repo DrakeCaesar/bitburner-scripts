@@ -1487,6 +1487,28 @@ function crawlWorkerArgs(
   return [WORKER_MODE_ARG, reportPort, lorePort, registryJson]
 }
 
+async function ensureFreeRam(ns: NS, dnet: DarknetCrawlApi, host: string): Promise<void> {
+  const details = dnet.getServerDetails(host)
+  if (details.blockedRam <= 0) {
+    return
+  }
+
+  while (true) {
+    try {
+      const result = await ns.dnet.memoryReallocation(host)
+      if (!result.success) {
+        break
+      }
+    } catch {
+      return
+    }
+    const updated = dnet.getServerDetails(host)
+    if (updated.blockedRam <= 0) {
+      return
+    }
+  }
+}
+
 async function spawnCrawlWorkerOnHost(
   ns: NS,
   host: string,
@@ -1880,6 +1902,10 @@ async function runOneCrawlPass(
       continue
     }
 
+    if (neighborDetails.blockedRam > 0) {
+      await ensureFreeRam(ns, dnet, neighbor)
+    }
+
     if (ns.isRunning(DARKNET_CRAWL_SCRIPT, neighbor)) {
       continue
     }
@@ -1891,6 +1917,12 @@ async function runOneCrawlPass(
       etaMs: 0,
       detail: "recurse",
     })
+
+    const workerRam = ns.getScriptRam(DARKNET_CRAWL_SCRIPT, neighbor)
+    const freeRam = ns.getServerMaxRam(neighbor) - ns.getServerUsedRam(neighbor)
+    if (workerRam > freeRam) {
+      continue
+    }
 
     await spawnCrawlWorkerOnHost(
       ns,
