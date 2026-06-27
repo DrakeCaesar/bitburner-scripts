@@ -236,6 +236,10 @@ function isFactoriOsModel(details: DarknetServerDetailsForFormulas): boolean {
   return details.modelId === "Factori-Os" && details.passwordFormat === "numeric"
 }
 
+function isKingOfTheHillModel(details: DarknetServerDetailsForFormulas): boolean {
+  return details.modelId === "KingOfTheHill" && details.passwordFormat === "numeric"
+}
+
 function solveLaika4(input: DarknetAuthSolverInput): string | null {
   if (input.modelId !== "Laika4" || input.passwordFormat !== "alphabetic") {
     return null
@@ -960,6 +964,102 @@ async function authenticateFactoriOs(
   }
 }
 
+// ---- KingOfTheHill ----
+
+/**
+ * Read KingOfTheHill altitude feedback from the auth log.
+ * Entries: {"data": <number>, "message": "current altitude: X m; highest peak: 10,000 m", ...}
+ */
+async function readKingOfTheHillFeedback(
+  ns: NS,
+  port: number,
+  dnet: DarknetCrawlApi,
+  host: string,
+  guess: string
+): Promise<{ altitude: number; peak: number } | null> {
+  writeCrawlStatus(ns, port, {
+    workerHost: ns.getHostname(),
+    targetHost: host,
+    phase: "heartbleed",
+    etaMs: getHeartbleedEtaMs(ns, dnet, host),
+    detail: "reading auth log",
+  })
+
+  const result = await dnet.heartbleed(host, { peek: true })
+  if (!result.success) return null
+
+  for (const logLine of result.logs) {
+    try {
+      const parsed: unknown = JSON.parse(logLine)
+      if (typeof parsed !== "object" || parsed === null) continue
+      const entry = parsed as Record<string, unknown>
+      if (entry.passwordAttempted !== guess) continue
+
+      const altitude = typeof entry.data === "number" ? entry.data : 0
+      // Parse peak from message: "current altitude: X m; highest peak: 10,000 m"
+      const peakMatch = typeof entry.message === "string"
+        ? entry.message.match(/highest peak:\s*([\d,.]+)\s*m/i)
+        : null
+      const peak = peakMatch ? parseFloat(peakMatch[1]!.replace(/,/g, "")) : 10000
+
+      return { altitude, peak }
+    } catch {
+      // not JSON, skip
+    }
+  }
+
+  return null
+}
+
+/**
+ * KingOfTheHill uses a Gaussian: altitude = peak * exp(-0.25 * (guess - password)^2).
+ * From a single measurement we can compute the exact distance to the password:
+ *   distance = 2 * sqrt(ln(peak / altitude))
+ * Then try guess ± distance — at most 3 auth calls total.
+ */
+async function authenticateKingOfTheHill(
+  ns: NS,
+  port: number,
+  dnet: DarknetCrawlApi,
+  host: string,
+  length: number
+): Promise<{ password: string | null; authenticated: boolean; authGuesses: number }> {
+  const min = 10 ** (length - 1)
+  const max = 10 ** length - 1
+  let authGuesses = 0
+
+  // Probe at the midpoint to get altitude
+  const mid = Math.floor((min + max) / 2)
+  const midStr = String(mid)
+
+  authGuesses++
+  const midResult = await authenticateWithStatus(ns, port, dnet, host, midStr, `probe ${mid}`, authGuesses)
+  if (midResult.success) {
+    return { password: midStr, authenticated: true, authGuesses }
+  }
+
+  const feedback = await readKingOfTheHillFeedback(ns, port, dnet, host, midStr)
+  if (!feedback || feedback.altitude <= 0) {
+    return { password: null, authenticated: false, authGuesses }
+  }
+
+  const { altitude, peak } = feedback
+  const distance = Math.round(2 * Math.sqrt(Math.log(peak / altitude)))
+
+  // Try both candidates: mid - distance, mid + distance
+  for (const candidate of [mid - distance, mid + distance]) {
+    if (candidate < min || candidate > max) continue
+    const candStr = String(candidate)
+    authGuesses++
+    const result = await authenticateWithStatus(ns, port, dnet, host, candStr, `candidate ${candidate}`, authGuesses)
+    if (result.success) {
+      return { password: candStr, authenticated: true, authGuesses }
+    }
+  }
+
+  return { password: null, authenticated: false, authGuesses }
+}
+
 export function solveDarknetPassword(input: DarknetAuthSolverInput): { password: string | null } {
   const zeroLogon = solveZeroLogon(input)
   if (zeroLogon !== null) {
@@ -1181,6 +1281,15 @@ export async function tryAuthNeighbor(
 
   if (isFactoriOsModel(details)) {
     const auth = await authenticateFactoriOs(ns, port, dnet, neighbor, details.passwordLength)
+    return {
+      password: auth.password,
+      authenticated: auth.authenticated ? true : auth.password !== null ? false : null,
+      authGuesses: auth.authGuesses,
+    }
+  }
+
+  if (isKingOfTheHillModel(details)) {
+    const auth = await authenticateKingOfTheHill(ns, port, dnet, neighbor, details.passwordLength)
     return {
       password: auth.password,
       authenticated: auth.authenticated ? true : auth.password !== null ? false : null,
