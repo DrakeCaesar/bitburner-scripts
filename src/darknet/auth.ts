@@ -232,6 +232,10 @@ function isLaika4Model(details: DarknetServerDetailsForFormulas): boolean {
   return details.modelId === "Laika4" && details.passwordFormat === "alphabetic"
 }
 
+function isFactoriOsModel(details: DarknetServerDetailsForFormulas): boolean {
+  return details.modelId === "Factori-Os" && details.passwordFormat === "numeric"
+}
+
 function solveLaika4(input: DarknetAuthSolverInput): string | null {
   if (input.modelId !== "Laika4" || input.passwordFormat !== "alphabetic") {
     return null
@@ -841,6 +845,121 @@ async function authenticateDeepGreen(
   return { password: null, authenticated: false, authGuesses }
 }
 
+// ---- Factori-Os ----
+
+/** Primes in ascending order, used as divisibility probes. */
+const FACTORIOS_PRIMES = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97]
+
+/**
+ * Read the Factori-Os divisibility feedback from the auth log.
+ * Factori-Os entries: {"data": true/false, "passwordAttempted": "5", "code": 401}
+ */
+async function readFactoriOsFeedback(
+  ns: NS,
+  port: number,
+  dnet: DarknetCrawlApi,
+  host: string,
+  guess: string
+): Promise<boolean | null> {
+  writeCrawlStatus(ns, port, {
+    workerHost: ns.getHostname(),
+    targetHost: host,
+    phase: "heartbleed",
+    etaMs: getHeartbleedEtaMs(ns, dnet, host),
+    detail: "reading auth log",
+  })
+
+  const result = await dnet.heartbleed(host, { peek: true })
+  if (!result.success) {
+    return null
+  }
+
+  for (const logLine of result.logs) {
+    try {
+      const parsed: unknown = JSON.parse(logLine)
+      if (typeof parsed !== "object" || parsed === null) continue
+      const entry = parsed as Record<string, unknown>
+      if (entry.passwordAttempted !== guess) continue
+      if (typeof entry.data === "boolean") {
+        return entry.data
+      }
+    } catch {
+      // not JSON, skip
+    }
+  }
+
+  return null
+}
+
+async function authenticateFactoriOs(
+  ns: NS,
+  port: number,
+  dnet: DarknetCrawlApi,
+  host: string,
+  length: number
+): Promise<{ password: string | null; authenticated: boolean; authGuesses: number }> {
+  let product = 1
+  let authGuesses = 0
+
+  for (const prime of FACTORIOS_PRIMES) {
+    // Skip primes too large to be a factor of a length-N number
+    const primeStr = String(prime)
+    if (primeStr.length > length) break
+
+    authGuesses++
+    const result = await authenticateWithStatus(ns, port, dnet, host, primeStr, `prime ${prime}`, authGuesses)
+    if (result.success) {
+      return { password: primeStr, authenticated: true, authGuesses }
+    }
+
+    const feedback = await readFactoriOsFeedback(ns, port, dnet, host, primeStr)
+    if (feedback === null) {
+      return { password: null, authenticated: false, authGuesses }
+    }
+
+    if (feedback) {
+      // This prime divides the password — find the highest power
+      let power = prime
+      let next = prime * prime
+      while (String(next).length <= length) {
+        const nextStr = String(next)
+        authGuesses++
+        const powerResult = await authenticateWithStatus(ns, port, dnet, host, nextStr, `pow ${next}`, authGuesses)
+        if (powerResult.success) {
+          return { password: nextStr, authenticated: true, authGuesses }
+        }
+
+        const powerFeedback = await readFactoriOsFeedback(ns, port, dnet, host, nextStr)
+        if (powerFeedback) {
+          power = next
+          next *= prime
+        } else {
+          break
+        }
+      }
+      product *= power
+      // If product already exceeds the digit limit, bail
+      if (String(product).length > length) {
+        return { password: null, authenticated: false, authGuesses }
+      }
+    }
+    // feedback === false: prime does not divide, continue
+  }
+
+  const password = String(product)
+  if (password.length !== length) {
+    return { password: null, authenticated: false, authGuesses }
+  }
+
+  authGuesses++
+  const finalResult = await authenticateWithStatus(ns, port, dnet, host, password, "factor product", authGuesses)
+  return {
+    password: finalResult.success ? password : null,
+    authenticated: finalResult.success,
+    authGuesses,
+  }
+}
+
 export function solveDarknetPassword(input: DarknetAuthSolverInput): { password: string | null } {
   const zeroLogon = solveZeroLogon(input)
   if (zeroLogon !== null) {
@@ -1056,6 +1175,15 @@ export async function tryAuthNeighbor(
     return {
       password: auth.password,
       authenticated: auth.authenticated ? true : false,
+      authGuesses: auth.authGuesses,
+    }
+  }
+
+  if (isFactoriOsModel(details)) {
+    const auth = await authenticateFactoriOs(ns, port, dnet, neighbor, details.passwordLength)
+    return {
+      password: auth.password,
+      authenticated: auth.authenticated ? true : auth.password !== null ? false : null,
       authGuesses: auth.authGuesses,
     }
   }
