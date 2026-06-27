@@ -183,6 +183,64 @@ function solveBellaCuore(input: DarknetAuthSolverInput): string | null {
   return password
 }
 
+function solveOctantVoxel(input: DarknetAuthSolverInput): string | null {
+  if (input.modelId !== "OctantVoxel") {
+    return null
+  }
+  if (input.passwordFormat !== "numeric") {
+    return null
+  }
+
+  // Hint: "the password is the base N number X in base 10"
+  // Data: "N,X"
+  const parts = input.data.split(",")
+  if (parts.length !== 2) {
+    return null
+  }
+  const fromBase = Number(parts[0]?.trim())
+  const numberStr = parts[1]?.trim()
+  if (!Number.isInteger(fromBase) || fromBase < 2 || fromBase > 36 || !numberStr) {
+    return null
+  }
+
+  // Validate all digits are valid in the given base
+  const validChars = "0123456789abcdefghijklmnopqrstuvwxyz".slice(0, fromBase)
+  for (const ch of numberStr.toLowerCase()) {
+    if (!validChars.includes(ch)) {
+      return null
+    }
+  }
+
+  const decimal = parseInt(numberStr, fromBase)
+  if (!Number.isFinite(decimal)) {
+    return null
+  }
+  const password = String(decimal)
+  if (password.length !== input.passwordLength) {
+    return null
+  }
+
+  return password
+}
+
+const LAIKA4_DOG_NAMES = ["max", "fido", "spot", "rover"]
+
+function laika4Candidates(length: number): string[] {
+  return LAIKA4_DOG_NAMES.filter((name) => name.length === length)
+}
+
+function isLaika4Model(details: DarknetServerDetailsForFormulas): boolean {
+  return details.modelId === "Laika4" && details.passwordFormat === "alphabetic"
+}
+
+function solveLaika4(input: DarknetAuthSolverInput): string | null {
+  if (input.modelId !== "Laika4" || input.passwordFormat !== "alphabetic") {
+    return null
+  }
+  const candidates = laika4Candidates(input.passwordLength)
+  return candidates.length > 0 ? candidates[0]! : null
+}
+
 const PHP54_MODEL = "PHP 5.4"
 
 function permutationsFromDigitPool(pool: string, length: number): string[] {
@@ -241,7 +299,8 @@ function isAccountsManagerGuessNumber(details: DarknetServerDetailsForFormulas):
 
 const DEEP_GREEN_MODEL = "DeepGreen"
 const DEEP_GREEN_CLUE_LINE_RE = /remember|must use/i
-const MAX_MASTERMIND_CANDIDATES = 50_000
+/** Keep N low enough that pickMastermindGuess (O(N²)) won't freeze the game thread. */
+const MAX_MASTERMIND_CANDIDATES = 1_000
 
 function isDeepGreenModel(details: DarknetServerDetailsForFormulas): boolean {
   return details.modelId === DEEP_GREEN_MODEL
@@ -764,6 +823,18 @@ export function solveDarknetPassword(input: DarknetAuthSolverInput): { password:
     return { password: bellaCuore }
   }
 
+  const octantVoxel = solveOctantVoxel(input)
+  if (octantVoxel !== null) {
+    return { password: octantVoxel }
+  }
+
+  // Single-shot Laika4 — for length 4 there are 2 candidates (fido, spot),
+  // but the worker's tryAuthNeighbor branch handles the full sequence.
+  const laika4 = solveLaika4(input)
+  if (laika4 !== null) {
+    return { password: laika4 }
+  }
+
   return { password: null }
 }
 
@@ -927,6 +998,19 @@ export async function tryAuthNeighbor(
     return {
       password: auth.password,
       authenticated: auth.authenticated ? true : auth.password !== null ? false : null,
+      authGuesses: auth.authGuesses,
+    }
+  }
+
+  if (isLaika4Model(details)) {
+    const candidates = laika4Candidates(details.passwordLength)
+    if (candidates.length === 0) {
+      return { password: null, authenticated: null, authGuesses: null }
+    }
+    const auth = await authenticateCandidates(ns, port, dnet, neighbor, candidates)
+    return {
+      password: auth.password,
+      authenticated: auth.authenticated ? true : false,
       authGuesses: auth.authGuesses,
     }
   }
