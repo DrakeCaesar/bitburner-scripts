@@ -8,7 +8,6 @@ import {
   type CrawlStatusReport,
   darkwebPasswordCandidates,
   darkwebHostDigitPool,
-  mergeDarkwebDigitPools,
   tryConnectToSession,
 } from "./config"
 
@@ -243,6 +242,63 @@ function solveLaika4(input: DarknetAuthSolverInput): string | null {
 
 const PHP54_MODEL = "PHP 5.4"
 
+/** Generate all distinct permutations of a multiset of digits. */
+function multisetPermutations(digits: string[], length: number): string[] {
+  if (digits.length < length) {
+    return []
+  }
+
+  // Count frequencies
+  const freq = new Map<string, number>()
+  for (const d of digits.slice(0, length)) {
+    freq.set(d, (freq.get(d) ?? 0) + 1)
+  }
+  const uniqueChars = [...freq.keys()].sort()
+
+  const out: string[] = []
+  const build = (prefix: string): void => {
+    if (prefix.length === length) {
+      out.push(prefix)
+      return
+    }
+    for (const ch of uniqueChars) {
+      const rem = freq.get(ch) ?? 0
+      if (rem <= 0) continue
+      freq.set(ch, rem - 1)
+      build(prefix + ch)
+      freq.set(ch, rem)
+    }
+  }
+  build("")
+  return out
+}
+
+function isPhp54Model(details: DarknetServerDetailsForFormulas): boolean {
+  return details.modelId === PHP54_MODEL && details.passwordFormat === "numeric"
+}
+
+function php54NumericCandidates(host: string, hint: string, length: number): string[] {
+  // The server hint format is "The password is shuffled 226"
+  // — digits are the exact multiset with repeats preserved.
+  const hintDigits = hint.replace(/\D/g, "").split("")
+  if (hintDigits.length !== length) {
+    return []
+  }
+
+  const candidates = multisetPermutations(hintDigits, length)
+
+  // If archive hints exist, filter to only those containing all archive digits
+  const archivePool = darkwebHostDigitPool(host)
+  if (archivePool && archivePool.length > 0) {
+    return candidates.filter((candidate) => {
+      return [...archivePool].every((ch) => candidate.includes(ch))
+    })
+  }
+
+  return candidates
+}
+
+/** Generate all unique-per-digit permutations (no repeats). Used by DeepGreen log clues. */
 function permutationsFromDigitPool(pool: string, length: number): string[] {
   const chars = pool.replace(/\D/g, "").split("")
   if (chars.length < length) {
@@ -263,18 +319,6 @@ function permutationsFromDigitPool(pool: string, length: number): string[] {
   }
   walk(chars, "")
   return [...out].sort((a, b) => a.localeCompare(b))
-}
-
-function isPhp54Model(details: DarknetServerDetailsForFormulas): boolean {
-  return details.modelId === PHP54_MODEL && details.passwordFormat === "numeric"
-}
-
-function php54NumericCandidates(host: string, hint: string, length: number): string[] {
-  const pool = mergeDarkwebDigitPools(darkwebHostDigitPool(host) ?? "", hint)
-  if (pool.length < length) {
-    return []
-  }
-  return permutationsFromDigitPool(pool, length)
 }
 
 const ACCOUNTS_MANAGER_MODEL = "AccountsManager_4.2"
