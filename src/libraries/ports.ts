@@ -3,7 +3,7 @@
  *
  * Ports are assigned in blocks to prevent accidental collisions:
  *   Batch hacking      — 21
- *   Darknet crawl      — 45107–45108
+ *   Darknet crawl      — 45107–45109
  */
 
 // ---- batch hacking ----
@@ -21,3 +21,6 @@ export const CRAWL_REPORT_PORT = 45107
 
 /** Worker-to-controller text content IPC — lore/journaling files (raw strings). */
 export const DARKNET_LORE_PORT = 45108
+
+/** Master-to-worker broadcast — runtime config and commands (single-message, workers peek). */
+export const DARKNET_CONTROL_PORT = 45109

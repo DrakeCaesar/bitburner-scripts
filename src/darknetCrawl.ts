@@ -35,6 +35,18 @@ export function flatFileName(fileName: string): string {
 const DARKNET_LORE_FILE = "darknet-lore.json"
 const DARKWEB_ARCHIVE_DIR = "darkweb"
 
+/**
+ * Master-to-worker broadcast port. Workers peek this port each loop to get
+ * runtime config and commands. Inlined so the script stays standalone-copyable.
+ */
+const CONTROL_PORT = 45109
+
+interface ControlMessage {
+  sessionId: number
+  reportPort: number
+  lorePort: number
+}
+
 // --- types ---
 
 type DarknetPasswordFormat = "numeric" | "alphabetic" | "alphanumeric" | "ASCII" | "unicode"
@@ -369,55 +381,6 @@ export function loadDarknetRegistry(ns: NS): DarknetRegistry {
 
 export function saveDarknetRegistry(ns: NS, registry: DarknetRegistry): void {
   ns.write(DARKNET_REGISTRY_FILE, JSON.stringify(registry, null, 2), "w")
-}
-
-function registryToPasswordMap(registry: DarknetRegistry): Map<string, string> {
-  const map = new Map<string, string>()
-  for (const entry of Object.values(registry.servers)) {
-    if (entry.password != null) {
-      map.set(entry.hostname, entry.password)
-    }
-  }
-  return map
-}
-
-interface WorkerState {
-  passwords: Record<string, string>
-}
-
-function serializeWorkerState(passwordCache: Map<string, string>): string {
-  const state: WorkerState = {
-    passwords: Object.fromEntries(passwordCache),
-  }
-  return JSON.stringify(state)
-}
-
-function parseWorkerState(raw: unknown): Map<string, string> {
-  const passwordCache = new Map<string, string>()
-  if (typeof raw !== "string" || raw.length === 0) {
-    return passwordCache
-  }
-  try {
-    const parsed: unknown = JSON.parse(raw)
-    if (typeof parsed !== "object" || parsed === null) {
-      return passwordCache
-    }
-    const state = parsed as Record<string, unknown>
-    if (typeof state.passwords === "object" && state.passwords !== null && !Array.isArray(state.passwords)) {
-      for (const [hostname, password] of Object.entries(state.passwords as Record<string, unknown>)) {
-        if (typeof password === "string") {
-          passwordCache.set(hostname, password)
-        }
-      }
-    }
-  } catch {
-    // ignore
-  }
-  return passwordCache
-}
-
-function loadWorkerPasswordCache(ns: NS): Map<string, string> {
-  return parseWorkerState(ns.args[3])
 }
 
 export function mergeCrawlReportsIntoRegistry(
@@ -1479,12 +1442,8 @@ async function copyCrawlScript(ns: NS, target: string, source: string): Promise<
   }
 }
 
-function crawlWorkerArgs(
-  reportPort: number,
-  lorePort: number,
-  registryJson: string
-): (string | number)[] {
-  return [WORKER_MODE_ARG, reportPort, lorePort, registryJson]
+function crawlWorkerArgs(sessionId: number): (string | number)[] {
+  return [WORKER_MODE_ARG, sessionId]
 }
 
 async function ensureFreeRam(ns: NS, dnet: DarknetCrawlApi, host: string): Promise<void> {
@@ -1512,9 +1471,7 @@ async function ensureFreeRam(ns: NS, dnet: DarknetCrawlApi, host: string): Promi
 async function spawnCrawlWorkerOnHost(
   ns: NS,
   host: string,
-  reportPort: number,
-  lorePort: number,
-  passwordCache: Map<string, string>,
+  sessionId: number,
   assetSource: string
 ): Promise<number> {
   await copyCrawlScript(ns, host, assetSource)
@@ -1527,7 +1484,7 @@ async function spawnCrawlWorkerOnHost(
     DARKNET_CRAWL_SCRIPT,
     host,
     1,
-    ...crawlWorkerArgs(reportPort, lorePort, serializeWorkerState(passwordCache))
+    ...crawlWorkerArgs(sessionId)
   )
 }
 
@@ -1837,7 +1794,8 @@ async function runOneCrawlPass(
   reportPort: number,
   lorePort: number,
   dnet: DarknetCrawlApi,
-  passwordCache: Map<string, string>
+  passwordCache: Map<string, string>,
+  sessionId: number
 ): Promise<void> {
   const hostname = ns.getHostname()
 
@@ -1927,38 +1885,70 @@ async function runOneCrawlPass(
     await spawnCrawlWorkerOnHost(
       ns,
       neighbor,
-      reportPort,
-      lorePort,
-      passwordCache,
+      sessionId,
       hostname
     )
   }
 }
 
 async function runCrawlWorker(ns: NS): Promise<void> {
-  const reportPort = Number(ns.args[1])
-  const lorePort = Number(ns.args[2])
-  if (
-    !Number.isInteger(reportPort) || reportPort <= 0 ||
-    !Number.isInteger(lorePort) || lorePort <= 0
-  ) {
-    return
-  }
-
   const dnet = (ns as NS & { dnet?: DarknetCrawlApi }).dnet
   if (!dnet) {
     return
   }
 
-  const passwordCache = loadWorkerPasswordCache(ns)
+  const mySessionId = Number(ns.args[1])
+  if (!Number.isFinite(mySessionId) || mySessionId <= 0) {
+    return
+  }
 
+  // Wait for master to write config to the control port
   while (true) {
-    try {
-      await runOneCrawlPass(ns, reportPort, lorePort, dnet, passwordCache)
-    } catch {
-      // probe/auth might fail if host changes — keep looping
+    const raw = ns.peek(CONTROL_PORT)
+    if (raw === "NULL PORT DATA") {
+      await ns.sleep(2000)
+      continue
     }
-    await ns.sleep(5000)
+
+    let msg: ControlMessage
+    try {
+      msg = JSON.parse(raw as string) as ControlMessage
+    } catch {
+      await ns.sleep(2000)
+      continue
+    }
+
+    if (typeof msg.sessionId !== "number" || msg.sessionId !== mySessionId) {
+      // Different session — master restarted, terminate
+      ns.exit()
+    }
+
+    if (typeof msg.reportPort === "number" && typeof msg.lorePort === "number") {
+      const passwordCache = new Map<string, string>()
+      while (true) {
+        // Re-check control port each loop for session change
+        const checkRaw = ns.peek(CONTROL_PORT)
+        if (checkRaw !== "NULL PORT DATA") {
+          try {
+            const checkMsg = JSON.parse(checkRaw as string) as ControlMessage
+            if (typeof checkMsg.sessionId !== "number" || checkMsg.sessionId !== mySessionId) {
+              ns.exit()
+            }
+          } catch {
+            // malformed, ignore
+          }
+        }
+
+        try {
+          await runOneCrawlPass(ns, msg.reportPort, msg.lorePort, dnet, passwordCache, mySessionId)
+        } catch {
+          // probe/auth might fail if host changes — keep looping
+        }
+        await ns.sleep(5000)
+      }
+    }
+
+    await ns.sleep(2000)
   }
 }
 
@@ -2283,20 +2273,15 @@ async function authenticateDarkwebEntry(
 
 async function launchDarkwebCrawlWorker(
   ns: NS,
-  reportPort: number,
-  lorePort: number,
   source: string,
-  registry: DarknetRegistry | undefined
+  sessionId: number
 ): Promise<number> {
-  // Kill any existing daemon so RAM is free
   try {
     ns.scriptKill(DARKNET_CRAWL_SCRIPT, DARKWEB)
   } catch {
     // darkweb may be offline — ignore
   }
   await copyCrawlScript(ns, DARKWEB, source)
-  const passwordCache = registry ? registryToPasswordMap(registry) : new Map<string, string>()
-  const stateJson = serializeWorkerState(passwordCache)
   const workerRam = ns.getScriptRam(DARKNET_CRAWL_SCRIPT, DARKWEB)
   const freeRam = ns.getServerMaxRam(DARKWEB) - ns.getServerUsedRam(DARKWEB)
   if (workerRam > freeRam) {
@@ -2308,7 +2293,7 @@ async function launchDarkwebCrawlWorker(
     DARKNET_CRAWL_SCRIPT,
     DARKWEB,
     1,
-    ...crawlWorkerArgs(reportPort, lorePort, stateJson)
+    ...crawlWorkerArgs(sessionId)
   )
   if (pid === 0) {
     throw new Error(`Could not exec ${DARKNET_CRAWL_SCRIPT} on ${DARKWEB}`)
@@ -2384,6 +2369,7 @@ export async function runDarknetCrawl(
 ): Promise<DarknetCrawlResult> {
   const source = ns.getHostname()
   const continuous = intervalMs > 0
+  let sessionId = Date.now()
 
   if (registry) {
     pruneInvalidRegistryHosts(dnet, registry)
@@ -2396,10 +2382,14 @@ export async function runDarknetCrawl(
 
   ns.clearPort(reportPort)
   ns.clearPort(lorePort)
+  ns.clearPort(CONTROL_PORT)
+
+  // Write broadcast config with session fingerprint — workers exit if sessionId changes
+  ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId, reportPort, lorePort } satisfies ControlMessage))
 
   const loreSet = loadDarknetTextSet(ns, DARKNET_LORE_FILE)
 
-  let pid = await launchDarkwebCrawlWorker(ns, reportPort, lorePort, source, registry)
+  let pid = await launchDarkwebCrawlWorker(ns, source, sessionId)
 
   const reports = new Map<string, CrawlHostReport>()
   const activeOps = new Map<string, CrawlStatusReport>()
@@ -2427,14 +2417,17 @@ export async function runDarknetCrawl(
       if (!ns.isRunning(pid)) {
         onWorkerError?.(`${DARKNET_CRAWL_SCRIPT} daemon on ${DARKWEB} stopped — restarting`)
         try {
+          sessionId = Date.now()
           await killAllCrawlWorkers(ns, dnet, registry)
           await authenticateDarkwebEntry(ns, dnet, registry?.servers[DARKWEB]?.password)
           reports.clear()
           activeOps.clear()
           ns.clearPort(reportPort)
           ns.clearPort(lorePort)
+          ns.clearPort(CONTROL_PORT)
+          ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId, reportPort, lorePort } satisfies ControlMessage))
           await ns.sleep(5000)
-          pid = await launchDarkwebCrawlWorker(ns, reportPort, lorePort, source, registry)
+          pid = await launchDarkwebCrawlWorker(ns, source, sessionId)
         } catch (restartErr) {
           onWorkerError?.(`Failed to restart daemon: ${String(restartErr)} — retrying in 30s`)
           await ns.sleep(30000)
@@ -2452,6 +2445,8 @@ export async function runDarknetCrawl(
     await ns.sleep(100)
   }
 
+  // Signal all workers to stop — write a fresh sessionId to invalidate theirs
+  ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId: 0, reportPort: 0, lorePort: 0 } satisfies ControlMessage))
   drainCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, registry)
   drainTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
   await emitProgress(false)
