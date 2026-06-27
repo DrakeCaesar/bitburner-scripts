@@ -963,14 +963,15 @@ export async function tryAuthNeighbor(
   }
 
   if (isDeepGreenModel(details)) {
-    const archiveAuth = await tryDarkwebArchivePasswords(ns, port, dnet, neighbor, details)
-    if (archiveAuth?.authenticated) {
-      return {
-        password: archiveAuth.password,
-        authenticated: true,
-        authGuesses: archiveAuth.authGuesses,
-      }
-    }
+    // Disabled — explicit solvers only
+    // const archiveAuth = await tryDarkwebArchivePasswords(ns, port, dnet, neighbor, details)
+    // if (archiveAuth?.authenticated) {
+    //   return {
+    //     password: archiveAuth.password,
+    //     authenticated: true,
+    //     authGuesses: archiveAuth.authGuesses,
+    //   }
+    // }
 
     const scrapedLogs = await scrapeHeartbleedLogs(ns, port, dnet, neighbor)
     const logCandidates = deepGreenLogPermutationCandidates(
@@ -1022,14 +1023,15 @@ export async function tryAuthNeighbor(
     return { password, authenticated: result.success, authGuesses: 1 }
   }
 
-  const archiveAuth = await tryDarkwebArchivePasswords(ns, port, dnet, neighbor, details)
-  if (archiveAuth != null) {
-    return {
-      password: archiveAuth.password,
-      authenticated: archiveAuth.authenticated ? true : archiveAuth.password !== null ? false : null,
-      authGuesses: archiveAuth.authGuesses,
-    }
-  }
+  // Disabled — explicit solvers only
+  // const archiveAuth = await tryDarkwebArchivePasswords(ns, port, dnet, neighbor, details)
+  // if (archiveAuth != null) {
+  //   return {
+  //     password: archiveAuth.password,
+  //     authenticated: archiveAuth.authenticated ? true : archiveAuth.password !== null ? false : null,
+  //     authGuesses: archiveAuth.authGuesses,
+  //   }
+  // }
 
   return { password: null, authenticated: null, authGuesses: null }
 }
