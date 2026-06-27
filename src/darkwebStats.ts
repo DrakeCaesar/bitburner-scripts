@@ -131,7 +131,7 @@ function buildDarknetTreeRows(
     return [
       {
         id: hostname,
-        parentId: report?.parentHost ?? null,
+        parentId: null,
         label: hostname,
         cells: [
           ses,
@@ -158,8 +158,8 @@ function bumpActColumnMax(rows: TreeTableRow[]): void {
   }
 }
 
-function bumpHostColumnMax(rows: TreeTableRow[], rootIds?: string[]): void {
-  const measured = measureTreeTableHostChars(rows, rootIds)
+function bumpHostColumnMax(rows: TreeTableRow[]): void {
+  const measured = measureTreeTableHostChars(rows)
   if (measured > hostColumnMaxChars) {
     hostColumnMaxChars = measured
   }
@@ -183,12 +183,10 @@ function appendDarknetTreeTable(
   if (rows.length === 0) {
     return
   }
-  const rootIds = reports.has("darkweb") ? ["darkweb"] : undefined
   bumpActColumnMax(rows)
-  bumpHostColumnMax(rows, rootIds)
+  bumpHostColumnMax(rows)
   log.tab("crawl").treeTable({
     title,
-    rootIds,
     treeMinWidth: hostColumnMaxChars,
     columns: treeDataColumns(),
     rows,

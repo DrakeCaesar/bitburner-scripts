@@ -413,7 +413,8 @@ async function runOneCrawlPass(
   lorePort: number,
   dnet: DarknetCrawlApi,
   passwordCache: Map<string, string>,
-  sessionId: number
+  sessionId: number,
+  assignedTargets: string[] | undefined
 ): Promise<void> {
   const hostname = ns.getHostname()
 
@@ -449,12 +450,24 @@ async function runOneCrawlPass(
     return
   }
 
+  // Report neighbor list to master so it can coordinate assignments
+  ns.writePort(reportPort, JSON.stringify({ type: "neighbors", workerHost: hostname, neighbors }))
+
   // Archive files after probe so we have neighbors for password-intel parsing
   if (selfDetails.hasSession) {
     await archiveLocalServerFiles(ns, dnet, reportPort, lorePort, neighbors)
   }
 
+  // Only auth targets that the master assigned to this worker.
+  // If no assignments yet (first cycle), just probe and report.
+  const assignedSet = assignedTargets ? new Set(assignedTargets) : new Set<string>()
+
   for (const neighbor of neighbors) {
+    // Skip if master hasn't assigned this target to us (or no assignments yet)
+    if (assignedTargets && !assignedSet.has(neighbor)) {
+      continue
+    }
+
     const auth = await tryAuthNeighbor(
       ns,
       reportPort,
@@ -467,7 +480,6 @@ async function runOneCrawlPass(
     }
     writeCrawlReport(ns, reportPort, {
       hostname: neighbor,
-      parentHost: hostname,
       authenticated: auth.authenticated,
       password: auth.password,
       authGuesses: auth.authGuesses,
@@ -545,8 +557,10 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
 
     if (typeof msg.reportPort === "number" && typeof msg.lorePort === "number") {
       const passwordCache = new Map<string, string>()
+      const workerHost = ns.getHostname()
       while (true) {
-        // Re-check control port each loop for session change
+        // Re-check control port each loop for session + updated assignments
+        let assignments: string[] | undefined
         const checkRaw = ns.peek(CONTROL_PORT)
         if (checkRaw !== "NULL PORT DATA") {
           try {
@@ -554,13 +568,14 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
             if (typeof checkMsg.sessionId !== "number" || checkMsg.sessionId !== mySessionId) {
               ns.exit()
             }
+            assignments = checkMsg.assignments?.[workerHost]
           } catch {
             // malformed, ignore
           }
         }
 
         try {
-          await runOneCrawlPass(ns, msg.reportPort, msg.lorePort, dnet, passwordCache, mySessionId)
+          await runOneCrawlPass(ns, msg.reportPort, msg.lorePort, dnet, passwordCache, mySessionId, assignments)
         } catch {
           // probe/auth might fail if host changes — keep looping
         }

@@ -79,8 +79,6 @@ function parseCrawlReport(raw: unknown): CrawlHostReport | null {
     if (row.authenticated !== true && row.authenticated !== false && row.authenticated !== null) {
       return null
     }
-    const parentHost =
-      typeof row.parentHost === "string" ? row.parentHost : row.parentHost === null ? null : undefined
     const authGuesses =
       typeof row.authGuesses === "number"
         ? row.authGuesses
@@ -90,7 +88,6 @@ function parseCrawlReport(raw: unknown): CrawlHostReport | null {
     return {
       type: "host",
       hostname: row.hostname,
-      parentHost,
       authenticated: row.authenticated,
       password: typeof row.password === "string" || row.password === null ? row.password : null,
       authGuesses,
@@ -127,6 +124,7 @@ function applyCrawlPortMessage(
   reports: Map<string, CrawlHostReport>,
   activeOps: Map<string, CrawlStatusReport>,
   cacheOpens: CrawlCacheOpen[],
+  workerNeighbors: Map<string, string[]>,
   registry?: DarknetRegistry
 ): void {
   try {
@@ -135,6 +133,13 @@ function applyCrawlPortMessage(
       return
     }
     const row = parsed as Record<string, unknown>
+
+    // Workers report their probe results so the master can coordinate assignments
+    if (row.type === "neighbors" && typeof row.workerHost === "string" && Array.isArray(row.neighbors)) {
+      workerNeighbors.set(row.workerHost, row.neighbors.filter((n): n is string => typeof n === "string"))
+      return
+    }
+
     const cacheOpen = parseCacheOpen(row)
     if (cacheOpen) {
       cacheOpens.push(cacheOpen)
@@ -162,7 +167,6 @@ function applyCrawlPortMessage(
       hostname: report.hostname,
       authenticated: report.authenticated,
       password: report.password,
-      parentHost: report.parentHost != null ? report.parentHost : (existing?.parentHost ?? null),
       authGuesses: report.authGuesses ?? existing?.authGuesses ?? null,
     })
     for (const [workerHost, op] of activeOps) {
@@ -181,12 +185,13 @@ function drainCrawlPort(
   reports: Map<string, CrawlHostReport>,
   activeOps: Map<string, CrawlStatusReport>,
   cacheOpens: CrawlCacheOpen[],
+  workerNeighbors: Map<string, string[]>,
   registry?: DarknetRegistry
 ): void {
   while (true) {
     const raw = ns.readPort(port)
     if (raw === "NULL PORT DATA") break
-    applyCrawlPortMessage(ns, raw, reports, activeOps, cacheOpens, registry)
+    applyCrawlPortMessage(ns, raw, reports, activeOps, cacheOpens, workerNeighbors, registry)
   }
 }
 
@@ -196,13 +201,14 @@ function pollCrawlPort(
   reports: Map<string, CrawlHostReport>,
   activeOps: Map<string, CrawlStatusReport>,
   cacheOpens: CrawlCacheOpen[],
+  workerNeighbors: Map<string, string[]>,
   registry?: DarknetRegistry
 ): void {
   while (true) {
     const raw = ns.peek(port)
     if (raw === "NULL PORT DATA") break
     ns.readPort(port)
-    applyCrawlPortMessage(ns, raw, reports, activeOps, cacheOpens, registry)
+    applyCrawlPortMessage(ns, raw, reports, activeOps, cacheOpens, workerNeighbors, registry)
   }
 }
 
@@ -343,6 +349,7 @@ export async function runDarknetCrawl(
     const reports = new Map<string, CrawlHostReport>()
     const activeOps = new Map<string, CrawlStatusReport>()
     const cacheOpens: CrawlCacheOpen[] = []
+    const workerNeighbors = new Map<string, string[]>()
     const loreSet = loadDarknetTextSet(ns, DARKNET_LORE_FILE)
 
     const emitProgress = async (workerRunning: boolean): Promise<void> => {
@@ -363,7 +370,7 @@ export async function runDarknetCrawl(
       await ns.sleep(1000)
       // Keep killing in case new ones spawned before the stop signal propagated
       await killAllCrawlWorkers(ns, dnet, registry)
-      pollCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, registry)
+      pollCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, workerNeighbors, registry)
       pollTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
       await emitProgress(activeOps.size > 0)
       // Check if any workers still exist
@@ -412,6 +419,39 @@ export async function runDarknetCrawl(
   const reports = new Map<string, CrawlHostReport>()
   const activeOps = new Map<string, CrawlStatusReport>()
   const cacheOpens: CrawlCacheOpen[] = []
+  const workerNeighbors = new Map<string, string[]>()
+
+  const computeAssignments = (): Record<string, string[]> => {
+    const byWorker = new Map<string, string[]>()
+    for (const [workerHost, neighbors] of workerNeighbors) {
+      for (const target of neighbors) {
+        const existingHost = [...byWorker.entries()].find(([, targets]) => targets.includes(target))
+        if (!existingHost) {
+          const arr = byWorker.get(workerHost) ?? []
+          arr.push(target)
+          byWorker.set(workerHost, arr)
+        }
+      }
+    }
+    // Remove targets that are already authenticated (hasSession) from assignments
+    const assignments: Record<string, string[]> = {}
+    for (const [workerHost, targets] of byWorker) {
+      const filtered = targets.filter((t) => {
+        const r = reports.get(t)
+        return r?.authenticated !== true
+      })
+      if (filtered.length > 0) {
+        assignments[workerHost] = filtered
+      }
+    }
+    return assignments
+  }
+
+  const writeAssignments = (): void => {
+    const assignments = computeAssignments()
+    ns.clearPort(CONTROL_PORT)
+    ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId, reportPort, lorePort, assignments } satisfies ControlMessage))
+  }
 
   const emitProgress = async (workerRunning: boolean): Promise<void> => {
     if (!onProgress) {
@@ -429,8 +469,9 @@ export async function runDarknetCrawl(
 
   if (continuous) {
     while (true) {
-      pollCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, registry)
+      pollCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, workerNeighbors, registry)
       pollTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
+      writeAssignments()
       await emitProgress(true)
       if (!ns.isRunning(pid)) {
         onWorkerError?.(`${DARKNET_CRAWL_SCRIPT} daemon on ${DARKWEB} stopped — restarting`)
@@ -440,6 +481,7 @@ export async function runDarknetCrawl(
           await authenticateDarkwebEntry(ns, dnet, registry?.servers[DARKWEB]?.password)
           reports.clear()
           activeOps.clear()
+          workerNeighbors.clear()
           ns.clearPort(reportPort)
           ns.clearPort(lorePort)
           ns.clearPort(CONTROL_PORT)
@@ -457,15 +499,16 @@ export async function runDarknetCrawl(
   }
 
   while (ns.isRunning(pid)) {
-    pollCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, registry)
+    pollCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, workerNeighbors, registry)
     pollTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
+    writeAssignments()
     await emitProgress(true)
     await ns.sleep(100)
   }
 
   // Signal all workers to stop — write a fresh sessionId to invalidate theirs
   ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId: 0, reportPort: 0, lorePort: 0 } satisfies ControlMessage))
-  drainCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, registry)
+  drainCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, workerNeighbors, registry)
   drainTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
   await emitProgress(false)
 

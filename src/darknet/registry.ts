@@ -42,8 +42,6 @@ export function loadDarknetRegistry(ns: NS): DarknetRegistry {
       }
       servers[hostname] = {
         hostname: entry.hostname,
-        parentHost:
-          typeof entry.parentHost === "string" ? entry.parentHost : entry.parentHost === null ? null : null,
         password: typeof entry.password === "string" ? entry.password : null,
         timestamp:
           typeof entry.timestamp === "number" ? entry.timestamp : null,
@@ -95,7 +93,6 @@ export function mergeCrawlReportsIntoRegistry(
         : existing?.timestamp ?? null
     registry.servers[report.hostname] = {
       hostname: report.hostname,
-      parentHost: report.parentHost != null ? report.parentHost : (existing?.parentHost ?? null),
       password,
       timestamp,
       passwordHints: existing?.passwordHints ?? [],
@@ -111,7 +108,6 @@ export function mergeRegistryWithCrawl(
   for (const entry of Object.values(registry.servers)) {
     merged.set(entry.hostname, {
       hostname: entry.hostname,
-      parentHost: entry.parentHost,
       authenticated: entry.password != null ? true : null,
       password: entry.password,
       authGuesses: null,
@@ -121,7 +117,6 @@ export function mergeRegistryWithCrawl(
     const prev = merged.get(report.hostname)
     merged.set(report.hostname, {
       hostname: report.hostname,
-      parentHost: report.parentHost != null ? report.parentHost : (prev?.parentHost ?? null),
       authenticated: report.authenticated ?? prev?.authenticated ?? null,
       password: report.password ?? prev?.password ?? null,
       authGuesses: report.authGuesses ?? prev?.authGuesses ?? null,
@@ -173,7 +168,6 @@ export function applyPasswordIntel(registry: DarknetRegistry, raw: unknown): voi
         } else {
           registry.servers[host] = {
             hostname: host,
-            parentHost: null,
             password,
             timestamp: msgTimestamp,
             passwordHints: [],
@@ -210,7 +204,6 @@ export function applyPasswordIntel(registry: DarknetRegistry, raw: unknown): voi
         } else {
           registry.servers[host] = {
             hostname: host,
-            parentHost: null,
             password: null,
             timestamp: null,
             passwordHints: [record],

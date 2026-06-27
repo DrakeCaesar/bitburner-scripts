@@ -43,6 +43,12 @@ export interface ControlMessage {
   sessionId: number
   reportPort: number
   lorePort: number
+  /**
+   * Master-assigned auth targets per worker hostname.
+   * Workers should only attempt auth on their assigned targets.
+   * Absent/empty = no targets assigned yet (workers only probe).
+   */
+  assignments?: Record<string, string[]>
 }
 
 // ---- file lists for SCP ----
@@ -70,7 +76,6 @@ export interface DarknetAuthSolverInput {
 export interface CrawlHostReport {
   type?: "host"
   hostname: string
-  parentHost?: string | null
   authenticated: boolean | null
   password: string | null
   authGuesses?: number | null
@@ -123,7 +128,6 @@ export interface PasswordHintRecord {
 
 export interface DarknetRegistryEntry {
   hostname: string
-  parentHost: string | null
   password: string | null
   /** When the password was last discovered from a file (explicit) or confirmed via auth. */
   timestamp: number | null
