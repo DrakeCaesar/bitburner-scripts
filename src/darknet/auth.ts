@@ -240,6 +240,10 @@ function isKingOfTheHillModel(details: DarknetServerDetailsForFormulas): boolean
   return details.modelId === "KingOfTheHill" && details.passwordFormat === "numeric"
 }
 
+function isRateMyPixModel(details: DarknetServerDetailsForFormulas): boolean {
+  return details.modelId === "RateMyPix.Auth" && details.passwordFormat === "numeric"
+}
+
 function solveLaika4(input: DarknetAuthSolverInput): string | null {
   if (input.modelId !== "Laika4" || input.passwordFormat !== "alphabetic") {
     return null
@@ -1060,6 +1064,146 @@ async function authenticateKingOfTheHill(
   return { password: null, authenticated: false, authGuesses }
 }
 
+// ---- RateMyPix.Auth ----
+
+/**
+ * Read RateMyPix feedback: count of 🌶️ in the data field.
+ * Format: "🌶️/5", "🌶️🌶️/5", "0/5"
+ */
+async function readRateMyPixFeedback(
+  ns: NS,
+  port: number,
+  dnet: DarknetCrawlApi,
+  host: string,
+  guess: string
+): Promise<number | null> {
+  writeCrawlStatus(ns, port, {
+    workerHost: ns.getHostname(),
+    targetHost: host,
+    phase: "heartbleed",
+    etaMs: getHeartbleedEtaMs(ns, dnet, host),
+    detail: "reading auth log",
+  })
+
+  const result = await dnet.heartbleed(host, { peek: true })
+  if (!result.success) return null
+
+  for (const logLine of result.logs) {
+    try {
+      const parsed: unknown = JSON.parse(logLine)
+      if (typeof parsed !== "object" || parsed === null) continue
+      const entry = parsed as Record<string, unknown>
+      if (entry.passwordAttempted !== guess) continue
+      if (typeof entry.data === "string") {
+        // Count pepper emoji (🌶️ is 2 code units in JS)
+        return (entry.data.match(/🌶/g) ?? []).length
+      }
+    } catch {
+      continue
+    }
+  }
+
+  return null
+}
+
+/**
+ * RateMyPix returns 🌶️ count = number of digits in the correct position.
+ *
+ * Strategy:
+ *   1. Frequency phase: probe 00000-99999 (10 auths) to learn digit multiset
+ *   2. Permutation phase: generate distinct permutations, try each.
+ *      Each wrong guess returns the exact match count, pruning candidates.
+ */
+async function authenticateRateMyPix(
+  ns: NS,
+  port: number,
+  dnet: DarknetCrawlApi,
+  host: string,
+  length: number
+): Promise<{ password: string | null; authenticated: boolean; authGuesses: number }> {
+  let authGuesses = 0
+
+  // ---- Phase 1: learn digit frequencies ----
+  const freq = new Map<string, number>()
+  for (let digit = 0; digit <= 9; digit++) {
+    const guess = String(digit).repeat(length)
+    authGuesses++
+    const result = await authenticateWithStatus(ns, port, dnet, host, guess, `freq ${digit}`, authGuesses)
+    if (result.success) {
+      return { password: guess, authenticated: true, authGuesses }
+    }
+    const count = await readRateMyPixFeedback(ns, port, dnet, host, guess)
+    if (count === null) {
+      return { password: null, authenticated: false, authGuesses }
+    }
+    if (count > 0) {
+      freq.set(String(digit), count)
+    }
+  }
+
+  // Sanity: total count should equal length
+  const totalCount = [...freq.values()].reduce((a, b) => a + b, 0)
+  if (totalCount !== length) {
+    return { password: null, authenticated: false, authGuesses }
+  }
+
+  // ---- Phase 2: generate and test permutations with pruning ----
+  let candidates = generatePermutations(freq, length)
+  if (candidates.length === 0) {
+    return { password: null, authenticated: false, authGuesses }
+  }
+
+  while (candidates.length > 0) {
+    const guess = candidates[0]!
+    authGuesses++
+    const detail = `${candidates.length} candidate(s)`
+    const result = await authenticateWithStatus(ns, port, dnet, host, guess, detail, authGuesses)
+    if (result.success) {
+      return { password: guess, authenticated: true, authGuesses }
+    }
+
+    const count = await readRateMyPixFeedback(ns, port, dnet, host, guess)
+    if (count === null) {
+      return { password: null, authenticated: false, authGuesses }
+    }
+
+    // Prune: keep only candidates that would produce the same match count
+    candidates = candidates.filter((candidate) => {
+      let matches = 0
+      for (let i = 0; i < length; i++) {
+        if (candidate[i] === guess[i]) matches++
+      }
+      return matches === count
+    })
+  }
+
+  return { password: null, authenticated: false, authGuesses }
+}
+
+/** Generate all distinct strings of `length` digits from the given frequency map. */
+function generatePermutations(freq: Map<string, number>, length: number): string[] {
+  const uniqueDigits = [...freq.keys()].sort()
+  const remaining = new Map(freq)
+  const out: string[] = []
+
+  function build(prefix: string): void {
+    if (prefix.length === length) {
+      out.push(prefix)
+      return
+    }
+    for (const digit of uniqueDigits) {
+      const left = remaining.get(digit) ?? 0
+      if (left <= 0) continue
+      remaining.set(digit, left - 1)
+      build(prefix + digit)
+      remaining.set(digit, left)
+    }
+  }
+
+  build("")
+  return out
+}
+
 export function solveDarknetPassword(input: DarknetAuthSolverInput): { password: string | null } {
   const zeroLogon = solveZeroLogon(input)
   if (zeroLogon !== null) {
@@ -1290,6 +1434,15 @@ export async function tryAuthNeighbor(
 
   if (isKingOfTheHillModel(details)) {
     const auth = await authenticateKingOfTheHill(ns, port, dnet, neighbor, details.passwordLength)
+    return {
+      password: auth.password,
+      authenticated: auth.authenticated ? true : auth.password !== null ? false : null,
+      authGuesses: auth.authGuesses,
+    }
+  }
+
+  if (isRateMyPixModel(details)) {
+    const auth = await authenticateRateMyPix(ns, port, dnet, neighbor, details.passwordLength)
     return {
       password: auth.password,
       authenticated: auth.authenticated ? true : auth.password !== null ? false : null,
