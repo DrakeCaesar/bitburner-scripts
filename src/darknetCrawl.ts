@@ -93,8 +93,6 @@ export interface DarknetCrawlResult {
 
 export type CrawlProgressHandler = (state: CrawlProgressState) => void | Promise<void>
 
-export type CrawlCycleCompleteHandler = (result: DarknetCrawlResult) => void | Promise<void>
-
 export type CrawlErrorHandler = (message: string) => void
 
 /** A single hint discovery: "The password for X contains 7 and 8" */
@@ -385,27 +383,24 @@ function registryToPasswordMap(registry: DarknetRegistry): Map<string, string> {
 
 interface WorkerState {
   passwords: Record<string, string>
-  visited: string[]
 }
 
-function serializeWorkerState(passwordCache: Map<string, string>, visited: Set<string>): string {
+function serializeWorkerState(passwordCache: Map<string, string>): string {
   const state: WorkerState = {
     passwords: Object.fromEntries(passwordCache),
-    visited: [...visited],
   }
   return JSON.stringify(state)
 }
 
-function parseWorkerState(raw: unknown): { passwordCache: Map<string, string>; visited: Set<string> } {
+function parseWorkerState(raw: unknown): Map<string, string> {
   const passwordCache = new Map<string, string>()
-  const visited = new Set<string>()
   if (typeof raw !== "string" || raw.length === 0) {
-    return { passwordCache, visited }
+    return passwordCache
   }
   try {
     const parsed: unknown = JSON.parse(raw)
     if (typeof parsed !== "object" || parsed === null) {
-      return { passwordCache, visited }
+      return passwordCache
     }
     const state = parsed as Record<string, unknown>
     if (typeof state.passwords === "object" && state.passwords !== null && !Array.isArray(state.passwords)) {
@@ -415,23 +410,14 @@ function parseWorkerState(raw: unknown): { passwordCache: Map<string, string>; v
         }
       }
     }
-    if (Array.isArray(state.visited)) {
-      for (const h of state.visited) {
-        if (typeof h === "string") visited.add(h)
-      }
-    }
   } catch {
     // ignore
   }
-  return { passwordCache, visited }
+  return passwordCache
 }
 
 function loadWorkerPasswordCache(ns: NS): Map<string, string> {
-  return parseWorkerState(ns.args[4]).passwordCache
-}
-
-function loadWorkerVisitedHosts(ns: NS): Set<string> {
-  return parseWorkerState(ns.args[4]).visited
+  return parseWorkerState(ns.args[3])
 }
 
 export function mergeCrawlReportsIntoRegistry(
@@ -1293,10 +1279,6 @@ function writeCrawlStatus(ns: NS, port: number, status: Omit<CrawlStatusReport, 
   ns.writePort(port, JSON.stringify({ type: "status", ...status }))
 }
 
-function writeCrawlCycleComplete(ns: NS, port: number): void {
-  ns.writePort(port, JSON.stringify({ type: "cycleComplete" }))
-}
-
 async function authenticateWithStatus(
   ns: NS,
   port: number,
@@ -1488,15 +1470,6 @@ async function tryAuthNeighbor(
   return { password: null, authenticated: null, authGuesses: null }
 }
 
-async function waitForChildPids(ns: NS, pids: number[]): Promise<void> {
-  for (const pid of pids) {
-    if (pid <= 0) continue
-    while (ns.isRunning(pid)) {
-      await ns.sleep(50)
-    }
-  }
-}
-
 async function copyCrawlScript(ns: NS, target: string, source: string): Promise<void> {
   if (!ns.fileExists(DARKNET_CRAWL_SCRIPT, source)) {
     throw new Error(`${DARKNET_CRAWL_SCRIPT} not found on ${source}`)
@@ -1509,10 +1482,9 @@ async function copyCrawlScript(ns: NS, target: string, source: string): Promise<
 function crawlWorkerArgs(
   reportPort: number,
   lorePort: number,
-  registryJson: string,
-  waitForChildren: boolean
+  registryJson: string
 ): (string | number)[] {
-  return [WORKER_MODE_ARG, reportPort, lorePort, waitForChildren ? 1 : 0, registryJson]
+  return [WORKER_MODE_ARG, reportPort, lorePort, registryJson]
 }
 
 async function spawnCrawlWorkerOnHost(
@@ -1521,9 +1493,7 @@ async function spawnCrawlWorkerOnHost(
   reportPort: number,
   lorePort: number,
   passwordCache: Map<string, string>,
-  visited: Set<string>,
-  assetSource: string,
-  waitForChildren: boolean
+  assetSource: string
 ): Promise<number> {
   await copyCrawlScript(ns, host, assetSource)
   const workerRam = ns.getScriptRam(DARKNET_CRAWL_SCRIPT, host)
@@ -1535,7 +1505,7 @@ async function spawnCrawlWorkerOnHost(
     DARKNET_CRAWL_SCRIPT,
     host,
     1,
-    ...crawlWorkerArgs(reportPort, lorePort, serializeWorkerState(passwordCache, visited), waitForChildren)
+    ...crawlWorkerArgs(reportPort, lorePort, serializeWorkerState(passwordCache))
   )
 }
 
@@ -1845,12 +1815,9 @@ async function runOneCrawlPass(
   reportPort: number,
   lorePort: number,
   dnet: DarknetCrawlApi,
-  passwordCache: Map<string, string>,
-  visited: Set<string>,
-  waitForChildren: boolean
+  passwordCache: Map<string, string>
 ): Promise<void> {
   const hostname = ns.getHostname()
-  visited.add(hostname)
 
   try {
     await ensureSessionOnSelf(ns, dnet, passwordCache)
@@ -1868,8 +1835,6 @@ async function runOneCrawlPass(
     authenticated: selfDetails.hasSession ? true : null,
     password: null,
   })
-
-  const childPids: number[] = []
 
   writeCrawlStatus(ns, reportPort, {
     workerHost: hostname,
@@ -1915,10 +1880,9 @@ async function runOneCrawlPass(
       continue
     }
 
-    if (visited.has(neighbor)) {
+    if (ns.isRunning(DARKNET_CRAWL_SCRIPT, neighbor)) {
       continue
     }
-    visited.add(neighbor)
 
     writeCrawlStatus(ns, reportPort, {
       workerHost: hostname,
@@ -1928,37 +1892,20 @@ async function runOneCrawlPass(
       detail: "recurse",
     })
 
-    const pid = await spawnCrawlWorkerOnHost(
+    await spawnCrawlWorkerOnHost(
       ns,
       neighbor,
       reportPort,
       lorePort,
       passwordCache,
-      visited,
-      hostname,
-      waitForChildren
+      hostname
     )
-    if (pid > 0 && waitForChildren) {
-      childPids.push(pid)
-    }
-  }
-
-  if (waitForChildren && childPids.length > 0) {
-    writeCrawlStatus(ns, reportPort, {
-      workerHost: hostname,
-      targetHost: hostname,
-      phase: "wait",
-      etaMs: 0,
-      detail: `${childPids.length} child worker(s)`,
-    })
-    await waitForChildPids(ns, childPids)
   }
 }
 
 async function runCrawlWorker(ns: NS): Promise<void> {
   const reportPort = Number(ns.args[1])
   const lorePort = Number(ns.args[2])
-  const waitForChildren = Number(ns.args[3]) === 1
   if (
     !Number.isInteger(reportPort) || reportPort <= 0 ||
     !Number.isInteger(lorePort) || lorePort <= 0
@@ -1972,10 +1919,14 @@ async function runCrawlWorker(ns: NS): Promise<void> {
   }
 
   const passwordCache = loadWorkerPasswordCache(ns)
-  const visited = loadWorkerVisitedHosts(ns)
-  await runOneCrawlPass(ns, reportPort, lorePort, dnet, passwordCache, visited, waitForChildren)
-  if (ns.getHostname() === DARKWEB) {
-    writeCrawlCycleComplete(ns, reportPort)
+
+  while (true) {
+    try {
+      await runOneCrawlPass(ns, reportPort, lorePort, dnet, passwordCache)
+    } catch {
+      // probe/auth might fail if host changes — keep looping
+    }
+    await ns.sleep(5000)
   }
 }
 
@@ -2023,9 +1974,6 @@ function parseCrawlReport(raw: unknown): CrawlHostReport | null {
       return null
     }
     if (row.type === "cacheOpen") {
-      return null
-    }
-    if (row.type === "cycleComplete") {
       return null
     }
     if (typeof row.hostname !== "string") return null
@@ -2155,7 +2103,6 @@ function applyCrawlPortMessage(
   reports: Map<string, CrawlHostReport>,
   activeOps: Map<string, CrawlStatusReport>,
   cacheOpens: CrawlCacheOpen[],
-  cycleComplete?: { value: boolean },
   registry?: DarknetRegistry
 ): void {
   try {
@@ -2164,12 +2111,6 @@ function applyCrawlPortMessage(
       return
     }
     const row = parsed as Record<string, unknown>
-    if (row.type === "cycleComplete") {
-      if (cycleComplete) {
-        cycleComplete.value = true
-      }
-      return
-    }
     const cacheOpen = parseCacheOpen(row)
     if (cacheOpen) {
       cacheOpens.push(cacheOpen)
@@ -2216,13 +2157,12 @@ function drainCrawlPort(
   reports: Map<string, CrawlHostReport>,
   activeOps: Map<string, CrawlStatusReport>,
   cacheOpens: CrawlCacheOpen[],
-  cycleComplete?: { value: boolean },
   registry?: DarknetRegistry
 ): void {
   while (true) {
     const raw = ns.readPort(port)
     if (raw === "NULL PORT DATA") break
-    applyCrawlPortMessage(ns, raw, reports, activeOps, cacheOpens, cycleComplete, registry)
+    applyCrawlPortMessage(ns, raw, reports, activeOps, cacheOpens, registry)
   }
 }
 
@@ -2232,14 +2172,13 @@ function pollCrawlPort(
   reports: Map<string, CrawlHostReport>,
   activeOps: Map<string, CrawlStatusReport>,
   cacheOpens: CrawlCacheOpen[],
-  cycleComplete?: { value: boolean },
   registry?: DarknetRegistry
 ): void {
   while (true) {
     const raw = ns.peek(port)
     if (raw === "NULL PORT DATA") break
     ns.readPort(port)
-    applyCrawlPortMessage(ns, raw, reports, activeOps, cacheOpens, cycleComplete, registry)
+    applyCrawlPortMessage(ns, raw, reports, activeOps, cacheOpens, registry)
   }
 }
 
@@ -2315,12 +2254,17 @@ async function launchDarkwebCrawlWorker(
   reportPort: number,
   lorePort: number,
   source: string,
-  registry: DarknetRegistry | undefined,
-  waitForChildren: boolean
+  registry: DarknetRegistry | undefined
 ): Promise<number> {
+  // Kill any existing daemon so RAM is free
+  try {
+    ns.scriptKill(DARKNET_CRAWL_SCRIPT, DARKWEB)
+  } catch {
+    // darkweb may be offline — ignore
+  }
   await copyCrawlScript(ns, DARKWEB, source)
   const passwordCache = registry ? registryToPasswordMap(registry) : new Map<string, string>()
-  const stateJson = serializeWorkerState(passwordCache, new Set<string>())
+  const stateJson = serializeWorkerState(passwordCache)
   const workerRam = ns.getScriptRam(DARKNET_CRAWL_SCRIPT, DARKWEB)
   const freeRam = ns.getServerMaxRam(DARKWEB) - ns.getServerUsedRam(DARKWEB)
   if (workerRam > freeRam) {
@@ -2332,7 +2276,7 @@ async function launchDarkwebCrawlWorker(
     DARKNET_CRAWL_SCRIPT,
     DARKWEB,
     1,
-    ...crawlWorkerArgs(reportPort, lorePort, stateJson, waitForChildren)
+    ...crawlWorkerArgs(reportPort, lorePort, stateJson)
   )
   if (pid === 0) {
     throw new Error(`Could not exec ${DARKNET_CRAWL_SCRIPT} on ${DARKWEB}`)
@@ -2404,7 +2348,6 @@ export async function runDarknetCrawl(
   onProgress?: CrawlProgressHandler,
   registry?: DarknetRegistry,
   intervalMs = 0,
-  onCycleComplete?: CrawlCycleCompleteHandler,
   onWorkerError?: CrawlErrorHandler
 ): Promise<DarknetCrawlResult> {
   const source = ns.getHostname()
@@ -2424,12 +2367,11 @@ export async function runDarknetCrawl(
 
   const loreSet = loadDarknetTextSet(ns, DARKNET_LORE_FILE)
 
-  let pid = await launchDarkwebCrawlWorker(ns, reportPort, lorePort, source, registry, !continuous)
+  let pid = await launchDarkwebCrawlWorker(ns, reportPort, lorePort, source, registry)
 
   const reports = new Map<string, CrawlHostReport>()
   const activeOps = new Map<string, CrawlStatusReport>()
   const cacheOpens: CrawlCacheOpen[] = []
-  const cycleComplete = { value: false }
 
   const emitProgress = async (workerRunning: boolean): Promise<void> => {
     if (!onProgress) {
@@ -2447,30 +2389,11 @@ export async function runDarknetCrawl(
 
   if (continuous) {
     while (true) {
-      pollCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, cycleComplete, registry)
+      pollCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, registry)
       pollTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
-      if (cycleComplete.value) {
-        cycleComplete.value = false
-        const result: DarknetCrawlResult = {
-          reports: new Map(reports),
-          cacheOpens: [...cacheOpens],
-        }
-        if (onCycleComplete) {
-          await onCycleComplete(result)
-        }
-        if (registry) {
-          saveDarknetRegistry(ns, registry)
-        }
-        reports.clear()
-        activeOps.clear()
-        cacheOpens.length = 0
-        await killAllCrawlWorkers(ns, dnet, registry)
-        await ns.sleep(intervalMs)
-        pid = await launchDarkwebCrawlWorker(ns, reportPort, lorePort, source, registry, false)
-      }
       await emitProgress(true)
       if (!ns.isRunning(pid)) {
-        onWorkerError?.(`${DARKNET_CRAWL_SCRIPT} worker on ${DARKWEB} stopped unexpectedly — restarting crawl`)
+        onWorkerError?.(`${DARKNET_CRAWL_SCRIPT} daemon on ${DARKWEB} stopped — restarting`)
         try {
           await killAllCrawlWorkers(ns, dnet, registry)
           await authenticateDarkwebEntry(ns, dnet, registry?.servers[DARKWEB]?.password)
@@ -2479,9 +2402,9 @@ export async function runDarknetCrawl(
           ns.clearPort(reportPort)
           ns.clearPort(lorePort)
           await ns.sleep(5000)
-          pid = await launchDarkwebCrawlWorker(ns, reportPort, lorePort, source, registry, false)
+          pid = await launchDarkwebCrawlWorker(ns, reportPort, lorePort, source, registry)
         } catch (restartErr) {
-          onWorkerError?.(`Failed to restart crawl worker: ${String(restartErr)} — retrying in 30s`)
+          onWorkerError?.(`Failed to restart daemon: ${String(restartErr)} — retrying in 30s`)
           await ns.sleep(30000)
           continue
         }
@@ -2491,13 +2414,13 @@ export async function runDarknetCrawl(
   }
 
   while (ns.isRunning(pid)) {
-    pollCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, undefined, registry)
+    pollCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, registry)
     pollTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
     await emitProgress(true)
     await ns.sleep(100)
   }
 
-  drainCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, undefined, registry)
+  drainCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, registry)
   drainTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
   await emitProgress(false)
 

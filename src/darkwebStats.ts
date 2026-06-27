@@ -4,14 +4,12 @@ import {
   DARKNET_REGISTRY_FILE,
   formatCrawlOpShort,
   loadDarknetRegistry,
-  mergeCrawlReportsIntoRegistry,
   mergeRegistryWithCrawl,
   pruneInvalidRegistryHosts,
   runDarknetCrawl,
   safeGetServerDetails,
   saveDarknetRegistry,
   type CrawlCacheOpen,
-  type CrawlErrorHandler,
   type CrawlHostReport,
   type CrawlProgressState,
   type CrawlStatusReport,
@@ -388,13 +386,6 @@ export async function main(ns: NS): Promise<void> {
       },
       registry,
       crawlIntervalMs,
-      async (result) => {
-        crawlNum++
-        mergeCrawlReportsIntoRegistry(registry, result.reports)
-        saveDarknetRegistry(ns, registry)
-        sessionCacheOpens.push(...result.cacheOpens)
-        await renderRegistrySummary(ns, dnet, tabbedLog, registry, result.reports, crawlNum, sessionCacheOpens)
-      },
       logCrawl
     )
   } catch (err) {
