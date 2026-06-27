@@ -366,7 +366,8 @@ export async function main(ns: NS): Promise<void> {
     return
   }
 
-  const crawlIntervalMs = parseCrawlIntervalMs(ns)
+  const killOnly = ns.args[0] === "kill"
+  const crawlIntervalMs = killOnly ? 0 : parseCrawlIntervalMs(ns)
   let registry = loadDarknetRegistry(ns)
   const pruned = pruneInvalidRegistryHosts(dnet, registry)
   if (pruned.length > 0) {
@@ -386,7 +387,8 @@ export async function main(ns: NS): Promise<void> {
       },
       registry,
       crawlIntervalMs,
-      logCrawl
+      logCrawl,
+      killOnly
     )
   } catch (err) {
     tabbedLog.clearPanels()

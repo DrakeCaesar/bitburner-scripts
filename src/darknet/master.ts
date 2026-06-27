@@ -330,9 +330,62 @@ export async function runDarknetCrawl(
   onProgress?: CrawlProgressHandler,
   registry?: DarknetRegistry,
   intervalMs = 0,
-  onWorkerError?: CrawlErrorHandler
+  onWorkerError?: CrawlErrorHandler,
+  killOnly = false
 ): Promise<DarknetCrawlResult> {
   const source = ns.getHostname()
+
+  // ---- kill-only mode ----
+  if (killOnly) {
+    ns.clearPort(CONTROL_PORT)
+    ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId: 0, reportPort: 0, lorePort: 0 } satisfies ControlMessage))
+
+    const reports = new Map<string, CrawlHostReport>()
+    const activeOps = new Map<string, CrawlStatusReport>()
+    const cacheOpens: CrawlCacheOpen[] = []
+    const loreSet = loadDarknetTextSet(ns, DARKNET_LORE_FILE)
+
+    const emitProgress = async (workerRunning: boolean): Promise<void> => {
+      if (!onProgress) return
+      await onProgress({
+        reports,
+        activeOps: [...activeOps.values()],
+        workerRunning,
+        cacheOpens,
+      })
+    }
+
+    await killAllCrawlWorkers(ns, dnet, registry)
+    await emitProgress(true)
+
+    // Poll until no workers remain running
+    while (true) {
+      await ns.sleep(1000)
+      // Keep killing in case new ones spawned before the stop signal propagated
+      await killAllCrawlWorkers(ns, dnet, registry)
+      pollCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, registry)
+      pollTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
+      await emitProgress(activeOps.size > 0)
+      // Check if any workers still exist
+      const hosts = crawlWorkerHosts(ns, registry)
+      let anyRunning = false
+      for (const host of hosts) {
+        try {
+          if (ns.isRunning(DARKNET_CRAWL_SCRIPT, host)) {
+            anyRunning = true
+            break
+          }
+        } catch {
+          // host may be offline
+        }
+      }
+      if (!anyRunning) break
+    }
+
+    return { reports, cacheOpens }
+  }
+
+  // ---- normal operation ----
   const continuous = intervalMs > 0
   let sessionId = Date.now()
 
