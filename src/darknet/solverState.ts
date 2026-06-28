@@ -550,18 +550,22 @@ const nilSolver: SolverModule<NilState> = {
 
 // --- AccountsManager_4.2 ---
 
-interface AccountsManagerState extends SolverState { type: "accountsManager"; lo: number; hi: number }
+interface AccountsManagerState extends SolverState { type: "accountsManager"; lo: number; hi: number; length: number }
 
 const accountsManager: SolverModule<AccountsManagerState> = {
   initSolver(details) {
-    const match = details.passwordHint.match(/\d+/)
-    const maxExclusive = match ? Number(match[0]) : 100
-    return { type: "accountsManager", lo: 0, hi: maxExclusive - 1 }
+    // Hint format: "The password is a number between 0 and NNN"
+    // Take the LAST number (the upper bound), not the first (which would be 0).
+    const matches = [...details.passwordHint.matchAll(/\d+/g)]
+    const upper = matches.length >= 2 ? Number(matches[matches.length - 1]![0]) : 100
+    return { type: "accountsManager", lo: 0, hi: upper - 1, length: details.passwordLength }
   },
   nextGuess(state) {
     if (state.lo > state.hi) return null
     const mid = Math.floor((state.lo + state.hi) / 2)
-    return { guess: String(mid), detail: `bin ${mid}` }
+    const raw = String(mid)
+    const padded = raw.length < state.length ? "0".repeat(state.length - raw.length) + raw : raw
+    return { guess: padded, detail: `bin ${mid}` }
   },
   applyResult(state, guess, result) {
     if (result.success) return state
