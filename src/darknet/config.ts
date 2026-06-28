@@ -335,6 +335,8 @@ export interface DarknetCrawlApi {
   connectToSession?(host: string, password: string): { success: boolean }
   openCache(filename: string, suppressToast?: boolean): { success: boolean; message: string; karmaLoss: number }
   getServerDetails(host?: string): DarknetServerDetailsForFormulas
+  labreport?(): Promise<{ success: boolean; coords: number[]; north: boolean; east: boolean; south: boolean; west: boolean }>
+  labradar?(): Promise<{ success: boolean; message: string }>
 }
 
 export type DarknetServerDetailsForFormulas = {

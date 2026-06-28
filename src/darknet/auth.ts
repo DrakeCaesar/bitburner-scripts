@@ -362,6 +362,7 @@ function isAccountsManagerGuessNumber(details: DarknetServerDetailsForFormulas):
 }
 
 const DEEP_GREEN_MODEL = "DeepGreen"
+const LABYRINTH_MODEL = "(The Labyrinth)"
 const DEEP_GREEN_CLUE_LINE_RE = /remember|must use/i
 /** Keep N low enough that pickMastermindGuess (O(N²)) won't freeze the game thread. */
 const MAX_MASTERMIND_CANDIDATES = 10_000
@@ -371,6 +372,10 @@ const MINIMAX_THRESHOLD = 500
 
 function isDeepGreenModel(details: DarknetServerDetailsForFormulas): boolean {
   return details.modelId === DEEP_GREEN_MODEL
+}
+
+function isLabyrinthModel(details: DarknetServerDetailsForFormulas): boolean {
+  return details.modelId === LABYRINTH_MODEL
 }
 
 function extractDeepGreenClueDigits(line: string): string[] {
@@ -1158,6 +1163,74 @@ async function authenticateOpenWebAccessPoint(
   }
 }
 
+// ---- Labyrinth maze solver ----
+
+const LAB_DIRS = [
+  { name: "n", dx: 0, dy: -2, field: "north" as const },
+  { name: "e", dx: 2, dy: 0, field: "east" as const },
+  { name: "s", dx: 0, dy: 2, field: "south" as const },
+  { name: "w", dx: -2, dy: 0, field: "west" as const },
+]
+const LAB_OPPOSITE: Record<string, string> = { n: "s", s: "n", e: "w", w: "e" }
+
+async function authenticateLabyrinth(
+  ns: NS,
+  port: number,
+  dnet: DarknetCrawlApi,
+  host: string,
+): Promise<{ password: string | null; authenticated: boolean; authGuesses: number }> {
+  let authGuesses = 0
+  const visited = new Set<string>()
+  const path: string[] = [] // stack of directions taken (for backtracking)
+
+  while (true) {
+    // Get current position and open directions
+    const report = dnet.labreport ? await dnet.labreport() : null
+    if (!report || !report.success) {
+      return { password: null, authenticated: false, authGuesses }
+    }
+    const [x, y] = report.coords
+    const key = `${x},${y}`
+    visited.add(key)
+
+    // Find an unvisited direction to explore
+    let chosenDir: typeof LAB_DIRS[number] | null = null
+    for (const dir of LAB_DIRS) {
+      if (!report[dir.field]) continue
+      const nKey = `${x + dir.dx},${y + dir.dy}`
+      if (!visited.has(nKey)) {
+        chosenDir = dir
+        break
+      }
+    }
+
+    if (chosenDir) {
+      // Move forward into unexplored territory
+      authGuesses++
+      const result = await authenticateWithStatus(
+        ns, port, dnet, host, chosenDir.name, `lab ${chosenDir.name}`, authGuesses,
+      )
+      if (result.success) {
+        return { password: typeof result.data === "string" ? result.data : null, authenticated: true, authGuesses }
+      }
+      path.push(chosenDir.name)
+    } else if (path.length > 0) {
+      // Backtrack one step
+      const prev = path.pop()!
+      authGuesses++
+      const result = await authenticateWithStatus(
+        ns, port, dnet, host, LAB_OPPOSITE[prev], `back ${LAB_OPPOSITE[prev]}`, authGuesses,
+      )
+      if (result.success) {
+        return { password: typeof result.data === "string" ? result.data : null, authenticated: true, authGuesses }
+      }
+    } else {
+      // Explored entire maze without finding the endpoint
+      return { password: null, authenticated: false, authGuesses }
+    }
+  }
+}
+
 export function solveDarknetPassword(input: DarknetAuthSolverInput): { password: string | null } {
   const zeroLogon = solveZeroLogon(input)
   if (zeroLogon !== null) {
@@ -1424,6 +1497,10 @@ export async function tryAuthNeighbor(
       authenticated: result.success ? true : null,
       authGuesses: 1,
     }
+  }
+
+  if (isLabyrinthModel(details)) {
+    return await authenticateLabyrinth(ns, port, dnet, neighbor)
   }
 
   const { password } = solveDarknetPassword(solverInputFromDetails(details))
