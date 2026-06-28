@@ -36,6 +36,10 @@ export function isCacheFile(fileName: string): boolean {
   return flatFileName(fileName).endsWith(".cache")
 }
 
+export function isExeFile(fileName: string): boolean {
+  return flatFileName(fileName).endsWith(".exe")
+}
+
 // ---- text-file json merge (replaces per-file archiving) ----
 
 export function loadDarknetTextSet(ns: NS, file: string): Set<string> {
@@ -301,14 +305,36 @@ async function archiveLocalServerFiles(
     return
   }
 
+  // Debug: log files
+  if (hostname.includes("cryptic")) {
+    // eslint-disable-next-line no-console
+    console.log(`[darknet] ls ${hostname}:`, files)
+  }
+
   for (const file of files) {
-    if (!isLiteratureFile(file) && !isArchivableTextFile(file)) {
-      continue
+    const ext = flatFileName(file).split(".").pop()
+    switch (ext) {
+      case "lit":
+      case "txt":
+        if (!ns.fileExists(file)) break
+        queueArchiveContent(ns, flatFileName(file), ns.read(file), reportPort, lorePort, neighbors)
+        break
+      case "exe": {
+        // eslint-disable-next-line no-console
+        if (ns.fileExists(file, "home")) {
+          console.log(`[darknet] skip ${file} from ${hostname} — already on home`)
+          break
+        }
+        const ok = ns.scp(file, "home", hostname)
+        // eslint-disable-next-line no-console
+        if (ok) {
+          console.log(`[darknet] copied ${file} from ${hostname} to home`)
+        } else {
+          console.log(`[darknet] FAILED scp ${file} from ${hostname} to home`)
+        }
+        break
+      }
     }
-    if (!ns.fileExists(file)) {
-      continue
-    }
-    queueArchiveContent(ns, flatFileName(file), ns.read(file), reportPort, lorePort, neighbors)
   }
 
   await openCacheFilesOnCurrentHost(ns, dnet, reportPort, lorePort, neighbors, cacheOpens)
@@ -327,8 +353,12 @@ export async function copyCrawlScript(ns: NS, target: string, source: string): P
   }
 }
 
-export function crawlWorkerArgs(sessionId: number): (string | number)[] {
-  return [WORKER_MODE_ARG, sessionId]
+export function crawlWorkerArgs(sessionId: number, selfPassword?: string): (string | number)[] {
+  const args: (string | number)[] = [WORKER_MODE_ARG, sessionId]
+  if (selfPassword !== undefined) {
+    args.push(selfPassword)
+  }
+  return args
 }
 
 export async function ensureFreeRam(ns: NS, dnet: DarknetCrawlApi, host: string): Promise<void> {
@@ -357,7 +387,8 @@ async function spawnCrawlWorkerOnHost(
   ns: NS,
   host: string,
   sessionId: number,
-  assetSource: string
+  assetSource: string,
+  selfPassword?: string
 ): Promise<number> {
   await copyCrawlScript(ns, host, assetSource)
   const workerRam = ns.getScriptRam(DARKNET_CRAWL_SCRIPT, host)
@@ -369,7 +400,7 @@ async function spawnCrawlWorkerOnHost(
     DARKNET_CRAWL_SCRIPT,
     host,
     1,
-    ...crawlWorkerArgs(sessionId)
+    ...crawlWorkerArgs(sessionId, selfPassword)
   )
 }
 
@@ -459,14 +490,15 @@ async function runOneCrawlPass(
   }
 
   // Only auth targets that the master assigned to this worker.
-  // If no assignments yet (first cycle), just probe and report — auth nothing.
-  // null means "no assignments received yet" → skip all auth.
-  // empty Set means "master assigned us nothing this cycle" → skip all auth.
-  const assignedSet: Set<string> | null = assignedTargets ? new Set(assignedTargets) : null
+  // undefined = no assignments yet (first cycle / newly spawned) → auth all neighbors to bootstrap
+  // [] = master assigned nothing this cycle → skip all auth
+  // [...] = auth only those in the list
+  const useAssigned = assignedTargets !== undefined
+  const assignedSet = new Set(assignedTargets ?? [])
 
   for (const neighbor of neighbors) {
-    // Skip if master hasn't assigned this target to us
-    if (!assignedSet || !assignedSet.has(neighbor)) {
+    // Skip if master didn't assign this target to us
+    if (useAssigned && !assignedSet.has(neighbor)) {
       continue
     }
 
@@ -518,7 +550,8 @@ async function runOneCrawlPass(
       ns,
       neighbor,
       sessionId,
-      hostname
+      hostname,
+      auth.password ?? undefined
     )
   }
 }
@@ -560,6 +593,10 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
     if (typeof msg.reportPort === "number" && typeof msg.lorePort === "number") {
       const passwordCache = new Map<string, string>()
       const workerHost = ns.getHostname()
+      // If parent passed a password via args, cache it so we can auth ourselves
+      if (typeof ns.args[2] === "string" && ns.args[2].length > 0) {
+        passwordCache.set(workerHost, ns.args[2])
+      }
       while (true) {
         // Re-check control port each loop for session + updated assignments
         let assignments: string[] | undefined
@@ -581,11 +618,11 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
         } catch {
           // probe/auth might fail if host changes — keep looping
         }
-        await ns.sleep(5000)
+        await ns.sleep(500)
       }
     }
 
-    await ns.sleep(2000)
+    await ns.sleep(200)
   }
 }
 
