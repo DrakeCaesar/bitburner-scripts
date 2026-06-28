@@ -557,6 +557,13 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
 
   ns.printf("%s worker initialized on port %d", hostname, commandPort)
 
+  // Report PID to master so it can check liveness with ns.isRunning(pid)
+  ns.writePort(reportPort, JSON.stringify({
+    type: "ready",
+    workerHost: hostname,
+    pid: ns.pid,
+  }))
+
   // Main command loop — uses ns.peek/ns.readPort for command polling
   while (true) {
     // Check CONTROL_PORT for session change (master restart)

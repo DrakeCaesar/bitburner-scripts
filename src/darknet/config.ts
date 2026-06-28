@@ -389,6 +389,7 @@ export type WorkerCommand =
 
 /** Workers write these to reportPort. */
 export type WorkerResponse =
+  | { type: "ready"; workerHost: string; pid: number }
   | { type: "executing"; workerHost: string; commandType: string }
   | { type: "guessResult"; target: string; solverId: string; success: boolean; feedback?: string; message?: string }
   | { type: "heartbleedResult"; target: string; solverId: string; logEntries: string[] }
