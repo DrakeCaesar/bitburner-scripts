@@ -364,6 +364,7 @@ function isAccountsManagerGuessNumber(details: DarknetServerDetailsForFormulas):
 const DEEP_GREEN_MODEL = "DeepGreen"
 const LABYRINTH_MODEL = "(The Labyrinth)"
 const EUROZONE_MODEL = "EuroZone Free"
+const TIMING_ATTACK_MODEL = "2G_cellular"
 
 const EU_COUNTRIES = [
   "Austria",
@@ -411,6 +412,10 @@ function isLabyrinthModel(details: DarknetServerDetailsForFormulas): boolean {
 
 function isEuroZoneModel(details: DarknetServerDetailsForFormulas): boolean {
   return details.modelId === EUROZONE_MODEL
+}
+
+function isTimingAttackModel(details: DarknetServerDetailsForFormulas): boolean {
+  return details.modelId === TIMING_ATTACK_MODEL
 }
 
 function isMathMLModel(details: DarknetServerDetailsForFormulas): boolean {
@@ -676,13 +681,24 @@ async function readLatestAuthFeedback(
   host: string,
   passwordAttempted: string
 ): Promise<string | null> {
+  const entry = await readLatestAuthLog(ns, port, dnet, host, passwordAttempted)
+  return entry !== null && typeof entry.data === "string" ? entry.data : null
+}
+
+/** Returns the full parsed heartbleed log entry (with message + data) for a specific guess. */
+async function readLatestAuthLog(
+  ns: NS,
+  port: number,
+  dnet: DarknetCrawlApi,
+  host: string,
+  passwordAttempted: string
+): Promise<{ message: string; data: unknown } | null> {
   const logs = await scrapeHeartbleedLogs(ns, port, dnet, host)
-  // Logs are newest-first; find the entry matching our guess
   for (const entry of logs) {
     try {
       const parsed = JSON.parse(entry)
-      if (String(parsed.passwordAttempted) === passwordAttempted && typeof parsed.data === "string") {
-        return parsed.data
+      if (String(parsed.passwordAttempted) === passwordAttempted) {
+        return { message: String(parsed.message ?? ""), data: parsed.data }
       }
     } catch {
       // noise entry, skip
@@ -1160,6 +1176,70 @@ function generatePermutations(freq: Map<string, number>, length: number): string
   return out
 }
 
+// ---- TimingAttack (2G_cellular) ----
+
+/**
+ * TimingAttack: the auth response message contains the index of the first
+ * mismatching character. We deduce the password one position at a time.
+ *
+ * Strategy: for position i, try digits 0-9 (with known digits fixed and 0s
+ * for unknown positions). The mismatch index tells us when we've found the
+ * correct digit — if the mismatch index moves past i, digit at position i
+ * is correct.
+ */
+async function authenticateTimingAttack(
+  ns: NS,
+  port: number,
+  dnet: DarknetCrawlApi,
+  host: string,
+  length: number
+): Promise<{ password: string | null; authenticated: boolean; authGuesses: number }> {
+  let authGuesses = 0
+  const digits: (string | null)[] = Array.from({ length }, () => null)
+
+  for (let pos = 0; pos < length; pos++) {
+    let found = false
+    for (let d = 0; d <= 9; d++) {
+      // Build guess: known digits + this candidate + zeros for the rest
+      let guess = ""
+      for (let j = 0; j < length; j++) {
+        if (j < pos) guess += digits[j]!
+        else if (j === pos) guess += String(d)
+        else guess += "0"
+      }
+      authGuesses++
+      const result = await authenticateWithStatus(ns, port, dnet, host, guess, `pos ${pos} try ${d}`, authGuesses)
+      if (result.success) {
+        return { password: guess, authenticated: true, authGuesses }
+      }
+
+      const log = await readLatestAuthLog(ns, port, dnet, host, guess)
+      if (!log) continue
+
+      // Parse mismatch index from message: "Found a mismatch while checking each character (2)"
+      const match = log.message.match(/Found a mismatch while checking each character \((\d+)\)/)
+      if (!match) continue
+      const mismatchIdx = Number(match[1])
+
+      if (mismatchIdx !== pos) {
+        // Mismatch is at a later position → digit at `pos` is correct
+        digits[pos] = String(d)
+        found = true
+        break
+      }
+      // mismatchIdx === pos → digit at `pos` is wrong, try next digit
+    }
+    if (!found) {
+      return { password: null, authenticated: false, authGuesses }
+    }
+  }
+
+  const password = digits.join("")
+  authGuesses++
+  const finalResult = await authenticateWithStatus(ns, port, dnet, host, password, "final", authGuesses)
+  return { password, authenticated: finalResult.success, authGuesses }
+}
+
 // ---- OpenWebAccessPoint ----
 
 /**
@@ -1584,6 +1664,15 @@ export async function tryAuthNeighbor(
 
   if (isRateMyPixModel(details)) {
     const auth = await authenticateRateMyPix(ns, port, dnet, neighbor, details.passwordLength, details.passwordFormat)
+    return {
+      password: auth.password,
+      authenticated: auth.authenticated ? true : auth.password !== null ? false : null,
+      authGuesses: auth.authGuesses,
+    }
+  }
+
+  if (isTimingAttackModel(details)) {
+    const auth = await authenticateTimingAttack(ns, port, dnet, neighbor, details.passwordLength)
     return {
       password: auth.password,
       authenticated: auth.authenticated ? true : auth.password !== null ? false : null,
