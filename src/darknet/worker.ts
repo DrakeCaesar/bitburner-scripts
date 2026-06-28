@@ -3,6 +3,7 @@ import {
   DARKNET_CRAWL_SCRIPT,
   DARKWEB_ARCHIVE_DIR,
   CONTROL_PORT,
+  TASK_PORT,
   WORKER_MODE_ARG,
   isLoreFile,
   isPasswordFile,
@@ -14,12 +15,12 @@ import {
   type CrawlHostReport,
   type CrawlStatusReport,
   type CrawlCacheOpen,
+  type TaskMessage,
   DARKNET_WORKER_FILES,
 } from "./config"
 import {
   writeCrawlReport,
   writeCrawlStatus,
-  tryAuthNeighbor,
 } from "./auth"
 
 // ---- file type helpers ----
@@ -409,6 +410,137 @@ function safeGetSessionDetails(
 
 // ---- crawl pass ----
 
+/** Execute a single task and report the result back to the master. */
+async function executeTask(
+  ns: NS,
+  dnet: DarknetCrawlApi,
+  task: TaskMessage,
+  reportPort: number,
+): Promise<void> {
+  const hostname = ns.getHostname()
+
+  if (task.type === "guess") {
+    try {
+      const result = await dnet.authenticate(task.target, task.guess)
+      if (result.success) {
+        ns.writePort(reportPort, JSON.stringify({
+          type: "guessResult",
+          target: task.target,
+          solverId: task.solverId,
+          success: true,
+          feedback: typeof result.data === "string" ? result.data : undefined,
+        }))
+        return
+      }
+      // Scrape heartbleed for feedback (most interactive solvers need this)
+      let feedback: string | undefined
+      let message: string | undefined
+      try {
+        const hb = await dnet.heartbleed(task.target, { peek: true })
+        if (hb.success && hb.logs.length > 0) {
+          // Find the log entry for this specific guess attempt
+          for (const log of hb.logs) {
+            try {
+              const entry: unknown = JSON.parse(log)
+              if (typeof entry === "object" && entry !== null) {
+                const e = entry as Record<string, unknown>
+                if (e.passwordAttempted === task.guess) {
+                  feedback = typeof e.data === "string" ? e.data : undefined
+                  message = typeof e.message === "string" ? e.message : undefined
+                  break
+                }
+              }
+            } catch { /* ignore unparseable */ }
+          }
+          // Fallback: use the last log entry's data if specific match not found
+          if (feedback === undefined && message === undefined) {
+            try {
+              const lastEntry: unknown = JSON.parse(hb.logs[hb.logs.length - 1]!)
+              if (typeof lastEntry === "object" && lastEntry !== null) {
+                const e = lastEntry as Record<string, unknown>
+                feedback = typeof e.data === "string" ? e.data : undefined
+                message = typeof e.message === "string" ? e.message : undefined
+              }
+            } catch { /* ignore */ }
+          }
+        }
+      } catch { /* heartbleed may fail */ }
+      ns.writePort(reportPort, JSON.stringify({
+        type: "guessResult",
+        target: task.target,
+        solverId: task.solverId,
+        success: false,
+        feedback,
+        message,
+      }))
+    } catch {
+      ns.writePort(reportPort, JSON.stringify({
+        type: "guessResult",
+        target: task.target,
+        solverId: task.solverId,
+        success: false,
+      }))
+    }
+  } else if (task.type === "heartbleed") {
+    try {
+      const result = await dnet.heartbleed(task.target)
+      ns.writePort(reportPort, JSON.stringify({
+        type: "heartbleedResult",
+        target: task.target,
+        solverId: task.solverId,
+        logEntries: result.success ? result.logs : [],
+      }))
+    } catch {
+      ns.writePort(reportPort, JSON.stringify({
+        type: "heartbleedResult",
+        target: task.target,
+        solverId: task.solverId,
+        logEntries: [],
+      }))
+    }
+  } else if (task.type === "labreport") {
+    try {
+      if (dnet.labreport) {
+        const result = await dnet.labreport()
+        ns.writePort(reportPort, JSON.stringify({
+          type: "labreportResult",
+          target: task.target,
+          solverId: task.solverId,
+          coords: result.coords,
+          north: result.north, east: result.east,
+          south: result.south, west: result.west,
+        }))
+      }
+    } catch {
+      // labreport might fail — master handles timeout
+    }
+  }
+}
+
+/** Poll TASK_PORT for up to maxTasks and execute them. */
+async function pollAndExecuteTasks(
+  ns: NS,
+  dnet: DarknetCrawlApi,
+  reportPort: number,
+  maxTasks: number,
+): Promise<void> {
+  for (let i = 0; i < maxTasks; i++) {
+    const raw = ns.peek(TASK_PORT)
+    if (raw === "NULL PORT DATA") break
+    ns.readPort(TASK_PORT)
+    try {
+      const task: unknown = typeof raw === "string" ? JSON.parse(raw) : raw
+      if (typeof task !== "object" || task === null) continue
+      const t = task as Record<string, unknown>
+      if (t.type !== "guess" && t.type !== "heartbleed" && t.type !== "labreport") continue
+      if (typeof t.target !== "string" || typeof t.solverId !== "string") continue
+      await executeTask(ns, dnet, t as TaskMessage, reportPort)
+    } catch {
+      // malformed task, skip
+    }
+  }
+}
+
 async function runOneCrawlPass(
   ns: NS,
   reportPort: number,
@@ -426,9 +558,7 @@ async function runOneCrawlPass(
   }
 
   const selfDetails = safeGetSessionDetails(dnet, hostname)
-  if (!selfDetails) {
-    return
-  }
+  if (!selfDetails) return
 
   writeCrawlReport(ns, reportPort, {
     hostname,
@@ -436,6 +566,18 @@ async function runOneCrawlPass(
     password: null,
   })
 
+  // Report worker idle — master needs to know we're available for tasks
+  if (selfDetails.hasSession) {
+    ns.writePort(reportPort, JSON.stringify({
+      type: "workerIdle",
+      workerHost: hostname,
+    }))
+  }
+
+  // Poll TASK_PORT for tasks (guess/heartbleed/labreport)
+  await pollAndExecuteTasks(ns, dnet, reportPort, 3)
+
+  // Probe neighbors
   writeCrawlStatus(ns, reportPort, {
     workerHost: hostname,
     targetHost: hostname,
@@ -451,42 +593,40 @@ async function runOneCrawlPass(
     return
   }
 
-  // Archive files after probe so we have neighbors for password-intel parsing
+  // Report neighbors to master for task routing
+  if (selfDetails.hasSession) {
+    const workerRam = ns.getScriptRam(DARKNET_CRAWL_SCRIPT, hostname)
+    const freeRam = ns.getServerMaxRam(hostname) - ns.getServerUsedRam(hostname)
+    ns.writePort(reportPort, JSON.stringify({
+      type: "neighbors",
+      workerHost: hostname,
+      targets: neighbors,
+      freeRam: freeRam - workerRam, // remaining after our own instance
+    }))
+  }
+
+  // Archive files after probe
   if (selfDetails.hasSession) {
     await archiveLocalServerFiles(ns, dnet, reportPort, lorePort, neighbors)
   }
 
+  // Spawn children on authenticated neighbors (unchanged)
   for (const neighbor of neighbors) {
-    const auth = await tryAuthNeighbor(
-      ns,
-      reportPort,
-      dnet,
-      neighbor,
-      passwordCache.get(neighbor) ?? null
-    )
+    const neighborDetails = safeGetSessionDetails(dnet, neighbor)
+    if (!neighborDetails?.hasSession) continue
 
-    if (auth.password != null) {
-      passwordCache.set(neighbor, auth.password)
-    }
+    // Report neighbor status to master
     writeCrawlReport(ns, reportPort, {
       hostname: neighbor,
-      authenticated: auth.authenticated,
-      password: auth.password,
-      authGuesses: auth.authGuesses,
+      authenticated: true,
+      password: null,
     })
-
-    const neighborDetails = safeGetSessionDetails(dnet, neighbor)
-    if (!neighborDetails?.hasSession) {
-      continue
-    }
 
     if (neighborDetails.blockedRam > 0) {
       await ensureFreeRam(ns, dnet, neighbor)
     }
 
-    if (ns.isRunning(DARKNET_CRAWL_SCRIPT, neighbor)) {
-      continue
-    }
+    if (ns.isRunning(DARKNET_CRAWL_SCRIPT, neighbor)) continue
 
     writeCrawlStatus(ns, reportPort, {
       workerHost: hostname,
@@ -498,16 +638,11 @@ async function runOneCrawlPass(
 
     const workerRam = ns.getScriptRam(DARKNET_CRAWL_SCRIPT, neighbor)
     const freeRam = ns.getServerMaxRam(neighbor) - ns.getServerUsedRam(neighbor)
-    if (workerRam > freeRam) {
-      continue
-    }
+    if (workerRam > freeRam) continue
 
     await spawnCrawlWorkerOnHost(
-      ns,
-      neighbor,
-      sessionId,
-      hostname,
-      auth.password ?? undefined
+      ns, neighbor, sessionId, hostname,
+      passwordCache.get(neighbor) ?? undefined,
     )
   }
 }

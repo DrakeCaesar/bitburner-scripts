@@ -39,6 +39,9 @@ export const DARKWEB_ARCHIVE_DIR = "darkweb"
  */
 export const CONTROL_PORT = 45109
 
+/** Master writes auth/heartbleed/labreport tasks. Workers read (atomic FIFO). */
+export const TASK_PORT = 45110
+
 export interface ControlMessage {
   sessionId: number
   reportPort: number
@@ -51,6 +54,7 @@ export interface ControlMessage {
 export const DARKNET_WORKER_FILES = [
   "darknet/config.js",
   "darknet/auth.js",
+  "darknet/solverState.js",
   "darknet/worker.js",
 ]
 
@@ -352,6 +356,72 @@ export function safeGetServerDetails(
   } catch {
     return null
   }
+}
+
+// ---- task queue types ----
+
+/** Master writes these to TASK_PORT. Workers read and execute one at a time. */
+export type TaskMessage =
+  | { type: "guess"; target: string; solverId: string; guess: string; detail: string | null }
+  | { type: "heartbleed"; target: string; solverId: string }
+  | { type: "labreport"; target: string; solverId: string }
+
+/** Workers write these to reportPort after executing a task. */
+export type TaskResult =
+  | { type: "guessResult"; target: string; solverId: string; success: boolean; feedback?: string; message?: string }
+  | { type: "heartbleedResult"; target: string; solverId: string; logEntries: string[] }
+  | { type: "labreportResult"; target: string; solverId: string; coords: number[]; north: boolean; east: boolean; south: boolean; west: boolean }
+
+/** Worker reports its neighborhood so the master knows which targets it can reach. */
+export interface WorkerNeighborsReport {
+  type: "neighbors"
+  workerHost: string
+  targets: string[]
+  freeRam: number
+}
+
+/** Worker signals it's idle and ready to take tasks. */
+export interface WorkerIdleReport {
+  type: "workerIdle"
+  workerHost: string
+}
+
+/** Base interface for solver state machines. Each solver adds its own fields. */
+export interface SolverState {
+  type: string // unique solver identifier, e.g. "nil", "kingOfTheHill"
+}
+
+/** A guess that the master should dispatch to a worker. */
+export interface SolverNextGuess {
+  guess: string
+  detail: string | null
+}
+
+/** Result of a single authenticate call, as interpreted from auth response + heartbleed. */
+export interface SolverGuessResult {
+  success: boolean
+  feedback?: string
+  message?: string
+}
+
+/** Context passed to solver state machine functions. */
+export interface SolverContext {
+  target: string
+  details: DarknetServerDetailsForFormulas
+}
+
+/** Solver state machine functions — one module per model. */
+export interface SolverModule<S extends SolverState = SolverState> {
+  /** Create the initial serializable state from server details. */
+  initSolver(details: DarknetServerDetailsForFormulas): S
+  /** Return the next guess to dispatch, or null if the solver is done. */
+  nextGuess(state: S, context: SolverContext): SolverNextGuess | null
+  /** Process the result of a guess. Returns updated state. */
+  applyResult(state: S, guess: string, result: SolverGuessResult): S
+  /** Process heartbleed log entries. Returns updated state. */
+  applyHeartbleed?(state: S, logEntries: string[]): S
+  /** Process labreport data (Labyrinth only). Returns updated state. */
+  applyLabreport?(state: S, report: { coords: number[]; north: boolean; east: boolean; south: boolean; west: boolean }): S
 }
 
 export function tryConnectToSession(dnet: DarknetCrawlApi, host: string, password: string): boolean {
