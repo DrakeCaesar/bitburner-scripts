@@ -244,6 +244,10 @@ function isRateMyPixModel(details: DarknetServerDetailsForFormulas): boolean {
   return details.modelId === "RateMyPix.Auth" && details.passwordFormat === "numeric"
 }
 
+function isOpenWebAccessPointModel(details: DarknetServerDetailsForFormulas): boolean {
+  return details.modelId === "OpenWebAccessPoint" && details.passwordFormat === "numeric"
+}
+
 function solveLaika4(input: DarknetAuthSolverInput): string | null {
   if (input.modelId !== "Laika4" || input.passwordFormat !== "alphabetic") {
     return null
@@ -489,38 +493,6 @@ function isNilModel(details: DarknetServerDetailsForFormulas): boolean {
   )
 }
 
-interface AuthLogEntry {
-  passwordAttempted: string
-  data?: string
-}
-
-function parseAuthLogLine(logLine: string): AuthLogEntry | null {
-  try {
-    const parsed: unknown = JSON.parse(logLine)
-    if (typeof parsed !== "object" || parsed === null) {
-      return null
-    }
-    const row = parsed as Record<string, unknown>
-    if (typeof row.passwordAttempted !== "string") {
-      return null
-    }
-    return {
-      passwordAttempted: row.passwordAttempted,
-      data: typeof row.data === "string" ? row.data : undefined,
-    }
-  } catch {
-    const attemptMatch = logLine.match(/passwordAttempted:\s*(\S+)/)
-    const dataMatch = logLine.match(/data:\s*([^\n]+)/)
-    if (!attemptMatch) {
-      return null
-    }
-    return {
-      passwordAttempted: attemptMatch[1]!,
-      data: dataMatch?.[1]?.trim(),
-    }
-  }
-}
-
 function parseNilFeedback(data: string, length: number): boolean[] | null {
   const parts = data.split(",")
   if (parts.length !== length) {
@@ -597,7 +569,7 @@ export async function authenticateWithStatus(
   password: string,
   detail: string | null = null,
   authGuesses?: number
-): Promise<{ success: boolean }> {
+): Promise<{ success: boolean; data?: unknown }> {
   writeCrawlStatus(ns, port, {
     workerHost: ns.getHostname(),
     targetHost: host,
@@ -635,108 +607,7 @@ export async function authenticateCandidates(
 
 // --- auth-solver functions ---
 
-async function readNilFeedback(
-  ns: NS,
-  port: number,
-  dnet: DarknetCrawlApi,
-  host: string,
-  guess: string
-): Promise<boolean[] | null> {
-  writeCrawlStatus(ns, port, {
-    workerHost: ns.getHostname(),
-    targetHost: host,
-    phase: "heartbleed",
-    etaMs: getHeartbleedEtaMs(ns, dnet, host),
-    detail: "reading auth log",
-  })
-
-  const result = await dnet.heartbleed(host, { peek: true })
-  if (!result.success) {
-    return null
-  }
-
-  for (const logLine of result.logs) {
-    const entry = parseAuthLogLine(logLine)
-    if (String(entry?.passwordAttempted) !== guess || !entry.data) {
-      continue
-    }
-    const feedback = parseNilFeedback(entry.data, guess.length)
-    if (feedback) {
-      return feedback
-    }
-  }
-
-  return null
-}
-
 type GuessNumberFeedback = "Higher" | "Lower"
-
-async function readGuessNumberFeedback(
-  ns: NS,
-  port: number,
-  dnet: DarknetCrawlApi,
-  host: string,
-  guess: string
-): Promise<GuessNumberFeedback | null> {
-  writeCrawlStatus(ns, port, {
-    workerHost: ns.getHostname(),
-    targetHost: host,
-    phase: "heartbleed",
-    etaMs: getHeartbleedEtaMs(ns, dnet, host),
-    detail: "reading auth log",
-  })
-
-  const result = await dnet.heartbleed(host, { peek: true })
-  if (!result.success) {
-    return null
-  }
-
-  for (const logLine of result.logs) {
-    const entry = parseAuthLogLine(logLine)
-    if (String(entry?.passwordAttempted) !== guess || !entry.data) {
-      continue
-    }
-    if (entry.data === "Higher" || entry.data === "Lower") {
-      return entry.data
-    }
-  }
-
-  return null
-}
-
-async function readMastermindFeedback(
-  ns: NS,
-  port: number,
-  dnet: DarknetCrawlApi,
-  host: string,
-  guess: string
-): Promise<{ exact: number; misplaced: number } | null> {
-  writeCrawlStatus(ns, port, {
-    workerHost: ns.getHostname(),
-    targetHost: host,
-    phase: "heartbleed",
-    etaMs: getHeartbleedEtaMs(ns, dnet, host),
-    detail: "reading auth log",
-  })
-
-  const result = await dnet.heartbleed(host, { peek: true })
-  if (!result.success) {
-    return null
-  }
-
-  for (const logLine of result.logs) {
-    const entry = parseAuthLogLine(logLine)
-    if (String(entry?.passwordAttempted) !== guess || !entry.data) {
-      continue
-    }
-    const feedback = parseMastermindFeedback(entry.data)
-    if (feedback) {
-      return feedback
-    }
-  }
-
-  return null
-}
 
 async function authenticateNil(
   ns: NS,
@@ -757,7 +628,8 @@ async function authenticateNil(
       return { password: guess, authenticated: true, authGuesses }
     }
 
-    const feedback = await readNilFeedback(ns, port, dnet, host, guess)
+    const data = typeof result.data === "string" ? result.data : ""
+    const feedback = parseNilFeedback(data, length)
     if (feedback) {
       for (let i = 0; i < length; i++) {
         if (feedback[i]) {
@@ -801,7 +673,7 @@ async function authenticateAccountsManager(
       return { password: guess, authenticated: true, authGuesses }
     }
 
-    const feedback = await readGuessNumberFeedback(ns, port, dnet, host, guess)
+    const feedback = (result.data === "Higher" || result.data === "Lower") ? result.data : null
     if (feedback === "Lower") {
       max = mid - 1
     } else if (feedback === "Higher") {
@@ -839,7 +711,8 @@ async function authenticateDeepGreen(
       return { password: guess, authenticated: true, authGuesses }
     }
 
-    const feedback = await readMastermindFeedback(ns, port, dnet, host, guess)
+    const data = typeof result.data === "string" ? result.data : ""
+    const feedback = parseMastermindFeedback(data)
     if (!feedback) {
       return { password: null, authenticated: false, authGuesses }
     }
@@ -859,47 +732,12 @@ async function authenticateDeepGreen(
 const FACTORIOS_PRIMES = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97]
 
 /**
- * Read the Factori-Os divisibility feedback from the auth log.
- * Factori-Os entries: {"data": true/false, "passwordAttempted": "5", "code": 401}
+ * Parse boolean-like auth response data (true/"true" / false/"false").
+ * Used by Factori-Os solver — reads from authenticate() response, no heartbleed.
  */
-async function readFactoriOsFeedback(
-  ns: NS,
-  port: number,
-  dnet: DarknetCrawlApi,
-  host: string,
-  guess: string
-): Promise<boolean | null> {
-  writeCrawlStatus(ns, port, {
-    workerHost: ns.getHostname(),
-    targetHost: host,
-    phase: "heartbleed",
-    etaMs: getHeartbleedEtaMs(ns, dnet, host),
-    detail: "reading auth log",
-  })
-
-  const result = await dnet.heartbleed(host, { peek: true })
-  if (!result.success) {
-    return null
-  }
-
-  for (const logLine of result.logs) {
-    try {
-      const parsed: unknown = JSON.parse(logLine)
-      if (typeof parsed !== "object" || parsed === null) continue
-      const entry = parsed as Record<string, unknown>
-      if (String(entry.passwordAttempted) !== guess) continue
-      // data may be boolean or string "true"/"false"
-      if (entry.data === true || entry.data === "true") {
-        return true
-      }
-      if (entry.data === false || entry.data === "false") {
-        return false
-      }
-    } catch {
-      // not JSON, skip
-    }
-  }
-
+function parseBoolFeedback(data: unknown): boolean | null {
+  if (data === true || data === "true") return true
+  if (data === false || data === "false") return false
   return null
 }
 
@@ -924,7 +762,7 @@ async function authenticateFactoriOs(
       return { password: primeStr, authenticated: true, authGuesses }
     }
 
-    const feedback = await readFactoriOsFeedback(ns, port, dnet, host, primeStr)
+    const feedback = parseBoolFeedback(result.data)
     if (feedback === null) {
       return { password: null, authenticated: false, authGuesses }
     }
@@ -941,7 +779,7 @@ async function authenticateFactoriOs(
           return { password: nextStr, authenticated: true, authGuesses }
         }
 
-        const powerFeedback = await readFactoriOsFeedback(ns, port, dnet, host, nextStr)
+        const powerFeedback = parseBoolFeedback(powerResult.data)
         if (powerFeedback) {
           power = next
           next *= prime
@@ -973,51 +811,6 @@ async function authenticateFactoriOs(
 }
 
 // ---- KingOfTheHill ----
-
-/**
- * Read KingOfTheHill altitude feedback from the auth log.
- * Entries: {"data": <number>, "message": "current altitude: X m; highest peak: 10,000 m", ...}
- */
-async function readKingOfTheHillFeedback(
-  ns: NS,
-  port: number,
-  dnet: DarknetCrawlApi,
-  host: string,
-  guess: string
-): Promise<{ altitude: number; peak: number } | null> {
-  writeCrawlStatus(ns, port, {
-    workerHost: ns.getHostname(),
-    targetHost: host,
-    phase: "heartbleed",
-    etaMs: getHeartbleedEtaMs(ns, dnet, host),
-    detail: "reading auth log",
-  })
-
-  const result = await dnet.heartbleed(host, { peek: true })
-  if (!result.success) return null
-
-  for (const logLine of result.logs) {
-    try {
-      const parsed: unknown = JSON.parse(logLine)
-      if (typeof parsed !== "object" || parsed === null) continue
-      const entry = parsed as Record<string, unknown>
-      if (String(entry.passwordAttempted) !== guess) continue
-
-      const altitude = typeof entry.data === "number" ? entry.data : 0
-      // Parse peak from message: "current altitude: X m; highest peak: 10,000 m"
-      const peakMatch = typeof entry.message === "string"
-        ? entry.message.match(/highest peak:\s*([\d,.]+)\s*m/i)
-        : null
-      const peak = peakMatch ? parseFloat(peakMatch[1]!.replace(/,/g, "")) : 10000
-
-      return { altitude, peak }
-    } catch {
-      // not JSON, skip
-    }
-  }
-
-  return null
-}
 
 /**
  * KingOfTheHill uses altitude = peak × exp(-k × (guess - password)²)
@@ -1056,19 +849,14 @@ async function authenticateKingOfTheHill(
       return { password: gStr, authenticated: true, authGuesses }
     }
 
-    const feedback = await readKingOfTheHillFeedback(ns, port, dnet, host, gStr)
-    if (!feedback) {
-      return { password: null, authenticated: false, authGuesses }
-    }
-    peak = feedback.peak
-
-    if (feedback.altitude > bestAlt) {
-      bestAlt = feedback.altitude
+    const altitude = typeof result.data === "number" ? result.data : 0
+    if (altitude > bestAlt) {
+      bestAlt = altitude
       bestGuess = g
     }
 
-    // Early exit: if altitude is already at peak (exact match behavior unlikely but check)
-    if (feedback.altitude >= peak) {
+    // Early exit: if altitude is already at peak
+    if (altitude >= peak) {
       const exactStr = String(g)
       authGuesses++
       const exactResult = await authenticateWithStatus(ns, port, dnet, host, exactStr, `final ${g}`, authGuesses)
@@ -1090,9 +878,9 @@ async function authenticateKingOfTheHill(
       if (result.success) {
         return { password: gStr, authenticated: true, authGuesses }
       }
-      const feedback = await readKingOfTheHillFeedback(ns, port, dnet, host, gStr)
-      if (feedback && feedback.altitude > bestAlt) {
-        bestAlt = feedback.altitude
+      const altitude = typeof result.data === "number" ? result.data : 0
+      if (altitude > bestAlt) {
+        bestAlt = altitude
         bestGuess = g
       }
     }
@@ -1121,46 +909,6 @@ async function authenticateKingOfTheHill(
 // ---- RateMyPix.Auth ----
 
 /**
- * Read RateMyPix feedback: count of 🌶️ in the data field.
- * Format: "🌶️/5", "🌶️🌶️/5", "0/5"
- */
-async function readRateMyPixFeedback(
-  ns: NS,
-  port: number,
-  dnet: DarknetCrawlApi,
-  host: string,
-  guess: string
-): Promise<number | null> {
-  writeCrawlStatus(ns, port, {
-    workerHost: ns.getHostname(),
-    targetHost: host,
-    phase: "heartbleed",
-    etaMs: getHeartbleedEtaMs(ns, dnet, host),
-    detail: "reading auth log",
-  })
-
-  const result = await dnet.heartbleed(host, { peek: true })
-  if (!result.success) return null
-
-  for (const logLine of result.logs) {
-    try {
-      const parsed: unknown = JSON.parse(logLine)
-      if (typeof parsed !== "object" || parsed === null) continue
-      const entry = parsed as Record<string, unknown>
-      if (String(entry.passwordAttempted) !== guess) continue
-      if (typeof entry.data === "string") {
-        // Count pepper emoji (🌶️ is 2 code units in JS)
-        return (entry.data.match(/🌶/g) ?? []).length
-      }
-    } catch {
-      continue
-    }
-  }
-
-  return null
-}
-
-/**
  * RateMyPix returns 🌶️ count = number of digits in the correct position.
  *
  * Strategy:
@@ -1186,10 +934,9 @@ async function authenticateRateMyPix(
     if (result.success) {
       return { password: guess, authenticated: true, authGuesses }
     }
-    const count = await readRateMyPixFeedback(ns, port, dnet, host, guess)
-    if (count === null) {
-      return { password: null, authenticated: false, authGuesses }
-    }
+    // Count pepper emoji from auth response data (🌶️ is 2 code units in JS)
+    const data = typeof result.data === "string" ? result.data : ""
+    const count = (data.match(/🌶/g) ?? []).length
     if (count > 0) {
       freq.set(String(digit), count)
     }
@@ -1216,10 +963,8 @@ async function authenticateRateMyPix(
       return { password: guess, authenticated: true, authGuesses }
     }
 
-    const count = await readRateMyPixFeedback(ns, port, dnet, host, guess)
-    if (count === null) {
-      return { password: null, authenticated: false, authGuesses }
-    }
+    const data = typeof result.data === "string" ? result.data : ""
+    const count = (data.match(/🌶/g) ?? []).length
 
     // Prune: keep only candidates that would produce the same match count
     candidates = candidates.filter((candidate) => {
@@ -1256,6 +1001,48 @@ function generatePermutations(freq: Map<string, number>, length: number): string
 
   build("")
   return out
+}
+
+// ---- OpenWebAccessPoint ----
+
+/**
+ * OpenWebAccessPoint: submit empty password, the auth response's data
+ * field contains a leak like "cryptosys:2680". Extract the digits.
+ *
+ * Example response data:
+ *   "zxcvbnm76 There's definitely a 6 a cryptosys:2680 nd a 8..."
+ *   -> password = "2680"
+ */
+async function authenticateOpenWebAccessPoint(
+  ns: NS,
+  port: number,
+  dnet: DarknetCrawlApi,
+  host: string
+): Promise<{ password: string | null; authenticated: boolean; authGuesses: number }> {
+  let authGuesses = 0
+
+  // Submit empty password
+  authGuesses++
+  const emptyResult = await authenticateWithStatus(ns, port, dnet, host, "", "empty probe", authGuesses)
+  if (emptyResult.success) {
+    return { password: "", authenticated: true, authGuesses }
+  }
+
+  // Extract password from the auth response data
+  const data = typeof emptyResult.data === "string" ? emptyResult.data : ""
+  const match = data.match(/([a-zA-Z0-9_-]+):(\d+)/)
+  if (!match) {
+    return { password: null, authenticated: false, authGuesses }
+  }
+
+  const password = match[2]!
+  authGuesses++
+  const finalResult = await authenticateWithStatus(ns, port, dnet, host, password, `final ${password}`, authGuesses)
+  return {
+    password: finalResult.success ? password : null,
+    authenticated: finalResult.success,
+    authGuesses,
+  }
 }
 
 export function solveDarknetPassword(input: DarknetAuthSolverInput): { password: string | null } {
@@ -1497,6 +1284,15 @@ export async function tryAuthNeighbor(
 
   if (isRateMyPixModel(details)) {
     const auth = await authenticateRateMyPix(ns, port, dnet, neighbor, details.passwordLength)
+    return {
+      password: auth.password,
+      authenticated: auth.authenticated ? true : auth.password !== null ? false : null,
+      authGuesses: auth.authGuesses,
+    }
+  }
+
+  if (isOpenWebAccessPointModel(details)) {
+    const auth = await authenticateOpenWebAccessPoint(ns, port, dnet, neighbor)
     return {
       password: auth.password,
       authenticated: auth.authenticated ? true : auth.password !== null ? false : null,

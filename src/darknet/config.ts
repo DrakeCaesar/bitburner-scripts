@@ -323,7 +323,7 @@ export function darkwebPasswordCandidates(length: number, format: DarknetPasswor
 
 export interface DarknetCrawlApi {
   probe(): string[]
-  authenticate(host: string, password: string, additionalMsec?: number): Promise<{ success: boolean }>
+  authenticate(host: string, password: string, additionalMsec?: number): Promise<{ success: boolean; data?: unknown }>
   heartbleed(host: string, options?: { peek?: boolean }): Promise<{ success: boolean; logs: string[] }>
   connectToSession?(host: string, password: string): { success: boolean }
   openCache(filename: string, suppressToast?: boolean): { success: boolean; message: string; karmaLoss: number }
