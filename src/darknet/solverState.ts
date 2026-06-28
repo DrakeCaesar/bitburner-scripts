@@ -810,144 +810,99 @@ const factoriOs: SolverModule<FactoriOsState> = {
 }
 
 // --- KingOfTheHill ---
+//
+// Multi-scale search: sweep the numeric range at descending step sizes,
+// each pass zooming into ±prev_step around the best value found so far.
+// The underlying function is a sum of Gaussian hills; the widest, tallest one
+// sits at the password. Side hills are narrower and lower (≤7400 vs 10000)
+// and vanish when |guess - pw| / pw < 0.03 (only the main hill remains).
+//
+// Refinement factor ≈ 8 (ceil(step / 8)) keeps probe count bounded.
+// Total probes: ~50 (len ≤ 3), ~100 (len ≤ 6), ~150 (len ≤ 10).
 
 interface KingOfTheHillState extends SolverState {
   type: "kingOfTheHill"
   min: number
   max: number
-  phase: "search" | "scan" | "done"
-  // Search stack for recursive interval-halving
-  stack: [number, number][]
-  // Coarse sweep
-  sweepIdx: number
-  sweepStep: number
-  sweepsDone: number
   bestVal: number
   bestAlt: number
-  // Scan state
-  scanLo: number
-  scanHi: number
-  scanIdx: number
-  // Termination
-  exhausted: boolean
-  // When nextGuess pops a tiny interval for scanning, set this so applyResult
-  // doesn't double-pop the stack (see applyResult).
-  poppedForScan: boolean
+  step: number       // current sweep step size
+  sweepIdx: number   // next value to probe
+  sweepEnd: number   // end of current pass
+  passNum: number    // which refinement pass (0 = initial coarse)
+  finished: boolean  // sweep passes complete, trying finals
+  finals: number[]   // bestVal ± small offsets
+  finalIdx: number
+  dispatched: boolean
 }
 
 const kingOfTheHill: SolverModule<KingOfTheHillState> = {
   initSolver(details) {
     const min = 10 ** (details.passwordLength - 1)
     const max = 10 ** details.passwordLength - 1
-    const step = Math.max(1, Math.floor(Math.sqrt(max - min)))
+    const step = Math.max(1, Math.ceil((max - min) / 25))
     return {
       type: "kingOfTheHill",
-      min, max, phase: "search",
-      stack: [[min, max]],
-      sweepIdx: min - step, sweepStep: step, sweepsDone: 0,
-      bestVal: min, bestAlt: 0,
-      scanLo: 0, scanHi: 0, scanIdx: 0,
-      exhausted: false,
-      poppedForScan: false,
+      min, max,
+      bestVal: min, bestAlt: -Infinity,
+      step, sweepIdx: min, sweepEnd: max,
+      passNum: 0,
+      finished: false, finals: [], finalIdx: 0,
+      dispatched: false,
     }
   },
   nextGuess(state) {
-    if (state.exhausted) return null
-    if (state.phase === "done") return null
+    if (state.dispatched) return null
 
-    // Coarse sweep every sweepStep to find non-zero altitude regions
-    if (state.sweepsDone < 3) {
-      state.sweepIdx += state.sweepStep
-      if (state.sweepIdx > state.max) {
-        state.sweepsDone++
-        state.sweepIdx = state.min - state.sweepStep + state.sweepsDone // offset subsequent sweeps
-        if (state.sweepsDone >= 3) {
-          // Sweeps done, fall through to search
-        } else {
-          return { guess: String(state.sweepIdx), detail: `sweep ${state.sweepIdx}` }
-        }
-      } else {
-        return { guess: String(state.sweepIdx), detail: `sweep ${state.sweepIdx}` }
+    // If pass complete → refine and start next pass
+    while (state.sweepIdx > state.sweepEnd) {
+      if (state.bestAlt <= 0 && state.passNum === 0) {
+        // Coarse pass found nothing — scan entire range at step 1 (tiny range?)
+        state.sweepIdx = state.min
+        state.sweepEnd = state.max
+        state.step = 1
+        state.passNum = 999 // last pass
+        continue
       }
+      // Narrow around best: next pass covers ±prev_step of best
+      const prevStep = state.step
+      state.step = Math.max(1, Math.ceil(prevStep / 8))
+      if (state.step >= prevStep) {
+        // Refinement saturated — build final candidates
+        state.finished = true
+        break
+      }
+      state.sweepIdx = Math.max(state.min, state.bestVal - prevStep)
+      state.sweepEnd = Math.min(state.max, state.bestVal + prevStep)
+      state.passNum++
     }
 
-    if (state.phase === "scan") {
-      // Linear scan within a narrow window found by the search
-      if (state.scanIdx <= state.scanHi) {
-        const g = state.scanIdx++
-        return { guess: String(g), detail: `scan ${g}` }
-      }
-      state.phase = "search"
+    if (!state.finished) {
+      const g = state.sweepIdx
+      state.sweepIdx += state.step
+      return { guess: String(g), detail: `p${state.passNum}-${g}` }
     }
 
-    // Recursive interval-halving search
-    while (state.stack.length > 0) {
-      const [lo, hi] = state.stack[state.stack.length - 1]!
-      if (hi - lo <= 2) {
-        state.stack.pop()
-        // Tiny interval — scan all values
-        state.phase = "scan"
-        state.poppedForScan = true
-        state.scanLo = lo
-        state.scanHi = hi
-        state.scanIdx = lo
-        if (state.scanIdx > state.scanHi) { state.phase = "search"; state.poppedForScan = false; continue }
-        return { guess: String(state.scanIdx++), detail: `tiny ${lo}-${hi}` }
-      }
-      const mid = Math.floor((lo + hi) / 2)
-      // We'll probe mid — stash the interval and wait for applyResult
-      // The actual halving happens in applyResult
-      return { guess: String(mid), detail: `bin ${mid}` }
-    }
-
-    // No more intervals — try neighbors of best value found
-    if (state.bestAlt > 0) {
+    // Finished scanning — try candidates around best value
+    if (state.finals.length === 0) {
+      // Build ordered list: best first, then ±1, ±2, ±3
       for (const d of [0, -1, 1, -2, 2, -3, 3]) {
         const c = state.bestVal + d
-        if (c >= state.min && c <= state.max) {
-          state.exhausted = true
-          return { guess: String(c), detail: `final ${c}` }
-        }
+        if (c >= state.min && c <= state.max) state.finals.push(c)
       }
     }
-
-    state.exhausted = true
+    if (state.finalIdx < state.finals.length) {
+      const c = state.finals[state.finalIdx++]!
+      return { guess: String(c), detail: `final ${c}` }
+    }
+    state.dispatched = true
     return null
   },
-  applyResult(state, guess, result) {
+  applyResult(state, _guess, result) {
     if (result.success) return state
-    const g = Number(guess)
+    const g = Number(_guess)
     const alt = typeof result.feedback === "string" ? Number(result.feedback) : 0
-
     if (alt > state.bestAlt) { state.bestAlt = alt; state.bestVal = g }
-
-    if (state.phase === "scan" || state.sweepsDone < 3) return state
-
-    // If nextGuess popped a tiny interval for scanning, skip the pop — the
-    // interval was already consumed and applyResult shouldn't steal the next one.
-    if (state.poppedForScan) {
-      state.poppedForScan = false
-      return state
-    }
-
-    // Search phase: process the midpoint probe and recurse
-    if (state.stack.length > 0) {
-      const [lo, hi] = state.stack.pop()!
-      const mid = Math.floor((lo + hi) / 2)
-
-      if (alt > 1e-10) {
-        // Found signal — scan neighborhood
-        const w = Math.max(1, Math.floor(Math.sqrt(hi - lo)))
-        state.phase = "scan"
-        state.scanLo = Math.max(state.min, mid - w)
-        state.scanHi = Math.min(state.max, mid + w)
-        state.scanIdx = state.scanLo
-      } else {
-        // No signal — split and recurse into both halves
-        if (mid + 1 <= hi) state.stack.push([mid + 1, hi])
-        if (lo <= mid - 1) state.stack.push([lo, mid - 1])
-      }
-    }
     return state
   },
 }
