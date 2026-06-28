@@ -1021,20 +1021,14 @@ async function readKingOfTheHillFeedback(
 
 /**
  * KingOfTheHill uses altitude = peak × exp(-k × (guess - password)²)
- * where k may vary per server instance.
+ * where k may vary per server instance (0.25 to 200+ observed).
  *
- * Strategy: probe 3 consecutive points to measure k, then solve for password.
+ * Strategy: scan the full numeric range, collect altitudes, and pick the maximum.
+ * The altitude function is unimodal (peak at the password), so the max-altitude
+ * guess is closest to the password. Auth at that point and its neighbors.
  *
- * With probes at x, x+1, x+2:
- *   ln(alt_x / alt_{x+1}) = k × (2(x-p) + 1)
- *   ln(alt_{x+1} / alt_{x+2}) = k × (2(x-p) + 3)
- *
- * Subtract:
- *   k = (ln(alt_{x+1} / alt_{x+2}) - ln(alt_x / alt_{x+1})) / 2
- *
- * Then:
- *   x - p = (ln(alt_x / alt_{x+1}) / k - 1) / 2
- *   p = x - (ln(alt_x / alt_{x+1}) / k - 1) / 2
+ * For 2-digit passwords (max 90 probes) this is fast. For 3+ digit, we scan
+ * coarsely (~20 probes) then fine-scan around the maximum.
  */
 async function authenticateKingOfTheHill(
   ns: NS,
@@ -1045,110 +1039,83 @@ async function authenticateKingOfTheHill(
 ): Promise<{ password: string | null; authenticated: boolean; authGuesses: number }> {
   const min = 10 ** (length - 1)
   const max = 10 ** length - 1
+  const rangeSize = max - min + 1
   let authGuesses = 0
 
-  const mid = Math.floor((min + max) / 2)
-
-  // Probe three consecutive points: mid-1, mid, mid+1
-  const probes = [
-    { guess: mid - 1, str: String(mid - 1), altitude: 0 },
-    { guess: mid, str: String(mid), altitude: 0 },
-    { guess: mid + 1, str: String(mid + 1), altitude: 0 },
-  ]
-
+  // For small ranges, scan every value. For larger, scan coarsely.
+  const step = rangeSize <= 100 ? 1 : Math.max(1, Math.floor(rangeSize / 20))
+  let bestGuess = min
+  let bestAlt = -Infinity
   let peak = 10000
-  for (const probe of probes) {
-    if (probe.guess < min || probe.guess > max) continue
+
+  for (let g = min; g <= max; g += step) {
+    const gStr = String(g)
     authGuesses++
-    const result = await authenticateWithStatus(ns, port, dnet, host, probe.str, `probe ${probe.guess}`, authGuesses)
+    const result = await authenticateWithStatus(ns, port, dnet, host, gStr, `scan ${g}`, authGuesses)
     if (result.success) {
-      return { password: probe.str, authenticated: true, authGuesses }
+      return { password: gStr, authenticated: true, authGuesses }
     }
-    const feedback = await readKingOfTheHillFeedback(ns, port, dnet, host, probe.str)
+
+    const feedback = await readKingOfTheHillFeedback(ns, port, dnet, host, gStr)
     if (!feedback) {
       return { password: null, authenticated: false, authGuesses }
     }
-    probe.altitude = feedback.altitude
     peak = feedback.peak
+
+    if (feedback.altitude > bestAlt) {
+      bestAlt = feedback.altitude
+      bestGuess = g
+    }
+
+    // Early exit: if altitude is already at peak (exact match behavior unlikely but check)
+    if (feedback.altitude >= peak) {
+      const exactStr = String(g)
+      authGuesses++
+      const exactResult = await authenticateWithStatus(ns, port, dnet, host, exactStr, `final ${g}`, authGuesses)
+      if (exactResult.success) {
+        return { password: exactStr, authenticated: true, authGuesses }
+      }
+    }
   }
 
-  // Drop probes that gave 0 altitude (underflow — use the remaining pair/triple)
-  let valid = probes.filter((p) => p.altitude > 0)
-
-  // If the midpoint underflows, scan the full range coarsely to find a nonzero altitude
-  if (valid.length < 2) {
-    // Try scanning the range in ~10% steps
-    const step = Math.max(1, Math.floor((max - min) / 10))
-    for (let g = min; g <= max; g += step) {
+  // If the maximum altitude is 0 everywhere, k is too large for this step size.
+  // Fall back to step=1 full scan (only practical for ~200 or fewer values).
+  if (bestAlt <= 0) {
+    for (let g = min; g <= max && authGuesses < 200; g++) {
+      // skip values already probed
+      if ((g - min) % step === 0) continue
       const gStr = String(g)
       authGuesses++
-      const result = await authenticateWithStatus(ns, port, dnet, host, gStr, `scan ${g}`, authGuesses)
+      const result = await authenticateWithStatus(ns, port, dnet, host, gStr, `fine ${g}`, authGuesses)
       if (result.success) {
         return { password: gStr, authenticated: true, authGuesses }
       }
       const feedback = await readKingOfTheHillFeedback(ns, port, dnet, host, gStr)
-      if (feedback && feedback.altitude > 0) {
-        // Found a spot with nonzero altitude — probe a triplet around it
-        const nearby = [
-          { guess: g - 1, str: String(g - 1), altitude: 0 },
-          { guess: g, str: gStr, altitude: feedback.altitude },
-          { guess: g + 1, str: String(g + 1), altitude: 0 },
-        ]
-        for (const np of nearby) {
-          if (np.altitude > 0) continue
-          if (np.guess < min || np.guess > max) continue
-          authGuesses++
-          const nr = await authenticateWithStatus(ns, port, dnet, host, np.str, `nearby ${np.guess}`, authGuesses)
-          if (nr.success) return { password: np.str, authenticated: true, authGuesses }
-          const nf = await readKingOfTheHillFeedback(ns, port, dnet, host, np.str)
-          if (nf) np.altitude = nf.altitude
-        }
-        valid = nearby.filter((p) => p.altitude > 0)
-        break
+      if (feedback && feedback.altitude > bestAlt) {
+        bestAlt = feedback.altitude
+        bestGuess = g
       }
     }
-    if (valid.length < 2) {
+    if (bestAlt <= 0) {
       return { password: null, authenticated: false, authGuesses }
     }
   }
 
-  // If we have 3 valid probes, measure k dynamically
-  let k: number
-  let ln1: number
-  if (valid.length >= 3) {
-    const [a, b, c] = valid
-    ln1 = Math.log(a.altitude / b.altitude)
-    const ln2 = Math.log(b.altitude / c.altitude)
-    k = (ln2 - ln1) / 2
-  } else {
-    // Fallback: assume k=0.25 (works for some servers)
-    k = 0.25
-    const [a, b] = valid
-    ln1 = Math.log(a.altitude / b.altitude)
+  // Try best guess and its immediate neighbors (password is at the maximum)
+  for (const delta of [0, -1, 1, -2, 2]) {
+    const candidate = bestGuess + delta
+    if (candidate < min || candidate > max) continue
+    if (delta !== 0) {
+      authGuesses++
+    }
+    const cStr = String(candidate)
+    const cResult = await authenticateWithStatus(ns, port, dnet, host, cStr, `candidate ${candidate}`, authGuesses)
+    if (cResult.success) {
+      return { password: cStr, authenticated: true, authGuesses }
+    }
   }
 
-  // Must have k > 0 (otherwise altitude formula makes no sense)
-  if (k <= 0) {
-    return { password: null, authenticated: false, authGuesses }
-  }
-
-  // Solve: p = x - (ln1 / k - 1) / 2  where x = first valid probe's guess
-  const x = valid[0]!.guess
-  const distanceFromX = (ln1 / k - 1) / 2
-  const password = Math.round(x - distanceFromX)
-
-  if (password < min || password > max) {
-    return { password: null, authenticated: false, authGuesses }
-  }
-
-  const passwordStr = String(password)
-  authGuesses++
-  const finalResult = await authenticateWithStatus(ns, port, dnet, host, passwordStr, `final ${password}`, authGuesses)
-  return {
-    password: finalResult.success ? passwordStr : null,
-    authenticated: finalResult.success,
-    authGuesses,
-  }
+  return { password: null, authenticated: false, authGuesses }
 }
 
 // ---- RateMyPix.Auth ----
