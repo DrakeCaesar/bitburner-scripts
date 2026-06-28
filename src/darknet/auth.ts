@@ -976,143 +976,60 @@ async function authenticateKingOfTheHill(
 ): Promise<{ password: string | null; authenticated: boolean; authGuesses: number }> {
   const min = 10 ** (length - 1)
   const max = 10 ** length - 1
-  let lo = min
-  let hi = max
   let authGuesses = 0
 
-  // Cache altitude results to avoid re-probing
-  const cache = new Map<number, number>()
+  // The Gaussian altitude function can underflow to 0 for everything except
+  // the exact answer (or values very close to it). Without directional feedback,
+  // we recursively halve intervals: probe midpoints; if a midpoint returns
+  // altitude > 0, the peak is nearby — zoom in and scan locally. If altitude = 0,
+  // split and recurse into both halves.
 
-  async function probe(g: number): Promise<number> {
-    if (cache.has(g)) return cache.get(g)!
+  async function probe(g: number): Promise<{ success: boolean; alt: number }> {
     const gStr = String(g)
     authGuesses++
-    const result = await authenticateWithStatus(ns, port, dnet, host, gStr, `bin ${g}`, authGuesses)
+    const result = await authenticateWithStatus(ns, port, dnet, host, gStr, null, authGuesses)
     if (result.success) {
-      cache.set(g, NaN) // sentinel: correct password
-      return NaN
+      return { success: true, alt: 0 }
     }
     const data = await readLatestAuthFeedback(ns, port, dnet, host, gStr)
     const alt = typeof data === "string" ? Number(data) : 0
-    cache.set(g, alt)
-    return alt
+    return { success: false, alt }
   }
 
-  while (lo < hi) {
-    // When the interval is small enough, try every remaining value
+  async function search(lo: number, hi: number): Promise<string | null> {
+    if (lo > hi) return null
     if (hi - lo <= 2) {
+      // Tiny interval — try every value
       for (let g = lo; g <= hi; g++) {
-        const alt = await probe(g)
-        if (Number.isNaN(alt)) return { password: String(g), authenticated: true, authGuesses }
+        const p = await probe(g)
+        if (p.success) return String(g)
       }
-      // All failed — pick the one with highest altitude and its neighbors
-      let bestG = lo
-      let bestAlt = cache.get(lo) ?? 0
-      for (let g = lo; g <= hi; g++) {
-        const alt = cache.get(g) ?? 0
-        if (alt > bestAlt) { bestAlt = alt; bestG = g }
-      }
-      for (const d of [0, -1, 1, -2, 2]) {
-        const c = bestG + d
-        if (c < min || c > max) continue
-        if (cache.has(c) && !Number.isNaN(cache.get(c))) continue // already probed, not the answer
-        const cStr = String(c)
-        authGuesses++
-        const r = await authenticateWithStatus(ns, port, dnet, host, cStr, `nbr ${c}`, authGuesses)
-        if (r.success) return { password: cStr, authenticated: true, authGuesses }
-      }
-      return { password: null, authenticated: false, authGuesses }
+      return null
     }
 
     const mid = Math.floor((lo + hi) / 2)
-    const altMid = await probe(mid)
-    if (Number.isNaN(altMid)) return { password: String(mid), authenticated: true, authGuesses }
+    const p = await probe(mid)
+    if (p.success) return String(mid)
 
-    const altNext = await probe(mid + 1)
-    if (Number.isNaN(altNext)) return { password: String(mid + 1), authenticated: true, authGuesses }
-
-    if (altMid === 0 && altNext === 0) {
-      // Both underflowed — expand outward exponentially to find non-zero region
-      let found = false
-      for (let exp = 1; exp <= hi - lo && !found; exp *= 2) {
-        // Probe leftward from mid
-        for (let g = mid - exp; g >= lo; g -= exp) {
-          const alt = await probe(g)
-          if (Number.isNaN(alt)) return { password: String(g), authenticated: true, authGuesses }
-          if (alt > 0) {
-            // Found non-zero on the left — peak is left of mid, reset hi
-            hi = mid
-            found = true
-            break
-          }
-        }
-        if (found) break
-        // Probe rightward from mid+1
-        for (let g = mid + 1 + exp; g <= hi; g += exp) {
-          const alt = await probe(g)
-          if (Number.isNaN(alt)) return { password: String(g), authenticated: true, authGuesses }
-          if (alt > 0) {
-            // Found non-zero on the right — peak is right of mid, reset lo
-            lo = mid
-            found = true
-            break
-          }
-        }
+    if (p.alt > 0) {
+      // Found signal — the peak is near mid. Scan a tight neighborhood.
+      const w = Math.max(1, Math.floor(Math.sqrt(hi - lo)))
+      const scanLo = Math.max(min, mid - w)
+      const scanHi = Math.min(max, mid + w)
+      for (let g = scanLo; g <= scanHi; g++) {
+        if (g === mid) continue // already probed
+        const sp = await probe(g)
+        if (sp.success) return String(g)
       }
-      if (!found) {
-        // Entire range underflows — step through every value (last resort)
-        for (let g = lo; g <= hi; g++) {
-          if (cache.has(g)) continue
-          const alt = await probe(g)
-          if (Number.isNaN(alt)) return { password: String(g), authenticated: true, authGuesses }
-        }
-        // Find max altitude
-        let bestG = lo
-        let bestAlt = cache.get(lo) ?? 0
-        for (let g = lo; g <= hi; g++) {
-          const alt = cache.get(g) ?? 0
-          if (alt > bestAlt) { bestAlt = alt; bestG = g }
-        }
-        if (bestAlt <= 0) return { password: null, authenticated: false, authGuesses }
-        // Try around the max
-        for (const d of [0, -1, 1, -2, 2]) {
-          const c = bestG + d
-          if (c < min || c > max) continue
-          if (cache.has(c) && !Number.isNaN(cache.get(c))) continue
-          const cStr = String(c)
-          authGuesses++
-          const r = await authenticateWithStatus(ns, port, dnet, host, cStr, `fallback ${c}`, authGuesses)
-          if (r.success) return { password: cStr, authenticated: true, authGuesses }
-        }
-        return { password: null, authenticated: false, authGuesses }
-      }
-      continue
+      return null
     }
 
-    // Binary search: altitude(mid+1) > altitude(mid) → password > mid
-    if (altNext > altMid) {
-      lo = mid + 1
-    } else if (altNext < altMid) {
-      hi = mid
-    } else {
-      // Equal altitudes → symmetric around mid+0.5 → try both
-      const midStr = String(mid)
-      authGuesses++
-      const r = await authenticateWithStatus(ns, port, dnet, host, midStr, `tie ${mid}`, authGuesses)
-      if (r.success) return { password: midStr, authenticated: true, authGuesses }
-      const nextStr = String(mid + 1)
-      authGuesses++
-      const r2 = await authenticateWithStatus(ns, port, dnet, host, nextStr, `tie ${mid + 1}`, authGuesses)
-      if (r2.success) return { password: nextStr, authenticated: true, authGuesses }
-      return { password: null, authenticated: false, authGuesses }
-    }
+    // No signal at midpoint — recurse into both halves
+    return (await search(lo, mid - 1)) ?? (await search(mid + 1, hi))
   }
 
-  // lo == hi — final try
-  const finalStr = String(lo)
-  authGuesses++
-  const r = await authenticateWithStatus(ns, port, dnet, host, finalStr, `final ${lo}`, authGuesses)
-  return { password: r.success ? finalStr : null, authenticated: r.success, authGuesses }
+  const password = await search(min, max)
+  return { password, authenticated: password !== null, authGuesses }
 }
 
 // ---- BellaCuore (range format) ----
