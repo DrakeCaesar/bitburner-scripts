@@ -3,6 +3,7 @@ import {
   DARKNET_CRAWL_SCRIPT,
   DARKWEB_ARCHIVE_DIR,
   CONTROL_PORT,
+  LOCK_FILE_PREFIX,
   WORKER_MODE_ARG,
   isLoreFile,
   isPasswordFile,
@@ -412,7 +413,6 @@ async function runOneCrawlPass(
   dnet: DarknetCrawlApi,
   passwordCache: Map<string, string>,
   sessionId: number,
-  assignedTargets: string[] | undefined
 ): Promise<void> {
   const hostname = ns.getHostname()
 
@@ -448,26 +448,59 @@ async function runOneCrawlPass(
     return
   }
 
-  // Report neighbor list to master so it can coordinate assignments
-  ns.writePort(reportPort, JSON.stringify({ type: "neighbors", workerHost: hostname, neighbors }))
-
   // Archive files after probe so we have neighbors for password-intel parsing
   if (selfDetails.hasSession) {
     await archiveLocalServerFiles(ns, dnet, reportPort, lorePort, neighbors)
   }
 
-  // Only auth targets that the master assigned to this worker.
-  // undefined = no assignments yet (first cycle / newly spawned) → auth all neighbors to bootstrap
-  // [] = master assigned nothing this cycle → skip all auth
-  // [...] = auth only those in the list
-  const useAssigned = assignedTargets !== undefined
-  const assignedSet = new Set(assignedTargets ?? [])
-
   for (const neighbor of neighbors) {
-    // Skip if master didn't assign this target to us
-    if (useAssigned && !assignedSet.has(neighbor)) {
+    // Check if another worker has an active lock on this target (checking home,
+    // where the master maintains lock files)
+    const lockOnHome = `${LOCK_FILE_PREFIX}${neighbor}.txt`
+    if (ns.fileExists(lockOnHome, "home")) {
+      // Another worker already claimed this target — skip
       continue
     }
+
+    // Claim the lock before attempting auth
+    ns.writePort(reportPort, JSON.stringify({
+      type: "lock",
+      action: "claim",
+      target: neighbor,
+      workerHost: hostname,
+    }))
+
+    // Wait for master to create the lock file, then verify it exists.
+    // Without this, two workers can both see "no lock" simultaneously.
+    // fileExists accepts a host arg, so we can check home from anywhere.
+    let lockConfirmed = false
+    for (let retry = 0; retry < 5; retry++) {
+      await ns.sleep(100)
+      if (ns.fileExists(lockOnHome, "home")) {
+        lockConfirmed = true
+        break
+      }
+    }
+
+    if (!lockConfirmed) {
+      // Master never created the lock (maybe crashed or busy).
+      // Release our claim and skip to avoid auth without coordination.
+      ns.writePort(reportPort, JSON.stringify({
+        type: "lock",
+        action: "release",
+        target: neighbor,
+        workerHost: hostname,
+      }))
+      continue
+    }
+
+    // Renew the lock before a potentially long auth to keep it fresh
+    ns.writePort(reportPort, JSON.stringify({
+      type: "lock",
+      action: "renew",
+      target: neighbor,
+      workerHost: hostname,
+    }))
 
     const auth = await tryAuthNeighbor(
       ns,
@@ -476,6 +509,15 @@ async function runOneCrawlPass(
       neighbor,
       passwordCache.get(neighbor) ?? null
     )
+
+    // Release the lock after auth attempt (success or failure)
+    ns.writePort(reportPort, JSON.stringify({
+      type: "lock",
+      action: "release",
+      target: neighbor,
+      workerHost: hostname,
+    }))
+
     if (auth.password != null) {
       passwordCache.set(neighbor, auth.password)
     }
@@ -565,8 +607,7 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
         passwordCache.set(workerHost, ns.args[2])
       }
       while (true) {
-        // Re-check control port each loop for session + updated assignments
-        let assignments: string[] | undefined
+        // Re-check control port each loop for session changes
         const checkRaw = ns.peek(CONTROL_PORT)
         if (checkRaw !== "NULL PORT DATA") {
           try {
@@ -574,14 +615,13 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
             if (typeof checkMsg.sessionId !== "number" || checkMsg.sessionId !== mySessionId) {
               ns.exit()
             }
-            assignments = checkMsg.assignments?.[workerHost]
           } catch {
             // malformed, ignore
           }
         }
 
         try {
-          await runOneCrawlPass(ns, msg.reportPort, msg.lorePort, dnet, passwordCache, mySessionId, assignments)
+          await runOneCrawlPass(ns, msg.reportPort, msg.lorePort, dnet, passwordCache, mySessionId)
         } catch {
           // probe/auth might fail if host changes — keep looping
         }

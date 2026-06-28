@@ -39,16 +39,16 @@ export const DARKWEB_ARCHIVE_DIR = "darkweb"
  */
 export const CONTROL_PORT = 45109
 
+/** Prefix for lock files stored on home: "dnlock-X.txt" per darknet target. */
+export const LOCK_FILE_PREFIX = "dnlock-"
+
+/** Lock files older than this (ms) are considered stale and can be claimed. */
+export const LOCK_STALE_MS = 60_000
+
 export interface ControlMessage {
   sessionId: number
   reportPort: number
   lorePort: number
-  /**
-   * Master-assigned auth targets per worker hostname.
-   * Workers should only attempt auth on their assigned targets.
-   * Absent/empty = no targets assigned yet (workers only probe).
-   */
-  assignments?: Record<string, string[]>
 }
 
 // ---- file lists for SCP ----
@@ -94,6 +94,13 @@ export interface CrawlStatusReport {
 }
 
 export type CrawlPortMessage = CrawlHostReport | CrawlStatusReport
+
+export interface DarknetLock {
+  target: string
+  workerHost: string
+  sessionId: number
+  renewedAt: number
+}
 
 export interface CrawlCacheOpen {
   host: string
