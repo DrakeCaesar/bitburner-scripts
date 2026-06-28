@@ -541,8 +541,9 @@ interface NilState extends SolverState {
 
 const nilSolver: SolverModule<NilState> = {
   initSolver(details) {
-    const charset = details.passwordFormat === "alphabetic"
-      ? "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    const charset =
+      details.passwordFormat === "alphabetic" ? "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      : details.passwordFormat === "alphanumeric" ? "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
       : "0123456789"
     return {
       type: "nil",
@@ -963,7 +964,7 @@ interface RateMyPixState extends SolverState {
 
 function rateMyPixCharset(format: string): string {
   if (format === "alphabetic") return "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-  if (format === "alphanumeric") return "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+  if (format === "alphanumeric" || format === "ASCII") return "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
   return "0123456789"
 }
 
@@ -1245,12 +1246,15 @@ const SOLVER_REGISTRY: Record<string, SolverModule> = {
   "MathML|alphanumeric": mathML,
   "PrimeTime 2|numeric": primeTime2,
   "110100100|alphanumeric": binaryToText,
+  "110100100|alphabetic": binaryToText,
   "110100100|ASCII": binaryToText,
   "OrdoXenos|alphanumeric": ordoXenos,
+  "OrdoXenos|alphabetic": ordoXenos,
   "OrdoXenos|ASCII": ordoXenos,
   "Pr0verFl0|numeric": proverFlo,
   "Pr0verFl0|alphabetic": proverFlo,
   "Pr0verFl0|alphanumeric": proverFlo,
+  "Pr0verFl0|ASCII": proverFlo,
   // Candidate-list
   "Laika4|alphabetic": laika4,
   "PHP 5.4|numeric": php54,
@@ -1262,9 +1266,11 @@ const SOLVER_REGISTRY: Record<string, SolverModule> = {
   "FreshInstall_1.0|numeric": freshInstall,
   "FreshInstall_1.0|alphabetic": freshInstallAlpha,
   "FreshInstall_1.0|alphanumeric": freshInstallAlpha,
+  "FreshInstall_1.0|ASCII": freshInstallAlpha,
   // Sequential interactive
   "NIL|numeric": nilSolver,
   "NIL|alphabetic": nilSolver,
+  "NIL|alphanumeric": nilSolver,
   "AccountsManager_4.2|numeric": accountsManager,
   "DeepGreen|numeric": deepGreen,
   "DeepGreen|alphabetic": deepGreen,
@@ -1275,6 +1281,7 @@ const SOLVER_REGISTRY: Record<string, SolverModule> = {
   "RateMyPix.Auth|numeric": rateMyPix,
   "RateMyPix.Auth|alphabetic": rateMyPix,
   "RateMyPix.Auth|alphanumeric": rateMyPix,
+  "RateMyPix.Auth|ASCII": rateMyPix,
   "2G_cellular|numeric": timingAttack,
   "OpenWebAccessPoint|numeric": openWebAccessPoint,
   "OpenWebAccessPoint|alphabetic": openWebAccessPoint,
