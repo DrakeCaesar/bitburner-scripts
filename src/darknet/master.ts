@@ -974,6 +974,17 @@ export async function runDarknetCrawl(
         wi.idle = false
       }
 
+      // Prune stale report-only entries (no worker, not in any worker's neighbor set)
+      const visibleHosts = new Set<string>()
+      for (const [, wi] of workerRegistry) {
+        for (const n of wi.neighbors) visibleHosts.add(n)
+      }
+      for (const [hostname] of reports) {
+        if (!workerRegistry.has(hostname) && !visibleHosts.has(hostname) && !targetStates.has(hostname)) {
+          reports.delete(hostname)
+        }
+      }
+
       // Dispatch auth tasks
       dispatchTasks(ns, targetStates, workerRegistry)
 
@@ -1088,6 +1099,17 @@ export async function runDarknetCrawl(
       wi.lastCommandDetail = null
       wi.lastCommandAt = Date.now()
       wi.idle = false
+    }
+
+    // Prune stale report-only entries (no worker, not in any worker's neighbor set)
+    const visibleHosts = new Set<string>()
+    for (const [, wi] of workerRegistry) {
+      for (const n of wi.neighbors) visibleHosts.add(n)
+    }
+    for (const [hostname] of reports) {
+      if (!workerRegistry.has(hostname) && !visibleHosts.has(hostname) && !targetStates.has(hostname)) {
+        reports.delete(hostname)
+      }
     }
 
     dispatchTasks(ns, targetStates, workerRegistry)
