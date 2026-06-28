@@ -412,6 +412,13 @@ function drainReportPort(
               freePort(targetWi.port)
               workerRegistry.delete(workerResp.target)
             }
+            // Remove authenticated report for the target so the spawn section
+            // doesn't immediately re-dispatch (would cause an infinite retry loop).
+            // The target will be re-reported the next time a neighbor re-probes.
+            const report = reports.get(workerResp.target)
+            if (report?.authenticated === true) {
+              reports.delete(workerResp.target)
+            }
           }
           continue
         }

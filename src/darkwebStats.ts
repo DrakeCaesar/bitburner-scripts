@@ -39,6 +39,10 @@ const SERVER_TABLE_COLUMNS = [
   col("Ngbrs", "right", 5),
 ]
 
+// Track maximum observed content width per column (index-aligned with SERVER_TABLE_COLUMNS)
+// so the table only grows, never shrinks between renders.
+const _serverTableColumnMaxes: number[] = SERVER_TABLE_COLUMNS.map((c) => c.minWidth ?? 0)
+
 const CACHE_TABLE_COLUMNS = [
   col("Host", "left", W.host),
   col("File", "left", W.file),
@@ -137,10 +141,26 @@ function appendServerTable(
 
   rows.sort((a, b) => a[0]!.localeCompare(b[0]!))
 
+  // Stabilize column widths: update tracked maximums from current data,
+  // then use those maximums as minWidth so the table only grows, never shrinks.
+  const currentMaxes = SERVER_TABLE_COLUMNS.map((_, colIdx) =>
+    rows.reduce((max, row) => {
+      const cell = row[colIdx]
+      return cell ? Math.max(max, cell.length) : max
+    }, 0)
+  )
+  for (let i = 0; i < currentMaxes.length; i++) {
+    _serverTableColumnMaxes[i] = Math.max(currentMaxes[i], _serverTableColumnMaxes[i])
+  }
+  const stableColumns = SERVER_TABLE_COLUMNS.map((c, i) => ({
+    ...c,
+    minWidth: _serverTableColumnMaxes[i],
+  }))
+
   log.tab("darknet").text(`${allHosts.size} server(s) | ${workers.length} worker(s)`)
   log.tab("darknet").table({
     title: "Servers",
-    columns: SERVER_TABLE_COLUMNS,
+    columns: stableColumns,
     rows,
   })
 }
