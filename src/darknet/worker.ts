@@ -661,6 +661,7 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
       case "spawn": {
         // Master tells us to spawn a worker on target with assigned port
         let success = false
+        let childPid = 0
         try {
           await copyCrawlScript(ns, command.target, hostname)
           const childRam = ns.getScriptRam(DARKNET_CRAWL_SCRIPT, command.target)
@@ -668,8 +669,8 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
           if (childRam <= free) {
             const args: (string | number)[] = [WORKER_MODE_ARG, command.sessionId, command.port]
             if (command.password) args.push(command.password)
-            const pid = ns.exec(DARKNET_CRAWL_SCRIPT, command.target, 1, ...args)
-            success = pid !== 0
+            childPid = ns.exec(DARKNET_CRAWL_SCRIPT, command.target, 1, ...args)
+            success = childPid !== 0
           }
         } catch (err) {
           ns.printf("spawn %s failed: %s", command.target, String(err))
@@ -679,6 +680,7 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
           workerHost: hostname,
           target: command.target,
           success,
+          childPid,
         }))
         ns.printf("done: spawn:%s => %s", command.target, success ? "ok" : "fail")
         break

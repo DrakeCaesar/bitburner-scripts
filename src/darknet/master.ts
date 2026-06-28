@@ -186,6 +186,7 @@ function parseWorkerResponse(raw: unknown): WorkerResponse | null {
           workerHost: row.workerHost,
           target: row.target,
           success: row.success,
+          childPid: typeof row.childPid === "number" ? row.childPid : 0,
         }
       }
       case "reallocResult": {
@@ -435,7 +436,10 @@ function drainReportPort(
           spawning.delete(workerResp.target)
           if (workerResp.success) {
             const childWi = workerRegistry.get(workerResp.target)
-            if (childWi) childWi.idle = true
+            if (childWi) {
+              childWi.pid = workerResp.childPid
+              childWi.idle = true
+            }
           } else {
             const targetWi = workerRegistry.get(workerResp.target)
             if (targetWi) {

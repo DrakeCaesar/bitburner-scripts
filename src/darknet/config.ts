@@ -399,7 +399,7 @@ export type WorkerResponse =
   | { type: "heartbleedResult"; target: string; solverId: string; logEntries: string[] }
   | { type: "labreportResult"; target: string; solverId: string; coords: number[]; north: boolean; east: boolean; south: boolean; west: boolean }
   | { type: "probeResult"; workerHost: string; targets: string[]; freeRam: number; blockedRam: number }
-  | { type: "spawnResult"; workerHost: string; target: string; success: boolean }
+  | { type: "spawnResult"; workerHost: string; target: string; success: boolean; childPid: number }
   | { type: "reallocResult"; workerHost: string; freeRam: number; blockedRam: number }
 
 /** Base interface for solver state machines. Each solver adds its own fields. */
