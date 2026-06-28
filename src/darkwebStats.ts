@@ -16,6 +16,7 @@ import {
   type DarknetCrawlApi,
   type DarknetRegistry,
   type DarknetServerDetailsForFormulas,
+  type TaskSnapshot,
 } from "./darknetCrawl.js"
 import { DARKSCAPE_NAVIGATOR, purchaseDarkscapeNavigator, purchaseTorRouter } from "./libraries/purchasePrograms.js"
 import { CRAWL_REPORT_PORT, DARKNET_LORE_PORT } from "./libraries/ports.js"
@@ -36,6 +37,7 @@ import {
 const DARKWEB_TABS: TabDefinition[] = [
   { id: "crawl", label: "Crawl" },
   { id: "caches", label: "Caches" },
+  { id: "tasks", label: "Tasks" },
 ]
 
 const ACT_COLUMN_HEADER = "Act"
@@ -61,6 +63,14 @@ const CACHE_TABLE_COLUMNS = [
   col("File", "left", W.file),
   col("Karma", "right", W.job),
   col("Reward", "left", W.reward),
+]
+
+const TASK_TABLE_COLUMNS = [
+  col("Target", "left", 16),
+  col("Solver", "left", 18),
+  col("Status", "left", 8),
+  col("Guess", "left", 16),
+  col("Worker", "left", 16),
 ]
 
 // --- types ---
@@ -218,6 +228,30 @@ function appendCacheOpenTable(log: TabbedScriptLogBuilder, cacheOpens: readonly 
   })
 }
 
+function appendTaskTable(log: TabbedScriptLogBuilder, tasks: readonly TaskSnapshot[]): void {
+  const builder = log.tab("tasks")
+  if (tasks.length === 0) {
+    builder.text("No tasks queued — master is waiting for workers to report neighbors.")
+    return
+  }
+
+  const pending = tasks.filter((t) => t.status === "pending").length
+  const idle = tasks.filter((t) => t.status === "idle").length
+  const lab = tasks.filter((t) => t.status === "labreport").length
+  builder.text(`${tasks.length} target(s) | pending ${pending}, idle ${idle}, labreport ${lab}`)
+  builder.table({
+    title: "Auth tasks",
+    columns: TASK_TABLE_COLUMNS,
+    rows: tasks.map((t) => [
+      t.target,
+      t.solver,
+      t.status,
+      t.guess ?? "-",
+      t.worker ?? "-",
+    ]),
+  })
+}
+
 function countAuthStats(reports: ReadonlyMap<string, CrawlHostReport>): {
   ok: number
   failed: number
@@ -250,12 +284,14 @@ async function renderDashboard(
   displayReports: ReadonlyMap<string, CrawlHostReport>,
   activeOps: readonly CrawlStatusReport[],
   cacheOpens: readonly CrawlCacheOpen[],
-  summaryLine: string
+  summaryLine: string,
+  tasks: readonly TaskSnapshot[],
 ): Promise<void> {
   tabbedLog.clearPanels()
   tabbedLog.tab("crawl").text(summaryLine)
   appendDarknetTreeTable(tabbedLog, ns, dnet, displayReports, activeOps, "Darknet crawl")
   appendCacheOpenTable(tabbedLog, cacheOpens)
+  appendTaskTable(tabbedLog, tasks)
   await renderTabbedTailLog(ns, tabbedLog)
 }
 
@@ -287,7 +323,9 @@ async function renderCrawlProgress(
     `Crawl #${crawlNum} ${status} | registry ${Object.keys(registry.servers).length} host(s), ${knownPw} password(s) | ` +
       `shown ${onlineCount} online | auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped}` +
       (activeCount > 0 ? ` | active ${activeCount}` : "") +
-      ` | caches ${cacheOpens.length}`
+      ` | caches ${cacheOpens.length}` +
+      ` | tasks ${state.tasks.length}`,
+    state.tasks,
   )
 }
 
@@ -314,7 +352,8 @@ async function renderRegistrySummary(
     [],
     sessionCacheOpens,
     `Crawl #${crawlNum} done | registry ${Object.keys(registry.servers).length} host(s), ${knownPw} password(s) saved to ${DARKNET_REGISTRY_FILE} | ` +
-      `shown ${onlineCount} online | auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped} | caches ${sessionCacheOpens.length}`
+      `shown ${onlineCount} online | auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped} | caches ${sessionCacheOpens.length}`,
+    [],
   )
 }
 

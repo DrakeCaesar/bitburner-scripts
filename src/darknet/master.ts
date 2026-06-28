@@ -4,7 +4,8 @@ import {
   DARKNET_LORE_FILE,
   DARKWEB,
   CONTROL_PORT,
-  TASK_PORT,
+  PORT_POOL_START,
+  PORT_POOL_SIZE,
   tryConnectToSession,
   type CrawlHostReport,
   type CrawlStatusReport,
@@ -16,11 +17,11 @@ import {
   type CrawlErrorHandler,
   type DarknetCrawlResult,
   type DarknetServerDetailsForFormulas,
-  type TaskResult,
-  type WorkerNeighborsReport,
-  type WorkerIdleReport,
+  type WorkerResponse,
+  type WorkerCommand,
   type SolverState,
   type SolverModule,
+  type TaskSnapshot,
 } from "./config"
 import { solveDarknetPassword, solverInputFromDetails } from "./auth"
 import {
@@ -112,17 +113,17 @@ function parseCacheOpen(row: Record<string, unknown>): CrawlCacheOpen | null {
   }
 }
 
-// ---- task result parsers ----
+// ---- worker response parser ----
 
-function parseTaskResult(raw: unknown): TaskResult | null {
+function parseWorkerResponse(raw: unknown): WorkerResponse | null {
   try {
     const parsed: unknown = typeof raw === "string" ? JSON.parse(raw) : raw
     if (typeof parsed !== "object" || parsed === null) return null
     const row = parsed as Record<string, unknown>
-    if (typeof row.target !== "string" || typeof row.solverId !== "string") return null
 
     switch (row.type) {
       case "guessResult": {
+        if (typeof row.target !== "string" || typeof row.solverId !== "string") return null
         if (typeof row.success !== "boolean") return null
         return {
           type: "guessResult",
@@ -134,6 +135,7 @@ function parseTaskResult(raw: unknown): TaskResult | null {
         }
       }
       case "heartbleedResult": {
+        if (typeof row.target !== "string" || typeof row.solverId !== "string") return null
         if (!Array.isArray(row.logEntries)) return null
         if (row.logEntries.some((e: unknown) => typeof e !== "string")) return null
         return {
@@ -144,6 +146,7 @@ function parseTaskResult(raw: unknown): TaskResult | null {
         }
       }
       case "labreportResult": {
+        if (typeof row.target !== "string" || typeof row.solverId !== "string") return null
         if (!Array.isArray(row.coords)) return null
         if (typeof row.north !== "boolean" || typeof row.east !== "boolean" ||
             typeof row.south !== "boolean" || typeof row.west !== "boolean") return null
@@ -152,42 +155,32 @@ function parseTaskResult(raw: unknown): TaskResult | null {
           target: row.target,
           solverId: row.solverId,
           coords: row.coords as number[],
-          north: row.north,
-          east: row.east,
-          south: row.south,
-          west: row.west,
+          north: row.north, east: row.east,
+          south: row.south, west: row.west,
+        }
+      }
+      case "probeResult": {
+        if (typeof row.workerHost !== "string") return null
+        if (!Array.isArray(row.targets) || typeof row.freeRam !== "number") return null
+        return {
+          type: "probeResult",
+          workerHost: row.workerHost,
+          targets: row.targets as string[],
+          freeRam: row.freeRam,
+        }
+      }
+      case "spawnResult": {
+        if (typeof row.workerHost !== "string" || typeof row.target !== "string") return null
+        if (typeof row.success !== "boolean") return null
+        return {
+          type: "spawnResult",
+          workerHost: row.workerHost,
+          target: row.target,
+          success: row.success,
         }
       }
       default: return null
     }
-  } catch { return null }
-}
-
-function parseNeighborsReport(raw: unknown): WorkerNeighborsReport | null {
-  try {
-    const parsed: unknown = typeof raw === "string" ? JSON.parse(raw) : raw
-    if (typeof parsed !== "object" || parsed === null) return null
-    const row = parsed as Record<string, unknown>
-    if (row.type !== "neighbors") return null
-    if (typeof row.workerHost !== "string") return null
-    if (!Array.isArray(row.targets) || typeof row.freeRam !== "number") return null
-    return {
-      type: "neighbors",
-      workerHost: row.workerHost,
-      targets: row.targets as string[],
-      freeRam: row.freeRam,
-    }
-  } catch { return null }
-}
-
-function parseWorkerIdle(raw: unknown): WorkerIdleReport | null {
-  try {
-    const parsed: unknown = typeof raw === "string" ? JSON.parse(raw) : raw
-    if (typeof parsed !== "object" || parsed === null) return null
-    const row = parsed as Record<string, unknown>
-    if (row.type !== "workerIdle") return null
-    if (typeof row.workerHost !== "string") return null
-    return { type: "workerIdle", workerHost: row.workerHost }
   } catch { return null }
 }
 
@@ -284,6 +277,40 @@ function drainTextPort(ns: NS, port: number, textSet: Set<string>, file: string)
   }
 }
 
+// ---- worker registry ----
+
+interface WorkerInfo {
+  port: number          // dedicated command port for this worker
+  neighbors: string[]   // hosts this worker can reach
+  freeRam: number
+  probed: boolean       // has received at least one probeResult
+  idle: boolean         // ready to receive a task (not waiting on a pending command)
+}
+
+// ---- port pool ----
+
+let _portPool: number[] | null = null
+
+function initPortPool(): number[] {
+  const pool: number[] = []
+  for (let i = 0; i < PORT_POOL_SIZE; i++) {
+    pool.push(PORT_POOL_START + i)
+  }
+  return pool
+}
+
+function allocatePort(): number {
+  if (!_portPool) _portPool = initPortPool()
+  const port = _portPool.shift()
+  if (port === undefined) throw new Error("No free ports in pool (all 1024 in use)")
+  return port
+}
+
+function freePort(port: number): void {
+  if (!_portPool) _portPool = initPortPool()
+  _portPool.push(port)
+}
+
 // ---- target state ----
 
 interface TargetState {
@@ -307,8 +334,8 @@ function drainReportPort(
   ns: NS,
   reportPort: number,
   targetStates: Map<string, TargetState>,
-  neighborMap: Map<string, Set<string>>,
-  idleWorkers: Set<string>,
+  workerRegistry: Map<string, WorkerInfo>,
+  spawning: Set<string>,
   reports: Map<string, CrawlHostReport>,
   activeOps: Map<string, CrawlStatusReport>,
   cacheOpens: CrawlCacheOpen[],
@@ -321,56 +348,78 @@ function drainReportPort(
     try {
       const parsed: unknown = typeof raw === "string" ? JSON.parse(raw) : raw
       if (typeof parsed !== "object" || parsed === null) continue
-      const row = parsed as Record<string, unknown>
 
-      // Task results (new)
-      const taskResult = parseTaskResult(parsed)
-      if (taskResult) {
-        applyTaskResult(taskResult, targetStates)
-        continue
-      }
-
-      // Neighbor reports (new)
-      const neighborsReport = parseNeighborsReport(parsed)
-      if (neighborsReport) {
-        for (const target of neighborsReport.targets) {
-          let entry = neighborMap.get(target)
-          if (!entry) { entry = new Set(); neighborMap.set(target, entry) }
-          entry.add(neighborsReport.workerHost)
+      // Worker responses (new)
+      const workerResp = parseWorkerResponse(parsed)
+      if (workerResp) {
+        if (workerResp.type === "probeResult") {
+          // Update worker registry with probe results
+          let wi = workerRegistry.get(workerResp.workerHost)
+          if (!wi) { wi = { port: 0, neighbors: [], freeRam: 0, probed: false, idle: false }; workerRegistry.set(workerResp.workerHost, wi) }
+          wi.neighbors = workerResp.targets
+          wi.freeRam = workerResp.freeRam
+          wi.probed = true
+          wi.idle = true
+          // Build neighborMap for task dispatch (target -> workers that can reach it)
+          // handled ad-hoc in dispatchTasks via workerRegistry
+          continue
         }
-        idleWorkers.add(neighborsReport.workerHost)
+
+        if (workerResp.type === "spawnResult") {
+          // Mark parent worker idle again
+          const parentWi = workerRegistry.get(workerResp.workerHost)
+          if (parentWi) parentWi.idle = true
+
+          spawning.delete(workerResp.target)
+          if (workerResp.success) {
+            // New worker was pre-registered — mark it idle so master sends probe
+            const childWi = workerRegistry.get(workerResp.target)
+            if (childWi) childWi.idle = true
+          } else {
+            // Spawn failed — free the port we allocated
+            const targetWi = workerRegistry.get(workerResp.target)
+            if (targetWi) {
+              freePort(targetWi.port)
+              workerRegistry.delete(workerResp.target)
+            }
+          }
+          continue
+        }
+
+        // guessResult / heartbleedResult / labreportResult
+        applyTaskResult(workerResp, targetStates, workerRegistry)
         continue
       }
 
-      // Worker idle (new)
-      const idleReport = parseWorkerIdle(parsed)
-      if (idleReport) {
-        idleWorkers.add(idleReport.workerHost)
-        continue
-      }
-
-      // Legacy crawl messages
+      // Legacy crawl messages (archive, passwordIntel, host/status reports)
       applyCrawlPortMessage(ns, parsed, reports, activeOps, cacheOpens, sessionId, registry)
     } catch { /* malformed */ }
   }
 }
 
 function applyTaskResult(
-  result: TaskResult,
+  result: WorkerResponse & { type: "guessResult" | "heartbleedResult" | "labreportResult" },
   targetStates: Map<string, TargetState>,
+  workerRegistry: Map<string, WorkerInfo>,
 ): void {
   const target = targetStates.get(result.target)
   if (!target) return
   if (target.solverState.type !== result.solverId) return
 
   const dispatchedGuess = target.pendingGuess
+  const completedWorker = target.pendingWorker
   target.pendingGuess = null
   target.pendingWorker = null
+
+  // Mark the worker idle again
+  if (completedWorker) {
+    const wi = workerRegistry.get(completedWorker)
+    if (wi) wi.idle = true
+  }
 
   if (result.type === "guessResult") {
     if (result.success) {
       target.done = true
-      // The password is the guess that succeeded, or the data returned (Labyrinth)
       target.password = result.feedback || dispatchedGuess
       return
     }
@@ -397,102 +446,110 @@ function applyTaskResult(
 function dispatchTasks(
   ns: NS,
   targetStates: Map<string, TargetState>,
-  neighborMap: Map<string, Set<string>>,
-  idleWorkers: Set<string>,
+  workerRegistry: Map<string, WorkerInfo>,
 ): void {
   const now = Date.now()
 
   // Timeout stale pending guesses
-  for (const [hostname, target] of targetStates) {
+  for (const [, target] of targetStates) {
     if (target.done) continue
     if (target.pendingGuess && target.pendingAt && (now - target.pendingAt > PENDING_TIMEOUT_MS)) {
+      // Mark worker idle — the pending command was lost
+      if (target.pendingWorker) {
+        const wi = workerRegistry.get(target.pendingWorker)
+        if (wi) wi.idle = true
+      }
       target.pendingGuess = null
       target.pendingWorker = null
+    }
+  }
+
+  // Build reverse index: worker -> targets it can reach (from neighbor sets)
+  const workerReach: Map<string, Set<string>> = new Map()
+  for (const [workerHost, wi] of workerRegistry) {
+    if (!wi.probed || !wi.idle) continue
+    for (const t of wi.neighbors) {
+      let s = workerReach.get(workerHost)
+      if (!s) { s = new Set(); workerReach.set(workerHost, s) }
+      s.add(t)
     }
   }
 
   // Dispatch new tasks
   for (const [hostname, target] of targetStates) {
     if (target.done) continue
-    if (target.pendingGuess !== null) continue // already waiting on a worker
+    if (target.pendingGuess !== null) continue
 
     const next = target.solver.nextGuess(target.solverState, {
       target: hostname,
       details: target.details,
     })
     if (!next) {
-      // Check if solver needs a labreport (Labyrinth)
       const s = target.solverState as unknown as Record<string, unknown>
       if (s.phase === "labreport" || (s.phase === "move" && !s.coords)) {
-        // Need labreport — find any worker that can reach this target
-        const workers = neighborMap.get(hostname)
-        if (workers && workers.size > 0) {
-          let labWorker: string | null = null
-          for (const w of idleWorkers) {
-            if (workers.has(w)) { labWorker = w; break }
-          }
-          if (labWorker) {
-            ns.writePort(TASK_PORT, JSON.stringify({
+        // Need labreport — find any idle worker that can reach this target
+        for (const [workerHost, reach] of workerReach) {
+          if (reach.has(hostname)) {
+            const wi = workerRegistry.get(workerHost)!
+            ns.writePort(wi.port, JSON.stringify({
               type: "labreport",
               target: hostname,
               solverId: target.solverState.type,
-              guess: "",
-              detail: "labreport",
-            }))
+            } satisfies WorkerCommand))
             target.pendingGuess = "labreport"
-            target.pendingWorker = labWorker
+            target.pendingWorker = workerHost
             target.pendingAt = now
-            idleWorkers.delete(labWorker)
+            wi.idle = false
+            break
           }
         }
         continue
       }
 
-      // Check if solver needs a recheck (FactoriOs power-to-prime transition)
-      if (s.needsRecheck === true) {
-        continue // next call to nextGuess will handle the transition
-      }
+      if (s.needsRecheck === true) continue // next call to nextGuess handles transition
 
-      // Solver exhausted candidates without success — mark as failed unknown
+      // Solver exhausted
       target.done = true
       target.pendingGuess = "EXHAUSTED"
       continue
     }
 
     // Find an idle worker that can reach this target
-    const workers = neighborMap.get(hostname)
-    if (!workers || workers.size === 0) continue
+    for (const [workerHost, reach] of workerReach) {
+      if (reach.has(hostname)) {
+        const wi = workerRegistry.get(workerHost)!
+        const taskType: "guess" | "heartbleed" =
+          next.detail?.startsWith("heartbleed") ? "heartbleed" : "guess"
 
-    let worker: string | null = null
-    for (const w of idleWorkers) {
-      if (workers.has(w)) { worker = w; break }
+        // For labreport, we don't include a guess string
+        if (next.detail?.startsWith("labreport")) {
+          ns.writePort(wi.port, JSON.stringify({
+            type: "labreport",
+            target: hostname,
+            solverId: target.solverState.type,
+          } satisfies WorkerCommand))
+        } else {
+          ns.writePort(wi.port, JSON.stringify({
+            type: taskType,
+            target: hostname,
+            solverId: target.solverState.type,
+            guess: next.guess,
+            detail: next.detail,
+          } satisfies WorkerCommand))
+        }
+
+        target.pendingGuess = next.guess
+        target.pendingWorker = workerHost
+        target.pendingAt = now
+        wi.idle = false
+        break
+      }
     }
-    if (!worker) continue
-
-    // Determine task type
-    const taskType: "guess" | "heartbleed" | "labreport" =
-      next.detail?.startsWith("heartbleed") ? "heartbleed"
-      : next.detail?.startsWith("labreport") ? "labreport"
-      : "guess"
-
-    ns.writePort(TASK_PORT, JSON.stringify({
-      type: taskType,
-      target: hostname,
-      solverId: target.solverState.type,
-      guess: next.guess,
-      detail: next.detail,
-    }))
-
-    target.pendingGuess = next.guess
-    target.pendingWorker = worker
-    target.pendingAt = now
-    idleWorkers.delete(worker)
   }
 }
 
 function registerTarget(
   targetStates: Map<string, TargetState>,
-  neighborMap: Map<string, Set<string>>,
   dnet: DarknetCrawlApi,
   hostname: string,
 ): void {
@@ -555,7 +612,7 @@ async function authenticateDarkwebEntry(
 }
 
 async function launchDarkwebCrawlWorker(
-  ns: NS, source: string, sessionId: number,
+  ns: NS, source: string, sessionId: number, commandPort: number,
 ): Promise<number> {
   try { ns.scriptKill(DARKNET_CRAWL_SCRIPT, DARKWEB) } catch { /* ignore */ }
   await copyCrawlScript(ns, DARKWEB, source)
@@ -566,7 +623,7 @@ async function launchDarkwebCrawlWorker(
       `Not enough RAM on ${DARKWEB} for ${DARKNET_CRAWL_SCRIPT} (need ${ns.format.ram(workerRam)}, free ${ns.format.ram(freeRam)})`
     )
   }
-  const pid = ns.exec(DARKNET_CRAWL_SCRIPT, DARKWEB, 1, ...crawlWorkerArgs(sessionId))
+  const pid = ns.exec(DARKNET_CRAWL_SCRIPT, DARKWEB, 1, ...crawlWorkerArgs(sessionId, commandPort))
   if (pid === 0) throw new Error(`Could not exec ${DARKNET_CRAWL_SCRIPT} on ${DARKWEB}`)
   return pid
 }
@@ -622,7 +679,7 @@ export async function runDarknetCrawl(
 
     const emitProgress = async (workerRunning: boolean): Promise<void> => {
       if (!onProgress) return
-      await onProgress({ reports, activeOps: [...activeOps.values()], workerRunning, cacheOpens })
+      await onProgress({ reports, activeOps: [...activeOps.values()], workerRunning, cacheOpens, tasks: [] })
     }
 
     await killAllCrawlWorkers(ns, dnet, registry)
@@ -648,6 +705,8 @@ export async function runDarknetCrawl(
   // ---- normal operation ----
   const continuous = intervalMs > 0
   let sessionId = Date.now()
+  // Reset port pool on each run
+  _portPool = null
 
   if (registry) {
     pruneInvalidRegistryHosts(dnet, registry)
@@ -660,18 +719,25 @@ export async function runDarknetCrawl(
 
   ns.clearPort(reportPort)
   ns.clearPort(lorePort)
-  ns.clearPort(TASK_PORT)
+  // Clear all pool ports (belt and suspenders)
+  for (let i = 0; i < PORT_POOL_SIZE; i++) {
+    ns.clearPort(PORT_POOL_START + i)
+  }
 
   syncControlPort(ns, sessionId, reportPort, lorePort)
 
   const loreSet = loadDarknetTextSet(ns, DARKNET_LORE_FILE)
 
-  let pid = await launchDarkwebCrawlWorker(ns, source, sessionId)
+  // Allocate a port for the initial darkweb worker
+  const darkwebPort = allocatePort()
+  const workerRegistry = new Map<string, WorkerInfo>()
+  workerRegistry.set(DARKWEB, { port: darkwebPort, neighbors: [], freeRam: 0, probed: false, idle: false })
+  const spawning = new Set<string>() // hosts with spawn commands in flight
+
+  let pid = await launchDarkwebCrawlWorker(ns, source, sessionId, darkwebPort)
 
   // Task orchestration state
   const targetStates = new Map<string, TargetState>()
-  const neighborMap = new Map<string, Set<string>>() // target -> workers that can reach it
-  const idleWorkers = new Set<string>()
 
   const reports = new Map<string, CrawlHostReport>()
   const activeOps = new Map<string, CrawlStatusReport>()
@@ -679,50 +745,97 @@ export async function runDarknetCrawl(
 
   const emitProgress = async (workerRunning: boolean): Promise<void> => {
     if (!onProgress) return
-    await onProgress({ reports, activeOps: [...activeOps.values()], workerRunning, cacheOpens })
+    const now = Date.now()
+    const tasks: TaskSnapshot[] = []
+    for (const [hostname, target] of targetStates) {
+      if (target.done) continue
+      let status: TaskSnapshot["status"]
+      if (target.pendingGuess === "labreport") {
+        status = "labreport"
+      } else if (target.pendingGuess !== null) {
+        status = "pending"
+      } else {
+        status = "idle"
+      }
+      tasks.push({
+        target: hostname,
+        solver: target.solverState.type,
+        status,
+        guess: target.pendingGuess === "labreport" ? "labreport" : target.pendingGuess,
+        worker: target.pendingWorker,
+        startedAt: target.startedAt,
+      })
+    }
+    tasks.sort((a, b) => b.startedAt - a.startedAt)
+    await onProgress({ reports, activeOps: [...activeOps.values()], workerRunning, cacheOpens, tasks })
   }
 
   await emitProgress(true)
 
+  // Send initial probe to darkweb worker
+  ns.writePort(darkwebPort, JSON.stringify({ type: "probe" } satisfies WorkerCommand))
+
   if (continuous) {
     while (true) {
-      // Process all report port messages (legacy + task + neighbor + idle)
-      drainReportPort(ns, reportPort, targetStates, neighborMap, idleWorkers, reports, activeOps, cacheOpens, sessionId, registry)
+      drainReportPort(ns, reportPort, targetStates, workerRegistry, spawning, reports, activeOps, cacheOpens, sessionId, registry)
       pollTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
 
-      // Register new authenticated targets from worker reports
+      // Register new unauthenticated targets from worker reports + dispatch spawns for authenticated neighbors
       for (const [hostname, report] of reports) {
         if (report.authenticated === false && !targetStates.has(hostname)) {
-          registerTarget(targetStates, neighborMap, dnet, hostname)
+          registerTarget(targetStates, dnet, hostname)
         }
         if (report.authenticated === true && targetStates.has(hostname)) {
           targetStates.delete(hostname)
         }
+        // Spawn workers on authenticated hosts that don't have one yet
+        if (report.authenticated === true && !workerRegistry.has(hostname) && !spawning.has(hostname) && hostname !== DARKWEB) {
+          // Find which worker can reach this host
+          for (const [workerHost, wi] of workerRegistry) {
+            if (wi.neighbors.includes(hostname) && wi.idle && wi.probed) {
+              const childPort = allocatePort()
+              spawning.add(hostname)
+              workerRegistry.set(hostname, { port: childPort, neighbors: [], freeRam: 0, probed: false, idle: false })
+            const pw = registry?.servers[hostname]?.password ?? undefined
+            ns.writePort(wi.port, JSON.stringify({
+              type: "spawn",
+              target: hostname,
+              sessionId,
+              port: childPort,
+              password: pw,
+            } satisfies WorkerCommand))
+            wi.idle = false // busy with spawn
+            break
+          }
+        }
+      }
+    }
+
+    // When spawnResult comes in, send probe to the new worker
+      for (const [hostname, wi] of workerRegistry) {
+        if (!wi.probed && wi.idle) {
+          // Worker is idle but hasn't probed yet — send probe
+          ns.writePort(wi.port, JSON.stringify({ type: "probe" } satisfies WorkerCommand))
+          wi.idle = false
+        }
       }
 
-      // Dispatch tasks
-      dispatchTasks(ns, targetStates, neighborMap, idleWorkers)
+      // Dispatch auth tasks
+      dispatchTasks(ns, targetStates, workerRegistry)
 
       // Handle completed targets
       for (const [hostname, target] of targetStates) {
         if (target.done) {
           if (target.password !== null && target.pendingGuess !== "EXHAUSTED") {
             reports.set(hostname, {
-              type: "host",
-              hostname,
-              authenticated: true,
-              password: target.password,
-              authGuesses: undefined,
+              type: "host", hostname, authenticated: true,
+              password: target.password, authGuesses: undefined,
             })
             try { await dnet.authenticate(hostname, target.password) } catch { /* already done */ }
           } else {
-            // Mark as failed auth so we don't re-register
             reports.set(hostname, {
-              type: "host",
-              hostname,
-              authenticated: false,
-              password: null,
-              authGuesses: undefined,
+              type: "host", hostname, authenticated: false,
+              password: null, authGuesses: undefined,
             })
           }
           targetStates.delete(hostname)
@@ -730,6 +843,9 @@ export async function runDarknetCrawl(
       }
 
       await emitProgress(true)
+
+      // Handle spawn results (remove from spawning set, send probe if successful)
+      // drainReportPort handles spawnResult — after that, probe is sent via the loop above
 
       if (!ns.isRunning(pid)) {
         onWorkerError?.(`${DARKNET_CRAWL_SCRIPT} daemon on ${DARKWEB} stopped — restarting`)
@@ -740,14 +856,18 @@ export async function runDarknetCrawl(
           reports.clear()
           activeOps.clear()
           targetStates.clear()
-          neighborMap.clear()
-          idleWorkers.clear()
+          workerRegistry.clear()
+          spawning.clear()
           ns.clearPort(reportPort)
           ns.clearPort(lorePort)
-          ns.clearPort(TASK_PORT)
+          for (let i = 0; i < PORT_POOL_SIZE; i++) { ns.clearPort(PORT_POOL_START + i) }
+          _portPool = null
           syncControlPort(ns, sessionId, reportPort, lorePort)
           await ns.sleep(5000)
-          pid = await launchDarkwebCrawlWorker(ns, source, sessionId)
+          const newPort = allocatePort()
+          workerRegistry.set(DARKWEB, { port: newPort, neighbors: [], freeRam: 0, probed: false, idle: false })
+          pid = await launchDarkwebCrawlWorker(ns, source, sessionId, newPort)
+          ns.writePort(newPort, JSON.stringify({ type: "probe" } satisfies WorkerCommand))
         } catch (restartErr) {
           onWorkerError?.(`Failed to restart daemon: ${String(restartErr)} — retrying in 30s`)
           await ns.sleep(30000)
@@ -759,22 +879,43 @@ export async function runDarknetCrawl(
   }
 
   while (ns.isRunning(pid)) {
-    drainReportPort(ns, reportPort, targetStates, neighborMap, idleWorkers, reports, activeOps, cacheOpens, sessionId, registry)
+    drainReportPort(ns, reportPort, targetStates, workerRegistry, spawning, reports, activeOps, cacheOpens, sessionId, registry)
     pollTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
 
-    // Register new unauthenticated targets from worker reports
     for (const [hostname, report] of reports) {
       if (report.authenticated === false && !targetStates.has(hostname)) {
-        registerTarget(targetStates, neighborMap, dnet, hostname)
+        registerTarget(targetStates, dnet, hostname)
       }
       if (report.authenticated === true && targetStates.has(hostname)) {
         targetStates.delete(hostname)
       }
+      if (report.authenticated === true && !workerRegistry.has(hostname) && !spawning.has(hostname) && hostname !== DARKWEB) {
+        for (const [workerHost, wi] of workerRegistry) {
+          if (wi.neighbors.includes(hostname) && wi.idle && wi.probed) {
+            const childPort = allocatePort()
+            spawning.add(hostname)
+            workerRegistry.set(hostname, { port: childPort, neighbors: [], freeRam: 0, probed: false, idle: false })
+            const pw = registry?.servers[hostname]?.password ?? undefined
+            ns.writePort(wi.port, JSON.stringify({
+              type: "spawn", target: hostname, sessionId, port: childPort,
+              password: pw,
+            } satisfies WorkerCommand))
+            wi.idle = false
+            break
+          }
+        }
+      }
     }
 
-    dispatchTasks(ns, targetStates, neighborMap, idleWorkers)
+    for (const [hostname, wi] of workerRegistry) {
+      if (!wi.probed && wi.idle) {
+        ns.writePort(wi.port, JSON.stringify({ type: "probe" } satisfies WorkerCommand))
+        wi.idle = false
+      }
+    }
 
-    // Handle completed targets
+    dispatchTasks(ns, targetStates, workerRegistry)
+
     for (const [hostname, target] of targetStates) {
       if (target.done) {
         if (target.password !== null && target.pendingGuess !== "EXHAUSTED") {

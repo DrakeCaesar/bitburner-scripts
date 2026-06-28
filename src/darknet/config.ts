@@ -39,8 +39,10 @@ export const DARKWEB_ARCHIVE_DIR = "darkweb"
  */
 export const CONTROL_PORT = 45109
 
-/** Master writes auth/heartbleed/labreport tasks. Workers read (atomic FIFO). */
-export const TASK_PORT = 45110
+/** Port pool for per-worker command ports. First port in the pool. */
+export const PORT_POOL_START = 45110
+/** Total ports in the pool (max concurrent workers). */
+export const PORT_POOL_SIZE = 1024
 
 export interface ControlMessage {
   sessionId: number
@@ -101,11 +103,23 @@ export interface CrawlCacheOpen {
   openedAt: number
 }
 
+/** One-line snapshot of a queued / in-flight task for the UI dashboard. */
+export interface TaskSnapshot {
+  target: string
+  solver: string
+  status: "idle" | "pending" | "heartbleed" | "labreport"
+  guess: string | null
+  worker: string | null
+  startedAt: number
+}
+
 export interface CrawlProgressState {
   reports: ReadonlyMap<string, CrawlHostReport>
   activeOps: readonly CrawlStatusReport[]
   workerRunning: boolean
   cacheOpens: readonly CrawlCacheOpen[]
+  /** Task-queue status for the dashboard "tasks" tab. */
+  tasks: readonly TaskSnapshot[]
 }
 
 export interface DarknetCrawlResult {
@@ -358,33 +372,24 @@ export function safeGetServerDetails(
   }
 }
 
-// ---- task queue types ----
+// ---- worker command / response types ----
 
-/** Master writes these to TASK_PORT. Workers read and execute one at a time. */
-export type TaskMessage =
+/** Master writes these to a worker's dedicated command port. Worker reads and executes. */
+export type WorkerCommand =
+  | { type: "probe" }
   | { type: "guess"; target: string; solverId: string; guess: string; detail: string | null }
   | { type: "heartbleed"; target: string; solverId: string }
   | { type: "labreport"; target: string; solverId: string }
+  | { type: "spawn"; target: string; sessionId: number; port: number; password?: string }
+  | { type: "exit" }
 
-/** Workers write these to reportPort after executing a task. */
-export type TaskResult =
+/** Workers write these to reportPort after executing a command. */
+export type WorkerResponse =
   | { type: "guessResult"; target: string; solverId: string; success: boolean; feedback?: string; message?: string }
   | { type: "heartbleedResult"; target: string; solverId: string; logEntries: string[] }
   | { type: "labreportResult"; target: string; solverId: string; coords: number[]; north: boolean; east: boolean; south: boolean; west: boolean }
-
-/** Worker reports its neighborhood so the master knows which targets it can reach. */
-export interface WorkerNeighborsReport {
-  type: "neighbors"
-  workerHost: string
-  targets: string[]
-  freeRam: number
-}
-
-/** Worker signals it's idle and ready to take tasks. */
-export interface WorkerIdleReport {
-  type: "workerIdle"
-  workerHost: string
-}
+  | { type: "probeResult"; workerHost: string; targets: string[]; freeRam: number }
+  | { type: "spawnResult"; workerHost: string; target: string; success: boolean }
 
 /** Base interface for solver state machines. Each solver adds its own fields. */
 export interface SolverState {
