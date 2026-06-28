@@ -657,7 +657,7 @@ async function readNilFeedback(
 
   for (const logLine of result.logs) {
     const entry = parseAuthLogLine(logLine)
-    if (entry?.passwordAttempted !== guess || !entry.data) {
+    if (String(entry?.passwordAttempted) !== guess || !entry.data) {
       continue
     }
     const feedback = parseNilFeedback(entry.data, guess.length)
@@ -693,7 +693,7 @@ async function readGuessNumberFeedback(
 
   for (const logLine of result.logs) {
     const entry = parseAuthLogLine(logLine)
-    if (entry?.passwordAttempted !== guess || !entry.data) {
+    if (String(entry?.passwordAttempted) !== guess || !entry.data) {
       continue
     }
     if (entry.data === "Higher" || entry.data === "Lower") {
@@ -726,7 +726,7 @@ async function readMastermindFeedback(
 
   for (const logLine of result.logs) {
     const entry = parseAuthLogLine(logLine)
-    if (entry?.passwordAttempted !== guess || !entry.data) {
+    if (String(entry?.passwordAttempted) !== guess || !entry.data) {
       continue
     }
     const feedback = parseMastermindFeedback(entry.data)
@@ -887,9 +887,13 @@ async function readFactoriOsFeedback(
       const parsed: unknown = JSON.parse(logLine)
       if (typeof parsed !== "object" || parsed === null) continue
       const entry = parsed as Record<string, unknown>
-      if (entry.passwordAttempted !== guess) continue
-      if (typeof entry.data === "boolean") {
-        return entry.data
+      if (String(entry.passwordAttempted) !== guess) continue
+      // data may be boolean or string "true"/"false"
+      if (entry.data === true || entry.data === "true") {
+        return true
+      }
+      if (entry.data === false || entry.data === "false") {
+        return false
       }
     } catch {
       // not JSON, skip
@@ -997,7 +1001,7 @@ async function readKingOfTheHillFeedback(
       const parsed: unknown = JSON.parse(logLine)
       if (typeof parsed !== "object" || parsed === null) continue
       const entry = parsed as Record<string, unknown>
-      if (entry.passwordAttempted !== guess) continue
+      if (String(entry.passwordAttempted) !== guess) continue
 
       const altitude = typeof entry.data === "number" ? entry.data : 0
       // Parse peak from message: "current altitude: X m; highest peak: 10,000 m"
@@ -1016,10 +1020,21 @@ async function readKingOfTheHillFeedback(
 }
 
 /**
- * KingOfTheHill uses a Gaussian: altitude = peak * exp(-0.25 * (guess - password)^2).
- * From a single measurement we can compute the exact distance to the password:
- *   distance = 2 * sqrt(ln(peak / altitude))
- * Then try guess ± distance — at most 3 auth calls total.
+ * KingOfTheHill uses altitude = peak × exp(-k × (guess - password)²)
+ * where k may vary per server instance.
+ *
+ * Strategy: probe 3 consecutive points to measure k, then solve for password.
+ *
+ * With probes at x, x+1, x+2:
+ *   ln(alt_x / alt_{x+1}) = k × (2(x-p) + 1)
+ *   ln(alt_{x+1} / alt_{x+2}) = k × (2(x-p) + 3)
+ *
+ * Subtract:
+ *   k = (ln(alt_{x+1} / alt_{x+2}) - ln(alt_x / alt_{x+1})) / 2
+ *
+ * Then:
+ *   x - p = (ln(alt_x / alt_{x+1}) / k - 1) / 2
+ *   p = x - (ln(alt_x / alt_{x+1}) / k - 1) / 2
  */
 async function authenticateKingOfTheHill(
   ns: NS,
@@ -1032,36 +1047,108 @@ async function authenticateKingOfTheHill(
   const max = 10 ** length - 1
   let authGuesses = 0
 
-  // Probe at the midpoint to get altitude
   const mid = Math.floor((min + max) / 2)
-  const midStr = String(mid)
 
-  authGuesses++
-  const midResult = await authenticateWithStatus(ns, port, dnet, host, midStr, `probe ${mid}`, authGuesses)
-  if (midResult.success) {
-    return { password: midStr, authenticated: true, authGuesses }
-  }
+  // Probe three consecutive points: mid-1, mid, mid+1
+  const probes = [
+    { guess: mid - 1, str: String(mid - 1), altitude: 0 },
+    { guess: mid, str: String(mid), altitude: 0 },
+    { guess: mid + 1, str: String(mid + 1), altitude: 0 },
+  ]
 
-  const feedback = await readKingOfTheHillFeedback(ns, port, dnet, host, midStr)
-  if (!feedback || feedback.altitude <= 0) {
-    return { password: null, authenticated: false, authGuesses }
-  }
-
-  const { altitude, peak } = feedback
-  const distance = Math.round(2 * Math.sqrt(Math.log(peak / altitude)))
-
-  // Try both candidates: mid - distance, mid + distance
-  for (const candidate of [mid - distance, mid + distance]) {
-    if (candidate < min || candidate > max) continue
-    const candStr = String(candidate)
+  let peak = 10000
+  for (const probe of probes) {
+    if (probe.guess < min || probe.guess > max) continue
     authGuesses++
-    const result = await authenticateWithStatus(ns, port, dnet, host, candStr, `candidate ${candidate}`, authGuesses)
+    const result = await authenticateWithStatus(ns, port, dnet, host, probe.str, `probe ${probe.guess}`, authGuesses)
     if (result.success) {
-      return { password: candStr, authenticated: true, authGuesses }
+      return { password: probe.str, authenticated: true, authGuesses }
+    }
+    const feedback = await readKingOfTheHillFeedback(ns, port, dnet, host, probe.str)
+    if (!feedback) {
+      return { password: null, authenticated: false, authGuesses }
+    }
+    probe.altitude = feedback.altitude
+    peak = feedback.peak
+  }
+
+  // Drop probes that gave 0 altitude (underflow — use the remaining pair/triple)
+  let valid = probes.filter((p) => p.altitude > 0)
+
+  // If the midpoint underflows, scan the full range coarsely to find a nonzero altitude
+  if (valid.length < 2) {
+    // Try scanning the range in ~10% steps
+    const step = Math.max(1, Math.floor((max - min) / 10))
+    for (let g = min; g <= max; g += step) {
+      const gStr = String(g)
+      authGuesses++
+      const result = await authenticateWithStatus(ns, port, dnet, host, gStr, `scan ${g}`, authGuesses)
+      if (result.success) {
+        return { password: gStr, authenticated: true, authGuesses }
+      }
+      const feedback = await readKingOfTheHillFeedback(ns, port, dnet, host, gStr)
+      if (feedback && feedback.altitude > 0) {
+        // Found a spot with nonzero altitude — probe a triplet around it
+        const nearby = [
+          { guess: g - 1, str: String(g - 1), altitude: 0 },
+          { guess: g, str: gStr, altitude: feedback.altitude },
+          { guess: g + 1, str: String(g + 1), altitude: 0 },
+        ]
+        for (const np of nearby) {
+          if (np.altitude > 0) continue
+          if (np.guess < min || np.guess > max) continue
+          authGuesses++
+          const nr = await authenticateWithStatus(ns, port, dnet, host, np.str, `nearby ${np.guess}`, authGuesses)
+          if (nr.success) return { password: np.str, authenticated: true, authGuesses }
+          const nf = await readKingOfTheHillFeedback(ns, port, dnet, host, np.str)
+          if (nf) np.altitude = nf.altitude
+        }
+        valid = nearby.filter((p) => p.altitude > 0)
+        break
+      }
+    }
+    if (valid.length < 2) {
+      return { password: null, authenticated: false, authGuesses }
     }
   }
 
-  return { password: null, authenticated: false, authGuesses }
+  // If we have 3 valid probes, measure k dynamically
+  let k: number
+  let ln1: number
+  if (valid.length >= 3) {
+    const [a, b, c] = valid
+    ln1 = Math.log(a.altitude / b.altitude)
+    const ln2 = Math.log(b.altitude / c.altitude)
+    k = (ln2 - ln1) / 2
+  } else {
+    // Fallback: assume k=0.25 (works for some servers)
+    k = 0.25
+    const [a, b] = valid
+    ln1 = Math.log(a.altitude / b.altitude)
+  }
+
+  // Must have k > 0 (otherwise altitude formula makes no sense)
+  if (k <= 0) {
+    return { password: null, authenticated: false, authGuesses }
+  }
+
+  // Solve: p = x - (ln1 / k - 1) / 2  where x = first valid probe's guess
+  const x = valid[0]!.guess
+  const distanceFromX = (ln1 / k - 1) / 2
+  const password = Math.round(x - distanceFromX)
+
+  if (password < min || password > max) {
+    return { password: null, authenticated: false, authGuesses }
+  }
+
+  const passwordStr = String(password)
+  authGuesses++
+  const finalResult = await authenticateWithStatus(ns, port, dnet, host, passwordStr, `final ${password}`, authGuesses)
+  return {
+    password: finalResult.success ? passwordStr : null,
+    authenticated: finalResult.success,
+    authGuesses,
+  }
 }
 
 // ---- RateMyPix.Auth ----
@@ -1093,7 +1180,7 @@ async function readRateMyPixFeedback(
       const parsed: unknown = JSON.parse(logLine)
       if (typeof parsed !== "object" || parsed === null) continue
       const entry = parsed as Record<string, unknown>
-      if (entry.passwordAttempted !== guess) continue
+      if (String(entry.passwordAttempted) !== guess) continue
       if (typeof entry.data === "string") {
         // Count pepper emoji (🌶️ is 2 code units in JS)
         return (entry.data.match(/🌶/g) ?? []).length
