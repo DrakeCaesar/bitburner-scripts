@@ -364,7 +364,10 @@ function isAccountsManagerGuessNumber(details: DarknetServerDetailsForFormulas):
 const DEEP_GREEN_MODEL = "DeepGreen"
 const DEEP_GREEN_CLUE_LINE_RE = /remember|must use/i
 /** Keep N low enough that pickMastermindGuess (O(N²)) won't freeze the game thread. */
-const MAX_MASTERMIND_CANDIDATES = 1_000
+const MAX_MASTERMIND_CANDIDATES = 10_000
+
+/** Don't run exhaustive minimax above this many candidates — use a simpler guess. */
+const MINIMAX_THRESHOLD = 500
 
 function isDeepGreenModel(details: DarknetServerDetailsForFormulas): boolean {
   return details.modelId === DEEP_GREEN_MODEL
@@ -472,6 +475,10 @@ function generateMastermindCandidates(length: number, charset: string): string[]
 
 function pickMastermindGuess(candidates: string[]): string {
   let bestGuess = candidates[0]!
+  // Exhaustive minimax is O(N²); use random guess above threshold to avoid freezing
+  if (candidates.length > MINIMAX_THRESHOLD) {
+    return candidates[Math.floor(Math.random() * candidates.length)]
+  }
   let bestWorstBucket = candidates.length + 1
   for (const guess of candidates) {
     const buckets = new Map<string, number>()
