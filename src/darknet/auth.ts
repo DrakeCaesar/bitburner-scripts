@@ -8,6 +8,7 @@ import {
   type CrawlStatusReport,
   darkwebPasswordCandidates,
   darkwebHostDigitPool,
+  DARKWEB_COMMON_PASSWORDS,
   tryConnectToSession,
 } from "./config"
 
@@ -365,6 +366,8 @@ const DEEP_GREEN_MODEL = "DeepGreen"
 const LABYRINTH_MODEL = "(The Labyrinth)"
 const EUROZONE_MODEL = "EuroZone Free"
 const TIMING_ATTACK_MODEL = "2G_cellular"
+const TOPPASS_MODEL = "TopPass"
+
 
 const EU_COUNTRIES = [
   "Austria",
@@ -424,6 +427,10 @@ function isEuroZoneModel(details: DarknetServerDetailsForFormulas): boolean {
 
 function isTimingAttackModel(details: DarknetServerDetailsForFormulas): boolean {
   return details.modelId === TIMING_ATTACK_MODEL
+}
+
+function isTopPassModel(details: DarknetServerDetailsForFormulas): boolean {
+  return details.modelId === TOPPASS_MODEL
 }
 
 function isMathMLModel(details: DarknetServerDetailsForFormulas): boolean {
@@ -1728,6 +1735,18 @@ export async function tryAuthNeighbor(
 
   if (isEuroZoneModel(details)) {
     const candidates = EU_COUNTRIES.filter((c) => c.length === details.passwordLength)
+    if (candidates.length > 0) {
+      const auth = await authenticateCandidates(ns, port, dnet, neighbor, candidates)
+      return {
+        password: auth.password,
+        authenticated: auth.authenticated ? true : false,
+        authGuesses: auth.authGuesses,
+      }
+    }
+  }
+
+  if (isTopPassModel(details)) {
+    const candidates = DARKWEB_COMMON_PASSWORDS.filter((c) => c.length === details.passwordLength)
     if (candidates.length > 0) {
       const auth = await authenticateCandidates(ns, port, dnet, neighbor, candidates)
       return {

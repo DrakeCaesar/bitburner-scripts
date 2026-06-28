@@ -156,7 +156,6 @@ export interface DarknetRegistry {
 
 // #region darkweb-password-intel
 
-/** Sources: password.data.txt, credentials.data.txt, access.data.txt */
 export const DARKWEB_COMMON_PASSWORDS: readonly string[] = [
   "123456",
   "password",
