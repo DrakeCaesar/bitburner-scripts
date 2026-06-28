@@ -424,6 +424,26 @@ function drainReportPort(
         }
 
         // guessResult / heartbleedResult / labreportResult
+        if (workerResp.type === "guessResult" && workerResp.message === "notNeighbor") {
+          // Worker cannot reach the target (stale probe data). Clear pending
+          // without advancing solver state so the guess is retried on a capable worker.
+          const target = targetStates.get(workerResp.target)
+          if (target) {
+            const completedWorker = target.pendingWorker
+            target.pendingGuess = null
+            target.pendingWorker = null
+            if (completedWorker) {
+              const wi = workerRegistry.get(completedWorker)
+              if (wi) {
+                wi.idle = true
+                wi.lastReply = "notNeighbor"
+                wi.lastReplyAt = Date.now()
+                wi.failures = 0
+              }
+            }
+          }
+          continue
+        }
         applyTaskResult(workerResp, targetStates, workerRegistry)
         continue
       }

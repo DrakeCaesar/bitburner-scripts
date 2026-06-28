@@ -375,6 +375,19 @@ async function executeTask(
   const hostname = ns.getHostname()
 
   if (cmd.type === "guess") {
+    // Verify target is still a neighbor before attempting (probe data can be stale)
+    const targetDetails = safeGetSessionDetails(dnet, cmd.target)
+    if (!targetDetails?.isConnectedToCurrentServer) {
+      ns.writePort(reportPort, JSON.stringify({
+        type: "guessResult",
+        target: cmd.target,
+        solverId: cmd.solverId,
+        success: false,
+        message: "notNeighbor",
+      }))
+      return
+    }
+
     try {
       const result = await dnet.authenticate(cmd.target, cmd.guess)
       if (result.success) {
@@ -435,6 +448,18 @@ async function executeTask(
       }))
     }
   } else if (cmd.type === "heartbleed") {
+    // Verify target is still a neighbor
+    const targetDetails = safeGetSessionDetails(dnet, cmd.target)
+    if (!targetDetails?.isConnectedToCurrentServer) {
+      ns.writePort(reportPort, JSON.stringify({
+        type: "heartbleedResult",
+        target: cmd.target,
+        solverId: cmd.solverId,
+        logEntries: [],
+      }))
+      return
+    }
+
     try {
       const result = await dnet.heartbleed(cmd.target)
       ns.writePort(reportPort, JSON.stringify({
