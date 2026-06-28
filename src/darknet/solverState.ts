@@ -530,11 +530,19 @@ const nilSolver: SolverModule<NilState> = {
       const feedback = result.feedback ?? ""
       const parts = feedback.split(",")
       if (parts.length === state.chars.length) {
+        let any = false
         for (let i = 0; i < parts.length; i++) {
-          if (parts[i] === "yes") state.chars[i] = guess[0]!
+          if (parts[i] === "yes") { state.chars[i] = guess[0]!; any = true }
+        }
+        state.charIdx++ // advance only when feedback was parseable
+        if (!any && state.charIdx >= state.charset.length) {
+          // End of charset with no matches — final guess is best effort
+          state.finalDispatched = true
+          state.chars.fill("0") // fallback digit
+          return state
         }
       }
-      state.charIdx++
+      // If parts length doesn't match, retry same char (charIdx not incremented)
     }
     return state
   },
@@ -655,7 +663,7 @@ const deepGreen: SolverModule<DeepGreenState> = {
     if (result.success) return state
     const fbRaw = result.feedback ?? ""
     const fb = parseMastermindFeedback(fbRaw)
-    if (!fb) { state.candidates = []; return state }
+    if (!fb) return state // unparseable — retry same guess
     state.candidates = state.candidates.filter((secret) => {
       const f = mastermindFeedback(secret, guess)
       return f.exact === fb.exact && f.misplaced === fb.misplaced
@@ -725,7 +733,7 @@ const factoriOs: SolverModule<FactoriOsState> = {
 
     if (state.phase === "prime") {
       const fb = parseBoolFeedback(result.feedback)
-      if (fb === null) { state.primeIdx = FACTORIOS_PRIMES.length; return state }
+      if (fb === null) return state // unparseable — retry same guess
       if (fb) {
         // Prime divides — enter power phase
         const p = Number(guess)
@@ -739,7 +747,7 @@ const factoriOs: SolverModule<FactoriOsState> = {
     } else {
       // Power phase
       const fb = parseBoolFeedback(result.feedback)
-      if (fb === null) { state.primeIdx = FACTORIOS_PRIMES.length; return state }
+      if (fb === null) return state // unparseable — retry same guess
       if (fb) {
         // This power divides — accumulate and try next
         state.currentPower = state.nextPower
@@ -954,6 +962,7 @@ const rateMyPix: SolverModule<RateMyPixState> = {
 
     if (state.phase === "freq") {
       const fb = result.feedback ?? ""
+      if (!fb) return state // no feedback — retry same char
       const count = (fb.match(/🌶/g) ?? []).length
       if (count > 0) state.freq[guess[0]!] = count
       state.charIdx++
@@ -1023,8 +1032,9 @@ const timingAttack: SolverModule<TimingAttackState> = {
     if (state.finalDispatched) return state
 
     const msg = result.message ?? ""
+    if (!msg) return state // no log data — retry same guess
     const match = msg.match(/Found a mismatch while checking each character \((\d+)\)/)
-    if (!match) { state.d++; return state }
+    if (!match) return state // unrecognized — retry same guess
     const mismatchIdx = Number(match[1])
 
     if (mismatchIdx !== state.pos) {
@@ -1066,6 +1076,7 @@ const openWebAccessPoint: SolverModule<OpenWebAccessPointState> = {
     if (result.success) return state
     if (state.phase === "probe") {
       const fb = result.feedback ?? ""
+      if (!fb) return state // no feedback — retry
       // Extract "hostname:password" from feedback
       const escapedHost = guess.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
       const regex = new RegExp(escapedHost + `:(\\S+)`)
