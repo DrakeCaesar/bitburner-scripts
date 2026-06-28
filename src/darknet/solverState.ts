@@ -195,7 +195,9 @@ const octantVoxel: SolverModule<OctantVoxelState> = {
 function cleanMathExpression(expr: string): string {
   return expr
     .replace(/\u2212/g, "-").replace(/\u00D7/g, "*").replace(/\u00F7/g, "/")
-    .replace(/\u00B7/g, "*").replace(/\u2217/g, "*").replace(/[^\d\s+\-*/().]/g, "")
+    .replace(/\u00B7/g, "*").replace(/\u2217/g, "*")
+    .replace(/\u2795/g, "+").replace(/\u2796/g, "-")
+    .replace(/[^\d\s+\-*/().]/g, "")
 }
 
 function evaluateMathExpression(expr: string): number {
@@ -1046,59 +1048,65 @@ const rateMyPix: SolverModule<RateMyPixState> = {
 
 interface TimingAttackState extends SolverState {
   type: "timingAttack"
-  digits: (string | null)[]
+  chars: (string | null)[]
+  charset: string
   pos: number
-  d: number
+  charIdx: number
   length: number
   finalDispatched: boolean
 }
 
 const timingAttack: SolverModule<TimingAttackState> = {
   initSolver(details) {
+    const charset =
+      details.passwordFormat === "alphabetic" ? "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      : details.passwordFormat === "alphanumeric" ? "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      : "0123456789"
     return {
       type: "timingAttack",
-      digits: Array.from({ length: details.passwordLength }, () => null),
-      pos: 0, d: 0, length: details.passwordLength, finalDispatched: false,
+      chars: Array.from({ length: details.passwordLength }, () => null),
+      charset, pos: 0, charIdx: 0, length: details.passwordLength, finalDispatched: false,
     }
   },
   nextGuess(state) {
     if (state.finalDispatched) return null
     while (state.pos < state.length) {
-      if (state.d > 9) {
-        // Failed to find digit at this position
+      if (state.charIdx >= state.charset.length) {
+        // Failed to find char at this position
         return null
       }
-      // Build guess: known digits + candidate + zeros for rest
+      const ch = state.charset[state.charIdx]!
+      // Build guess: known chars + candidate + padding for rest
       let guess = ""
       for (let j = 0; j < state.length; j++) {
-        if (j < state.pos) guess += state.digits[j]!
-        else if (j === state.pos) guess += String(state.d)
-        else guess += "0"
+        if (j < state.pos) guess += state.chars[j]!
+        else if (j === state.pos) guess += ch
+        else guess += state.charset[0]!
       }
-      return { guess, detail: `pos ${state.pos} try ${state.d}` }
+      return { guess, detail: `pos ${state.pos} try ${ch}` }
     }
     // All positions resolved, dispatch final
     state.finalDispatched = true
-    return { guess: state.digits.join(""), detail: "final" }
+    return { guess: state.chars.join(""), detail: "final" }
   },
   applyResult(state, guess, result) {
     if (result.success) return state
     if (state.finalDispatched) return state
 
     const msg = result.message ?? ""
-    if (!msg) return state // no log data — retry same guess
+    if (!msg) return state
     const match = msg.match(/Found a mismatch while checking each character \((\d+)\)/)
-    if (!match) return state // unrecognized — retry same guess
+    if (!match) return state
     const mismatchIdx = Number(match[1])
 
     if (mismatchIdx !== state.pos) {
-      // Mismatch at later position => current digit is correct
-      state.digits[state.pos] = String(state.d)
+      // Mismatch at later position => current char is correct
+      state.chars[state.pos] = state.charset[state.charIdx]!
       state.pos++
-      state.d = 0
+      state.charIdx = 0
     } else {
-      // Mismatch at current position => try next digit
-      state.d++
+      // Mismatch at current position => try next char
+      state.charIdx++
     }
     return state
   },
@@ -1391,6 +1399,8 @@ const SOLVER_REGISTRY: Record<string, SolverModule> = {
   "RateMyPix.Auth|alphanumeric": rateMyPix,
   "RateMyPix.Auth|ASCII": rateMyPix,
   "2G_cellular|numeric": timingAttack,
+  "2G_cellular|alphabetic": timingAttack,
+  "2G_cellular|alphanumeric": timingAttack,
   "OpenWebAccessPoint|numeric": openWebAccessPoint,
   "OpenWebAccessPoint|alphabetic": openWebAccessPoint,
   "OpenWebAccessPoint|alphanumeric": openWebAccessPoint,
