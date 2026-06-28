@@ -818,14 +818,15 @@ async function authenticateFactoriOs(
 
 /**
  * KingOfTheHill uses altitude = peak × exp(-k × (guess - password)²)
- * where k may vary per server instance (0.25 to 200+ observed).
+ * where k varies per server instance (0.25 to 200+ observed).
  *
- * Strategy: scan the full numeric range, collect altitudes, and pick the maximum.
- * The altitude function is unimodal (peak at the password), so the max-altitude
- * guess is closest to the password. Auth at that point and its neighbors.
+ * Strategy: binary search using altitude comparison.
+ * At any point x: altitude(x+1) > altitude(x) means the password is to the right.
+ * This holds for any k because the Gaussian is unimodal and symmetric.
  *
- * For 2-digit passwords (max 90 probes) this is fast. For 3+ digit, we scan
- * coarsely (~20 probes) then fine-scan around the maximum.
+ * Underflow: when k is large, both probe points may give altitude 0.
+ * In that case we expand the probe window exponentially until non-zero is found,
+ * then reset bounds around the non-zero region and continue binary search.
  */
 async function authenticateKingOfTheHill(
   ns: NS,
@@ -836,78 +837,142 @@ async function authenticateKingOfTheHill(
 ): Promise<{ password: string | null; authenticated: boolean; authGuesses: number }> {
   const min = 10 ** (length - 1)
   const max = 10 ** length - 1
-  const rangeSize = max - min + 1
+  let lo = min
+  let hi = max
   let authGuesses = 0
 
-  // For small ranges, scan every value. For larger, scan coarsely.
-  const step = rangeSize <= 100 ? 1 : Math.max(1, Math.floor(rangeSize / 20))
-  let bestGuess = min
-  let bestAlt = -Infinity
-  let peak = 10000
+  // Cache altitude results to avoid re-probing
+  const cache = new Map<number, number>()
 
-  for (let g = min; g <= max; g += step) {
+  async function probe(g: number): Promise<number> {
+    if (cache.has(g)) return cache.get(g)!
     const gStr = String(g)
     authGuesses++
-    const result = await authenticateWithStatus(ns, port, dnet, host, gStr, `scan ${g}`, authGuesses)
+    const result = await authenticateWithStatus(ns, port, dnet, host, gStr, `bin ${g}`, authGuesses)
     if (result.success) {
-      return { password: gStr, authenticated: true, authGuesses }
+      cache.set(g, NaN) // sentinel: correct password
+      return NaN
     }
-
-    const altitude = typeof result.data === "number" ? result.data : 0
-    if (altitude > bestAlt) {
-      bestAlt = altitude
-      bestGuess = g
-    }
-
-    // Early exit: if altitude is already at peak
-    if (altitude >= peak) {
-      const exactStr = String(g)
-      authGuesses++
-      const exactResult = await authenticateWithStatus(ns, port, dnet, host, exactStr, `final ${g}`, authGuesses)
-      if (exactResult.success) {
-        return { password: exactStr, authenticated: true, authGuesses }
-      }
-    }
+    const alt = typeof result.data === "number" ? result.data : 0
+    cache.set(g, alt)
+    return alt
   }
 
-  // If the maximum altitude is 0 everywhere, k is too large for this step size.
-  // Fall back to step=1 full scan (only practical for ~200 or fewer values).
-  if (bestAlt <= 0) {
-    for (let g = min; g <= max && authGuesses < 200; g++) {
-      // skip values already probed
-      if ((g - min) % step === 0) continue
-      const gStr = String(g)
-      authGuesses++
-      const result = await authenticateWithStatus(ns, port, dnet, host, gStr, `fine ${g}`, authGuesses)
-      if (result.success) {
-        return { password: gStr, authenticated: true, authGuesses }
+  while (lo < hi) {
+    // When the interval is small enough, try every remaining value
+    if (hi - lo <= 2) {
+      for (let g = lo; g <= hi; g++) {
+        const alt = await probe(g)
+        if (Number.isNaN(alt)) return { password: String(g), authenticated: true, authGuesses }
       }
-      const altitude = typeof result.data === "number" ? result.data : 0
-      if (altitude > bestAlt) {
-        bestAlt = altitude
-        bestGuess = g
+      // All failed — pick the one with highest altitude and its neighbors
+      let bestG = lo
+      let bestAlt = cache.get(lo) ?? 0
+      for (let g = lo; g <= hi; g++) {
+        const alt = cache.get(g) ?? 0
+        if (alt > bestAlt) { bestAlt = alt; bestG = g }
       }
+      for (const d of [0, -1, 1, -2, 2]) {
+        const c = bestG + d
+        if (c < min || c > max) continue
+        if (cache.has(c) && !Number.isNaN(cache.get(c))) continue // already probed, not the answer
+        const cStr = String(c)
+        authGuesses++
+        const r = await authenticateWithStatus(ns, port, dnet, host, cStr, `nbr ${c}`, authGuesses)
+        if (r.success) return { password: cStr, authenticated: true, authGuesses }
+      }
+      return { password: null, authenticated: false, authGuesses }
     }
-    if (bestAlt <= 0) {
+
+    const mid = Math.floor((lo + hi) / 2)
+    const altMid = await probe(mid)
+    if (Number.isNaN(altMid)) return { password: String(mid), authenticated: true, authGuesses }
+
+    const altNext = await probe(mid + 1)
+    if (Number.isNaN(altNext)) return { password: String(mid + 1), authenticated: true, authGuesses }
+
+    if (altMid === 0 && altNext === 0) {
+      // Both underflowed — expand outward exponentially to find non-zero region
+      let found = false
+      for (let exp = 1; exp <= hi - lo && !found; exp *= 2) {
+        // Probe leftward from mid
+        for (let g = mid - exp; g >= lo; g -= exp) {
+          const alt = await probe(g)
+          if (Number.isNaN(alt)) return { password: String(g), authenticated: true, authGuesses }
+          if (alt > 0) {
+            // Found non-zero on the left — peak is left of mid, reset hi
+            hi = mid
+            found = true
+            break
+          }
+        }
+        if (found) break
+        // Probe rightward from mid+1
+        for (let g = mid + 1 + exp; g <= hi; g += exp) {
+          const alt = await probe(g)
+          if (Number.isNaN(alt)) return { password: String(g), authenticated: true, authGuesses }
+          if (alt > 0) {
+            // Found non-zero on the right — peak is right of mid, reset lo
+            lo = mid
+            found = true
+            break
+          }
+        }
+      }
+      if (!found) {
+        // Entire range underflows — step through every value (last resort)
+        for (let g = lo; g <= hi; g++) {
+          if (cache.has(g)) continue
+          const alt = await probe(g)
+          if (Number.isNaN(alt)) return { password: String(g), authenticated: true, authGuesses }
+        }
+        // Find max altitude
+        let bestG = lo
+        let bestAlt = cache.get(lo) ?? 0
+        for (let g = lo; g <= hi; g++) {
+          const alt = cache.get(g) ?? 0
+          if (alt > bestAlt) { bestAlt = alt; bestG = g }
+        }
+        if (bestAlt <= 0) return { password: null, authenticated: false, authGuesses }
+        // Try around the max
+        for (const d of [0, -1, 1, -2, 2]) {
+          const c = bestG + d
+          if (c < min || c > max) continue
+          if (cache.has(c) && !Number.isNaN(cache.get(c))) continue
+          const cStr = String(c)
+          authGuesses++
+          const r = await authenticateWithStatus(ns, port, dnet, host, cStr, `fallback ${c}`, authGuesses)
+          if (r.success) return { password: cStr, authenticated: true, authGuesses }
+        }
+        return { password: null, authenticated: false, authGuesses }
+      }
+      continue
+    }
+
+    // Binary search: altitude(mid+1) > altitude(mid) → password > mid
+    if (altNext > altMid) {
+      lo = mid + 1
+    } else if (altNext < altMid) {
+      hi = mid
+    } else {
+      // Equal altitudes → symmetric around mid+0.5 → try both
+      const midStr = String(mid)
+      authGuesses++
+      const r = await authenticateWithStatus(ns, port, dnet, host, midStr, `tie ${mid}`, authGuesses)
+      if (r.success) return { password: midStr, authenticated: true, authGuesses }
+      const nextStr = String(mid + 1)
+      authGuesses++
+      const r2 = await authenticateWithStatus(ns, port, dnet, host, nextStr, `tie ${mid + 1}`, authGuesses)
+      if (r2.success) return { password: nextStr, authenticated: true, authGuesses }
       return { password: null, authenticated: false, authGuesses }
     }
   }
 
-  // Try best guess and its immediate neighbors (password is at the maximum)
-  for (const delta of [0, -1, 1, -2, 2]) {
-    const candidate = bestGuess + delta
-    if (candidate < min || candidate > max) continue
-    if (delta !== 0) {
-      authGuesses++
-    }
-    const cStr = String(candidate)
-    const cResult = await authenticateWithStatus(ns, port, dnet, host, cStr, `candidate ${candidate}`, authGuesses)
-    if (cResult.success) {
-      return { password: cStr, authenticated: true, authGuesses }
-    }
-  }
-
-  return { password: null, authenticated: false, authGuesses }
+  // lo == hi — final try
+  const finalStr = String(lo)
+  authGuesses++
+  const r = await authenticateWithStatus(ns, port, dnet, host, finalStr, `final ${lo}`, authGuesses)
+  return { password: r.success ? finalStr : null, authenticated: r.success, authGuesses }
 }
 
 // ---- RateMyPix.Auth ----
@@ -1025,21 +1090,31 @@ async function authenticateOpenWebAccessPoint(
 ): Promise<{ password: string | null; authenticated: boolean; authGuesses: number }> {
   let authGuesses = 0
 
-  // Submit empty password
+  // Submit hostname as password to get the data leak in the response
+  const probe = host
   authGuesses++
-  const emptyResult = await authenticateWithStatus(ns, port, dnet, host, "", "empty probe", authGuesses)
-  if (emptyResult.success) {
-    return { password: "", authenticated: true, authGuesses }
+  const probeResult = await authenticateWithStatus(ns, port, dnet, host, probe, `probe ${host}`, authGuesses)
+  if (probeResult.success) {
+    return { password: probe, authenticated: true, authGuesses }
   }
 
   // Extract password from the auth response data
-  const data = typeof emptyResult.data === "string" ? emptyResult.data : ""
-  const match = data.match(/([a-zA-Z0-9_-]+):(\d+)/)
+  // eslint-disable-next-line no-console
+  console.log(`[OpenWebAccessPoint] host=${host} probeResult.success=${probeResult.success} rawData=${JSON.stringify(probeResult.data)}`)
+  const data = typeof probeResult.data === "string" ? probeResult.data : ""
+  // eslint-disable-next-line no-console
+  console.log(`[OpenWebAccessPoint] typeof data=${typeof probeResult.data} coerced=${data.length} chars`)
+  // Look for this server's hostname followed by colon, the password is the rest
+  const escapedHost = host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const regex = new RegExp(escapedHost + `:(\\S+)`)
+  const match = data.match(regex)
+  // eslint-disable-next-line no-console
+  console.log(`[OpenWebAccessPoint] regex=${regex} match=${match ? match[0] : "null"} password=${match ? match[1] : "null"}`)
   if (!match) {
     return { password: null, authenticated: false, authGuesses }
   }
 
-  const password = match[2]!
+  const password = match[1]!
   authGuesses++
   const finalResult = await authenticateWithStatus(ns, port, dnet, host, password, `final ${password}`, authGuesses)
   return {
