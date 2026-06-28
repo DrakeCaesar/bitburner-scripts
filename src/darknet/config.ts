@@ -43,8 +43,6 @@ export interface ControlMessage {
   sessionId: number
   reportPort: number
   lorePort: number
-  /** Active auth locks: target hostname → locking worker pid */
-  locks?: Record<string, number>
 }
 
 // ---- file lists for SCP ----

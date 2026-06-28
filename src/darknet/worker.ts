@@ -357,6 +357,10 @@ async function spawnCrawlWorkerOnHost(
   assetSource: string,
   selfPassword?: string
 ): Promise<number> {
+  // Prevent duplicate workers — isRunning is the last line of defense
+  if (ns.isRunning(DARKNET_CRAWL_SCRIPT, host)) {
+    return 0
+  }
   await copyCrawlScript(ns, host, assetSource)
   const workerRam = ns.getScriptRam(DARKNET_CRAWL_SCRIPT, host)
   const freeRam = ns.getServerMaxRam(host) - ns.getServerUsedRam(host)
@@ -453,78 +457,6 @@ async function runOneCrawlPass(
   }
 
   for (const neighbor of neighbors) {
-    const myPid = ns.pid
-
-    // Peek CONTROL_PORT for the master's lock snapshot
-    const lockSnap = ns.peek(CONTROL_PORT)
-    let currentLocks: Record<string, number> | undefined
-    if (lockSnap !== "NULL PORT DATA") {
-      try {
-        const msg = JSON.parse(lockSnap as string) as ControlMessage
-        if (typeof msg.locks === "object" && msg.locks !== null) {
-          currentLocks = msg.locks
-        }
-      } catch { /* malformed, ignore */ }
-    }
-    // Skip if another worker already holds the lock (not our own stale entry)
-    if (currentLocks && typeof currentLocks[neighbor] === "number" && currentLocks[neighbor] !== myPid) {
-      continue
-    }
-
-    // Claim the lock before attempting auth
-    ns.writePort(reportPort, JSON.stringify({
-      type: "lock",
-      action: "claim",
-      target: neighbor,
-      workerHost: hostname,
-      pid: myPid,
-    }))
-
-    // Wait for master to process our claim and write the updated snapshot.
-    // Only the worker whose claim was accepted sees locks[neighbor] === myPid.
-    let lockConfirmed = false
-    for (let retry = 0; retry < 5; retry++) {
-      await ns.sleep(100)
-      const snap = ns.peek(CONTROL_PORT)
-      if (snap !== "NULL PORT DATA") {
-        try {
-          const msg = JSON.parse(snap as string) as ControlMessage
-          if (typeof msg.locks === "object" && msg.locks !== null) {
-            if (msg.locks[neighbor] === myPid) {
-              lockConfirmed = true
-              break
-            }
-            if (typeof msg.locks[neighbor] === "number" && msg.locks[neighbor] !== myPid) {
-              // Someone else got it — stop waiting
-              break
-            }
-          }
-        } catch { /* ignore */ }
-      }
-    }
-
-    if (!lockConfirmed) {
-      // Master rejected our claim (someone else locked it first).
-      // Release and skip to avoid auth without coordination.
-      ns.writePort(reportPort, JSON.stringify({
-        type: "lock",
-        action: "release",
-        target: neighbor,
-        workerHost: hostname,
-        pid: myPid,
-      }))
-      continue
-    }
-
-    // Renew the lock before a potentially long auth to keep it fresh
-    ns.writePort(reportPort, JSON.stringify({
-      type: "lock",
-      action: "renew",
-      target: neighbor,
-      workerHost: hostname,
-      pid: myPid,
-    }))
-
     const auth = await tryAuthNeighbor(
       ns,
       reportPort,
@@ -545,14 +477,6 @@ async function runOneCrawlPass(
 
     const neighborDetails = safeGetSessionDetails(dnet, neighbor)
     if (!neighborDetails?.hasSession) {
-      // Release the lock before we skip
-      ns.writePort(reportPort, JSON.stringify({
-        type: "lock",
-        action: "release",
-        target: neighbor,
-        workerHost: hostname,
-        pid: myPid,
-      }))
       continue
     }
 
@@ -561,14 +485,6 @@ async function runOneCrawlPass(
     }
 
     if (ns.isRunning(DARKNET_CRAWL_SCRIPT, neighbor)) {
-      // Release the lock before we skip
-      ns.writePort(reportPort, JSON.stringify({
-        type: "lock",
-        action: "release",
-        target: neighbor,
-        workerHost: hostname,
-        pid: myPid,
-      }))
       continue
     }
 
@@ -583,14 +499,6 @@ async function runOneCrawlPass(
     const workerRam = ns.getScriptRam(DARKNET_CRAWL_SCRIPT, neighbor)
     const freeRam = ns.getServerMaxRam(neighbor) - ns.getServerUsedRam(neighbor)
     if (workerRam > freeRam) {
-      // Release the lock before we skip
-      ns.writePort(reportPort, JSON.stringify({
-        type: "lock",
-        action: "release",
-        target: neighbor,
-        workerHost: hostname,
-        pid: myPid,
-      }))
       continue
     }
 
@@ -601,14 +509,6 @@ async function runOneCrawlPass(
       hostname,
       auth.password ?? undefined
     )
-    // Release the lock only after spawning — prevents duplicate workers
-    ns.writePort(reportPort, JSON.stringify({
-      type: "lock",
-      action: "release",
-      target: neighbor,
-      workerHost: hostname,
-      pid: myPid,
-    }))
   }
 }
 
