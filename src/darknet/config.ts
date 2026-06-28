@@ -1,3 +1,5 @@
+import { NS } from "@ns"
+
 // ---- constants ----
 
 export const DARKNET_CRAWL_SCRIPT = "darknet/worker.js"
@@ -473,4 +475,12 @@ export function formatCrawlStatusLine(status: CrawlStatusReport): string {
   const eta = formatEtaMs(status.etaMs)
   const detail = status.detail ? ` | ${status.detail}` : ""
   return `${status.workerHost} -> ${status.targetHost}: ${status.phase} (est ${eta})${detail}`
+}
+
+export function writeCrawlReport(ns: NS, port: number, report: CrawlHostReport): void {
+  ns.writePort(port, JSON.stringify({ type: "host", ...report }))
+}
+
+export function writeCrawlStatus(ns: NS, port: number, status: Omit<CrawlStatusReport, "type">): void {
+  ns.writePort(port, JSON.stringify({ type: "status", ...status }))
 }

@@ -23,7 +23,6 @@ import {
   type SolverModule,
   type WorkerSnapshot,
 } from "./config"
-import { solveDarknetPassword, solverInputFromDetails } from "./auth"
 import {
   saveDarknetRegistry,
   pruneInvalidRegistryHosts,
@@ -737,13 +736,10 @@ async function authenticateDarkwebEntry(
     const cached = await dnet.authenticate(DARKWEB, cachedPassword)
     if (cached.success) return
   }
-  const details = dnet.getServerDetails(DARKWEB)
-  const { password } = solveDarknetPassword(solverInputFromDetails(details))
-  if (password !== null) {
-    await dnet.authenticate(DARKWEB, password)
-  } else {
-    tryConnectToSession(dnet, DARKWEB, "")
-  }
+  // Darkweb is always ZeroLogon: single character, numeric, password "0"
+  try { await dnet.authenticate(DARKWEB, "0") } catch { /* not fatal */ }
+  // If that failed, try connecting with no password (some game configs)
+  tryConnectToSession(dnet, DARKWEB, "")
 }
 
 async function launchDarkwebCrawlWorker(

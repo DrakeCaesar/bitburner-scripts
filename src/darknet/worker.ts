@@ -16,11 +16,9 @@ import {
   type CrawlCacheOpen,
   type WorkerCommand,
   DARKNET_WORKER_FILES,
-} from "./config"
-import {
   writeCrawlReport,
   writeCrawlStatus,
-} from "./auth"
+} from "./config"
 
 // ---- file type helpers ----
 
