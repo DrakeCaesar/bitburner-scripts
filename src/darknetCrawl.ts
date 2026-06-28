@@ -29,7 +29,7 @@ import type {
   DarknetRegistryEntry,
   DarknetRememberedPassword,
   DarknetServerDetailsForFormulas,
-  TaskSnapshot,
+  WorkerSnapshot,
 } from "./darknet/config"
 
 export {
@@ -59,7 +59,7 @@ export type {
   DarknetRegistryEntry,
   DarknetRememberedPassword,
   DarknetServerDetailsForFormulas,
-  TaskSnapshot,
+  WorkerSnapshot,
 }
 
 import {

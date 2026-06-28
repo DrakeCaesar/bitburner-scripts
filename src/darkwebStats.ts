@@ -2,60 +2,39 @@ import { NS } from "@ns"
 import {
   DEFAULT_CRAWL_INTERVAL_MS,
   DARKNET_REGISTRY_FILE,
-  formatCrawlOpShort,
   loadDarknetRegistry,
   mergeRegistryWithCrawl,
   pruneInvalidRegistryHosts,
   runDarknetCrawl,
-  safeGetServerDetails,
   saveDarknetRegistry,
   type CrawlCacheOpen,
   type CrawlHostReport,
   type CrawlProgressState,
-  type CrawlStatusReport,
   type DarknetCrawlApi,
   type DarknetRegistry,
-  type DarknetServerDetailsForFormulas,
-  type TaskSnapshot,
+  type WorkerSnapshot,
 } from "./darknetCrawl.js"
 import { DARKSCAPE_NAVIGATOR, purchaseDarkscapeNavigator, purchaseTorRouter } from "./libraries/purchasePrograms.js"
 import { CRAWL_REPORT_PORT, DARKNET_LORE_PORT } from "./libraries/ports.js"
 import {
   col,
   createTabbedTailLog,
-  measureTreeTableHostChars,
   openTailLog,
   renderTabbedTailLog,
   W,
-  type TabDefinition,
   type TabbedScriptLogBuilder,
-  type TreeTableRow,
 } from "./libraries/scriptLogUiLayout.js"
 
 // --- config ---
 
-const DARKWEB_TABS: TabDefinition[] = [
-  { id: "crawl", label: "Crawl" },
-  { id: "caches", label: "Caches" },
-  { id: "tasks", label: "Tasks" },
-]
-
-const ACT_COLUMN_HEADER = "Act"
-const ACT_COLUMN_MIN_CHARS = 10
-const HOST_COLUMN_MIN_CHARS = 16
-let actColumnMaxChars = ACT_COLUMN_MIN_CHARS
-let hostColumnMaxChars = HOST_COLUMN_MIN_CHARS
-
-const TREE_DATA_COLUMNS = [
-  col("Ses", "center", W.ses),
-  col("Gss", "right", W.gss),
-  col(ACT_COLUMN_HEADER, "left", ACT_COLUMN_MIN_CHARS),
-  col("D", "right", W.dCol),
-  col("Diff", "right", W.diff),
-  col("Model", "left", W.model),
-  col("Cha", "right", W.cha),
-  col("Len", "right", W.len),
-  col("RAM", "right", W.num),
+const SERVER_TABLE_COLUMNS = [
+  col("Host", "left", 20),
+  col("Wrk", "center", 3),
+  col("State", "left", 10),
+  col("Last Command", "left", 18),
+  col("Last Reply", "left", 18),
+  col("Auth", "center", 4),
+  col("Ngbrs", "right", 5),
 ]
 
 const CACHE_TABLE_COLUMNS = [
@@ -65,142 +44,92 @@ const CACHE_TABLE_COLUMNS = [
   col("Reward", "left", W.reward),
 ]
 
-const TASK_TABLE_COLUMNS = [
-  col("Target", "left", 16),
-  col("Solver", "left", 18),
-  col("Status", "left", 8),
-  col("Guess", "left", 16),
-  col("Worker", "left", 16),
-]
-
-// --- types ---
-
-interface DarknetApi extends DarknetCrawlApi {
-  getServerDetails(host?: string): DarknetServerDetailsForFormulas
-}
-
 // --- ui ---
 
-function getDarknetApi(ns: NS): DarknetApi | null {
-  return (ns as NS & { dnet?: DarknetApi }).dnet ?? null
+function formatTimestamp(ts: number): string {
+  if (ts <= 0) return "-"
+  const seconds = Math.floor((Date.now() - ts) / 1000)
+  if (seconds < 60) return `${seconds}s ago`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
+  return `${Math.floor(seconds / 3600)}h ago`
 }
 
-function formatAuthGuesses(
-  report: CrawlHostReport | undefined,
-  op: CrawlStatusReport | undefined
-): string {
-  if (op?.authGuesses != null) {
-    return String(op.authGuesses)
-  }
-  if (report?.authGuesses != null) {
-    return String(report.authGuesses)
-  }
-  return ""
-}
-
-function activeOpsByTarget(activeOps: readonly CrawlStatusReport[]): Map<string, CrawlStatusReport> {
-  const byTarget = new Map<string, CrawlStatusReport>()
-  for (const op of activeOps) {
-    byTarget.set(op.targetHost, op)
-  }
-  return byTarget
-}
-
-function countOnlineHosts(dnet: DarknetApi, reports: ReadonlyMap<string, CrawlHostReport>): number {
-  let n = 0
-  for (const hostname of reports.keys()) {
-    const details = safeGetServerDetails(dnet, hostname)
-    if (details?.isOnline) n++
-  }
-  return n
-}
-
-function buildDarknetTreeRows(
-  ns: NS,
-  dnet: DarknetApi,
-  reports: ReadonlyMap<string, CrawlHostReport>,
-  activeOps: readonly CrawlStatusReport[]
-): TreeTableRow[] {
-  const activeByTarget = activeOpsByTarget(activeOps)
-
-  return [...reports.keys()].flatMap((hostname) => {
-    const details = safeGetServerDetails(dnet, hostname)
-    if (!details?.isOnline) {
-      return []
-    }
-    const server = ns.getServer(hostname)
-    const report = reports.get(hostname)
-    const op = activeByTarget.get(hostname)
-    const ses =
-      report?.authenticated === true || details.hasSession
-        ? "Y"
-        : report?.authenticated === false
-          ? "F"
-          : ""
-
-    return [
-      {
-        id: hostname,
-        parentId: null,
-        label: hostname,
-        cells: [
-          ses,
-          formatAuthGuesses(report, op),
-          op ? formatCrawlOpShort(op) : "",
-          String(details.depth),
-          String(details.difficulty),
-          details.modelId || "-",
-          String(details.requiredCharismaSkill),
-          String(details.passwordLength),
-          ns.format.ram(server.maxRam, 0),
-        ],
-      },
-    ]
-  })
-}
-
-function bumpActColumnMax(rows: TreeTableRow[]): void {
-  for (const row of rows) {
-    const act = row.cells[2] ?? ""
-    if (act.length > actColumnMaxChars) {
-      actColumnMaxChars = act.length
-    }
-  }
-}
-
-function bumpHostColumnMax(rows: TreeTableRow[]): void {
-  const measured = measureTreeTableHostChars(rows)
-  if (measured > hostColumnMaxChars) {
-    hostColumnMaxChars = measured
-  }
-}
-
-function treeDataColumns() {
-  return TREE_DATA_COLUMNS.map((col) =>
-    col.header === ACT_COLUMN_HEADER ? { ...col, minWidth: actColumnMaxChars } : col
-  )
-}
-
-function appendDarknetTreeTable(
+function appendServerTable(
   log: TabbedScriptLogBuilder,
-  ns: NS,
-  dnet: DarknetApi,
+  workers: readonly WorkerSnapshot[],
   reports: ReadonlyMap<string, CrawlHostReport>,
-  activeOps: readonly CrawlStatusReport[],
-  title: string
 ): void {
-  const rows = buildDarknetTreeRows(ns, dnet, reports, activeOps)
-  if (rows.length === 0) {
+  if (workers.length === 0) {
+    log.tab("darknet").text("No workers connected — waiting for probe results.")
     return
   }
-  bumpActColumnMax(rows)
-  bumpHostColumnMax(rows)
-  log.tab("crawl").treeTable({
-    title,
-    treeMinWidth: hostColumnMaxChars,
-    columns: treeDataColumns(),
+
+  // Build a set of worker hosts
+  const workerHosts = new Set(workers.map((w) => w.host))
+
+  // Also include servers from reports that don't have workers
+  const allHosts = new Set<string>(workerHosts)
+  for (const hostname of reports.keys()) {
+    if (!workerHosts.has(hostname)) allHosts.add(hostname)
+  }
+
+  // Build rows: workers first, then report-only servers
+  const rows: string[][] = []
+  const workerMap = new Map(workers.map((w) => [w.host, w]))
+
+  for (const hostname of allHosts) {
+    const wi = workerMap.get(hostname)
+    const report = reports.get(hostname)
+
+    if (wi) {
+      // Worker entry
+      let state = "idle"
+      if (!wi.probed) state = "init"
+      else if (!wi.idle) state = "busy"
+
+      let lastCmd = "-"
+      if (wi.lastCommand) {
+        lastCmd = `${wi.lastCommand} ${formatTimestamp(wi.lastCommandAt)}`
+      }
+
+      let lastReply = "-"
+      if (wi.lastReply) {
+        lastReply = `${wi.lastReply} ${formatTimestamp(wi.lastReplyAt)}`
+      }
+
+      const auth = report?.authenticated === true ? "Y" : report?.authenticated === false ? "F" : "-"
+
+      rows.push([
+        hostname,
+        "Y",
+        state,
+        lastCmd,
+        lastReply,
+        auth,
+        String(wi.neighbors.length),
+      ])
+    } else if (report) {
+      // Report-only entry (no worker)
+      const auth = report.authenticated === true ? "Y" : report.authenticated === false ? "F" : "-"
+      rows.push([
+        hostname,
+        "N",
+        auth === "Y" ? "auth" : "unknown",
+        "-",
+        "-",
+        auth,
+        "-",
+      ])
+    }
+  }
+
+  rows.sort((a, b) => a[0]!.localeCompare(b[0]!))
+
+  log.tab("darknet").text(`${allHosts.size} server(s) | ${workers.length} worker(s)`)
+  log.tab("darknet").table({
+    title: "Servers",
+    columns: SERVER_TABLE_COLUMNS,
     rows,
-    singleBodyRow: true,
   })
 }
 
@@ -213,42 +142,14 @@ function sumCacheKarma(cacheOpens: readonly CrawlCacheOpen[]): number {
 }
 
 function appendCacheOpenTable(log: TabbedScriptLogBuilder, cacheOpens: readonly CrawlCacheOpen[]): void {
-  const builder = log.tab("caches")
-  if (cacheOpens.length === 0) {
-    builder.text("No caches opened yet this session.")
-    return
-  }
+  if (cacheOpens.length === 0) return
 
   const sorted = [...cacheOpens].sort((a, b) => b.openedAt - a.openedAt)
-  builder.text(`${sorted.length} cache(s) opened | total karma ${sumCacheKarma(sorted)}`)
-  builder.table({
+  log.tab("darknet").text(`${sorted.length} cache(s) opened | total karma ${sumCacheKarma(sorted)}`)
+  log.tab("darknet").table({
     title: "Opened caches",
     columns: CACHE_TABLE_COLUMNS,
     rows: sorted.map((entry) => [entry.host, entry.file, String(entry.karmaLoss), entry.message]),
-  })
-}
-
-function appendTaskTable(log: TabbedScriptLogBuilder, tasks: readonly TaskSnapshot[]): void {
-  const builder = log.tab("tasks")
-  if (tasks.length === 0) {
-    builder.text("No tasks queued — master is waiting for workers to report neighbors.")
-    return
-  }
-
-  const pending = tasks.filter((t) => t.status === "pending").length
-  const idle = tasks.filter((t) => t.status === "idle").length
-  const lab = tasks.filter((t) => t.status === "labreport").length
-  builder.text(`${tasks.length} target(s) | pending ${pending}, idle ${idle}, labreport ${lab}`)
-  builder.table({
-    title: "Auth tasks",
-    columns: TASK_TABLE_COLUMNS,
-    rows: tasks.map((t) => [
-      t.target,
-      t.solver,
-      t.status,
-      t.guess ?? "-",
-      t.worker ?? "-",
-    ]),
   })
 }
 
@@ -278,26 +179,21 @@ function countRegistryPasswords(registry: DarknetRegistry): number {
 
 async function renderDashboard(
   ns: NS,
-  dnet: DarknetApi,
   tabbedLog: TabbedScriptLogBuilder,
-  registry: DarknetRegistry,
   displayReports: ReadonlyMap<string, CrawlHostReport>,
-  activeOps: readonly CrawlStatusReport[],
   cacheOpens: readonly CrawlCacheOpen[],
   summaryLine: string,
-  tasks: readonly TaskSnapshot[],
+  workers: readonly WorkerSnapshot[],
 ): Promise<void> {
   tabbedLog.clearPanels()
-  tabbedLog.tab("crawl").text(summaryLine)
-  appendDarknetTreeTable(tabbedLog, ns, dnet, displayReports, activeOps, "Darknet crawl")
+  tabbedLog.tab("darknet").text(summaryLine)
+  appendServerTable(tabbedLog, workers, displayReports)
   appendCacheOpenTable(tabbedLog, cacheOpens)
-  appendTaskTable(tabbedLog, tasks)
   await renderTabbedTailLog(ns, tabbedLog)
 }
 
 async function renderCrawlProgress(
   ns: NS,
-  dnet: DarknetApi,
   tabbedLog: TabbedScriptLogBuilder,
   registry: DarknetRegistry,
   state: CrawlProgressState,
@@ -306,32 +202,25 @@ async function renderCrawlProgress(
 ): Promise<void> {
   const displayReports = mergeRegistryWithCrawl(registry, state.reports)
   const auth = countAuthStats(displayReports)
-  const onlineCount = countOnlineHosts(dnet, displayReports)
   const status = state.workerRunning ? "running" : "done"
-  const activeCount = state.activeOps.length
   const knownPw = countRegistryPasswords(registry)
   const cacheOpens = [...sessionCacheOpens, ...state.cacheOpens]
+  const workerCount = state.workers.length
 
   await renderDashboard(
     ns,
-    dnet,
     tabbedLog,
-    registry,
     displayReports,
-    state.activeOps,
     cacheOpens,
     `Crawl #${crawlNum} ${status} | registry ${Object.keys(registry.servers).length} host(s), ${knownPw} password(s) | ` +
-      `shown ${onlineCount} online | auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped}` +
-      (activeCount > 0 ? ` | active ${activeCount}` : "") +
-      ` | caches ${cacheOpens.length}` +
-      ` | tasks ${state.tasks.length}`,
-    state.tasks,
+      `auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped} | ` +
+      `workers ${workerCount} | caches ${cacheOpens.length}`,
+    state.workers,
   )
 }
 
 async function renderRegistrySummary(
   ns: NS,
-  dnet: DarknetApi,
   tabbedLog: TabbedScriptLogBuilder,
   registry: DarknetRegistry,
   crawlReports: ReadonlyMap<string, CrawlHostReport>,
@@ -340,65 +229,53 @@ async function renderRegistrySummary(
 ): Promise<void> {
   const displayReports = mergeRegistryWithCrawl(registry, crawlReports)
   const auth = countAuthStats(displayReports)
-  const onlineCount = countOnlineHosts(dnet, displayReports)
   const knownPw = countRegistryPasswords(registry)
 
   await renderDashboard(
     ns,
-    dnet,
     tabbedLog,
-    registry,
     displayReports,
-    [],
     sessionCacheOpens,
     `Crawl #${crawlNum} done | registry ${Object.keys(registry.servers).length} host(s), ${knownPw} password(s) saved to ${DARKNET_REGISTRY_FILE} | ` +
-      `shown ${onlineCount} online | auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped} | caches ${sessionCacheOpens.length}`,
+      `auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped} | caches ${sessionCacheOpens.length}`,
     [],
   )
 }
 
 function parseCrawlIntervalMs(ns: NS): number {
   const arg = Number(ns.args[0])
-  if (Number.isFinite(arg) && arg > 0) {
-    return arg
-  }
+  if (Number.isFinite(arg) && arg > 0) return arg
   return DEFAULT_CRAWL_INTERVAL_MS
 }
 
 // --- entry ---
 
 export async function main(ns: NS): Promise<void> {
-  actColumnMaxChars = ACT_COLUMN_MIN_CHARS
-  hostColumnMaxChars = HOST_COLUMN_MIN_CHARS
   openTailLog(ns, "Darknet")
 
-  const tabbedLog = createTabbedTailLog(DARKWEB_TABS)
+  const tabbedLog = createTabbedTailLog([{ id: "darknet", label: "Darknet" }])
 
   const logCrawl = (message: string) => {
-    tabbedLog.tab("crawl").text(message)
+    tabbedLog.tab("darknet").text(message)
   }
 
-  if (!ns.hasTorRouter()) {
-    purchaseTorRouter(ns, logCrawl)
-  }
-  if (!ns.fileExists(DARKSCAPE_NAVIGATOR, "home")) {
-    purchaseDarkscapeNavigator(ns, logCrawl)
-  }
+  if (!ns.hasTorRouter()) purchaseTorRouter(ns, logCrawl)
+  if (!ns.fileExists(DARKSCAPE_NAVIGATOR, "home")) purchaseDarkscapeNavigator(ns, logCrawl)
 
   if (!ns.hasTorRouter()) {
-    tabbedLog.tab("crawl").text("ERROR: Need a TOR router")
+    tabbedLog.tab("darknet").text("ERROR: Need a TOR router")
     await renderTabbedTailLog(ns, tabbedLog)
     return
   }
   if (!ns.fileExists(DARKSCAPE_NAVIGATOR, "home")) {
-    tabbedLog.tab("crawl").text(`ERROR: Need ${DARKSCAPE_NAVIGATOR} on home`)
+    tabbedLog.tab("darknet").text(`ERROR: Need ${DARKSCAPE_NAVIGATOR} on home`)
     await renderTabbedTailLog(ns, tabbedLog)
     return
   }
 
-  const dnet = getDarknetApi(ns)
+  const dnet = (ns as NS & { dnet?: DarknetCrawlApi }).dnet ?? null
   if (!dnet) {
-    tabbedLog.tab("crawl").text("ERROR: ns.dnet API not available")
+    tabbedLog.tab("darknet").text("ERROR: ns.dnet API not available")
     await renderTabbedTailLog(ns, tabbedLog)
     return
   }
@@ -407,9 +284,7 @@ export async function main(ns: NS): Promise<void> {
   const crawlIntervalMs = killOnly ? 0 : parseCrawlIntervalMs(ns)
   let registry = loadDarknetRegistry(ns)
   const pruned = pruneInvalidRegistryHosts(dnet, registry)
-  if (pruned.length > 0) {
-    saveDarknetRegistry(ns, registry)
-  }
+  if (pruned.length > 0) saveDarknetRegistry(ns, registry)
   let crawlNum = 0
   const sessionCacheOpens: CrawlCacheOpen[] = []
 
@@ -420,7 +295,7 @@ export async function main(ns: NS): Promise<void> {
       CRAWL_REPORT_PORT,
       DARKNET_LORE_PORT,
       async (state) => {
-        await renderCrawlProgress(ns, dnet, tabbedLog, registry, state, crawlNum, sessionCacheOpens)
+        await renderCrawlProgress(ns, tabbedLog, registry, state, crawlNum, sessionCacheOpens)
       },
       registry,
       crawlIntervalMs,
@@ -429,7 +304,7 @@ export async function main(ns: NS): Promise<void> {
     )
   } catch (err) {
     tabbedLog.clearPanels()
-    tabbedLog.tab("crawl").text(`ERROR: ${String(err)}`)
+    tabbedLog.tab("darknet").text(`ERROR: ${String(err)}`)
     await renderTabbedTailLog(ns, tabbedLog)
   }
 }

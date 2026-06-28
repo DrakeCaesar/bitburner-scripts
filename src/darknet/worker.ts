@@ -535,6 +535,13 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
     let command: WorkerCommand
     try { command = JSON.parse(raw as string) as WorkerCommand } catch { continue }
 
+    // Acknowledge receipt before execution
+    ns.writePort(reportPort, JSON.stringify({
+      type: "executing",
+      workerHost: hostname,
+      commandType: command.type,
+    }))
+
     switch (command.type) {
       case "probe": {
         writeCrawlStatus(ns, reportPort, {

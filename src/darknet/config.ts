@@ -103,14 +103,17 @@ export interface CrawlCacheOpen {
   openedAt: number
 }
 
-/** One-line snapshot of a queued / in-flight task for the UI dashboard. */
-export interface TaskSnapshot {
-  target: string
-  solver: string
-  status: "idle" | "pending" | "heartbleed" | "labreport"
-  guess: string | null
-  worker: string | null
-  startedAt: number
+/** Snapshot of a single worker for the unified dashboard table. */
+export interface WorkerSnapshot {
+  host: string
+  probed: boolean
+  idle: boolean
+  lastCommand: string | null
+  lastCommandAt: number
+  lastReply: string | null
+  lastReplyAt: number
+  freeRam: number
+  neighbors: string[]
 }
 
 export interface CrawlProgressState {
@@ -118,8 +121,8 @@ export interface CrawlProgressState {
   activeOps: readonly CrawlStatusReport[]
   workerRunning: boolean
   cacheOpens: readonly CrawlCacheOpen[]
-  /** Task-queue status for the dashboard "tasks" tab. */
-  tasks: readonly TaskSnapshot[]
+  /** Worker status snapshots for the unified dashboard table. */
+  workers: readonly WorkerSnapshot[]
 }
 
 export interface DarknetCrawlResult {
@@ -383,8 +386,9 @@ export type WorkerCommand =
   | { type: "spawn"; target: string; sessionId: number; port: number; password?: string }
   | { type: "exit" }
 
-/** Workers write these to reportPort after executing a command. */
+/** Workers write these to reportPort. */
 export type WorkerResponse =
+  | { type: "executing"; workerHost: string; commandType: string }
   | { type: "guessResult"; target: string; solverId: string; success: boolean; feedback?: string; message?: string }
   | { type: "heartbleedResult"; target: string; solverId: string; logEntries: string[] }
   | { type: "labreportResult"; target: string; solverId: string; coords: number[]; north: boolean; east: boolean; south: boolean; west: boolean }
