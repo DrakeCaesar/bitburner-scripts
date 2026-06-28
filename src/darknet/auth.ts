@@ -613,6 +613,33 @@ export async function authenticateCandidates(
 
 type GuessNumberFeedback = "Higher" | "Lower"
 
+/**
+ * Reads the most recent auth feedback for a specific guess from heartbleed logs.
+ * Non-labyrinth darknet servers strip `data` from the `authenticate` response,
+ * so we must fall back to heartbleed to extract interactive solver feedback.
+ */
+async function readLatestAuthFeedback(
+  ns: NS,
+  port: number,
+  dnet: DarknetCrawlApi,
+  host: string,
+  passwordAttempted: string
+): Promise<string | null> {
+  const logs = await scrapeHeartbleedLogs(ns, port, dnet, host)
+  // Logs are newest-first; find the entry matching our guess
+  for (const entry of logs) {
+    try {
+      const parsed = JSON.parse(entry)
+      if (String(parsed.passwordAttempted) === passwordAttempted && typeof parsed.data === "string") {
+        return parsed.data
+      }
+    } catch {
+      // noise entry, skip
+    }
+  }
+  return null
+}
+
 async function authenticateNil(
   ns: NS,
   port: number,
@@ -632,8 +659,8 @@ async function authenticateNil(
       return { password: guess, authenticated: true, authGuesses }
     }
 
-    const data = typeof result.data === "string" ? result.data : ""
-    const feedback = parseNilFeedback(data, length)
+    const data = await readLatestAuthFeedback(ns, port, dnet, host, guess)
+    const feedback = data != null ? parseNilFeedback(data, length) : null
     if (feedback) {
       for (let i = 0; i < length; i++) {
         if (feedback[i]) {
@@ -677,7 +704,9 @@ async function authenticateAccountsManager(
       return { password: guess, authenticated: true, authGuesses }
     }
 
-    const feedback = (result.data === "Higher" || result.data === "Lower") ? result.data : null
+    // Non-labyrinth servers strip `data` from authenticate responses;
+    // read feedback from the heartbleed log entry for this attempt.
+    const feedback = await readLatestAuthFeedback(ns, port, dnet, host, guess)
     if (feedback === "Lower") {
       max = mid - 1
     } else if (feedback === "Higher") {
@@ -715,8 +744,8 @@ async function authenticateDeepGreen(
       return { password: guess, authenticated: true, authGuesses }
     }
 
-    const data = typeof result.data === "string" ? result.data : ""
-    const feedback = parseMastermindFeedback(data)
+    const data = await readLatestAuthFeedback(ns, port, dnet, host, guess)
+    const feedback = data != null ? parseMastermindFeedback(data) : null
     if (!feedback) {
       return { password: null, authenticated: false, authGuesses }
     }
@@ -737,7 +766,7 @@ const FACTORIOS_PRIMES = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47
 
 /**
  * Parse boolean-like auth response data (true/"true" / false/"false").
- * Used by Factori-Os solver — reads from authenticate() response, no heartbleed.
+ * Factori-Os reads this via heartbleed (non-labyrinth servers strip data from authenticate).
  */
 function parseBoolFeedback(data: unknown): boolean | null {
   if (data === true || data === "true") return true
@@ -766,7 +795,8 @@ async function authenticateFactoriOs(
       return { password: primeStr, authenticated: true, authGuesses }
     }
 
-    const feedback = parseBoolFeedback(result.data)
+    const feedbackData = await readLatestAuthFeedback(ns, port, dnet, host, primeStr)
+    const feedback = parseBoolFeedback(feedbackData)
     if (feedback === null) {
       return { password: null, authenticated: false, authGuesses }
     }
@@ -783,7 +813,8 @@ async function authenticateFactoriOs(
           return { password: nextStr, authenticated: true, authGuesses }
         }
 
-        const powerFeedback = parseBoolFeedback(powerResult.data)
+        const powerData = await readLatestAuthFeedback(ns, port, dnet, host, nextStr)
+        const powerFeedback = parseBoolFeedback(powerData)
         if (powerFeedback) {
           power = next
           next *= prime
@@ -853,7 +884,8 @@ async function authenticateKingOfTheHill(
       cache.set(g, NaN) // sentinel: correct password
       return NaN
     }
-    const alt = typeof result.data === "number" ? result.data : 0
+    const data = await readLatestAuthFeedback(ns, port, dnet, host, gStr)
+    const alt = typeof data === "string" ? Number(data) : 0
     cache.set(g, alt)
     return alt
   }
@@ -1003,9 +1035,9 @@ async function authenticateRateMyPix(
     if (result.success) {
       return { password: guess, authenticated: true, authGuesses }
     }
-    // Count pepper emoji from auth response data (🌶️ is 2 code units in JS)
-    const data = typeof result.data === "string" ? result.data : ""
-    const count = (data.match(/🌶/g) ?? []).length
+    // Count pepper emoji from auth response data (🌶️ is 2 code units in JS, 🌶 is 1 unit)
+    const data = await readLatestAuthFeedback(ns, port, dnet, host, guess)
+    const count = (data?.match(/🌶/g) ?? []).length
     if (count > 0) {
       freq.set(String(digit), count)
     }
@@ -1032,8 +1064,8 @@ async function authenticateRateMyPix(
       return { password: guess, authenticated: true, authGuesses }
     }
 
-    const data = typeof result.data === "string" ? result.data : ""
-    const count = (data.match(/🌶/g) ?? []).length
+    const phase2Data = await readLatestAuthFeedback(ns, port, dnet, host, guess)
+    const pruneCount = (phase2Data?.match(/🌶/g) ?? []).length
 
     // Prune: keep only candidates that would produce the same match count
     candidates = candidates.filter((candidate) => {
@@ -1041,7 +1073,7 @@ async function authenticateRateMyPix(
       for (let i = 0; i < length; i++) {
         if (candidate[i] === guess[i]) matches++
       }
-      return matches === count
+      return matches === pruneCount
     })
   }
 
@@ -1098,18 +1130,13 @@ async function authenticateOpenWebAccessPoint(
     return { password: probe, authenticated: true, authGuesses }
   }
 
-  // Extract password from the auth response data
-  // eslint-disable-next-line no-console
-  console.log(`[OpenWebAccessPoint] host=${host} probeResult.success=${probeResult.success} rawData=${JSON.stringify(probeResult.data)}`)
-  const data = typeof probeResult.data === "string" ? probeResult.data : ""
-  // eslint-disable-next-line no-console
-  console.log(`[OpenWebAccessPoint] typeof data=${typeof probeResult.data} coerced=${data.length} chars`)
+  // Extract password from the auth response data (via heartbleed — non-labyrinth)
+  const rawData = await readLatestAuthFeedback(ns, port, dnet, host, probe)
+  const data = rawData ?? ""
   // Look for this server's hostname followed by colon, the password is the rest
   const escapedHost = host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
   const regex = new RegExp(escapedHost + `:(\\S+)`)
   const match = data.match(regex)
-  // eslint-disable-next-line no-console
-  console.log(`[OpenWebAccessPoint] regex=${regex} match=${match ? match[0] : "null"} password=${match ? match[1] : "null"}`)
   if (!match) {
     return { password: null, authenticated: false, authGuesses }
   }
