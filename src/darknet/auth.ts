@@ -363,6 +363,37 @@ function isAccountsManagerGuessNumber(details: DarknetServerDetailsForFormulas):
 
 const DEEP_GREEN_MODEL = "DeepGreen"
 const LABYRINTH_MODEL = "(The Labyrinth)"
+const EUROZONE_MODEL = "EuroZone Free"
+
+const EU_COUNTRIES = [
+  "Austria",
+  "Belgium",
+  "Bulgaria",
+  "Croatia",
+  "Republic of Cyprus",
+  "Czech Republic",
+  "Denmark",
+  "Estonia",
+  "Finland",
+  "France",
+  "Germany",
+  "Greece",
+  "Hungary",
+  "Ireland",
+  "Italy",
+  "Latvia",
+  "Lithuania",
+  "Luxembourg",
+  "Malta",
+  "Netherlands",
+  "Poland",
+  "Portugal",
+  "Romania",
+  "Slovakia",
+  "Slovenia",
+  "Spain",
+  "Sweden",
+]
 const DEEP_GREEN_CLUE_LINE_RE = /remember|must use/i
 /** Keep N low enough that pickMastermindGuess (O(N²)) won't freeze the game thread. */
 const MAX_MASTERMIND_CANDIDATES = 10_000
@@ -376,6 +407,10 @@ function isDeepGreenModel(details: DarknetServerDetailsForFormulas): boolean {
 
 function isLabyrinthModel(details: DarknetServerDetailsForFormulas): boolean {
   return details.modelId === LABYRINTH_MODEL
+}
+
+function isEuroZoneModel(details: DarknetServerDetailsForFormulas): boolean {
+  return details.modelId === EUROZONE_MODEL
 }
 
 function extractDeepGreenClueDigits(line: string): string[] {
@@ -1501,6 +1536,18 @@ export async function tryAuthNeighbor(
 
   if (isLabyrinthModel(details)) {
     return await authenticateLabyrinth(ns, port, dnet, neighbor)
+  }
+
+  if (isEuroZoneModel(details)) {
+    const candidates = EU_COUNTRIES.filter((c) => c.length === details.passwordLength)
+    if (candidates.length > 0) {
+      const auth = await authenticateCandidates(ns, port, dnet, neighbor, candidates)
+      return {
+        password: auth.password,
+        authenticated: auth.authenticated ? true : false,
+        authGuesses: auth.authGuesses,
+      }
+    }
   }
 
   const { password } = solveDarknetPassword(solverInputFromDetails(details))
