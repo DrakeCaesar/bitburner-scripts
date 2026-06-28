@@ -563,7 +563,7 @@ function pickMastermindGuess(candidates: string[]): string {
 function isNilModel(details: DarknetServerDetailsForFormulas): boolean {
   return (
     details.modelId === "NIL" &&
-    details.passwordFormat === "numeric" &&
+    (details.passwordFormat === "numeric" || details.passwordFormat === "alphabetic") &&
     details.passwordHint === "you are one who's'nt authorized"
   )
 }
@@ -727,15 +727,20 @@ async function authenticateNil(
   port: number,
   dnet: DarknetCrawlApi,
   host: string,
-  length: number
+  length: number,
+  format: DarknetPasswordFormat
 ): Promise<{ password: string | null; authenticated: boolean; authGuesses: number }> {
-  const digits: (string | null)[] = Array.from({ length }, () => null)
+  const chars: (string | null)[] = Array.from({ length }, () => null)
   let authGuesses = 0
 
-  for (let digit = 0; digit <= 9; digit++) {
+  const charset = format === "alphabetic"
+    ? "abcdefghijklmnopqrstuvwxyz"
+    : "0123456789"
+
+  for (const ch of charset) {
     authGuesses++
-    const guess = String(digit).repeat(length)
-    const detail = `NIL digit ${digit}/9`
+    const guess = ch.repeat(length)
+    const detail = `NIL char ${ch}`
     const result = await authenticateWithStatus(ns, port, dnet, host, guess, detail, authGuesses)
     if (result.success) {
       return { password: guess, authenticated: true, authGuesses }
@@ -746,22 +751,22 @@ async function authenticateNil(
     if (feedback) {
       for (let i = 0; i < length; i++) {
         if (feedback[i]) {
-          digits[i] = String(digit)
+          chars[i] = ch
         }
       }
     }
 
-    if (digits.every((d) => d !== null)) {
+    if (chars.every((d) => d !== null)) {
       break
     }
   }
 
-  if (!digits.every((d) => d !== null)) {
+  if (!chars.every((d) => d !== null)) {
     return { password: null, authenticated: false, authGuesses }
   }
 
   authGuesses++
-  const password = digits.join("")
+  const password = chars.join("")
   const result = await authenticateWithStatus(ns, port, dnet, host, password, "NIL final", authGuesses)
   return { password, authenticated: result.success, authGuesses }
 }
@@ -1496,6 +1501,21 @@ export function solveDarknetPassword(input: DarknetAuthSolverInput): { password:
     }
   }
 
+  // 110100100: binary → text. Data is space-separated 8-bit binary strings.
+  if (input.modelId === "110100100" && input.data) {
+    const chars: string[] = []
+    for (const token of input.data.split(/\s+/)) {
+      if (!/^[01]{8}$/.test(token)) continue
+      chars.push(String.fromCharCode(parseInt(token, 2)))
+    }
+    if (chars.length > 0) {
+      const result = chars.join("")
+      if (result.length === input.passwordLength) {
+        return { password: result }
+      }
+    }
+  }
+
   return { password: null }
 }
 
@@ -1581,7 +1601,7 @@ export async function tryAuthNeighbor(
   }
 
   if (isNilModel(details)) {
-    const nil = await authenticateNil(ns, port, dnet, neighbor, details.passwordLength)
+    const nil = await authenticateNil(ns, port, dnet, neighbor, details.passwordLength, details.passwordFormat)
     return {
       password: nil.password,
       authenticated: nil.authenticated ? true : nil.password !== null ? false : null,
