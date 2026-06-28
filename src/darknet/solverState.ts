@@ -1226,6 +1226,113 @@ const labyrinth: SolverModule<LabyrinthState> = {
   },
 }
 
+// --- BigMo%od (triple modulo) ---
+
+// CRT helper: combine two coprime constraints x ≡ r1 (mod m1), x ≡ r2 (mod m2)
+function crtCombine(r1: number, m1: number, r2: number, m2: number): { r: number; m: number } | null {
+  // Extended Euclidean algorithm: find a, b such that a*m1 + b*m2 = 1
+  let [old_r, r] = [m1, m2]
+  let [old_s, s] = [1, 0]
+  let [old_t, t] = [0, 1]
+  while (r !== 0) {
+    const quotient = Math.floor(old_r / r)
+    ;[old_r, r] = [r, old_r - quotient * r]
+    ;[old_s, s] = [s, old_s - quotient * s]
+    ;[old_t, t] = [t, old_t - quotient * t]
+  }
+  const g = old_r
+  if ((r2 - r1) % g !== 0) return null // inconsistent constraints
+  const lcm = (m1 / g) * m2
+  const x = (r1 + (r2 - r1) / g * old_s * m1) % lcm
+  return { r: (x + lcm) % lcm, m: lcm }
+}
+
+// Primes we can use as moduli (all < 32 since d = ((n-1)%32)+1 ≤ 32)
+const BIGMO_PRIMES = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31]
+
+interface BigMoState extends SolverState {
+  type: "bigMo"
+  phase: "probe" | "solve"
+  probes: { n: number; d: number; r: number | null }[]
+  probeIdx: number
+  finalDispatched: boolean
+  pwMin: number
+  pwMax: number
+  length: number
+}
+
+const bigMoSolver: SolverModule<BigMoState> = {
+  initSolver(details) {
+    const len = details.passwordLength
+    const pwMin = 10 ** (len - 1)
+    const pwMax = 10 ** len - 1
+    const probes: { n: number; d: number; r: number | null }[] = []
+    for (const d of BIGMO_PRIMES) {
+      const target = d % 32
+      let n = pwMax + 1
+      while (n % 32 !== target) n++
+      probes.push({ n, d, r: null })
+    }
+    return {
+      type: "bigMo",
+      phase: probes.length > 0 ? "probe" : "solve",
+      probes, probeIdx: 0, finalDispatched: false,
+      pwMin, pwMax, length: len,
+    }
+  },
+  nextGuess(state) {
+    if (state.finalDispatched) return null
+    if (state.phase === "probe") {
+      if (state.probeIdx < state.probes.length) {
+        const p = state.probes[state.probeIdx]!
+        // Return the probe — applyResult will store feedback at this index
+        return { guess: String(p.n), detail: `bigMo d=${p.d}` }
+      }
+      state.phase = "solve"
+    }
+    if (state.phase === "solve") {
+      const resolved = state.probes.filter((p) => p.r !== null)
+      if (resolved.length === 0) {
+        state.finalDispatched = true
+        return null
+      }
+      let r = resolved[0]!.r!
+      let m = resolved[0]!.d
+      for (let i = 1; i < resolved.length; i++) {
+        const combined = crtCombine(r, m, resolved[i]!.r!, resolved[i]!.d)
+        if (!combined) { state.finalDispatched = true; return null }
+        r = combined.r
+        m = combined.m
+      }
+      const k = Math.ceil((state.pwMin - r) / m)
+      const candidate = r + k * m
+      if (candidate > state.pwMax) {
+        state.finalDispatched = true
+        return null
+      }
+      state.finalDispatched = true
+      const raw = String(candidate)
+      const padded = raw.length < state.length
+        ? "0".repeat(state.length - raw.length) + raw
+        : raw
+      return { guess: padded, detail: `bigMo CRT` }
+    }
+    state.finalDispatched = true
+    return null
+  },
+  applyResult(state, _guess, result) {
+    if (result.success) return state
+    if (state.phase === "probe" && state.probeIdx < state.probes.length) {
+      const fb = typeof result.feedback === "string" ? Number(result.feedback) : NaN
+      if (Number.isFinite(fb) && fb >= 0) {
+        state.probes[state.probeIdx]!.r = fb
+      }
+      state.probeIdx++
+    }
+    return state
+  },
+}
+
 // ============================================================
 // Registry
 // ============================================================
@@ -1245,6 +1352,7 @@ const SOLVER_REGISTRY: Record<string, SolverModule> = {
   "MathML|alphabetic": mathML,
   "MathML|alphanumeric": mathML,
   "PrimeTime 2|numeric": primeTime2,
+  "BigMo%od|numeric": bigMoSolver,
   "110100100|alphanumeric": binaryToText,
   "110100100|alphabetic": binaryToText,
   "110100100|ASCII": binaryToText,
