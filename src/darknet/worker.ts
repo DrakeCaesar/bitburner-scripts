@@ -24,20 +24,8 @@ import {
 
 // ---- file type helpers ----
 
-export function isArchivableTextFile(fileName: string): boolean {
-  return flatFileName(fileName).endsWith(".txt")
-}
-
-export function isLiteratureFile(fileName: string): boolean {
-  return flatFileName(fileName).endsWith(".lit")
-}
-
 export function isCacheFile(fileName: string): boolean {
   return flatFileName(fileName).endsWith(".cache")
-}
-
-export function isExeFile(fileName: string): boolean {
-  return flatFileName(fileName).endsWith(".exe")
 }
 
 // ---- text-file json merge (replaces per-file archiving) ----
@@ -305,12 +293,6 @@ async function archiveLocalServerFiles(
     return
   }
 
-  // Debug: log files
-  if (hostname.includes("cryptic")) {
-    // eslint-disable-next-line no-console
-    console.log(`[darknet] ls ${hostname}:`, files)
-  }
-
   for (const file of files) {
     const ext = flatFileName(file).split(".").pop()
     switch (ext) {
@@ -319,21 +301,6 @@ async function archiveLocalServerFiles(
         if (!ns.fileExists(file)) break
         queueArchiveContent(ns, flatFileName(file), ns.read(file), reportPort, lorePort, neighbors)
         break
-      case "exe": {
-        // eslint-disable-next-line no-console
-        if (ns.fileExists(file, "home")) {
-          console.log(`[darknet] skip ${file} from ${hostname} — already on home`)
-          break
-        }
-        const ok = ns.scp(file, "home", hostname)
-        // eslint-disable-next-line no-console
-        if (ok) {
-          console.log(`[darknet] copied ${file} from ${hostname} to home`)
-        } else {
-          console.log(`[darknet] FAILED scp ${file} from ${hostname} to home`)
-        }
-        break
-      }
     }
   }
 
