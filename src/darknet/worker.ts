@@ -3,7 +3,6 @@ import {
   DARKNET_CRAWL_SCRIPT,
   DARKWEB_ARCHIVE_DIR,
   CONTROL_PORT,
-  LOCK_FILE_PREFIX,
   WORKER_MODE_ARG,
   isLoreFile,
   isPasswordFile,
@@ -454,11 +453,21 @@ async function runOneCrawlPass(
   }
 
   for (const neighbor of neighbors) {
-    // Check if another worker has an active lock on this target (checking home,
-    // where the master maintains lock files)
-    const lockOnHome = `${LOCK_FILE_PREFIX}${neighbor}.txt`
-    if (ns.fileExists(lockOnHome, "home")) {
-      // Another worker already claimed this target — skip
+    const myPid = ns.pid
+
+    // Peek CONTROL_PORT for the master's lock snapshot
+    const lockSnap = ns.peek(CONTROL_PORT)
+    let currentLocks: Record<string, number> | undefined
+    if (lockSnap !== "NULL PORT DATA") {
+      try {
+        const msg = JSON.parse(lockSnap as string) as ControlMessage
+        if (typeof msg.locks === "object" && msg.locks !== null) {
+          currentLocks = msg.locks
+        }
+      } catch { /* malformed, ignore */ }
+    }
+    // Skip if another worker already holds the lock (not our own stale entry)
+    if (currentLocks && typeof currentLocks[neighbor] === "number" && currentLocks[neighbor] !== myPid) {
       continue
     }
 
@@ -468,28 +477,41 @@ async function runOneCrawlPass(
       action: "claim",
       target: neighbor,
       workerHost: hostname,
+      pid: myPid,
     }))
 
-    // Wait for master to create the lock file, then verify it exists.
-    // Without this, two workers can both see "no lock" simultaneously.
-    // fileExists accepts a host arg, so we can check home from anywhere.
+    // Wait for master to process our claim and write the updated snapshot.
+    // Only the worker whose claim was accepted sees locks[neighbor] === myPid.
     let lockConfirmed = false
     for (let retry = 0; retry < 5; retry++) {
       await ns.sleep(100)
-      if (ns.fileExists(lockOnHome, "home")) {
-        lockConfirmed = true
-        break
+      const snap = ns.peek(CONTROL_PORT)
+      if (snap !== "NULL PORT DATA") {
+        try {
+          const msg = JSON.parse(snap as string) as ControlMessage
+          if (typeof msg.locks === "object" && msg.locks !== null) {
+            if (msg.locks[neighbor] === myPid) {
+              lockConfirmed = true
+              break
+            }
+            if (typeof msg.locks[neighbor] === "number" && msg.locks[neighbor] !== myPid) {
+              // Someone else got it — stop waiting
+              break
+            }
+          }
+        } catch { /* ignore */ }
       }
     }
 
     if (!lockConfirmed) {
-      // Master never created the lock (maybe crashed or busy).
-      // Release our claim and skip to avoid auth without coordination.
+      // Master rejected our claim (someone else locked it first).
+      // Release and skip to avoid auth without coordination.
       ns.writePort(reportPort, JSON.stringify({
         type: "lock",
         action: "release",
         target: neighbor,
         workerHost: hostname,
+        pid: myPid,
       }))
       continue
     }
@@ -500,6 +522,7 @@ async function runOneCrawlPass(
       action: "renew",
       target: neighbor,
       workerHost: hostname,
+      pid: myPid,
     }))
 
     const auth = await tryAuthNeighbor(
@@ -528,6 +551,7 @@ async function runOneCrawlPass(
         action: "release",
         target: neighbor,
         workerHost: hostname,
+        pid: myPid,
       }))
       continue
     }
@@ -543,6 +567,7 @@ async function runOneCrawlPass(
         action: "release",
         target: neighbor,
         workerHost: hostname,
+        pid: myPid,
       }))
       continue
     }
@@ -564,6 +589,7 @@ async function runOneCrawlPass(
         action: "release",
         target: neighbor,
         workerHost: hostname,
+        pid: myPid,
       }))
       continue
     }
@@ -581,6 +607,7 @@ async function runOneCrawlPass(
       action: "release",
       target: neighbor,
       workerHost: hostname,
+      pid: myPid,
     }))
   }
 }

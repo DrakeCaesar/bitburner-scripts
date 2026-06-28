@@ -4,8 +4,6 @@ import {
   DARKNET_LORE_FILE,
   DARKWEB,
   CONTROL_PORT,
-  LOCK_FILE_PREFIX,
-  LOCK_STALE_MS,
   tryConnectToSession,
   type CrawlHostReport,
   type CrawlStatusReport,
@@ -13,7 +11,6 @@ import {
   type ControlMessage,
   type DarknetCrawlApi,
   type DarknetRegistry,
-  type DarknetLock,
   type CrawlProgressHandler,
   type CrawlErrorHandler,
   type DarknetCrawlResult,
@@ -32,48 +29,38 @@ import {
   syncDarknetTextFile,
 } from "./worker"
 
-// ---- lock file management (on home) ----
+// ---- lock management (in-memory, synced via CONTROL_PORT) ----
 
-function lockFilePath(target: string): string {
-  return `${LOCK_FILE_PREFIX}${target}.txt`
+/** Active auth locks: target hostname → { workerHost, pid } */
+type ActiveLocks = Map<string, { workerHost: string; pid: number }>
+
+/**
+ * Write current session config + lock snapshot to CONTROL_PORT.
+ * Workers peek this port to see which targets are claimed.
+ */
+function syncControlPort(
+  ns: NS,
+  sessionId: number,
+  reportPort: number,
+  lorePort: number,
+  activeLocks: ActiveLocks,
+): void {
+  ns.clearPort(CONTROL_PORT)
+  ns.writePort(CONTROL_PORT, JSON.stringify({
+    sessionId,
+    reportPort,
+    lorePort,
+    locks: activeLocks.size > 0
+      ? Object.fromEntries([...activeLocks].map(([k, v]) => [k, v.pid]))
+      : undefined,
+  } satisfies ControlMessage))
 }
 
-function readLockFile(ns: NS, target: string): DarknetLock | null {
-  const path = lockFilePath(target)
-  if (!ns.fileExists(path)) return null
-  try {
-    return JSON.parse(ns.read(path)) as DarknetLock
-  } catch {
-    return null
-  }
-}
-
-function writeLockFile(ns: NS, target: string, workerHost: string, sessionId: number): void {
-  const lock: DarknetLock = { target, workerHost, sessionId, renewedAt: Date.now() }
-  ns.write(lockFilePath(target), JSON.stringify(lock), "w")
-}
-
-function deleteLockFile(ns: NS, target: string): void {
-  const path = lockFilePath(target)
-  if (ns.fileExists(path)) ns.rm(path)
-}
-
-function cleanupStaleLocks(ns: NS, currentSessionId: number): void {
-  // List all lock files on home matching the prefix
-  const allFiles = ns.ls("home", LOCK_FILE_PREFIX)
-  const now = Date.now()
-  for (const file of allFiles) {
-    if (!file.endsWith(".txt")) continue
-    // Extract target from "dnlock-X.txt" → "X"
-    const target = file.replace(/^dnlock-/, "").replace(/\.txt$/, "")
-    if (!target) continue
-    const lock = readLockFile(ns, target)
-    if (!lock) {
-      ns.rm(lockFilePath(target))
-      continue
-    }
-    if (lock.sessionId !== currentSessionId || (now - lock.renewedAt) > LOCK_STALE_MS) {
-      ns.rm(lockFilePath(target))
+/** Remove dead-pid locks from the map. Called before processing claims. */
+function purgeDeadLocks(ns: NS, activeLocks: ActiveLocks): void {
+  for (const [target, entry] of activeLocks) {
+    if (!ns.isRunning(entry.pid)) {
+      activeLocks.delete(target)
     }
   }
 }
@@ -174,6 +161,7 @@ function applyCrawlPortMessage(
   activeOps: Map<string, CrawlStatusReport>,
   cacheOpens: CrawlCacheOpen[],
   sessionId: number,
+  activeLocks: ActiveLocks,
   registry?: DarknetRegistry
 ): void {
   try {
@@ -186,20 +174,20 @@ function applyCrawlPortMessage(
     // Lock messages: workers request/renew/release auth locks
     if (row.type === "lock" && typeof row.action === "string" && typeof row.target === "string") {
       const target = row.target
+      const claimPid = typeof row.pid === "number" ? row.pid : 0
       if (row.action === "claim") {
-        // Only create lock if target is not already locked or existing lock is stale
-        const existing = readLockFile(ns, target)
-        const now = Date.now()
-        if (!existing || existing.sessionId !== sessionId || (now - existing.renewedAt) > LOCK_STALE_MS) {
-          writeLockFile(ns, target, typeof row.workerHost === "string" ? row.workerHost : "unknown", sessionId)
+        // Grant if target is not locked (or locked by a dead worker)
+        const existing = activeLocks.get(target)
+        if (!existing || !ns.isRunning(existing.pid)) {
+          activeLocks.set(target, {
+            workerHost: typeof row.workerHost === "string" ? row.workerHost : "unknown",
+            pid: claimPid,
+          })
         }
       } else if (row.action === "renew") {
-        const existing = readLockFile(ns, target)
-        if (existing) {
-          writeLockFile(ns, target, existing.workerHost, sessionId)
-        }
+        // Nothing needed — lock stays until explicitly released or worker dies
       } else if (row.action === "release") {
-        deleteLockFile(ns, target)
+        activeLocks.delete(target)
       }
       return
     }
@@ -250,12 +238,13 @@ function drainCrawlPort(
   activeOps: Map<string, CrawlStatusReport>,
   cacheOpens: CrawlCacheOpen[],
   sessionId: number,
+  activeLocks: ActiveLocks,
   registry?: DarknetRegistry
 ): void {
   while (true) {
     const raw = ns.readPort(port)
     if (raw === "NULL PORT DATA") break
-    applyCrawlPortMessage(ns, raw, reports, activeOps, cacheOpens, sessionId, registry)
+    applyCrawlPortMessage(ns, raw, reports, activeOps, cacheOpens, sessionId, activeLocks, registry)
   }
 }
 
@@ -266,13 +255,14 @@ function pollCrawlPort(
   activeOps: Map<string, CrawlStatusReport>,
   cacheOpens: CrawlCacheOpen[],
   sessionId: number,
+  activeLocks: ActiveLocks,
   registry?: DarknetRegistry
 ): void {
   while (true) {
     const raw = ns.peek(port)
     if (raw === "NULL PORT DATA") break
     ns.readPort(port)
-    applyCrawlPortMessage(ns, raw, reports, activeOps, cacheOpens, sessionId, registry)
+    applyCrawlPortMessage(ns, raw, reports, activeOps, cacheOpens, sessionId, activeLocks, registry)
   }
 }
 
@@ -407,8 +397,7 @@ export async function runDarknetCrawl(
 
   // ---- kill-only mode ----
   if (killOnly) {
-    ns.clearPort(CONTROL_PORT)
-    ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId: 0, reportPort: 0, lorePort: 0 } satisfies ControlMessage))
+    syncControlPort(ns, 0, 0, 0, new Map())
 
     const reports = new Map<string, CrawlHostReport>()
     const activeOps = new Map<string, CrawlStatusReport>()
@@ -433,7 +422,7 @@ export async function runDarknetCrawl(
       await ns.sleep(1000)
       // Keep killing in case new ones spawned before the stop signal propagated
       await killAllCrawlWorkers(ns, dnet, registry)
-      pollCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, 0, registry)
+      pollCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, 0, new Map(), registry)
       pollTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
       await emitProgress(activeOps.size > 0)
       // Check if any workers still exist
@@ -470,17 +459,10 @@ export async function runDarknetCrawl(
 
   ns.clearPort(reportPort)
   ns.clearPort(lorePort)
-  ns.clearPort(CONTROL_PORT)
 
-  // Write broadcast config with session fingerprint — workers exit if sessionId changes.
-  ns.writePort(CONTROL_PORT, JSON.stringify({
-    sessionId,
-    reportPort,
-    lorePort,
-  } satisfies ControlMessage))
-
-  // Clean up stale lock files from previous sessions
-  cleanupStaleLocks(ns, sessionId)
+  // Initialize empty lock state and broadcast to workers
+  const activeLocks: ActiveLocks = new Map()
+  syncControlPort(ns, sessionId, reportPort, lorePort, activeLocks)
 
   const loreSet = loadDarknetTextSet(ns, DARKNET_LORE_FILE)
 
@@ -506,23 +488,23 @@ export async function runDarknetCrawl(
 
   if (continuous) {
     while (true) {
-      pollCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, sessionId, registry)
+      purgeDeadLocks(ns, activeLocks)
+      pollCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, sessionId, activeLocks, registry)
       pollTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
-      cleanupStaleLocks(ns, sessionId)
+      syncControlPort(ns, sessionId, reportPort, lorePort, activeLocks)
       await emitProgress(true)
       if (!ns.isRunning(pid)) {
         onWorkerError?.(`${DARKNET_CRAWL_SCRIPT} daemon on ${DARKWEB} stopped — restarting`)
         try {
           sessionId = Date.now()
+          activeLocks.clear()
           await killAllCrawlWorkers(ns, dnet, registry)
           await authenticateDarkwebEntry(ns, dnet, registry?.servers[DARKWEB]?.password)
           reports.clear()
           activeOps.clear()
           ns.clearPort(reportPort)
           ns.clearPort(lorePort)
-          ns.clearPort(CONTROL_PORT)
-          ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId, reportPort, lorePort } satisfies ControlMessage))
-          cleanupStaleLocks(ns, sessionId)
+          syncControlPort(ns, sessionId, reportPort, lorePort, activeLocks)
           await ns.sleep(5000)
           pid = await launchDarkwebCrawlWorker(ns, source, sessionId)
         } catch (restartErr) {
@@ -536,21 +518,19 @@ export async function runDarknetCrawl(
   }
 
   while (ns.isRunning(pid)) {
-    pollCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, sessionId, registry)
+    purgeDeadLocks(ns, activeLocks)
+    pollCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, sessionId, activeLocks, registry)
     pollTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
-    cleanupStaleLocks(ns, sessionId)
+    syncControlPort(ns, sessionId, reportPort, lorePort, activeLocks)
     await emitProgress(true)
     await ns.sleep(100)
   }
 
   // Signal all workers to stop — write a fresh sessionId to invalidate theirs
-  ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId: 0, reportPort: 0, lorePort: 0 } satisfies ControlMessage))
-  drainCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, sessionId, registry)
+  syncControlPort(ns, 0, 0, 0, new Map())
+  drainCrawlPort(ns, reportPort, reports, activeOps, cacheOpens, sessionId, activeLocks, registry)
   drainTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
   await emitProgress(false)
-
-  // Clean up all lock files for this session
-  cleanupStaleLocks(ns, 0) // sessionId 0 won't match any valid lock → deletes all
 
   return { reports, cacheOpens }
 }
