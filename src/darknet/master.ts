@@ -284,15 +284,16 @@ function drainTextPort(ns: NS, port: number, textSet: Set<string>, file: string)
 // ---- worker registry ----
 
 interface WorkerInfo {
-  port: number          // dedicated command port
-  neighbors: string[]   // hosts this worker can reach
+  port: number
+  neighbors: string[]
   freeRam: number
-  probed: boolean       // has received at least one probeResult
-  idle: boolean         // ready to receive a command (not waiting on a pending command)
-  lastCommand: string | null  // most recent command type sent
-  lastCommandAt: number       // timestamp
-  lastReply: string | null    // most recent response type
-  lastReplyAt: number         // timestamp
+  probed: boolean
+  idle: boolean
+  lastCommand: string | null
+  lastCommandAt: number
+  lastReply: string | null
+  lastReplyAt: number
+  failures: number // consecutive unresponsive commands
 }
 
 // ---- port pool ----
@@ -337,6 +338,8 @@ interface TargetState {
 // ---- task dispatch ----
 
 const PENDING_TIMEOUT_MS = 60_000
+const WORKER_CMD_TIMEOUT_MS = 30_000 // reset unresponsive workers to idle after 30s
+const WORKER_MAX_RETRIES = 3 // give up on a worker after this many timeouts
 
 function drainReportPort(
   ns: NS,
@@ -363,24 +366,26 @@ function drainReportPort(
         const now = Date.now()
 
         if (workerResp.type === "executing") {
-          // Worker confirmed receipt — update lastReply to show "executing"
           const wi = workerRegistry.get(workerResp.workerHost)
           if (wi) {
             wi.lastReply = `executing:${workerResp.commandType}`
             wi.lastReplyAt = now
+            wi.failures = 0
           }
           continue
         }
 
         if (workerResp.type === "probeResult") {
-          let wi = workerRegistry.get(workerResp.workerHost)
-          if (!wi) { wi = { port: 0, neighbors: [], freeRam: 0, probed: false, idle: false, lastCommand: null, lastCommandAt: 0, lastReply: null, lastReplyAt: 0 }; workerRegistry.set(workerResp.workerHost, wi) }
+          const existingWi = workerRegistry.get(workerResp.workerHost)
+          const wi: WorkerInfo = existingWi ?? { port: 0, neighbors: [], freeRam: 0, probed: false, idle: false, lastCommand: null, lastCommandAt: 0, lastReply: null, lastReplyAt: 0, failures: 0 }
+          if (!existingWi) workerRegistry.set(workerResp.workerHost, wi)
           wi.neighbors = workerResp.targets
           wi.freeRam = workerResp.freeRam
           wi.probed = true
           wi.idle = true
           wi.lastReply = "probeResult"
           wi.lastReplyAt = now
+          wi.failures = 0
           continue
         }
 
@@ -390,6 +395,7 @@ function drainReportPort(
             parentWi.idle = true
             parentWi.lastReply = workerResp.success ? "spawnResult:ok" : "spawnResult:fail"
             parentWi.lastReplyAt = now
+            parentWi.failures = 0
           }
 
           spawning.delete(workerResp.target)
@@ -438,6 +444,7 @@ function applyTaskResult(
       wi.idle = true
       wi.lastReply = result.type
       wi.lastReplyAt = Date.now()
+      wi.failures = 0
     }
   }
 
@@ -464,6 +471,29 @@ function applyTaskResult(
         south: result.south, west: result.west,
       })
     }
+  }
+}
+
+function handleWorkerTimeouts(
+  workerRegistry: Map<string, WorkerInfo>,
+  spawning: Set<string>,
+): void {
+  const now = Date.now()
+  for (const [workerHost, wi] of workerRegistry) {
+    if (wi.idle) continue
+    if (now - wi.lastCommandAt < WORKER_CMD_TIMEOUT_MS) continue
+
+    wi.failures++
+    if (wi.failures > WORKER_MAX_RETRIES) {
+      // Worker appears dead — remove from registry, free its port
+      freePort(wi.port)
+      spawning.delete(workerHost)
+      workerRegistry.delete(workerHost)
+      continue
+    }
+    // Retry: mark idle, the loop will send probe/auth again
+    wi.lastReply = null
+    wi.idle = true
   }
 }
 
@@ -743,7 +773,7 @@ export async function runDarknetCrawl(
   // Allocate a port for the initial darkweb worker
   const darkwebPort = allocatePort()
   const workerRegistry = new Map<string, WorkerInfo>()
-  workerRegistry.set(DARKWEB, { port: darkwebPort, neighbors: [], freeRam: 0, probed: false, idle: false, lastCommand: null, lastCommandAt: 0, lastReply: null, lastReplyAt: 0 })
+  workerRegistry.set(DARKWEB, { port: darkwebPort, neighbors: [], freeRam: 0, probed: false, idle: true, lastCommand: null, lastCommandAt: 0, lastReply: null, lastReplyAt: 0, failures: 0 })
   const spawning = new Set<string>() // hosts with spawn commands in flight
 
   let pid = await launchDarkwebCrawlWorker(ns, source, sessionId, darkwebPort)
@@ -778,13 +808,6 @@ export async function runDarknetCrawl(
 
   await emitProgress(true)
 
-  // Send initial probe to darkweb worker
-  ns.writePort(darkwebPort, JSON.stringify({ type: "probe" } satisfies WorkerCommand))
-  const darkwebWi = workerRegistry.get(DARKWEB)!
-  darkwebWi.lastCommand = "probe"
-  darkwebWi.lastCommandAt = Date.now()
-  darkwebWi.idle = false
-
   if (continuous) {
     while (true) {
       drainReportPort(ns, reportPort, targetStates, workerRegistry, spawning, reports, activeOps, cacheOpens, sessionId, registry)
@@ -805,7 +828,7 @@ export async function runDarknetCrawl(
             if (wi.neighbors.includes(hostname) && wi.idle && wi.probed) {
               const childPort = allocatePort()
               spawning.add(hostname)
-              workerRegistry.set(hostname, { port: childPort, neighbors: [], freeRam: 0, probed: false, idle: false, lastCommand: null, lastCommandAt: 0, lastReply: null, lastReplyAt: 0 })
+              workerRegistry.set(hostname, { port: childPort, neighbors: [], freeRam: 0, probed: false, idle: false, lastCommand: null, lastCommandAt: 0, lastReply: null, lastReplyAt: 0, failures: 0 })
               const pw = registry?.servers[hostname]?.password ?? undefined
               ns.writePort(wi.port, JSON.stringify({
                 type: "spawn",
@@ -835,6 +858,9 @@ export async function runDarknetCrawl(
 
       // Dispatch auth tasks
       dispatchTasks(ns, targetStates, workerRegistry)
+
+      // Time out unresponsive workers
+      handleWorkerTimeouts(workerRegistry, spawning)
 
       // Handle completed targets
       for (const [hostname, target] of targetStates) {
@@ -878,13 +904,8 @@ export async function runDarknetCrawl(
           syncControlPort(ns, sessionId, reportPort, lorePort)
           await ns.sleep(5000)
           const newPort = allocatePort()
-          workerRegistry.set(DARKWEB, { port: newPort, neighbors: [], freeRam: 0, probed: false, idle: false, lastCommand: null, lastCommandAt: 0, lastReply: null, lastReplyAt: 0 })
+          workerRegistry.set(DARKWEB, { port: newPort, neighbors: [], freeRam: 0, probed: false, idle: true, lastCommand: null, lastCommandAt: 0, lastReply: null, lastReplyAt: 0, failures: 0 })
           pid = await launchDarkwebCrawlWorker(ns, source, sessionId, newPort)
-          ns.writePort(newPort, JSON.stringify({ type: "probe" } satisfies WorkerCommand))
-          const newDarkwebWi = workerRegistry.get(DARKWEB)!
-          newDarkwebWi.lastCommand = "probe"
-          newDarkwebWi.lastCommandAt = Date.now()
-          newDarkwebWi.idle = false
         } catch (restartErr) {
           onWorkerError?.(`Failed to restart daemon: ${String(restartErr)} — retrying in 30s`)
           await ns.sleep(30000)
@@ -911,7 +932,7 @@ export async function runDarknetCrawl(
           if (wi.neighbors.includes(hostname) && wi.idle && wi.probed) {
             const childPort = allocatePort()
             spawning.add(hostname)
-            workerRegistry.set(hostname, { port: childPort, neighbors: [], freeRam: 0, probed: false, idle: false, lastCommand: null, lastCommandAt: 0, lastReply: null, lastReplyAt: 0 })
+            workerRegistry.set(hostname, { port: childPort, neighbors: [], freeRam: 0, probed: false, idle: false, lastCommand: null, lastCommandAt: 0, lastReply: null, lastReplyAt: 0, failures: 0 })
             const pw = registry?.servers[hostname]?.password ?? undefined
             ns.writePort(wi.port, JSON.stringify({
               type: "spawn", target: hostname, sessionId, port: childPort,
@@ -936,6 +957,8 @@ export async function runDarknetCrawl(
     }
 
     dispatchTasks(ns, targetStates, workerRegistry)
+
+    handleWorkerTimeouts(workerRegistry, spawning)
 
     for (const [hostname, target] of targetStates) {
       if (target.done) {

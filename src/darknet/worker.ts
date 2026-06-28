@@ -311,11 +311,14 @@ async function archiveLocalServerFiles(
 
 export async function copyCrawlScript(ns: NS, target: string, source: string): Promise<void> {
   for (const file of DARKNET_WORKER_FILES) {
-    if (!ns.fileExists(file, source)) {
-      throw new Error(`${file} not found on ${source}`)
+    for (let retryIdx = 0; retryIdx < 3; retryIdx++) {
+      if (ns.fileExists(file, source)) {
+        if (ns.scp(file, target, source)) break
+      }
+      await ns.sleep(1000)
     }
-    if (!ns.scp(file, target, source)) {
-      throw new Error(`Failed to scp ${file} to ${target} from ${source}`)
+    if (!ns.fileExists(file, target)) {
+      throw new Error(`Failed to scp ${file} to ${target} from ${source} after retries`)
     }
   }
 }
@@ -394,10 +397,10 @@ async function executeTask(
             try {
               const entry: unknown = JSON.parse(log)
               if (typeof entry === "object" && entry !== null) {
-                const e = entry as Record<string, unknown>
-                if (e.passwordAttempted === cmd.guess) {
-                  feedback = typeof e.data === "string" ? e.data : undefined
-                  message = typeof e.message === "string" ? e.message : undefined
+                const rec = entry as Record<string, unknown>
+                if (rec["passwordAttempted"] === cmd.guess) {
+                  feedback = typeof rec["data"] === "string" ? rec["data"] : undefined
+                  message = typeof rec["message"] === "string" ? rec["message"] : undefined
                   break
                 }
               }
@@ -407,9 +410,9 @@ async function executeTask(
             try {
               const lastEntry: unknown = JSON.parse(hb.logs[hb.logs.length - 1]!)
               if (typeof lastEntry === "object" && lastEntry !== null) {
-                const e = lastEntry as Record<string, unknown>
-                feedback = typeof e.data === "string" ? e.data : undefined
-                message = typeof e.message === "string" ? e.message : undefined
+                const rec = lastEntry as Record<string, unknown>
+                feedback = typeof rec["data"] === "string" ? rec["data"] : undefined
+                message = typeof rec["message"] === "string" ? rec["message"] : undefined
               }
             } catch { /* ignore */ }
           }
@@ -469,6 +472,17 @@ async function executeTask(
 
 // ---- worker entry ----
 
+function formatCommandBrief(cmd: WorkerCommand): string {
+  switch (cmd.type) {
+    case "probe": return "probe"
+    case "guess": return `guess:${cmd.target}="${cmd.guess}"`
+    case "heartbleed": return `heartbleed:${cmd.target}`
+    case "labreport": return `labreport:${cmd.target}`
+    case "spawn": return `spawn:${cmd.target}`
+    case "exit": return "exit"
+  }
+}
+
 export async function runCrawlWorker(ns: NS): Promise<void> {
   const dnet = (ns as NS & { dnet?: DarknetCrawlApi }).dnet
   if (!dnet) return
@@ -511,10 +525,14 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
   }
 
   // Ensure session on ourselves
-  try { await ensureSessionOnSelf(ns, dnet, passwordCache) } catch { return }
+  try { await ensureSessionOnSelf(ns, dnet, passwordCache) } catch {
+    ns.tprintf("ERROR: %s failed to authenticate self", hostname)
+    return
+  }
 
-  // Main command loop — blocks on nextWrite(), does nothing autonomous
-  const port = ns.getPortHandle(commandPort)
+  ns.printf("%s worker initialized on port %d", hostname, commandPort)
+
+  // Main command loop — uses ns.peek/ns.readPort for command polling
   while (true) {
     // Check CONTROL_PORT for session change (master restart)
     const checkRaw = ns.peek(CONTROL_PORT)
@@ -527,13 +545,24 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
       } catch { /* malformed, ignore */ }
     }
 
-    // Block until master sends us a command
-    await port.nextWrite()
-    const raw = port.read()
-    if (raw === "NULL PORT DATA") continue
+    // Poll for commands using ns.peek — same API the master uses to write (ns.writePort)
+    let raw = ns.peek(commandPort)
+    if (raw === "NULL PORT DATA") {
+      ns.print("awaiting command...")
+      let waitMs = 100
+      while (true) {
+        await ns.sleep(waitMs)
+        raw = ns.peek(commandPort)
+        if (raw !== "NULL PORT DATA") break
+        waitMs = Math.min(waitMs * 2, 2000)
+      }
+    }
+    ns.readPort(commandPort) // consume the message we peeked
 
     let command: WorkerCommand
     try { command = JSON.parse(raw as string) as WorkerCommand } catch { continue }
+
+    ns.printf("%s executing: %s", hostname, formatCommandBrief(command))
 
     // Acknowledge receipt before execution
     ns.writePort(reportPort, JSON.stringify({
@@ -584,25 +613,31 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
           targets,
           freeRam: freeRam - workerRam,
         }))
+        ns.print(`done: probe => ${targets.length} neighbors`)
         break
       }
       case "guess":
       case "heartbleed":
       case "labreport": {
         await executeTask(ns, dnet, command, reportPort)
+        ns.printf("done: %s", command.type)
         break
       }
       case "spawn": {
         // Master tells us to spawn a worker on target with assigned port
-        await copyCrawlScript(ns, command.target, hostname)
-        const childRam = ns.getScriptRam(DARKNET_CRAWL_SCRIPT, command.target)
-        const free = ns.getServerMaxRam(command.target) - ns.getServerUsedRam(command.target)
         let success = false
-        if (childRam <= free) {
-          const args: (string | number)[] = [WORKER_MODE_ARG, command.sessionId, command.port]
-          if (command.password) args.push(command.password)
-          const pid = ns.exec(DARKNET_CRAWL_SCRIPT, command.target, 1, ...args)
-          success = pid !== 0
+        try {
+          await copyCrawlScript(ns, command.target, hostname)
+          const childRam = ns.getScriptRam(DARKNET_CRAWL_SCRIPT, command.target)
+          const free = ns.getServerMaxRam(command.target) - ns.getServerUsedRam(command.target)
+          if (childRam <= free) {
+            const args: (string | number)[] = [WORKER_MODE_ARG, command.sessionId, command.port]
+            if (command.password) args.push(command.password)
+            const pid = ns.exec(DARKNET_CRAWL_SCRIPT, command.target, 1, ...args)
+            success = pid !== 0
+          }
+        } catch (err) {
+          ns.printf("spawn %s failed: %s", command.target, String(err))
         }
         ns.writePort(reportPort, JSON.stringify({
           type: "spawnResult",
@@ -610,12 +645,14 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
           target: command.target,
           success,
         }))
+        ns.printf("done: spawn:%s => %s", command.target, success ? "ok" : "fail")
         break
       }
       case "exit": {
         ns.exit()
       }
     }
+    ns.print("idle")
   }
 }
 
