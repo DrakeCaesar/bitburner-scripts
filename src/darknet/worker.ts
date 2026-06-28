@@ -659,10 +659,23 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
         break
       }
       case "spawn": {
-        // Master tells us to spawn a worker on target with assigned port
+        // Master tells us to spawn a worker on target with assigned port.
+        // First, free blocked RAM on the target so the worker can actually run.
         let success = false
         let childPid = 0
         try {
+          if (dnet.memoryReallocation && dnet.getBlockedRam) {
+            let blocked = dnet.getBlockedRam(command.target)
+            const childRam = ns.getScriptRam(DARKNET_CRAWL_SCRIPT, command.target)
+            let free = ns.getServerMaxRam(command.target) - ns.getServerUsedRam(command.target)
+            for (let reallocAttempts = 0; reallocAttempts < 10 && blocked > 0 && free < childRam; reallocAttempts++) {
+              ns.printf("reallocating %s (blocked %s, free %s, need %s)",
+                command.target, ns.format.ram(blocked), ns.format.ram(free), ns.format.ram(childRam))
+              try { await dnet.memoryReallocation(command.target) } catch { break }
+              blocked = dnet.getBlockedRam(command.target)
+              free = ns.getServerMaxRam(command.target) - ns.getServerUsedRam(command.target)
+            }
+          }
           await copyCrawlScript(ns, command.target, hostname)
           const childRam = ns.getScriptRam(DARKNET_CRAWL_SCRIPT, command.target)
           const free = ns.getServerMaxRam(command.target) - ns.getServerUsedRam(command.target)
