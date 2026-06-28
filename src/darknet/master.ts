@@ -409,8 +409,14 @@ export async function runDarknetCrawl(
   ns.clearPort(lorePort)
   ns.clearPort(CONTROL_PORT)
 
-  // Write broadcast config with session fingerprint — workers exit if sessionId changes
-  ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId, reportPort, lorePort } satisfies ControlMessage))
+  // Write broadcast config with session fingerprint — workers exit if sessionId changes.
+  // Include an empty assignments map so the field is always defined.
+  ns.writePort(CONTROL_PORT, JSON.stringify({
+    sessionId,
+    reportPort,
+    lorePort,
+    assignments: {},
+  } satisfies ControlMessage))
 
   const loreSet = loadDarknetTextSet(ns, DARKNET_LORE_FILE)
 
@@ -485,7 +491,7 @@ export async function runDarknetCrawl(
           ns.clearPort(reportPort)
           ns.clearPort(lorePort)
           ns.clearPort(CONTROL_PORT)
-          ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId, reportPort, lorePort } satisfies ControlMessage))
+          ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId, reportPort, lorePort, assignments: {} } satisfies ControlMessage))
           await ns.sleep(5000)
           pid = await launchDarkwebCrawlWorker(ns, source, sessionId)
         } catch (restartErr) {

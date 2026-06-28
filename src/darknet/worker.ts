@@ -459,12 +459,14 @@ async function runOneCrawlPass(
   }
 
   // Only auth targets that the master assigned to this worker.
-  // If no assignments yet (first cycle), just probe and report.
-  const assignedSet = assignedTargets ? new Set(assignedTargets) : new Set<string>()
+  // If no assignments yet (first cycle), just probe and report — auth nothing.
+  // null means "no assignments received yet" → skip all auth.
+  // empty Set means "master assigned us nothing this cycle" → skip all auth.
+  const assignedSet: Set<string> | null = assignedTargets ? new Set(assignedTargets) : null
 
   for (const neighbor of neighbors) {
-    // Skip if master hasn't assigned this target to us (or no assignments yet)
-    if (assignedTargets && !assignedSet.has(neighbor)) {
+    // Skip if master hasn't assigned this target to us
+    if (!assignedSet || !assignedSet.has(neighbor)) {
       continue
     }
 
