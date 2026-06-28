@@ -1073,24 +1073,29 @@ async function authenticateRateMyPix(
   port: number,
   dnet: DarknetCrawlApi,
   host: string,
-  length: number
+  length: number,
+  format: DarknetPasswordFormat
 ): Promise<{ password: string | null; authenticated: boolean; authGuesses: number }> {
   let authGuesses = 0
 
-  // ---- Phase 1: learn digit frequencies ----
+  // ---- Phase 1: learn character frequencies ----
+  // RateMyPix auth response data: pepper emoji count = number of correct position matches.
+  // Submit a guess of all the same character; the pepper count = frequency of that character.
+  const charset = format === "alphabetic"
+    ? "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    : "0123456789"
   const freq = new Map<string, number>()
-  for (let digit = 0; digit <= 9; digit++) {
-    const guess = String(digit).repeat(length)
+  for (const ch of charset) {
+    const guess = ch.repeat(length)
     authGuesses++
-    const result = await authenticateWithStatus(ns, port, dnet, host, guess, `freq ${digit}`, authGuesses)
+    const result = await authenticateWithStatus(ns, port, dnet, host, guess, `freq ${ch}`, authGuesses)
     if (result.success) {
       return { password: guess, authenticated: true, authGuesses }
     }
-    // Count pepper emoji from auth response data (🌶️ is 2 code units in JS, 🌶 is 1 unit)
     const data = await readLatestAuthFeedback(ns, port, dnet, host, guess)
     const count = (data?.match(/🌶/g) ?? []).length
     if (count > 0) {
-      freq.set(String(digit), count)
+      freq.set(ch, count)
     }
   }
 
@@ -1578,7 +1583,7 @@ export async function tryAuthNeighbor(
   }
 
   if (isRateMyPixModel(details)) {
-    const auth = await authenticateRateMyPix(ns, port, dnet, neighbor, details.passwordLength)
+    const auth = await authenticateRateMyPix(ns, port, dnet, neighbor, details.passwordLength, details.passwordFormat)
     return {
       password: auth.password,
       authenticated: auth.authenticated ? true : auth.password !== null ? false : null,
