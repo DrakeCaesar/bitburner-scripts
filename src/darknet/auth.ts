@@ -395,6 +395,14 @@ const EU_COUNTRIES = [
   "Spain",
   "Sweden",
 ]
+
+const LARGE_PRIMES = [
+  1069, 1409, 1471, 1567, 1597, 1601, 1697, 1747, 1801, 1889, 1979, 1999, 2063, 2207, 2371, 2503, 2539, 2693, 2741,
+  2753, 2801, 2819, 2837, 2909, 2939, 3169, 3389, 3571, 3761, 3881, 4217, 4289, 4547, 4729, 4789, 4877, 4943, 4951,
+  4957, 5393, 5417, 5419, 5441, 5519, 5527, 5647, 5779, 5881, 6007, 6089, 6133, 6389, 6451, 6469, 6547, 6661, 6719,
+  6841, 7103, 7549, 7559, 7573, 7691, 7753, 7867, 8053, 8081, 8221, 8329, 8599, 8677, 8761, 8839, 8963, 9103, 9199,
+  9343, 9467, 9551, 9601, 9739, 9749, 9859,
+]
 const DEEP_GREEN_CLUE_LINE_RE = /remember|must use/i
 /** Keep N low enough that pickMastermindGuess (O(N²)) won't freeze the game thread. */
 const MAX_MASTERMIND_CANDIDATES = 10_000
@@ -1459,6 +1467,18 @@ export function solveDarknetPassword(input: DarknetAuthSolverInput): { password:
       const resultStr = Math.abs(result) < 0.000001 ? result.toFixed(20) : result.toString()
       if (resultStr.length === input.passwordLength) {
         return { password: resultStr }
+      }
+    }
+  }
+
+  // PrimeTime 2: largest prime factor of the target number.
+  if (input.modelId === "PrimeTime 2" && input.data) {
+    const target = Number(input.data)
+    if (Number.isFinite(target) && Number.isSafeInteger(target)) {
+      for (let i = LARGE_PRIMES.length - 1; i >= 0; i--) {
+        if (target % LARGE_PRIMES[i]! === 0) {
+          return { password: String(LARGE_PRIMES[i]) }
+        }
       }
     }
   }
