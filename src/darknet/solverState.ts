@@ -236,25 +236,62 @@ const LARGE_PRIMES = [
   509, 521, 523, 541,
 ]
 
-interface PrimeTime2State extends SolverState { type: "primeTime2"; dispatched: boolean; guess: string | null }
+interface PrimeTime2State extends SolverState { type: "primeTime2"; dispatched: boolean; factors: string[]; factorIdx: number }
 
 const primeTime2: SolverModule<PrimeTime2State> = {
   initSolver(details) {
-    if (!details.data) return { type: "primeTime2", dispatched: true, guess: null }
+    if (!details.data) return { type: "primeTime2", dispatched: true, factors: [], factorIdx: 0 }
     const target = Number(details.data)
-    if (!Number.isFinite(target) || !Number.isSafeInteger(target)) return { type: "primeTime2", dispatched: true, guess: null }
-    for (let i = LARGE_PRIMES.length - 1; i >= 0; i--) {
-      const p = LARGE_PRIMES[i]!
-      if (target % p === 0) return { type: "primeTime2", dispatched: false, guess: String(p) }
+    if (!Number.isFinite(target) || !Number.isSafeInteger(target)) return { type: "primeTime2", dispatched: true, factors: [], factorIdx: 0 }
+
+    // Try trial division with all primes in the list, then check if the
+    // remaining cofactor is itself prime (the real largest prime factor).
+    let remaining = target
+    const smallFactors: number[] = []
+    for (const p of LARGE_PRIMES) {
+      while (remaining % p === 0 && remaining > 1) {
+        smallFactors.push(p)
+        remaining /= p
+      }
     }
-    return { type: "primeTime2", dispatched: true, guess: null }
+
+    // If nothing remained, the largest prime factor is in our list.
+    // If something remained and it's > 1, it IS the largest prime factor
+    // (all factors ≤ 541 were extracted; any remaining factor must be > 541 and prime).
+    const pad = (n: number): string => {
+      const raw = String(n)
+      return raw.length < details.passwordLength
+        ? "0".repeat(details.passwordLength - raw.length) + raw
+        : raw
+    }
+
+    const factors: string[] = []
+    if (remaining > 1) {
+      factors.push(pad(remaining))
+    }
+    // Also try small factors (largest first) as fallback
+    smallFactors.sort((a, b) => b - a)
+    for (const f of smallFactors) {
+      factors.push(pad(f))
+    }
+
+    return { type: "primeTime2", dispatched: factors.length === 0, factors, factorIdx: 0 }
   },
   nextGuess(state) {
-    if (state.dispatched || !state.guess) return null
+    if (state.dispatched) return null
+    while (state.factorIdx < state.factors.length) {
+      const guess = state.factors[state.factorIdx]!
+      state.factorIdx++
+      return { guess, detail: `primeTime2` }
+    }
     state.dispatched = true
-    return { guess: state.guess, detail: "primeTime2" }
+    return null
   },
-  applyResult(state, _guess, _result) { return state },
+  applyResult(state, _guess, result) {
+    if (result.success) { state.dispatched = true }
+    // On failure, nextGuess will try the next factor
+    return state
+  },
 }
 
 // --- 110100100 (binary-to-text) ---
