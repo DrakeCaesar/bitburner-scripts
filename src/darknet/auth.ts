@@ -413,6 +413,10 @@ function isEuroZoneModel(details: DarknetServerDetailsForFormulas): boolean {
   return details.modelId === EUROZONE_MODEL
 }
 
+function isMathMLModel(details: DarknetServerDetailsForFormulas): boolean {
+  return details.modelId === "MathML"
+}
+
 function extractDeepGreenClueDigits(line: string): string[] {
   if (!DEEP_GREEN_CLUE_LINE_RE.test(line)) {
     return []
@@ -1266,6 +1270,65 @@ async function authenticateLabyrinth(
   }
 }
 
+// ---- MathML expression evaluator ----
+
+function cleanMathExpression(expression: string): string {
+  return expression
+    .replaceAll("ҳ", "*")
+    .replaceAll("÷", "/")
+    .replaceAll("➕", "+")
+    .replaceAll("➖", "-")
+    .replaceAll("ns.exit(),", "")
+    .split(",")[0]
+}
+
+function evaluateMathExpression(expression: string): number {
+  const tokens = cleanMathExpression(expression).split("")
+
+  // Resolve parentheses recursively
+  let currentDepth = 0
+  const depth = tokens.map((token) => {
+    if (token === "(") { currentDepth += 1 }
+    else if (token === ")") { currentDepth -= 1; return currentDepth + 1 }
+    return currentDepth
+  })
+  const depth1Start = depth.indexOf(1)
+  const firstZeroAfter = depth.indexOf(0, depth1Start)
+  const depth1End = firstZeroAfter === -1 ? depth.length - 1 : firstZeroAfter - 1
+  if (depth1Start !== -1) {
+    const subExpression = tokens.slice(depth1Start + 1, depth1End).join("")
+    const result = evaluateMathExpression(subExpression)
+    tokens.splice(depth1Start, depth1End - depth1Start + 1, result.toString())
+    return evaluateMathExpression(tokens.join(""))
+  }
+
+  let remaining = tokens.join("")
+
+  // Multiplication and division, left to right
+  const mulDivRe = /(-?\d*\.?\d+) *([*/]) *(-?\d*\.?\d+)/
+  let match = remaining.match(mulDivRe)
+  while (match) {
+    const [, left, op, right] = match
+    const result = op === "*" ? parseFloat(left) * parseFloat(right) : parseFloat(left) / parseFloat(right)
+    const resultStr = Math.abs(result) < 0.000001 ? result.toFixed(20) : result.toString()
+    remaining = remaining.replace(match[0], resultStr)
+    match = remaining.match(mulDivRe)
+  }
+
+  // Addition and subtraction
+  const addSubRe = /(-?\d*\.?\d+) *([+-]) *(-?\d*\.?\d+)/
+  match = remaining.match(addSubRe)
+  while (match) {
+    const [, left, op, right] = match
+    const result = op === "+" ? parseFloat(left) + parseFloat(right) : parseFloat(left) - parseFloat(right)
+    remaining = remaining.replace(match[0], result.toString())
+    match = remaining.match(addSubRe)
+  }
+
+  const [, leftover] = remaining.match(/(-?\d*\.?\d+)/) ?? ["", ""]
+  return parseFloat(leftover)
+}
+
 export function solveDarknetPassword(input: DarknetAuthSolverInput): { password: string | null } {
   const zeroLogon = solveZeroLogon(input)
   if (zeroLogon !== null) {
@@ -1302,6 +1365,17 @@ export function solveDarknetPassword(input: DarknetAuthSolverInput): { password:
   const laika4 = solveLaika4(input)
   if (laika4 !== null) {
     return { password: laika4 }
+  }
+
+  // MathML: evaluate the arithmetic expression
+  if (input.modelId === "MathML" && input.data) {
+    const result = evaluateMathExpression(input.data)
+    if (!Number.isNaN(result) && Number.isFinite(result)) {
+      const resultStr = Math.abs(result) < 0.000001 ? result.toFixed(20) : result.toString()
+      if (resultStr.length === input.passwordLength) {
+        return { password: resultStr }
+      }
+    }
   }
 
   return { password: null }
