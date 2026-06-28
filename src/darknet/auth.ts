@@ -1092,10 +1092,11 @@ async function authenticateKingOfTheHill(
 // ---- RateMyPix.Auth ----
 
 /**
- * RateMyPix returns 🌶️ count = number of digits in the correct position.
+ * RateMyPix returns 🌶️ count = number of characters in the correct position.
  *
  * Strategy:
- *   1. Frequency phase: probe 00000-99999 (10 auths) to learn digit multiset
+ *   1. Frequency phase: probe all-same-character guesses (10-62 auths depending on format)
+ *      to learn which characters are in the password and their counts.
  *   2. Permutation phase: generate distinct permutations, try each.
  *      Each wrong guess returns the exact match count, pruning candidates.
  */
@@ -1112,9 +1113,14 @@ async function authenticateRateMyPix(
   // ---- Phase 1: learn character frequencies ----
   // RateMyPix auth response data: pepper emoji count = number of correct position matches.
   // Submit a guess of all the same character; the pepper count = frequency of that character.
-  const charset = format === "alphabetic"
-    ? "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    : "0123456789"
+  let charset: string
+  if (format === "alphabetic") {
+    charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+  } else if (format === "alphanumeric") {
+    charset = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+  } else {
+    charset = "0123456789"
+  }
   const freq = new Map<string, number>()
   for (const ch of charset) {
     const guess = ch.repeat(length)
