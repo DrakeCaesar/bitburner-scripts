@@ -125,6 +125,11 @@ function solveDeskMemo(input: DarknetAuthSolverInput): string | null {
 }
 
 function romanToDecimal(roman: string): number | null {
+  const trimmed = roman.trim()
+  if (trimmed.toLowerCase() === "nulla") {
+    return 0
+  }
+
   const values: Record<string, number> = {
     I: 1,
     V: 5,
@@ -135,7 +140,7 @@ function romanToDecimal(roman: string): number | null {
     M: 1000,
   }
 
-  const upper = roman.trim().toUpperCase()
+  const upper = trimmed.toUpperCase()
   if (!upper || !/^[IVXLCDM]+$/.test(upper)) {
     return null
   }
@@ -165,12 +170,20 @@ function solveBellaCuore(input: DarknetAuthSolverInput): string | null {
     return null
   }
 
-  const numeral = input.data.trim()
-  if (input.passwordHint !== `The password is the value of the number '${numeral}'`) {
+  const data = input.data.trim()
+
+  // Range format (difficulty >= 8): "nulla,DCCCLXV"
+  // Can't statically solve — needs binary search
+  if (data.includes(",")) {
     return null
   }
 
-  const decimal = romanToDecimal(numeral)
+  // Single numeral format (difficulty < 8): "the password is the value of X"
+  if (input.passwordHint !== `The password is the value of the number '${data}'`) {
+    return null
+  }
+
+  const decimal = romanToDecimal(data)
   if (decimal === null) {
     return null
   }
@@ -231,6 +244,14 @@ function laika4Candidates(length: number): string[] {
 
 function isLaika4Model(details: DarknetServerDetailsForFormulas): boolean {
   return details.modelId === "Laika4" && details.passwordFormat === "alphabetic"
+}
+
+function isBellaCuoreRangeModel(details: DarknetServerDetailsForFormulas): boolean {
+  return (
+    details.modelId === "BellaCuore" &&
+    details.passwordFormat === "numeric" &&
+    details.data.includes(",")
+  )
 }
 
 function isFactoriOsModel(details: DarknetServerDetailsForFormulas): boolean {
@@ -734,7 +755,7 @@ async function authenticateNil(
   let authGuesses = 0
 
   const charset = format === "alphabetic"
-    ? "abcdefghijklmnopqrstuvwxyz"
+    ? "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
     : "0123456789"
 
   for (const ch of charset) {
@@ -1092,6 +1113,72 @@ async function authenticateKingOfTheHill(
   authGuesses++
   const r = await authenticateWithStatus(ns, port, dnet, host, finalStr, `final ${lo}`, authGuesses)
   return { password: r.success ? finalStr : null, authenticated: r.success, authGuesses }
+}
+
+// ---- BellaCuore (range format) ----
+
+/**
+ * BellaCuore range format (difficulty >= 8): binary search between min/max Roman numerals.
+ * Latin feedback: "PARUM BREVIS" = too low, "ALTUS NIMIS" = too high.
+ */
+async function authenticateBellaCuore(
+  ns: NS,
+  port: number,
+  dnet: DarknetCrawlApi,
+  host: string,
+  length: number,
+  data: string
+): Promise<{ password: string | null; authenticated: boolean; authGuesses: number }> {
+  const parts = data.split(",")
+  if (parts.length !== 2) {
+    return { password: null, authenticated: false, authGuesses: 0 }
+  }
+  const lo = romanToDecimal(parts[0]!)
+  const hi = romanToDecimal(parts[1]!)
+  if (lo === null || hi === null || lo > hi) {
+    return { password: null, authenticated: false, authGuesses: 0 }
+  }
+
+  let authGuesses = 0
+  let left = lo
+  let right = hi
+
+  // Pad guess to required length with leading zeros
+  function pad(n: number): string {
+    return String(n).padStart(length, "0")
+  }
+
+  while (left <= right) {
+    const mid = Math.floor((left + right) / 2)
+    const guess = pad(mid)
+    authGuesses++
+    const result = await authenticateWithStatus(ns, port, dnet, host, guess, `bc ${mid}`, authGuesses)
+    if (result.success) {
+      return { password: guess, authenticated: true, authGuesses }
+    }
+
+    const feedback = await readLatestAuthFeedback(ns, port, dnet, host, guess)
+    if (feedback === "ALTUS NIMIS") {
+      right = mid - 1 // too high
+    } else if (feedback === "PARUM BREVIS") {
+      left = mid + 1 // too low
+    } else {
+      // Unexpected feedback — try linear scan as fallback
+      break
+    }
+  }
+
+  // Fallback: linear scan remaining range
+  for (let i = left; i <= right; i++) {
+    const guess = pad(i)
+    authGuesses++
+    const result = await authenticateWithStatus(ns, port, dnet, host, guess, `lin ${i}`, authGuesses)
+    if (result.success) {
+      return { password: guess, authenticated: true, authGuesses }
+    }
+  }
+
+  return { password: null, authenticated: false, authGuesses }
 }
 
 // ---- RateMyPix.Auth ----
@@ -1516,6 +1603,26 @@ export function solveDarknetPassword(input: DarknetAuthSolverInput): { password:
     }
   }
 
+  // OrdoXenos: XOR mask decryption.
+  // Data: "HB6GLC;00011011 00010100 ..." — mask chars, then space-separated binary XOR keys.
+  if (input.modelId === "OrdoXenos" && input.data) {
+    const semiIdx = input.data.indexOf(";")
+    if (semiIdx > 0) {
+      const mask = input.data.slice(0, semiIdx)
+      const binPart = input.data.slice(semiIdx + 1)
+      const bins = binPart.split(/\s+/).filter((t) => /^[01]{8}$/.test(t))
+      if (mask.length === bins.length && mask.length === input.passwordLength) {
+        const chars: string[] = []
+        for (let i = 0; i < mask.length; i++) {
+          const xorKey = parseInt(bins[i]!, 2)
+          const decrypted = mask.charCodeAt(i) ^ xorKey
+          chars.push(String.fromCharCode(decrypted))
+        }
+        return { password: chars.join("") }
+      }
+    }
+  }
+
   return { password: null }
 }
 
@@ -1708,6 +1815,15 @@ export async function tryAuthNeighbor(
 
   if (isKingOfTheHillModel(details)) {
     const auth = await authenticateKingOfTheHill(ns, port, dnet, neighbor, details.passwordLength)
+    return {
+      password: auth.password,
+      authenticated: auth.authenticated ? true : auth.password !== null ? false : null,
+      authGuesses: auth.authGuesses,
+    }
+  }
+
+  if (isBellaCuoreRangeModel(details)) {
+    const auth = await authenticateBellaCuore(ns, port, dnet, neighbor, details.passwordLength, details.data)
     return {
       password: auth.password,
       authenticated: auth.authenticated ? true : auth.password !== null ? false : null,
