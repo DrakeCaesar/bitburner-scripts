@@ -510,14 +510,6 @@ async function runOneCrawlPass(
       passwordCache.get(neighbor) ?? null
     )
 
-    // Release the lock after auth attempt (success or failure)
-    ns.writePort(reportPort, JSON.stringify({
-      type: "lock",
-      action: "release",
-      target: neighbor,
-      workerHost: hostname,
-    }))
-
     if (auth.password != null) {
       passwordCache.set(neighbor, auth.password)
     }
@@ -530,6 +522,13 @@ async function runOneCrawlPass(
 
     const neighborDetails = safeGetSessionDetails(dnet, neighbor)
     if (!neighborDetails?.hasSession) {
+      // Release the lock before we skip
+      ns.writePort(reportPort, JSON.stringify({
+        type: "lock",
+        action: "release",
+        target: neighbor,
+        workerHost: hostname,
+      }))
       continue
     }
 
@@ -538,6 +537,13 @@ async function runOneCrawlPass(
     }
 
     if (ns.isRunning(DARKNET_CRAWL_SCRIPT, neighbor)) {
+      // Release the lock before we skip
+      ns.writePort(reportPort, JSON.stringify({
+        type: "lock",
+        action: "release",
+        target: neighbor,
+        workerHost: hostname,
+      }))
       continue
     }
 
@@ -552,6 +558,13 @@ async function runOneCrawlPass(
     const workerRam = ns.getScriptRam(DARKNET_CRAWL_SCRIPT, neighbor)
     const freeRam = ns.getServerMaxRam(neighbor) - ns.getServerUsedRam(neighbor)
     if (workerRam > freeRam) {
+      // Release the lock before we skip
+      ns.writePort(reportPort, JSON.stringify({
+        type: "lock",
+        action: "release",
+        target: neighbor,
+        workerHost: hostname,
+      }))
       continue
     }
 
@@ -562,6 +575,13 @@ async function runOneCrawlPass(
       hostname,
       auth.password ?? undefined
     )
+    // Release the lock only after spawning — prevents duplicate workers
+    ns.writePort(reportPort, JSON.stringify({
+      type: "lock",
+      action: "release",
+      target: neighbor,
+      workerHost: hostname,
+    }))
   }
 }
 
