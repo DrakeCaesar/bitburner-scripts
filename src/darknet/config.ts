@@ -109,6 +109,7 @@ export interface WorkerSnapshot {
   probed: boolean
   idle: boolean
   lastCommand: string | null
+  lastCommandDetail: string | null // guess password, spawn target, etc.
   lastCommandAt: number
   lastReply: string | null
   lastReplyAt: number

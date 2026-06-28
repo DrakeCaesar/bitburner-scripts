@@ -31,8 +31,10 @@ const SERVER_TABLE_COLUMNS = [
   col("Host", "left", 20),
   col("Wrk", "center", 3),
   col("State", "left", 10),
-  col("Last Command", "left", 18),
+  col("Last Cmd", "left", 20),
+  col("Cmd At", "right", 7),
   col("Last Reply", "left", 18),
+  col("Reply At", "right", 7),
   col("Auth", "center", 4),
   col("Ngbrs", "right", 5),
 ]
@@ -88,13 +90,21 @@ function appendServerTable(
       else if (!wi.idle) state = "busy"
 
       let lastCmd = "-"
+      let cmdAt = "-"
       if (wi.lastCommand) {
-        lastCmd = `${wi.lastCommand} ${formatTimestamp(wi.lastCommandAt)}`
+        if (wi.lastCommandDetail && wi.lastCommand !== "probe") {
+          lastCmd = `${wi.lastCommand}:${wi.lastCommandDetail}`
+        } else {
+          lastCmd = wi.lastCommand
+        }
+        cmdAt = formatTimestamp(wi.lastCommandAt)
       }
 
       let lastReply = "-"
+      let replyAt = "-"
       if (wi.lastReply) {
-        lastReply = `${wi.lastReply} ${formatTimestamp(wi.lastReplyAt)}`
+        lastReply = wi.lastReply
+        replyAt = formatTimestamp(wi.lastReplyAt)
       }
 
       const auth = report?.authenticated === true ? "Y" : report?.authenticated === false ? "F" : "-"
@@ -104,7 +114,9 @@ function appendServerTable(
         "Y",
         state,
         lastCmd,
+        cmdAt,
         lastReply,
+        replyAt,
         auth,
         String(wi.neighbors.length),
       ])
@@ -115,8 +127,8 @@ function appendServerTable(
         hostname,
         "N",
         auth === "Y" ? "auth" : "unknown",
-        "-",
-        "-",
+        "-", "-",
+        "-", "-",
         auth,
         "-",
       ])
