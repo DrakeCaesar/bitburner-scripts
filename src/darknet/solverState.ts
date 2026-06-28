@@ -827,6 +827,9 @@ interface KingOfTheHillState extends SolverState {
   scanIdx: number
   // Termination
   exhausted: boolean
+  // When nextGuess pops a tiny interval for scanning, set this so applyResult
+  // doesn't double-pop the stack (see applyResult).
+  poppedForScan: boolean
 }
 
 const kingOfTheHill: SolverModule<KingOfTheHillState> = {
@@ -842,6 +845,7 @@ const kingOfTheHill: SolverModule<KingOfTheHillState> = {
       bestVal: min, bestAlt: 0,
       scanLo: 0, scanHi: 0, scanIdx: 0,
       exhausted: false,
+      poppedForScan: false,
     }
   },
   nextGuess(state) {
@@ -880,10 +884,11 @@ const kingOfTheHill: SolverModule<KingOfTheHillState> = {
         state.stack.pop()
         // Tiny interval — scan all values
         state.phase = "scan"
+        state.poppedForScan = true
         state.scanLo = lo
         state.scanHi = hi
         state.scanIdx = lo
-        if (state.scanIdx > state.scanHi) { state.phase = "search"; continue }
+        if (state.scanIdx > state.scanHi) { state.phase = "search"; state.poppedForScan = false; continue }
         return { guess: String(state.scanIdx++), detail: `tiny ${lo}-${hi}` }
       }
       const mid = Math.floor((lo + hi) / 2)
@@ -915,12 +920,19 @@ const kingOfTheHill: SolverModule<KingOfTheHillState> = {
 
     if (state.phase === "scan" || state.sweepsDone < 3) return state
 
+    // If nextGuess popped a tiny interval for scanning, skip the pop — the
+    // interval was already consumed and applyResult shouldn't steal the next one.
+    if (state.poppedForScan) {
+      state.poppedForScan = false
+      return state
+    }
+
     // Search phase: process the midpoint probe and recurse
     if (state.stack.length > 0) {
       const [lo, hi] = state.stack.pop()!
       const mid = Math.floor((lo + hi) / 2)
 
-      if (alt > 0) {
+      if (alt > 1e-10) {
         // Found signal — scan neighborhood
         const w = Math.max(1, Math.floor(Math.sqrt(hi - lo)))
         state.phase = "scan"
