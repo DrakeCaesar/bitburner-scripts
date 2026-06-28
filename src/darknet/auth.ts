@@ -248,6 +248,10 @@ function isOpenWebAccessPointModel(details: DarknetServerDetailsForFormulas): bo
   return details.modelId === "OpenWebAccessPoint" && details.passwordFormat === "numeric"
 }
 
+function isProverFloModel(details: DarknetServerDetailsForFormulas): boolean {
+  return details.modelId === "Pr0verFl0"
+}
+
 function solveLaika4(input: DarknetAuthSolverInput): string | null {
   if (input.modelId !== "Laika4" || input.passwordFormat !== "alphabetic") {
     return null
@@ -1297,6 +1301,19 @@ export async function tryAuthNeighbor(
       password: auth.password,
       authenticated: auth.authenticated ? true : auth.password !== null ? false : null,
       authGuesses: auth.authGuesses,
+    }
+  }
+
+  if (isProverFloModel(details)) {
+    // Buffer overflow: any string repeated twice matches itself.
+    // The first half overflows into the comparison buffer and matches the second half.
+    const half = "0".repeat(details.passwordLength)
+    const overflow = half + half
+    const result = await authenticateWithStatus(ns, port, dnet, neighbor, overflow, "overflow", 1)
+    return {
+      password: result.success ? overflow : null,
+      authenticated: result.success ? true : null,
+      authGuesses: 1,
     }
   }
 
