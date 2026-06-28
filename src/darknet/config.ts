@@ -114,6 +114,7 @@ export interface WorkerSnapshot {
   lastReply: string | null
   lastReplyAt: number
   freeRam: number
+  blockedRam: number
   neighbors: string[]
 }
 
@@ -345,6 +346,8 @@ export interface DarknetCrawlApi {
   getServerDetails(host?: string): DarknetServerDetailsForFormulas
   labreport?(): Promise<{ success: boolean; coords: number[]; north: boolean; east: boolean; south: boolean; west: boolean }>
   labradar?(): Promise<{ success: boolean; message: string }>
+  memoryReallocation?(host?: string): Promise<{ success: boolean }>
+  getBlockedRam?(host?: string): number
 }
 
 export type DarknetServerDetailsForFormulas = {
@@ -385,6 +388,7 @@ export type WorkerCommand =
   | { type: "heartbleed"; target: string; solverId: string }
   | { type: "labreport"; target: string; solverId: string }
   | { type: "spawn"; target: string; sessionId: number; port: number; password?: string }
+  | { type: "realloc" }
   | { type: "exit" }
 
 /** Workers write these to reportPort. */
@@ -394,8 +398,9 @@ export type WorkerResponse =
   | { type: "guessResult"; target: string; solverId: string; success: boolean; feedback?: string; message?: string }
   | { type: "heartbleedResult"; target: string; solverId: string; logEntries: string[] }
   | { type: "labreportResult"; target: string; solverId: string; coords: number[]; north: boolean; east: boolean; south: boolean; west: boolean }
-  | { type: "probeResult"; workerHost: string; targets: string[]; freeRam: number }
+  | { type: "probeResult"; workerHost: string; targets: string[]; freeRam: number; blockedRam: number }
   | { type: "spawnResult"; workerHost: string; target: string; success: boolean }
+  | { type: "reallocResult"; workerHost: string; freeRam: number; blockedRam: number }
 
 /** Base interface for solver state machines. Each solver adds its own fields. */
 export interface SolverState {

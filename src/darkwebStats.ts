@@ -37,6 +37,7 @@ const SERVER_TABLE_COLUMNS = [
   col("Reply At", "right", 7),
   col("Auth", "center", 4),
   col("Ngbrs", "right", 5),
+  col("Blk", "right", 4),
 ]
 
 // Track maximum observed content width per column (index-aligned with SERVER_TABLE_COLUMNS)
@@ -58,6 +59,12 @@ function formatTimestamp(ts: number): string {
   if (seconds < 60) return `${seconds}s ago`
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
   return `${Math.floor(seconds / 3600)}h ago`
+}
+
+function formatGB(gb: number): string {
+  if (gb <= 0) return "0"
+  if (gb >= 1024) return `${Math.round(gb / 1024)}T`
+  return `${Math.round(gb)}G`
 }
 
 function appendServerTable(
@@ -123,6 +130,7 @@ function appendServerTable(
         replyAt,
         auth,
         String(wi.neighbors.length),
+        formatGB(wi.blockedRam),
       ])
     } else if (report) {
       // Report-only entry (no worker)
@@ -134,6 +142,7 @@ function appendServerTable(
         "-", "-",
         "-", "-",
         auth,
+        "-",
         "-",
       ])
     }

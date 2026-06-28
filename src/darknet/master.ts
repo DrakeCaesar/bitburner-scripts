@@ -175,6 +175,7 @@ function parseWorkerResponse(raw: unknown): WorkerResponse | null {
           workerHost: row.workerHost,
           targets: row.targets as string[],
           freeRam: row.freeRam,
+          blockedRam: typeof row.blockedRam === "number" ? row.blockedRam : 0,
         }
       }
       case "spawnResult": {
@@ -185,6 +186,16 @@ function parseWorkerResponse(raw: unknown): WorkerResponse | null {
           workerHost: row.workerHost,
           target: row.target,
           success: row.success,
+        }
+      }
+      case "reallocResult": {
+        if (typeof row.workerHost !== "string") return null
+        if (typeof row.freeRam !== "number" || typeof row.blockedRam !== "number") return null
+        return {
+          type: "reallocResult",
+          workerHost: row.workerHost,
+          freeRam: row.freeRam,
+          blockedRam: row.blockedRam,
         }
       }
       default: return null
@@ -292,6 +303,7 @@ interface WorkerInfo {
   port: number
   neighbors: string[]
   freeRam: number
+  blockedRam: number
   probed: boolean
   idle: boolean
   lastCommand: string | null
@@ -397,10 +409,11 @@ function drainReportPort(
 
         if (workerResp.type === "probeResult") {
           const existingWi = workerRegistry.get(workerResp.workerHost)
-          const wi: WorkerInfo = existingWi ?? { pid: 0, port: 0, neighbors: [], freeRam: 0, probed: false, idle: false, lastCommand: null, lastCommandDetail: null, lastCommandAt: 0, lastReply: null, lastReplyAt: 0, lastProbedAt: 0, failures: 0 }
+          const wi: WorkerInfo = existingWi ?? { pid: 0, port: 0, neighbors: [], freeRam: 0, blockedRam: 0, probed: false, idle: false, lastCommand: null, lastCommandDetail: null, lastCommandAt: 0, lastReply: null, lastReplyAt: 0, lastProbedAt: 0, failures: 0 }
           if (!existingWi) workerRegistry.set(workerResp.workerHost, wi)
           wi.neighbors = workerResp.targets
           wi.freeRam = workerResp.freeRam
+          wi.blockedRam = workerResp.blockedRam
           wi.probed = true
           wi.lastProbedAt = now
           wi.idle = true
@@ -436,6 +449,19 @@ function drainReportPort(
             if (report?.authenticated === true) {
               reports.delete(workerResp.target)
             }
+          }
+          continue
+        }
+
+        if (workerResp.type === "reallocResult") {
+          const wi = workerRegistry.get(workerResp.workerHost)
+          if (wi) {
+            wi.freeRam = workerResp.freeRam
+            wi.blockedRam = workerResp.blockedRam
+            wi.idle = true
+            wi.lastReply = "reallocResult"
+            wi.lastReplyAt = now
+            wi.failures = 0
           }
           continue
         }
@@ -844,7 +870,7 @@ export async function runDarknetCrawl(
   // Allocate a port for the initial darkweb worker
   const darkwebPort = allocatePort()
   const workerRegistry = new Map<string, WorkerInfo>()
-  workerRegistry.set(DARKWEB, { pid: 0, port: darkwebPort, neighbors: [], freeRam: 0, probed: false, idle: true, lastCommand: null, lastCommandDetail: null, lastCommandAt: 0, lastReply: null, lastReplyAt: 0, lastProbedAt: 0, failures: 0 })
+  workerRegistry.set(DARKWEB, { pid: 0, port: darkwebPort, neighbors: [], freeRam: 0, blockedRam: 0, probed: false, idle: true, lastCommand: null, lastCommandDetail: null, lastCommandAt: 0, lastReply: null, lastReplyAt: 0, lastProbedAt: 0, failures: 0 })
   const spawning = new Set<string>() // hosts with spawn commands in flight
 
   let pid = await launchDarkwebCrawlWorker(ns, source, sessionId, darkwebPort)
@@ -872,6 +898,7 @@ export async function runDarknetCrawl(
         lastReply: wi.lastReply,
         lastReplyAt: wi.lastReplyAt,
         freeRam: wi.freeRam,
+        blockedRam: wi.blockedRam,
         neighbors: wi.neighbors,
       })
     }
@@ -901,7 +928,7 @@ export async function runDarknetCrawl(
             if (wi.neighbors.includes(hostname) && wi.idle && wi.probed) {
               const childPort = allocatePort()
               spawning.add(hostname)
-              workerRegistry.set(hostname, { pid: 0, port: childPort, neighbors: [], freeRam: 0, probed: false, idle: false, lastCommand: null, lastCommandDetail: null, lastCommandAt: 0, lastReply: null, lastReplyAt: 0, lastProbedAt: 0, failures: 0 })
+              workerRegistry.set(hostname, { pid: 0, port: childPort, neighbors: [], freeRam: 0, blockedRam: 0, probed: false, idle: false, lastCommand: null, lastCommandDetail: null, lastCommandAt: 0, lastReply: null, lastReplyAt: 0, lastProbedAt: 0, failures: 0 })
               const pw = registry?.servers[hostname]?.password ?? undefined
               ns.writePort(wi.port, JSON.stringify({
                 type: "spawn",
@@ -929,6 +956,17 @@ export async function runDarknetCrawl(
         wi.lastCommand = "probe"
         wi.lastCommandDetail = null
         wi.lastCommandAt = probeNow
+        wi.idle = false
+      }
+
+      // Dispatch realloc to idle workers with blocked RAM
+      for (const [, wi] of workerRegistry) {
+        if (!wi.idle || !wi.probed) continue
+        if (wi.blockedRam <= 0) continue
+        ns.writePort(wi.port, JSON.stringify({ type: "realloc" } satisfies WorkerCommand))
+        wi.lastCommand = "realloc"
+        wi.lastCommandDetail = null
+        wi.lastCommandAt = Date.now()
         wi.idle = false
       }
 
@@ -980,7 +1018,7 @@ export async function runDarknetCrawl(
           syncControlPort(ns, sessionId, reportPort, lorePort)
           await ns.sleep(5000)
           const newPort = allocatePort()
-          workerRegistry.set(DARKWEB, { pid: 0, port: newPort, neighbors: [], freeRam: 0, probed: false, idle: true, lastCommand: null, lastCommandDetail: null, lastCommandAt: 0, lastReply: null, lastReplyAt: 0, lastProbedAt: 0, failures: 0 })
+          workerRegistry.set(DARKWEB, { pid: 0, port: newPort, neighbors: [], freeRam: 0, blockedRam: 0, probed: false, idle: true, lastCommand: null, lastCommandDetail: null, lastCommandAt: 0, lastReply: null, lastReplyAt: 0, lastProbedAt: 0, failures: 0 })
           pid = await launchDarkwebCrawlWorker(ns, source, sessionId, newPort)
           workerRegistry.get(DARKWEB)!.pid = pid
         } catch (restartErr) {
@@ -1009,7 +1047,7 @@ export async function runDarknetCrawl(
           if (wi.neighbors.includes(hostname) && wi.idle && wi.probed) {
             const childPort = allocatePort()
             spawning.add(hostname)
-            workerRegistry.set(hostname, { pid: 0, port: childPort, neighbors: [], freeRam: 0, probed: false, idle: false, lastCommand: null, lastCommandDetail: null, lastCommandAt: 0, lastReply: null, lastReplyAt: 0, lastProbedAt: 0, failures: 0 })
+            workerRegistry.set(hostname, { pid: 0, port: childPort, neighbors: [], freeRam: 0, blockedRam: 0, probed: false, idle: false, lastCommand: null, lastCommandDetail: null, lastCommandAt: 0, lastReply: null, lastReplyAt: 0, lastProbedAt: 0, failures: 0 })
             const pw = registry?.servers[hostname]?.password ?? undefined
             ns.writePort(wi.port, JSON.stringify({
               type: "spawn", target: hostname, sessionId, port: childPort,
@@ -1034,6 +1072,17 @@ export async function runDarknetCrawl(
       wi.lastCommand = "probe"
       wi.lastCommandDetail = null
       wi.lastCommandAt = probeNow
+      wi.idle = false
+    }
+
+    // Dispatch realloc to idle workers with blocked RAM
+    for (const [, wi] of workerRegistry) {
+      if (!wi.idle || !wi.probed) continue
+      if (wi.blockedRam <= 0) continue
+      ns.writePort(wi.port, JSON.stringify({ type: "realloc" } satisfies WorkerCommand))
+      wi.lastCommand = "realloc"
+      wi.lastCommandDetail = null
+      wi.lastCommandAt = Date.now()
       wi.idle = false
     }
 

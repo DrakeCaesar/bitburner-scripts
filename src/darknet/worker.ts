@@ -503,7 +503,8 @@ function formatCommandBrief(cmd: WorkerCommand): string {
     case "guess": return `guess:${cmd.target}="${cmd.guess}"`
     case "heartbleed": return `heartbleed:${cmd.target}`
     case "labreport": return `labreport:${cmd.target}`
-    case "spawn": return `spawn:${cmd.target}`
+      case "spawn": return `spawn:${cmd.target}`
+    case "realloc": return "realloc"
     case "exit": return "exit"
   }
 }
@@ -639,11 +640,13 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
         // Report probe result to master
         const workerRam = ns.getScriptRam(DARKNET_CRAWL_SCRIPT, hostname)
         const freeRam = ns.getServerMaxRam(hostname) - ns.getServerUsedRam(hostname)
+        const blockedRam = dnet.getBlockedRam?.(hostname) ?? 0
         ns.writePort(reportPort, JSON.stringify({
           type: "probeResult",
           workerHost: hostname,
           targets,
           freeRam: freeRam - workerRam,
+          blockedRam,
         }))
         ns.print(`done: probe => ${targets.length} neighbors`)
         break
@@ -678,6 +681,22 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
           success,
         }))
         ns.printf("done: spawn:%s => %s", command.target, success ? "ok" : "fail")
+        break
+      }
+      case "realloc": {
+        if (!dnet.memoryReallocation) break
+        try {
+          await dnet.memoryReallocation(hostname)
+        } catch { /* realloc may fail */ }
+        const freeRam = ns.getServerMaxRam(hostname) - ns.getServerUsedRam(hostname) - ns.getScriptRam(DARKNET_CRAWL_SCRIPT, hostname)
+        const blockedRam = dnet.getBlockedRam?.(hostname) ?? 0
+        ns.writePort(reportPort, JSON.stringify({
+          type: "reallocResult",
+          workerHost: hostname,
+          freeRam,
+          blockedRam,
+        }))
+        ns.printf("done: realloc => free %s blocked %s", ns.format.ram(freeRam), ns.format.ram(blockedRam))
         break
       }
       case "exit": {
