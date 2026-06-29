@@ -16,9 +16,83 @@ import {
   type CrawlCacheOpen,
   type WorkerCommand,
   DARKNET_WORKER_FILES,
+  DNET_DEBUG_RAW_API_CONSOLE,
+  HEARTBLEED_AUTH_LOG_MAX_RETRIES,
   writeCrawlReport,
   writeCrawlStatus,
 } from "./config"
+
+function debugRawDnetApi(
+  api: "authenticate" | "heartbleed",
+  meta: Record<string, unknown>,
+  raw: unknown,
+): void {
+  if (!DNET_DEBUG_RAW_API_CONSOLE) return
+  console.log(`[dnet.${api}]`, { ...meta, raw })
+}
+
+interface AuthAttemptLog {
+  data: string
+  message: string
+}
+
+/** True when a heartbleed line is JSON auth feedback for this guess (not ambient server noise). */
+function parseAuthAttemptLog(log: string, guess: string): AuthAttemptLog | null {
+  try {
+    const entry: unknown = JSON.parse(log)
+    if (typeof entry !== "object" || entry === null) return null
+    const rec = entry as Record<string, unknown>
+    if (rec["passwordAttempted"] !== guess) return null
+    if (rec["code"] !== 401) return null
+    if (typeof rec["message"] !== "string") return null
+    if (!("data" in rec) || typeof rec["data"] !== "string") return null
+    return { data: rec["data"], message: rec["message"] }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * After 401 auth, peek heartbleed logs until we find feedback for this guess.
+ * Unrelated lines are consumed (peek: false) and skipped, up to HEARTBLEED_AUTH_LOG_MAX_RETRIES.
+ */
+async function scrapeAuthFeedbackAfter401(
+  dnet: DarknetCrawlApi,
+  target: string,
+  guess: string,
+  worker: string,
+  solverId: string,
+): Promise<AuthAttemptLog | null> {
+  for (let retryIdx = 0; retryIdx < HEARTBLEED_AUTH_LOG_MAX_RETRIES; retryIdx++) {
+    const hb = await dnet.heartbleed(target, { peek: true })
+    debugRawDnetApi("heartbleed", {
+      worker,
+      target,
+      peek: true,
+      guess,
+      solverId,
+      retryIdx,
+    }, hb)
+
+    if (!hb.success || hb.logs.length === 0) return null
+
+    const matched = parseAuthAttemptLog(hb.logs[0]!, guess)
+    if (matched) return matched
+
+    // Ambient or stale log — consume it and try again.
+    const consumed = await dnet.heartbleed(target)
+    debugRawDnetApi("heartbleed", {
+      worker,
+      target,
+      peek: false,
+      guess,
+      solverId,
+      retryIdx,
+      consumedUnmatched: hb.logs[0],
+    }, consumed)
+  }
+  return null
+}
 
 // ---- file type helpers ----
 
@@ -388,7 +462,13 @@ async function executeTask(
 
     try {
       const result = await dnet.authenticate(cmd.target, cmd.guess)
-      if (result.success) {
+      debugRawDnetApi("authenticate", {
+        worker: hostname,
+        target: cmd.target,
+        guess: cmd.guess,
+        solverId: cmd.solverId,
+      }, result)
+      if (result.success || result.code === 200) {
         ns.writePort(replyPort, JSON.stringify({
           type: "guessResult",
           target: cmd.target,
@@ -398,37 +478,21 @@ async function executeTask(
         }))
         return
       }
-      // Scrape heartbleed for feedback (most interactive solvers need this)
+
       let feedback: string | undefined
       let message: string | undefined
-      try {
-        const hb = await dnet.heartbleed(cmd.target, { peek: true })
-        if (hb.success && hb.logs.length > 0) {
-          for (const log of hb.logs) {
-            try {
-              const entry: unknown = JSON.parse(log)
-              if (typeof entry === "object" && entry !== null) {
-                const rec = entry as Record<string, unknown>
-                if (rec["passwordAttempted"] === cmd.guess) {
-                  feedback = typeof rec["data"] === "string" ? rec["data"] : undefined
-                  message = typeof rec["message"] === "string" ? rec["message"] : undefined
-                  break
-                }
-              }
-            } catch { /* ignore unparseable */ }
+      if (result.code === 401) {
+        try {
+          const authLog = await scrapeAuthFeedbackAfter401(
+            dnet, cmd.target, cmd.guess, hostname, cmd.solverId,
+          )
+          if (authLog) {
+            feedback = authLog.data
+            message = authLog.message
           }
-          if (feedback === undefined && message === undefined) {
-            try {
-              const lastEntry: unknown = JSON.parse(hb.logs[hb.logs.length - 1]!)
-              if (typeof lastEntry === "object" && lastEntry !== null) {
-                const rec = lastEntry as Record<string, unknown>
-                feedback = typeof rec["data"] === "string" ? rec["data"] : undefined
-                message = typeof rec["message"] === "string" ? rec["message"] : undefined
-              }
-            } catch { /* ignore */ }
-          }
-        }
-      } catch { /* heartbleed may fail */ }
+        } catch { /* heartbleed may fail */ }
+      }
+
       ns.writePort(replyPort, JSON.stringify({
         type: "guessResult",
         target: cmd.target,
@@ -437,7 +501,14 @@ async function executeTask(
         feedback,
         message,
       }))
-    } catch {
+    } catch (err) {
+      debugRawDnetApi("authenticate", {
+        worker: hostname,
+        target: cmd.target,
+        guess: cmd.guess,
+        solverId: cmd.solverId,
+        error: String(err),
+      }, null)
       ns.writePort(replyPort, JSON.stringify({
         type: "guessResult",
         target: cmd.target,
@@ -460,13 +531,26 @@ async function executeTask(
 
     try {
       const result = await dnet.heartbleed(cmd.target)
+      debugRawDnetApi("heartbleed", {
+        worker: hostname,
+        target: cmd.target,
+        peek: false,
+        solverId: cmd.solverId,
+      }, result)
       ns.writePort(replyPort, JSON.stringify({
         type: "heartbleedResult",
         target: cmd.target,
         solverId: cmd.solverId,
         logEntries: result.success ? result.logs : [],
       }))
-    } catch {
+    } catch (err) {
+      debugRawDnetApi("heartbleed", {
+        worker: hostname,
+        target: cmd.target,
+        peek: false,
+        solverId: cmd.solverId,
+        error: String(err),
+      }, null)
       ns.writePort(replyPort, JSON.stringify({
         type: "heartbleedResult",
         target: cmd.target,

@@ -2,6 +2,7 @@ import { NS } from "@ns"
 import {
   DARKNET_CRAWL_SCRIPT,
   safeGetServerDetails,
+  HEARTBLEED_AUTH_LOG_MAX_RETRIES,
   type DarknetCrawlApi,
   type DarknetServerDetailsForFormulas,
   type WorkerCommandMeta,
@@ -82,9 +83,12 @@ export function estimateCommandMs(
   switch (command.type) {
     case "probe":
       return PROBE_OVERHEAD_MS
-    case "guess":
-      // executeTask always authenticates; on failure it also heartbleed-peeks for feedback.
-      return authTimeMs(ns, dnet, command.target) + heartbleedTimeMs(ns, dnet, command.target)
+    case "guess": {
+      const hbMs = heartbleedTimeMs(ns, dnet, command.target)
+      // 401 path: up to N peek + consume pairs hunting for the auth attempt log.
+      const hbWorst = hbMs * HEARTBLEED_AUTH_LOG_MAX_RETRIES * 2
+      return authTimeMs(ns, dnet, command.target) + hbWorst
+    }
     case "heartbleed":
       return heartbleedTimeMs(ns, dnet, command.target)
     case "labreport":

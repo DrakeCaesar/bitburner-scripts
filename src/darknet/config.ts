@@ -47,6 +47,12 @@ export const PORT_POOL_START = 45110
 /** Total ports in the pool (each worker uses a pair, so max concurrent workers = PORT_POOL_SIZE). */
 export const PORT_POOL_SIZE = 512
 
+/** Log raw dnet.authenticate / dnet.heartbleed return values to the browser dev console. */
+export const DNET_DEBUG_RAW_API_CONSOLE = false
+
+/** After 401 auth, peek/consume heartbleed cycles while hunting for a matching attempt log. */
+export const HEARTBLEED_AUTH_LOG_MAX_RETRIES = 5
+
 export interface ControlMessage {
   sessionId: number
   lorePort: number
@@ -348,7 +354,7 @@ export function darkwebPasswordCandidates(length: number, format: DarknetPasswor
 
 export interface DarknetCrawlApi {
   probe(): string[]
-  authenticate(host: string, password: string, additionalMsec?: number): Promise<{ success: boolean; data?: unknown }>
+  authenticate(host: string, password: string, additionalMsec?: number): Promise<{ success: boolean; code?: number; message?: string; data?: unknown }>
   heartbleed(host: string, options?: { peek?: boolean }): Promise<{ success: boolean; logs: string[] }>
   connectToSession?(host: string, password: string): { success: boolean }
   openCache(filename: string, suppressToast?: boolean): { success: boolean; message: string; karmaLoss: number }
