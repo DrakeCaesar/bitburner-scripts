@@ -1505,27 +1505,410 @@ const openWebAccessPoint: SolverModule<OpenWebAccessPointState> = {
 
 // --- Labyrinth ---
 //
-// Game stores maze position per script PID (ns.dnet.labreport / auth on the lab). Each crawl
-// worker adjacent to the lab has its own session — state is keyed by explorer worker hostname.
+// Game stores maze position per script PID. Workers share one map (walls + known cells);
+// each worker keeps only local path/coords/phase for its PID session.
 
-interface LabyrinthSession {
-  visited: string[]
+export type LabyrinthWallSide = "north" | "east" | "south" | "west"
+
+export interface LabyrinthCellWalls {
+  /** True only after labreport() at this cell (not inferred from neighbor walls). */
+  seen: boolean
+  north: boolean | null
+  east: boolean | null
+  south: boolean | null
+  west: boolean | null
+}
+
+export interface LabyrinthSession {
   path: string[]
   coords: [number, number] | null
   walls: { north: boolean; east: boolean; south: boolean; west: boolean } | null
   phase: "labreport" | "move" | "done"
 }
 
-interface LabyrinthState extends SolverState {
+export interface LabyrinthState extends SolverState {
   type: "labyrinth"
+  /** Shared wall/corridor knowledge keyed by "x,y" (merged from all workers). */
+  map: Record<string, LabyrinthCellWalls>
+  /** Per-worker PID session state (position + local DFS backtrack path). */
   sessions: Record<string, LabyrinthSession>
 }
 
 const LABYRINTH_DIRS: Record<string, [number, number]> = { n: [0, -2], e: [2, 0], s: [0, 2], w: [-2, 0] }
 const LABYRINTH_OPPOSITE: Record<string, string> = { n: "s", e: "w", s: "n", w: "e" }
+const LABYRINTH_WALL_KEY: Record<string, LabyrinthWallSide> = {
+  n: "north", e: "east", s: "south", w: "west",
+}
+
+function labyrinthEmptyWalls(): LabyrinthCellWalls {
+  return { seen: false, north: null, east: null, south: null, west: null }
+}
+
+function labyrinthCellExplored(map: Record<string, LabyrinthCellWalls>, key: string): boolean {
+  return map[key]?.seen === true
+}
+
+function labyrinthPrunePropagationStubs(map: Record<string, LabyrinthCellWalls>): void {
+  for (const key of Object.keys(map)) {
+    const cell = map[key]!
+    if (cell.seen === true) continue
+    if (cell.seen === undefined) {
+      const known = [cell.north, cell.east, cell.south, cell.west].filter((v) => v !== null).length
+      if (known >= 2) {
+        cell.seen = true
+        continue
+      }
+    }
+    delete map[key]
+  }
+}
+
+function labyrinthCellKey(x: number, y: number): string {
+  return `${x},${y}`
+}
+
+function labyrinthEnsureMap(state: LabyrinthState): Record<string, LabyrinthCellWalls> {
+  if (!state.map) state.map = {}
+  for (const sess of Object.values(state.sessions)) {
+    const legacy = sess as LabyrinthSession & { visited?: string[] }
+    if (legacy.visited) {
+      for (const k of legacy.visited) {
+        if (!state.map[k]) state.map[k] = labyrinthEmptyWalls()
+        state.map[k]!.seen = true
+      }
+      delete legacy.visited
+    }
+    if (sess.coords && sess.walls) {
+      labyrinthMergeCell(state.map, sess.coords[0], sess.coords[1], sess.walls)
+    }
+  }
+  labyrinthPrunePropagationStubs(state.map)
+  return state.map
+}
+
+function labyrinthEnsureCell(map: Record<string, LabyrinthCellWalls>, key: string): LabyrinthCellWalls {
+  if (!map[key]) map[key] = labyrinthEmptyWalls()
+  return map[key]!
+}
+
+/** Merge labreport walls into the shared map and propagate to adjacent cells. */
+export function labyrinthMergeCell(
+  map: Record<string, LabyrinthCellWalls>,
+  x: number,
+  y: number,
+  walls: { north: boolean; east: boolean; south: boolean; west: boolean },
+): void {
+  const key = labyrinthCellKey(x, y)
+  const cell = labyrinthEnsureCell(map, key)
+  cell.seen = true
+  cell.north = walls.north
+  cell.east = walls.east
+  cell.south = walls.south
+  cell.west = walls.west
+
+  const propagate: [LabyrinthWallSide, number, number, LabyrinthWallSide][] = [
+    ["north", 0, -2, "south"],
+    ["east", 2, 0, "west"],
+    ["south", 0, 2, "north"],
+    ["west", -2, 0, "east"],
+  ]
+  for (const [side, dx, dy, opposite] of propagate) {
+    const nkey = labyrinthCellKey(x + dx, y + dy)
+    const ncell = map[nkey]
+    if (ncell) ncell[opposite] = walls[side]
+  }
+}
+
+function labyrinthWallsAt(
+  map: Record<string, LabyrinthCellWalls>,
+  x: number,
+  y: number,
+  fallback: { north: boolean; east: boolean; south: boolean; west: boolean } | null,
+): { north: boolean; east: boolean; south: boolean; west: boolean } | null {
+  const cell = map[labyrinthCellKey(x, y)]
+  if (!cell) return fallback
+  const pick = (side: LabyrinthWallSide, fb: boolean): boolean | null => {
+    const v = cell[side]
+    return v !== null ? v : fb
+  }
+  if (!fallback) {
+    if (cell.north === null && cell.east === null && cell.south === null && cell.west === null) {
+      return null
+    }
+    return {
+      north: cell.north ?? false,
+      east: cell.east ?? false,
+      south: cell.south ?? false,
+      west: cell.west ?? false,
+    }
+  }
+  return {
+    north: pick("north", fallback.north) ?? fallback.north,
+    east: pick("east", fallback.east) ?? fallback.east,
+    south: pick("south", fallback.south) ?? fallback.south,
+    west: pick("west", fallback.west) ?? fallback.west,
+  }
+}
+
+function labyrinthOpenNeighbors(
+  map: Record<string, LabyrinthCellWalls>,
+  x: number,
+  y: number,
+  walls: { north: boolean; east: boolean; south: boolean; west: boolean },
+): boolean {
+  for (const [dir, [dx, dy]] of Object.entries(LABYRINTH_DIRS)) {
+    const wallKey = LABYRINTH_WALL_KEY[dir]
+    if (!wallKey || !walls[wallKey]) continue
+    const nkey = labyrinthCellKey(x + dx!, y + dy!)
+    if (!labyrinthCellExplored(map, nkey)) return true
+  }
+  return false
+}
+
+/** Any explored cell with an open passage into an unseen cell. */
+export function labyrinthGlobalFrontierRemaining(map: Record<string, LabyrinthCellWalls>): boolean {
+  for (const [key, walls] of Object.entries(map)) {
+    if (!walls.seen) continue
+    const [xs, ys] = key.split(",")
+    const x = Number(xs)
+    const y = Number(ys)
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue
+    for (const [dir, [dx, dy]] of Object.entries(LABYRINTH_DIRS)) {
+      const wallKey = LABYRINTH_WALL_KEY[dir]
+      if (!wallKey || walls[wallKey] !== true) continue
+      const nkey = labyrinthCellKey(x + dx!, y + dy!)
+      if (!labyrinthCellExplored(map, nkey)) return true
+    }
+  }
+  return false
+}
+
+function labyrinthPassable(
+  map: Record<string, LabyrinthCellWalls>,
+  x: number,
+  y: number,
+  dir: string,
+): boolean {
+  const wallKey = LABYRINTH_WALL_KEY[dir]
+  if (!wallKey) return false
+  const walls = map[labyrinthCellKey(x, y)]
+  return walls?.seen === true && walls[wallKey] === true
+}
+
+/** First step toward the nearest unseen cell through explored corridors. */
+function labyrinthBfsFirstStep(
+  map: Record<string, LabyrinthCellWalls>,
+  startX: number,
+  startY: number,
+): string | null {
+  const startKey = labyrinthCellKey(startX, startY)
+  if (!labyrinthCellExplored(map, startKey)) return null
+
+  type Node = { x: number; y: number; first: string }
+  const queue: Node[] = []
+  const visited = new Set<string>([startKey])
+
+  for (const [dir, [dx, dy]] of Object.entries(LABYRINTH_DIRS)) {
+    if (!labyrinthPassable(map, startX, startY, dir)) continue
+    const nx = startX + dx!
+    const ny = startY + dy!
+    const nkey = labyrinthCellKey(nx, ny)
+    if (!labyrinthCellExplored(map, nkey)) return dir
+    if (visited.has(nkey)) continue
+    visited.add(nkey)
+    queue.push({ x: nx, y: ny, first: dir })
+  }
+
+  while (queue.length > 0) {
+    const { x, y, first } = queue.shift()!
+    for (const [dir, [dx, dy]] of Object.entries(LABYRINTH_DIRS)) {
+      if (!labyrinthPassable(map, x, y, dir)) continue
+      const nx = x + dx!
+      const ny = y + dy!
+      const nkey = labyrinthCellKey(nx, ny)
+      if (!labyrinthCellExplored(map, nkey)) return first
+      if (visited.has(nkey)) continue
+      visited.add(nkey)
+      queue.push({ x: nx, y: ny, first })
+    }
+  }
+  return null
+}
+
+/** True when a worker session still has unexplored passages or backtrack moves. */
+export function labyrinthSessionCanContinue(state: LabyrinthState, session: LabyrinthSession): boolean {
+  const map = labyrinthEnsureMap(state)
+  if (session.phase === "labreport") return true
+  if (session.phase !== "done" && (!session.coords || !session.walls)) return true
+  if (session.coords) {
+    const [x, y] = session.coords
+    const walls = labyrinthWallsAt(map, x, y, session.walls)
+    if (walls && labyrinthOpenNeighbors(map, x, y, walls)) return true
+    if (labyrinthBfsFirstStep(map, x, y)) return true
+  }
+  return session.path.length > 0
+}
+
+/** Undo a false done from planning calls that mutated session phase. */
+export function repairLabyrinthState(state: LabyrinthState): LabyrinthState {
+  labyrinthEnsureMap(state)
+  if (labyrinthGlobalFrontierRemaining(state.map)) {
+    for (const sess of Object.values(state.sessions)) {
+      if (sess.phase === "done" && labyrinthSessionCanContinue(state, sess)) {
+        sess.phase = "move"
+      }
+    }
+  }
+  return state
+}
+
+const LAB_MAP_WALL = "\u2588"
+const LAB_MAP_OPEN = " "
+const LAB_MAP_UNKNOWN = "\u2592"
+const LAB_WORKER_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+const LAB_MULTI_WORKER = "*"
+
+function labyrinthAssignWorkerLetters(
+  sessions: Record<string, LabyrinthSession>,
+): Map<string, string> {
+  const out = new Map<string, string>()
+  const workers = Object.keys(sessions).sort()
+  for (let i = 0; i < workers.length && i < LAB_WORKER_LETTERS.length; i++) {
+    out.set(workers[i]!, LAB_WORKER_LETTERS[i]!)
+  }
+  return out
+}
+
+function labyrinthMapLegendLine(): string {
+  return `Legend: ${LAB_MAP_WALL} wall  ${LAB_MAP_OPEN} corridor  ${LAB_MAP_UNKNOWN} unknown  ${LAB_WORKER_LETTERS[0]}-${LAB_WORKER_LETTERS[LAB_WORKER_LETTERS.length - 1]} worker  ${LAB_MULTI_WORKER} multiple`
+}
+
+export function formatLabyrinthMap(
+  hostname: string,
+  map: Record<string, LabyrinthCellWalls>,
+  sessions: Record<string, LabyrinthSession>,
+): string {
+  const workerLetters = labyrinthAssignWorkerLetters(sessions)
+  const known = new Set<string>()
+  for (const [k, cell] of Object.entries(map)) {
+    if (cell.seen) known.add(k)
+  }
+  /** Cell key -> letters for workers currently at that cell. */
+  const cellWorkers = new Map<string, string[]>()
+
+  for (const [worker, sess] of Object.entries(sessions)) {
+    if (sess.coords) {
+      const k = labyrinthCellKey(sess.coords[0], sess.coords[1])
+      known.add(k)
+      const letter = workerLetters.get(worker)
+      if (!letter) continue
+      cellWorkers.set(k, [...(cellWorkers.get(k) ?? []), letter])
+    }
+  }
+
+  if (known.size === 0) {
+    return `${hostname}: no cells mapped yet\n${labyrinthMapLegendLine()}`
+  }
+
+  let minX = Infinity
+  let maxX = -Infinity
+  let minY = Infinity
+  let maxY = -Infinity
+  for (const k of known) {
+    const [xs, ys] = k.split(",")
+    const x = Number(xs)
+    const y = Number(ys)
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue
+    if (x < minX) minX = x
+    if (x > maxX) maxX = x
+    if (y < minY) minY = y
+    if (y > maxY) maxY = y
+  }
+
+  // Pad one cell beyond known bounds so frontiers show as unknown.
+  minX -= 2
+  maxX += 2
+  minY -= 2
+  maxY += 2
+
+  const cols = Math.floor((maxX - minX) / 2) + 1
+  const rows = Math.floor((maxY - minY) / 2) + 1
+  if (cols <= 0 || rows <= 0) return `${hostname}: invalid bounds`
+
+  const gh = rows * 2 - 1
+  const gw = cols * 2 - 1
+  const grid: string[][] = Array.from({ length: gh }, () => Array<string>(gw).fill(LAB_MAP_UNKNOWN))
+
+  const toGrid = (x: number, y: number): [number, number] => [
+    ((x - minX) / 2) * 2,
+    ((y - minY) / 2) * 2,
+  ]
+
+  for (const k of known) {
+    const [xs, ys] = k.split(",")
+    const x = Number(xs!)
+    const y = Number(ys!)
+    const [gx, gy] = toGrid(x, y)
+    const atCell = cellWorkers.get(k)
+    if (atCell && atCell.length > 1) {
+      grid[gy]![gx] = LAB_MULTI_WORKER
+    } else if (atCell?.length === 1) {
+      grid[gy]![gx] = atCell[0]!
+    } else {
+      grid[gy]![gx] = LAB_MAP_OPEN
+    }
+  }
+
+  for (const [k, walls] of Object.entries(map)) {
+    if (!walls.seen) continue
+    const [xs, ys] = k.split(",")
+    const x = Number(xs!)
+    const y = Number(ys!)
+    const [gx, gy] = toGrid(x, y)
+    const setEdge = (egy: number, egx: number, open: boolean | null) => {
+      if (egy < 0 || egx < 0 || egy >= gh || egx >= gw) return
+      if (open === true) grid[egy]![egx] = LAB_MAP_OPEN
+      else if (open === false) grid[egy]![egx] = LAB_MAP_WALL
+    }
+    setEdge(gy - 1, gx, walls.north)
+    setEdge(gy + 1, gx, walls.south)
+    setEdge(gy, gx - 1, walls.west)
+    setEdge(gy, gx + 1, walls.east)
+  }
+
+  const seenCount = Object.values(map).filter((c) => c.seen).length
+  const lines = [
+    `${hostname} (explored ${seenCount} cell(s), ${Object.keys(sessions).length} explorer(s))`,
+    labyrinthMapLegendLine(),
+  ]
+
+  const workerLegend: string[] = []
+  for (const [worker, letter] of [...workerLetters.entries()].sort((a, b) => a[1].localeCompare(b[1]))) {
+    const sess = sessions[worker]
+    const pos = sess?.coords ? `@ ${sess.coords.join(",")}` : ""
+    const phase = sess && sess.phase !== "done" ? ` (${sess.phase})` : ""
+    workerLegend.push(`${letter} ${worker}${pos}${phase}`)
+  }
+  if (workerLegend.length > 0) {
+    lines.push(`Workers: ${workerLegend.join("  |  ")}`)
+  }
+
+  for (const row of grid) lines.push(row.join(""))
+
+  const colocated: string[] = []
+  for (const [k, letters] of cellWorkers) {
+    if (letters.length <= 1) continue
+    colocated.push(`${LAB_MULTI_WORKER} ${letters.join("+")} @ ${k}`)
+  }
+  if (colocated.length > 0) {
+    lines.push(colocated.join("  |  "))
+  }
+
+  return lines.join("\n")
+}
 
 function labyrinthFreshSession(): LabyrinthSession {
-  return { visited: [], path: [], coords: null, walls: null, phase: "labreport" }
+  return { path: [], coords: null, walls: null, phase: "labreport" }
 }
 
 function labyrinthSession(state: LabyrinthState, workerHost: string): LabyrinthSession {
@@ -1535,32 +1918,43 @@ function labyrinthSession(state: LabyrinthState, workerHost: string): LabyrinthS
   return state.sessions[workerHost]!
 }
 
+function labyrinthMoveSucceeded(result: SolverGuessResult): boolean {
+  const msg = result.message ?? ""
+  if (msg.includes("still at")) return false
+  if (msg.includes("You have moved to")) return true
+  if (msg.includes("You cannot go that way")) return false
+  return true
+}
+
 const labyrinth: SolverModule<LabyrinthState> = {
   initSolver(_details) {
-    return { type: "labyrinth", sessions: {} }
+    return { type: "labyrinth", map: {}, sessions: {} }
   },
   nextGuess(state, context) {
     const workerHost = context.explorerWorker
     if (!workerHost) return null
+    const map = labyrinthEnsureMap(state)
     const session = labyrinthSession(state, workerHost)
     if (session.phase === "done") return null
     if (session.phase === "labreport" || !session.coords || !session.walls) return null
 
     const [x, y] = session.coords
-    const key = `${x},${y}`
-    if (!session.visited.includes(key)) session.visited.push(key)
+    const walls = labyrinthWallsAt(map, x, y, session.walls)
+    if (!walls) return null
 
     for (const [dir, [dx, dy]] of Object.entries(LABYRINTH_DIRS)) {
-      if (!session.walls[dir as keyof typeof session.walls]) continue
-      const nx = x + dx!
-      const ny = y + dy!
-      const nkey = `${nx},${ny}`
-      if (session.visited.includes(nkey)) continue
+      const wallKey = LABYRINTH_WALL_KEY[dir]
+      if (!wallKey || !walls[wallKey]) continue
+      const nkey = labyrinthCellKey(x + dx!, y + dy!)
+      if (labyrinthCellExplored(map, nkey)) continue
       return { guess: dir, detail: `move ${dir}@${workerHost}` }
     }
 
+    const route = labyrinthBfsFirstStep(map, x, y)
+    if (route) return { guess: route, detail: `route ${route}@${workerHost}` }
+
     if (session.path.length > 0) {
-      const last = session.path.pop()!
+      const last = session.path[session.path.length - 1]!
       return { guess: LABYRINTH_OPPOSITE[last]!, detail: `back ${last}@${workerHost}` }
     }
 
@@ -1573,8 +1967,13 @@ const labyrinth: SolverModule<LabyrinthState> = {
     const session = labyrinthSession(state, workerHost)
     if (result.success) return state
     if (guess === "n" || guess === "e" || guess === "s" || guess === "w") {
-      if (session.path.length === 0 || guess !== LABYRINTH_OPPOSITE[session.path[session.path.length - 1]!]) {
-        session.path.push(guess)
+      if (labyrinthMoveSucceeded(result)) {
+        const last = session.path[session.path.length - 1]
+        if (last && guess === LABYRINTH_OPPOSITE[last]) {
+          session.path.pop()
+        } else {
+          session.path.push(guess)
+        }
       }
       session.coords = null
       session.walls = null
@@ -1583,15 +1982,13 @@ const labyrinth: SolverModule<LabyrinthState> = {
     return state
   },
   applyLabreport(state, report) {
+    labyrinthEnsureMap(state)
     const session = labyrinthSession(state, report.workerHost)
     session.coords = report.coords as [number, number]
     session.walls = { north: report.north, east: report.east, south: report.south, west: report.west }
     session.phase = "move"
     const [x, y] = session.coords
-    const key = `${x},${y}`
-    if (!session.visited.includes(key)) {
-      session.visited.push(key)
-    }
+    labyrinthMergeCell(state.map, x, y, session.walls)
     return state
   },
 }

@@ -164,6 +164,17 @@ export interface CrawlProgressState {
   targets: readonly CrawlTargetSnapshot[]
   /** Aggregate auth queue counts for the dashboard summary line. */
   queueSummary: CrawlQueueSummary
+  /** Known labyrinth map(s) when a maze target is registered. */
+  labyrinths: readonly LabyrinthProgressSnapshot[]
+}
+
+/** ASCII map of explored labyrinth cells for the dashboard. */
+export interface LabyrinthProgressSnapshot {
+  hostname: string
+  mapText: string
+  queueState: CrawlTargetQueueState
+  explorerWorker: string | null
+  pending: string | null
 }
 
 export interface DarknetCrawlResult {

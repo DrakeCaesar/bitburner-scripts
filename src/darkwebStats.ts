@@ -15,6 +15,7 @@ import {
   type CrawlQueueSummary,
   type DarknetCrawlApi,
   type DarknetRegistry,
+  type LabyrinthProgressSnapshot,
   type SolverTiming,
   type WorkerSnapshot,
 } from "./darknetCrawl.js"
@@ -317,9 +318,21 @@ async function renderDashboard(
   workers: readonly WorkerSnapshot[],
   solverTimings: readonly SolverTiming[],
   targets: readonly CrawlTargetSnapshot[] = [],
+  labyrinths: readonly LabyrinthProgressSnapshot[] = [],
 ): Promise<void> {
   tabbedLog.clearPanels()
-  tabbedLog.tab("darknet").text(summaryLine)
+  const panel = tabbedLog.tab("darknet")
+  for (const lab of labyrinths) {
+    panel.text(`--- Labyrinth: ${lab.hostname} [${lab.queueState}] ---`)
+    if (lab.pending) {
+      panel.text(`  pending: ${lab.pending}${lab.explorerWorker ? ` via ${lab.explorerWorker}` : ""}`)
+    }
+    for (const line of lab.mapText.split("\n")) {
+      panel.text(line)
+    }
+    panel.text("")
+  }
+  panel.text(summaryLine)
   appendSolverTimingTable(tabbedLog, solverTimings)
   appendServerTable(tabbedLog, dnet, workers, displayReports, targets)
   appendCacheOpenTable(tabbedLog, cacheOpens)
@@ -355,6 +368,7 @@ async function renderCrawlProgress(
     state.workers,
     state.solverTimings,
     state.targets,
+    state.labyrinths,
   )
 }
 

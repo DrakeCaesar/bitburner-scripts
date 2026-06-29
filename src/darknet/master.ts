@@ -27,6 +27,7 @@ import {
   type CrawlTargetSnapshot,
   type CrawlTargetQueueState,
   type CrawlQueueSummary,
+  type LabyrinthProgressSnapshot,
   DNET_DEBUG_MASTER_DECISIONS,
 } from "./config"
 import {
@@ -34,6 +35,13 @@ import {
   pruneInvalidRegistryHosts,
   applyPasswordIntel,
 } from "./registry"
+import {
+  formatLabyrinthMap,
+  repairLabyrinthState,
+  labyrinthSessionCanContinue,
+  labyrinthGlobalFrontierRemaining,
+  type LabyrinthState,
+} from "./solverState"
 import {
   copyCrawlScript,
   crawlWorkerArgs,
@@ -630,12 +638,11 @@ type LabyrinthSessionView = {
   walls: unknown
 }
 
-function asLabyrinthState(state: SolverState): { sessions: Record<string, LabyrinthSessionView> } | null {
+function asLabyrinthState(state: SolverState): LabyrinthState | null {
   const raw = state as unknown as Record<string, unknown>
   if (raw.type !== "labyrinth") return null
-  const sessions = raw.sessions
-  if (typeof sessions !== "object" || sessions === null) return null
-  return { sessions: sessions as Record<string, LabyrinthSessionView> }
+  if (typeof raw.sessions !== "object" || raw.sessions === null) return null
+  return state as LabyrinthState
 }
 
 function adjacentIdleWorkersForTarget(
@@ -653,20 +660,164 @@ function adjacentIdleWorkersForTarget(
   return out.sort()
 }
 
+function adjacentWorkersForTarget(
+  hostname: string,
+  workerRegistry: Map<string, WorkerInfo>,
+): string[] {
+  const out: string[] = []
+  for (const [workerHost, wi] of workerRegistry) {
+    if (!wi.probed) continue
+    if (!wi.neighbors.includes(hostname)) continue
+    out.push(workerHost)
+  }
+  return out.sort()
+}
+
+function labyrinthRepairTargetState(target: TargetState): void {
+  const lab = asLabyrinthState(target.solverState)
+  if (!lab) return
+  repairLabyrinthState(target.solverState as LabyrinthState)
+}
+
+function reactivateFalseExhaustedLabyrinths(
+  targetStates: Map<string, TargetState>,
+  workerRegistry: Map<string, WorkerInfo>,
+): void {
+  for (const [hostname, target] of targetStates) {
+    if (!target.done || target.pendingGuess !== "EXHAUSTED") continue
+    const lab = asLabyrinthState(target.solverState)
+    if (!lab) continue
+    labyrinthRepairTargetState(target)
+    const adjacent = adjacentWorkersForTarget(hostname, workerRegistry)
+    if (adjacent.length === 0) continue
+    if (!labyrinthGlobalFrontierRemaining(lab.map) && !labyrinthAnyWorkRemaining(lab, adjacent)) continue
+    target.done = false
+    target.pendingGuess = null
+  }
+}
+
+function buildLabyrinthSnapshots(
+  targetStates: Map<string, TargetState>,
+  reachableTargets: Set<string>,
+): LabyrinthProgressSnapshot[] {
+  const out: LabyrinthProgressSnapshot[] = []
+  for (const [hostname, target] of targetStates) {
+    const lab = asLabyrinthState(target.solverState)
+    if (!lab) continue
+    repairLabyrinthState(lab)
+    let queueState: CrawlTargetQueueState
+    if (target.done) {
+      queueState = target.pendingGuess === "EXHAUSTED" ? "exhausted" : "done"
+    } else if (target.pendingGuess !== null) {
+      queueState = "pending"
+    } else if (!reachableTargets.has(hostname)) {
+      queueState = "unreachable"
+    } else {
+      queueState = "queued"
+    }
+    out.push({
+      hostname,
+      mapText: formatLabyrinthMap(hostname, lab.map, lab.sessions),
+      queueState,
+      explorerWorker: target.explorerWorker,
+      pending: target.pendingGuess,
+    })
+  }
+  out.sort((a, b) => a.hostname.localeCompare(b.hostname))
+  return out
+}
+
 function labyrinthNeedsLabreport(session: LabyrinthSessionView | undefined): boolean {
   if (!session) return true
   return session.phase === "labreport" || (session.phase === "move" && (!session.coords || !session.walls))
 }
 
-function labyrinthAnyWorkRemaining(
-  lab: { sessions: Record<string, LabyrinthSessionView> },
-  workerHosts: string[],
-): boolean {
+function labyrinthAnyWorkRemaining(lab: LabyrinthState, workerHosts: string[]): boolean {
+  repairLabyrinthState(lab)
   for (const w of workerHosts) {
     const s = lab.sessions[w]
-    if (!s || s.phase !== "done") return true
+    if (!s) return true
+    if (s.phase !== "done") return true
+    if (labyrinthSessionCanContinue(lab, s)) return true
   }
   return false
+}
+
+/** Dispatch labreport/moves to every idle adjacent worker (shared map coordinates exploration). */
+async function dispatchLabyrinthTargets(
+  ns: NS,
+  dnet: DarknetCrawlApi,
+  targetStates: Map<string, TargetState>,
+  workerRegistry: Map<string, WorkerInfo>,
+  workerReach: Map<string, Set<string>>,
+  reachableTargets: Set<string>,
+  now: number,
+): Promise<void> {
+  if (!_solverWorker) return
+
+  for (const [hostname, target] of targetStates) {
+    const lab = asLabyrinthState(target.solverState)
+    if (!lab || target.done) continue
+
+    const reachable = reachableTargets.has(hostname)
+    if (!reachable) {
+      if (target.unreachableSince === 0) target.unreachableSince = now
+      if (now - target.lastPlanAt < UNREACHABLE_RECHECK_MS) continue
+    } else {
+      target.unreachableSince = 0
+    }
+    target.lastPlanAt = now
+
+    labyrinthRepairTargetState(target)
+    const adjacent = adjacentIdleWorkersForTarget(hostname, workerReach, workerRegistry)
+    const allAdjacent = adjacentWorkersForTarget(hostname, workerRegistry)
+
+    for (const workerHost of adjacent) {
+      const sess = lab.sessions[workerHost]
+
+      if (labyrinthNeedsLabreport(sess)) {
+        const wi = workerRegistry.get(workerHost)
+        if (!wi?.idle || !wi.probed) continue
+        const solverId = (target.solverState as unknown as Record<string, unknown>).type as string
+        sendWorkerCommand(ns, dnet, wi, { type: "labreport", target: hostname, solverId })
+        target.pendingGuess = "labreport"
+        target.pendingWorker = workerHost
+        target.explorerWorker = workerHost
+        target.pendingAt = now
+        target.plannedNext = null
+        continue
+      }
+
+      if (sess?.phase === "done") continue
+      if (sess?.phase !== "move" || !sess.coords || !sess.walls) continue
+      const planned = await workerNextGuess(
+        target.solverState, hostname, target.details, workerHost,
+      )
+      target.solverState = planned.state
+      if (!planned.next) {
+        labyrinthRepairTargetState(target)
+        continue
+      }
+      if (tryDispatchGuess(
+        ns, dnet, workerRegistry, workerReach, hostname, target, planned.next, now, workerHost,
+      )) {
+        target.plannedNext = null
+      } else {
+        target.plannedNext = planned.next
+        target.explorerWorker = workerHost
+      }
+    }
+
+    if (
+      allAdjacent.length > 0
+      && !labyrinthGlobalFrontierRemaining(lab.map)
+      && !labyrinthAnyWorkRemaining(lab, allAdjacent)
+    ) {
+      target.done = true
+      target.pendingGuess = "EXHAUSTED"
+      target.plannedNext = null
+    }
+  }
 }
 
 /** Apply stasis links on authenticated lab neighbors while seats remain. */
@@ -1024,6 +1175,11 @@ async function applyTaskResult(
       workerHost: result.workerHost,
     })
     target.explorerWorker = result.workerHost
+    labyrinthRepairTargetState(target)
+    if (target.done && target.pendingGuess === "EXHAUSTED") {
+      target.done = false
+      target.pendingGuess = null
+    }
   }
 }
 
@@ -1116,6 +1272,8 @@ async function dispatchTasks(
 ): Promise<void> {
   const now = Date.now()
 
+  reactivateFalseExhaustedLabyrinths(targetStates, workerRegistry)
+
   // Timeout stale pending guesses when the assigned worker missed its deadline
   for (const [, target] of targetStates) {
     if (target.done) continue
@@ -1134,9 +1292,14 @@ async function dispatchTasks(
   const workerReach = buildWorkerReach(workerRegistry)
   const reachableTargets = buildReachableTargets(workerReach)
 
+  await dispatchLabyrinthTargets(
+    ns, dnet, targetStates, workerRegistry, workerReach, reachableTargets, now,
+  )
+
   // Dispatch cached guesses for targets that became reachable
   for (const [hostname, target] of targetStates) {
     if (target.done || target.pendingGuess !== null || !target.plannedNext) continue
+    if (asLabyrinthState(target.solverState)) continue
     if (!reachableTargets.has(hostname)) continue
     tryDispatchGuess(
       ns, dnet, workerRegistry, workerReach, hostname, target, target.plannedNext, now,
@@ -1147,6 +1310,7 @@ async function dispatchTasks(
   const needPlan: { hostname: string; target: TargetState }[] = []
   for (const [hostname, target] of targetStates) {
     if (target.done || target.pendingGuess !== null) continue
+    if (asLabyrinthState(target.solverState)) continue
     if (target.plannedNext) continue
 
     const reachable = reachableTargets.has(hostname)
@@ -1165,64 +1329,14 @@ async function dispatchTasks(
         ({ state, next }) => {
           target.solverState = state
           return { hostname, target, next }
-        }
-      )
+        },
+      ),
     ))
 
     for (const { hostname, target, next } of results) {
       target.lastPlanAt = now
 
       if (!next) {
-        const lab = asLabyrinthState(target.solverState)
-        if (lab) {
-          const adjacent = adjacentIdleWorkersForTarget(hostname, workerReach, workerRegistry)
-          let dispatched = false
-
-          for (const workerHost of adjacent) {
-            const sess = lab.sessions[workerHost]
-            if (sess?.phase !== "move" || !sess.coords || !sess.walls) continue
-            const planned = await workerNextGuess(
-              target.solverState, hostname, target.details, workerHost,
-            )
-            target.solverState = planned.state
-            if (!planned.next) continue
-            if (tryDispatchGuess(
-              ns, dnet, workerRegistry, workerReach, hostname, target, planned.next, now, workerHost,
-            )) {
-              target.plannedNext = null
-            } else {
-              target.plannedNext = planned.next
-              target.explorerWorker = workerHost
-            }
-            dispatched = true
-            break
-          }
-          if (dispatched) continue
-
-          for (const workerHost of adjacent) {
-            if (!labyrinthNeedsLabreport(lab.sessions[workerHost])) continue
-            const wi = workerRegistry.get(workerHost)
-            if (!wi?.idle || !wi.probed) continue
-            const solverId = (target.solverState as unknown as Record<string, unknown>).type as string
-            sendWorkerCommand(ns, dnet, wi, { type: "labreport", target: hostname, solverId })
-            target.pendingGuess = "labreport"
-            target.pendingWorker = workerHost
-            target.explorerWorker = workerHost
-            target.pendingAt = now
-            target.plannedNext = null
-            dispatched = true
-            break
-          }
-          if (dispatched) continue
-
-          if (adjacent.length > 0 && !labyrinthAnyWorkRemaining(lab, adjacent)) {
-            target.done = true
-            target.pendingGuess = "EXHAUSTED"
-            target.plannedNext = null
-          }
-          continue
-        }
-
         const s = target.solverState as unknown as Record<string, unknown>
         if (s.needsRecheck === true) continue
 
@@ -1463,6 +1577,7 @@ export async function runDarknetCrawl(
         reports, activeOps: [...activeOps.values()], workerRunning, cacheOpens,
         workers: [], solverTimings: [],
         targets: [], queueSummary: { queued: 0, pending: 0, unreachable: 0, exhausted: 0, staleReports: 0 },
+        labyrinths: [],
       })
     }
 
@@ -1610,6 +1725,7 @@ export async function runDarknetCrawl(
     await onProgress({
       reports, activeOps: [...activeOps.values()], workerRunning, cacheOpens, workers,
       solverTimings: timings, targets, queueSummary,
+      labyrinths: buildLabyrinthSnapshots(targetStates, reachableTargets),
     })
   }
 
