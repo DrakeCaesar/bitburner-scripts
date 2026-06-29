@@ -7,6 +7,7 @@ import {
   pruneInvalidRegistryHosts,
   runDarknetCrawl,
   saveDarknetRegistry,
+  safeGetServerDetails,
   type CrawlCacheOpen,
   type CrawlHostReport,
   type CrawlProgressState,
@@ -65,6 +66,7 @@ function appendSolverTimingTable(
 
 const SERVER_TABLE_COLUMNS = [
   col("Host", "left", 20),
+  col("Dpth", "right", 4),
   col("Wrk", "center", 3),
   col("State", "left", 10),
   col("Last Cmd", "left", 20),
@@ -75,6 +77,15 @@ const SERVER_TABLE_COLUMNS = [
   col("Ngbrs", "right", 5),
   col("Blk", "right", 4),
 ]
+
+/** Depth for table sort/display; offline hosts sort last. */
+function serverDepthSortKey(dnet: DarknetCrawlApi, hostname: string): { sortKey: number; label: string } {
+  const details = safeGetServerDetails(dnet, hostname)
+  if (!details?.isOnline || details.depth < 0) {
+    return { sortKey: Number.MAX_SAFE_INTEGER, label: "-" }
+  }
+  return { sortKey: details.depth, label: String(details.depth) }
+}
 
 // Track maximum observed content width per column (index-aligned with SERVER_TABLE_COLUMNS)
 // so the table only grows, never shrinks between renders.
@@ -125,6 +136,7 @@ function reportOnlyState(
 
 function appendServerTable(
   log: TabbedScriptLogBuilder,
+  dnet: DarknetCrawlApi,
   workers: readonly WorkerSnapshot[],
   reports: ReadonlyMap<string, CrawlHostReport>,
   targets: readonly CrawlTargetSnapshot[] = [],
@@ -144,13 +156,14 @@ function appendServerTable(
   }
 
   // Build rows: workers first, then report-only servers
-  const rows: string[][] = []
+  const entries: { sortKey: number; cells: string[] }[] = []
   const workerMap = new Map(workers.map((w) => [w.host, w]))
   const targetByHost = new Map(targets.map((t) => [t.host, t]))
 
   for (const hostname of allHosts) {
     const wi = workerMap.get(hostname)
     const report = reports.get(hostname)
+    const { sortKey, label: depthLabel } = serverDepthSortKey(dnet, hostname)
 
     if (wi) {
       // Worker entry
@@ -180,35 +193,50 @@ function appendServerTable(
       const queued = targetByHost.get(hostname)
       const wrkCol = queued && queued.queueState !== "done" ? "Q" : "Y"
 
-      rows.push([
-        hostname,
-        wrkCol,
-        state,
-        lastCmd,
-        cmdAt,
-        lastReply,
-        replyAt,
-        auth,
-        String(wi.neighbors.length),
-        formatGB(wi.blockedRam),
-      ])
+      entries.push({
+        sortKey,
+        cells: [
+          hostname,
+          depthLabel,
+          wrkCol,
+          state,
+          lastCmd,
+          cmdAt,
+          lastReply,
+          replyAt,
+          auth,
+          String(wi.neighbors.length),
+          formatGB(wi.blockedRam),
+        ],
+      })
     } else if (report) {
       // Report-only entry (no worker on this host)
       const auth = report.authenticated === true ? "Y" : report.authenticated === false ? "F" : "-"
-      rows.push([
-        hostname,
-        "N",
-        reportOnlyState(hostname, report, targetByHost),
-        "-", "-",
-        "-", "-",
-        auth,
-        "-",
-        "-",
-      ])
+      entries.push({
+        sortKey,
+        cells: [
+          hostname,
+          depthLabel,
+          "N",
+          reportOnlyState(hostname, report, targetByHost),
+          "-", "-",
+          "-", "-",
+          auth,
+          "-",
+          "-",
+        ],
+      })
     }
   }
 
-  rows.sort((a, b) => a[0]!.localeCompare(b[0]!))
+  entries.sort((a, b) => a.sortKey - b.sortKey || a.cells[0]!.localeCompare(b.cells[0]!))
+  const rows = entries.map((e) => e.cells)
+  const separatorAfter: number[] = []
+  for (let i = 0; i < entries.length - 1; i++) {
+    if (entries[i]!.sortKey !== entries[i + 1]!.sortKey) {
+      separatorAfter.push(i)
+    }
+  }
 
   // Stabilize column widths: update tracked maximums from current data,
   // then use those maximums as minWidth so the table only grows, never shrinks.
@@ -231,6 +259,7 @@ function appendServerTable(
     title: "Servers",
     columns: stableColumns,
     rows,
+    separatorAfter,
   })
 }
 
@@ -281,6 +310,7 @@ function countRegistryPasswords(registry: DarknetRegistry): number {
 async function renderDashboard(
   ns: NS,
   tabbedLog: TabbedScriptLogBuilder,
+  dnet: DarknetCrawlApi,
   displayReports: ReadonlyMap<string, CrawlHostReport>,
   cacheOpens: readonly CrawlCacheOpen[],
   summaryLine: string,
@@ -291,7 +321,7 @@ async function renderDashboard(
   tabbedLog.clearPanels()
   tabbedLog.tab("darknet").text(summaryLine)
   appendSolverTimingTable(tabbedLog, solverTimings)
-  appendServerTable(tabbedLog, workers, displayReports, targets)
+  appendServerTable(tabbedLog, dnet, workers, displayReports, targets)
   appendCacheOpenTable(tabbedLog, cacheOpens)
   await renderTabbedTailLog(ns, tabbedLog)
 }
@@ -299,6 +329,7 @@ async function renderDashboard(
 async function renderCrawlProgress(
   ns: NS,
   tabbedLog: TabbedScriptLogBuilder,
+  dnet: DarknetCrawlApi,
   registry: DarknetRegistry,
   state: CrawlProgressState,
   crawlNum: number,
@@ -315,6 +346,7 @@ async function renderCrawlProgress(
   await renderDashboard(
     ns,
     tabbedLog,
+    dnet,
     displayReports,
     cacheOpens,
     `Crawl #${crawlNum} ${status} | registry ${Object.keys(registry.servers).length} host(s), ${knownPw} password(s) | ` +
@@ -329,6 +361,7 @@ async function renderCrawlProgress(
 async function renderRegistrySummary(
   ns: NS,
   tabbedLog: TabbedScriptLogBuilder,
+  dnet: DarknetCrawlApi,
   registry: DarknetRegistry,
   crawlReports: ReadonlyMap<string, CrawlHostReport>,
   crawlNum: number,
@@ -341,6 +374,7 @@ async function renderRegistrySummary(
   await renderDashboard(
     ns,
     tabbedLog,
+    dnet,
     displayReports,
     sessionCacheOpens,
     `Crawl #${crawlNum} done | registry ${Object.keys(registry.servers).length} host(s), ${knownPw} password(s) saved to ${DARKNET_REGISTRY_FILE} | ` +
@@ -403,7 +437,7 @@ export async function main(ns: NS): Promise<void> {
       dnet,
       DARKNET_LORE_PORT,
       async (state) => {
-        await renderCrawlProgress(ns, tabbedLog, registry, state, crawlNum, sessionCacheOpens)
+        await renderCrawlProgress(ns, tabbedLog, dnet, registry, state, crawlNum, sessionCacheOpens)
       },
       registry,
       crawlIntervalMs,
