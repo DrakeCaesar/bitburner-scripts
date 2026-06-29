@@ -183,7 +183,7 @@ export function queueArchiveContent(
   ns: NS,
   fileName: string,
   content: string,
-  reportPort: number | undefined,
+  replyPort: number | undefined,
   lorePort: number | undefined,
   neighbors: string[] | undefined
 ): void {
@@ -199,8 +199,8 @@ export function queueArchiveContent(
   if (isPasswordFile(flatFileName(fileName))) {
     const hostname = ns.getHostname()
     const { intelJson } = parsePasswordFileContent(content, hostname, neighbors ?? [], Date.now())
-    if (reportPort != null && reportPort > 0) {
-      ns.writePort(reportPort, intelJson)
+    if (replyPort != null && replyPort > 0) {
+      ns.writePort(replyPort, intelJson)
     }
     return
   }
@@ -214,8 +214,8 @@ export function queueArchiveContent(
     return
   }
 
-  if (reportPort != null && reportPort > 0) {
-    ns.writePort(reportPort, JSON.stringify({ type: "archive", file: base, content }))
+  if (replyPort != null && replyPort > 0) {
+    ns.writePort(replyPort, JSON.stringify({ type: "archive", file: base, content }))
   }
 }
 
@@ -224,7 +224,7 @@ export function reportCacheOpen(
   host: string,
   fileName: string,
   result: { message: string; karmaLoss: number },
-  reportPort: number | undefined,
+  replyPort: number | undefined,
   lorePort: number | undefined,
   cacheOpens?: CrawlCacheOpen[]
 ): void {
@@ -238,8 +238,8 @@ export function reportCacheOpen(
 
   cacheOpens?.push(entry)
 
-  if (reportPort != null && reportPort > 0) {
-    ns.writePort(reportPort, JSON.stringify({ type: "cacheOpen", ...entry }))
+  if (replyPort != null && replyPort > 0) {
+    ns.writePort(replyPort, JSON.stringify({ type: "cacheOpen", ...entry }))
   }
   // cache messages are lore snippets, not password data
   if (lorePort != null && lorePort > 0) {
@@ -250,7 +250,7 @@ export function reportCacheOpen(
 async function openCacheFilesOnCurrentHost(
   ns: NS,
   dnet: DarknetCrawlApi,
-  reportPort: number | undefined,
+  replyPort: number | undefined,
   lorePort: number | undefined,
   neighbors: string[] | undefined,
   cacheOpens?: CrawlCacheOpen[]
@@ -271,14 +271,14 @@ async function openCacheFilesOnCurrentHost(
     if (!result.success) {
       continue
     }
-    reportCacheOpen(ns, hostname, file, result, reportPort, lorePort, cacheOpens)
+    reportCacheOpen(ns, hostname, file, result, replyPort, lorePort, cacheOpens)
   }
 }
 
 async function archiveLocalServerFiles(
   ns: NS,
   dnet: DarknetCrawlApi,
-  reportPort?: number,
+  replyPort?: number,
   lorePort?: number,
   neighbors?: string[],
   cacheOpens?: CrawlCacheOpen[]
@@ -297,12 +297,12 @@ async function archiveLocalServerFiles(
       case "lit":
       case "txt":
         if (!ns.fileExists(file)) break
-        queueArchiveContent(ns, flatFileName(file), ns.read(file), reportPort, lorePort, neighbors)
+        queueArchiveContent(ns, flatFileName(file), ns.read(file), replyPort, lorePort, neighbors)
         break
     }
   }
 
-  await openCacheFilesOnCurrentHost(ns, dnet, reportPort, lorePort, neighbors, cacheOpens)
+  await openCacheFilesOnCurrentHost(ns, dnet, replyPort, lorePort, neighbors, cacheOpens)
 }
 
 // ---- worker spawn helpers ----
@@ -368,7 +368,7 @@ async function executeTask(
   ns: NS,
   dnet: DarknetCrawlApi,
   cmd: WorkerCommand & { type: "guess" | "heartbleed" | "labreport" },
-  reportPort: number,
+  replyPort: number,
 ): Promise<void> {
   const hostname = ns.getHostname()
 
@@ -376,7 +376,7 @@ async function executeTask(
     // Verify target is still a neighbor before attempting (probe data can be stale)
     const targetDetails = safeGetSessionDetails(dnet, cmd.target)
     if (!targetDetails?.isConnectedToCurrentServer) {
-      ns.writePort(reportPort, JSON.stringify({
+      ns.writePort(replyPort, JSON.stringify({
         type: "guessResult",
         target: cmd.target,
         solverId: cmd.solverId,
@@ -389,7 +389,7 @@ async function executeTask(
     try {
       const result = await dnet.authenticate(cmd.target, cmd.guess)
       if (result.success) {
-        ns.writePort(reportPort, JSON.stringify({
+        ns.writePort(replyPort, JSON.stringify({
           type: "guessResult",
           target: cmd.target,
           solverId: cmd.solverId,
@@ -429,7 +429,7 @@ async function executeTask(
           }
         }
       } catch { /* heartbleed may fail */ }
-      ns.writePort(reportPort, JSON.stringify({
+      ns.writePort(replyPort, JSON.stringify({
         type: "guessResult",
         target: cmd.target,
         solverId: cmd.solverId,
@@ -438,7 +438,7 @@ async function executeTask(
         message,
       }))
     } catch {
-      ns.writePort(reportPort, JSON.stringify({
+      ns.writePort(replyPort, JSON.stringify({
         type: "guessResult",
         target: cmd.target,
         solverId: cmd.solverId,
@@ -449,7 +449,7 @@ async function executeTask(
     // Verify target is still a neighbor
     const targetDetails = safeGetSessionDetails(dnet, cmd.target)
     if (!targetDetails?.isConnectedToCurrentServer) {
-      ns.writePort(reportPort, JSON.stringify({
+      ns.writePort(replyPort, JSON.stringify({
         type: "heartbleedResult",
         target: cmd.target,
         solverId: cmd.solverId,
@@ -460,14 +460,14 @@ async function executeTask(
 
     try {
       const result = await dnet.heartbleed(cmd.target)
-      ns.writePort(reportPort, JSON.stringify({
+      ns.writePort(replyPort, JSON.stringify({
         type: "heartbleedResult",
         target: cmd.target,
         solverId: cmd.solverId,
         logEntries: result.success ? result.logs : [],
       }))
     } catch {
-      ns.writePort(reportPort, JSON.stringify({
+      ns.writePort(replyPort, JSON.stringify({
         type: "heartbleedResult",
         target: cmd.target,
         solverId: cmd.solverId,
@@ -478,7 +478,7 @@ async function executeTask(
     try {
       if (dnet.labreport) {
         const result = await dnet.labreport()
-        ns.writePort(reportPort, JSON.stringify({
+        ns.writePort(replyPort, JSON.stringify({
           type: "labreportResult",
           target: cmd.target,
           solverId: cmd.solverId,
@@ -523,8 +523,10 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
     passwordCache.set(hostname, ns.args[3])
   }
 
-  // Wait for master to write reportPort/lorePort config to CONTROL_PORT
-  let reportPort = 0
+  // Reply port is always commandPort + 1 (adjacent pair)
+  const replyPort = commandPort + 1
+
+  // Wait for master to write lorePort config to CONTROL_PORT
   let lorePort = 0
   while (true) {
     const raw = ns.peek(CONTROL_PORT)
@@ -540,8 +542,7 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
     if (typeof msg.sessionId !== "number" || msg.sessionId !== mySessionId) {
       ns.exit()
     }
-    if (typeof msg.reportPort === "number" && typeof msg.lorePort === "number") {
-      reportPort = msg.reportPort
+    if (typeof msg.lorePort === "number") {
       lorePort = msg.lorePort
       break
     }
@@ -557,7 +558,7 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
   ns.printf("%s worker initialized on port %d", hostname, commandPort)
 
   // Report PID to master so it can check liveness with ns.isRunning(pid)
-  ns.writePort(reportPort, JSON.stringify({
+  ns.writePort(replyPort, JSON.stringify({
     type: "ready",
     workerHost: hostname,
     pid: ns.pid,
@@ -596,7 +597,7 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
     ns.printf("%s executing: %s", hostname, formatCommandBrief(command))
 
     // Acknowledge receipt before execution
-    ns.writePort(reportPort, JSON.stringify({
+    ns.writePort(replyPort, JSON.stringify({
       type: "executing",
       workerHost: hostname,
       commandType: command.type,
@@ -604,7 +605,7 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
 
     switch (command.type) {
       case "probe": {
-        writeCrawlStatus(ns, reportPort, {
+        writeCrawlStatus(ns, replyPort, {
           workerHost: hostname,
           targetHost: hostname,
           phase: "probe",
@@ -616,7 +617,7 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
 
         // Report self + all neighbors (authenticated and unauthenticated)
         const selfDetails = safeGetSessionDetails(dnet, hostname)
-        writeCrawlReport(ns, reportPort, {
+        writeCrawlReport(ns, replyPort, {
           hostname,
           authenticated: selfDetails?.hasSession ? true : null,
           password: null,
@@ -624,22 +625,22 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
         for (const neighbor of targets) {
           const details = safeGetSessionDetails(dnet, neighbor)
           if (details?.hasSession) {
-            writeCrawlReport(ns, reportPort, { hostname: neighbor, authenticated: true, password: null })
+            writeCrawlReport(ns, replyPort, { hostname: neighbor, authenticated: true, password: null })
           } else {
-            writeCrawlReport(ns, reportPort, { hostname: neighbor, authenticated: false, password: null })
+            writeCrawlReport(ns, replyPort, { hostname: neighbor, authenticated: false, password: null })
           }
         }
 
         // Archive local files
         if (selfDetails?.hasSession) {
-          await archiveLocalServerFiles(ns, dnet, reportPort, lorePort, targets)
+          await archiveLocalServerFiles(ns, dnet, replyPort, lorePort, targets)
         }
 
         // Report probe result to master
         const workerRam = ns.getScriptRam(DARKNET_CRAWL_SCRIPT, hostname)
         const freeRam = ns.getServerMaxRam(hostname) - ns.getServerUsedRam(hostname)
         const blockedRam = dnet.getBlockedRam?.(hostname) ?? 0
-        ns.writePort(reportPort, JSON.stringify({
+        ns.writePort(replyPort, JSON.stringify({
           type: "probeResult",
           workerHost: hostname,
           targets,
@@ -652,7 +653,7 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
       case "guess":
       case "heartbleed":
       case "labreport": {
-        await executeTask(ns, dnet, command, reportPort)
+        await executeTask(ns, dnet, command, replyPort)
         ns.printf("done: %s", command.type)
         break
       }
@@ -686,7 +687,7 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
         } catch (err) {
           ns.printf("spawn %s failed: %s", command.target, String(err))
         }
-        ns.writePort(reportPort, JSON.stringify({
+        ns.writePort(replyPort, JSON.stringify({
           type: "spawnResult",
           workerHost: hostname,
           target: command.target,
@@ -703,7 +704,7 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
         } catch { /* realloc may fail */ }
         const freeRam = ns.getServerMaxRam(hostname) - ns.getServerUsedRam(hostname) - ns.getScriptRam(DARKNET_CRAWL_SCRIPT, hostname)
         const blockedRam = dnet.getBlockedRam?.(hostname) ?? 0
-        ns.writePort(reportPort, JSON.stringify({
+        ns.writePort(replyPort, JSON.stringify({
           type: "reallocResult",
           workerHost: hostname,
           freeRam,

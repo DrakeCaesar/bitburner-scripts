@@ -16,7 +16,7 @@ import {
   type WorkerSnapshot,
 } from "./darknetCrawl.js"
 import { DARKSCAPE_NAVIGATOR, purchaseDarkscapeNavigator, purchaseTorRouter } from "./libraries/purchasePrograms.js"
-import { CRAWL_REPORT_PORT, DARKNET_LORE_PORT } from "./libraries/ports.js"
+import { DARKNET_LORE_PORT } from "./libraries/ports.js"
 import {
   col,
   createTabbedTailLog,
@@ -371,7 +371,6 @@ export async function main(ns: NS): Promise<void> {
     await runDarknetCrawl(
       ns,
       dnet,
-      CRAWL_REPORT_PORT,
       DARKNET_LORE_PORT,
       async (state) => {
         await renderCrawlProgress(ns, tabbedLog, registry, state, crawlNum, sessionCacheOpens)

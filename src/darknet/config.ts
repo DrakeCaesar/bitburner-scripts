@@ -41,14 +41,14 @@ export const DARKWEB_ARCHIVE_DIR = "darkweb"
  */
 export const CONTROL_PORT = 45109
 
-/** Port pool for per-worker command ports. First port in the pool. */
+/** Port pool for per-worker command ports. First port in the pool.
+ *  Workers use adjacent port pairs: command port (even) and reply port (odd = command+1). */
 export const PORT_POOL_START = 45110
-/** Total ports in the pool (max concurrent workers). */
-export const PORT_POOL_SIZE = 1024
+/** Total ports in the pool (each worker uses a pair, so max concurrent workers = PORT_POOL_SIZE). */
+export const PORT_POOL_SIZE = 512
 
 export interface ControlMessage {
   sessionId: number
-  reportPort: number
   lorePort: number
 }
 
@@ -400,7 +400,7 @@ export type WorkerCommand =
   | { type: "realloc" }
   | { type: "exit" }
 
-/** Workers write these to reportPort. */
+/** Workers write these to their reply port (command port + 1). */
 export type WorkerResponse =
   | { type: "ready"; workerHost: string; pid: number }
   | { type: "executing"; workerHost: string; commandType: string }
