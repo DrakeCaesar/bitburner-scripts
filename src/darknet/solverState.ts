@@ -1,6 +1,8 @@
 import {
   type SolverState,
   type SolverModule,
+  type SolverContext,
+  type SolverGuessResult,
   type DarknetServerDetailsForFormulas,
 } from "./config"
 import { DARKWEB_COMMON_PASSWORDS } from "./config"
@@ -1472,7 +1474,7 @@ const bigMoSolver: SolverModule<BigMoState> = {
 // Registry
 // ============================================================
 
-const SOLVER_REGISTRY: Record<string, SolverModule> = {
+export const SOLVER_REGISTRY: Record<string, SolverModule> = {
   // Static
   "ZeroLogon|numeric": zeroLogon,
   "ZeroLogon|alphabetic": zeroLogon,
@@ -1538,5 +1540,5 @@ const SOLVER_REGISTRY: Record<string, SolverModule> = {
   "(The Labyrinth)|ASCII": labyrinth,
 }
 
-// Exported for master special-case handling (BellaCuore range detection)
+// Exported for master + solverWorker
 export { bellaCuoreRange }

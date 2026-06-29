@@ -57,7 +57,6 @@ export interface ControlMessage {
 /** Files that must be copied (via SCP) to darknet nodes for workers to run. */
 export const DARKNET_WORKER_FILES = [
   "darknet/config.js",
-  "darknet/auth.js",
   "darknet/solverState.js",
   "darknet/worker.js",
 ]

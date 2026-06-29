@@ -20,7 +20,6 @@ import {
   type WorkerResponse,
   type WorkerCommand,
   type SolverState,
-  type SolverModule,
   type WorkerSnapshot,
   type SolverTiming,
 } from "./config"
@@ -36,7 +35,6 @@ import {
   loadDarknetTextSet,
   syncDarknetTextFile,
 } from "./worker"
-import { lookupSolver, bellaCuoreRange } from "./solverState"
 
 // ---- control port sync ----
 
@@ -345,7 +343,6 @@ function freePort(port: number): void {
 interface TargetState {
   hostname: string
   details: DarknetServerDetailsForFormulas
-  solver: SolverModule
   solverState: SolverState
   done: boolean
   password: string | null
@@ -362,7 +359,49 @@ const WORKER_CMD_TIMEOUT_MS = 30_000 // reset unresponsive workers to idle after
 const WORKER_MAX_RETRIES = 3 // give up on a worker after this many timeouts
 const PROBE_INTERVAL_MS = 3_000 // re-probe idle workers every 30s
 
-function drainReportPort(
+// ---- solver web worker ----
+
+let _solverWorker: Worker | null = null
+let _solverWorkerMsgId = 0
+const _solverWorkerPromises = new Map<number, (data: Record<string, unknown>) => void>()
+
+function callSolverWorker(msg: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const w = _solverWorker
+  if (!w) return Promise.resolve({ error: "no worker" })
+  return new Promise((resolve) => {
+    const id = ++_solverWorkerMsgId
+    _solverWorkerPromises.set(id, resolve)
+    w.postMessage({ id, ...msg })
+  })
+}
+
+async function workerInitSolver(details: DarknetServerDetailsForFormulas): Promise<SolverState | null> {
+  const resp = await callSolverWorker({ type: "initSolver", details })
+  if (resp.error) return null
+  return resp.state as SolverState
+}
+
+async function workerNextGuess(state: SolverState, hostname: string, details: DarknetServerDetailsForFormulas): Promise<{ state: SolverState; next: { guess: string; detail: string | null } | null }> {
+  const resp = await callSolverWorker({ type: "nextGuess", state, target: hostname, details })
+  return { state: (resp.state as SolverState) ?? state, next: resp.next as { guess: string; detail: string | null } | null }
+}
+
+async function workerApplyResult(state: SolverState, guess: string, result: { success: boolean; feedback?: string; message?: string }): Promise<SolverState> {
+  const resp = await callSolverWorker({ type: "applyResult", state, guess, result })
+  return (resp.state as SolverState) ?? state
+}
+
+async function workerApplyHeartbleed(state: SolverState, logEntries: string[]): Promise<SolverState> {
+  const resp = await callSolverWorker({ type: "applyHeartbleed", state, logEntries })
+  return (resp.state as SolverState) ?? state
+}
+
+async function workerApplyLabreport(state: SolverState, report: { coords: number[]; north: boolean; east: boolean; south: boolean; west: boolean }): Promise<SolverState> {
+  const resp = await callSolverWorker({ type: "applyLabreport", state, report })
+  return (resp.state as SolverState) ?? state
+}
+
+async function drainReportPort(
   ns: NS,
   reportPort: number,
   targetStates: Map<string, TargetState>,
@@ -374,7 +413,7 @@ function drainReportPort(
   cacheOpens: CrawlCacheOpen[],
   sessionId: number,
   registry?: DarknetRegistry,
-): void {
+): Promise<void> {
   while (true) {
     const raw = ns.readPort(reportPort)
     if (raw === "NULL PORT DATA") break
@@ -492,7 +531,7 @@ function drainReportPort(
           }
           continue
         }
-        applyTaskResult(workerResp, targetStates, solverTimings, workerRegistry)
+        await applyTaskResult(workerResp, targetStates, solverTimings, workerRegistry)
         continue
       }
 
@@ -502,15 +541,15 @@ function drainReportPort(
   }
 }
 
-function applyTaskResult(
+async function applyTaskResult(
   result: WorkerResponse & { type: "guessResult" | "heartbleedResult" | "labreportResult" },
   targetStates: Map<string, TargetState>,
   solverTimings: Map<string, { count: number; totalMs: number }>,
   workerRegistry: Map<string, WorkerInfo>,
-): void {
+): Promise<void> {
   const target = targetStates.get(result.target)
   if (!target) return
-  if (target.solverState.type !== result.solverId) return
+  if ((target.solverState as unknown as Record<string, unknown>).type !== result.solverId) return
 
   const dispatchedGuess = target.pendingGuess
   const completedWorker = target.pendingWorker
@@ -544,23 +583,19 @@ function applyTaskResult(
       target.password = result.feedback || dispatchedGuess
       return
     }
-    target.solverState = target.solver.applyResult(
+    target.solverState = await workerApplyResult(
       target.solverState,
       dispatchedGuess ?? "",
       { success: false, feedback: result.feedback, message: result.message },
     )
   } else if (result.type === "heartbleedResult") {
-    if (target.solver.applyHeartbleed) {
-      target.solverState = target.solver.applyHeartbleed(target.solverState, result.logEntries)
-    }
+    target.solverState = await workerApplyHeartbleed(target.solverState, result.logEntries)
   } else if (result.type === "labreportResult") {
-    if (target.solver.applyLabreport) {
-      target.solverState = target.solver.applyLabreport(target.solverState, {
-        coords: result.coords,
-        north: result.north, east: result.east,
-        south: result.south, west: result.west,
-      })
-    }
+    target.solverState = await workerApplyLabreport(target.solverState, {
+      coords: result.coords,
+      north: result.north, east: result.east,
+      south: result.south, west: result.west,
+    })
   }
 }
 
@@ -596,11 +631,11 @@ function handleWorkerTimeouts(
   }
 }
 
-function dispatchTasks(
+async function dispatchTasks(
   ns: NS,
   targetStates: Map<string, TargetState>,
   workerRegistry: Map<string, WorkerInfo>,
-): void {
+): Promise<void> {
   const now = Date.now()
 
   // Helper: send a command to a specific worker and update tracking
@@ -642,92 +677,87 @@ function dispatchTasks(
     }
   }
 
-  // Dispatch new tasks
+  // Collect all targets that need nextGuess, dispatch them in parallel via worker
+  const pending: { hostname: string; target: TargetState }[] = []
   for (const [hostname, target] of targetStates) {
-    if (target.done) continue
-    if (target.pendingGuess !== null) continue
+    if (target.done || target.pendingGuess !== null) continue
+    pending.push({ hostname, target })
+  }
 
-    const next = target.solver.nextGuess(target.solverState, {
-      target: hostname,
-      details: target.details,
-    })
-    if (!next) {
-      const s = target.solverState as unknown as Record<string, unknown>
-      if (s.phase === "labreport" || (s.phase === "move" && !s.coords)) {
-        for (const [workerHost, reach] of workerReach) {
-          if (reach.has(hostname)) {
-            const wi = workerRegistry.get(workerHost)!
-            sendCommand(wi, { type: "labreport", target: hostname, solverId: target.solverState.type })
-            target.pendingGuess = "labreport"
-            target.pendingWorker = workerHost
-            target.pendingAt = now
-            break
-          }
+  if (pending.length > 0 && _solverWorker) {
+    const results = await Promise.all(pending.map(({ hostname, target }) =>
+      workerNextGuess(target.solverState, hostname, target.details).then(
+        ({ state, next }) => {
+          target.solverState = state
+          return { hostname, target, next }
         }
+      )
+    ))
+
+    for (const { hostname, target, next } of results) {
+      if (!next) {
+        const s = target.solverState as unknown as Record<string, unknown>
+        if (s.phase === "labreport" || (s.phase === "move" && !s.coords)) {
+          for (const [workerHost, reach] of workerReach) {
+            if (reach.has(hostname)) {
+              const wi = workerRegistry.get(workerHost)!
+              const solverId = (target.solverState as unknown as Record<string, unknown>).type as string
+              sendCommand(wi, { type: "labreport", target: hostname, solverId })
+              target.pendingGuess = "labreport"
+              target.pendingWorker = workerHost
+              target.pendingAt = now
+              break
+            }
+          }
+          continue
+        }
+
+        if (s.needsRecheck === true) continue
+
+        target.done = true
+        target.pendingGuess = "EXHAUSTED"
         continue
       }
 
-      if (s.needsRecheck === true) continue
+      for (const [workerHost, reach] of workerReach) {
+        if (reach.has(hostname)) {
+          const wi = workerRegistry.get(workerHost)!
+          const taskType: "guess" | "heartbleed" =
+            next.detail?.startsWith("heartbleed") ? "heartbleed" : "guess"
 
-      target.done = true
-      target.pendingGuess = "EXHAUSTED"
-      continue
-    }
+          if (next.detail?.startsWith("labreport")) {
+            const solverId = (target.solverState as unknown as Record<string, unknown>).type as string
+            sendCommand(wi, { type: "labreport", target: hostname, solverId })
+          } else {
+            const solverId = (target.solverState as unknown as Record<string, unknown>).type as string
+            sendCommand(wi, { type: taskType, target: hostname, solverId, guess: next.guess, detail: next.detail })
+          }
 
-    for (const [workerHost, reach] of workerReach) {
-      if (reach.has(hostname)) {
-        const wi = workerRegistry.get(workerHost)!
-        const taskType: "guess" | "heartbleed" =
-          next.detail?.startsWith("heartbleed") ? "heartbleed" : "guess"
-
-        if (next.detail?.startsWith("labreport")) {
-          sendCommand(wi, { type: "labreport", target: hostname, solverId: target.solverState.type })
-        } else {
-          sendCommand(wi, { type: taskType, target: hostname, solverId: target.solverState.type, guess: next.guess, detail: next.detail })
+          target.pendingGuess = next.guess
+          target.pendingWorker = workerHost
+          target.pendingAt = now
+          break
         }
-
-        target.pendingGuess = next.guess
-        target.pendingWorker = workerHost
-        target.pendingAt = now
-        break
       }
     }
   }
 }
 
-function registerTarget(
+async function registerTarget(
   targetStates: Map<string, TargetState>,
   dnet: DarknetCrawlApi,
   hostname: string,
-): void {
+): Promise<void> {
   if (targetStates.has(hostname)) return
   const details = dnet.getServerDetails(hostname)
-  if (!details || details.hasSession) return
+  if (!details || details.hasSession || !_solverWorker) return
 
-  // BellaCuore range: "nulla,DCCCLXV" format needs binary search via bellaCuoreRange
-  // bellaCuoreSingle returns dispatched:true for range data; substitute here
-  let solver: SolverModule | null = lookupSolver(details)
-  let solverState: SolverState | null = null
-
-  if (details.modelId === "BellaCuore" && details.data.includes(",")) {
-    // Range format — use the bellaCuoreRange solver
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rangeState = bellaCuoreRange.initSolver(details) as any
-    if (rangeState.lo > rangeState.hi) { /* invalid range */ }
-    else {
-      solver = bellaCuoreRange
-      solverState = rangeState
-    }
-  } else if (solver) {
-    solverState = solver.initSolver(details)
-  }
-
-  if (!solver || !solverState) return
+  let solverState = await workerInitSolver(details)
+  if (!solverState) return
 
   targetStates.set(hostname, {
     hostname,
     details,
-    solver,
     solverState,
     done: false,
     password: null,
@@ -889,6 +919,46 @@ export async function runDarknetCrawl(
   let pid = await launchDarkwebCrawlWorker(ns, source, sessionId, darkwebPort)
   workerRegistry.get(DARKWEB)!.pid = pid
 
+  // Create solver web worker once at startup (outside the loop).
+  // Pattern from contractSolver.ts, but since solverWorker.js has ES module
+  // imports (Vite compiles each file individually, not as a standalone bundle),
+  // we assemble the full worker code by reading all dependencies and wrapping
+  // them as a single classic Worker script (no import/export in Blob URLs).
+  try {
+    const configRaw = ns.read("darknet/config.js")
+    const solverRaw = ns.read("darknet/solverState.js")
+    const workerRaw = ns.read("darknet/solverWorker.js")
+    if (configRaw && solverRaw && workerRaw) {
+      // Strip import/export declarations so the code can run as a classic script.
+      // "import { ... } from '...'" → removed
+      // "import type { ... } from '...'" → removed
+      // "export function" → "function"
+      // "export const" → "const"
+      // "export { ... }" → removed
+      // "export type { ... }" → removed
+      const stripModule = (code: string): string => {
+        return code
+          .replace(/^import\s+type\s*\{[^}]*\}\s*from\s*['"].*?['"]\s*;?\s*$/gm, "")
+          .replace(/^import\s+\{[^}]*\}\s*from\s*['"].*?['"]\s*;?\s*$/gm, "")
+          .replace(/^import\s+['"].*?['"]\s*;?\s*$/gm, "")
+          .replace(/^export\s+type\s*\{[^}]*\}\s*;?\s*$/gm, "")
+          .replace(/^export\s+\{[^}]*\}\s*;?\s*$/gm, "")
+          .replace(/^export\s+(default\s+)?(function|const|let|var|class|async\s+function)\b/gm, "$2")
+          .replace(/^export\s+(default\s+)?(interface|type)\b/gm, "$2")
+      }
+      const fullCode = stripModule(configRaw) + "\n" + stripModule(solverRaw) + "\n" + stripModule(workerRaw)
+      if (fullCode.length > 200) {
+        const blobUrl = URL.createObjectURL(new Blob([fullCode], { type: "text/javascript" }))
+        _solverWorker = new Worker(blobUrl)
+        _solverWorker.onmessage = (e: MessageEvent) => {
+          const data = e.data as { id: number } & Record<string, unknown>
+          const resolve = _solverWorkerPromises.get(data.id)
+          if (resolve) { _solverWorkerPromises.delete(data.id); resolve(data) }
+        }
+      }
+    }
+  } catch { /* worker unavailable — solver calls become no-ops */ }
+
   // Task orchestration state
   const targetStates = new Map<string, TargetState>()
   const solverTimings = new Map<string, { count: number; totalMs: number }>()
@@ -929,13 +999,13 @@ export async function runDarknetCrawl(
 
   if (continuous) {
     while (true) {
-      drainReportPort(ns, reportPort, targetStates, solverTimings, workerRegistry, spawning, reports, activeOps, cacheOpens, sessionId, registry)
+      await drainReportPort(ns, reportPort, targetStates, solverTimings, workerRegistry, spawning, reports, activeOps, cacheOpens, sessionId, registry)
       pollTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
 
       // Register new unauthenticated targets from worker reports + dispatch spawns for authenticated neighbors
       for (const [hostname, report] of reports) {
         if (report.authenticated === false && !targetStates.has(hostname)) {
-          registerTarget(targetStates, dnet, hostname)
+          await registerTarget(targetStates, dnet, hostname)
         }
         if (report.authenticated === true && targetStates.has(hostname)) {
           targetStates.delete(hostname)
@@ -1001,7 +1071,7 @@ export async function runDarknetCrawl(
       }
 
       // Dispatch auth tasks
-      dispatchTasks(ns, targetStates, workerRegistry)
+      await dispatchTasks(ns, targetStates, workerRegistry)
 
       // Time out unresponsive workers
       handleWorkerTimeouts(ns, workerRegistry, spawning)
@@ -1062,12 +1132,12 @@ export async function runDarknetCrawl(
   }
 
   while (ns.isRunning(pid)) {
-    drainReportPort(ns, reportPort, targetStates, solverTimings, workerRegistry, spawning, reports, activeOps, cacheOpens, sessionId, registry)
+    await drainReportPort(ns, reportPort, targetStates, solverTimings, workerRegistry, spawning, reports, activeOps, cacheOpens, sessionId, registry)
     pollTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
 
     for (const [hostname, report] of reports) {
       if (report.authenticated === false && !targetStates.has(hostname)) {
-        registerTarget(targetStates, dnet, hostname)
+        await registerTarget(targetStates, dnet, hostname)
       }
       if (report.authenticated === true && targetStates.has(hostname)) {
         targetStates.delete(hostname)
@@ -1127,7 +1197,7 @@ export async function runDarknetCrawl(
       }
     }
 
-    dispatchTasks(ns, targetStates, workerRegistry)
+    await dispatchTasks(ns, targetStates, workerRegistry)
 
     handleWorkerTimeouts(ns, workerRegistry, spawning)
 
