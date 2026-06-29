@@ -1504,9 +1504,11 @@ const openWebAccessPoint: SolverModule<OpenWebAccessPointState> = {
 }
 
 // --- Labyrinth ---
+//
+// Game stores maze position per script PID (ns.dnet.labreport / auth on the lab). Each crawl
+// worker adjacent to the lab has its own session — state is keyed by explorer worker hostname.
 
-interface LabyrinthState extends SolverState {
-  type: "labyrinth"
+interface LabyrinthSession {
   visited: string[]
   path: string[]
   coords: [number, number] | null
@@ -1514,69 +1516,81 @@ interface LabyrinthState extends SolverState {
   phase: "labreport" | "move" | "done"
 }
 
+interface LabyrinthState extends SolverState {
+  type: "labyrinth"
+  sessions: Record<string, LabyrinthSession>
+}
+
 const LABYRINTH_DIRS: Record<string, [number, number]> = { n: [0, -2], e: [2, 0], s: [0, 2], w: [-2, 0] }
 const LABYRINTH_OPPOSITE: Record<string, string> = { n: "s", e: "w", s: "n", w: "e" }
 
+function labyrinthFreshSession(): LabyrinthSession {
+  return { visited: [], path: [], coords: null, walls: null, phase: "labreport" }
+}
+
+function labyrinthSession(state: LabyrinthState, workerHost: string): LabyrinthSession {
+  if (!state.sessions[workerHost]) {
+    state.sessions[workerHost] = labyrinthFreshSession()
+  }
+  return state.sessions[workerHost]!
+}
+
 const labyrinth: SolverModule<LabyrinthState> = {
   initSolver(_details) {
-    return { type: "labyrinth", visited: [], path: [], coords: null, walls: null, phase: "labreport" }
+    return { type: "labyrinth", sessions: {} }
   },
-  nextGuess(state) {
-    if (state.phase === "done") return null
-    // Needs labreport before moving — master should heartbleed first
-    if (state.phase === "labreport" || !state.coords || !state.walls) return null
+  nextGuess(state, context) {
+    const workerHost = context.explorerWorker
+    if (!workerHost) return null
+    const session = labyrinthSession(state, workerHost)
+    if (session.phase === "done") return null
+    if (session.phase === "labreport" || !session.coords || !session.walls) return null
 
-    const [x, y] = state.coords
+    const [x, y] = session.coords
     const key = `${x},${y}`
-    if (!state.visited.includes(key)) state.visited.push(key)
+    if (!session.visited.includes(key)) session.visited.push(key)
 
-    // Try each unvisited direction
     for (const [dir, [dx, dy]] of Object.entries(LABYRINTH_DIRS)) {
-      if (!state.walls[dir as keyof typeof state.walls]) continue
+      if (!session.walls[dir as keyof typeof session.walls]) continue
       const nx = x + dx!
       const ny = y + dy!
       const nkey = `${nx},${ny}`
-      if (state.visited.includes(nkey)) continue
-      return { guess: dir, detail: `move ${dir}` }
+      if (session.visited.includes(nkey)) continue
+      return { guess: dir, detail: `move ${dir}@${workerHost}` }
     }
 
-    // No unvisited — backtrack
-    if (state.path.length > 0) {
-      const last = state.path.pop()!
-      return { guess: LABYRINTH_OPPOSITE[last]!, detail: `back ${last}` }
+    if (session.path.length > 0) {
+      const last = session.path.pop()!
+      return { guess: LABYRINTH_OPPOSITE[last]!, detail: `back ${last}@${workerHost}` }
     }
 
-    // Explored everything
-    state.phase = "done"
+    session.phase = "done"
     return null
   },
-  applyResult(state, guess, result) {
-    if (result.success) {
-      // The authenticate data is the password
-      return state
-    }
-    // Direction was accepted (player moved) — record in path
+  applyResult(state, guess, result, context) {
+    const workerHost = context?.explorerWorker
+    if (!workerHost) return state
+    const session = labyrinthSession(state, workerHost)
+    if (result.success) return state
     if (guess === "n" || guess === "e" || guess === "s" || guess === "w") {
-      // If this was a forward move (not backtrack), push to path
-      if (state.path.length === 0 || guess !== LABYRINTH_OPPOSITE[state.path[state.path.length - 1]!]) {
-        state.path.push(guess)
+      if (session.path.length === 0 || guess !== LABYRINTH_OPPOSITE[session.path[session.path.length - 1]!]) {
+        session.path.push(guess)
       }
-      // Need labreport to get new position
-      state.coords = null
-      state.walls = null
-      state.phase = "labreport"
+      session.coords = null
+      session.walls = null
+      session.phase = "labreport"
     }
     return state
   },
   applyLabreport(state, report) {
-    state.coords = report.coords as [number, number]
-    state.walls = { north: report.north, east: report.east, south: report.south, west: report.west }
-    state.phase = "move"
-    // Mark current position as visited
-    const [x, y] = state.coords
+    const session = labyrinthSession(state, report.workerHost)
+    session.coords = report.coords as [number, number]
+    session.walls = { north: report.north, east: report.east, south: report.south, west: report.west }
+    session.phase = "move"
+    const [x, y] = session.coords
     const key = `${x},${y}`
-    if (!state.visited.includes(key)) {
-      state.visited.push(key)
+    if (!session.visited.includes(key)) {
+      session.visited.push(key)
     }
     return state
   },

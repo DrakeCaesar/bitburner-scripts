@@ -451,7 +451,7 @@ export type WorkerResponse =
   | { type: "executing"; workerHost: string; commandType: string; deadlineAt: number }
   | { type: "guessResult"; target: string; solverId: string; workerHost?: string; guess?: string; success: boolean; feedback?: string; message?: string }
   | { type: "heartbleedResult"; target: string; solverId: string; logEntries: string[] }
-  | { type: "labreportResult"; target: string; solverId: string; coords: number[]; north: boolean; east: boolean; south: boolean; west: boolean }
+  | { type: "labreportResult"; target: string; solverId: string; workerHost: string; coords: number[]; north: boolean; east: boolean; south: boolean; west: boolean }
   | { type: "probeResult"; workerHost: string; targets: string[]; freeRam: number; blockedRam: number }
   | { type: "spawnResult"; workerHost: string; target: string; success: boolean; childPid: number }
   | { type: "reallocResult"; workerHost: string; freeRam: number; blockedRam: number }
@@ -479,6 +479,8 @@ export interface SolverGuessResult {
 export interface SolverContext {
   target: string
   details: DarknetServerDetailsForFormulas
+  /** Crawl worker host exploring a labyrinth (game tracks maze position per script PID). */
+  explorerWorker?: string
 }
 
 /** Solver state machine functions — one module per model. */
@@ -488,11 +490,14 @@ export interface SolverModule<S extends SolverState = SolverState> {
   /** Return the next guess to dispatch, or null if the solver is done. */
   nextGuess(state: S, context: SolverContext): SolverNextGuess | null
   /** Process the result of a guess. Returns updated state. */
-  applyResult(state: S, guess: string, result: SolverGuessResult): S
+  applyResult(state: S, guess: string, result: SolverGuessResult, context?: SolverContext): S
   /** Process heartbleed log entries. Returns updated state. */
   applyHeartbleed?(state: S, logEntries: string[]): S
-  /** Process labreport data (Labyrinth only). Returns updated state. */
-  applyLabreport?(state: S, report: { coords: number[]; north: boolean; east: boolean; south: boolean; west: boolean }): S
+  /** Process labreport data (Labyrinth only). workerHost keys the per-worker maze session. */
+  applyLabreport?(
+    state: S,
+    report: { coords: number[]; north: boolean; east: boolean; south: boolean; west: boolean; workerHost: string },
+  ): S
 }
 
 export function tryConnectToSession(dnet: DarknetCrawlApi, host: string, password: string): boolean {

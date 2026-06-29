@@ -170,6 +170,7 @@ function parseWorkerResponse(raw: unknown): WorkerResponse | null {
       }
       case "labreportResult": {
         if (typeof row.target !== "string" || typeof row.solverId !== "string") return null
+        if (typeof row.workerHost !== "string") return null
         if (!Array.isArray(row.coords)) return null
         if (typeof row.north !== "boolean" || typeof row.east !== "boolean" ||
             typeof row.south !== "boolean" || typeof row.west !== "boolean") return null
@@ -177,6 +178,7 @@ function parseWorkerResponse(raw: unknown): WorkerResponse | null {
           type: "labreportResult",
           target: row.target,
           solverId: row.solverId,
+          workerHost: row.workerHost,
           coords: row.coords as number[],
           north: row.north, east: row.east,
           south: row.south, west: row.west,
@@ -579,6 +581,8 @@ interface TargetState {
   lastPlanAt: number
   /** When the target became unreachable from idle workers (0 = reachable). */
   unreachableSince: number
+  /** Labyrinth: crawl worker whose PID owns the in-flight lab session. */
+  explorerWorker: string | null
 }
 
 // ---- labyrinth stasis ----
@@ -618,6 +622,51 @@ function labyrinthNeighborHosts(
     }
   }
   return [...neighbors].sort()
+}
+
+type LabyrinthSessionView = {
+  phase: string
+  coords: unknown
+  walls: unknown
+}
+
+function asLabyrinthState(state: SolverState): { sessions: Record<string, LabyrinthSessionView> } | null {
+  const raw = state as unknown as Record<string, unknown>
+  if (raw.type !== "labyrinth") return null
+  const sessions = raw.sessions
+  if (typeof sessions !== "object" || sessions === null) return null
+  return { sessions: sessions as Record<string, LabyrinthSessionView> }
+}
+
+function adjacentIdleWorkersForTarget(
+  hostname: string,
+  workerReach: Map<string, Set<string>>,
+  workerRegistry: Map<string, WorkerInfo>,
+): string[] {
+  const out: string[] = []
+  for (const [workerHost, reach] of workerReach) {
+    if (!reach.has(hostname)) continue
+    const wi = workerRegistry.get(workerHost)
+    if (!wi?.probed || !wi.idle) continue
+    out.push(workerHost)
+  }
+  return out.sort()
+}
+
+function labyrinthNeedsLabreport(session: LabyrinthSessionView | undefined): boolean {
+  if (!session) return true
+  return session.phase === "labreport" || (session.phase === "move" && (!session.coords || !session.walls))
+}
+
+function labyrinthAnyWorkRemaining(
+  lab: { sessions: Record<string, LabyrinthSessionView> },
+  workerHosts: string[],
+): boolean {
+  for (const w of workerHosts) {
+    const s = lab.sessions[w]
+    if (!s || s.phase !== "done") return true
+  }
+  return false
 }
 
 /** Apply stasis links on authenticated lab neighbors while seats remain. */
@@ -708,13 +757,29 @@ async function workerInitSolver(details: DarknetServerDetailsForFormulas): Promi
   return resp.state as SolverState
 }
 
-async function workerNextGuess(state: SolverState, hostname: string, details: DarknetServerDetailsForFormulas): Promise<{ state: SolverState; next: { guess: string; detail: string | null } | null }> {
-  const resp = await callSolverWorker({ type: "nextGuess", state, target: hostname, details })
+async function workerNextGuess(
+  state: SolverState,
+  hostname: string,
+  details: DarknetServerDetailsForFormulas,
+  explorerWorker?: string,
+): Promise<{ state: SolverState; next: { guess: string; detail: string | null } | null }> {
+  const resp = await callSolverWorker({
+    type: "nextGuess", state, target: hostname, details, explorerWorker,
+  })
   return { state: (resp.state as SolverState) ?? state, next: resp.next as { guess: string; detail: string | null } | null }
 }
 
-async function workerApplyResult(state: SolverState, guess: string, result: { success: boolean; feedback?: string; message?: string }): Promise<SolverState> {
-  const resp = await callSolverWorker({ type: "applyResult", state, guess, result })
+async function workerApplyResult(
+  state: SolverState,
+  guess: string,
+  result: { success: boolean; feedback?: string; message?: string },
+  hostname: string,
+  details: DarknetServerDetailsForFormulas,
+  explorerWorker?: string,
+): Promise<SolverState> {
+  const resp = await callSolverWorker({
+    type: "applyResult", state, guess, result, target: hostname, details, explorerWorker,
+  })
   return (resp.state as SolverState) ?? state
 }
 
@@ -723,7 +788,10 @@ async function workerApplyHeartbleed(state: SolverState, logEntries: string[]): 
   return (resp.state as SolverState) ?? state
 }
 
-async function workerApplyLabreport(state: SolverState, report: { coords: number[]; north: boolean; east: boolean; south: boolean; west: boolean }): Promise<SolverState> {
+async function workerApplyLabreport(
+  state: SolverState,
+  report: { coords: number[]; north: boolean; east: boolean; south: boolean; west: boolean; workerHost: string },
+): Promise<SolverState> {
   const resp = await callSolverWorker({ type: "applyLabreport", state, report })
   return (resp.state as SolverState) ?? state
 }
@@ -902,7 +970,9 @@ async function applyTaskResult(
     ? (result.guess ?? target.inFlightGuess ?? target.pendingGuess ?? "")
     : (target.pendingGuess ?? "")
 
-  const completedWorker = (result.type === "guessResult" && result.workerHost)
+  const completedWorker = (
+    (result.type === "guessResult" || result.type === "labreportResult") && result.workerHost
+  )
     ? result.workerHost
     : target.pendingWorker
   target.pendingGuess = null
@@ -940,6 +1010,9 @@ async function applyTaskResult(
       target.solverState,
       dispatchedGuess ?? "",
       { success: false, feedback: result.feedback, message: result.message },
+      target.hostname,
+      target.details,
+      target.explorerWorker ?? completedWorker ?? undefined,
     )
   } else if (result.type === "heartbleedResult") {
     target.solverState = await workerApplyHeartbleed(target.solverState, result.logEntries)
@@ -948,7 +1021,9 @@ async function applyTaskResult(
       coords: result.coords,
       north: result.north, east: result.east,
       south: result.south, west: result.west,
+      workerHost: result.workerHost,
     })
+    target.explorerWorker = result.workerHost
   }
 }
 
@@ -996,11 +1071,13 @@ function tryDispatchGuess(
   target: TargetState,
   next: { guess: string; detail: string | null },
   now: number,
+  forcedWorker?: string,
 ): boolean {
-  for (const [workerHost, reach] of workerReach) {
-    if (!reach.has(hostname)) continue
+  const dispatchVia = (workerHost: string): boolean => {
+    const reach = workerReach.get(workerHost)
+    if (!reach?.has(hostname)) return false
     const wi = workerRegistry.get(workerHost)
-    if (!wi) continue
+    if (!wi) return false
 
     const taskType: "guess" | "heartbleed" =
       next.detail?.startsWith("heartbleed") ? "heartbleed" : "guess"
@@ -1015,10 +1092,18 @@ function tryDispatchGuess(
     target.pendingGuess = next.guess
     target.pendingWorker = workerHost
     target.inFlightGuess = next.guess
+    target.explorerWorker = workerHost
     target.pendingAt = now
     target.plannedNext = null
     target.unreachableSince = 0
     return true
+  }
+
+  if (forcedWorker) return dispatchVia(forcedWorker)
+
+  for (const [workerHost, reach] of workerReach) {
+    if (!reach.has(hostname)) continue
+    if (dispatchVia(workerHost)) return true
   }
   return false
 }
@@ -1053,7 +1138,10 @@ async function dispatchTasks(
   for (const [hostname, target] of targetStates) {
     if (target.done || target.pendingGuess !== null || !target.plannedNext) continue
     if (!reachableTargets.has(hostname)) continue
-    tryDispatchGuess(ns, dnet, workerRegistry, workerReach, hostname, target, target.plannedNext, now)
+    tryDispatchGuess(
+      ns, dnet, workerRegistry, workerReach, hostname, target, target.plannedNext, now,
+      target.explorerWorker ?? undefined,
+    )
   }
 
   const needPlan: { hostname: string; target: TargetState }[] = []
@@ -1085,23 +1173,57 @@ async function dispatchTasks(
       target.lastPlanAt = now
 
       if (!next) {
-        const s = target.solverState as unknown as Record<string, unknown>
-        if (s.phase === "labreport" || (s.phase === "move" && !s.coords)) {
-          for (const [workerHost, reach] of workerReach) {
-            if (reach.has(hostname)) {
-              const wi = workerRegistry.get(workerHost)!
-              const solverId = (target.solverState as unknown as Record<string, unknown>).type as string
-              sendWorkerCommand(ns, dnet, wi, { type: "labreport", target: hostname, solverId })
-              target.pendingGuess = "labreport"
-              target.pendingWorker = workerHost
-              target.pendingAt = now
+        const lab = asLabyrinthState(target.solverState)
+        if (lab) {
+          const adjacent = adjacentIdleWorkersForTarget(hostname, workerReach, workerRegistry)
+          let dispatched = false
+
+          for (const workerHost of adjacent) {
+            const sess = lab.sessions[workerHost]
+            if (sess?.phase !== "move" || !sess.coords || !sess.walls) continue
+            const planned = await workerNextGuess(
+              target.solverState, hostname, target.details, workerHost,
+            )
+            target.solverState = planned.state
+            if (!planned.next) continue
+            if (tryDispatchGuess(
+              ns, dnet, workerRegistry, workerReach, hostname, target, planned.next, now, workerHost,
+            )) {
               target.plannedNext = null
-              break
+            } else {
+              target.plannedNext = planned.next
+              target.explorerWorker = workerHost
             }
+            dispatched = true
+            break
+          }
+          if (dispatched) continue
+
+          for (const workerHost of adjacent) {
+            if (!labyrinthNeedsLabreport(lab.sessions[workerHost])) continue
+            const wi = workerRegistry.get(workerHost)
+            if (!wi?.idle || !wi.probed) continue
+            const solverId = (target.solverState as unknown as Record<string, unknown>).type as string
+            sendWorkerCommand(ns, dnet, wi, { type: "labreport", target: hostname, solverId })
+            target.pendingGuess = "labreport"
+            target.pendingWorker = workerHost
+            target.explorerWorker = workerHost
+            target.pendingAt = now
+            target.plannedNext = null
+            dispatched = true
+            break
+          }
+          if (dispatched) continue
+
+          if (adjacent.length > 0 && !labyrinthAnyWorkRemaining(lab, adjacent)) {
+            target.done = true
+            target.pendingGuess = "EXHAUSTED"
+            target.plannedNext = null
           }
           continue
         }
 
+        const s = target.solverState as unknown as Record<string, unknown>
         if (s.needsRecheck === true) continue
 
         target.done = true
@@ -1110,7 +1232,10 @@ async function dispatchTasks(
         continue
       }
 
-      if (!tryDispatchGuess(ns, dnet, workerRegistry, workerReach, hostname, target, next, now)) {
+      if (!tryDispatchGuess(
+        ns, dnet, workerRegistry, workerReach, hostname, target, next, now,
+        target.explorerWorker ?? undefined,
+      )) {
         target.plannedNext = next
       }
     }
@@ -1160,6 +1285,7 @@ async function registerTarget(
     plannedNext: null,
     lastPlanAt: 0,
     unreachableSince: 0,
+    explorerWorker: null,
   })
 }
 

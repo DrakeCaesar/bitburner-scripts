@@ -40,7 +40,8 @@ self.onmessage = (event: MessageEvent) => {
     guess?: string
     result?: SolverGuessResult
     logEntries?: string[]
-    report?: { coords: number[]; north: boolean; east: boolean; south: boolean; west: boolean }
+    report?: { coords: number[]; north: boolean; east: boolean; south: boolean; west: boolean; workerHost: string }
+    explorerWorker?: string
   }
   try {
     switch (msg.type) {
@@ -57,7 +58,12 @@ self.onmessage = (event: MessageEvent) => {
         if (!msg.state || !msg.target || !msg.details) { postMessage({ id: msg.id, error: "missing context" }); return }
         const mod = getModule(msg.state)
         if (!mod) { postMessage({ id: msg.id, error: "unknown solver" }); return }
-        const next = mod.nextGuess(msg.state, { target: msg.target, details: msg.details })
+        const context: SolverContext = {
+          target: msg.target,
+          details: msg.details,
+          explorerWorker: msg.explorerWorker,
+        }
+        const next = mod.nextGuess(msg.state, context)
         postMessage({ id: msg.id, state: msg.state, next })
         return
       }
@@ -65,7 +71,10 @@ self.onmessage = (event: MessageEvent) => {
         if (!msg.state || msg.guess == null || !msg.result) { postMessage({ id: msg.id, error: "missing args" }); return }
         const mod = getModule(msg.state)
         if (!mod) { postMessage({ id: msg.id, error: "unknown solver" }); return }
-        postMessage({ id: msg.id, state: mod.applyResult(msg.state, msg.guess, msg.result) })
+        const context: SolverContext | undefined = msg.target && msg.details
+          ? { target: msg.target, details: msg.details, explorerWorker: msg.explorerWorker }
+          : undefined
+        postMessage({ id: msg.id, state: mod.applyResult(msg.state, msg.guess, msg.result, context) })
         return
       }
       case "applyHeartbleed": {

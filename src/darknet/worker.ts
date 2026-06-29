@@ -593,6 +593,7 @@ async function executeTask(
           type: "labreportResult",
           target: cmd.target,
           solverId: cmd.solverId,
+          workerHost: hostname,
           coords: result.coords,
           north: result.north, east: result.east,
           south: result.south, west: result.west,
