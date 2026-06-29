@@ -54,9 +54,6 @@ export const DNET_DEBUG_RAW_API_CONSOLE = false
 /** Log master target registration / prune / report-merge decisions (throttled per host). */
 export const DNET_DEBUG_MASTER_DECISIONS = false
 
-/** After 401 auth, peek/consume heartbleed cycles while hunting for a matching attempt log. */
-export const HEARTBLEED_AUTH_LOG_MAX_RETRIES = 5
-
 /** {@link DarknetServerDetails.modelId} for labyrinth servers (all variants). */
 export const LABYRINTH_MODEL_ID = "(The Labyrinth)"
 
@@ -452,7 +449,7 @@ export type WorkerCommand = WorkerCommandPayload & WorkerCommandMeta
 export type WorkerResponse =
   | { type: "ready"; workerHost: string; pid: number }
   | { type: "executing"; workerHost: string; commandType: string; deadlineAt: number }
-  | { type: "guessResult"; target: string; solverId: string; success: boolean; feedback?: string; message?: string }
+  | { type: "guessResult"; target: string; solverId: string; workerHost?: string; guess?: string; success: boolean; feedback?: string; message?: string }
   | { type: "heartbleedResult"; target: string; solverId: string; logEntries: string[] }
   | { type: "labreportResult"; target: string; solverId: string; coords: number[]; north: boolean; east: boolean; south: boolean; west: boolean }
   | { type: "probeResult"; workerHost: string; targets: string[]; freeRam: number; blockedRam: number }

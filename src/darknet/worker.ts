@@ -18,7 +18,6 @@ import {
   type WorkerCommand,
   DARKNET_WORKER_FILES,
   DNET_DEBUG_RAW_API_CONSOLE,
-  HEARTBLEED_AUTH_LOG_MAX_RETRIES,
   writeCrawlReport,
   writeCrawlStatus,
 } from "./config"
@@ -37,17 +36,26 @@ interface AuthAttemptLog {
   message: string
 }
 
+/** Coerce heartbleed auth log data to the string feedback solvers expect. */
+function normalizeAuthFeedback(data: unknown): string | undefined {
+  if (typeof data === "string") return data
+  if (typeof data === "boolean") return data ? "true" : "false"
+  if (typeof data === "number" && Number.isFinite(data)) return String(data)
+  return undefined
+}
+
 /** True when a heartbleed line is JSON auth feedback for this guess (not ambient server noise). */
 function parseAuthAttemptLog(log: string, guess: string): AuthAttemptLog | null {
   try {
     const entry: unknown = JSON.parse(log)
     if (typeof entry !== "object" || entry === null) return null
     const rec = entry as Record<string, unknown>
-    if (rec["passwordAttempted"] !== guess) return null
+    if (String(rec["passwordAttempted"]) !== guess) return null
     if (rec["code"] !== 401) return null
     if (typeof rec["message"] !== "string") return null
-    if (!("data" in rec) || typeof rec["data"] !== "string") return null
-    return { data: rec["data"], message: rec["message"] }
+    const data = normalizeAuthFeedback(rec["data"])
+    if (data === undefined) return null
+    return { data, message: rec["message"] }
   } catch {
     return null
   }
@@ -55,7 +63,7 @@ function parseAuthAttemptLog(log: string, guess: string): AuthAttemptLog | null 
 
 /**
  * After 401 auth, peek heartbleed logs until we find feedback for this guess.
- * Unrelated lines are consumed (peek: false) and skipped, up to HEARTBLEED_AUTH_LOG_MAX_RETRIES.
+ * Unrelated lines are consumed (peek: false) and skipped until the log is empty.
  */
 async function scrapeAuthFeedbackAfter401(
   dnet: DarknetCrawlApi,
@@ -64,7 +72,7 @@ async function scrapeAuthFeedbackAfter401(
   worker: string,
   solverId: string,
 ): Promise<AuthAttemptLog | null> {
-  for (let retryIdx = 0; retryIdx < HEARTBLEED_AUTH_LOG_MAX_RETRIES; retryIdx++) {
+  for (let retryIdx = 0; ; retryIdx++) {
     const hb = await dnet.heartbleed(target, { peek: true })
     debugRawDnetApi("heartbleed", {
       worker,
@@ -92,7 +100,6 @@ async function scrapeAuthFeedbackAfter401(
       consumedUnmatched: hb.logs[0],
     }, consumed)
   }
-  return null
 }
 
 // ---- file type helpers ----
@@ -467,6 +474,7 @@ async function executeTask(
         type: "guessResult",
         target: cmd.target,
         solverId: cmd.solverId,
+        workerHost: hostname,
         success: false,
         message: "notNeighbor",
       }))
@@ -486,8 +494,10 @@ async function executeTask(
           type: "guessResult",
           target: cmd.target,
           solverId: cmd.solverId,
+          workerHost: hostname,
+          guess: cmd.guess,
           success: true,
-          feedback: typeof result.data === "string" ? result.data : undefined,
+          feedback: normalizeAuthFeedback(result.data),
         }))
         return
       }
@@ -510,6 +520,8 @@ async function executeTask(
         type: "guessResult",
         target: cmd.target,
         solverId: cmd.solverId,
+        workerHost: hostname,
+        guess: cmd.guess,
         success: false,
         feedback,
         message,
@@ -526,6 +538,8 @@ async function executeTask(
         type: "guessResult",
         target: cmd.target,
         solverId: cmd.solverId,
+        workerHost: hostname,
+        guess: cmd.guess,
         success: false,
       }))
     }

@@ -141,12 +141,19 @@ function parseWorkerResponse(raw: unknown): WorkerResponse | null {
       case "guessResult": {
         if (typeof row.target !== "string" || typeof row.solverId !== "string") return null
         if (typeof row.success !== "boolean") return null
+        const feedbackRaw = row.feedback
+        let feedback: string | undefined
+        if (typeof feedbackRaw === "string") feedback = feedbackRaw
+        else if (typeof feedbackRaw === "boolean") feedback = feedbackRaw ? "true" : "false"
+        else if (typeof feedbackRaw === "number" && Number.isFinite(feedbackRaw)) feedback = String(feedbackRaw)
         return {
           type: "guessResult",
           target: row.target,
           solverId: row.solverId,
+          guess: typeof row.guess === "string" ? row.guess : undefined,
+          workerHost: typeof row.workerHost === "string" ? row.workerHost : undefined,
           success: row.success,
-          feedback: typeof row.feedback === "string" ? row.feedback : undefined,
+          feedback,
           message: typeof row.message === "string" ? row.message : undefined,
         }
       }
@@ -356,6 +363,7 @@ function pruneStaleReports(
     const inTargetStates = targetStates.has(hostname)
     if (inTargetStates) {
       const target = targetStates.get(hostname)!
+      if (target.done && target.pendingGuess === "EXHAUSTED") continue
       if (target.pendingGuess !== null && target.pendingGuess !== "EXHAUSTED") continue
     }
 
@@ -561,6 +569,8 @@ interface TargetState {
   password: string | null
   pendingGuess: string | null
   pendingWorker: string | null
+  /** Guess sent to worker; kept until applyResult runs (survives dispatch timeout). */
+  inFlightGuess: string | null
   pendingAt: number
   startedAt: number
   /** Cached next guess when no idle neighbor worker could dispatch yet. */
@@ -876,10 +886,30 @@ async function applyTaskResult(
   if (!target) return
   if ((target.solverState as unknown as Record<string, unknown>).type !== result.solverId) return
 
-  const dispatchedGuess = target.pendingGuess
-  const completedWorker = target.pendingWorker
+  if (result.type === "guessResult" && result.guess != null
+      && target.inFlightGuess != null && result.guess !== target.inFlightGuess) {
+    if (result.workerHost) {
+      const wi = workerRegistry.get(result.workerHost)
+      if (wi) {
+        wi.failures = 0
+        markWorkerIdle(wi, result.type, Date.now())
+      }
+    }
+    return
+  }
+
+  const dispatchedGuess = result.type === "guessResult"
+    ? (result.guess ?? target.inFlightGuess ?? target.pendingGuess ?? "")
+    : (target.pendingGuess ?? "")
+
+  const completedWorker = (result.type === "guessResult" && result.workerHost)
+    ? result.workerHost
+    : target.pendingWorker
   target.pendingGuess = null
   target.pendingWorker = null
+  if (result.type === "guessResult") {
+    target.inFlightGuess = null
+  }
 
   // Accumulate timing for this solver step
   if (target.pendingAt > 0) {
@@ -984,6 +1014,7 @@ function tryDispatchGuess(
 
     target.pendingGuess = next.guess
     target.pendingWorker = workerHost
+    target.inFlightGuess = next.guess
     target.pendingAt = now
     target.plannedNext = null
     target.unreachableSince = 0
@@ -1123,6 +1154,7 @@ async function registerTarget(
     password: null,
     pendingGuess: null,
     pendingWorker: null,
+    inFlightGuess: null,
     pendingAt: 0,
     startedAt: Date.now(),
     plannedNext: null,
@@ -1493,13 +1525,15 @@ export async function runDarknetCrawl(
               password: target.password, authGuesses: undefined,
             })
             try { await dnet.authenticate(hostname, target.password) } catch { /* already done */ }
-          } else {
+          } else if (target.pendingGuess !== "EXHAUSTED") {
             reports.set(hostname, {
               type: "host", hostname, authenticated: false,
               password: null, authGuesses: undefined,
             })
           }
-          targetStates.delete(hostname)
+          if (target.pendingGuess !== "EXHAUSTED") {
+            targetStates.delete(hostname)
+          }
         }
       }
 
@@ -1575,13 +1609,15 @@ export async function runDarknetCrawl(
             password: target.password, authGuesses: undefined,
           })
           try { await dnet.authenticate(hostname, target.password) } catch { /* already done */ }
-        } else {
+        } else if (target.pendingGuess !== "EXHAUSTED") {
           reports.set(hostname, {
             type: "host", hostname, authenticated: false,
             password: null, authGuesses: undefined,
           })
         }
-        targetStates.delete(hostname)
+        if (target.pendingGuess !== "EXHAUSTED") {
+          targetStates.delete(hostname)
+        }
       }
     }
 

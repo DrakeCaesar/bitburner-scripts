@@ -985,8 +985,9 @@ const factoriOs: SolverModule<FactoriOsState> = {
   applyResult(state, guess, result) {
     if (result.success) return state
 
-    if (!state.probedZero && guess === "0") {
-      state.probedZero = true
+    // Divisor 0 always bogus; discard even if feedback says "true" or guess was lost on timeout.
+    if (guess === "0" || guess === "") {
+      if (!state.probedZero) state.probedZero = true
       return state
     }
 

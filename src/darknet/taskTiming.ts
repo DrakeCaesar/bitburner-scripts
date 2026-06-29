@@ -2,7 +2,6 @@ import { NS } from "@ns"
 import {
   DARKNET_CRAWL_SCRIPT,
   safeGetServerDetails,
-  HEARTBLEED_AUTH_LOG_MAX_RETRIES,
   type DarknetCrawlApi,
   type DarknetServerDetailsForFormulas,
   type WorkerCommandMeta,
@@ -79,6 +78,9 @@ function heartbleedTimeMs(ns: NS, dnet: DarknetCrawlApi, host: string): number {
   }
 }
 
+/** Game caps serverLogs at 200 lines (packetSniffing.ts); worst-case auth scrape drains all. */
+const HEARTBLEED_AUTH_LOG_DEADLINE_LINES = 200
+
 /** Predicted wall-clock duration for a worker command (before deadline multiplier). */
 export function estimateCommandMs(
   ns: NS,
@@ -90,8 +92,8 @@ export function estimateCommandMs(
       return PROBE_OVERHEAD_MS
     case "guess": {
       const hbMs = heartbleedTimeMs(ns, dnet, command.target)
-      // 401 path: up to N peek + consume pairs hunting for the auth attempt log.
-      const hbWorst = hbMs * HEARTBLEED_AUTH_LOG_MAX_RETRIES * 2
+      // 401 path: peek + consume pairs until auth log found or buffer empty.
+      const hbWorst = hbMs * HEARTBLEED_AUTH_LOG_DEADLINE_LINES * 2
       return authTimeMs(ns, dnet, command.target) + hbWorst
     }
     case "heartbleed":
