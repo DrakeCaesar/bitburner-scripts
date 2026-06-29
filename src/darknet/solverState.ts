@@ -1582,28 +1582,80 @@ const labyrinth: SolverModule<LabyrinthState> = {
 }
 
 // --- BigMo%od (triple modulo) ---
+//
+// Game formula: (password % n) % (((n - 1) % 32) + 1)
+// Probe with n > password so feedback equals password % d for d = ((n-1)%32)+1.
+// CRT over those remainders recovers the password. Use BigInt — Number CRT overflows
+// once the product of moduli exceeds ~2^53 (length 7 needs product ~2e11).
 
-// CRT helper: combine two coprime constraints x ≡ r1 (mod m1), x ≡ r2 (mod m2)
-function crtCombine(r1: number, m1: number, r2: number, m2: number): { r: number; m: number } | null {
-  // Extended Euclidean algorithm: find a, b such that a*m1 + b*m2 = 1
-  let [old_r, r] = [m1, m2]
-  let [old_s, s] = [1, 0]
-  let [old_t, t] = [0, 1]
-  while (r !== 0) {
-    const quotient = Math.floor(old_r / r)
-    ;[old_r, r] = [r, old_r - quotient * r]
-    ;[old_s, s] = [s, old_s - quotient * s]
-    ;[old_t, t] = [t, old_t - quotient * t]
+function crtCombineBigInt(r1: bigint, m1: bigint, r2: bigint, m2: bigint): { r: bigint; m: bigint } | null {
+  let a = m1
+  let b = m2
+  let s0 = 1n
+  let s1 = 0n
+  while (b !== 0n) {
+    const q = a / b
+    ;[a, b] = [b, a - q * b]
+    ;[s0, s1] = [s1, s0 - q * s1]
   }
-  const g = old_r
-  if ((r2 - r1) % g !== 0) return null // inconsistent constraints
+  const g = a
+  if ((r2 - r1) % g !== 0n) return null
   const lcm = (m1 / g) * m2
-  const x = (r1 + (r2 - r1) / g * old_s * m1) % lcm
-  return { r: (x + lcm) % lcm, m: lcm }
+  const x = (r1 + ((r2 - r1) / g) * s0 * m1) % lcm
+  return { r: ((x % lcm) + lcm) % lcm, m: lcm }
 }
 
-// Primes we can use as moduli (all < 32 since d = ((n-1)%32)+1 ≤ 32)
+function bigMoPasswordFromProbes(
+  resolved: { d: number; r: number }[],
+  pwMin: number,
+  pwMax: number,
+  length: number,
+): string | null {
+  if (resolved.length === 0) return null
+  let r = BigInt(resolved[0]!.r)
+  let m = BigInt(resolved[0]!.d)
+  for (let i = 1; i < resolved.length; i++) {
+    const combined = crtCombineBigInt(r, m, BigInt(resolved[i]!.r), BigInt(resolved[i]!.d))
+    if (!combined) return null
+    r = combined.r
+    m = combined.m
+  }
+  const pwMinB = BigInt(pwMin)
+  const pwMaxB = BigInt(pwMax)
+  let candidate = r
+  if (candidate < pwMinB) {
+    const k = (pwMinB - r + m - 1n) / m
+    candidate = r + k * m
+  }
+  if (candidate > pwMaxB) return null
+  const raw = candidate.toString()
+  if (raw.length > length) return null
+  if (raw.length < length) return raw.padStart(length, "0")
+  return raw
+}
+
+// Primes usable as inner modulus d = ((n-1)%32)+1 (each ≤ 31)
 const BIGMO_PRIMES = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31]
+
+/** Smallest prefix of BIGMO_PRIMES whose product covers the password range. */
+function bigMoPrimeModuliForLength(len: number): number[] {
+  const span = 10 ** len - 10 ** (len - 1) + 1
+  const moduli: number[] = []
+  let product = 1
+  for (const p of BIGMO_PRIMES) {
+    moduli.push(p)
+    product *= p
+    if (product >= span) break
+  }
+  return moduli
+}
+
+function bigMoProbeN(pwMax: number, d: number): number {
+  const target = d % 32
+  let n = pwMax + 1
+  while (n % 32 !== target) n++
+  return n
+}
 
 interface BigMoState extends SolverState {
   type: "bigMo"
@@ -1622,11 +1674,8 @@ const bigMoSolver: SolverModule<BigMoState> = {
     const pwMin = 10 ** (len - 1)
     const pwMax = 10 ** len - 1
     const probes: { n: number; d: number; r: number | null }[] = []
-    for (const d of BIGMO_PRIMES) {
-      const target = d % 32
-      let n = pwMax + 1
-      while (n % 32 !== target) n++
-      probes.push({ n, d, r: null })
+    for (const d of bigMoPrimeModuliForLength(len)) {
+      probes.push({ n: bigMoProbeN(pwMax, d), d, r: null })
     }
     return {
       type: "bigMo",
@@ -1646,31 +1695,15 @@ const bigMoSolver: SolverModule<BigMoState> = {
       state.phase = "solve"
     }
     if (state.phase === "solve") {
-      const resolved = state.probes.filter((p) => p.r !== null)
+      const resolved = state.probes.filter((p) => p.r !== null) as { d: number; r: number }[]
       if (resolved.length === 0) {
         state.finalDispatched = true
         return null
       }
-      let r = resolved[0]!.r!
-      let m = resolved[0]!.d
-      for (let i = 1; i < resolved.length; i++) {
-        const combined = crtCombine(r, m, resolved[i]!.r!, resolved[i]!.d)
-        if (!combined) { state.finalDispatched = true; return null }
-        r = combined.r
-        m = combined.m
-      }
-      const k = Math.ceil((state.pwMin - r) / m)
-      const candidate = r + k * m
-      if (candidate > state.pwMax) {
-        state.finalDispatched = true
-        return null
-      }
+      const padded = bigMoPasswordFromProbes(resolved, state.pwMin, state.pwMax, state.length)
       state.finalDispatched = true
-      const raw = String(candidate)
-      const padded = raw.length < state.length
-        ? "0".repeat(state.length - raw.length) + raw
-        : raw
-      return { guess: padded, detail: `bigMo CRT` }
+      if (!padded) return null
+      return { guess: padded, detail: "bigMo CRT" }
     }
     state.finalDispatched = true
     return null
