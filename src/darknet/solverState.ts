@@ -1619,6 +1619,27 @@ export function labyrinthMergeCell(
   }
 }
 
+/** Record an open step-1 passage after a successful move auth (midpoint is corridor). */
+export function labyrinthConfirmMovePassage(
+  map: Record<string, LabyrinthCellWalls>,
+  x: number,
+  y: number,
+  guess: string,
+): void {
+  const wallKey = LABYRINTH_WALL_KEY[guess]
+  const delta = LABYRINTH_DIRS[guess]
+  if (!wallKey || !delta) return
+  const cell = labyrinthEnsureCell(map, labyrinthCellKey(x, y))
+  cell.seen = true
+  cell[wallKey] = true
+  const [dx, dy] = delta
+  const oppKey = LABYRINTH_WALL_KEY[LABYRINTH_OPPOSITE[guess]!]
+  if (oppKey) {
+    const ncell = map[labyrinthCellKey(x + dx, y + dy)]
+    if (ncell?.seen) ncell[oppKey] = true
+  }
+}
+
 function labyrinthWallsAt(
   map: Record<string, LabyrinthCellWalls>,
   x: number,
@@ -1865,15 +1886,29 @@ export function formatLabyrinthMap(
     const x = Number(xs!)
     const y = Number(ys!)
     const [gx, gy] = toGrid(x, y)
-    const setEdge = (egy: number, egx: number, open: boolean | null) => {
+    const setEdge = (egy: number, egx: number, open: boolean | null, axis: "ns" | "ew") => {
       if (egy < 0 || egx < 0 || egy >= gh || egx >= gw) return
-      if (open === true) grid[egy]![egx] = LAB_MAP_OPEN
-      else if (open === false) grid[egy]![egx] = LAB_MAP_WALL
+      if (open === true) {
+        grid[egy]![egx] = LAB_MAP_OPEN
+        const markTunnelWall = (r: number, c: number) => {
+          if (r < 0 || c < 0 || r >= gh || c >= gw) return
+          if (grid[r]![c] === LAB_MAP_UNKNOWN) grid[r]![c] = LAB_MAP_WALL
+        }
+        if (axis === "ew") {
+          markTunnelWall(egy - 1, egx)
+          markTunnelWall(egy + 1, egx)
+        } else {
+          markTunnelWall(egy, egx - 1)
+          markTunnelWall(egy, egx + 1)
+        }
+      } else if (open === false) {
+        grid[egy]![egx] = LAB_MAP_WALL
+      }
     }
-    setEdge(gy - 1, gx, walls.north)
-    setEdge(gy + 1, gx, walls.south)
-    setEdge(gy, gx - 1, walls.west)
-    setEdge(gy, gx + 1, walls.east)
+    setEdge(gy - 1, gx, walls.north, "ns")
+    setEdge(gy + 1, gx, walls.south, "ns")
+    setEdge(gy, gx - 1, walls.west, "ew")
+    setEdge(gy, gx + 1, walls.east, "ew")
   }
 
   const seenCount = Object.values(map).filter((c) => c.seen).length
@@ -1968,6 +2003,10 @@ const labyrinth: SolverModule<LabyrinthState> = {
     if (result.success) return state
     if (guess === "n" || guess === "e" || guess === "s" || guess === "w") {
       if (labyrinthMoveSucceeded(result)) {
+        if (session.coords) {
+          labyrinthEnsureMap(state)
+          labyrinthConfirmMovePassage(state.map, session.coords[0], session.coords[1], guess)
+        }
         const last = session.path[session.path.length - 1]
         if (last && guess === LABYRINTH_OPPOSITE[last]) {
           session.path.pop()
