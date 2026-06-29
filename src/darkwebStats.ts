@@ -10,6 +10,8 @@ import {
   type CrawlCacheOpen,
   type CrawlHostReport,
   type CrawlProgressState,
+  type CrawlTargetSnapshot,
+  type CrawlQueueSummary,
   type DarknetCrawlApi,
   type DarknetRegistry,
   type SolverTiming,
@@ -101,10 +103,31 @@ function formatGB(gb: number): string {
   return `${Math.round(gb)}G`
 }
 
+function reportOnlyState(
+  hostname: string,
+  report: CrawlHostReport,
+  targetByHost: ReadonlyMap<string, CrawlTargetSnapshot>,
+): string {
+  if (report.authenticated === true) return "auth"
+  const target = targetByHost.get(hostname)
+  if (target) {
+    switch (target.queueState) {
+      case "queued": return "queued"
+      case "pending": return "pending"
+      case "unreachable": return "unreachable"
+      case "exhausted": return "exhausted"
+      case "done": return "done"
+      default: return "unauth"
+    }
+  }
+  return report.authenticated === false ? "unauth" : "offline"
+}
+
 function appendServerTable(
   log: TabbedScriptLogBuilder,
   workers: readonly WorkerSnapshot[],
   reports: ReadonlyMap<string, CrawlHostReport>,
+  targets: readonly CrawlTargetSnapshot[] = [],
 ): void {
   if (workers.length === 0) {
     log.tab("darknet").text("No workers connected — waiting for probe results.")
@@ -123,6 +146,7 @@ function appendServerTable(
   // Build rows: workers first, then report-only servers
   const rows: string[][] = []
   const workerMap = new Map(workers.map((w) => [w.host, w]))
+  const targetByHost = new Map(targets.map((t) => [t.host, t]))
 
   for (const hostname of allHosts) {
     const wi = workerMap.get(hostname)
@@ -153,10 +177,12 @@ function appendServerTable(
       }
 
       const auth = report?.authenticated === true ? "Y" : report?.authenticated === false ? "F" : "-"
+      const queued = targetByHost.get(hostname)
+      const wrkCol = queued && queued.queueState !== "done" ? "Q" : "Y"
 
       rows.push([
         hostname,
-        "Y",
+        wrkCol,
         state,
         lastCmd,
         cmdAt,
@@ -167,12 +193,12 @@ function appendServerTable(
         formatGB(wi.blockedRam),
       ])
     } else if (report) {
-      // Report-only entry (no worker)
+      // Report-only entry (no worker on this host)
       const auth = report.authenticated === true ? "Y" : report.authenticated === false ? "F" : "-"
       rows.push([
         hostname,
         "N",
-        auth === "Y" ? "auth" : "unknown",
+        reportOnlyState(hostname, report, targetByHost),
         "-", "-",
         "-", "-",
         auth,
@@ -260,11 +286,12 @@ async function renderDashboard(
   summaryLine: string,
   workers: readonly WorkerSnapshot[],
   solverTimings: readonly SolverTiming[],
+  targets: readonly CrawlTargetSnapshot[] = [],
 ): Promise<void> {
   tabbedLog.clearPanels()
   tabbedLog.tab("darknet").text(summaryLine)
   appendSolverTimingTable(tabbedLog, solverTimings)
-  appendServerTable(tabbedLog, workers, displayReports)
+  appendServerTable(tabbedLog, workers, displayReports, targets)
   appendCacheOpenTable(tabbedLog, cacheOpens)
   await renderTabbedTailLog(ns, tabbedLog)
 }
@@ -283,6 +310,7 @@ async function renderCrawlProgress(
   const knownPw = countRegistryPasswords(registry)
   const cacheOpens = [...sessionCacheOpens, ...state.cacheOpens]
   const workerCount = state.workers.length
+  const qs = state.queueSummary
 
   await renderDashboard(
     ns,
@@ -291,9 +319,10 @@ async function renderCrawlProgress(
     cacheOpens,
     `Crawl #${crawlNum} ${status} | registry ${Object.keys(registry.servers).length} host(s), ${knownPw} password(s) | ` +
       `auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped} | ` +
-      `workers ${workerCount} | caches ${cacheOpens.length}`,
+      `workers ${workerCount} | targets q${qs.queued} p${qs.pending} u${qs.unreachable} stale${qs.staleReports} | caches ${cacheOpens.length}`,
     state.workers,
     state.solverTimings,
+    state.targets,
   )
 }
 
@@ -316,6 +345,7 @@ async function renderRegistrySummary(
     sessionCacheOpens,
     `Crawl #${crawlNum} done | registry ${Object.keys(registry.servers).length} host(s), ${knownPw} password(s) saved to ${DARKNET_REGISTRY_FILE} | ` +
       `auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped} | caches ${sessionCacheOpens.length}`,
+    [],
     [],
     [],
   )

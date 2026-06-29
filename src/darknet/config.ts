@@ -51,6 +51,9 @@ export const PORT_POOL_SIZE = 512
 /** Log raw dnet.authenticate / dnet.heartbleed return values to the browser dev console. */
 export const DNET_DEBUG_RAW_API_CONSOLE = false
 
+/** Log master target registration / prune / report-merge decisions (throttled per host). */
+export const DNET_DEBUG_MASTER_DECISIONS = false
+
 /** After 401 auth, peek/consume heartbleed cycles while hunting for a matching attempt log. */
 export const HEARTBLEED_AUTH_LOG_MAX_RETRIES = 5
 
@@ -135,6 +138,22 @@ export interface SolverTiming {
   totalMs: number
 }
 
+/** Auth queue state for a target the master is solving via a neighbor worker. */
+export type CrawlTargetQueueState = "queued" | "pending" | "unreachable" | "done" | "exhausted"
+
+export interface CrawlTargetSnapshot {
+  host: string
+  queueState: CrawlTargetQueueState
+}
+
+export interface CrawlQueueSummary {
+  queued: number
+  pending: number
+  unreachable: number
+  exhausted: number
+  staleReports: number
+}
+
 export interface CrawlProgressState {
   reports: ReadonlyMap<string, CrawlHostReport>
   activeOps: readonly CrawlStatusReport[]
@@ -144,6 +163,10 @@ export interface CrawlProgressState {
   workers: readonly WorkerSnapshot[]
   /** Per-solver execution timing statistics. */
   solverTimings: readonly SolverTiming[]
+  /** Targets the master is actively trying to authenticate. */
+  targets: readonly CrawlTargetSnapshot[]
+  /** Aggregate auth queue counts for the dashboard summary line. */
+  queueSummary: CrawlQueueSummary
 }
 
 export interface DarknetCrawlResult {

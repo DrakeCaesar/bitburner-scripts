@@ -723,7 +723,11 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
         })
         for (const neighbor of targets) {
           const details = safeGetSessionDetails(dnet, neighbor)
-          if (details?.hasSession) {
+          if (details === null) {
+            ns.writePort(replyPort, JSON.stringify({ type: "hostGone", hostname: neighbor }))
+            continue
+          }
+          if (details.hasSession) {
             writeCrawlReport(ns, replyPort, { hostname: neighbor, authenticated: true, password: null })
           } else {
             writeCrawlReport(ns, replyPort, { hostname: neighbor, authenticated: false, password: null })
