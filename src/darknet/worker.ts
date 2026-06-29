@@ -340,7 +340,7 @@ async function openCacheFilesOnCurrentHost(
   const hostname = ns.getHostname()
   let files: string[]
   try {
-    files = ns.ls(hostname)
+    files = ns.ls(hostname, ".cache")
   } catch {
     return
   }
@@ -349,11 +349,17 @@ async function openCacheFilesOnCurrentHost(
     if (!isCacheFile(file)) {
       continue
     }
-    const result = dnet.openCache(file, true)
+    const cacheName = flatFileName(file)
+    let result: { success: boolean; message: string; karmaLoss: number }
+    try {
+      result = dnet.openCache(cacheName, true)
+    } catch {
+      continue
+    }
     if (!result.success) {
       continue
     }
-    reportCacheOpen(ns, hostname, file, result, replyPort, lorePort, cacheOpens)
+    reportCacheOpen(ns, hostname, cacheName, result, replyPort, lorePort, cacheOpens)
   }
 }
 
@@ -730,6 +736,7 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
         try { targets = dnet.probe() } catch { targets = [] }
 
         // Report self + all neighbors (authenticated and unauthenticated)
+        await ensureSessionOnSelf(ns, dnet, passwordCache)
         const selfDetails = safeGetSessionDetails(dnet, hostname)
         writeCrawlReport(ns, replyPort, {
           hostname,
@@ -820,6 +827,10 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
         try {
           await dnet.memoryReallocation(hostname)
         } catch { /* realloc may fail */ }
+        const self = safeGetSessionDetails(dnet, hostname)
+        if (self?.hasSession) {
+          await openCacheFilesOnCurrentHost(ns, dnet, replyPort, lorePort, undefined)
+        }
         const freeRam = ns.getServerMaxRam(hostname) - ns.getServerUsedRam(hostname) - ns.getScriptRam(DARKNET_CRAWL_SCRIPT, hostname)
         const blockedRam = dnet.getBlockedRam?.(hostname) ?? 0
         ns.writePort(replyPort, JSON.stringify({
@@ -855,6 +866,7 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
               blocked = dnet.getBlockedRam(hostname)
               free = ns.getServerMaxRam(hostname) - ns.getServerUsedRam(hostname)
             }
+            await openCacheFilesOnCurrentHost(ns, dnet, replyPort, lorePort, undefined)
           }
 
           if (!(await ensureStasisScript(ns, hostname))) {

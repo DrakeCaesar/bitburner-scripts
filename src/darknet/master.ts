@@ -34,6 +34,7 @@ import {
   saveDarknetRegistry,
   pruneInvalidRegistryHosts,
   applyPasswordIntel,
+  mergeCrawlReportsIntoRegistry,
 } from "./registry"
 import {
   formatLabyrinthMap,
@@ -1445,6 +1446,36 @@ async function maybeRegisterTarget(
   await registerTarget(ns, targetStates, dnet, reports, registry, hostname)
 }
 
+async function finalizeCompletedTargets(
+  ns: NS,
+  dnet: DarknetCrawlApi,
+  targetStates: Map<string, TargetState>,
+  reports: Map<string, CrawlHostReport>,
+  registry: DarknetRegistry | undefined,
+): Promise<void> {
+  for (const [hostname, target] of targetStates) {
+    if (!target.done) continue
+    if (target.password !== null && target.pendingGuess !== "EXHAUSTED") {
+      reports.set(hostname, {
+        type: "host", hostname, authenticated: true,
+        password: target.password, authGuesses: undefined,
+      })
+      try { await dnet.authenticate(hostname, target.password) } catch { /* already done */ }
+    } else if (target.pendingGuess !== "EXHAUSTED") {
+      reports.set(hostname, {
+        type: "host", hostname, authenticated: false,
+        password: null, authGuesses: undefined,
+      })
+    }
+    if (target.pendingGuess !== "EXHAUSTED") {
+      targetStates.delete(hostname)
+    }
+  }
+  if (registry) {
+    mergeCrawlReportsIntoRegistry(registry, reports)
+  }
+}
+
 async function processReportsAndSpawns(
   ns: NS,
   dnet: DarknetCrawlApi,
@@ -1474,7 +1505,9 @@ async function processReportsAndSpawns(
             lastCommand: null, lastCommandDetail: null, lastCommandAt: 0,
             lastReply: null, lastReplyAt: 0, lastProbedAt: 0, failures: 0, commandDeadlineAt: 0,
           })
-          const pw = registry?.servers[hostname]?.password ?? undefined
+          const pw = reports.get(hostname)?.password
+            ?? registry?.servers[hostname]?.password
+            ?? undefined
           sendWorkerCommand(ns, dnet, wi, {
             type: "spawn",
             target: hostname,
@@ -1736,6 +1769,10 @@ export async function runDarknetCrawl(
       await drainReportPort(ns, dnet, targetStates, solverTimings, workerRegistry, spawning, reports, activeOps, cacheOpens, sessionId, registry, staleReportLoops)
       pollTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
 
+      await dispatchTasks(ns, dnet, targetStates, workerRegistry)
+
+      await finalizeCompletedTargets(ns, dnet, targetStates, reports, registry)
+
       await processReportsAndSpawns(ns, dnet, targetStates, workerRegistry, spawning, reports, registry, sessionId)
 
       const probeNow = Date.now()
@@ -1755,29 +1792,7 @@ export async function runDarknetCrawl(
 
       lastStaleReportCount = pruneStaleReports(ns, dnet, reports, targetStates, workerRegistry, staleReportLoops)
 
-      await dispatchTasks(ns, dnet, targetStates, workerRegistry)
-
       handleWorkerTimeouts(ns, workerRegistry, spawning)
-
-      for (const [hostname, target] of targetStates) {
-        if (target.done) {
-          if (target.password !== null && target.pendingGuess !== "EXHAUSTED") {
-            reports.set(hostname, {
-              type: "host", hostname, authenticated: true,
-              password: target.password, authGuesses: undefined,
-            })
-            try { await dnet.authenticate(hostname, target.password) } catch { /* already done */ }
-          } else if (target.pendingGuess !== "EXHAUSTED") {
-            reports.set(hostname, {
-              type: "host", hostname, authenticated: false,
-              password: null, authGuesses: undefined,
-            })
-          }
-          if (target.pendingGuess !== "EXHAUSTED") {
-            targetStates.delete(hostname)
-          }
-        }
-      }
 
       await emitProgress(true)
 
@@ -1820,6 +1835,10 @@ export async function runDarknetCrawl(
     await drainReportPort(ns, dnet, targetStates, solverTimings, workerRegistry, spawning, reports, activeOps, cacheOpens, sessionId, registry, staleReportLoops)
     pollTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
 
+    await dispatchTasks(ns, dnet, targetStates, workerRegistry)
+
+    await finalizeCompletedTargets(ns, dnet, targetStates, reports, registry)
+
     await processReportsAndSpawns(ns, dnet, targetStates, workerRegistry, spawning, reports, registry, sessionId)
 
     const probeNow = Date.now()
@@ -1839,29 +1858,7 @@ export async function runDarknetCrawl(
 
     lastStaleReportCount = pruneStaleReports(ns, dnet, reports, targetStates, workerRegistry, staleReportLoops)
 
-    await dispatchTasks(ns, dnet, targetStates, workerRegistry)
-
     handleWorkerTimeouts(ns, workerRegistry, spawning)
-
-    for (const [hostname, target] of targetStates) {
-      if (target.done) {
-        if (target.password !== null && target.pendingGuess !== "EXHAUSTED") {
-          reports.set(hostname, {
-            type: "host", hostname, authenticated: true,
-            password: target.password, authGuesses: undefined,
-          })
-          try { await dnet.authenticate(hostname, target.password) } catch { /* already done */ }
-        } else if (target.pendingGuess !== "EXHAUSTED") {
-          reports.set(hostname, {
-            type: "host", hostname, authenticated: false,
-            password: null, authGuesses: undefined,
-          })
-        }
-        if (target.pendingGuess !== "EXHAUSTED") {
-          targetStates.delete(hostname)
-        }
-      }
-    }
 
     await emitProgress(true)
     await ns.sleep(100)

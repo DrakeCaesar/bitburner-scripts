@@ -58,7 +58,7 @@ function appendSolverTimingTable(
     formatTimingMs(Math.round(t.totalMs / t.count)),
   ])
 
-  log.tab("darknet").table({
+  log.tab("crawl").table({
     title: "Solver execution times",
     columns: SOLVER_TIMING_COLUMNS,
     rows,
@@ -143,7 +143,7 @@ function appendServerTable(
   targets: readonly CrawlTargetSnapshot[] = [],
 ): void {
   if (workers.length === 0) {
-    log.tab("darknet").text("No workers connected — waiting for probe results.")
+    log.tab("crawl").text("No workers connected — waiting for probe results.")
     return
   }
 
@@ -255,8 +255,8 @@ function appendServerTable(
     minWidth: _serverTableColumnMaxes[i],
   }))
 
-  log.tab("darknet").text(`${allHosts.size} server(s) | ${workers.length} worker(s)`)
-  log.tab("darknet").table({
+  log.tab("crawl").text(`${allHosts.size} server(s) | ${workers.length} worker(s)`)
+  log.tab("crawl").table({
     title: "Servers",
     columns: stableColumns,
     rows,
@@ -273,11 +273,15 @@ function sumCacheKarma(cacheOpens: readonly CrawlCacheOpen[]): number {
 }
 
 function appendCacheOpenTable(log: TabbedScriptLogBuilder, cacheOpens: readonly CrawlCacheOpen[]): void {
-  if (cacheOpens.length === 0) return
+  const builder = log.tab("caches")
+  if (cacheOpens.length === 0) {
+    builder.text("No caches opened yet this session.")
+    return
+  }
 
   const sorted = [...cacheOpens].sort((a, b) => b.openedAt - a.openedAt)
-  log.tab("darknet").text(`${sorted.length} cache(s) opened | total karma ${sumCacheKarma(sorted)}`)
-  log.tab("darknet").table({
+  builder.text(`${sorted.length} cache(s) opened | total karma ${sumCacheKarma(sorted)}`)
+  builder.table({
     title: "Opened caches",
     columns: CACHE_TABLE_COLUMNS,
     rows: sorted.map((entry) => [entry.host, entry.file, String(entry.karmaLoss), entry.message]),
@@ -321,7 +325,7 @@ async function renderDashboard(
   labyrinths: readonly LabyrinthProgressSnapshot[] = [],
 ): Promise<void> {
   tabbedLog.clearPanels()
-  const panel = tabbedLog.tab("darknet")
+  const panel = tabbedLog.tab("crawl")
   for (const lab of labyrinths) {
     panel.text(`--- Labyrinth: ${lab.hostname} [${lab.queueState}] ---`)
     if (lab.pending) {
@@ -410,29 +414,32 @@ function parseCrawlIntervalMs(ns: NS): number {
 export async function main(ns: NS): Promise<void> {
   openTailLog(ns, "Darknet")
 
-  const tabbedLog = createTabbedTailLog([{ id: "darknet", label: "Darknet" }])
+  const tabbedLog = createTabbedTailLog([
+    { id: "crawl", label: "Crawl" },
+    { id: "caches", label: "Caches" },
+  ])
 
   const logCrawl = (message: string) => {
-    tabbedLog.tab("darknet").text(message)
+    tabbedLog.tab("crawl").text(message)
   }
 
   if (!ns.hasTorRouter()) purchaseTorRouter(ns, logCrawl)
   if (!ns.fileExists(DARKSCAPE_NAVIGATOR, "home")) purchaseDarkscapeNavigator(ns, logCrawl)
 
   if (!ns.hasTorRouter()) {
-    tabbedLog.tab("darknet").text("ERROR: Need a TOR router")
+    tabbedLog.tab("crawl").text("ERROR: Need a TOR router")
     await renderTabbedTailLog(ns, tabbedLog)
     return
   }
   if (!ns.fileExists(DARKSCAPE_NAVIGATOR, "home")) {
-    tabbedLog.tab("darknet").text(`ERROR: Need ${DARKSCAPE_NAVIGATOR} on home`)
+    tabbedLog.tab("crawl").text(`ERROR: Need ${DARKSCAPE_NAVIGATOR} on home`)
     await renderTabbedTailLog(ns, tabbedLog)
     return
   }
 
   const dnet = (ns as NS & { dnet?: DarknetCrawlApi }).dnet ?? null
   if (!dnet) {
-    tabbedLog.tab("darknet").text("ERROR: ns.dnet API not available")
+    tabbedLog.tab("crawl").text("ERROR: ns.dnet API not available")
     await renderTabbedTailLog(ns, tabbedLog)
     return
   }
@@ -460,7 +467,7 @@ export async function main(ns: NS): Promise<void> {
     )
   } catch (err) {
     tabbedLog.clearPanels()
-    tabbedLog.tab("darknet").text(`ERROR: ${String(err)}`)
+    tabbedLog.tab("crawl").text(`ERROR: ${String(err)}`)
     await renderTabbedTailLog(ns, tabbedLog)
   }
 }
