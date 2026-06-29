@@ -1043,16 +1043,6 @@ const kingOfTheHill: SolverModule<KingOfTheHillState> = {
 
 // --- RateMyPix.Auth ---
 
-interface RateMyPixState extends SolverState {
-  type: "rateMyPix"
-  charset: string
-  charIdx: number
-  freq: Record<string, number>
-  phase: "freq" | "perm"
-  candidates: string[]
-  length: number
-}
-
 function rateMyPixCharset(format: string): string {
   if (format === "alphabetic") return "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
   if (format === "alphanumeric" || format === "ASCII") return "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -1076,6 +1066,17 @@ function generateRateMyPixPermutations(freq: Record<string, number>, length: num
   return out
 }
 
+interface RateMyPixState extends SolverState {
+  type: "rateMyPix"
+  charset: string
+  charIdx: number
+  freq: Record<string, number>
+  phase: "freq" | "perm"
+  candidates: string[]
+  length: number
+  retries: number   // retry count for unparseable feedback in freq phase
+}
+
 const rateMyPix: SolverModule<RateMyPixState> = {
   initSolver(details) {
     return {
@@ -1083,6 +1084,7 @@ const rateMyPix: SolverModule<RateMyPixState> = {
       charset: rateMyPixCharset(details.passwordFormat),
       charIdx: 0, freq: {}, phase: "freq", candidates: [],
       length: details.passwordLength,
+      retries: 0,
     }
   },
   nextGuess(state) {
@@ -1107,21 +1109,43 @@ const rateMyPix: SolverModule<RateMyPixState> = {
 
     if (state.phase === "freq") {
       const fb = result.feedback ?? ""
-      if (!fb) return state // no feedback — retry same char
-      const count = (fb.match(/🌶/g) ?? []).length
-      if (count > 0) state.freq[guess[0]!] = count
+      if (!fb) {
+        // Heartbleed missed — retry up to 3 times, then advance anyway
+        state.retries++
+        if (state.retries > 3) { state.retries = 0; state.charIdx++ }
+        return state
+      }
+      state.retries = 0
+      // Game returns "🌶🌶/N" or "0/N" — count 🌶 before the slash
+      const emojiCount = (fb.split("/")[0]?.match(/🌶/g) ?? []).length
+      if (emojiCount > 0) state.freq[guess[0]!] = emojiCount
       state.charIdx++
-      // If all chars probed, validate total count
+      // End of charset — validate
       if (state.charIdx >= state.charset.length) {
         const total = Object.values(state.freq).reduce((a, b) => a + b, 0)
-        if (total !== state.length) { state.phase = "perm"; state.candidates = [] }
+        if (total < state.length) {
+          // Some chars undetected (possibly outside charset).
+          // Pad with the first charset character to reach length.
+          let remaining = state.length - total
+          for (const ch of state.charset) {
+            if (remaining <= 0) break
+            if (state.freq[ch]) continue
+            state.freq[ch] = 1
+            remaining--
+          }
+          // Still short — just put the rest on the first known char
+          if (remaining > 0) {
+            const known = Object.keys(state.freq)[0] ?? state.charset[0]!
+            state.freq[known] = (state.freq[known] ?? 0) + remaining
+          }
+        }
       }
       return state
     }
 
-    // Perm phase: prune by exact match count
+    // Perm phase: prune by exact position match count
     const fb = result.feedback ?? ""
-    const pruneCount = (fb.match(/🌶/g) ?? []).length
+    const pruneCount = (fb.split("/")[0]?.match(/🌶/g) ?? []).length
     state.candidates = state.candidates.filter((candidate) => {
       let matches = 0
       for (let i = 0; i < state.length; i++) {
