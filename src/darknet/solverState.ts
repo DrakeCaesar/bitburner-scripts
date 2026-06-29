@@ -1291,17 +1291,122 @@ const timingAttack: SolverModule<TimingAttackState> = {
 //   Difficulty > 16:  raw password embedded in getPassword(124..144, true) — pure alphanumeric noise
 //
 // Strategy:
-//   1. Send hostname as guess → get feedback data (the "packet capture")
+//   1. Send hostname as guess -> get feedback data (the "packet capture")
 //   2. Try "hostname:password" regex first (easy variant)
-//   3. Fall back: extract all substrings of password length, iterate through them (hard variant)
+//   3. Hard variant: collect multiple captures from wrong guesses, intersect length-N substrings
+//      (password appears verbatim once per capture). Prefer substrings that appear once per capture;
+//      if still ambiguous after max captures, iterate remaining candidates or fall back to single-capture scan.
+
+const OPEN_WEB_MAX_CAPTURES = 5
+
+function openWebCharset(format: string): string {
+  switch (format) {
+    case "numeric": return "0123456789"
+    case "alphabetic": return "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    case "alphanumeric": return "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    default: return "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+  }
+}
+
+function openWebSubstringsOfLength(s: string, len: number): Set<string> {
+  const out = new Set<string>()
+  if (s.length < len) return out
+  for (let i = 0; i <= s.length - len; i++) out.add(s.slice(i, i + len))
+  return out
+}
+
+function openWebCountOccurrences(haystack: string, needle: string): number {
+  if (needle.length === 0) return 0
+  let count = 0
+  let idx = 0
+  while (true) {
+    const found = haystack.indexOf(needle, idx)
+    if (found === -1) break
+    count++
+    idx = found + 1
+  }
+  return count
+}
+
+function openWebSharedSubstrings(captures: string[], pwLen: number): string[] {
+  if (captures.length === 0) return []
+  let shared = openWebSubstringsOfLength(captures[0]!, pwLen)
+  for (let i = 1; i < captures.length; i++) {
+    const subs = openWebSubstringsOfLength(captures[i]!, pwLen)
+    shared = new Set([...shared].filter((c) => subs.has(c)))
+  }
+  return [...shared]
+}
+
+function openWebFallbackCandidates(capture: string, pwLen: number): string[] {
+  return [...openWebSubstringsOfLength(capture, pwLen)].sort()
+}
+
+function openWebRefreshCandidates(
+  captures: string[],
+  pwLen: number,
+  exclude: ReadonlySet<string>,
+): string[] {
+  if (captures.length < 2) return []
+  const shared = openWebSharedSubstrings(captures, pwLen).filter((c) => !exclude.has(c))
+  const uniqueOnce = shared.filter((c) => captures.every((cap) => openWebCountOccurrences(cap, c) === 1))
+  const candidates = uniqueOnce.length > 0 ? uniqueOnce : shared
+  return candidates.sort()
+}
+
+function openWebRandomWrongGuess(charset: string, len: number, avoid: ReadonlySet<string>): string {
+  for (let attempt = 0; attempt < 64; attempt++) {
+    let guess = ""
+    for (let i = 0; i < len; i++) {
+      guess += charset[Math.floor(Math.random() * charset.length)]!
+    }
+    if (!avoid.has(guess)) return guess
+  }
+  for (const ch of charset) {
+    const guess = ch.repeat(len)
+    if (!avoid.has(guess)) return guess
+  }
+  return charset[0]!.repeat(len)
+}
 
 interface OpenWebAccessPointState extends SolverState {
   type: "openWebAccessPoint"
-  phase: "probe" | "easySubmit" | "hardIterate"
+  phase: "probe" | "easySubmit" | "collect" | "iterate"
   extractedPassword: string | null
   pwLen: number
-  candidates: string[]     // substrings from the feedback data
+  charset: string
+  captures: string[]
+  candidates: string[]
   candidateIdx: number
+  triedGuesses: string[]
+  maxCaptures: number
+}
+
+function openWebExcludeGuesses(state: OpenWebAccessPointState): Set<string> {
+  return new Set(state.triedGuesses)
+}
+
+function openWebAfterCapture(state: OpenWebAccessPointState): OpenWebAccessPointState {
+  if (state.captures.length < 2) return state
+
+  state.candidates = openWebRefreshCandidates(state.captures, state.pwLen, openWebExcludeGuesses(state))
+  if (state.candidates.length === 1) {
+    state.extractedPassword = state.candidates[0]!
+    state.phase = "easySubmit"
+    return state
+  }
+  if (state.candidates.length > 1 && state.captures.length >= state.maxCaptures) {
+    state.phase = "iterate"
+    state.candidateIdx = 0
+    return state
+  }
+  if (state.candidates.length === 0 && state.captures.length >= state.maxCaptures) {
+    state.candidates = openWebFallbackCandidates(state.captures[0]!, state.pwLen)
+      .filter((c) => !openWebExcludeGuesses(state).has(c))
+    state.phase = "iterate"
+    state.candidateIdx = 0
+  }
+  return state
 }
 
 const openWebAccessPoint: SolverModule<OpenWebAccessPointState> = {
@@ -1309,7 +1414,9 @@ const openWebAccessPoint: SolverModule<OpenWebAccessPointState> = {
     return {
       type: "openWebAccessPoint", phase: "probe",
       extractedPassword: null, pwLen: details.passwordLength,
-      candidates: [], candidateIdx: 0,
+      charset: openWebCharset(details.passwordFormat),
+      captures: [], candidates: [], candidateIdx: 0,
+      triedGuesses: [], maxCaptures: OPEN_WEB_MAX_CAPTURES,
     }
   },
   nextGuess(state, context) {
@@ -1317,9 +1424,18 @@ const openWebAccessPoint: SolverModule<OpenWebAccessPointState> = {
       return { guess: context.target, detail: `probe ${context.target}` }
     }
     if (state.phase === "easySubmit" && state.extractedPassword) {
-      return { guess: state.extractedPassword, detail: "submit (easy)" }
+      return { guess: state.extractedPassword, detail: "submit" }
     }
-    if (state.phase === "hardIterate") {
+    if (state.phase === "collect") {
+      if (state.captures.length >= state.maxCaptures) return null
+      const avoid = new Set([context.target, ...state.triedGuesses])
+      const guess = openWebRandomWrongGuess(state.charset, state.pwLen, avoid)
+      return {
+        guess,
+        detail: `collect ${state.captures.length + 1}/${state.maxCaptures}`,
+      }
+    }
+    if (state.phase === "iterate") {
       if (state.candidateIdx < state.candidates.length) {
         const guess = state.candidates[state.candidateIdx]!
         state.candidateIdx++
@@ -1330,9 +1446,11 @@ const openWebAccessPoint: SolverModule<OpenWebAccessPointState> = {
   },
   applyResult(state, guess, result) {
     if (result.success) return state
+
     if (state.phase === "probe") {
       const fb = result.feedback ?? ""
       if (!fb) return state // no feedback — retry probe
+      state.triedGuesses.push(guess)
 
       // Try easy variant: "hostname:password" embedded
       const escapedHost = guess.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
@@ -1344,25 +1462,20 @@ const openWebAccessPoint: SolverModule<OpenWebAccessPointState> = {
         return state
       }
 
-      // Hard variant: raw password embedded in alphanumeric noise.
-      // Collect all substrings of password length from the feedback.
-      if (fb.length < state.pwLen) {
-        state.phase = "hardIterate" // dead end
-        return state
-      }
-      const candidates: string[] = []
-      for (let i = 0; i <= fb.length - state.pwLen; i++) {
-        const sub = fb.slice(i, i + state.pwLen)
-        if (!candidates.includes(sub)) candidates.push(sub)
-      }
-      state.candidates = candidates
-      state.candidateIdx = 0
-      state.phase = "hardIterate"
+      // Hard variant: gather more captures, then intersect substrings of password length.
+      state.captures.push(fb)
+      state.phase = "collect"
       return state
     }
 
-    // For easySubmit — already dispatched, done
-    // For hardIterate — nextGuess handles advancing candidateIdx
+    if (state.phase === "collect") {
+      const fb = result.feedback ?? ""
+      if (!fb) return state
+      state.triedGuesses.push(guess)
+      state.captures.push(fb)
+      return openWebAfterCapture(state)
+    }
+
     return state
   },
 }
