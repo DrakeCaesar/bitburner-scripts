@@ -648,12 +648,6 @@ const bellaCuoreRange: SolverModule<BellaCuoreRangeState> = {
 
 // --- DeepGreen (Mastermind) ---
 
-interface DeepGreenState extends SolverState {
-  type: "deepGreen"
-  candidates: string[]
-  charset: string
-}
-
 const MAX_MASTERMIND_CANDIDATES = 10000
 const MINIMAX_THRESHOLD = 500
 
@@ -668,6 +662,31 @@ function generateMastermindCandidates(length: number, charset: string): string[]
   }
   build("")
   return out
+}
+
+/** Generate all unique permutations of a multiset of characters. */
+function multisetPermutations(chars: string[]): string[] {
+  const results: string[] = []
+  const sorted = [...chars].sort()
+  const used = new Array(sorted.length).fill(false)
+
+  function backtrack(current: string[]): void {
+    if (current.length === sorted.length) {
+      results.push(current.join(""))
+      return
+    }
+    for (let i = 0; i < sorted.length; i++) {
+      if (used[i]) continue
+      if (i > 0 && sorted[i] === sorted[i - 1] && !used[i - 1]) continue
+      used[i] = true
+      current.push(sorted[i]!)
+      backtrack(current)
+      current.pop()
+      used[i] = false
+    }
+  }
+  backtrack([])
+  return results
 }
 
 function pickMastermindGuess(candidates: string[]): string {
@@ -692,22 +711,92 @@ function pickMastermindGuess(candidates: string[]): string {
   return bestGuess
 }
 
+interface DeepGreenState extends SolverState {
+  type: "deepGreen"
+  charset: string
+  length: number
+  // Two-phase strategy for large character spaces (>10K candidates):
+  // Phase 1 — count occurrences of each charset character
+  // Phase 2 — solve via permutation candidates + minimax
+  charCounts: Record<string, number>
+  charList: string[]
+  charIdx: number
+  totalCount: number
+  candidates: string[]
+}
+
 const deepGreen: SolverModule<DeepGreenState> = {
   initSolver(details) {
     const charset = mastermindCharset(details.passwordFormat)
     const initial = generateMastermindCandidates(details.passwordLength, charset)
-    return { type: "deepGreen", candidates: initial ?? [], charset }
+    if (initial) {
+      // Small space — direct enumeration
+      return {
+        type: "deepGreen", charset, length: details.passwordLength,
+        charCounts: {}, charList: [], charIdx: 0,
+        totalCount: details.passwordLength, candidates: initial,
+      }
+    }
+    // Large space — phase 1: count characters
+    return {
+      type: "deepGreen", charset, length: details.passwordLength,
+      charCounts: {}, charList: charset.split(""), charIdx: 0,
+      totalCount: 0, candidates: [],
+    }
   },
   nextGuess(state) {
-    if (state.candidates.length === 0) return null
-    const guess = pickMastermindGuess(state.candidates)
-    return { guess, detail: `${state.candidates.length} cand` }
+    // Phase 2: permutation-based solving
+    if (state.totalCount >= state.length) {
+      if (state.candidates.length === 0) return null
+      return { guess: pickMastermindGuess(state.candidates), detail: `${state.candidates.length} cand` }
+    }
+    // Phase 1: count occurrences of each charset character
+    if (state.charIdx < state.charList.length) {
+      const ch = state.charList[state.charIdx]!
+      return { guess: ch.repeat(state.length), detail: `count ${ch}` }
+    }
+    // Exhausted charset without finding all chars — build whatever we have
+    const digits: string[] = []
+    for (const [c, cnt] of Object.entries(state.charCounts)) {
+      for (let i = 0; i < cnt; i++) digits.push(c)
+    }
+    while (digits.length < state.length) digits.push(state.charset[0]!)
+    state.candidates = multisetPermutations(digits.slice(0, state.length))
+    state.totalCount = state.length
+    return state.candidates.length > 0
+      ? { guess: pickMastermindGuess(state.candidates), detail: `${state.candidates.length} cand` }
+      : null
   },
   applyResult(state, guess, result) {
     if (result.success) return state
+
+    if (state.totalCount < state.length) {
+      // Phase 1: parse counting feedback
+      const fbRaw = result.feedback ?? ""
+      const fb = parseMastermindFeedback(fbRaw)
+      if (!fb) return state // unparseable — retry same guess
+      const ch = state.charList[state.charIdx]!
+      // Guessing "CCCCCCC" → exact = count of C in the password
+      state.charCounts[ch] = fb.exact
+      state.totalCount += fb.exact
+      state.charIdx++
+      // Early exit if we've accounted for all positions
+      if (state.totalCount >= state.length || state.charIdx >= state.charList.length) {
+        const digits: string[] = []
+        for (const [c, cnt] of Object.entries(state.charCounts)) {
+          for (let i = 0; i < cnt; i++) digits.push(c)
+        }
+        while (digits.length < state.length) digits.push(state.charset[0]!)
+        state.candidates = multisetPermutations(digits.slice(0, state.length))
+        state.totalCount = state.length
+      }
+      return state
+    }
+
+    // Phase 2: filter permutation candidates
     const fbRaw = result.feedback ?? ""
     const fb = parseMastermindFeedback(fbRaw)
-    if (!fb) return state // unparseable — retry same guess
+    if (!fb) return state
     state.candidates = state.candidates.filter((secret) => {
       const f = mastermindFeedback(secret, guess)
       return f.exact === fb.exact && f.misplaced === fb.misplaced
