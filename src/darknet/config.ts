@@ -120,6 +120,12 @@ export interface WorkerSnapshot {
   neighbors: string[]
 }
 
+export interface SolverTiming {
+  solverId: string
+  count: number
+  totalMs: number
+}
+
 export interface CrawlProgressState {
   reports: ReadonlyMap<string, CrawlHostReport>
   activeOps: readonly CrawlStatusReport[]
@@ -127,6 +133,8 @@ export interface CrawlProgressState {
   cacheOpens: readonly CrawlCacheOpen[]
   /** Worker status snapshots for the unified dashboard table. */
   workers: readonly WorkerSnapshot[]
+  /** Per-solver execution timing statistics. */
+  solverTimings: readonly SolverTiming[]
 }
 
 export interface DarknetCrawlResult {

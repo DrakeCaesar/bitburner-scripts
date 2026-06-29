@@ -22,6 +22,7 @@ import {
   type SolverState,
   type SolverModule,
   type WorkerSnapshot,
+  type SolverTiming,
 } from "./config"
 import {
   saveDarknetRegistry,
@@ -365,6 +366,7 @@ function drainReportPort(
   ns: NS,
   reportPort: number,
   targetStates: Map<string, TargetState>,
+  solverTimings: Map<string, { count: number; totalMs: number }>,
   workerRegistry: Map<string, WorkerInfo>,
   spawning: Set<string>,
   reports: Map<string, CrawlHostReport>,
@@ -490,7 +492,7 @@ function drainReportPort(
           }
           continue
         }
-        applyTaskResult(workerResp, targetStates, workerRegistry)
+        applyTaskResult(workerResp, targetStates, solverTimings, workerRegistry)
         continue
       }
 
@@ -503,6 +505,7 @@ function drainReportPort(
 function applyTaskResult(
   result: WorkerResponse & { type: "guessResult" | "heartbleedResult" | "labreportResult" },
   targetStates: Map<string, TargetState>,
+  solverTimings: Map<string, { count: number; totalMs: number }>,
   workerRegistry: Map<string, WorkerInfo>,
 ): void {
   const target = targetStates.get(result.target)
@@ -513,6 +516,16 @@ function applyTaskResult(
   const completedWorker = target.pendingWorker
   target.pendingGuess = null
   target.pendingWorker = null
+
+  // Accumulate timing for this solver step
+  if (target.pendingAt > 0) {
+    const elapsed = Date.now() - target.pendingAt
+    const id = (target.solverState as unknown as Record<string, unknown>).type as string
+    let t = solverTimings.get(id)
+    if (!t) { t = { count: 0, totalMs: 0 }; solverTimings.set(id, t) }
+    t.count++
+    t.totalMs += elapsed
+  }
 
   // Mark the worker idle again with reply tracking
   if (completedWorker) {
@@ -810,7 +823,7 @@ export async function runDarknetCrawl(
 
     const emitProgress = async (workerRunning: boolean): Promise<void> => {
       if (!onProgress) return
-      await onProgress({ reports, activeOps: [...activeOps.values()], workerRunning, cacheOpens, workers: [] })
+      await onProgress({ reports, activeOps: [...activeOps.values()], workerRunning, cacheOpens, workers: [], solverTimings: [] })
     }
 
     await killAllCrawlWorkers(ns, dnet, registry)
@@ -878,6 +891,7 @@ export async function runDarknetCrawl(
 
   // Task orchestration state
   const targetStates = new Map<string, TargetState>()
+  const solverTimings = new Map<string, { count: number; totalMs: number }>()
 
   const reports = new Map<string, CrawlHostReport>()
   const activeOps = new Map<string, CrawlStatusReport>()
@@ -903,14 +917,19 @@ export async function runDarknetCrawl(
       })
     }
     workers.sort((a, b) => a.host.localeCompare(b.host))
-    await onProgress({ reports, activeOps: [...activeOps.values()], workerRunning, cacheOpens, workers })
+    const timings: SolverTiming[] = []
+    for (const [solverId, t] of solverTimings) {
+      timings.push({ solverId, count: t.count, totalMs: t.totalMs })
+    }
+    timings.sort((a, b) => b.totalMs - a.totalMs)
+    await onProgress({ reports, activeOps: [...activeOps.values()], workerRunning, cacheOpens, workers, solverTimings: timings })
   }
 
   await emitProgress(true)
 
   if (continuous) {
     while (true) {
-      drainReportPort(ns, reportPort, targetStates, workerRegistry, spawning, reports, activeOps, cacheOpens, sessionId, registry)
+      drainReportPort(ns, reportPort, targetStates, solverTimings, workerRegistry, spawning, reports, activeOps, cacheOpens, sessionId, registry)
       pollTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
 
       // Register new unauthenticated targets from worker reports + dispatch spawns for authenticated neighbors
@@ -1043,7 +1062,7 @@ export async function runDarknetCrawl(
   }
 
   while (ns.isRunning(pid)) {
-    drainReportPort(ns, reportPort, targetStates, workerRegistry, spawning, reports, activeOps, cacheOpens, sessionId, registry)
+    drainReportPort(ns, reportPort, targetStates, solverTimings, workerRegistry, spawning, reports, activeOps, cacheOpens, sessionId, registry)
     pollTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
 
     for (const [hostname, report] of reports) {

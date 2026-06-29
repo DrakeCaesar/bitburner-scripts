@@ -12,6 +12,7 @@ import {
   type CrawlProgressState,
   type DarknetCrawlApi,
   type DarknetRegistry,
+  type SolverTiming,
   type WorkerSnapshot,
 } from "./darknetCrawl.js"
 import { DARKSCAPE_NAVIGATOR, purchaseDarkscapeNavigator, purchaseTorRouter } from "./libraries/purchasePrograms.js"
@@ -26,6 +27,39 @@ import {
 } from "./libraries/scriptLogUiLayout.js"
 
 // --- config ---
+
+function formatTimingMs(ms: number): string {
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
+  return `${(ms / 60_000).toFixed(1)}m`
+}
+
+const SOLVER_TIMING_COLUMNS = [
+  col("Solver", "left", 18),
+  col("Count", "right", 6),
+  col("Total", "right", 9),
+  col("Avg", "right", 9),
+]
+
+function appendSolverTimingTable(
+  log: TabbedScriptLogBuilder,
+  timings: readonly SolverTiming[],
+): void {
+  if (timings.length === 0) return
+
+  const rows = timings.map((t) => [
+    t.solverId,
+    String(t.count),
+    formatTimingMs(t.totalMs),
+    formatTimingMs(Math.round(t.totalMs / t.count)),
+  ])
+
+  log.tab("darknet").table({
+    title: "Solver execution times",
+    columns: SOLVER_TIMING_COLUMNS,
+    rows,
+  })
+}
 
 const SERVER_TABLE_COLUMNS = [
   col("Host", "left", 20),
@@ -225,9 +259,11 @@ async function renderDashboard(
   cacheOpens: readonly CrawlCacheOpen[],
   summaryLine: string,
   workers: readonly WorkerSnapshot[],
+  solverTimings: readonly SolverTiming[],
 ): Promise<void> {
   tabbedLog.clearPanels()
   tabbedLog.tab("darknet").text(summaryLine)
+  appendSolverTimingTable(tabbedLog, solverTimings)
   appendServerTable(tabbedLog, workers, displayReports)
   appendCacheOpenTable(tabbedLog, cacheOpens)
   await renderTabbedTailLog(ns, tabbedLog)
@@ -257,6 +293,7 @@ async function renderCrawlProgress(
       `auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped} | ` +
       `workers ${workerCount} | caches ${cacheOpens.length}`,
     state.workers,
+    state.solverTimings,
   )
 }
 
@@ -279,6 +316,7 @@ async function renderRegistrySummary(
     sessionCacheOpens,
     `Crawl #${crawlNum} done | registry ${Object.keys(registry.servers).length} host(s), ${knownPw} password(s) saved to ${DARKNET_REGISTRY_FILE} | ` +
       `auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped} | caches ${sessionCacheOpens.length}`,
+    [],
     [],
   )
 }
