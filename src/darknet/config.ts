@@ -390,8 +390,16 @@ export function safeGetServerDetails(
 
 // ---- worker command / response types ----
 
-/** Master writes these to a worker's dedicated command port. Worker reads and executes. */
-export type WorkerCommand =
+/** Per-command timing metadata set by the master before dispatch. */
+export interface WorkerCommandMeta {
+  /** Predicted execution time in ms (before multiplier). */
+  expectedMs: number
+  /** Absolute timestamp (Date.now()) by which the worker should finish. */
+  deadlineAt: number
+}
+
+/** Command body without timing — master attaches expectedMs/deadlineAt at dispatch. */
+export type WorkerCommandPayload =
   | { type: "probe" }
   | { type: "guess"; target: string; solverId: string; guess: string; detail: string | null }
   | { type: "heartbleed"; target: string; solverId: string }
@@ -400,10 +408,13 @@ export type WorkerCommand =
   | { type: "realloc" }
   | { type: "exit" }
 
+/** Master writes these to a worker's dedicated command port. Worker reads and executes. */
+export type WorkerCommand = WorkerCommandPayload & WorkerCommandMeta
+
 /** Workers write these to their reply port (command port + 1). */
 export type WorkerResponse =
   | { type: "ready"; workerHost: string; pid: number }
-  | { type: "executing"; workerHost: string; commandType: string }
+  | { type: "executing"; workerHost: string; commandType: string; deadlineAt: number }
   | { type: "guessResult"; target: string; solverId: string; success: boolean; feedback?: string; message?: string }
   | { type: "heartbleedResult"; target: string; solverId: string; logEntries: string[] }
   | { type: "labreportResult"; target: string; solverId: string; coords: number[]; north: boolean; east: boolean; south: boolean; west: boolean }

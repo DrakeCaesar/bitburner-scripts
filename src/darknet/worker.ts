@@ -601,6 +601,7 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
       type: "executing",
       workerHost: hostname,
       commandType: command.type,
+      deadlineAt: command.deadlineAt ?? 0,
     }))
 
     switch (command.type) {
