@@ -859,6 +859,8 @@ interface FactoriOsState extends SolverState {
   length: number
   finalDispatched: boolean
   needsRecheck: boolean
+  /** Probe with 0 first; game reports bogus "divisible" (password % 0 is NaN). */
+  probedZero: boolean
 }
 
 const factoriOs: SolverModule<FactoriOsState> = {
@@ -869,10 +871,14 @@ const factoriOs: SolverModule<FactoriOsState> = {
       phase: "prime", currentPower: 0, nextPower: 0,
       length: details.passwordLength, finalDispatched: false,
       needsRecheck: false,
+      probedZero: false,
     }
   },
   nextGuess(state) {
     if (state.finalDispatched) return null
+    if (!state.probedZero) {
+      return { guess: "0", detail: "factoriOs discard" }
+    }
     if (state.phase === "prime" || state.needsRecheck) {
       state.needsRecheck = false
       // Find next prime that fits within length
@@ -903,6 +909,11 @@ const factoriOs: SolverModule<FactoriOsState> = {
   },
   applyResult(state, guess, result) {
     if (result.success) return state
+
+    if (!state.probedZero && guess === "0") {
+      state.probedZero = true
+      return state
+    }
 
     if (state.phase === "prime") {
       const fb = parseBoolFeedback(result.feedback)
