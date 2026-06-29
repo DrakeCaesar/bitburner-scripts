@@ -8,13 +8,8 @@ import {
 import { DARKWEB_COMMON_PASSWORDS } from "./config"
 
 // ============================================================
-// Solver registry
+// Solver registry — lookupSolver is defined after SOLVER_REGISTRY below.
 // ============================================================
-
-export function lookupSolver(details: DarknetServerDetailsForFormulas): SolverModule | null {
-  const key = `${details.modelId}|${details.passwordFormat}`
-  return (SOLVER_REGISTRY as Record<string, SolverModule>)[key] ?? null
-}
 
 // ============================================================
 // Shared helpers
@@ -1562,6 +1557,15 @@ export const SOLVER_REGISTRY: Record<string, SolverModule> = {
   "(The Labyrinth)|alphabetic": labyrinth,
   "(The Labyrinth)|alphanumeric": labyrinth,
   "(The Labyrinth)|ASCII": labyrinth,
+}
+
+export function lookupSolver(details: DarknetServerDetailsForFormulas): SolverModule | null {
+  // Range variant: Data is "nulla,MCXCVII" (comma-separated bounds), not a single numeral.
+  if (details.modelId === "BellaCuore" && details.passwordFormat === "numeric" && details.data.includes(",")) {
+    return bellaCuoreRange
+  }
+  const key = `${details.modelId}|${details.passwordFormat}`
+  return SOLVER_REGISTRY[key] ?? null
 }
 
 // Exported for master + solverWorker

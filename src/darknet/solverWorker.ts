@@ -47,9 +47,6 @@ self.onmessage = (event: MessageEvent) => {
       case "initSolver": {
         if (!msg.details) throw new Error("missing details")
         let mod = lookupSolver(msg.details)
-        if (!mod && msg.details.modelId === "BellaCuore" && msg.details.data.includes(",")) {
-          mod = bellaCuoreRange
-        }
         if (!mod) { postMessage({ id: msg.id, error: "no solver" }); return }
         const state = mod.initSolver(msg.details)
         _solverCache.set((state as unknown as Record<string, unknown>).type as string, mod)
