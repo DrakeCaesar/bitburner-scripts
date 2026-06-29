@@ -159,9 +159,41 @@ const bellaCuoreSingle: SolverModule<BellaCuoreSingleState> = {
   applyResult(state, _guess, _result) { return state },
 }
 
-// --- OctantVoxel ---
+// --- OctantVoxel (base-N conversion, including fractional bases like 15.1) ---
 
 interface OctantVoxelState extends SolverState { type: "octantVoxel"; dispatched: boolean; guess: string | null }
+
+const OCTANT_VOXEL_DIGITS = "0123456789abcdef"
+
+function octantVoxelDigitValue(ch: string): number | null {
+  const idx = OCTANT_VOXEL_DIGITS.indexOf(ch.toLowerCase())
+  return idx >= 0 ? idx : null
+}
+
+function parseBaseNToDecimal(base: number, numberStr: string): number | null {
+  const maxDigit = Math.ceil(base) - 1
+  const dotIdx = numberStr.indexOf(".")
+  const intPart = dotIdx >= 0 ? numberStr.slice(0, dotIdx) : numberStr
+  const fracPart = dotIdx >= 0 ? numberStr.slice(dotIdx + 1) : ""
+
+  let value = 0
+
+  // Integer part (positions ≥ 0)
+  for (let i = 0; i < intPart.length; i++) {
+    const dv = octantVoxelDigitValue(intPart[intPart.length - 1 - i]!)
+    if (dv === null || dv > maxDigit) return null
+    value += dv * base ** i
+  }
+
+  // Fractional part (positions < 0)
+  for (let i = 0; i < fracPart.length; i++) {
+    const dv = octantVoxelDigitValue(fracPart[i]!)
+    if (dv === null || dv > maxDigit) return null
+    value += dv * base ** -(i + 1)
+  }
+
+  return value
+}
 
 const octantVoxel: SolverModule<OctantVoxelState> = {
   initSolver(details) {
@@ -169,16 +201,13 @@ const octantVoxel: SolverModule<OctantVoxelState> = {
     if (parts.length !== 2) return { type: "octantVoxel", dispatched: true, guess: null }
     const fromBase = Number(parts[0]?.trim())
     const numberStr = parts[1]?.trim()
-    if (!Number.isInteger(fromBase) || fromBase < 2 || fromBase > 36 || !numberStr) {
+    if (!Number.isFinite(fromBase) || fromBase < 2 || !numberStr) {
       return { type: "octantVoxel", dispatched: true, guess: null }
     }
-    const validChars = "0123456789abcdefghijklmnopqrstuvwxyz".slice(0, fromBase)
-    for (const ch of numberStr.toLowerCase()) {
-      if (!validChars.includes(ch)) return { type: "octantVoxel", dispatched: true, guess: null }
-    }
-    const decimal = parseInt(numberStr, fromBase)
-    if (!Number.isFinite(decimal)) return { type: "octantVoxel", dispatched: true, guess: null }
-    const password = String(decimal)
+    const decimal = parseBaseNToDecimal(fromBase, numberStr)
+    if (decimal === null) return { type: "octantVoxel", dispatched: true, guess: null }
+    const rounded = Math.round(decimal)
+    const password = String(rounded).padStart(details.passwordLength, "0")
     if (password.length !== details.passwordLength) return { type: "octantVoxel", dispatched: true, guess: null }
     return { type: "octantVoxel", dispatched: false, guess: password }
   },
@@ -197,6 +226,7 @@ function cleanMathExpression(expr: string): string {
     .replace(/\u2212/g, "-").replace(/\u00D7/g, "*").replace(/\u00F7/g, "/")
     .replace(/\u00B7/g, "*").replace(/\u2217/g, "*")
     .replace(/\u2795/g, "+").replace(/\u2796/g, "-")
+    .replace(/\u04B3/g, "*").replace(/\u0445/g, "*")
     .replace(/[^\d\s+\-*/().]/g, "")
 }
 
@@ -538,6 +568,7 @@ interface NilState extends SolverState {
   chars: (string | null)[]
   charset: string
   charIdx: number
+  retries: number   // count retries of current char (unparseable feedback)
   finalDispatched: boolean
 }
 
@@ -550,17 +581,28 @@ const nilSolver: SolverModule<NilState> = {
     return {
       type: "nil",
       chars: Array.from({ length: details.passwordLength }, () => null),
-      charset, charIdx: 0, finalDispatched: false,
+      charset, charIdx: 0, retries: 0, finalDispatched: false,
     }
   },
   nextGuess(state) {
-    if (state.chars.every((d) => d !== null) && !state.finalDispatched) {
-      state.finalDispatched = true
-      return { guess: state.chars.join(""), detail: "NIL final" }
+    if (state.chars.every((d) => d !== null)) {
+      if (!state.finalDispatched) {
+        state.finalDispatched = true
+        return { guess: state.chars.join(""), detail: "NIL final" }
+      }
+      return null
     }
     if (state.charIdx < state.charset.length) {
       const ch = state.charset[state.charIdx]!
       return { guess: ch.repeat(state.chars.length), detail: `NIL char ${ch}` }
+    }
+    // Charset exhausted but some positions still null — fill with first char and dispatch
+    for (let i = 0; i < state.chars.length; i++) {
+      if (state.chars[i] === null) state.chars[i] = state.charset[0]!
+    }
+    if (!state.finalDispatched) {
+      state.finalDispatched = true
+      return { guess: state.chars.join(""), detail: "NIL final (fallback)" }
     }
     return null
   },
@@ -570,19 +612,20 @@ const nilSolver: SolverModule<NilState> = {
       const feedback = result.feedback ?? ""
       const parts = feedback.split(",")
       if (parts.length === state.chars.length) {
+        state.retries = 0
         let any = false
         for (let i = 0; i < parts.length; i++) {
           if (parts[i] === "yes") { state.chars[i] = guess[0]!; any = true }
         }
-        state.charIdx++ // advance only when feedback was parseable
-        if (!any && state.charIdx >= state.charset.length) {
-          // End of charset with no matches — final guess is best effort
-          state.finalDispatched = true
-          state.chars.fill("0") // fallback digit
-          return state
+        state.charIdx++
+      } else {
+        // Unparseable feedback — retry up to 3 times, then advance anyway
+        state.retries++
+        if (state.retries > 3) {
+          state.retries = 0
+          state.charIdx++
         }
       }
-      // If parts length doesn't match, retry same char (charIdx not incremented)
     }
     return state
   },
