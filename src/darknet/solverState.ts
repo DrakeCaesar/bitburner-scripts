@@ -1199,25 +1199,47 @@ const timingAttack: SolverModule<TimingAttackState> = {
   },
 }
 
-// --- OpenWebAccessPoint ---
+// --- OpenWebAccessPoint (packetSniffer) ---
+//
+// Two difficulty levels from game source:
+//   Difficulty <= 16: password embedded as " hostname:password " in varied noise
+//   Difficulty > 16:  raw password embedded in getPassword(124..144, true) — pure alphanumeric noise
+//
+// Strategy:
+//   1. Send hostname as guess → get feedback data (the "packet capture")
+//   2. Try "hostname:password" regex first (easy variant)
+//   3. Fall back: extract all substrings of password length, iterate through them (hard variant)
 
 interface OpenWebAccessPointState extends SolverState {
   type: "openWebAccessPoint"
-  phase: "probe" | "submit"
+  phase: "probe" | "easySubmit" | "hardIterate"
   extractedPassword: string | null
+  pwLen: number
+  candidates: string[]     // substrings from the feedback data
+  candidateIdx: number
 }
 
 const openWebAccessPoint: SolverModule<OpenWebAccessPointState> = {
-  initSolver(_details) {
-    return { type: "openWebAccessPoint", phase: "probe", extractedPassword: null }
+  initSolver(details) {
+    return {
+      type: "openWebAccessPoint", phase: "probe",
+      extractedPassword: null, pwLen: details.passwordLength,
+      candidates: [], candidateIdx: 0,
+    }
   },
   nextGuess(state, context) {
     if (state.phase === "probe") {
       return { guess: context.target, detail: `probe ${context.target}` }
     }
-    if (state.phase === "submit" && state.extractedPassword) {
-      // One-shot submit
-      return { guess: state.extractedPassword, detail: "submit" }
+    if (state.phase === "easySubmit" && state.extractedPassword) {
+      return { guess: state.extractedPassword, detail: "submit (easy)" }
+    }
+    if (state.phase === "hardIterate") {
+      if (state.candidateIdx < state.candidates.length) {
+        const guess = state.candidates[state.candidateIdx]!
+        state.candidateIdx++
+        return { guess, detail: `cand ${state.candidateIdx}/${state.candidates.length}` }
+      }
     }
     return null
   },
@@ -1225,19 +1247,37 @@ const openWebAccessPoint: SolverModule<OpenWebAccessPointState> = {
     if (result.success) return state
     if (state.phase === "probe") {
       const fb = result.feedback ?? ""
-      if (!fb) return state // no feedback — retry
-      // Extract "hostname:password" from feedback
+      if (!fb) return state // no feedback — retry probe
+
+      // Try easy variant: "hostname:password" embedded
       const escapedHost = guess.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
       const regex = new RegExp(escapedHost + `:(\\S+)`)
       const m = fb.match(regex)
       if (m) {
         state.extractedPassword = m[1]!
-        state.phase = "submit"
-      } else {
-        state.extractedPassword = null
-        state.phase = "submit" // done trying
+        state.phase = "easySubmit"
+        return state
       }
+
+      // Hard variant: raw password embedded in alphanumeric noise.
+      // Collect all substrings of password length from the feedback.
+      if (fb.length < state.pwLen) {
+        state.phase = "hardIterate" // dead end
+        return state
+      }
+      const candidates: string[] = []
+      for (let i = 0; i <= fb.length - state.pwLen; i++) {
+        const sub = fb.slice(i, i + state.pwLen)
+        if (!candidates.includes(sub)) candidates.push(sub)
+      }
+      state.candidates = candidates
+      state.candidateIdx = 0
+      state.phase = "hardIterate"
+      return state
     }
+
+    // For easySubmit — already dispatched, done
+    // For hardIterate — nextGuess handles advancing candidateIdx
     return state
   },
 }
