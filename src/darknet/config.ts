@@ -151,6 +151,16 @@ export interface CrawlQueueSummary {
   staleReports: number
 }
 
+/** One solver exhaustion event (logged for the dashboard; targets are retried automatically). */
+export interface ExhaustedTargetRecord {
+  host: string
+  solverId: string
+  modelId: string
+  attempt: number
+  exhaustedAt: number
+  retryAt: number
+}
+
 export interface CrawlProgressState {
   reports: ReadonlyMap<string, CrawlHostReport>
   activeOps: readonly CrawlStatusReport[]
@@ -166,6 +176,8 @@ export interface CrawlProgressState {
   queueSummary: CrawlQueueSummary
   /** Known labyrinth map(s) when a maze target is registered. */
   labyrinths: readonly LabyrinthProgressSnapshot[]
+  /** Solver exhaustion log for this crawl session (newest appended last). */
+  exhaustedRecords: readonly ExhaustedTargetRecord[]
 }
 
 /** ASCII map of explored labyrinth cells for the dashboard. */

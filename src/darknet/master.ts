@@ -27,6 +27,7 @@ import {
   type CrawlTargetSnapshot,
   type CrawlTargetQueueState,
   type CrawlQueueSummary,
+  type ExhaustedTargetRecord,
   type LabyrinthProgressSnapshot,
   DNET_DEBUG_MASTER_DECISIONS,
 } from "./config"
@@ -237,6 +238,7 @@ function parseWorkerResponse(raw: unknown): WorkerResponse | null {
 // ---- port processing ----
 
 const UNREACHABLE_RECHECK_MS = 5_000
+const EXHAUSTED_RETRY_BASE_MS = 15_000
 const STALE_REPORT_PRUNE_LOOPS = 30
 const MASTER_LOG_THROTTLE_MS = 30_000
 
@@ -259,12 +261,14 @@ function mergeHostReport(
   ns?: NS,
 ): CrawlHostReport {
   const registryPw = registry?.servers[incoming.hostname]?.password ?? null
-  const existingPw = existing?.password ?? registryPw
+  const existingPw = existing?.password ?? null
   const liveDetails = safeGetServerDetails(dnet, incoming.hostname)
   const liveSession = liveDetails?.hasSession === true
 
   let authenticated = incoming.authenticated
-  const wasAuthed = existing?.authenticated === true || liveSession || existingPw != null
+  const wasAuthed =
+    liveSession
+    || (existing?.authenticated === true && (existing?.password != null || liveSession))
   if (wasAuthed && incoming.authenticated === false) {
     authenticated = true
     if (ns) {
@@ -594,6 +598,125 @@ interface TargetState {
   explorerWorker: string | null
 }
 
+function solverIdOf(state: SolverState): string {
+  return (state as unknown as Record<string, unknown>).type as string
+}
+
+function markTargetExhausted(
+  target: TargetState,
+  exhaustedRecords: ExhaustedTargetRecord[],
+  now: number,
+): void {
+  target.done = true
+  target.pendingGuess = "EXHAUSTED"
+  target.plannedNext = null
+  target.pendingWorker = null
+  target.inFlightGuess = null
+
+  const prevAttempts = exhaustedRecords.filter((r) => r.host === target.hostname).length
+  const attempt = prevAttempts + 1
+  exhaustedRecords.push({
+    host: target.hostname,
+    solverId: solverIdOf(target.solverState),
+    modelId: target.details.modelId,
+    attempt,
+    exhaustedAt: now,
+    retryAt: now + EXHAUSTED_RETRY_BASE_MS * Math.min(attempt, 6),
+  })
+}
+
+function latestExhaustedRecord(
+  records: readonly ExhaustedTargetRecord[],
+  host: string,
+): ExhaustedTargetRecord | undefined {
+  for (let i = records.length - 1; i >= 0; i--) {
+    const rec = records[i]!
+    if (rec.host === host) return rec
+  }
+  return undefined
+}
+
+async function retryExhaustedTargets(
+  ns: NS,
+  dnet: DarknetCrawlApi,
+  targetStates: Map<string, TargetState>,
+  reports: Map<string, CrawlHostReport>,
+  exhaustedRecords: ExhaustedTargetRecord[],
+  now: number,
+): Promise<void> {
+  if (!_solverWorker) return
+
+  for (const [hostname, target] of targetStates) {
+    if (!target.done || target.pendingGuess !== "EXHAUSTED") continue
+    const latest = latestExhaustedRecord(exhaustedRecords, hostname)
+    if (!latest || now < latest.retryAt) continue
+
+    const details = safeGetServerDetails(dnet, hostname)
+    if (!details) {
+      targetStates.delete(hostname)
+      continue
+    }
+    if (details.hasSession && target.password != null) {
+      targetStates.delete(hostname)
+      reports.set(hostname, {
+        hostname,
+        authenticated: true,
+        password: target.password,
+        authGuesses: null,
+      })
+      continue
+    }
+
+    reports.set(hostname, {
+      hostname,
+      authenticated: false,
+      password: null,
+      authGuesses: null,
+    })
+
+    if (asLabyrinthState(target.solverState)) {
+      labyrinthRepairTargetState(target)
+      target.details = details
+      target.done = false
+      target.pendingGuess = null
+      target.pendingWorker = null
+      target.inFlightGuess = null
+      target.plannedNext = null
+      target.pendingAt = 0
+      target.lastPlanAt = 0
+      target.unreachableSince = 0
+      masterLogThrottled(
+        ns,
+        `retry:${hostname}`,
+        `retry exhausted labyrinth ${hostname} (attempt ${latest.attempt}, map kept)`,
+      )
+      continue
+    }
+
+    const freshState = await workerInitSolver(details)
+    if (!freshState) continue
+
+    target.details = details
+    target.solverState = freshState
+    target.done = false
+    target.pendingGuess = null
+    target.pendingWorker = null
+    target.inFlightGuess = null
+    target.plannedNext = null
+    target.pendingAt = 0
+    target.lastPlanAt = 0
+    target.unreachableSince = 0
+    target.explorerWorker = null
+    target.startedAt = now
+
+    masterLogThrottled(
+      ns,
+      `retry:${hostname}`,
+      `retry exhausted ${hostname} (${solverIdOf(freshState)} attempt ${latest.attempt})`,
+    )
+  }
+}
+
 // ---- labyrinth stasis ----
 
 function isLabyrinthHost(dnet: DarknetCrawlApi, hostname: string): boolean {
@@ -752,6 +875,7 @@ async function dispatchLabyrinthTargets(
   workerRegistry: Map<string, WorkerInfo>,
   workerReach: Map<string, Set<string>>,
   reachableTargets: Set<string>,
+  exhaustedRecords: ExhaustedTargetRecord[],
   now: number,
 ): Promise<void> {
   if (!_solverWorker) return
@@ -814,9 +938,7 @@ async function dispatchLabyrinthTargets(
       && !labyrinthGlobalFrontierRemaining(lab.map)
       && !labyrinthAnyWorkRemaining(lab, allAdjacent)
     ) {
-      target.done = true
-      target.pendingGuess = "EXHAUSTED"
-      target.plannedNext = null
+      markTargetExhausted(target, exhaustedRecords, now)
     }
   }
 }
@@ -1270,10 +1392,13 @@ async function dispatchTasks(
   dnet: DarknetCrawlApi,
   targetStates: Map<string, TargetState>,
   workerRegistry: Map<string, WorkerInfo>,
+  reports: Map<string, CrawlHostReport>,
+  exhaustedRecords: ExhaustedTargetRecord[],
 ): Promise<void> {
   const now = Date.now()
 
   reactivateFalseExhaustedLabyrinths(targetStates, workerRegistry)
+  await retryExhaustedTargets(ns, dnet, targetStates, reports, exhaustedRecords, now)
 
   // Timeout stale pending guesses when the assigned worker missed its deadline
   for (const [, target] of targetStates) {
@@ -1294,7 +1419,7 @@ async function dispatchTasks(
   const reachableTargets = buildReachableTargets(workerReach)
 
   await dispatchLabyrinthTargets(
-    ns, dnet, targetStates, workerRegistry, workerReach, reachableTargets, now,
+    ns, dnet, targetStates, workerRegistry, workerReach, reachableTargets, exhaustedRecords, now,
   )
 
   // Dispatch cached guesses for targets that became reachable
@@ -1341,9 +1466,7 @@ async function dispatchTasks(
         const s = target.solverState as unknown as Record<string, unknown>
         if (s.needsRecheck === true) continue
 
-        target.done = true
-        target.pendingGuess = "EXHAUSTED"
-        target.plannedNext = null
+        markTargetExhausted(target, exhaustedRecords, now)
         continue
       }
 
@@ -1374,9 +1497,11 @@ async function registerTarget(
   }
   if (details.hasSession) {
     const pw = registry?.servers[hostname]?.password ?? reports.get(hostname)?.password ?? null
-    reports.set(hostname, { hostname, authenticated: true, password: pw, authGuesses: null })
-    masterLogThrottled(ns, `register:${hostname}`, `register skip: hasSession ${hostname}`)
-    return
+    if (pw != null) {
+      reports.set(hostname, { hostname, authenticated: true, password: pw, authGuesses: null })
+      masterLogThrottled(ns, `register:${hostname}`, `register skip: hasSession ${hostname}`)
+      return
+    }
   }
   if (!_solverWorker) return
 
@@ -1415,7 +1540,7 @@ async function maybeRegisterTarget(
   if (targetStates.has(hostname)) return
 
   const report = reports.get(hostname)
-  if (report?.authenticated === true || report?.password != null) {
+  if (report?.password != null) {
     masterLogThrottled(ns, `register:${hostname}`, `register skip: report authed ${hostname}`)
     return
   }
@@ -1435,6 +1560,15 @@ async function maybeRegisterTarget(
         return
       }
     } catch { /* fall through to solver registration */ }
+  }
+
+  if (report?.authenticated === true && report.password == null) {
+    reports.set(hostname, {
+      hostname,
+      authenticated: false,
+      password: null,
+      authGuesses: report.authGuesses ?? null,
+    })
   }
 
   if (safeGetServerDetails(dnet, hostname) === null) {
@@ -1487,13 +1621,12 @@ async function processReportsAndSpawns(
   sessionId: number,
 ): Promise<void> {
   for (const [hostname, report] of reports) {
-    if (report.authenticated === false && !targetStates.has(hostname)) {
+    if (report.password == null && !targetStates.has(hostname)) {
       await maybeRegisterTarget(ns, dnet, targetStates, reports, registry, hostname)
     }
-    if (report.authenticated === true && targetStates.has(hostname)) {
-      targetStates.delete(hostname)
-    }
-    if (report.authenticated === true && !workerRegistry.has(hostname) && !spawning.has(hostname) && hostname !== DARKWEB) {
+
+    const pw = reports.get(hostname)?.password ?? registry?.servers[hostname]?.password ?? null
+    if (pw != null && !workerRegistry.has(hostname) && !spawning.has(hostname) && hostname !== DARKWEB) {
       for (const [, wi] of workerRegistry) {
         if (wi.neighbors.includes(hostname) && wi.idle && wi.probed) {
           const childPort = allocatePort()
@@ -1505,9 +1638,6 @@ async function processReportsAndSpawns(
             lastCommand: null, lastCommandDetail: null, lastCommandAt: 0,
             lastReply: null, lastReplyAt: 0, lastProbedAt: 0, failures: 0, commandDeadlineAt: 0,
           })
-          const pw = reports.get(hostname)?.password
-            ?? registry?.servers[hostname]?.password
-            ?? undefined
           sendWorkerCommand(ns, dnet, wi, {
             type: "spawn",
             target: hostname,
@@ -1611,6 +1741,7 @@ export async function runDarknetCrawl(
         workers: [], solverTimings: [],
         targets: [], queueSummary: { queued: 0, pending: 0, unreachable: 0, exhausted: 0, staleReports: 0 },
         labyrinths: [],
+        exhaustedRecords: [],
       })
     }
 
@@ -1727,6 +1858,7 @@ export async function runDarknetCrawl(
   const reports = new Map<string, CrawlHostReport>()
   const activeOps = new Map<string, CrawlStatusReport>()
   const cacheOpens: CrawlCacheOpen[] = []
+  const exhaustedRecords: ExhaustedTargetRecord[] = []
 
   const emitProgress = async (workerRunning: boolean): Promise<void> => {
     if (!onProgress) return
@@ -1759,6 +1891,7 @@ export async function runDarknetCrawl(
       reports, activeOps: [...activeOps.values()], workerRunning, cacheOpens, workers,
       solverTimings: timings, targets, queueSummary,
       labyrinths: buildLabyrinthSnapshots(targetStates, reachableTargets),
+      exhaustedRecords,
     })
   }
 
@@ -1769,7 +1902,7 @@ export async function runDarknetCrawl(
       await drainReportPort(ns, dnet, targetStates, solverTimings, workerRegistry, spawning, reports, activeOps, cacheOpens, sessionId, registry, staleReportLoops)
       pollTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
 
-      await dispatchTasks(ns, dnet, targetStates, workerRegistry)
+      await dispatchTasks(ns, dnet, targetStates, workerRegistry, reports, exhaustedRecords)
 
       await finalizeCompletedTargets(ns, dnet, targetStates, reports, registry)
 
@@ -1835,7 +1968,7 @@ export async function runDarknetCrawl(
     await drainReportPort(ns, dnet, targetStates, solverTimings, workerRegistry, spawning, reports, activeOps, cacheOpens, sessionId, registry, staleReportLoops)
     pollTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
 
-    await dispatchTasks(ns, dnet, targetStates, workerRegistry)
+    await dispatchTasks(ns, dnet, targetStates, workerRegistry, reports, exhaustedRecords)
 
     await finalizeCompletedTargets(ns, dnet, targetStates, reports, registry)
 

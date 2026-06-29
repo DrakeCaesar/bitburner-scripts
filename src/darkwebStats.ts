@@ -15,6 +15,7 @@ import {
   type CrawlQueueSummary,
   type DarknetCrawlApi,
   type DarknetRegistry,
+  type ExhaustedTargetRecord,
   type LabyrinthProgressSnapshot,
   type SolverTiming,
   type WorkerSnapshot,
@@ -97,6 +98,22 @@ const CACHE_TABLE_COLUMNS = [
   col("File", "left", W.file),
   col("Karma", "right", W.job),
   col("Reward", "left", W.reward),
+]
+
+const EXHAUSTED_STATUS_COLUMNS = [
+  col("Host", "left", W.host),
+  col("Solver", "left", 14),
+  col("Model", "left", 16),
+  col("Try", "right", 4),
+  col("Status", "left", 14),
+]
+
+const EXHAUSTED_LOG_COLUMNS = [
+  col("Host", "left", W.host),
+  col("Solver", "left", 14),
+  col("Try", "right", 4),
+  col("When", "right", 8),
+  col("Next retry", "right", 10),
 ]
 
 // --- ui ---
@@ -272,6 +289,82 @@ function sumCacheKarma(cacheOpens: readonly CrawlCacheOpen[]): number {
   return total
 }
 
+function formatRetryIn(retryAt: number, now: number): string {
+  const remainMs = retryAt - now
+  if (remainMs <= 0) return "now"
+  if (remainMs < 60_000) return `${Math.ceil(remainMs / 1000)}s`
+  return `${Math.ceil(remainMs / 60_000)}m`
+}
+
+function exhaustedStatusLabel(
+  host: string,
+  records: readonly ExhaustedTargetRecord[],
+  targets: readonly CrawlTargetSnapshot[],
+  now: number,
+): string {
+  const target = targets.find((t) => t.host === host)
+  if (target?.queueState === "exhausted") {
+    const latest = records.filter((r) => r.host === host).at(-1)
+    if (latest) return `wait ${formatRetryIn(latest.retryAt, now)}`
+    return "exhausted"
+  }
+  if (target) return target.queueState
+  return "cleared"
+}
+
+function appendExhaustedTables(
+  log: TabbedScriptLogBuilder,
+  records: readonly ExhaustedTargetRecord[],
+  targets: readonly CrawlTargetSnapshot[],
+): void {
+  const builder = log.tab("exhausted")
+  const now = Date.now()
+
+  if (records.length === 0) {
+    builder.text("No solver exhaustion events this session.")
+    return
+  }
+
+  const latestByHost = new Map<string, ExhaustedTargetRecord>()
+  for (const rec of records) {
+    latestByHost.set(rec.host, rec)
+  }
+
+  const statusRows = [...latestByHost.values()]
+    .sort((a, b) => a.host.localeCompare(b.host))
+    .map((rec) => [
+      rec.host,
+      rec.solverId,
+      rec.modelId,
+      String(rec.attempt),
+      exhaustedStatusLabel(rec.host, records, targets, now),
+    ])
+
+  const waiting = statusRows.filter((row) => row[4]!.startsWith("wait")).length
+  builder.text(`${latestByHost.size} host(s) exhausted this session | ${waiting} waiting for retry`)
+  builder.table({
+    title: "Solver status",
+    columns: EXHAUSTED_STATUS_COLUMNS,
+    rows: statusRows,
+  })
+
+  const logRows = [...records]
+    .sort((a, b) => b.exhaustedAt - a.exhaustedAt)
+    .map((rec) => [
+      rec.host,
+      rec.solverId,
+      String(rec.attempt),
+      formatTimestamp(rec.exhaustedAt),
+      formatRetryIn(rec.retryAt, rec.exhaustedAt),
+    ])
+
+  builder.table({
+    title: "Exhaustion log",
+    columns: EXHAUSTED_LOG_COLUMNS,
+    rows: logRows,
+  })
+}
+
 function appendCacheOpenTable(log: TabbedScriptLogBuilder, cacheOpens: readonly CrawlCacheOpen[]): void {
   const builder = log.tab("caches")
   if (cacheOpens.length === 0) {
@@ -323,6 +416,7 @@ async function renderDashboard(
   solverTimings: readonly SolverTiming[],
   targets: readonly CrawlTargetSnapshot[] = [],
   labyrinths: readonly LabyrinthProgressSnapshot[] = [],
+  exhaustedRecords: readonly ExhaustedTargetRecord[] = [],
 ): Promise<void> {
   tabbedLog.clearPanels()
   const panel = tabbedLog.tab("crawl")
@@ -340,6 +434,7 @@ async function renderDashboard(
   appendSolverTimingTable(tabbedLog, solverTimings)
   appendServerTable(tabbedLog, dnet, workers, displayReports, targets)
   appendCacheOpenTable(tabbedLog, cacheOpens)
+  appendExhaustedTables(tabbedLog, exhaustedRecords, targets)
   await renderTabbedTailLog(ns, tabbedLog)
 }
 
@@ -368,11 +463,12 @@ async function renderCrawlProgress(
     cacheOpens,
     `Crawl #${crawlNum} ${status} | registry ${Object.keys(registry.servers).length} host(s), ${knownPw} password(s) | ` +
       `auth ok ${auth.ok}, failed ${auth.failed}, skipped ${auth.skipped} | ` +
-      `workers ${workerCount} | targets q${qs.queued} p${qs.pending} u${qs.unreachable} stale${qs.staleReports} | caches ${cacheOpens.length}`,
+      `workers ${workerCount} | targets q${qs.queued} p${qs.pending} u${qs.unreachable} e${qs.exhausted} stale${qs.staleReports} | caches ${cacheOpens.length}`,
     state.workers,
     state.solverTimings,
     state.targets,
     state.labyrinths,
+    state.exhaustedRecords,
   )
 }
 
@@ -400,6 +496,8 @@ async function renderRegistrySummary(
     [],
     [],
     [],
+    [],
+    [],
   )
 }
 
@@ -417,6 +515,7 @@ export async function main(ns: NS): Promise<void> {
   const tabbedLog = createTabbedTailLog([
     { id: "crawl", label: "Crawl" },
     { id: "caches", label: "Caches" },
+    { id: "exhausted", label: "Exhausted" },
   ])
 
   const logCrawl = (message: string) => {
