@@ -3,6 +3,7 @@ import { NS } from "@ns"
 // ---- constants ----
 
 export const DARKNET_CRAWL_SCRIPT = "darknet/worker.js"
+export const DARKNET_STASIS_SCRIPT = "darknet/stasisLink.js"
 export const DARKNET_REGISTRY_FILE = "darknet-registry.json"
 export const DEFAULT_CRAWL_INTERVAL_MS = 60_000
 export const DARKWEB = "darkweb"
@@ -52,6 +53,9 @@ export const DNET_DEBUG_RAW_API_CONSOLE = false
 
 /** After 401 auth, peek/consume heartbleed cycles while hunting for a matching attempt log. */
 export const HEARTBLEED_AUTH_LOG_MAX_RETRIES = 5
+
+/** {@link DarknetServerDetails.modelId} for labyrinth servers (all variants). */
+export const LABYRINTH_MODEL_ID = "(The Labyrinth)"
 
 export interface ControlMessage {
   sessionId: number
@@ -363,6 +367,9 @@ export interface DarknetCrawlApi {
   labradar?(): Promise<{ success: boolean; message: string }>
   memoryReallocation?(host?: string): Promise<{ success: boolean }>
   getBlockedRam?(host?: string): number
+  setStasisLink?(shouldLink?: boolean): Promise<{ success: boolean; code?: number; message?: string }>
+  getStasisLinkLimit?(): number
+  getStasisLinkedServers?(returnByIP?: boolean): string[]
 }
 
 export type DarknetServerDetailsForFormulas = {
@@ -412,6 +419,7 @@ export type WorkerCommandPayload =
   | { type: "labreport"; target: string; solverId: string }
   | { type: "spawn"; target: string; sessionId: number; port: number; password?: string }
   | { type: "realloc" }
+  | { type: "stasis" }
   | { type: "exit" }
 
 /** Master writes these to a worker's dedicated command port. Worker reads and executes. */
@@ -427,6 +435,7 @@ export type WorkerResponse =
   | { type: "probeResult"; workerHost: string; targets: string[]; freeRam: number; blockedRam: number }
   | { type: "spawnResult"; workerHost: string; target: string; success: boolean; childPid: number }
   | { type: "reallocResult"; workerHost: string; freeRam: number; blockedRam: number }
+  | { type: "stasisResult"; workerHost: string; success: boolean }
 
 /** Base interface for solver state machines. Each solver adds its own fields. */
 export interface SolverState {

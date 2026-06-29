@@ -45,6 +45,11 @@ export function getReallocTimeMs(charisma: number): number {
   return Math.max(8000 * (500 / (500 + charisma)), 200)
 }
 
+/** Matches dnet.setStasisLink delay in game source. */
+export function getStasisLinkTimeMs(charisma: number): number {
+  return Math.max((1000 / (charisma + 1000)) * 30_000, 200)
+}
+
 function authTimeMs(
   ns: NS,
   dnet: DarknetCrawlApi,
@@ -96,6 +101,10 @@ export function estimateCommandMs(
       return authTimeMs(ns, dnet, command.target)
     case "realloc":
       return getReallocTimeMs(ns.getPlayer().skills.charisma)
+    case "stasis": {
+      const charisma = ns.getPlayer().skills.charisma
+      return getStasisLinkTimeMs(charisma) + 10 * getReallocTimeMs(charisma)
+    }
     case "spawn": {
       const charisma = ns.getPlayer().skills.charisma
       const reallocMs = getReallocTimeMs(charisma)

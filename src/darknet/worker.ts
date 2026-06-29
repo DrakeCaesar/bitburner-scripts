@@ -1,6 +1,7 @@
 import { NS } from "@ns"
 import {
   DARKNET_CRAWL_SCRIPT,
+  DARKNET_STASIS_SCRIPT,
   DARKWEB_ARCHIVE_DIR,
   CONTROL_PORT,
   WORKER_MODE_ARG,
@@ -395,6 +396,18 @@ export async function copyCrawlScript(ns: NS, target: string, source: string): P
   }
 }
 
+/** Copy stasis helper script onto host (from home). */
+export async function ensureStasisScript(ns: NS, host: string): Promise<boolean> {
+  if (ns.fileExists(DARKNET_STASIS_SCRIPT, host)) return true
+  for (let retryIdx = 0; retryIdx < 3; retryIdx++) {
+    if (ns.fileExists(DARKNET_STASIS_SCRIPT, "home")) {
+      if (ns.scp(DARKNET_STASIS_SCRIPT, host, "home")) break
+    }
+    await ns.sleep(1000)
+  }
+  return ns.fileExists(DARKNET_STASIS_SCRIPT, host)
+}
+
 export function crawlWorkerArgs(sessionId: number, commandPort: number, selfPassword?: string): (string | number)[] {
   const args: (string | number)[] = [WORKER_MODE_ARG, sessionId, commandPort]
   if (selfPassword !== undefined) {
@@ -587,6 +600,7 @@ function formatCommandBrief(cmd: WorkerCommand): string {
     case "labreport": return `labreport:${cmd.target}`
       case "spawn": return `spawn:${cmd.target}`
     case "realloc": return "realloc"
+    case "stasis": return "stasis"
     case "exit": return "exit"
   }
 }
@@ -796,6 +810,80 @@ export async function runCrawlWorker(ns: NS): Promise<void> {
           blockedRam,
         }))
         ns.printf("done: realloc => free %s blocked %s", ns.format.ram(freeRam), ns.format.ram(blockedRam))
+        break
+      }
+      case "stasis": {
+        let childPid = 0
+        try {
+          const self = safeGetSessionDetails(dnet, hostname)
+          if (!self?.hasSession) {
+            ns.writePort(replyPort, JSON.stringify({
+              type: "stasisResult",
+              workerHost: hostname,
+              success: false,
+            }))
+            break
+          }
+
+          if (dnet.memoryReallocation && dnet.getBlockedRam) {
+            let blocked = dnet.getBlockedRam(hostname)
+            const childRam = ns.getScriptRam(DARKNET_STASIS_SCRIPT, hostname)
+            let free = ns.getServerMaxRam(hostname) - ns.getServerUsedRam(hostname)
+            for (let retryIdx = 0; retryIdx < 10 && blocked > 0 && free < childRam; retryIdx++) {
+              ns.printf("reallocating %s for stasis (blocked %s, free %s, need %s)",
+                hostname, ns.format.ram(blocked), ns.format.ram(free), ns.format.ram(childRam))
+              try { await dnet.memoryReallocation(hostname) } catch { break }
+              blocked = dnet.getBlockedRam(hostname)
+              free = ns.getServerMaxRam(hostname) - ns.getServerUsedRam(hostname)
+            }
+          }
+
+          if (!(await ensureStasisScript(ns, hostname))) {
+            ns.printf("stasis: %s missing on %s", DARKNET_STASIS_SCRIPT, hostname)
+            ns.writePort(replyPort, JSON.stringify({
+              type: "stasisResult",
+              workerHost: hostname,
+              success: false,
+            }))
+            break
+          }
+
+          const childRam = ns.getScriptRam(DARKNET_STASIS_SCRIPT, hostname)
+          const free = ns.getServerMaxRam(hostname) - ns.getServerUsedRam(hostname)
+          if (childRam > free) {
+            ns.printf("stasis: not enough RAM on %s (need %s, free %s)",
+              hostname, ns.format.ram(childRam), ns.format.ram(free))
+            ns.writePort(replyPort, JSON.stringify({
+              type: "stasisResult",
+              workerHost: hostname,
+              success: false,
+            }))
+            break
+          }
+
+          childPid = ns.exec(DARKNET_STASIS_SCRIPT, hostname, 1, replyPort)
+          if (childPid > 0) {
+            while (ns.isRunning(childPid)) {
+              await ns.sleep(200)
+            }
+          } else {
+            ns.writePort(replyPort, JSON.stringify({
+              type: "stasisResult",
+              workerHost: hostname,
+              success: false,
+            }))
+          }
+        } catch (err) {
+          ns.printf("stasis failed: %s", String(err))
+          if (childPid === 0) {
+            ns.writePort(replyPort, JSON.stringify({
+              type: "stasisResult",
+              workerHost: hostname,
+              success: false,
+            }))
+          }
+        }
+        ns.printf("done: stasis")
         break
       }
       case "exit": {

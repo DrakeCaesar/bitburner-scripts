@@ -6,6 +6,8 @@ import {
   CONTROL_PORT,
   PORT_POOL_START,
   PORT_POOL_SIZE,
+  LABYRINTH_MODEL_ID,
+  safeGetServerDetails,
   tryConnectToSession,
   type CrawlHostReport,
   type CrawlStatusReport,
@@ -201,6 +203,10 @@ function parseWorkerResponse(raw: unknown): WorkerResponse | null {
           blockedRam: row.blockedRam,
         }
       }
+      case "stasisResult": {
+        if (typeof row.workerHost !== "string" || typeof row.success !== "boolean") return null
+        return { type: "stasisResult", workerHost: row.workerHost, success: row.success }
+      }
       default: return null
     }
   } catch { return null }
@@ -373,6 +379,73 @@ interface TargetState {
   pendingWorker: string | null
   pendingAt: number
   startedAt: number
+}
+
+// ---- labyrinth stasis ----
+
+function isLabyrinthHost(dnet: DarknetCrawlApi, hostname: string): boolean {
+  const details = safeGetServerDetails(dnet, hostname)
+  return details?.modelId === LABYRINTH_MODEL_ID
+}
+
+function collectLabyrinthHosts(
+  dnet: DarknetCrawlApi,
+  workerRegistry: Map<string, WorkerInfo>,
+  reports: Map<string, CrawlHostReport>,
+): Set<string> {
+  const labs = new Set<string>()
+  const maybeAdd = (hostname: string): void => {
+    if (isLabyrinthHost(dnet, hostname)) labs.add(hostname)
+  }
+  for (const [hostname] of workerRegistry) maybeAdd(hostname)
+  for (const [hostname] of reports) maybeAdd(hostname)
+  for (const [, wi] of workerRegistry) {
+    for (const neighbor of wi.neighbors) maybeAdd(neighbor)
+  }
+  return labs
+}
+
+function labyrinthNeighborHosts(
+  labyrinthHosts: Set<string>,
+  workerRegistry: Map<string, WorkerInfo>,
+): string[] {
+  if (labyrinthHosts.size === 0) return []
+  const neighbors = new Set<string>()
+  for (const [host, wi] of workerRegistry) {
+    if (!wi.probed || labyrinthHosts.has(host)) continue
+    for (const neighbor of wi.neighbors) {
+      if (labyrinthHosts.has(neighbor)) neighbors.add(host)
+    }
+  }
+  return [...neighbors].sort()
+}
+
+/** Apply stasis links on authenticated lab neighbors while seats remain. */
+function dispatchLabyrinthStasis(
+  ns: NS,
+  dnet: DarknetCrawlApi,
+  workerRegistry: Map<string, WorkerInfo>,
+  reports: Map<string, CrawlHostReport>,
+): void {
+  if (!dnet.setStasisLink || !dnet.getStasisLinkLimit || !dnet.getStasisLinkedServers) return
+
+  const linked = new Set(dnet.getStasisLinkedServers())
+  let seats = dnet.getStasisLinkLimit() - linked.size
+  if (seats <= 0) return
+
+  const labyrinthHosts = collectLabyrinthHosts(dnet, workerRegistry, reports)
+  const candidates = labyrinthNeighborHosts(labyrinthHosts, workerRegistry)
+    .filter((host) => !linked.has(host))
+
+  for (const host of candidates) {
+    if (seats <= 0) break
+    const wi = workerRegistry.get(host)
+    if (!wi || !wi.idle || !wi.probed) continue
+    const report = reports.get(host)
+    if (report?.authenticated !== true) continue
+    sendWorkerCommand(ns, dnet, wi, { type: "stasis" })
+    seats--
+  }
 }
 
 // ---- task dispatch ----
@@ -558,6 +631,15 @@ async function drainReportPort(
             wi.blockedRam = workerResp.blockedRam
             wi.failures = 0
             markWorkerIdle(wi, "reallocResult", now)
+          }
+          continue
+        }
+
+        if (workerResp.type === "stasisResult") {
+          const wi = workerRegistry.get(workerResp.workerHost)
+          if (wi) {
+            wi.failures = 0
+            markWorkerIdle(wi, workerResp.success ? "stasisResult:ok" : "stasisResult:fail", now)
           }
           continue
         }
@@ -1087,6 +1169,8 @@ export async function runDarknetCrawl(
         sendWorkerCommand(ns, dnet, wi, { type: "realloc" })
       }
 
+      dispatchLabyrinthStasis(ns, dnet, workerRegistry, reports)
+
       // Prune stale report-only entries (no worker, not in any worker's neighbor set)
       const visibleHosts = new Set<string>()
       for (const [, wi] of workerRegistry) {
@@ -1203,6 +1287,8 @@ export async function runDarknetCrawl(
       if (wi.blockedRam <= 0) continue
       sendWorkerCommand(ns, dnet, wi, { type: "realloc" })
     }
+
+    dispatchLabyrinthStasis(ns, dnet, workerRegistry, reports)
 
     // Prune stale report-only entries (no worker, not in any worker's neighbor set)
     const visibleHosts = new Set<string>()

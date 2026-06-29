@@ -217,21 +217,74 @@ const octantVoxel: SolverModule<OctantVoxelState> = {
 }
 
 // --- MathML ---
+//
+// Game uses parseSimpleArithmeticExpression (not eval). Data may include unicode
+// operators and a comma-suffix code-injection trap; only the part before "," counts.
 
-function cleanMathExpression(expr: string): string {
-  return expr
-    .replace(/\u2212/g, "-").replace(/\u00D7/g, "*").replace(/\u00F7/g, "/")
-    .replace(/\u00B7/g, "*").replace(/\u2217/g, "*")
-    .replace(/\u2795/g, "+").replace(/\u2796/g, "-")
-    .replace(/\u04B3/g, "*").replace(/\u0445/g, "*")
-    .replace(/[^\d\s+\-*/().]/g, "")
+function cleanArithmeticExpression(expression: string): string {
+  return expression
+    .replaceAll("\u04B3", "*").replaceAll("\u0445", "*")
+    .replaceAll("\u00F7", "/").replaceAll("\u2796", "-")
+    .replaceAll("\u2795", "+").replaceAll("\u2212", "-")
+    .replaceAll("\u00D7", "*").replaceAll("\u00B7", "*").replaceAll("\u2217", "*")
+    .replaceAll("ns.exit(),", "")
+    .split(",")[0]!
 }
 
-function evaluateMathExpression(expr: string): number {
-  const cleaned = cleanMathExpression(expr)
-  if (!cleaned) return NaN
-  try { return Function(`"use strict"; return (${cleaned})`)() as number }
-  catch { return NaN }
+/** Mirrors bitburner-src ServerGenerator.parseSimpleArithmeticExpression. */
+function parseSimpleArithmeticExpression(expression: string): number {
+  const tokens = cleanArithmeticExpression(expression).split("")
+
+  let currentDepth = 0
+  const depth = tokens.map((token) => {
+    if (token === "(") {
+      currentDepth += 1
+    } else if (token === ")") {
+      currentDepth -= 1
+      return currentDepth + 1
+    }
+    return currentDepth
+  })
+  const depth1Start = depth.indexOf(1)
+  const firstZeroAfterDepth1Start = depth.indexOf(0, depth1Start)
+  const depth1End = firstZeroAfterDepth1Start === -1 ? depth.length - 1 : firstZeroAfterDepth1Start - 1
+  if (depth1Start !== -1) {
+    const subExpression = tokens.slice(depth1Start + 1, depth1End).join("")
+    const result = parseSimpleArithmeticExpression(subExpression)
+    tokens.splice(depth1Start, depth1End - depth1Start + 1, result.toString())
+    return parseSimpleArithmeticExpression(tokens.join(""))
+  }
+
+  let remainingExpression = tokens.join("")
+  const multiplicationDivisionRegex = /(-?\d*\.?\d+) *([*/]) *(-?\d*\.?\d+)/
+  let match = remainingExpression.match(multiplicationDivisionRegex)
+  while (match) {
+    const left = match[1]!
+    const operator = match[2]!
+    const right = match[3]!
+    const result = operator === "*"
+      ? parseFloat(left) * parseFloat(right)
+      : parseFloat(left) / parseFloat(right)
+    const resultString = Math.abs(result) < 0.000001 ? result.toFixed(20) : result.toString()
+    remainingExpression = remainingExpression.replace(match[0], resultString)
+    match = remainingExpression.match(multiplicationDivisionRegex)
+  }
+
+  const additionSubtractionRegex = /(-?\d*\.?\d+) *([+-]) *(-?\d*\.?\d+)/
+  match = remainingExpression.match(additionSubtractionRegex)
+  while (match) {
+    const left = match[1]!
+    const operator = match[2]!
+    const right = match[3]!
+    const result = operator === "+"
+      ? parseFloat(left) + parseFloat(right)
+      : parseFloat(left) - parseFloat(right)
+    remainingExpression = remainingExpression.replace(match[0], result.toString())
+    match = remainingExpression.match(additionSubtractionRegex)
+  }
+
+  const leftover = remainingExpression.match(/(-?\d*\.?\d+)/)
+  return parseFloat(leftover?.[1] ?? "NaN")
 }
 
 interface MathMLState extends SolverState { type: "mathML"; dispatched: boolean; guess: string | null }
@@ -239,7 +292,7 @@ interface MathMLState extends SolverState { type: "mathML"; dispatched: boolean;
 const mathML: SolverModule<MathMLState> = {
   initSolver(details) {
     if (!details.data) return { type: "mathML", dispatched: true, guess: null }
-    const result = evaluateMathExpression(details.data)
+    const result = parseSimpleArithmeticExpression(details.data)
     if (Number.isNaN(result) || !Number.isFinite(result)) return { type: "mathML", dispatched: true, guess: null }
     const resultStr = String(result)
     if (resultStr.length !== details.passwordLength) return { type: "mathML", dispatched: true, guess: null }
