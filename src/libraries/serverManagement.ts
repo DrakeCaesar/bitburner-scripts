@@ -13,17 +13,21 @@ export interface BatchRunOptions {
   excludeHacknet: boolean
   /** Use *Debug hacking scripts and verbose prep/timing logs. */
   debug: boolean
+  /** Skip hack-income port I/O for lower overhead (no per-hack $ collection). */
+  disablePorts: boolean
 }
 
 /**
  * Parse batch script args in any order: numbers + keywords.
  * Examples: `home`, `home 200`, `200 home`, `nuked 150`, `purchased no-hacknet`, `debug`, `home debug`
+ * By default ports are disabled for speed. Pass `ports` to enable per-hack income tracking.
  */
 export function parseBatchArgs(args: (string | number | boolean)[]): BatchRunOptions {
   const numbers: number[] = []
   let workers: BatchWorkerMode = "auto"
   let excludeHacknet = false
   let debug = false
+  let disablePorts = true
 
   for (const raw of args) {
     const token = String(raw).trim().toLowerCase()
@@ -40,6 +44,8 @@ export function parseBatchArgs(args: (string | number | boolean)[]): BatchRunOpt
     else if (token === "purchased" || token === "nodes") workers = "purchased"
     else if (token === "no-hacknet" || token === "nohacknet") excludeHacknet = true
     else if (token === "debug") debug = true
+    else if (token === "no-ports" || token === "noports") disablePorts = true
+    else if (token === "ports") disablePorts = false
   }
 
   return {
@@ -48,6 +54,7 @@ export function parseBatchArgs(args: (string | number | boolean)[]): BatchRunOpt
     workers,
     excludeHacknet,
     debug,
+    disablePorts,
   }
 }
 

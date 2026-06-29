@@ -234,6 +234,7 @@ export async function main(ns: NS) {
       debug,
       shareLeftoverRamWhileBatching: SHARE_LEFTOVER_RAM_WHILE_BATCHING,
       whileAsleep,
+      usePorts: !batchOptions.disablePorts,
     }
 
     const hackingScripts = getBatchHackingScripts(debug)
@@ -347,19 +348,20 @@ export async function main(ns: NS) {
 
     const batchEndTime = Date.now()
     const actualBatchCycleTime = batchEndTime - batchStartTime
-    const actualCycleMoney = actualHackIncome
+  const actualCycleMoney = actualHackIncome
 
-    const predictedCycleMoney = moneyPerBatch * completeBatches
-    const moneyDelta = actualCycleMoney - predictedCycleMoney
-    const moneyPercentDiff =
-      predictedCycleMoney > 0 ? ((moneyDelta / predictedCycleMoney) * 100).toFixed(1) : "n/a"
+  const predictedCycleMoney = moneyPerBatch * completeBatches
+  const showMoneyDelta = !batchOptions.disablePorts
+  const moneyDelta = actualCycleMoney - predictedCycleMoney
+  const moneyPercentDiff =
+    predictedCycleMoney > 0 ? ((moneyDelta / predictedCycleMoney) * 100).toFixed(1) : "n/a"
 
-    const predictedMoneyPerSecond =
-      predictedBatchCycleTime > 0 ? (predictedCycleMoney / predictedBatchCycleTime) * 1000 : 0
-    const actualMoneyPerSecond = actualBatchCycleTime > 0 ? (actualCycleMoney / actualBatchCycleTime) * 1000 : 0
-    const moneyPerSecondDelta = actualMoneyPerSecond - predictedMoneyPerSecond
-    const moneyPerSecondPercentDiff =
-      predictedMoneyPerSecond > 0 ? ((moneyPerSecondDelta / predictedMoneyPerSecond) * 100).toFixed(1) : "n/a"
+  const predictedMoneyPerSecond =
+    predictedBatchCycleTime > 0 ? (predictedCycleMoney / predictedBatchCycleTime) * 1000 : 0
+  const actualMoneyPerSecond = actualBatchCycleTime > 0 ? (actualCycleMoney / actualBatchCycleTime) * 1000 : 0
+  const moneyPerSecondDelta = actualMoneyPerSecond - predictedMoneyPerSecond
+  const moneyPerSecondPercentDiff =
+    predictedMoneyPerSecond > 0 ? ((moneyPerSecondDelta / predictedMoneyPerSecond) * 100).toFixed(1) : "n/a"
 
     const batchTimeDiff = actualBatchCycleTime - predictedBatchCycleTime
     const batchPercentDiff =
@@ -371,7 +373,7 @@ export async function main(ns: NS) {
     const moneyPercent = (currentMoney / maxMoney) * 100
 
     tabbedLog.tab("results").reset().keyValueTable({
-      title: "Last Cycle — Predicted vs Actual",
+      title: showMoneyDelta ? "Last Cycle — Predicted vs Actual" : "Last Cycle",
       rows: [
         { label: "Batches", value: `${completeBatches} / ${batches} planned` },
         { label: "Cycle time", value: `${fmtTime(predictedBatchCycleTime)} / ${fmtTime(actualBatchCycleTime)}` },
@@ -379,24 +381,34 @@ export async function main(ns: NS) {
           label: "Cycle time Δ",
           value: `${batchTimeDiff >= 0 ? "+" : ""}${fmtTime(Math.abs(batchTimeDiff))} (${batchPercentDiff}%)`,
         },
-        {
-          label: "Hack $ / cycle",
-          value: `${ns.format.number(predictedCycleMoney)} / ${ns.format.number(actualCycleMoney)}`,
-        },
-        {
-          label: "Hack $ Δ",
-          value: `${moneyDelta >= 0 ? "+" : ""}${ns.format.number(moneyDelta)} (${moneyPercentDiff}%)`,
-        },
-        {
-          label: "$ / second",
-          value: `${ns.format.number(predictedMoneyPerSecond)}/s / ${ns.format.number(actualMoneyPerSecond)}/s`,
-        },
-        {
-          label: "$ / second Δ",
-          value: `${moneyPerSecondDelta >= 0 ? "+" : ""}${ns.format.number(moneyPerSecondDelta)}/s (${moneyPerSecondPercentDiff}%)`,
-        },
+        ...(showMoneyDelta
+          ? [
+              {
+                label: "Hack $ / cycle",
+                value: `${ns.format.number(predictedCycleMoney)} / ${ns.format.number(actualCycleMoney)}`,
+              },
+              {
+                label: "Hack $ Δ",
+                value: `${moneyDelta >= 0 ? "+" : ""}${ns.format.number(moneyDelta)} (${moneyPercentDiff}%)`,
+              },
+              {
+                label: "$ / second",
+                value: `${ns.format.number(predictedMoneyPerSecond)}/s / ${ns.format.number(actualMoneyPerSecond)}/s`,
+              },
+              {
+                label: "$ / second Δ",
+                value: `${moneyPerSecondDelta >= 0 ? "+" : ""}${ns.format.number(moneyPerSecondDelta)}/s (${moneyPerSecondPercentDiff}%)`,
+              },
+            ]
+          : [
+              { label: "Hack $ / cycle", value: ns.format.number(predictedCycleMoney) },
+              {
+                label: "$ / second",
+                value: `${ns.format.number(predictedMoneyPerSecond)}/s`,
+              },
+            ]),
       ],
-      separatorAfter: [6],
+      separatorAfter: showMoneyDelta ? [6] : [2],
     })
     tabbedLog.tab("results").keyValueTable({
       title: "Target State After Cycle",
@@ -413,7 +425,7 @@ export async function main(ns: NS) {
       ],
     })
 
-    if (debug) {
+    if (debug && !batchOptions.disablePorts) {
       tabbedLog.tab("results").text(
         `[Debug] Hack income from port (sum of ns.hack() per hack): ${ns.format.number(actualHackIncome)}\n`
       )

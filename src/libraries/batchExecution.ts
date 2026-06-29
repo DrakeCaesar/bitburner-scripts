@@ -133,6 +133,8 @@ export interface BatchConfig {
   shareLeftoverRamWhileBatching?: boolean
   /** When set, used instead of ns.sleep while waiting for the batch cycle (e.g. tab resize polling). */
   whileAsleep?: (ms: number) => Promise<void>
+  /** Skip port-based hack-income collection (faster, no per-hack $ tracking). */
+  usePorts?: boolean
 }
 
 export function calculateBatchThreads(ns: NS, config: BatchConfig) {
@@ -247,6 +249,7 @@ export async function executeBatches(
     debug = false,
     shareLeftoverRamWhileBatching = false,
     whileAsleep,
+    usePorts = true,
   } = config
   const log = logMessage ?? (() => {})
   const { totalBatchRam, actualThreshold } = threads
@@ -337,7 +340,7 @@ export async function executeBatches(
           0,
           playerAfterHack.skills.hacking,
           playerAfterHack.exp.hacking,
-          BATCH_HACK_INCOME_PORT,
+          ...(usePorts ? [BATCH_HACK_INCOME_PORT] : []),
         ],
         threads: hackThreads,
         batchIndex: batchCounter,
@@ -392,9 +395,12 @@ export async function executeBatches(
     log(`INFO: Could only fit ${completeBatches} complete batches out of ${batches} requested (${assignments.length} operations)`)
   }
 
-  clearHackIncomePort(ns)
-  const expectedHackReports = assignments.filter((a) => a.operation.scriptPath === scripts.hack).length
-  const batchIntervalMs = effectiveBatchDelay * 4
+  if (usePorts) {
+    clearHackIncomePort(ns)
+  }
+  const expectedHackReports = usePorts
+    ? assignments.filter((a) => a.operation.scriptPath === scripts.hack).length
+    : 0
 
   // Execute all assigned operations
   let lastPid = 0
@@ -428,15 +434,25 @@ export async function executeBatches(
         }
       : undefined
 
-    actualHackIncome = await collectHackIncomeWhileBatchRuns(
-      ns,
-      expectedHackReports,
-      batchIntervalMs,
-      cycleStillRunning,
-      BATCH_HACK_INCOME_PORT,
-      shareLeftoverRam,
-      whileAsleep
-    )
+    if (usePorts) {
+      const batchIntervalMs = effectiveBatchDelay * 4
+      actualHackIncome = await collectHackIncomeWhileBatchRuns(
+        ns,
+        expectedHackReports,
+        batchIntervalMs,
+        cycleStillRunning,
+        BATCH_HACK_INCOME_PORT,
+        shareLeftoverRam,
+        whileAsleep
+      )
+    } else {
+      // No ports: just wait for the last process to exit
+      const sleep = whileAsleep ?? ((ms: number) => ns.sleep(ms))
+      while (cycleStillRunning()) {
+        shareLeftoverRam?.()
+        await sleep(200)
+      }
+    }
   }
 
   return { completeBatches, actualHackIncome }
