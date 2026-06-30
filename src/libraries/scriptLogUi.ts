@@ -864,6 +864,8 @@ export interface ReactTableConfig extends TableConfig {
   selectedRowIndex?: number
   highlightCells?: ReadonlySet<string>
   activeHeaderColumns?: ReadonlySet<number>
+  /** Row click handler; store selection in script state and re-render from the main loop. */
+  onRowClick?: (rowIndex: number) => void
 }
 
 export function buildReactTable(config: ReactTableConfig): ReactNode {
@@ -903,7 +905,15 @@ export function buildReactTable(config: ReactTableConfig): ReactNode {
       )
     })
 
-    return React.createElement("tr", { key: `r-${rowIdx}` }, ...cells)
+    return React.createElement(
+      "tr",
+      {
+        key: `r-${rowIdx}`,
+        onClick: config.onRowClick ? () => config.onRowClick!(rowIdx) : undefined,
+        style: config.onRowClick ? { cursor: "pointer" } : undefined,
+      },
+      ...cells,
+    )
   })
 
   const colgroup = React.createElement(

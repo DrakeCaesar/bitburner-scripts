@@ -4,6 +4,8 @@ export class AttemptLog {
   private nextId = 1
   private records: AttemptRecord[] = []
 
+  constructor(private readonly onAppend?: (record: AttemptRecord) => void) {}
+
   get all(): readonly AttemptRecord[] {
     return this.records
   }
@@ -19,6 +21,7 @@ export class AttemptLog {
       at: entry.at ?? Date.now(),
     }
     this.records.push(record)
+    this.onAppend?.(record)
     return record
   }
 

@@ -11,6 +11,7 @@ import {
 import { getServerDetails, tryConnect } from "../api/server.js"
 import { AttemptLog } from "../history/attemptLog.js"
 import { MasterActionLog } from "../history/masterActionLog.js"
+import { SessionArchive } from "../history/sessionArchive.js"
 import { PortPool, WorkerPool, type ManagedWorker } from "../pool/workers.js"
 import { lookupSolver, solverKey } from "../solvers/registry.js"
 import type { SolverState } from "../solvers/types.js"
@@ -58,7 +59,8 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
   }
 
   const sessionId = Date.now()
-  const attemptLog = new AttemptLog()
+  const sessionArchive = new SessionArchive()
+  const attemptLog = new AttemptLog((r) => sessionArchive.recordAttempt(r))
   const masterLog = new MasterActionLog()
   const portPool = new PortPool()
   const workerPool = new WorkerPool()
@@ -113,10 +115,14 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       pendingSpawns,
       mutationSync,
       masterLog,
+      sessionArchive,
     )
     pruneWorkers(ns, workerPool, portPool, targets, pendingSpawns, masterLog)
     if (mutationSync.tryCompleteSync(ns, workerPool)) {
       masterLog.append("sync", `complete mutation ${mutationSync.acked}`)
+      for (const target of targets.values()) {
+        if (target.awaitProbeAfter) target.awaitProbeAfter = false
+      }
     }
 
     if (!initialTopologySync) {
@@ -131,13 +137,23 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
     if (!mutationSync.canDispatchActions()) {
       dispatchSyncProbes(ns, workerPool, mutationSync, masterLog)
       await options.onProgress(
-        buildSnapshot(sessionId, targets, attemptLog, masterLog, workerPool, mutationSync, mutationPort, loopAt),
+        buildSnapshot(
+          sessionId,
+          targets,
+          attemptLog,
+          masterLog,
+          sessionArchive,
+          workerPool,
+          mutationSync,
+          mutationPort,
+          loopAt,
+        ),
       )
       await ns.sleep(LOOP_INTERVAL_MS)
       continue
     }
 
-    processQueuedTargets(targets, attemptLog, dnet, passwords)
+    processQueuedTargets(targets, attemptLog, sessionArchive, dnet, passwords)
     scheduleRetries(targets, attemptLog)
     spawnWorkers(
       ns,
@@ -154,7 +170,17 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
     dispatchGuesses(ns, workerPool, targets, attemptLog, dnet, masterLog)
 
     await options.onProgress(
-      buildSnapshot(sessionId, targets, attemptLog, masterLog, workerPool, mutationSync, mutationPort, loopAt),
+      buildSnapshot(
+        sessionId,
+        targets,
+        attemptLog,
+        masterLog,
+        sessionArchive,
+        workerPool,
+        mutationSync,
+        mutationPort,
+        loopAt,
+      ),
     )
     await ns.sleep(LOOP_INTERVAL_MS)
   }
@@ -176,6 +202,7 @@ function buildSnapshot(
   targets: Map<string, AuthTarget>,
   attemptLog: AttemptLog,
   masterLog: MasterActionLog,
+  sessionArchive: SessionArchive,
   workerPool: WorkerPool,
   mutationSync: MutationSync,
   mutationPort: { raw: string; ts: number | null },
@@ -188,6 +215,7 @@ function buildSnapshot(
     targets: all,
     attempts: attemptLog.all,
     actions: masterLog.all,
+    failedSessions: sessionArchive.failedSessions,
     mutation: {
       portRaw: mutationPort.raw,
       portTs: mutationPort.ts,
@@ -236,6 +264,7 @@ function drainReplies(
   pendingSpawns: Set<string>,
   mutationSync: MutationSync,
   masterLog: MasterActionLog,
+  sessionArchive: SessionArchive,
 ): void {
   for (const wi of [...workerPool.workers.values()]) {
     if (wi.commandPort <= 0) continue
@@ -302,7 +331,7 @@ function drainReplies(
         case "guessResult":
           wi.idle = true
           wi.busyUntil = 0
-          onGuessResult(msg, targets, passwords, attemptLog, dnet)
+          onGuessResult(msg, targets, passwords, attemptLog, sessionArchive, dnet)
           break
         case "heartbleedResult":
           wi.idle = true
@@ -363,6 +392,7 @@ function noteHost(
       guessCount: 0,
       retryAt: null,
       lastError: null,
+      awaitProbeAfter: false,
     }
     targets.set(host, target)
   } else if (details.hasSession && target.password == null && target.status !== "unsupported") {
@@ -385,6 +415,7 @@ function noteHost(
 function processQueuedTargets(
   targets: Map<string, AuthTarget>,
   attemptLog: AttemptLog,
+  sessionArchive: SessionArchive,
   dnet: DnetApi,
   passwords: Map<string, string>,
 ): void {
@@ -398,13 +429,19 @@ function processQueuedTargets(
     if (details.hasSession && passwords.has(target.host)) {
       target.status = "solved"
       target.password = passwords.get(target.host)!
+      sessionArchive.discardHost(target.host)
       continue
     }
-    startAuthSession(target, details, attemptLog)
+    startAuthSession(target, details, attemptLog, sessionArchive)
   }
 }
 
-function startAuthSession(target: AuthTarget, details: ServerDetails, log: AttemptLog): void {
+function startAuthSession(
+  target: AuthTarget,
+  details: ServerDetails,
+  log: AttemptLog,
+  sessionArchive: SessionArchive,
+): void {
   if (details.modelId === LABYRINTH_MODEL) {
     target.status = "unsupported"
     target.lastError = "Labyrinth solver not implemented in dnet v2 yet"
@@ -434,6 +471,8 @@ function startAuthSession(target: AuthTarget, details: ServerDetails, log: Attem
   target.pendingGuess = null
   target.lastError = null
 
+  sessionArchive.beginSession(target.host, target.session, target.solverId, details)
+
   log.append({
     host: target.host,
     session: target.session,
@@ -445,11 +484,21 @@ function startAuthSession(target: AuthTarget, details: ServerDetails, log: Attem
   })
 }
 
+function undoDispatchedGuess(target: AuthTarget): void {
+  const state = target.solverState
+  if (state == null || typeof state !== "object") return
+  const st = state as { dispatched?: boolean }
+  if (st.dispatched === true) {
+    target.solverState = { ...st, dispatched: false }
+  }
+}
+
 function onGuessResult(
   msg: Extract<WorkerResponse, { type: "guessResult" }>,
   targets: Map<string, AuthTarget>,
   passwords: Map<string, string>,
   attemptLog: AttemptLog,
+  sessionArchive: SessionArchive,
   dnet: DnetApi,
 ): void {
   const target = targets.get(msg.target)
@@ -458,7 +507,6 @@ function onGuessResult(
   target.pendingGuess = null
   target.pendingDetail = null
   target.workerHost = null
-  target.guessCount += 1
 
   attemptLog.append({
     host: target.host,
@@ -474,10 +522,14 @@ function onGuessResult(
   })
 
   if (msg.message === "notNeighbor") {
+    undoDispatchedGuess(target)
     target.status = "waiting_worker"
     target.lastError = "neighbor link lost"
+    target.awaitProbeAfter = true
     return
   }
+
+  target.guessCount += 1
 
   if (msg.success) {
     target.status = "solved"
@@ -502,6 +554,7 @@ function onGuessResult(
   if (!solver || target.solverState == null) {
     target.status = "exhausted"
     target.retryAt = Date.now() + EXHAUSTED_RETRY_MS
+    sessionArchive.archiveFailure(target.host, target.session, "solver state lost")
     return
   }
 
@@ -637,6 +690,7 @@ function dispatchGuesses(
   for (const target of targets.values()) {
     if (target.status !== "active" && target.status !== "waiting_worker") continue
     if (target.pendingGuess != null) continue
+    if (target.awaitProbeAfter) continue
 
     const details = getServerDetails(dnet, target.host)
     if (!details?.isOnline) {
@@ -655,6 +709,10 @@ function dispatchGuesses(
 
     const next = solver.nextGuess(target.solverState as SolverState, { target: target.host, details })
     if (!next) {
+      if (target.lastError === "neighbor link lost") {
+        target.status = "waiting_worker"
+        continue
+      }
       target.status = "exhausted"
       target.retryAt = Date.now() + EXHAUSTED_RETRY_MS
       attemptLog.append({
@@ -674,6 +732,7 @@ function dispatchGuesses(
     target.pendingDetail = next.detail
     target.workerHost = wi.host
     target.status = "active"
+    target.lastError = null
 
     attemptLog.append({
       host: target.host,

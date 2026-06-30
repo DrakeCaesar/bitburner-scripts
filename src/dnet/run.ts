@@ -8,7 +8,7 @@ export async function main(ns: NS): Promise<void> {
   ns.clearLog()
   openTailLog(ns, "dnet v2")
 
-  const log = createDashboard()
+  const dashboard = createDashboard()
   let lastRender = 0
 
   await runCoordinator(ns, {
@@ -16,11 +16,11 @@ export async function main(ns: NS): Promise<void> {
       const now = Date.now()
       if (now - lastRender < 400) return
       lastRender = now
-      await renderDashboard(ns, log, snap)
+      await renderDashboard(ns, dashboard, snap)
     },
     onError: (message) => {
-      log.clearPanels()
-      log.tab("overview").text(`ERROR: ${message}`)
+      dashboard.log.clearPanels()
+      dashboard.log.tab("overview").text(`ERROR: ${message}`)
     },
   })
 }

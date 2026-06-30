@@ -70,6 +70,8 @@ export interface AuthTarget {
   guessCount: number
   retryAt: number | null
   lastError: string | null
+  /** After notNeighbor, wait for the next mutation probe round before guessing again. */
+  awaitProbeAfter: boolean
 }
 
 export type AttemptKind =
@@ -99,6 +101,43 @@ export interface AttemptRecord {
   heartbleedLogs?: readonly string[]
   solverState?: unknown
   note?: string
+}
+
+export interface SessionEvent {
+  at: number
+  kind: AttemptKind
+  guess?: string
+  detail?: string
+  success?: boolean
+  feedback?: string
+  message?: string
+  heartbleedLogs?: readonly string[]
+  note?: string
+  workerHost?: string
+}
+
+export interface AuthAssignment {
+  host: string
+  modelId: string
+  format: PasswordFormat
+  passwordHint: string
+  passwordLength: number
+  data: string
+  depth: number
+  difficulty: number
+  requiredCharismaSkill: number
+}
+
+export interface FailedAuthSession {
+  id: string
+  host: string
+  session: number
+  solverId: string
+  startedAt: number
+  archivedAt: number
+  reason: string
+  assignment: AuthAssignment
+  events: readonly SessionEvent[]
 }
 
 export interface WorkerSnapshot {
@@ -139,6 +178,7 @@ export interface CrawlSnapshot {
   targets: readonly AuthTarget[]
   attempts: readonly AttemptRecord[]
   actions: readonly MasterActionRecord[]
+  failedSessions: readonly FailedAuthSession[]
   mutation: MutationPortSnapshot
   workers: readonly WorkerSnapshot[]
   summary: {

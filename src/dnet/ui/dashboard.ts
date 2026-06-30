@@ -11,8 +11,10 @@ import type {
   AttemptRecord,
   AuthTarget,
   CrawlSnapshot,
+  FailedAuthSession,
   MasterActionRecord,
   MutationPortSnapshot,
+  SessionEvent,
   WorkerSnapshot,
 } from "../types.js"
 
@@ -21,6 +23,7 @@ const TABS = [
   { id: "targets", label: "Targets" },
   { id: "attempts", label: "Attempts" },
   { id: "workers", label: "Workers" },
+  { id: "failed", label: "Failed" },
 ] as const
 
 const TARGET_COLUMNS = [
@@ -62,6 +65,60 @@ const WORKER_COLUMNS = [
   col("RAM", "right", 6),
 ]
 
+const FAILED_LIST_COLUMNS = [
+  col("Host", "left", W.host),
+  col("Sess", "right", 4),
+  col("Solver", "left", 14),
+  col("Guesses", "right", 7),
+  col("Reason", "left", 18),
+  col("Ended", "right", 8),
+]
+
+const FAILED_EVENT_COLUMNS = [
+  col("Time", "right", 8),
+  col("Kind", "left", 14),
+  col("Guess", "left", 14),
+  col("OK", "center", 3),
+  col("Feedback", "left", 16),
+  col("Detail", "left", 20),
+]
+
+export class DnetDashboard {
+  readonly log: TabbedScriptLogBuilder
+  selectedFailedSessionId: string | null = null
+  private pendingFailedRow = -1
+  private lastFailedCount = 0
+
+  constructor() {
+    this.log = createTabbedTailLog([...TABS])
+  }
+
+  onFailedRowClick(rowIndex: number): void {
+    this.pendingFailedRow = rowIndex
+  }
+
+  applyFailedSelection(failed: readonly FailedAuthSession[]): void {
+    if (this.pendingFailedRow >= 0 && this.pendingFailedRow < failed.length) {
+      this.selectedFailedSessionId = failed[this.pendingFailedRow]!.id
+      this.pendingFailedRow = -1
+    }
+
+    const ids = new Set(failed.map((s) => s.id))
+    if (this.selectedFailedSessionId != null && !ids.has(this.selectedFailedSessionId)) {
+      this.selectedFailedSessionId = null
+    }
+
+    if (failed.length > this.lastFailedCount && failed.length > 0) {
+      this.selectedFailedSessionId = failed[0]!.id
+    }
+    this.lastFailedCount = failed.length
+  }
+}
+
+export function createDashboard(): DnetDashboard {
+  return new DnetDashboard()
+}
+
 function formatMutationLine(m: MutationPortSnapshot): string {
   const portTime = m.portTs != null ? clock(m.portTs) : "-"
   const pending = m.pending != null ? String(m.pending) : "-"
@@ -90,16 +147,20 @@ function truncate(s: string | undefined, max: number): string {
   return s.length <= max ? s : s.slice(0, max - 1) + "."
 }
 
-export function createDashboard(): TabbedScriptLogBuilder {
-  return createTabbedTailLog([...TABS])
-}
-
 export async function renderDashboard(
   ns: NS,
-  log: TabbedScriptLogBuilder,
+  dashboard: DnetDashboard,
   snap: CrawlSnapshot,
 ): Promise<void> {
+  const log = dashboard.log
   const s = snap.summary
+  const failed = snap.failedSessions
+  dashboard.applyFailedSelection(failed)
+  const selected =
+    failed.find((f) => f.id === dashboard.selectedFailedSessionId) ?? null
+  const selectedRowIndex =
+    selected != null ? failed.findIndex((f) => f.id === selected.id) : undefined
+
   log.clearPanels()
 
   log
@@ -108,7 +169,8 @@ export async function renderDashboard(
       `dnet v2  session ${snap.sessionId}  ` +
         `targets ${snap.targets.length}  active ${s.active}  solved ${s.solved}  ` +
         `exhausted ${s.exhausted}  retry ${s.retryWait}  no_solver ${s.noSolver}  ` +
-        `unsupported ${s.unsupported}  attempts ${snap.attempts.length}  workers ${snap.workers.length}`,
+        `unsupported ${s.unsupported}  attempts ${snap.attempts.length}  workers ${snap.workers.length}  ` +
+        `failed ${failed.length}`,
     )
     .text(formatMutationLine(snap.mutation))
     .table({
@@ -137,7 +199,97 @@ export async function renderDashboard(
     rows: snap.workers.map(workerRow),
   })
 
+  renderFailedTab(log, dashboard, failed, selected, selectedRowIndex)
+
   await renderTabbedTailLog(ns, log)
+}
+
+function renderFailedTab(
+  log: TabbedScriptLogBuilder,
+  dashboard: DnetDashboard,
+  failed: readonly FailedAuthSession[],
+  selected: FailedAuthSession | null,
+  selectedRowIndex: number | undefined,
+): void {
+  const tab = log.tab("failed")
+  tab.text(
+    failed.length === 0
+      ? "No failed auth sessions archived yet."
+      : `Failed auth sessions (${failed.length}). Click a row to inspect one session.`,
+  )
+
+  if (failed.length === 0) return
+
+  tab.table({
+    title: "Archived sessions (newest first)",
+    columns: FAILED_LIST_COLUMNS,
+    rows: failed.map(failedSessionRow),
+    selectedRowIndex: selectedRowIndex != null && selectedRowIndex >= 0 ? selectedRowIndex : undefined,
+    onRowClick: (rowIndex) => dashboard.onFailedRowClick(rowIndex),
+  })
+
+  if (!selected) {
+    tab.text("No session selected.")
+    return
+  }
+
+  tab.text(
+    `Session ${selected.host} #${selected.session}  solver ${selected.solverId}  ` +
+      `reason ${selected.reason}  started ${clock(selected.startedAt)}  ended ${clock(selected.archivedAt)}`,
+  )
+
+  const a = selected.assignment
+  tab.keyValueTable({
+    title: "Assignment",
+    rows: [
+      { label: "Host", value: a.host },
+      { label: "Model", value: a.modelId },
+      { label: "Format", value: a.format },
+      { label: "Length", value: String(a.passwordLength) },
+      { label: "Hint", value: a.passwordHint || "-" },
+      { label: "Data", value: truncate(a.data, 80) },
+      { label: "Depth", value: String(a.depth) },
+      { label: "Difficulty", value: String(a.difficulty) },
+      { label: "Charisma", value: String(a.requiredCharismaSkill) },
+    ],
+  })
+
+  tab.table({
+    title: `Session log (${selected.events.length} events)`,
+    columns: FAILED_EVENT_COLUMNS,
+    rows: selected.events.map(failedEventRow),
+  })
+
+  for (const event of selected.events) {
+    if (event.kind !== "heartbleed" || !event.heartbleedLogs?.length) continue
+    tab.section(`Heartbleed ${clock(event.at)}`)
+    for (const line of event.heartbleedLogs) {
+      tab.text(line)
+    }
+  }
+}
+
+function failedSessionRow(s: FailedAuthSession): string[] {
+  const guesses = s.events.filter((e) => e.kind === "guess_result").length
+  return [
+    s.host,
+    String(s.session),
+    s.solverId,
+    String(guesses),
+    truncate(s.reason, 18),
+    clock(s.archivedAt),
+  ]
+}
+
+function failedEventRow(e: SessionEvent): string[] {
+  return [
+    clock(e.at),
+    e.kind,
+    truncate(e.guess, 14),
+    e.success === true ? "Y" : e.success === false ? "N" : "-",
+    truncate(e.feedback ?? e.message, 16),
+    truncate(e.detail ?? e.note, 20),
+  ]
 }
 
 function actionRow(a: MasterActionRecord): string[] {
