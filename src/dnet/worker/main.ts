@@ -3,6 +3,7 @@ import {
   CONTROL_PORT,
   type ControlMessage,
 } from "./constants.js"
+import { scanLocalServerOnce } from "../files/serverFiles.js"
 import type { WorkerDnetApi } from "./dnetApi.js"
 import type { WorkerCommand } from "./protocol.js"
 import {
@@ -29,6 +30,28 @@ function refreshSessionId(ns: NS, sessionId: number): number {
   return sessionId
 }
 
+async function waitForControlConfig(ns: NS, sessionId: number): Promise<{ lorePort: number }> {
+  while (true) {
+    const raw = ns.peek(CONTROL_PORT)
+    if (raw === "NULL PORT DATA") {
+      await ns.sleep(200)
+      continue
+    }
+    try {
+      const msg = JSON.parse(String(raw)) as ControlMessage
+      if (typeof msg.sessionId !== "number" || msg.sessionId !== sessionId) {
+        ns.exit()
+      }
+      if (typeof msg.lorePort === "number" && msg.lorePort > 0) {
+        return { lorePort: msg.lorePort }
+      }
+    } catch {
+      /* ignore */
+    }
+    await ns.sleep(200)
+  }
+}
+
 /** Read the next command payload, waiting on the port when empty. */
 async function readCommandPayload(ns: NS, commandPort: number): Promise<string> {
   let raw = ns.readPort(commandPort)
@@ -52,7 +75,12 @@ export async function main(ns: NS): Promise<void> {
   const hostname = ns.getHostname()
   const selfPassword = typeof ns.args[2] === "string" && ns.args[2].length > 0 ? ns.args[2] : undefined
 
+  const { lorePort } = await waitForControlConfig(ns, sessionId)
+  await ensureSelfAuth(dnet, hostname, selfPassword)
+
   ns.writePort(replyPort, JSON.stringify({ type: "ready", workerHost: hostname, pid: ns.pid }))
+
+  await scanLocalServerOnce(ns, dnet, replyPort, lorePort)
 
   let activeSessionId = sessionId
 

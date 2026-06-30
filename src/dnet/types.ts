@@ -29,6 +29,7 @@ export interface DnetApi {
   heartbleed(host: string, options?: { peek?: boolean }): Promise<{ success: boolean; logs: string[] }>
   connectToSession?(host: string, password: string): { success: boolean }
   getServerDetails(host?: string): ServerDetails
+  openCache(filename: string, suppressToast?: boolean): { success: boolean; message: string; karmaLoss: number }
   labreport?(): Promise<{
     success: boolean
     coords: number[]

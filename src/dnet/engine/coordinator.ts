@@ -7,10 +7,21 @@ import {
   INSTANT_CMD_FALLBACK_MS,
   FIRST_REPLY_MS,
   LABYRINTH_MODEL,
+  LORE_PORT,
   LOOP_INTERVAL_MS,
   WORKER_SCRIPT,
   WORKER_TIMEOUT_MS,
 } from "../constants.js"
+import { DARKNET_LORE_FILE } from "../files/categorize.js"
+import type { CacheOpenRecord } from "../files/types.js"
+import { applyWorkerFileMessage, createLoreSet, pollLorePort } from "./fileIntel.js"
+import {
+  loadDarknetRegistry,
+  pruneInvalidRegistryHosts,
+  saveDarknetRegistry,
+  syncRegistryPasswords,
+  type DarknetRegistry,
+} from "../registry.js"
 import { getServerDetails, tryConnect } from "../api/server.js"
 import { AttemptLog } from "../history/attemptLog.js"
 import { MasterActionLog } from "../history/masterActionLog.js"
@@ -82,10 +93,16 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
   const spawnPlans = new Map<string, SpawnPlan>()
   const mutationSync = new MutationSync()
   const urgentProbeHosts = new Set<string>()
+  const registry = loadDarknetRegistry(ns)
+  pruneInvalidRegistryHosts(dnet, registry)
+  saveDarknetRegistry(ns, registry)
+  const loreSet = createLoreSet(ns, DARKNET_LORE_FILE)
+  const cacheOpens: CacheOpenRecord[] = []
+  const fileIntelCtx = { registry, cacheOpens, loreSet, loreFile: DARKNET_LORE_FILE }
 
   clearDnetGlobalPorts(ns)
   ensureMutationWatcher(ns)
-  ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId }))
+  ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId, lorePort: LORE_PORT }))
   masterLog.append("startup", "ports cleared, mutation watcher started")
 
   await authDarkweb(dnet)
@@ -110,12 +127,13 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
 
   workerPool.register(DARKWEB, rootPid, rootPort)
   masterLog.append("startup", `root worker ${DARKWEB} pid ${rootPid} port ${rootPort}`)
+  syncRegistryPasswords(dnet, registry, passwords, targets, tryConnect)
 
   while (true) {
     const loopAt = Date.now()
     const mutationPort = mutationSync.peekPort(ns)
 
-    ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId }))
+    ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId, lorePort: LORE_PORT }))
 
     drainReplies(
       ns,
@@ -129,9 +147,12 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       spawnPlans,
       mutationSync,
       urgentProbeHosts,
+      fileIntelCtx,
       masterLog,
       sessionArchive,
     )
+    pollLorePort(ns, LORE_PORT, loreSet, DARKNET_LORE_FILE)
+    syncRegistryPasswords(dnet, registry, passwords, targets, tryConnect)
     checkCommandDeadlines(workerPool, targets, spawnPlans, pendingSpawns, portPool, ns, masterLog)
     pruneWorkers(ns, workerPool, portPool, targets, pendingSpawns, spawnPlans, masterLog)
     mutationSync.tick(ns, workerPool, targets, (ts) => {
@@ -305,14 +326,24 @@ function drainReplies(
   spawnPlans: Map<string, SpawnPlan>,
   mutationSync: MutationSync,
   urgentProbeHosts: Set<string>,
+  fileIntelCtx: {
+    registry: DarknetRegistry
+    cacheOpens: CacheOpenRecord[]
+    loreSet: Set<string>
+    loreFile: string
+  },
   masterLog: MasterActionLog,
   sessionArchive: SessionArchive,
 ): void {
   for (const wi of [...workerPool.workers.values()]) {
     if (wi.commandPort <= 0) continue
     while (ns.peek(wi.replyPort) !== "NULL PORT DATA") {
-      const msg = parseWorkerResponse(ns.readPort(wi.replyPort))
-      if (!msg) continue
+      const raw = ns.readPort(wi.replyPort)
+      const msg = parseWorkerResponse(raw)
+      if (!msg) {
+        applyWorkerFileMessage(ns, raw, fileIntelCtx)
+        continue
+      }
       wi.lastActivityAt = Date.now()
       wi.lastReply = msg.type
 

@@ -18,4 +18,5 @@ export interface WorkerDnetApi {
   connectToSession?(host: string, password: string): { success: boolean }
   getBlockedRam?(host?: string): number
   memoryReallocation?(host?: string): Promise<{ success: boolean }>
+  openCache(filename: string, suppressToast?: boolean): { success: boolean; message: string; karmaLoss: number }
 }

@@ -12,6 +12,9 @@ export const CONTROL_PORT = 45209
 export const MUTATION_PORT = 45208
 export const MUTATION_WATCHER_SCRIPT = "dnet/mutationWatcher.js"
 
+/** Worker-to-coordinator lore/journaling text (raw strings). */
+export const LORE_PORT = 45207
+
 /** Per-worker command ports start here (even); reply = command + 1. */
 export const PORT_POOL_START = 45210
 export const PORT_POOL_SIZE = 256
@@ -31,6 +34,11 @@ export const UNREACHABLE_RECHECK_MS = 5_000
 
 /** Files copied to remote hosts when spawning workers (worker subtree only). */
 export const WORKER_SCP_FILES = [
+  "dnet/files/categorize.js",
+  "dnet/files/archive.js",
+  "dnet/files/intel.js",
+  "dnet/files/types.js",
+  "dnet/files/serverFiles.js",
   "dnet/worker/constants.js",
   "dnet/worker/dnetApi.js",
   "dnet/worker/protocol.js",
@@ -43,4 +51,5 @@ export const WORKER_SCP_FILES = [
 
 export interface ControlMessage {
   sessionId: number
+  lorePort: number
 }
