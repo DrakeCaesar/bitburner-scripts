@@ -7,7 +7,7 @@ import {
 import type { WorkerDnetApi } from "./dnetApi.js"
 import type { WorkerCommand } from "./protocol.js"
 import { copyWorkerFiles } from "./deploy.js"
-import { ensureTargetAuth, executeCommand, ensureSelfAuth, runProbe } from "./execute.js"
+import { ensureTargetAuth, runAuthCommand, ensureSelfAuth, runProbe, executeHeartbleed } from "./execute.js"
 import { runReallocUntil } from "./realloc.js"
 
 /** NS with port wait API (available on current Bitburner fork). */
@@ -33,6 +33,20 @@ async function readCommandPayload(ns: NS, commandPort: number): Promise<string> 
   await (ns as NSPortWait).nextPortWrite(commandPort)
   raw = ns.readPort(commandPort)
   return raw === "NULL PORT DATA" ? "" : String(raw)
+}
+
+function postExecuting(ns: NS, replyPort: number, hostname: string, cmd: WorkerCommand): void {
+  if (cmd.type === "auth" || cmd.type === "probe") return
+  const deadlineAt = "deadlineAt" in cmd && typeof cmd.deadlineAt === "number" ? cmd.deadlineAt : Date.now()
+  ns.writePort(
+    replyPort,
+    JSON.stringify({
+      type: "executing",
+      workerHost: hostname,
+      commandType: cmd.type,
+      deadlineAt,
+    }),
+  )
 }
 
 export async function main(ns: NS): Promise<void> {
@@ -65,21 +79,15 @@ export async function main(ns: NS): Promise<void> {
       continue
     }
 
-    ns.writePort(
-      replyPort,
-      JSON.stringify({
-        type: "executing",
-        workerHost: hostname,
-        commandType: cmd.type,
-        deadlineAt: cmd.deadlineAt ?? Date.now(),
-      }),
-    )
+    postExecuting(ns, replyPort, hostname, cmd)
 
     if (cmd.type === "exit") break
 
     if (cmd.type === "probe") {
       await ensureSelfAuth(dnet, hostname, selfPassword)
       await runProbe(ns, dnet, replyPort)
+    } else if (cmd.type === "auth") {
+      await runAuthCommand(ns, dnet, cmd, replyPort)
     } else if (cmd.type === "spawn") {
       await ensureSelfAuth(dnet, hostname, selfPassword)
       let childPid = 0
@@ -117,8 +125,8 @@ export async function main(ns: NS): Promise<void> {
           childPid,
         }),
       )
-    } else if (cmd.type === "guess" || cmd.type === "heartbleed") {
-      await executeCommand(ns, dnet, cmd, replyPort)
+    } else if (cmd.type === "heartbleed") {
+      await executeHeartbleed(ns, dnet, cmd, replyPort)
     } else if (cmd.type === "realloc") {
       const result = await runReallocUntil(ns, dnet, hostname, cmd.priority)
       ns.writePort(

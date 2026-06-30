@@ -1,5 +1,7 @@
 import { NS } from "@ns"
 import type { WorkerDnetApi } from "./dnetApi.js"
+import type { FormulasServerDetails } from "./taskTiming.js"
+import { estimateAuthMs, estimateHeartbleedMs } from "./taskTiming.js"
 import type { NeighborProbeStatus, WorkerCommand } from "./protocol.js"
 import { WORKER_SCRIPT } from "./constants.js"
 
@@ -26,20 +28,6 @@ function parseAuthLog(log: string, guess: string): { data: string; message: stri
   }
 }
 
-async function scrapeFeedbackAfter401(
-  dnet: WorkerDnetApi,
-  target: string,
-  guess: string,
-): Promise<{ data: string; message: string } | null> {
-  for (;;) {
-    const hb = await dnet.heartbleed(target, { peek: true })
-    if (!hb.success || hb.logs.length === 0) return null
-    const matched = parseAuthLog(hb.logs[0]!, guess)
-    if (matched) return matched
-    await dnet.heartbleed(target)
-  }
-}
-
 function isNeighbor(dnet: WorkerDnetApi, target: string): boolean {
   try {
     return dnet.getServerDetails(target).isConnectedToCurrentServer
@@ -48,126 +36,158 @@ function isNeighbor(dnet: WorkerDnetApi, target: string): boolean {
   }
 }
 
-export async function executeCommand(
+function readFormulasDetails(dnet: WorkerDnetApi, target: string): FormulasServerDetails | null {
+  try {
+    return dnet.getServerDetails(target) as FormulasServerDetails
+  } catch {
+    return null
+  }
+}
+
+type AuthCommand = Extract<WorkerCommand, { type: "auth" }>
+
+export async function runAuthCommand(
   ns: NS,
   dnet: WorkerDnetApi,
-  cmd: WorkerCommand,
+  cmd: AuthCommand,
   replyPort: number,
 ): Promise<void> {
   const workerHost = ns.getHostname()
 
-  if (cmd.type === "guess") {
-    if (!isNeighbor(dnet, cmd.target)) {
-      ns.writePort(
-        replyPort,
-        JSON.stringify({
-          type: "guessResult",
-          target: cmd.target,
-          solverId: cmd.solverId,
-          workerHost,
-          guess: cmd.guess,
-          success: false,
-          message: "notNeighbor",
-        }),
-      )
-      return
-    }
-    try {
-      const result = await dnet.authenticate(cmd.target, cmd.guess)
-      if (result.success || result.code === 200) {
-        ns.writePort(
-          replyPort,
-          JSON.stringify({
-            type: "guessResult",
-            target: cmd.target,
-            solverId: cmd.solverId,
-            workerHost,
-            guess: cmd.guess,
-            success: true,
-            feedback: normalizeFeedback(result.data),
-            code: result.code,
-          }),
-        )
-        return
-      }
-      let feedback: string | undefined
-      let message: string | undefined
-      if (result.code === 401) {
-        try {
-          const authLog = await scrapeFeedbackAfter401(dnet, cmd.target, cmd.guess)
-          if (authLog) {
-            feedback = authLog.data
-            message = authLog.message
-          }
-        } catch {
-          /* heartbleed may fail */
-        }
-      }
-      ns.writePort(
-        replyPort,
-        JSON.stringify({
-          type: "guessResult",
-          target: cmd.target,
-          solverId: cmd.solverId,
-          workerHost,
-          guess: cmd.guess,
-          success: false,
-          feedback,
-          message,
-          code: result.code,
-        }),
-      )
-    } catch {
-      ns.writePort(
-        replyPort,
-        JSON.stringify({
-          type: "guessResult",
-          target: cmd.target,
-          solverId: cmd.solverId,
-          workerHost,
-          guess: cmd.guess,
-          success: false,
-        }),
-      )
-    }
+  const writeDeadline = (deadlineAt: number): void => {
+    ns.writePort(
+      replyPort,
+      JSON.stringify({
+        type: "deadline",
+        workerHost,
+        commandType: "auth",
+        deadlineAt,
+      }),
+    )
+  }
+
+  const writeResult = (result: {
+    success: boolean
+    feedback?: string
+    message?: string
+    code?: number
+  }): void => {
+    ns.writePort(
+      replyPort,
+      JSON.stringify({
+        type: "authResult",
+        target: cmd.target,
+        solverId: cmd.solverId,
+        workerHost,
+        guess: cmd.guess,
+        ...result,
+      }),
+    )
+  }
+
+  if (!isNeighbor(dnet, cmd.target)) {
+    writeResult({ success: false, message: "notNeighbor" })
     return
   }
 
-  if (cmd.type === "heartbleed") {
-    if (!isNeighbor(dnet, cmd.target)) {
-      ns.writePort(
-        replyPort,
-        JSON.stringify({
-          type: "heartbleedResult",
-          target: cmd.target,
-          solverId: cmd.solverId,
-          logEntries: [],
-        }),
-      )
+  const details = readFormulasDetails(dnet, cmd.target)
+  if (!details) {
+    writeResult({ success: false, message: "noDetails" })
+    return
+  }
+
+  writeDeadline(Date.now() + estimateAuthMs(ns, details, cmd.guess))
+
+  try {
+    const result = await dnet.authenticate(cmd.target, cmd.guess)
+    if (result.success || result.code === 200) {
+      writeResult({
+        success: true,
+        feedback: normalizeFeedback(result.data),
+        code: result.code,
+      })
       return
     }
-    try {
-      const result = await dnet.heartbleed(cmd.target)
-      ns.writePort(
-        replyPort,
-        JSON.stringify({
-          type: "heartbleedResult",
-          target: cmd.target,
-          solverId: cmd.solverId,
-          logEntries: result.success ? result.logs : [],
-        }),
-      )
-    } catch {
-      ns.writePort(
-        replyPort,
-        JSON.stringify({
-          type: "heartbleedResult",
-          target: cmd.target,
-          solverId: cmd.solverId,
-          logEntries: [],
-        }),
-      )
+
+    if (result.code !== 401) {
+      writeResult({
+        success: false,
+        message: result.message,
+        code: result.code,
+      })
+      return
     }
+
+    while (true) {
+      writeDeadline(Date.now() + estimateHeartbleedMs(ns, details))
+
+      const hb = await dnet.heartbleed(cmd.target, { peek: true })
+      if (!hb.success || hb.logs.length === 0) {
+        writeResult({
+          success: false,
+          message: result.message,
+          code: result.code,
+        })
+        return
+      }
+
+      const matched = parseAuthLog(hb.logs[0]!, cmd.guess)
+      if (matched) {
+        writeResult({
+          success: false,
+          feedback: matched.data,
+          message: matched.message,
+          code: result.code,
+        })
+        return
+      }
+
+      await dnet.heartbleed(cmd.target)
+    }
+  } catch {
+    writeResult({ success: false })
+  }
+}
+
+export async function executeHeartbleed(
+  ns: NS,
+  dnet: WorkerDnetApi,
+  cmd: Extract<WorkerCommand, { type: "heartbleed" }>,
+  replyPort: number,
+): Promise<void> {
+  if (!isNeighbor(dnet, cmd.target)) {
+    ns.writePort(
+      replyPort,
+      JSON.stringify({
+        type: "heartbleedResult",
+        target: cmd.target,
+        solverId: cmd.solverId,
+        logEntries: [],
+      }),
+    )
+    return
+  }
+  try {
+    const result = await dnet.heartbleed(cmd.target)
+    ns.writePort(
+      replyPort,
+      JSON.stringify({
+        type: "heartbleedResult",
+        target: cmd.target,
+        solverId: cmd.solverId,
+        logEntries: result.success ? result.logs : [],
+      }),
+    )
+  } catch {
+    ns.writePort(
+      replyPort,
+      JSON.stringify({
+        type: "heartbleedResult",
+        target: cmd.target,
+        solverId: cmd.solverId,
+        logEntries: [],
+      }),
+    )
   }
 }
 
@@ -200,7 +220,6 @@ function probeNeighbor(
 
   let workerRunning = false
   let workerKnown = false
-  // isRunning on a neighbor only works when this worker can reach it and has a session there.
   if (isOnline && isConnected && hasSession) {
     try {
       workerRunning = ns.isRunning(WORKER_SCRIPT, host)

@@ -29,7 +29,8 @@ export interface ManagedWorker {
   lastCommand: string | null
   lastReply: string | null
   lastActivityAt: number
-  busyUntil: number
+  /** Latest command deadline (worker-reported or master fallback). 0 when idle. */
+  commandDeadlineAt: number
   /** Mutation generation this worker last probed for (-1 = not synced). */
   probeSyncMutation: number
   freeRam: number
@@ -50,7 +51,7 @@ export class WorkerPool {
       lastCommand: null,
       lastReply: null,
       lastActivityAt: Date.now(),
-      busyUntil: 0,
+      commandDeadlineAt: 0,
       probeSyncMutation: -1,
       freeRam: 0,
       blockedRam: 0,

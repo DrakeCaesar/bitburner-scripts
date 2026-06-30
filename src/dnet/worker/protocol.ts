@@ -7,13 +7,19 @@ export interface CommandMeta {
 
 export type WorkerCommandPayload =
   | { type: "probe" }
-  | { type: "guess"; target: string; solverId: string; guess: string; detail: string | null }
+  | { type: "auth"; target: string; solverId: string; guess: string; detail: string | null }
   | { type: "heartbleed"; target: string; solverId: string }
   | { type: "spawn"; target: string; sessionId: number; port: number; password?: string }
   | { type: "realloc"; priority: 1 | 2 | 3 }
   | { type: "exit" }
 
-export type WorkerCommand = WorkerCommandPayload & CommandMeta
+/** Commands that still use master-attached expectedMs/deadlineAt metadata. */
+export type WorkerCommandWithMeta = Exclude<WorkerCommandPayload, { type: "auth" | "probe" }> & CommandMeta
+
+export type WorkerCommand =
+  | ({ type: "auth" } & Extract<WorkerCommandPayload, { type: "auth" }>)
+  | ({ type: "probe" } & Extract<WorkerCommandPayload, { type: "probe" }>)
+  | WorkerCommandWithMeta
 
 export interface NeighborProbeStatus {
   host: string
@@ -32,7 +38,18 @@ export interface NeighborProbeStatus {
 export type WorkerResponse =
   | { type: "ready"; workerHost: string; pid: number }
   | { type: "executing"; workerHost: string; commandType: string; deadlineAt: number }
-  | { type: "guessResult"; target: string; solverId: string; workerHost: string; guess: string; success: boolean; feedback?: string; message?: string; code?: number }
+  | { type: "deadline"; workerHost: string; commandType: string; deadlineAt: number }
+  | {
+      type: "authResult"
+      target: string
+      solverId: string
+      workerHost: string
+      guess: string
+      success: boolean
+      feedback?: string
+      message?: string
+      code?: number
+    }
   | { type: "heartbleedResult"; target: string; solverId: string; logEntries: string[] }
   | {
       type: "probeResult"
@@ -62,10 +79,18 @@ export function parseWorkerResponse(raw: unknown): WorkerResponse | null {
           commandType: row.commandType,
           deadlineAt: typeof row.deadlineAt === "number" ? row.deadlineAt : 0,
         }
-      case "guessResult": {
+      case "deadline":
+        if (typeof row.workerHost !== "string" || typeof row.commandType !== "string") return null
+        return {
+          type: "deadline",
+          workerHost: row.workerHost,
+          commandType: row.commandType,
+          deadlineAt: typeof row.deadlineAt === "number" ? row.deadlineAt : 0,
+        }
+      case "authResult": {
         if (typeof row.target !== "string" || typeof row.solverId !== "string") return null
         return {
-          type: "guessResult",
+          type: "authResult",
           target: row.target,
           solverId: row.solverId,
           workerHost: typeof row.workerHost === "string" ? row.workerHost : "",
@@ -148,8 +173,8 @@ export function formatCommand(cmd: WorkerCommandPayload): string {
   switch (cmd.type) {
     case "probe":
       return "probe"
-    case "guess":
-      return `guess:${cmd.target}`
+    case "auth":
+      return `auth:${cmd.target}`
     case "heartbleed":
       return `heartbleed:${cmd.target}`
     case "spawn":
