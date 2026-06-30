@@ -162,7 +162,21 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
     processQueuedTargets(targets, attemptLog, sessionArchive, dnet, passwords)
     scheduleRetries(targets, attemptLog)
     const dispatchCtx: WorkerDispatchCtx = { workerPool, portPool, pendingSpawns, spawnPlans, targets }
+    // Dispatch priority: urgent probe -> P1 RAM -> spawn -> P2 RAM -> auth -> background probe -> P3 RAM
     dispatchUrgentProbes(ns, workerPool, urgentProbeHosts, masterLog, dispatchCtx)
+    dispatchP1Reallocs(
+      ns,
+      sessionId,
+      workerPool,
+      portPool,
+      targets,
+      pendingSpawns,
+      spawnPlans,
+      dnet,
+      passwords,
+      masterLog,
+      dispatchCtx,
+    )
     spawnWorkers(
       ns,
       sessionId,
@@ -176,9 +190,10 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       masterLog,
       dispatchCtx,
     )
-    dispatchReallocs(ns, dnet, workerPool, masterLog, dispatchCtx)
+    dispatchP2Reallocs(ns, dnet, workerPool, masterLog, dispatchCtx)
     dispatchGuesses(ns, workerPool, targets, attemptLog, dnet, masterLog, dispatchCtx)
     dispatchBackgroundProbes(ns, workerPool, mutationSync, urgentProbeHosts, masterLog, dispatchCtx)
+    dispatchP3Reallocs(ns, dnet, workerPool, masterLog, dispatchCtx)
 
     await options.onProgress(
       buildSnapshot(
@@ -782,7 +797,7 @@ function dispatchBackgroundProbes(
   }
 }
 
-function dispatchReallocs(
+function dispatchP2Reallocs(
   ns: NS,
   dnet: DnetApi,
   workerPool: WorkerPool,
@@ -794,13 +809,92 @@ function dispatchReallocs(
   for (const wi of workerPool.idleWorkers()) {
     const ram = readHostRam(ns, dnet, wi.host)
     wi.blockedRam = ram.blockedRam
+    if (!needsRealloc(ns, dnet, wi.host, 2, ram)) continue
+    sendCommand(ns, wi, { type: "realloc", host: wi.host, priority: 2 }, masterLog, ctx)
+  }
+}
 
-    if (needsRealloc(ns, dnet, wi.host, 2, ram)) {
-      sendCommand(ns, wi, { type: "realloc", host: wi.host, priority: 2 }, masterLog, ctx)
-      continue
+function dispatchP3Reallocs(
+  ns: NS,
+  dnet: DnetApi,
+  workerPool: WorkerPool,
+  masterLog: MasterActionLog,
+  ctx: WorkerDispatchCtx,
+): void {
+  if (!dnet.memoryReallocation || !dnet.getBlockedRam) return
+
+  for (const wi of workerPool.idleWorkers()) {
+    const ram = readHostRam(ns, dnet, wi.host)
+    wi.blockedRam = ram.blockedRam
+    if (!needsRealloc(ns, dnet, wi.host, 3, ram)) continue
+    sendCommand(ns, wi, { type: "realloc", host: wi.host, priority: 3 }, masterLog, ctx)
+  }
+}
+
+function dispatchP1Reallocs(
+  ns: NS,
+  sessionId: number,
+  workerPool: WorkerPool,
+  portPool: PortPool,
+  targets: Map<string, AuthTarget>,
+  pendingSpawns: Set<string>,
+  spawnPlans: Map<string, SpawnPlan>,
+  dnet: DnetApi,
+  passwords: Map<string, string>,
+  masterLog: MasterActionLog,
+  ctx: WorkerDispatchCtx,
+): void {
+  if (!dnet.memoryReallocation || !dnet.getBlockedRam) return
+
+  for (const target of targets.values()) {
+    if (target.host === DARKWEB) continue
+    if (workerPool.workers.has(target.host)) {
+      const wi = workerPool.workers.get(target.host)!
+      if (isWorkerAlive(ns, wi)) continue
     }
-    if (needsRealloc(ns, dnet, wi.host, 3, ram)) {
-      sendCommand(ns, wi, { type: "realloc", host: wi.host, priority: 3 }, masterLog, ctx)
+    if (pendingSpawns.has(target.host)) continue
+
+    const details = getServerDetails(dnet, target.host)
+    if (!details?.isOnline) continue
+
+    const knownPassword = target.password ?? passwords.get(target.host) ?? null
+    const authed = knownPassword != null || details.hasSession
+    if (!authed) continue
+
+    const ram = readHostRam(ns, dnet, target.host)
+    if (canSpawnWorker(ns, dnet, target.host, ram)) continue
+    if (!needsRealloc(ns, dnet, target.host, 1, ram)) continue
+
+    const existingPlan = spawnPlans.get(target.host)
+    const parent =
+      existingPlan != null
+        ? workerPool.workers.get(existingPlan.parentHost)
+        : [...workerPool.workers.values()].find(
+            (w) => w.idle && w.neighbors.includes(target.host) && w.commandPort > 0,
+          )
+    if (!parent?.idle || parent.commandPort <= 0) continue
+
+    if (!existingPlan) {
+      spawnPlans.set(target.host, {
+        targetHost: target.host,
+        parentHost: parent.host,
+        sessionId,
+        ...(knownPassword != null ? { password: knownPassword } : {}),
+        port: 0,
+        phase: "realloc",
+      })
+    }
+
+    if (
+      !sendCommand(
+        ns,
+        parent,
+        { type: "realloc", host: target.host, priority: 1 },
+        masterLog,
+        ctx,
+      )
+    ) {
+      abortSpawnPlan(target.host, spawnPlans, pendingSpawns, workerPool, portPool, ns)
     }
   }
 }
@@ -935,31 +1029,7 @@ function spawnWorkers(
     if (!parent?.idle || parent.commandPort <= 0) continue
 
     const ram = readHostRam(ns, dnet, target.host)
-    if (!canSpawnWorker(ns, dnet, target.host, ram)) {
-      if (!needsRealloc(ns, dnet, target.host, 1, ram)) continue
-      if (!existingPlan) {
-        spawnPlans.set(target.host, {
-          targetHost: target.host,
-          parentHost: parent.host,
-          sessionId,
-          ...(knownPassword != null ? { password: knownPassword } : {}),
-          port: 0,
-          phase: "realloc",
-        })
-      }
-      if (
-        !sendCommand(
-          ns,
-          parent,
-          { type: "realloc", host: target.host, priority: 1 },
-          masterLog,
-          ctx,
-        )
-      ) {
-        abortSpawnPlan(target.host, spawnPlans, pendingSpawns, workerPool, portPool, ns)
-      }
-      continue
-    }
+    if (!canSpawnWorker(ns, dnet, target.host, ram)) continue
 
     let plan = spawnPlans.get(target.host)
     if (!plan) {
