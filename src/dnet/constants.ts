@@ -23,8 +23,10 @@ export const WORKER_TIMEOUT_MS = 120_000
 export const DEADLINE_GRACE_MS = 50
 /** Initial window for the worker to post its first reply (deadline or final result) on auth. */
 export const FIRST_REPLY_MS = 50
-/** Fallback if probeResult never arrives (probe has no worker deadline messages). */
-export const PROBE_FALLBACK_MS = 10_000
+/** Fallback if probeResult/spawnResult never arrives (no worker deadline messages). */
+export const INSTANT_CMD_FALLBACK_MS = 10_000
+/** @deprecated use INSTANT_CMD_FALLBACK_MS */
+export const PROBE_FALLBACK_MS = INSTANT_CMD_FALLBACK_MS
 export const UNREACHABLE_RECHECK_MS = 5_000
 
 /** Files copied to remote hosts when spawning workers (worker subtree only). */

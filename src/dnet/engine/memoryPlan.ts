@@ -1,14 +1,9 @@
 import { NS } from "@ns"
-import { STASIS_SCRIPT, WORKER_SCRIPT, WORKER_TIMEOUT_MS } from "../constants.js"
+import { STASIS_SCRIPT, WORKER_SCRIPT } from "../constants.js"
 import type { DnetApi } from "../types.js"
 
 /** 1 = worker RAM, 2 = worker + stasis RAM, 3 = clear all blocked RAM. */
 export type ReallocPriority = 1 | 2 | 3
-
-/** Realloc runs until complete; use worker timeout for command deadlines. */
-export function reallocCommandMs(_ns: NS): number {
-  return WORKER_TIMEOUT_MS
-}
 
 export interface HostRamSnapshot {
   freeRam: number
@@ -23,6 +18,10 @@ function scriptRam(ns: NS, script: string, host: string): number {
     /* host unreachable from master */
   }
   return 0
+}
+
+export function workerScriptRamGb(ns: NS, host: string): number {
+  return scriptRam(ns, WORKER_SCRIPT, host)
 }
 
 export function ramTargetGb(ns: NS, host: string, priority: ReallocPriority): number {
@@ -54,6 +53,13 @@ export function needsRealloc(
   if (blockedRam <= 0) return false
   if (priority === 3) return true
   return freeRam < ramTargetGb(ns, host, priority)
+}
+
+/** True when a worker script fits on host without further P1 realloc. */
+export function canSpawnWorker(ns: NS, dnet: DnetApi, host: string, cached?: HostRamSnapshot): boolean {
+  const ram = cached ?? readHostRam(ns, dnet, host)
+  if (ram.freeRam < workerScriptRamGb(ns, host)) return false
+  return !needsRealloc(ns, dnet, host, 1, ram)
 }
 
 /** Highest unmet realloc priority for a worker host (P1 not used on self). */

@@ -30,7 +30,7 @@ export function measureHostRam(ns: NS, dnet: WorkerDnetApi, host: string): HostR
   }
 }
 
-function priorityMet(ns: NS, dnet: WorkerDnetApi, host: string, priority: ReallocPriority): boolean {
+export function priorityMet(ns: NS, dnet: WorkerDnetApi, host: string, priority: ReallocPriority): boolean {
   const { freeRam, blockedRam } = measureHostRam(ns, dnet, host)
   if (priority === 3) return blockedRam <= 0
   if (blockedRam <= 0) return true

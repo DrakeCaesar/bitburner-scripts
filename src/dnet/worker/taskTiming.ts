@@ -5,6 +5,7 @@ const TIMING_ATTACK_MODEL = "2G_cellular"
 
 const FALLBACK_AUTH_MS = 5_000
 const FALLBACK_HEARTBLEED_MS = 7_500
+const FALLBACK_REALLOC_MS = 8_000
 
 /** Fields required by ns.formulas.dnet.getAuthenticateTime / getHeartbleedTime. */
 export interface FormulasServerDetails {
@@ -67,4 +68,10 @@ export function estimateHeartbleedMs(ns: NS, details: FormulasServerDetails): nu
   } catch {
     return FALLBACK_HEARTBLEED_MS
   }
+}
+
+/** Wall-clock ms for one dnet.memoryReallocation call (charisma-scaled in game source). */
+export function estimateReallocMs(ns: NS): number {
+  const charisma = ns.getPlayer().skills.charisma
+  return Math.max(8000 * (500 / (500 + charisma)), 200) || FALLBACK_REALLOC_MS
 }

@@ -1,14 +1,18 @@
 import { NS } from "@ns"
 import {
   CONTROL_PORT,
-  WORKER_SCRIPT,
   type ControlMessage,
 } from "./constants.js"
 import type { WorkerDnetApi } from "./dnetApi.js"
 import type { WorkerCommand } from "./protocol.js"
-import { copyWorkerFiles } from "./deploy.js"
-import { ensureTargetAuth, runAuthCommand, ensureSelfAuth, runProbe, executeHeartbleed } from "./execute.js"
-import { runReallocUntil } from "./realloc.js"
+import {
+  runAuthCommand,
+  ensureSelfAuth,
+  runProbe,
+  runHeartbleedCommand,
+  runReallocCommand,
+  runSpawnCommand,
+} from "./execute.js"
 
 /** NS with port wait API (available on current Bitburner fork). */
 type NSPortWait = NS & { nextPortWrite(port: number): Promise<void> }
@@ -33,20 +37,6 @@ async function readCommandPayload(ns: NS, commandPort: number): Promise<string> 
   await (ns as NSPortWait).nextPortWrite(commandPort)
   raw = ns.readPort(commandPort)
   return raw === "NULL PORT DATA" ? "" : String(raw)
-}
-
-function postExecuting(ns: NS, replyPort: number, hostname: string, cmd: WorkerCommand): void {
-  if (cmd.type === "auth" || cmd.type === "probe") return
-  const deadlineAt = "deadlineAt" in cmd && typeof cmd.deadlineAt === "number" ? cmd.deadlineAt : Date.now()
-  ns.writePort(
-    replyPort,
-    JSON.stringify({
-      type: "executing",
-      workerHost: hostname,
-      commandType: cmd.type,
-      deadlineAt,
-    }),
-  )
 }
 
 export async function main(ns: NS): Promise<void> {
@@ -79,8 +69,6 @@ export async function main(ns: NS): Promise<void> {
       continue
     }
 
-    postExecuting(ns, replyPort, hostname, cmd)
-
     if (cmd.type === "exit") break
 
     if (cmd.type === "probe") {
@@ -90,55 +78,11 @@ export async function main(ns: NS): Promise<void> {
       await runAuthCommand(ns, dnet, cmd, replyPort)
     } else if (cmd.type === "spawn") {
       await ensureSelfAuth(dnet, hostname, selfPassword)
-      let childPid = 0
-      let success = false
-      try {
-        await runReallocUntil(ns, dnet, cmd.target, 1)
-        await ensureTargetAuth(dnet, cmd.target, cmd.password)
-        if (!(await copyWorkerFiles(ns, cmd.target, hostname))) {
-          success = false
-        } else {
-          const childRam = ns.getScriptRam(WORKER_SCRIPT, cmd.target)
-          const free = ns.getServerMaxRam(cmd.target) - ns.getServerUsedRam(cmd.target)
-          if (childRam <= free) {
-            childPid = ns.exec(
-              WORKER_SCRIPT,
-              cmd.target,
-              1,
-              activeSessionId,
-              cmd.port,
-              cmd.password ?? "",
-            )
-            success = childPid > 0
-          }
-        }
-      } catch {
-        success = false
-      }
-      ns.writePort(
-        replyPort,
-        JSON.stringify({
-          type: "spawnResult",
-          workerHost: hostname,
-          target: cmd.target,
-          success,
-          childPid,
-        }),
-      )
+      await runSpawnCommand(ns, dnet, cmd, replyPort, activeSessionId)
     } else if (cmd.type === "heartbleed") {
-      await executeHeartbleed(ns, dnet, cmd, replyPort)
+      await runHeartbleedCommand(ns, dnet, cmd, replyPort)
     } else if (cmd.type === "realloc") {
-      const result = await runReallocUntil(ns, dnet, hostname, cmd.priority)
-      ns.writePort(
-        replyPort,
-        JSON.stringify({
-          type: "reallocResult",
-          workerHost: hostname,
-          priority: cmd.priority,
-          freeRam: result.freeRam,
-          blockedRam: result.blockedRam,
-        }),
-      )
+      await runReallocCommand(ns, dnet, cmd, replyPort)
     }
   }
 }

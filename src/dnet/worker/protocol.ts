@@ -1,25 +1,14 @@
 /** Worker command and response message types. */
 
-export interface CommandMeta {
-  expectedMs: number
-  deadlineAt: number
-}
-
 export type WorkerCommandPayload =
   | { type: "probe" }
   | { type: "auth"; target: string; solverId: string; guess: string; detail: string | null }
   | { type: "heartbleed"; target: string; solverId: string }
   | { type: "spawn"; target: string; sessionId: number; port: number; password?: string }
-  | { type: "realloc"; priority: 1 | 2 | 3 }
+  | { type: "realloc"; host: string; priority: 1 | 2 | 3 }
   | { type: "exit" }
 
-/** Commands that still use master-attached expectedMs/deadlineAt metadata. */
-export type WorkerCommandWithMeta = Exclude<WorkerCommandPayload, { type: "auth" | "probe" }> & CommandMeta
-
-export type WorkerCommand =
-  | ({ type: "auth" } & Extract<WorkerCommandPayload, { type: "auth" }>)
-  | ({ type: "probe" } & Extract<WorkerCommandPayload, { type: "probe" }>)
-  | WorkerCommandWithMeta
+export type WorkerCommand = WorkerCommandPayload
 
 export interface NeighborProbeStatus {
   host: string
@@ -37,7 +26,6 @@ export interface NeighborProbeStatus {
 
 export type WorkerResponse =
   | { type: "ready"; workerHost: string; pid: number }
-  | { type: "executing"; workerHost: string; commandType: string; deadlineAt: number }
   | { type: "deadline"; workerHost: string; commandType: string; deadlineAt: number }
   | {
       type: "authResult"
@@ -60,7 +48,14 @@ export type WorkerResponse =
       blockedRam: number
     }
   | { type: "spawnResult"; workerHost: string; target: string; success: boolean; childPid: number }
-  | { type: "reallocResult"; workerHost: string; priority: 1 | 2 | 3; freeRam: number; blockedRam: number }
+  | {
+      type: "reallocResult"
+      workerHost: string
+      host: string
+      priority: 1 | 2 | 3
+      freeRam: number
+      blockedRam: number
+    }
 
 export function parseWorkerResponse(raw: unknown): WorkerResponse | null {
   try {
@@ -71,14 +66,6 @@ export function parseWorkerResponse(raw: unknown): WorkerResponse | null {
       case "ready":
         if (typeof row.workerHost !== "string" || typeof row.pid !== "number") return null
         return { type: "ready", workerHost: row.workerHost, pid: row.pid }
-      case "executing":
-        if (typeof row.workerHost !== "string" || typeof row.commandType !== "string") return null
-        return {
-          type: "executing",
-          workerHost: row.workerHost,
-          commandType: row.commandType,
-          deadlineAt: typeof row.deadlineAt === "number" ? row.deadlineAt : 0,
-        }
       case "deadline":
         if (typeof row.workerHost !== "string" || typeof row.commandType !== "string") return null
         return {
@@ -130,12 +117,13 @@ export function parseWorkerResponse(raw: unknown): WorkerResponse | null {
           childPid: typeof row.childPid === "number" ? row.childPid : 0,
         }
       case "reallocResult": {
-        if (typeof row.workerHost !== "string") return null
+        if (typeof row.workerHost !== "string" || typeof row.host !== "string") return null
         const priority = row.priority
         if (priority !== 1 && priority !== 2 && priority !== 3) return null
         return {
           type: "reallocResult",
           workerHost: row.workerHost,
+          host: row.host,
           priority,
           freeRam: typeof row.freeRam === "number" ? row.freeRam : 0,
           blockedRam: typeof row.blockedRam === "number" ? row.blockedRam : 0,
@@ -180,8 +168,16 @@ export function formatCommand(cmd: WorkerCommandPayload): string {
     case "spawn":
       return `spawn:${cmd.target}`
     case "realloc":
-      return `realloc:p${cmd.priority}`
+      return `realloc:${cmd.host}:p${cmd.priority}`
     case "exit":
       return "exit"
   }
+}
+
+export function usesWorkerDeadlines(cmd: WorkerCommandPayload): boolean {
+  return cmd.type === "auth" || cmd.type === "heartbleed" || cmd.type === "realloc"
+}
+
+export function isInstantCommand(cmd: WorkerCommandPayload): boolean {
+  return cmd.type === "probe" || cmd.type === "spawn"
 }

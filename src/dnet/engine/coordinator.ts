@@ -4,10 +4,10 @@ import {
   DARKWEB,
   DEADLINE_GRACE_MS,
   EXHAUSTED_RETRY_MS,
+  INSTANT_CMD_FALLBACK_MS,
   FIRST_REPLY_MS,
   LABYRINTH_MODEL,
   LOOP_INTERVAL_MS,
-  PROBE_FALLBACK_MS,
   WORKER_SCRIPT,
   WORKER_TIMEOUT_MS,
 } from "../constants.js"
@@ -29,14 +29,16 @@ import type {
 } from "../types.js"
 import {
   formatCommand,
+  isInstantCommand,
   parseWorkerResponse,
+  usesWorkerDeadlines,
   type WorkerCommandPayload,
   type WorkerResponse,
 } from "../worker/protocol.js"
 import {
+  canSpawnWorker,
   needsRealloc,
   readHostRam,
-  reallocCommandMs,
 } from "./memoryPlan.js"
 import { copyWorkerFiles } from "../worker/deploy.js"
 import { ensureMutationWatcher, MutationSync } from "./mutationSync.js"
@@ -44,6 +46,15 @@ import { clearDnetGlobalPorts, clearWorkerPortPair } from "./ports.js"
 
 function cloneState<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
+}
+
+interface SpawnPlan {
+  targetHost: string
+  parentHost: string
+  sessionId: number
+  password?: string
+  port: number
+  phase: "realloc" | "spawn"
 }
 
 export interface CoordinatorOptions {
@@ -67,6 +78,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
   const targets = new Map<string, AuthTarget>()
   const passwords = new Map<string, string>()
   const pendingSpawns = new Set<string>()
+  const spawnPlans = new Map<string, SpawnPlan>()
   const mutationSync = new MutationSync()
   let initialTopologySync = false
 
@@ -113,12 +125,13 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       attemptLog,
       dnet,
       pendingSpawns,
+      spawnPlans,
       mutationSync,
       masterLog,
       sessionArchive,
     )
-    checkCommandDeadlines(workerPool, targets, masterLog)
-    pruneWorkers(ns, workerPool, portPool, targets, pendingSpawns, masterLog)
+    checkCommandDeadlines(workerPool, targets, spawnPlans, pendingSpawns, portPool, ns, masterLog)
+    pruneWorkers(ns, workerPool, portPool, targets, pendingSpawns, spawnPlans, masterLog)
     if (mutationSync.tryCompleteSync(ns, workerPool)) {
       masterLog.append("sync", `complete mutation ${mutationSync.acked}`)
       for (const target of targets.values()) {
@@ -136,7 +149,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
     }
 
     if (!mutationSync.canDispatchActions()) {
-      const dispatchCtx: WorkerDispatchCtx = { workerPool, portPool, pendingSpawns, targets }
+      const dispatchCtx: WorkerDispatchCtx = { workerPool, portPool, pendingSpawns, spawnPlans, targets }
       dispatchSyncProbes(ns, workerPool, mutationSync, masterLog, dispatchCtx)
       await options.onProgress(
         buildSnapshot(
@@ -157,7 +170,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
 
     processQueuedTargets(targets, attemptLog, sessionArchive, dnet, passwords)
     scheduleRetries(targets, attemptLog)
-    const dispatchCtx: WorkerDispatchCtx = { workerPool, portPool, pendingSpawns, targets }
+    const dispatchCtx: WorkerDispatchCtx = { workerPool, portPool, pendingSpawns, spawnPlans, targets }
     spawnWorkers(
       ns,
       sessionId,
@@ -165,6 +178,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       portPool,
       targets,
       pendingSpawns,
+      spawnPlans,
       dnet,
       passwords,
       masterLog,
@@ -266,6 +280,7 @@ function drainReplies(
   attemptLog: AttemptLog,
   dnet: DnetApi,
   pendingSpawns: Set<string>,
+  spawnPlans: Map<string, SpawnPlan>,
   mutationSync: MutationSync,
   masterLog: MasterActionLog,
   sessionArchive: SessionArchive,
@@ -289,13 +304,9 @@ function drainReplies(
               wi,
               { type: "probe" },
               masterLog,
-              { workerPool, portPool, pendingSpawns, targets },
+              { workerPool, portPool, pendingSpawns, spawnPlans, targets },
             )
           }
-          break
-        case "executing":
-          wi.idle = false
-          wi.commandDeadlineAt = msg.deadlineAt
           break
         case "deadline":
           wi.idle = false
@@ -323,6 +334,7 @@ function drainReplies(
           wi.idle = true
           wi.commandDeadlineAt = 0
           pendingSpawns.delete(msg.target)
+          spawnPlans.delete(msg.target)
           if (!msg.success) {
             const ghost = workerPool.workers.get(msg.target)
             if (ghost?.commandPort) releaseWorkerPort(ns, portPool, ghost.commandPort)
@@ -355,10 +367,12 @@ function drainReplies(
         case "reallocResult":
           wi.idle = true
           wi.commandDeadlineAt = 0
-          wi.freeRam = msg.freeRam
-          wi.blockedRam = msg.blockedRam
+          if (msg.host === wi.host) {
+            wi.freeRam = msg.freeRam
+            wi.blockedRam = msg.blockedRam
+          }
           attemptLog.append({
-            host: wi.host,
+            host: msg.host,
             session: 0,
             kind: "note",
             solverId: "-",
@@ -679,22 +693,16 @@ function dispatchReallocs(
 ): void {
   if (!dnet.memoryReallocation || !dnet.getBlockedRam) return
 
-  const reallocMs = reallocCommandMs(ns)
-
   for (const wi of workerPool.idleWorkers()) {
     const ram = readHostRam(ns, dnet, wi.host)
     wi.blockedRam = ram.blockedRam
 
     if (needsRealloc(ns, dnet, wi.host, 2, ram)) {
-      sendCommand(ns, wi, { type: "realloc", priority: 2 }, masterLog, ctx, {
-        expectedMs: reallocMs,
-      })
+      sendCommand(ns, wi, { type: "realloc", host: wi.host, priority: 2 }, masterLog, ctx)
       continue
     }
     if (needsRealloc(ns, dnet, wi.host, 3, ram)) {
-      sendCommand(ns, wi, { type: "realloc", priority: 3 }, masterLog, ctx, {
-        expectedMs: reallocMs,
-      })
+      sendCommand(ns, wi, { type: "realloc", host: wi.host, priority: 3 }, masterLog, ctx)
     }
   }
 }
@@ -796,6 +804,7 @@ function spawnWorkers(
   portPool: PortPool,
   targets: Map<string, AuthTarget>,
   pendingSpawns: Set<string>,
+  spawnPlans: Map<string, SpawnPlan>,
   dnet: DnetApi,
   passwords: Map<string, string>,
   masterLog: MasterActionLog,
@@ -806,7 +815,7 @@ function spawnWorkers(
     if (workerPool.workers.has(target.host)) {
       const wi = workerPool.workers.get(target.host)!
       if (isWorkerAlive(ns, wi)) continue
-      dropWorker(ns, target.host, workerPool, portPool, pendingSpawns, masterLog, "dead")
+      dropWorker(ns, target.host, workerPool, portPool, pendingSpawns, spawnPlans, masterLog, "dead")
     }
     if (pendingSpawns.has(target.host)) continue
 
@@ -818,17 +827,72 @@ function spawnWorkers(
     if (!authed) continue
     if (knownPassword != null) tryConnect(dnet, target.host, knownPassword)
 
-    const parent = [...workerPool.workers.values()].find(
-      (w) => w.idle && w.neighbors.includes(target.host) && w.commandPort > 0,
-    )
-    if (!parent) continue
+    const existingPlan = spawnPlans.get(target.host)
+    const parent =
+      existingPlan != null
+        ? workerPool.workers.get(existingPlan.parentHost)
+        : [...workerPool.workers.values()].find(
+            (w) => w.idle && w.neighbors.includes(target.host) && w.commandPort > 0,
+          )
+    if (!parent?.idle || parent.commandPort <= 0) continue
 
-    const port = portPool.allocate()
-    if (port <= 0) continue
-    clearWorkerPortPair(ns, port)
+    const ram = readHostRam(ns, dnet, target.host)
+    if (!canSpawnWorker(ns, dnet, target.host, ram)) {
+      if (!needsRealloc(ns, dnet, target.host, 1, ram)) continue
+      if (!existingPlan) {
+        spawnPlans.set(target.host, {
+          targetHost: target.host,
+          parentHost: parent.host,
+          sessionId,
+          ...(knownPassword != null ? { password: knownPassword } : {}),
+          port: 0,
+          phase: "realloc",
+        })
+      }
+      if (
+        !sendCommand(
+          ns,
+          parent,
+          { type: "realloc", host: target.host, priority: 1 },
+          masterLog,
+          ctx,
+        )
+      ) {
+        abortSpawnPlan(target.host, spawnPlans, pendingSpawns, workerPool, portPool, ns)
+      }
+      continue
+    }
+
+    let plan = spawnPlans.get(target.host)
+    if (!plan) {
+      const port = portPool.allocate()
+      if (port <= 0) continue
+      clearWorkerPortPair(ns, port)
+      plan = {
+        targetHost: target.host,
+        parentHost: parent.host,
+        sessionId,
+        ...(knownPassword != null ? { password: knownPassword } : {}),
+        port,
+        phase: "spawn",
+      }
+      spawnPlans.set(target.host, plan)
+      workerPool.register(target.host, 0, port)
+    } else if (plan.phase === "realloc") {
+      plan.parentHost = parent.host
+      plan.phase = "spawn"
+      if (plan.port <= 0) {
+        const port = portPool.allocate()
+        if (port <= 0) continue
+        clearWorkerPortPair(ns, port)
+        plan.port = port
+        workerPool.register(target.host, 0, port)
+      }
+    } else {
+      plan.parentHost = parent.host
+    }
 
     pendingSpawns.add(target.host)
-    workerPool.register(target.host, 0, port)
     if (
       !sendCommand(
         ns,
@@ -836,24 +900,17 @@ function spawnWorkers(
         {
           type: "spawn",
           target: target.host,
-          sessionId,
-          port,
-          ...(target.password != null ? { password: target.password } : {}),
+          sessionId: plan.sessionId,
+          port: plan.port,
+          ...(plan.password != null ? { password: plan.password } : {}),
         },
         masterLog,
         ctx,
-        { expectedMs: spawnCommandMs() },
       )
     ) {
-      pendingSpawns.delete(target.host)
-      releaseWorkerPort(ns, portPool, port)
-      workerPool.remove(target.host)
+      abortSpawnPlan(target.host, spawnPlans, pendingSpawns, workerPool, portPool, ns)
     }
   }
-}
-
-function spawnCommandMs(): number {
-  return WORKER_TIMEOUT_MS
 }
 
 function commandDetail(host: string, payload: WorkerCommandPayload): string {
@@ -865,7 +922,9 @@ function commandDetail(host: string, payload: WorkerCommandPayload): string {
     case "auth":
       return `${host} -> ${payload.target} ${payload.guess}`
     case "realloc":
-      return `${host} p${payload.priority}`
+      return `${host} -> ${payload.host} p${payload.priority}`
+    case "heartbleed":
+      return `${host} -> ${payload.target}`
     default:
       return host
   }
@@ -875,7 +934,25 @@ interface WorkerDispatchCtx {
   workerPool: WorkerPool
   portPool: PortPool
   pendingSpawns: Set<string>
+  spawnPlans: Map<string, SpawnPlan>
   targets?: Map<string, AuthTarget>
+}
+
+function abortSpawnPlan(
+  targetHost: string,
+  spawnPlans: Map<string, SpawnPlan>,
+  pendingSpawns: Set<string>,
+  workerPool: WorkerPool,
+  portPool: PortPool,
+  ns: NS,
+): void {
+  const plan = spawnPlans.get(targetHost)
+  spawnPlans.delete(targetHost)
+  pendingSpawns.delete(targetHost)
+  if (plan == null || plan.port <= 0) return
+  const ghost = workerPool.workers.get(targetHost)
+  if (ghost?.commandPort) releaseWorkerPort(ns, portPool, ghost.commandPort)
+  workerPool.remove(targetHost)
 }
 
 function clearTargetWorkerRefs(targets: Map<string, AuthTarget>, workerHost: string): void {
@@ -893,14 +970,13 @@ function sendCommand(
   payload: WorkerCommandPayload,
   masterLog: MasterActionLog,
   ctx: WorkerDispatchCtx,
-  timing?: { expectedMs: number },
 ): boolean {
   if (wi.commandPort <= 0) {
-    dropWorker(ns, wi.host, ctx.workerPool, ctx.portPool, ctx.pendingSpawns, masterLog, "no port")
+    dropWorker(ns, wi.host, ctx.workerPool, ctx.portPool, ctx.pendingSpawns, ctx.spawnPlans, masterLog, "no port")
     return false
   }
   if (wi.pid > 0 && !ns.isRunning(wi.pid)) {
-    dropWorker(ns, wi.host, ctx.workerPool, ctx.portPool, ctx.pendingSpawns, masterLog, "dead")
+    dropWorker(ns, wi.host, ctx.workerPool, ctx.portPool, ctx.pendingSpawns, ctx.spawnPlans, masterLog, "dead")
     if (ctx.targets) clearTargetWorkerRefs(ctx.targets, wi.host)
     return false
   }
@@ -909,21 +985,15 @@ function sendCommand(
   wi.lastCommand = formatCommand(payload)
   wi.idle = false
 
-  if (payload.type === "auth") {
+  if (usesWorkerDeadlines(payload)) {
     wi.commandDeadlineAt = now + FIRST_REPLY_MS
-    ns.writePort(wi.commandPort, JSON.stringify(payload))
-  } else if (payload.type === "probe") {
-    wi.commandDeadlineAt = now + PROBE_FALLBACK_MS
-    ns.writePort(wi.commandPort, JSON.stringify(payload))
+  } else if (isInstantCommand(payload)) {
+    wi.commandDeadlineAt = now + INSTANT_CMD_FALLBACK_MS
   } else {
-    const expectedMs = timing?.expectedMs ?? WORKER_TIMEOUT_MS
-    wi.commandDeadlineAt = now + expectedMs + 5000
-    ns.writePort(
-      wi.commandPort,
-      JSON.stringify({ ...payload, expectedMs, deadlineAt: wi.commandDeadlineAt }),
-    )
+    wi.commandDeadlineAt = now + WORKER_TIMEOUT_MS
   }
 
+  ns.writePort(wi.commandPort, JSON.stringify(payload))
   masterLog.append(payload.type, commandDetail(wi.host, payload))
   return true
 }
@@ -945,10 +1015,16 @@ function dropWorker(
   workerPool: WorkerPool,
   portPool: PortPool,
   pendingSpawns: Set<string>,
+  spawnPlans: Map<string, SpawnPlan>,
   masterLog: MasterActionLog,
   reason: string,
 ): void {
   pendingSpawns.delete(host)
+  for (const [targetHost, plan] of [...spawnPlans]) {
+    if (targetHost === host || plan.parentHost === host) {
+      abortSpawnPlan(targetHost, spawnPlans, pendingSpawns, workerPool, portPool, ns)
+    }
+  }
   const wi = workerPool.workers.get(host)
   if (!wi) return
   if (wi.commandPort > 0) releaseWorkerPort(ns, portPool, wi.commandPort)
@@ -1025,14 +1101,14 @@ function reconcileProbeStatuses(
   })
 }
 
-function commandUsesShortDeadlineGrace(wi: ManagedWorker): boolean {
-  const cmd = wi.lastCommand
-  return cmd === "probe" || (cmd?.startsWith("auth:") ?? false)
-}
-
 function failWorkerCommand(
   wi: ManagedWorker,
   targets: Map<string, AuthTarget>,
+  spawnPlans: Map<string, SpawnPlan>,
+  pendingSpawns: Set<string>,
+  workerPool: WorkerPool,
+  portPool: PortPool,
+  ns: NS,
   masterLog: MasterActionLog,
 ): void {
   wi.idle = true
@@ -1045,20 +1121,28 @@ function failWorkerCommand(
     t.pendingGuess = null
     t.status = "active"
   }
+  for (const [targetHost, plan] of spawnPlans) {
+    if (plan.parentHost === wi.host) {
+      abortSpawnPlan(targetHost, spawnPlans, pendingSpawns, workerPool, portPool, ns)
+    }
+  }
 }
 
 function checkCommandDeadlines(
   workerPool: WorkerPool,
   targets: Map<string, AuthTarget>,
+  spawnPlans: Map<string, SpawnPlan>,
+  pendingSpawns: Set<string>,
+  portPool: PortPool,
+  ns: NS,
   masterLog: MasterActionLog,
 ): void {
   const now = Date.now()
   for (const wi of workerPool.workers.values()) {
     if (wi.idle) continue
     if (wi.commandDeadlineAt <= 0) continue
-    const grace = commandUsesShortDeadlineGrace(wi) ? DEADLINE_GRACE_MS : WORKER_TIMEOUT_MS
-    if (now <= wi.commandDeadlineAt + grace) continue
-    failWorkerCommand(wi, targets, masterLog)
+    if (now <= wi.commandDeadlineAt + DEADLINE_GRACE_MS) continue
+    failWorkerCommand(wi, targets, spawnPlans, pendingSpawns, workerPool, portPool, ns, masterLog)
   }
 }
 
@@ -1068,20 +1152,21 @@ function pruneWorkers(
   portPool: PortPool,
   targets: Map<string, AuthTarget>,
   pendingSpawns: Set<string>,
+  spawnPlans: Map<string, SpawnPlan>,
   masterLog: MasterActionLog,
 ): void {
   const now = Date.now()
   for (const [host, wi] of workerPool.workers) {
     if (wi.commandPort <= 0) {
-      dropWorker(ns, host, workerPool, portPool, pendingSpawns, masterLog, "no port")
+      dropWorker(ns, host, workerPool, portPool, pendingSpawns, spawnPlans, masterLog, "no port")
       continue
     }
     if (wi.pid <= 0 && now - wi.lastActivityAt > WORKER_TIMEOUT_MS) {
-      dropWorker(ns, host, workerPool, portPool, pendingSpawns, masterLog, "spawn timeout")
+      dropWorker(ns, host, workerPool, portPool, pendingSpawns, spawnPlans, masterLog, "spawn timeout")
       continue
     }
     if (wi.pid > 0 && !isWorkerAlive(ns, wi)) {
-      dropWorker(ns, host, workerPool, portPool, pendingSpawns, masterLog, "dead")
+      dropWorker(ns, host, workerPool, portPool, pendingSpawns, spawnPlans, masterLog, "dead")
       continue
     }
   }

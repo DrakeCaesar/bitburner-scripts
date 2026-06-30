@@ -257,7 +257,6 @@ export async function renderDashboard(
         `unsupported ${s.unsupported}  attempts ${snap.attempts.length}  workers ${snap.workers.length}  ` +
         `failed ${failed.length}`,
     )
-    .text(formatMutationLine(snap.mutation))
 
   const sortedTargets = [...snap.targets].sort((a, b) => a.host.localeCompare(b.host))
   log.tab("targets").table({
@@ -269,7 +268,10 @@ export async function renderDashboard(
   const timeline = buildTimeline(snap.attempts, snap.actions)
   const attemptTimings = indexAttemptTimings(snap.attempts)
   const recentTimeline = timeline.slice(-100).reverse()
-  log.tab("attempts").table({
+  log
+    .tab("attempts")
+    .text(formatMutationLine(snap.mutation))
+    .table({
     title: `Activity log (newest first, ${recentTimeline.length} of ${timeline.length})`,
     columns: ATTEMPT_COLUMNS,
     rows: recentTimeline.map((entry) => timelineRow(entry, attemptTimings)),

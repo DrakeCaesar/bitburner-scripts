@@ -1,9 +1,11 @@
 import { NS } from "@ns"
 import type { WorkerDnetApi } from "./dnetApi.js"
 import type { FormulasServerDetails } from "./taskTiming.js"
-import { estimateAuthMs, estimateHeartbleedMs } from "./taskTiming.js"
+import { estimateAuthMs, estimateHeartbleedMs, estimateReallocMs } from "./taskTiming.js"
 import type { NeighborProbeStatus, WorkerCommand } from "./protocol.js"
 import { WORKER_SCRIPT } from "./constants.js"
+import { copyWorkerFiles } from "./deploy.js"
+import { measureHostRam, priorityMet } from "./realloc.js"
 
 function normalizeFeedback(data: unknown): string | undefined {
   if (typeof data === "string") return data
@@ -149,46 +151,159 @@ export async function runAuthCommand(
   }
 }
 
-export async function executeHeartbleed(
+export async function runHeartbleedCommand(
   ns: NS,
   dnet: WorkerDnetApi,
   cmd: Extract<WorkerCommand, { type: "heartbleed" }>,
   replyPort: number,
 ): Promise<void> {
-  if (!isNeighbor(dnet, cmd.target)) {
+  const workerHost = ns.getHostname()
+
+  const writeResult = (logEntries: string[]): void => {
     ns.writePort(
       replyPort,
       JSON.stringify({
         type: "heartbleedResult",
         target: cmd.target,
         solverId: cmd.solverId,
-        logEntries: [],
+        logEntries,
       }),
     )
+  }
+
+  if (!isNeighbor(dnet, cmd.target)) {
+    writeResult([])
     return
   }
-  try {
-    const result = await dnet.heartbleed(cmd.target)
+
+  const details = readFormulasDetails(dnet, cmd.target)
+  if (details) {
     ns.writePort(
       replyPort,
       JSON.stringify({
-        type: "heartbleedResult",
-        target: cmd.target,
-        solverId: cmd.solverId,
-        logEntries: result.success ? result.logs : [],
-      }),
-    )
-  } catch {
-    ns.writePort(
-      replyPort,
-      JSON.stringify({
-        type: "heartbleedResult",
-        target: cmd.target,
-        solverId: cmd.solverId,
-        logEntries: [],
+        type: "deadline",
+        workerHost,
+        commandType: "heartbleed",
+        deadlineAt: Date.now() + estimateHeartbleedMs(ns, details),
       }),
     )
   }
+
+  try {
+    const result = await dnet.heartbleed(cmd.target)
+    writeResult(result.success ? result.logs : [])
+  } catch {
+    writeResult([])
+  }
+}
+
+export async function runReallocCommand(
+  ns: NS,
+  dnet: WorkerDnetApi,
+  cmd: Extract<WorkerCommand, { type: "realloc" }>,
+  replyPort: number,
+): Promise<void> {
+  const workerHost = ns.getHostname()
+  const host = cmd.host
+
+  const writeDeadline = (): void => {
+    ns.writePort(
+      replyPort,
+      JSON.stringify({
+        type: "deadline",
+        workerHost,
+        commandType: "realloc",
+        deadlineAt: Date.now() + estimateReallocMs(ns),
+      }),
+    )
+  }
+
+  const writeResult = (freeRam: number, blockedRam: number): void => {
+    ns.writePort(
+      replyPort,
+      JSON.stringify({
+        type: "reallocResult",
+        workerHost,
+        host,
+        priority: cmd.priority,
+        freeRam,
+        blockedRam,
+      }),
+    )
+  }
+
+  if (!dnet.memoryReallocation) {
+    const ram = measureHostRam(ns, dnet, host)
+    writeResult(ram.freeRam, ram.blockedRam)
+    return
+  }
+
+  while (true) {
+    if (priorityMet(ns, dnet, host, cmd.priority)) {
+      const ram = measureHostRam(ns, dnet, host)
+      writeResult(ram.freeRam, ram.blockedRam)
+      return
+    }
+    const { blockedRam } = measureHostRam(ns, dnet, host)
+    if (blockedRam <= 0) {
+      const ram = measureHostRam(ns, dnet, host)
+      writeResult(ram.freeRam, ram.blockedRam)
+      return
+    }
+
+    writeDeadline()
+    try {
+      await dnet.memoryReallocation(host)
+    } catch {
+      const ram = measureHostRam(ns, dnet, host)
+      writeResult(ram.freeRam, ram.blockedRam)
+      return
+    }
+  }
+}
+
+export async function runSpawnCommand(
+  ns: NS,
+  dnet: WorkerDnetApi,
+  cmd: Extract<WorkerCommand, { type: "spawn" }>,
+  replyPort: number,
+  activeSessionId: number,
+): Promise<void> {
+  const workerHost = ns.getHostname()
+  let childPid = 0
+  let success = false
+
+  try {
+    await ensureTargetAuth(dnet, cmd.target, cmd.password)
+    if (await copyWorkerFiles(ns, cmd.target, workerHost)) {
+      const childRam = ns.getScriptRam(WORKER_SCRIPT, cmd.target)
+      const free = ns.getServerMaxRam(cmd.target) - ns.getServerUsedRam(cmd.target)
+      if (childRam <= free) {
+        childPid = ns.exec(
+          WORKER_SCRIPT,
+          cmd.target,
+          1,
+          activeSessionId,
+          cmd.port,
+          cmd.password ?? "",
+        )
+        success = childPid > 0
+      }
+    }
+  } catch {
+    success = false
+  }
+
+  ns.writePort(
+    replyPort,
+    JSON.stringify({
+      type: "spawnResult",
+      workerHost,
+      target: cmd.target,
+      success,
+      childPid,
+    }),
+  )
 }
 
 function probeNeighbor(
