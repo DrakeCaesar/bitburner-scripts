@@ -6,7 +6,13 @@ import {
   W,
   type TabbedScriptLogBuilder,
 } from "@/libraries/scriptLogUiLayout.js"
-import type { AttemptRecord, AuthTarget, CrawlSnapshot, WorkerSnapshot } from "../types.js"
+import type {
+  AttemptRecord,
+  AuthTarget,
+  CrawlSnapshot,
+  MasterActionRecord,
+  WorkerSnapshot,
+} from "../types.js"
 
 const TABS = [
   { id: "overview", label: "Overview" },
@@ -38,6 +44,12 @@ const ATTEMPT_COLUMNS = [
   col("Feedback", "left", 18),
 ]
 
+const ACTION_COLUMNS = [
+  col("Time", "right", 8),
+  col("Action", "left", 14),
+  col("Detail", "left", 48),
+]
+
 const WORKER_COLUMNS = [
   col("Host", "left", W.host),
   col("Port", "right", 6),
@@ -47,6 +59,12 @@ const WORKER_COLUMNS = [
   col("Ngbrs", "right", 5),
   col("RAM", "right", 6),
 ]
+
+function clock(ts: number): string {
+  const d = new Date(ts)
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
 
 function ago(ts: number): string {
   const s = Math.floor((Date.now() - ts) / 1000)
@@ -80,6 +98,11 @@ export async function renderDashboard(
         `exhausted ${s.exhausted}  retry ${s.retryWait}  no_solver ${s.noSolver}  ` +
         `unsupported ${s.unsupported}  attempts ${snap.attempts.length}  workers ${snap.workers.length}`,
     )
+    .table({
+      title: "Master actions (newest first)",
+      columns: ACTION_COLUMNS,
+      rows: [...snap.actions].reverse().map(actionRow),
+    })
 
   const sortedTargets = [...snap.targets].sort((a, b) => a.host.localeCompare(b.host))
   log.tab("targets").table({
@@ -102,6 +125,10 @@ export async function renderDashboard(
   })
 
   await renderTabbedTailLog(ns, log)
+}
+
+function actionRow(a: MasterActionRecord): string[] {
+  return [clock(a.at), a.action, truncate(a.detail, 48)]
 }
 
 function targetRow(t: AuthTarget): string[] {

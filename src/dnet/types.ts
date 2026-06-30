@@ -113,10 +113,18 @@ export interface WorkerSnapshot {
   blockedRam: number
 }
 
+export interface MasterActionRecord {
+  id: number
+  at: number
+  action: string
+  detail?: string
+}
+
 export interface CrawlSnapshot {
   sessionId: number
   targets: readonly AuthTarget[]
   attempts: readonly AttemptRecord[]
+  actions: readonly MasterActionRecord[]
   workers: readonly WorkerSnapshot[]
   summary: {
     discovered: number

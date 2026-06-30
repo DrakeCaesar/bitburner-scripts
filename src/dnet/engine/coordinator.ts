@@ -10,6 +10,7 @@ import {
 } from "../constants.js"
 import { getServerDetails, tryConnect } from "../api/server.js"
 import { AttemptLog } from "../history/attemptLog.js"
+import { MasterActionLog } from "../history/masterActionLog.js"
 import { PortPool, WorkerPool, type ManagedWorker } from "../pool/workers.js"
 import { lookupSolver, solverKey } from "../solvers/registry.js"
 import type { SolverState } from "../solvers/types.js"
@@ -58,6 +59,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
 
   const sessionId = Date.now()
   const attemptLog = new AttemptLog()
+  const masterLog = new MasterActionLog()
   const portPool = new PortPool()
   const workerPool = new WorkerPool()
   const targets = new Map<string, AuthTarget>()
@@ -69,6 +71,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
   clearDnetGlobalPorts(ns)
   ensureMutationWatcher(ns)
   ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId }))
+  masterLog.append("startup", "ports cleared, mutation watcher started")
 
   await authDarkweb(dnet)
   if (!(await copyWorkerFiles(ns, DARKWEB, "home"))) {
@@ -91,6 +94,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
   }
 
   workerPool.register(DARKWEB, rootPid, rootPort)
+  masterLog.append("startup", `root worker ${DARKWEB} pid ${rootPid} port ${rootPort}`)
 
   while (true) {
     ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId }))
@@ -105,31 +109,46 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       dnet,
       pendingSpawns,
       mutationSync,
+      masterLog,
     )
-    mutationSync.tryCompleteSync(workerPool)
+    if (mutationSync.tryCompleteSync(workerPool)) {
+      masterLog.append("sync", `complete mutation ${mutationSync.acked}`)
+    }
 
     if (!initialTopologySync) {
-      mutationSync.beginPending(ns, workerPool)
+      const ts = mutationSync.beginPending(ns, workerPool)
+      masterLog.append("sync", `begin mutation ${ts}, ${workerPool.workers.size} workers`)
       initialTopologySync = true
     } else if (mutationSync.canDispatchActions() && mutationSync.isStale(ns)) {
-      mutationSync.beginPending(ns, workerPool)
+      const ts = mutationSync.beginPending(ns, workerPool)
+      masterLog.append("sync", `stale, begin mutation ${ts}, ${workerPool.workers.size} workers`)
     }
 
     if (!mutationSync.canDispatchActions()) {
-      dispatchSyncProbes(ns, workerPool, mutationSync)
-      await options.onProgress(buildSnapshot(sessionId, targets, attemptLog, workerPool))
+      dispatchSyncProbes(ns, workerPool, mutationSync, masterLog)
+      await options.onProgress(buildSnapshot(sessionId, targets, attemptLog, masterLog, workerPool))
       await ns.sleep(LOOP_INTERVAL_MS)
       continue
     }
 
     processQueuedTargets(targets, attemptLog, dnet, passwords)
     scheduleRetries(targets, attemptLog)
-    pruneWorkers(ns, workerPool, portPool, targets, pendingSpawns)
-    spawnWorkers(ns, sessionId, workerPool, portPool, targets, pendingSpawns, dnet, passwords)
-    dispatchReallocs(ns, dnet, workerPool)
-    dispatchGuesses(ns, workerPool, targets, attemptLog, dnet)
+    pruneWorkers(ns, workerPool, portPool, targets, pendingSpawns, masterLog)
+    spawnWorkers(
+      ns,
+      sessionId,
+      workerPool,
+      portPool,
+      targets,
+      pendingSpawns,
+      dnet,
+      passwords,
+      masterLog,
+    )
+    dispatchReallocs(ns, dnet, workerPool, masterLog)
+    dispatchGuesses(ns, workerPool, targets, attemptLog, dnet, masterLog)
 
-    await options.onProgress(buildSnapshot(sessionId, targets, attemptLog, workerPool))
+    await options.onProgress(buildSnapshot(sessionId, targets, attemptLog, masterLog, workerPool))
     await ns.sleep(LOOP_INTERVAL_MS)
   }
 }
@@ -149,6 +168,7 @@ function buildSnapshot(
   sessionId: number,
   targets: Map<string, AuthTarget>,
   attemptLog: AttemptLog,
+  masterLog: MasterActionLog,
   workerPool: WorkerPool,
 ): CrawlSnapshot {
   const all = [...targets.values()]
@@ -157,6 +177,7 @@ function buildSnapshot(
     sessionId,
     targets: all,
     attempts: attemptLog.all,
+    actions: masterLog.all,
     workers: [...workerPool.workers.values()].map(
       (w): WorkerSnapshot => ({
         host: w.host,
@@ -192,6 +213,7 @@ function drainReplies(
   dnet: DnetApi,
   pendingSpawns: Set<string>,
   mutationSync: MutationSync,
+  masterLog: MasterActionLog,
 ): void {
   for (const wi of [...workerPool.workers.values()]) {
     if (wi.commandPort <= 0) continue
@@ -207,7 +229,7 @@ function drainReplies(
           wi.idle = true
           wi.busyUntil = 0
           if (mutationSync.canDispatchActions()) {
-            sendCommand(ns, wi, { type: "probe" }, PROBE_MS)
+            sendCommand(ns, wi, { type: "probe" }, PROBE_MS, masterLog)
           }
           break
         case "executing":
@@ -540,7 +562,12 @@ function scheduleRetries(targets: Map<string, AuthTarget>, log: AttemptLog): voi
   }
 }
 
-function dispatchSyncProbes(ns: NS, workerPool: WorkerPool, mutationSync: MutationSync): void {
+function dispatchSyncProbes(
+  ns: NS,
+  workerPool: WorkerPool,
+  mutationSync: MutationSync,
+  masterLog: MasterActionLog,
+): void {
   const pending = mutationSync.pending
   if (pending === null) return
 
@@ -548,11 +575,16 @@ function dispatchSyncProbes(ns: NS, workerPool: WorkerPool, mutationSync: Mutati
     if (wi.commandPort <= 0) continue
     if (wi.probeSyncMutation === pending) continue
     if (!wi.idle) continue
-    sendCommand(ns, wi, { type: "probe" }, PROBE_MS)
+    sendCommand(ns, wi, { type: "probe" }, PROBE_MS, masterLog)
   }
 }
 
-function dispatchReallocs(ns: NS, dnet: DnetApi, workerPool: WorkerPool): void {
+function dispatchReallocs(
+  ns: NS,
+  dnet: DnetApi,
+  workerPool: WorkerPool,
+  masterLog: MasterActionLog,
+): void {
   if (!dnet.memoryReallocation || !dnet.getBlockedRam) return
 
   const reallocMs = reallocCommandMs(ns)
@@ -562,11 +594,11 @@ function dispatchReallocs(ns: NS, dnet: DnetApi, workerPool: WorkerPool): void {
     wi.blockedRam = ram.blockedRam
 
     if (needsRealloc(ns, dnet, wi.host, 2, ram)) {
-      sendCommand(ns, wi, { type: "realloc", priority: 2 }, reallocMs)
+      sendCommand(ns, wi, { type: "realloc", priority: 2 }, reallocMs, masterLog)
       continue
     }
     if (needsRealloc(ns, dnet, wi.host, 3, ram)) {
-      sendCommand(ns, wi, { type: "realloc", priority: 3 }, reallocMs)
+      sendCommand(ns, wi, { type: "realloc", priority: 3 }, reallocMs, masterLog)
     }
   }
 }
@@ -577,6 +609,7 @@ function dispatchGuesses(
   targets: Map<string, AuthTarget>,
   attemptLog: AttemptLog,
   dnet: DnetApi,
+  masterLog: MasterActionLog,
 ): void {
   for (const target of targets.values()) {
     if (target.status !== "active" && target.status !== "waiting_worker") continue
@@ -642,6 +675,7 @@ function dispatchGuesses(
         detail: next.detail,
       },
       GUESS_MS,
+      masterLog,
     )
   }
 }
@@ -655,13 +689,14 @@ function spawnWorkers(
   pendingSpawns: Set<string>,
   dnet: DnetApi,
   passwords: Map<string, string>,
+  masterLog: MasterActionLog,
 ): void {
   for (const target of targets.values()) {
     if (target.host === DARKWEB) continue
     if (workerPool.workers.has(target.host)) {
       const wi = workerPool.workers.get(target.host)!
       if (isWorkerAlive(ns, wi)) continue
-      dropWorker(ns, target.host, workerPool, portPool, pendingSpawns)
+      dropWorker(ns, target.host, workerPool, portPool, pendingSpawns, masterLog, "dead")
     }
     if (pendingSpawns.has(target.host)) continue
 
@@ -695,6 +730,7 @@ function spawnWorkers(
         ...(target.password != null ? { password: target.password } : {}),
       },
       spawnCommandMs(),
+      masterLog,
     )
   }
 }
@@ -703,13 +739,35 @@ function spawnCommandMs(): number {
   return WORKER_TIMEOUT_MS
 }
 
-function sendCommand(ns: NS, wi: ManagedWorker, payload: WorkerCommandPayload, expectedMs: number): void {
+function commandDetail(host: string, payload: WorkerCommandPayload): string {
+  switch (payload.type) {
+    case "probe":
+      return host
+    case "spawn":
+      return `${host} -> ${payload.target} port ${payload.port}`
+    case "guess":
+      return `${host} -> ${payload.target} ${payload.guess}`
+    case "realloc":
+      return `${host} p${payload.priority}`
+    default:
+      return host
+  }
+}
+
+function sendCommand(
+  ns: NS,
+  wi: ManagedWorker,
+  payload: WorkerCommandPayload,
+  expectedMs: number,
+  masterLog: MasterActionLog,
+): void {
   if (wi.commandPort <= 0) return
   const now = Date.now()
   wi.lastCommand = formatCommand(payload)
   wi.idle = false
   wi.busyUntil = now + expectedMs + 5000
   ns.writePort(wi.commandPort, JSON.stringify({ ...payload, expectedMs, deadlineAt: wi.busyUntil }))
+  masterLog.append(payload.type, commandDetail(wi.host, payload))
 }
 
 function isWorkerAlive(ns: NS, wi: ManagedWorker): boolean {
@@ -729,12 +787,15 @@ function dropWorker(
   workerPool: WorkerPool,
   portPool: PortPool,
   pendingSpawns: Set<string>,
+  masterLog: MasterActionLog,
+  reason: string,
 ): void {
   pendingSpawns.delete(host)
   const wi = workerPool.workers.get(host)
   if (!wi) return
   if (wi.commandPort > 0) releaseWorkerPort(ns, portPool, wi.commandPort)
   workerPool.remove(host)
+  masterLog.append("prune", `${host} (${reason})`)
 }
 
 function reconcileProbeStatuses(
@@ -812,19 +873,21 @@ function pruneWorkers(
   portPool: PortPool,
   targets: Map<string, AuthTarget>,
   pendingSpawns: Set<string>,
+  masterLog: MasterActionLog,
 ): void {
   const now = Date.now()
   for (const [host, wi] of workerPool.workers) {
     if (wi.commandPort <= 0) {
-      dropWorker(ns, host, workerPool, portPool, pendingSpawns)
+      dropWorker(ns, host, workerPool, portPool, pendingSpawns, masterLog, "no port")
       continue
     }
     if (!isWorkerAlive(ns, wi)) {
-      dropWorker(ns, host, workerPool, portPool, pendingSpawns)
+      dropWorker(ns, host, workerPool, portPool, pendingSpawns, masterLog, "dead")
       continue
     }
     if (!wi.idle && wi.busyUntil > 0 && now > wi.busyUntil + WORKER_TIMEOUT_MS) {
       wi.idle = true
+      masterLog.append("timeout", `${host} command ${wi.lastCommand ?? "?"}`)
       for (const t of targets.values()) {
         if (t.workerHost === host) {
           t.workerHost = null
