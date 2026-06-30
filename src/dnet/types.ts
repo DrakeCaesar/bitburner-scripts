@@ -40,6 +40,9 @@ export interface DnetApi {
   }>
   memoryReallocation?(host?: string): Promise<{ success: boolean }>
   getBlockedRam?(host?: string): number
+  setStasisLink?(shouldLink?: boolean): Promise<{ success: boolean; code?: number; message?: string }>
+  getStasisLinkLimit?(): number
+  getStasisLinkedServers?(returnByIP?: boolean): string[]
 }
 
 export type TargetStatus =
@@ -176,6 +179,13 @@ export interface MutationPortSnapshot {
   loopAt: number
 }
 
+export interface StasisSnapshot {
+  limit: number
+  used: number
+  available: number
+  linkedHosts: readonly string[]
+}
+
 export interface CrawlSnapshot {
   sessionId: number
   targets: readonly AuthTarget[]
@@ -184,6 +194,7 @@ export interface CrawlSnapshot {
   failedSessions: readonly FailedAuthSession[]
   mutation: MutationPortSnapshot
   workers: readonly WorkerSnapshot[]
+  stasis: StasisSnapshot | null
   summary: {
     discovered: number
     active: number

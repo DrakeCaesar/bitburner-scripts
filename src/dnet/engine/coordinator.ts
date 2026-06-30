@@ -22,7 +22,7 @@ import {
   syncRegistryPasswords,
   type DarknetRegistry,
 } from "../registry.js"
-import { getServerDetails, tryConnect } from "../api/server.js"
+import { getServerDetails, readStasisSnapshot, tryConnect } from "../api/server.js"
 import { AttemptLog } from "../history/attemptLog.js"
 import { MasterActionLog } from "../history/masterActionLog.js"
 import { SessionArchive } from "../history/sessionArchive.js"
@@ -207,6 +207,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
         mutationSync,
         mutationPort,
         loopAt,
+        dnet,
       ),
     )
     await ns.sleep(LOOP_INTERVAL_MS)
@@ -234,6 +235,7 @@ function buildSnapshot(
   mutationSync: MutationSync,
   mutationPort: { raw: string; ts: number | null },
   loopAt: number,
+  dnet: DnetApi,
 ): CrawlSnapshot {
   const all = [...targets.values()]
   const count = (s: TargetStatus) => all.filter((t) => t.status === s).length
@@ -265,6 +267,7 @@ function buildSnapshot(
         blockedRam: w.blockedRam,
       }),
     ),
+    stasis: readStasisSnapshot(dnet),
     summary: {
       discovered: count("discovered") + count("queued"),
       active: count("active") + count("waiting_worker"),

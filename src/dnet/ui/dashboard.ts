@@ -15,6 +15,7 @@ import type {
   MasterActionRecord,
   MutationPortSnapshot,
   SessionEvent,
+  StasisSnapshot,
   WorkerSnapshot,
 } from "../types.js"
 
@@ -122,6 +123,29 @@ function formatMutationLine(m: MutationPortSnapshot): string {
     `mutation port ${MUTATION_PORT}  peek=${m.portRaw}  ts=${m.portTs ?? "-"} (${portTime})  ` +
     `acked=${m.acked}  stale=${m.stale ? "Y" : "N"}  loop ${clock(m.loopAt)}`
   )
+}
+
+function renderStasisOverview(
+  tab: ReturnType<TabbedScriptLogBuilder["tab"]>,
+  stasis: StasisSnapshot | null,
+): void {
+  if (stasis == null) {
+    tab.text("stasis tokens  unavailable (ns.dnet stasis API missing)")
+    return
+  }
+
+  tab.keyValueTable({
+    title: "Stasis tokens",
+    rows: [
+      { label: "Limit", value: String(stasis.limit) },
+      { label: "Used", value: String(stasis.used) },
+      { label: "Available", value: String(stasis.available) },
+      {
+        label: "Linked hosts",
+        value: stasis.linkedHosts.length > 0 ? stasis.linkedHosts.join(", ") : "(none)",
+      },
+    ],
+  })
 }
 
 function clock(ts: number): string {
@@ -296,6 +320,8 @@ export async function renderDashboard(
         `unsupported ${s.unsupported}  attempts ${snap.attempts.length}  workers ${snap.workers.length}  ` +
         `failed ${failed.length}`,
     )
+
+  renderStasisOverview(log.tab("overview"), snap.stasis)
 
   const sortedTargets = [...snap.targets].sort((a, b) => a.host.localeCompare(b.host))
   log.tab("targets").table({
