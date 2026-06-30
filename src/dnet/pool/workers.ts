@@ -30,7 +30,8 @@ export interface ManagedWorker {
   lastReply: string | null
   lastActivityAt: number
   busyUntil: number
-  lastProbeAt: number
+  /** Mutation generation this worker last probed for (-1 = not synced). */
+  probeSyncMutation: number
   freeRam: number
   blockedRam: number
 }
@@ -50,7 +51,7 @@ export class WorkerPool {
       lastReply: null,
       lastActivityAt: Date.now(),
       busyUntil: 0,
-      lastProbeAt: 0,
+      probeSyncMutation: -1,
       freeRam: 0,
       blockedRam: 0,
     }

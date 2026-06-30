@@ -8,6 +8,10 @@ export const LABYRINTH_MODEL = "(The Labyrinth)"
 /** Master broadcasts session config here; workers read each loop. */
 export const CONTROL_PORT = 45209
 
+/** Latest darknet mutation timestamp (single entry); written by mutationWatcher on home. */
+export const MUTATION_PORT = 45208
+export const MUTATION_WATCHER_SCRIPT = "dnet/mutationWatcher.js"
+
 /** Per-worker command ports start here (even); reply = command + 1. */
 export const PORT_POOL_START = 45210
 export const PORT_POOL_SIZE = 256

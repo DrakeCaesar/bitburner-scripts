@@ -34,10 +34,10 @@ import {
   reallocCommandMs,
 } from "./memoryPlan.js"
 import { copyWorkerFiles } from "../worker/deploy.js"
+import { ensureMutationWatcher, MutationSync } from "./mutationSync.js"
 
 const GUESS_MS = 800
 const PROBE_MS = 400
-const PROBE_INTERVAL_MS = 5_000
 
 function cloneState<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -62,6 +62,10 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
   const targets = new Map<string, AuthTarget>()
   const passwords = new Map<string, string>()
   const pendingSpawns = new Set<string>()
+  const mutationSync = new MutationSync()
+  let initialTopologySync = false
+
+  ensureMutationWatcher(ns)
 
   ns.clearPort(CONTROL_PORT)
   ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId }))
@@ -90,13 +94,38 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
   while (true) {
     ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId }))
 
-    drainReplies(ns, workerPool, portPool, targets, passwords, attemptLog, dnet, pendingSpawns)
+    drainReplies(
+      ns,
+      workerPool,
+      portPool,
+      targets,
+      passwords,
+      attemptLog,
+      dnet,
+      pendingSpawns,
+      mutationSync,
+    )
+    mutationSync.tryCompleteSync(workerPool)
+
+    if (!initialTopologySync) {
+      mutationSync.beginPending(ns, workerPool)
+      initialTopologySync = true
+    } else if (mutationSync.canDispatchActions() && mutationSync.isStale(ns)) {
+      mutationSync.beginPending(ns, workerPool)
+    }
+
+    if (!mutationSync.canDispatchActions()) {
+      dispatchSyncProbes(ns, workerPool, mutationSync)
+      await options.onProgress(buildSnapshot(sessionId, targets, attemptLog, workerPool))
+      await ns.sleep(LOOP_INTERVAL_MS)
+      continue
+    }
+
     processQueuedTargets(targets, attemptLog, dnet, passwords)
     scheduleRetries(targets, attemptLog)
     pruneWorkers(ns, workerPool, portPool, targets, pendingSpawns)
     spawnWorkers(ns, sessionId, workerPool, portPool, targets, pendingSpawns, dnet, passwords)
     dispatchReallocs(ns, dnet, workerPool)
-    dispatchProbes(ns, workerPool)
     dispatchGuesses(ns, workerPool, targets, attemptLog, dnet)
 
     await options.onProgress(buildSnapshot(sessionId, targets, attemptLog, workerPool))
@@ -161,6 +190,7 @@ function drainReplies(
   attemptLog: AttemptLog,
   dnet: DnetApi,
   pendingSpawns: Set<string>,
+  mutationSync: MutationSync,
 ): void {
   for (const wi of [...workerPool.workers.values()]) {
     if (wi.commandPort <= 0) continue
@@ -175,6 +205,9 @@ function drainReplies(
           wi.pid = msg.pid
           wi.idle = true
           wi.busyUntil = 0
+          if (mutationSync.canDispatchActions()) {
+            sendCommand(ns, wi, { type: "probe" }, PROBE_MS)
+          }
           break
         case "executing":
           wi.idle = false
@@ -196,6 +229,7 @@ function drainReplies(
             dnet,
             attemptLog,
           )
+          mutationSync.markWorkerProbed(msg.workerHost, workerPool)
           break
         case "spawnResult":
           wi.idle = true
@@ -505,6 +539,18 @@ function scheduleRetries(targets: Map<string, AuthTarget>, log: AttemptLog): voi
   }
 }
 
+function dispatchSyncProbes(ns: NS, workerPool: WorkerPool, mutationSync: MutationSync): void {
+  const pending = mutationSync.pending
+  if (pending === null) return
+
+  for (const wi of workerPool.workers.values()) {
+    if (wi.commandPort <= 0) continue
+    if (wi.probeSyncMutation === pending) continue
+    if (!wi.idle) continue
+    sendCommand(ns, wi, { type: "probe" }, PROBE_MS)
+  }
+}
+
 function dispatchReallocs(ns: NS, dnet: DnetApi, workerPool: WorkerPool): void {
   if (!dnet.memoryReallocation || !dnet.getBlockedRam) return
 
@@ -521,15 +567,6 @@ function dispatchReallocs(ns: NS, dnet: DnetApi, workerPool: WorkerPool): void {
     if (needsRealloc(ns, dnet, wi.host, 3, ram)) {
       sendCommand(ns, wi, { type: "realloc", priority: 3 }, reallocMs)
     }
-  }
-}
-
-function dispatchProbes(ns: NS, workerPool: WorkerPool): void {
-  const now = Date.now()
-  for (const wi of workerPool.idleWorkers()) {
-    if (now - wi.lastProbeAt < PROBE_INTERVAL_MS) continue
-    wi.lastProbeAt = now
-    sendCommand(ns, wi, { type: "probe" }, PROBE_MS)
   }
 }
 
