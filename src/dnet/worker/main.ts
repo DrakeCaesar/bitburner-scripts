@@ -10,6 +10,31 @@ import { copyWorkerFiles } from "./deploy.js"
 import { ensureTargetAuth, executeCommand, ensureSelfAuth, runProbe } from "./execute.js"
 import { runReallocUntil } from "./realloc.js"
 
+/** NS with port wait API (available on current Bitburner fork). */
+type NSPortWait = NS & { nextPortWrite(port: number): Promise<void> }
+
+function refreshSessionId(ns: NS, sessionId: number): number {
+  const controlRaw = ns.peek(CONTROL_PORT)
+  if (controlRaw === "NULL PORT DATA") return sessionId
+  try {
+    const msg = JSON.parse(String(controlRaw)) as ControlMessage
+    if (msg.sessionId > 0) return msg.sessionId
+  } catch {
+    /* ignore */
+  }
+  return sessionId
+}
+
+/** Read the next command payload, waiting on the port when empty. */
+async function readCommandPayload(ns: NS, commandPort: number): Promise<string> {
+  let raw = ns.readPort(commandPort)
+  if (raw !== "NULL PORT DATA") return String(raw)
+
+  await (ns as NSPortWait).nextPortWrite(commandPort)
+  raw = ns.readPort(commandPort)
+  return raw === "NULL PORT DATA" ? "" : String(raw)
+}
+
 export async function main(ns: NS): Promise<void> {
   const dnet = (ns as NS & { dnet?: WorkerDnetApi }).dnet
   if (!dnet) return
@@ -28,28 +53,15 @@ export async function main(ns: NS): Promise<void> {
   let activeSessionId = sessionId
 
   while (true) {
-    const controlRaw = ns.peek(CONTROL_PORT)
-    if (controlRaw !== "NULL PORT DATA") {
-      try {
-        const msg = JSON.parse(String(controlRaw)) as ControlMessage
-        if (msg.sessionId > 0) activeSessionId = msg.sessionId
-      } catch {
-        /* ignore */
-      }
-    }
+    activeSessionId = refreshSessionId(ns, activeSessionId)
 
-    const raw = ns.peek(commandPort)
-    if (raw === "NULL PORT DATA") {
-      await ns.sleep(50)
-      continue
-    }
+    const raw = await readCommandPayload(ns, commandPort)
+    if (!raw) continue
 
-    ns.readPort(commandPort)
     let cmd: WorkerCommand
     try {
-      cmd = JSON.parse(String(raw)) as WorkerCommand
+      cmd = JSON.parse(raw) as WorkerCommand
     } catch {
-      await ns.sleep(50)
       continue
     }
 
@@ -120,8 +132,6 @@ export async function main(ns: NS): Promise<void> {
         }),
       )
     }
-
-    await ns.sleep(10)
   }
 }
 
