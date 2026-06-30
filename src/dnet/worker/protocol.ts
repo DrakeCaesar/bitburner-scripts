@@ -47,7 +47,14 @@ export type WorkerResponse =
       freeRam: number
       blockedRam: number
     }
-  | { type: "spawnResult"; workerHost: string; target: string; success: boolean; childPid: number }
+  | {
+      type: "spawnResult"
+      workerHost: string
+      target: string
+      success: boolean
+      childPid: number
+      message?: string
+    }
   | {
       type: "reallocResult"
       workerHost: string
@@ -115,6 +122,7 @@ export function parseWorkerResponse(raw: unknown): WorkerResponse | null {
           target: row.target,
           success: row.success === true,
           childPid: typeof row.childPid === "number" ? row.childPid : 0,
+          message: typeof row.message === "string" ? row.message : undefined,
         }
       case "reallocResult": {
         if (typeof row.workerHost !== "string" || typeof row.host !== "string") return null

@@ -315,6 +315,7 @@ function drainReplies(
             workerHost: msg.workerHost,
             success: msg.success,
             note: msg.success ? `pid ${msg.childPid}` : "spawn failed",
+            message: msg.message,
           })
           break
         case "authResult":

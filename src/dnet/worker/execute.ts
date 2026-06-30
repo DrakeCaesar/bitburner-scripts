@@ -272,13 +272,42 @@ export async function runSpawnCommand(
   const workerHost = ns.getHostname()
   let childPid = 0
   let success = false
+  let message = ""
 
   try {
-    await ensureTargetAuth(dnet, cmd.target, cmd.password)
-    if (await copyWorkerFiles(ns, cmd.target, workerHost)) {
+    let neighbors: string[] = []
+    try {
+      neighbors = dnet.probe()
+    } catch {
+      neighbors = []
+    }
+    if (!neighbors.includes(cmd.target)) {
+      message = "not neighbor"
+    }
+
+    if (!message && cmd.password) {
+      await ensureTargetAuth(dnet, cmd.target, cmd.password)
+      try {
+        if (!dnet.getServerDetails(cmd.target).hasSession) {
+          message = "auth failed"
+        }
+      } catch {
+        message = "auth failed"
+      }
+    }
+
+    if (!message) {
+      if (!(await copyWorkerFiles(ns, cmd.target, workerHost))) {
+        message = "scp failed"
+      }
+    }
+
+    if (!message) {
       const childRam = ns.getScriptRam(WORKER_SCRIPT, cmd.target)
       const free = ns.getServerMaxRam(cmd.target) - ns.getServerUsedRam(cmd.target)
-      if (childRam <= free) {
+      if (childRam > free) {
+        message = `need ${childRam.toFixed(1)}GB, ${free.toFixed(1)}GB free`
+      } else {
         childPid = ns.exec(
           WORKER_SCRIPT,
           cmd.target,
@@ -287,11 +316,15 @@ export async function runSpawnCommand(
           cmd.port,
           cmd.password ?? "",
         )
-        success = childPid > 0
+        if (childPid > 0) {
+          success = true
+        } else {
+          message = "exec failed"
+        }
       }
     }
-  } catch {
-    success = false
+  } catch (err) {
+    message = err instanceof Error ? err.message : "spawn error"
   }
 
   ns.writePort(
@@ -302,6 +335,7 @@ export async function runSpawnCommand(
       target: cmd.target,
       success,
       childPid,
+      ...(message ? { message } : {}),
     }),
   )
 }
