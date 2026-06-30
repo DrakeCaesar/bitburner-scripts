@@ -16,7 +16,7 @@ export const MUTATION_WATCHER_SCRIPT = "dnet/mutationWatcher.js"
 export const PORT_POOL_START = 45210
 export const PORT_POOL_SIZE = 256
 
-export const LOOP_INTERVAL_MS = 250
+export const LOOP_INTERVAL_MS = 10
 export const EXHAUSTED_RETRY_MS = 20_000
 export const WORKER_TIMEOUT_MS = 120_000
 /** Grace after a worker-reported deadline before the coordinator treats the command as failed. */

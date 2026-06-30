@@ -43,6 +43,7 @@ const ATTEMPT_COLUMNS = [
   col("End", "right", 8),
   col("Dur", "right", 7),
   col("Host", "left", W.host),
+  col("Target", "left", W.host),
   col("Sess", "right", 4),
   col("Kind", "left", 14),
   col("Guess", "left", 10),
@@ -230,6 +231,46 @@ function truncate(s: string | undefined, max: number): string {
   return s.length <= max ? s : s.slice(0, max - 1) + "."
 }
 
+/** Remote command target when it differs from the acting host. */
+function formatActivityTarget(actorHost: string, remoteHost: string | undefined): string {
+  if (!remoteHost || remoteHost === actorHost || actorHost === "-") return "-"
+  return truncate(remoteHost, W.host)
+}
+
+function attemptTargetColumn(a: AttemptRecord): string {
+  return formatActivityTarget(a.host, a.workerHost)
+}
+
+/** Parse master action detail (`worker -> target ...`) into actor and remote host. */
+function parseCommandHosts(action: string, detail: string | undefined): { actor: string; remote: string } {
+  if (!detail) return { actor: "-", remote: "-" }
+  const sep = " -> "
+  const arrow = detail.indexOf(sep)
+  if (arrow < 0) return { actor: detail, remote: "-" }
+
+  const actor = detail.slice(0, arrow)
+  const rest = detail.slice(arrow + sep.length)
+
+  switch (action) {
+    case "spawn": {
+      const portIdx = rest.indexOf(" port ")
+      return { actor, remote: portIdx >= 0 ? rest.slice(0, portIdx) : rest }
+    }
+    case "realloc": {
+      const priIdx = rest.lastIndexOf(" p")
+      return { actor, remote: priIdx >= 0 ? rest.slice(0, priIdx) : rest.split(" ")[0] ?? rest }
+    }
+    case "auth": {
+      const guessIdx = rest.indexOf(" ")
+      return { actor, remote: guessIdx >= 0 ? rest.slice(0, guessIdx) : rest }
+    }
+    case "heartbleed":
+      return { actor, remote: rest }
+    default:
+      return { actor, remote: rest }
+  }
+}
+
 export async function renderDashboard(
   ns: NS,
   dashboard: DnetDashboard,
@@ -376,12 +417,14 @@ function failedEventRow(e: SessionEvent): string[] {
 
 function actionRow(a: MasterActionRecord, now: number): string[] {
   const timing = formatTiming({ startAt: a.at, endAt: a.at, ongoing: false }, now)
+  const { actor, remote } = parseCommandHosts(a.action, a.detail)
   return [
     String(a.id),
     timing.start,
     timing.end,
     timing.dur,
-    "-",
+    truncate(actor, W.host),
+    formatActivityTarget(actor, remote),
     "-",
     a.action,
     "-",
@@ -414,6 +457,7 @@ function attemptRow(
     timing.end,
     timing.dur,
     a.host,
+    attemptTargetColumn(a),
     String(a.session),
     a.kind,
     truncate(a.guess, 10),
