@@ -1,8 +1,12 @@
 import { NS } from "@ns"
 import { WORKER_SCRIPT, WORKER_SCP_FILES } from "./constants.js"
 
-/** Copy the full worker bundle to target; verifies every file landed. */
-export async function copyWorkerFiles(ns: NS, target: string, source: string): Promise<boolean> {
+/** Copy the full worker bundle to target; verifies every file landed. Null = ok. */
+export async function copyWorkerFiles(
+  ns: NS,
+  target: string,
+  source: string,
+): Promise<string | null> {
   try {
     ns.scriptKill(WORKER_SCRIPT, target)
   } catch {
@@ -10,7 +14,9 @@ export async function copyWorkerFiles(ns: NS, target: string, source: string): P
   }
 
   for (const file of WORKER_SCP_FILES) {
-    if (!ns.fileExists(file, source)) return false
+    if (!ns.fileExists(file, source)) {
+      return `missing on ${source}: ${file}`
+    }
 
     let copied = false
     for (let retry = 0; retry < 3; retry++) {
@@ -20,8 +26,13 @@ export async function copyWorkerFiles(ns: NS, target: string, source: string): P
       }
       await ns.sleep(200)
     }
-    if (!copied || !ns.fileExists(file, target)) return false
+    if (!copied) {
+      return `scp rejected: ${file}`
+    }
+    if (!ns.fileExists(file, target)) {
+      return `missing on ${target} after scp: ${file}`
+    }
   }
 
-  return true
+  return null
 }

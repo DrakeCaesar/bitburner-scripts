@@ -115,7 +115,7 @@ export function applyPasswordIntel(registry: DarknetRegistry, raw: unknown): voi
 
     if (kind === "explicit" || kind === "remember") {
       const password = typeof e.password === "string" ? e.password : null
-      if (!password) continue
+      if (password == null) continue
 
       if (kind === "explicit") {
         const host = typeof e.host === "string" ? e.host.trim() : null

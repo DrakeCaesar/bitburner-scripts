@@ -106,8 +106,9 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
   masterLog.append("startup", "ports cleared, mutation watcher started")
 
   await authDarkweb(dnet)
-  if (!(await copyWorkerFiles(ns, DARKWEB, "home"))) {
-    options.onError?.("Failed to copy worker files to darkweb")
+  const darkwebScpError = await copyWorkerFiles(ns, DARKWEB, "home")
+  if (darkwebScpError != null) {
+    options.onError?.(`Failed to copy worker files to darkweb: ${darkwebScpError}`)
     return
   }
 

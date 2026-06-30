@@ -285,11 +285,17 @@ export async function runSpawnCommand(
       message = NOT_NEIGHBOR_MESSAGE
     }
 
-    if (!message && cmd.password) {
-      await ensureTargetAuth(dnet, cmd.target, cmd.password)
+    if (!message) {
       try {
         if (!dnet.getServerDetails(cmd.target).hasSession) {
-          message = "auth failed"
+          if (cmd.password === undefined) {
+            message = "auth failed"
+          } else {
+            await ensureTargetAuth(dnet, cmd.target, cmd.password)
+            if (!dnet.getServerDetails(cmd.target).hasSession) {
+              message = "auth failed"
+            }
+          }
         }
       } catch {
         message = "auth failed"
@@ -297,8 +303,9 @@ export async function runSpawnCommand(
     }
 
     if (!message) {
-      if (!(await copyWorkerFiles(ns, cmd.target, workerHost))) {
-        message = "scp failed"
+      const scpError = await copyWorkerFiles(ns, cmd.target, workerHost)
+      if (scpError != null) {
+        message = scpError
       }
     }
 
@@ -394,7 +401,7 @@ export async function ensureTargetAuth(
   target: string,
   password: string | undefined,
 ): Promise<void> {
-  if (!password) return
+  if (password === undefined) return
   try {
     if (dnet.getServerDetails(target).hasSession) return
     if (dnet.connectToSession?.(target, password).success) return
@@ -438,7 +445,7 @@ export async function ensureSelfAuth(
   hostname: string,
   password: string | undefined,
 ): Promise<void> {
-  if (!password) return
+  if (password === undefined) return
   try {
     const details = dnet.getServerDetails(hostname)
     if (details.hasSession) return
