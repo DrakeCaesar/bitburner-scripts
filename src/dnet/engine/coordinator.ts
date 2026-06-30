@@ -80,7 +80,6 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
   const pendingSpawns = new Set<string>()
   const spawnPlans = new Map<string, SpawnPlan>()
   const mutationSync = new MutationSync()
-  let initialTopologySync = false
 
   clearDnetGlobalPorts(ns)
   ensureMutationWatcher(ns)
@@ -132,41 +131,9 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
     )
     checkCommandDeadlines(workerPool, targets, spawnPlans, pendingSpawns, portPool, ns, masterLog)
     pruneWorkers(ns, workerPool, portPool, targets, pendingSpawns, spawnPlans, masterLog)
-    if (mutationSync.tryCompleteSync(ns, workerPool)) {
-      masterLog.append("sync", `complete mutation ${mutationSync.acked}`)
-      for (const target of targets.values()) {
-        if (target.awaitProbeAfter) target.awaitProbeAfter = false
-      }
-    }
-
-    if (!initialTopologySync) {
-      const ts = mutationSync.beginPending(ns, workerPool)
-      masterLog.append("sync", `begin mutation ${ts}, ${workerPool.workers.size} workers`)
-      initialTopologySync = true
-    } else if (mutationSync.canDispatchActions() && mutationSync.isStale(ns)) {
-      const ts = mutationSync.beginPending(ns, workerPool)
-      masterLog.append("sync", `stale, begin mutation ${ts}, ${workerPool.workers.size} workers`)
-    }
-
-    if (!mutationSync.canDispatchActions()) {
-      const dispatchCtx: WorkerDispatchCtx = { workerPool, portPool, pendingSpawns, spawnPlans, targets }
-      dispatchSyncProbes(ns, workerPool, mutationSync, masterLog, dispatchCtx)
-      await options.onProgress(
-        buildSnapshot(
-          sessionId,
-          targets,
-          attemptLog,
-          masterLog,
-          sessionArchive,
-          workerPool,
-          mutationSync,
-          mutationPort,
-          loopAt,
-        ),
-      )
-      await ns.sleep(LOOP_INTERVAL_MS)
-      continue
-    }
+    mutationSync.tick(ns, workerPool, targets, (ts) => {
+      masterLog.append("sync", `mutation ${ts} (background probes)`)
+    })
 
     processQueuedTargets(targets, attemptLog, sessionArchive, dnet, passwords)
     scheduleRetries(targets, attemptLog)
@@ -186,6 +153,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
     )
     dispatchReallocs(ns, dnet, workerPool, masterLog, dispatchCtx)
     dispatchGuesses(ns, workerPool, targets, attemptLog, dnet, masterLog, dispatchCtx)
+    dispatchBackgroundProbes(ns, workerPool, mutationSync, masterLog, dispatchCtx)
 
     await options.onProgress(
       buildSnapshot(
@@ -240,10 +208,7 @@ function buildSnapshot(
       acked: mutationSync.acked,
       pending: mutationSync.pending,
       stale: mutationPort.ts !== null && mutationPort.ts > mutationSync.acked,
-      pendingBehindPort:
-        mutationSync.pending != null &&
-        mutationPort.ts != null &&
-        mutationPort.ts > mutationSync.pending,
+      pendingBehindPort: false,
       loopAt,
     },
     workers: [...workerPool.workers.values()].map(
@@ -298,15 +263,13 @@ function drainReplies(
           wi.pid = msg.pid
           wi.idle = true
           wi.commandDeadlineAt = 0
-          if (mutationSync.canDispatchActions()) {
-            sendCommand(
-              ns,
-              wi,
-              { type: "probe" },
-              masterLog,
-              { workerPool, portPool, pendingSpawns, spawnPlans, targets },
-            )
-          }
+          sendCommand(
+            ns,
+            wi,
+            { type: "probe" },
+            masterLog,
+            { workerPool, portPool, pendingSpawns, spawnPlans, targets },
+          )
           break
         case "deadline":
           wi.idle = false
@@ -328,7 +291,7 @@ function drainReplies(
             dnet,
             attemptLog,
           )
-          mutationSync.markWorkerProbed(msg.workerHost, workerPool)
+          mutationSync.markWorkerProbed(msg.workerHost, workerPool, ns)
           break
         case "spawnResult":
           wi.idle = true
@@ -665,21 +628,15 @@ function scheduleRetries(targets: Map<string, AuthTarget>, log: AttemptLog): voi
   }
 }
 
-function dispatchSyncProbes(
+function dispatchBackgroundProbes(
   ns: NS,
   workerPool: WorkerPool,
   mutationSync: MutationSync,
   masterLog: MasterActionLog,
   ctx: WorkerDispatchCtx,
 ): void {
-  const pending = mutationSync.pending
-  if (pending === null) return
-
   for (const wi of workerPool.workers.values()) {
-    if (wi.commandPort <= 0) continue
-    if (!mutationSync.workerMustSync(wi)) continue
-    if (wi.probeSyncMutation === pending) continue
-    if (!wi.idle) continue
+    if (!mutationSync.workerNeedsProbe(wi, ns)) continue
     sendCommand(ns, wi, { type: "probe" }, masterLog, ctx)
   }
 }

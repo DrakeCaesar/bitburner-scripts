@@ -117,11 +117,9 @@ export function createDashboard(): DnetDashboard {
 
 function formatMutationLine(m: MutationPortSnapshot): string {
   const portTime = m.portTs != null ? clock(m.portTs) : "-"
-  const pending = m.pending != null ? String(m.pending) : "-"
   return (
     `mutation port ${MUTATION_PORT}  peek=${m.portRaw}  ts=${m.portTs ?? "-"} (${portTime})  ` +
-    `acked=${m.acked}  pending=${pending}  stale=${m.stale ? "Y" : "N"}  ` +
-    `portAhead=${m.pendingBehindPort ? "Y" : "N"}  loop ${clock(m.loopAt)}`
+    `acked=${m.acked}  stale=${m.stale ? "Y" : "N"}  loop ${clock(m.loopAt)}`
   )
 }
 

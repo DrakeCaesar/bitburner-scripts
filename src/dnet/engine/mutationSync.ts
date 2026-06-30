@@ -1,14 +1,14 @@
 import { NS } from "@ns"
 import { MUTATION_PORT, MUTATION_WATCHER_SCRIPT } from "../constants.js"
+import type { AuthTarget } from "../types.js"
 import type { ManagedWorker, WorkerPool } from "../pool/workers.js"
 
-/** Tracks darknet mutation generations and full-network probe sync. */
+/** Tracks darknet mutation generations; probes run in the background without blocking dispatch. */
 export class MutationSync {
   private ackedMutationTs = 0
-  private pendingMutationTs: number | null = null
 
   get pending(): number | null {
-    return this.pendingMutationTs
+    return null
   }
 
   get acked(): number {
@@ -31,57 +31,40 @@ export class MutationSync {
     return ts !== null && ts > this.ackedMutationTs
   }
 
-  canDispatchActions(): boolean {
-    return this.pendingMutationTs === null
-  }
-
-  /** Start (or restart) a full-network probe sync for the current mutation generation. */
-  beginPending(ns: NS, workerPool: WorkerPool): number {
-    const ts = this.peekMutationTs(ns) ?? 0
-    this.pendingMutationTs = ts
+  /**
+   * Observe a new mutation generation: ack immediately (no full-network sync wait),
+   * reset worker probe markers, and allow auth/spawn to continue.
+   */
+  tick(
+    ns: NS,
+    workerPool: WorkerPool,
+    targets: Map<string, AuthTarget>,
+    onAck?: (ts: number) => void,
+  ): void {
+    const ts = this.peekMutationTs(ns)
+    if (ts == null || ts <= this.ackedMutationTs) return
+    this.ackedMutationTs = ts
     for (const wi of workerPool.workers.values()) {
       wi.probeSyncMutation = -1
     }
-    return ts
+    for (const target of targets.values()) {
+      if (target.awaitProbeAfter) target.awaitProbeAfter = false
+    }
+    onAck?.(ts)
   }
 
-  markWorkerProbed(host: string, workerPool: WorkerPool): void {
-    if (this.pendingMutationTs === null) return
+  markWorkerProbed(host: string, workerPool: WorkerPool, ns: NS): void {
+    const ts = this.peekMutationTs(ns) ?? this.ackedMutationTs
     const wi = workerPool.workers.get(host)
-    if (wi) wi.probeSyncMutation = this.pendingMutationTs
+    if (wi && ts > 0) wi.probeSyncMutation = ts
   }
 
-  /** Workers with no live script yet (spawn placeholder) are excluded from sync rounds. */
-  workerMustSync(wi: ManagedWorker): boolean {
-    return wi.commandPort > 0 && wi.pid > 0
-  }
-
-  tryCompleteSync(ns: NS, workerPool: WorkerPool): boolean {
-    const pending = this.pendingMutationTs
-    if (pending === null) return false
-
-    let syncable = 0
-    for (const wi of workerPool.workers.values()) {
-      if (!this.workerMustSync(wi)) continue
-      syncable++
-      if (wi.probeSyncMutation !== pending) return false
-    }
-    if (syncable === 0) return false
-
-    const latest = this.peekMutationTs(ns)
-    this.ackedMutationTs = latest != null && latest > pending ? latest : pending
-    this.pendingMutationTs = null
-    return true
-  }
-
-  allWorkersSynced(workerPool: WorkerPool): boolean {
-    const pending = this.pendingMutationTs
-    if (pending === null) return true
-    for (const wi of workerPool.workers.values()) {
-      if (!this.workerMustSync(wi)) continue
-      if (wi.probeSyncMutation !== pending) return false
-    }
-    return true
+  /** Live workers should eventually probe after each mutation generation. */
+  workerNeedsProbe(wi: ManagedWorker, ns: NS): boolean {
+    if (wi.commandPort <= 0 || wi.pid <= 0 || !wi.idle) return false
+    const ts = this.peekMutationTs(ns) ?? this.ackedMutationTs
+    if (ts <= 0) return false
+    return wi.probeSyncMutation < ts
   }
 }
 
