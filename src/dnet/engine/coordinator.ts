@@ -135,7 +135,8 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
     }
 
     if (!mutationSync.canDispatchActions()) {
-      dispatchSyncProbes(ns, workerPool, mutationSync, masterLog)
+      const dispatchCtx: WorkerDispatchCtx = { workerPool, portPool, pendingSpawns, targets }
+      dispatchSyncProbes(ns, workerPool, mutationSync, masterLog, dispatchCtx)
       await options.onProgress(
         buildSnapshot(
           sessionId,
@@ -155,6 +156,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
 
     processQueuedTargets(targets, attemptLog, sessionArchive, dnet, passwords)
     scheduleRetries(targets, attemptLog)
+    const dispatchCtx: WorkerDispatchCtx = { workerPool, portPool, pendingSpawns, targets }
     spawnWorkers(
       ns,
       sessionId,
@@ -165,9 +167,10 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       dnet,
       passwords,
       masterLog,
+      dispatchCtx,
     )
-    dispatchReallocs(ns, dnet, workerPool, masterLog)
-    dispatchGuesses(ns, workerPool, targets, attemptLog, dnet, masterLog)
+    dispatchReallocs(ns, dnet, workerPool, masterLog, dispatchCtx)
+    dispatchGuesses(ns, workerPool, targets, attemptLog, dnet, masterLog, dispatchCtx)
 
     await options.onProgress(
       buildSnapshot(
@@ -280,7 +283,14 @@ function drainReplies(
           wi.idle = true
           wi.busyUntil = 0
           if (mutationSync.canDispatchActions()) {
-            sendCommand(ns, wi, { type: "probe" }, PROBE_MS, masterLog)
+            sendCommand(
+              ns,
+              wi,
+              { type: "probe" },
+              PROBE_MS,
+              masterLog,
+              { workerPool, portPool, pendingSpawns, targets },
+            )
           }
           break
         case "executing":
@@ -642,6 +652,7 @@ function dispatchSyncProbes(
   workerPool: WorkerPool,
   mutationSync: MutationSync,
   masterLog: MasterActionLog,
+  ctx: WorkerDispatchCtx,
 ): void {
   const pending = mutationSync.pending
   if (pending === null) return
@@ -651,7 +662,7 @@ function dispatchSyncProbes(
     if (!mutationSync.workerMustSync(wi)) continue
     if (wi.probeSyncMutation === pending) continue
     if (!wi.idle) continue
-    sendCommand(ns, wi, { type: "probe" }, PROBE_MS, masterLog)
+    sendCommand(ns, wi, { type: "probe" }, PROBE_MS, masterLog, ctx)
   }
 }
 
@@ -660,6 +671,7 @@ function dispatchReallocs(
   dnet: DnetApi,
   workerPool: WorkerPool,
   masterLog: MasterActionLog,
+  ctx: WorkerDispatchCtx,
 ): void {
   if (!dnet.memoryReallocation || !dnet.getBlockedRam) return
 
@@ -670,11 +682,11 @@ function dispatchReallocs(
     wi.blockedRam = ram.blockedRam
 
     if (needsRealloc(ns, dnet, wi.host, 2, ram)) {
-      sendCommand(ns, wi, { type: "realloc", priority: 2 }, reallocMs, masterLog)
+      sendCommand(ns, wi, { type: "realloc", priority: 2 }, reallocMs, masterLog, ctx)
       continue
     }
     if (needsRealloc(ns, dnet, wi.host, 3, ram)) {
-      sendCommand(ns, wi, { type: "realloc", priority: 3 }, reallocMs, masterLog)
+      sendCommand(ns, wi, { type: "realloc", priority: 3 }, reallocMs, masterLog, ctx)
     }
   }
 }
@@ -686,6 +698,7 @@ function dispatchGuesses(
   attemptLog: AttemptLog,
   dnet: DnetApi,
   masterLog: MasterActionLog,
+  ctx: WorkerDispatchCtx,
 ): void {
   for (const target of targets.values()) {
     if (target.status !== "active" && target.status !== "waiting_worker") continue
@@ -728,6 +741,27 @@ function dispatchGuesses(
       continue
     }
 
+    if (
+      !sendCommand(
+        ns,
+        wi,
+        {
+          type: "guess",
+          target: target.host,
+          solverId: target.solverId ?? "-",
+          guess: next.guess,
+          detail: next.detail,
+        },
+        GUESS_MS,
+        masterLog,
+        ctx,
+      )
+    ) {
+      undoDispatchedGuess(target)
+      target.status = "waiting_worker"
+      continue
+    }
+
     target.pendingGuess = next.guess
     target.pendingDetail = next.detail
     target.workerHost = wi.host
@@ -745,20 +779,6 @@ function dispatchGuesses(
       detail: next.detail ?? undefined,
       solverState: cloneState(target.solverState),
     })
-
-    sendCommand(
-      ns,
-      wi,
-      {
-        type: "guess",
-        target: target.host,
-        solverId: target.solverId ?? "-",
-        guess: next.guess,
-        detail: next.detail,
-      },
-      GUESS_MS,
-      masterLog,
-    )
   }
 }
 
@@ -772,6 +792,7 @@ function spawnWorkers(
   dnet: DnetApi,
   passwords: Map<string, string>,
   masterLog: MasterActionLog,
+  ctx: WorkerDispatchCtx,
 ): void {
   for (const target of targets.values()) {
     if (target.host === DARKWEB) continue
@@ -801,19 +822,26 @@ function spawnWorkers(
 
     pendingSpawns.add(target.host)
     workerPool.register(target.host, 0, port)
-    sendCommand(
-      ns,
-      parent,
-      {
-        type: "spawn",
-        target: target.host,
-        sessionId,
-        port,
-        ...(target.password != null ? { password: target.password } : {}),
-      },
-      spawnCommandMs(),
-      masterLog,
-    )
+    if (
+      !sendCommand(
+        ns,
+        parent,
+        {
+          type: "spawn",
+          target: target.host,
+          sessionId,
+          port,
+          ...(target.password != null ? { password: target.password } : {}),
+        },
+        spawnCommandMs(),
+        masterLog,
+        ctx,
+      )
+    ) {
+      pendingSpawns.delete(target.host)
+      releaseWorkerPort(ns, portPool, port)
+      workerPool.remove(target.host)
+    }
   }
 }
 
@@ -836,20 +864,47 @@ function commandDetail(host: string, payload: WorkerCommandPayload): string {
   }
 }
 
+interface WorkerDispatchCtx {
+  workerPool: WorkerPool
+  portPool: PortPool
+  pendingSpawns: Set<string>
+  targets?: Map<string, AuthTarget>
+}
+
+function clearTargetWorkerRefs(targets: Map<string, AuthTarget>, workerHost: string): void {
+  for (const t of targets.values()) {
+    if (t.workerHost !== workerHost) continue
+    t.workerHost = null
+    t.pendingGuess = null
+    if (t.status === "active") t.status = "waiting_worker"
+  }
+}
+
 function sendCommand(
   ns: NS,
   wi: ManagedWorker,
   payload: WorkerCommandPayload,
   expectedMs: number,
   masterLog: MasterActionLog,
-): void {
-  if (wi.commandPort <= 0) return
+  ctx: WorkerDispatchCtx,
+): boolean {
+  if (wi.commandPort <= 0) {
+    dropWorker(ns, wi.host, ctx.workerPool, ctx.portPool, ctx.pendingSpawns, masterLog, "no port")
+    return false
+  }
+  if (wi.pid > 0 && !ns.isRunning(wi.pid)) {
+    dropWorker(ns, wi.host, ctx.workerPool, ctx.portPool, ctx.pendingSpawns, masterLog, "dead")
+    if (ctx.targets) clearTargetWorkerRefs(ctx.targets, wi.host)
+    return false
+  }
+
   const now = Date.now()
   wi.lastCommand = formatCommand(payload)
   wi.idle = false
   wi.busyUntil = now + expectedMs + 5000
   ns.writePort(wi.commandPort, JSON.stringify({ ...payload, expectedMs, deadlineAt: wi.busyUntil }))
   masterLog.append(payload.type, commandDetail(wi.host, payload))
+  return true
 }
 
 function isWorkerAlive(ns: NS, wi: ManagedWorker): boolean {
