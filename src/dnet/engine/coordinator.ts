@@ -102,11 +102,14 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
 }
 
 async function authDarkweb(dnet: DnetApi): Promise<void> {
+  if (getServerDetails(dnet, DARKWEB)?.hasSession) return
   try {
-    await dnet.authenticate(DARKWEB, "0")
+    const result = await dnet.authenticate(DARKWEB, "")
+    if (result.success) return
   } catch {
-    /* already authed */
+    /* ignore */
   }
+  tryConnect(dnet, DARKWEB, "")
 }
 
 async function scpWorkerFiles(ns: NS): Promise<void> {
