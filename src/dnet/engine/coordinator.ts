@@ -35,6 +35,7 @@ import {
 } from "./memoryPlan.js"
 import { copyWorkerFiles } from "../worker/deploy.js"
 import { ensureMutationWatcher, MutationSync } from "./mutationSync.js"
+import { clearDnetGlobalPorts, clearWorkerPortPair } from "./ports.js"
 
 const GUESS_MS = 800
 const PROBE_MS = 400
@@ -65,9 +66,8 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
   const mutationSync = new MutationSync()
   let initialTopologySync = false
 
+  clearDnetGlobalPorts(ns)
   ensureMutationWatcher(ns)
-
-  ns.clearPort(CONTROL_PORT)
   ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId }))
 
   await authDarkweb(dnet)
@@ -81,11 +81,12 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
     options.onError?.("No ports available")
     return
   }
+  clearWorkerPortPair(ns, rootPort)
 
   const rootPid = ns.exec(WORKER_SCRIPT, DARKWEB, 1, sessionId, rootPort, "")
   if (rootPid <= 0) {
     options.onError?.("Failed to start root worker on darkweb")
-    portPool.release(rootPort)
+    releaseWorkerPort(ns, portPool, rootPort)
     return
   }
 
@@ -237,7 +238,7 @@ function drainReplies(
           pendingSpawns.delete(msg.target)
           if (!msg.success) {
             const ghost = workerPool.workers.get(msg.target)
-            if (ghost?.commandPort) portPool.release(ghost.commandPort)
+            if (ghost?.commandPort) releaseWorkerPort(ns, portPool, ghost.commandPort)
             workerPool.remove(msg.target)
           } else {
             const child = workerPool.workers.get(msg.target)
@@ -679,6 +680,7 @@ function spawnWorkers(
 
     const port = portPool.allocate()
     if (port <= 0) continue
+    clearWorkerPortPair(ns, port)
 
     pendingSpawns.add(target.host)
     workerPool.register(target.host, 0, port)
@@ -716,6 +718,11 @@ function isWorkerAlive(ns: NS, wi: ManagedWorker): boolean {
   return ns.isRunning(wi.pid)
 }
 
+function releaseWorkerPort(ns: NS, portPool: PortPool, commandPort: number): void {
+  clearWorkerPortPair(ns, commandPort)
+  portPool.release(commandPort)
+}
+
 function dropWorker(
   ns: NS,
   host: string,
@@ -726,7 +733,7 @@ function dropWorker(
   pendingSpawns.delete(host)
   const wi = workerPool.workers.get(host)
   if (!wi) return
-  if (wi.commandPort > 0) portPool.release(wi.commandPort)
+  if (wi.commandPort > 0) releaseWorkerPort(ns, portPool, wi.commandPort)
   workerPool.remove(host)
 }
 
