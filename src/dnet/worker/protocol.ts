@@ -10,6 +10,7 @@ export type WorkerCommandPayload =
   | { type: "guess"; target: string; solverId: string; guess: string; detail: string | null }
   | { type: "heartbleed"; target: string; solverId: string }
   | { type: "spawn"; target: string; sessionId: number; port: number; password?: string }
+  | { type: "realloc"; priority: 1 | 2 | 3 }
   | { type: "exit" }
 
 export type WorkerCommand = WorkerCommandPayload & CommandMeta
@@ -21,6 +22,7 @@ export type WorkerResponse =
   | { type: "heartbleedResult"; target: string; solverId: string; logEntries: string[] }
   | { type: "probeResult"; workerHost: string; neighbors: string[]; freeRam: number; blockedRam: number }
   | { type: "spawnResult"; workerHost: string; target: string; success: boolean; childPid: number }
+  | { type: "reallocResult"; workerHost: string; priority: 1 | 2 | 3; freeRam: number; blockedRam: number }
 
 export function parseWorkerResponse(raw: unknown): WorkerResponse | null {
   try {
@@ -80,6 +82,18 @@ export function parseWorkerResponse(raw: unknown): WorkerResponse | null {
           success: row.success === true,
           childPid: typeof row.childPid === "number" ? row.childPid : 0,
         }
+      case "reallocResult": {
+        if (typeof row.workerHost !== "string") return null
+        const priority = row.priority
+        if (priority !== 1 && priority !== 2 && priority !== 3) return null
+        return {
+          type: "reallocResult",
+          workerHost: row.workerHost,
+          priority,
+          freeRam: typeof row.freeRam === "number" ? row.freeRam : 0,
+          blockedRam: typeof row.blockedRam === "number" ? row.blockedRam : 0,
+        }
+      }
       default:
         return null
     }
@@ -98,6 +112,8 @@ export function formatCommand(cmd: WorkerCommandPayload): string {
       return `heartbleed:${cmd.target}`
     case "spawn":
       return `spawn:${cmd.target}`
+    case "realloc":
+      return `realloc:p${cmd.priority}`
     case "exit":
       return "exit"
   }

@@ -13,4 +13,5 @@ export interface WorkerDnetApi {
     isConnectedToCurrentServer: boolean
   }
   getBlockedRam?(host?: string): number
+  memoryReallocation?(host?: string): Promise<{ success: boolean }>
 }

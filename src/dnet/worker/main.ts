@@ -8,6 +8,7 @@ import {
 import type { WorkerDnetApi } from "./dnetApi.js"
 import type { WorkerCommand } from "./protocol.js"
 import { executeCommand, ensureSelfAuth, runProbe } from "./execute.js"
+import { runReallocUntil } from "./realloc.js"
 
 export async function main(ns: NS): Promise<void> {
   const dnet = (ns as NS & { dnet?: WorkerDnetApi }).dnet
@@ -72,19 +73,24 @@ export async function main(ns: NS): Promise<void> {
       let childPid = 0
       let success = false
       try {
+        await runReallocUntil(ns, dnet, cmd.target, 1)
         for (const file of WORKER_SCP_FILES) {
           if (!ns.fileExists(file, "home")) continue
           await ns.scp(file, cmd.target, "home")
         }
-        childPid = ns.exec(
-          WORKER_SCRIPT,
-          cmd.target,
-          1,
-          activeSessionId,
-          cmd.port,
-          cmd.password ?? "",
-        )
-        success = childPid > 0
+        const childRam = ns.getScriptRam(WORKER_SCRIPT, cmd.target)
+        const free = ns.getServerMaxRam(cmd.target) - ns.getServerUsedRam(cmd.target)
+        if (childRam <= free) {
+          childPid = ns.exec(
+            WORKER_SCRIPT,
+            cmd.target,
+            1,
+            activeSessionId,
+            cmd.port,
+            cmd.password ?? "",
+          )
+          success = childPid > 0
+        }
       } catch {
         success = false
       }
@@ -100,6 +106,18 @@ export async function main(ns: NS): Promise<void> {
       )
     } else if (cmd.type === "guess" || cmd.type === "heartbleed") {
       await executeCommand(ns, dnet, cmd, replyPort)
+    } else if (cmd.type === "realloc") {
+      const result = await runReallocUntil(ns, dnet, hostname, cmd.priority)
+      ns.writePort(
+        replyPort,
+        JSON.stringify({
+          type: "reallocResult",
+          workerHost: hostname,
+          priority: cmd.priority,
+          freeRam: result.freeRam,
+          blockedRam: result.blockedRam,
+        }),
+      )
     }
 
     await ns.sleep(10)

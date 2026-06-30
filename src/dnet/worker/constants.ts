@@ -2,6 +2,7 @@
 
 export const CONTROL_PORT = 45209
 export const WORKER_SCRIPT = "dnet/worker/main.js"
+export const STASIS_SCRIPT = "dnet/stasis/stasisLink.js"
 
 /** Files copied to remote hosts when spawning workers. Worker subtree only. */
 export const WORKER_SCP_FILES = [

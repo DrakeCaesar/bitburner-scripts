@@ -29,6 +29,11 @@ import {
   type WorkerCommandPayload,
   type WorkerResponse,
 } from "../worker/protocol.js"
+import {
+  needsRealloc,
+  readHostRam,
+  reallocCommandMs,
+} from "./memoryPlan.js"
 
 const GUESS_MS = 800
 const PROBE_MS = 400
@@ -86,6 +91,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
     processQueuedTargets(targets, attemptLog, dnet, passwords)
     scheduleRetries(targets, attemptLog)
     spawnWorkers(ns, sessionId, workerPool, portPool, targets, pendingSpawns, dnet)
+    dispatchReallocs(ns, dnet, workerPool)
     dispatchProbes(ns, workerPool)
     dispatchGuesses(ns, workerPool, targets, attemptLog, dnet)
     pruneWorkers(ns, workerPool, portPool, targets)
@@ -225,6 +231,21 @@ function drainReplies(
           wi.idle = true
           wi.busyUntil = 0
           onHeartbleedResult(msg, targets, attemptLog, dnet)
+          break
+        case "reallocResult":
+          wi.idle = true
+          wi.busyUntil = 0
+          wi.freeRam = msg.freeRam
+          wi.blockedRam = msg.blockedRam
+          attemptLog.append({
+            host: wi.host,
+            session: 0,
+            kind: "note",
+            solverId: "-",
+            modelId: "-",
+            workerHost: wi.host,
+            note: `realloc p${msg.priority} free ${msg.freeRam.toFixed(1)} blocked ${msg.blockedRam.toFixed(1)}`,
+          })
           break
       }
     }
@@ -478,6 +499,25 @@ function scheduleRetries(targets: Map<string, AuthTarget>, log: AttemptLog): voi
   }
 }
 
+function dispatchReallocs(ns: NS, dnet: DnetApi, workerPool: WorkerPool): void {
+  if (!dnet.memoryReallocation || !dnet.getBlockedRam) return
+
+  const reallocMs = reallocCommandMs(ns)
+
+  for (const wi of workerPool.idleWorkers()) {
+    const ram = readHostRam(ns, dnet, wi.host)
+    wi.blockedRam = ram.blockedRam
+
+    if (needsRealloc(ns, dnet, wi.host, 2, ram)) {
+      sendCommand(ns, wi, { type: "realloc", priority: 2 }, reallocMs)
+      continue
+    }
+    if (needsRealloc(ns, dnet, wi.host, 3, ram)) {
+      sendCommand(ns, wi, { type: "realloc", priority: 3 }, reallocMs)
+    }
+  }
+}
+
 function dispatchProbes(ns: NS, workerPool: WorkerPool): void {
   const now = Date.now()
   for (const wi of workerPool.idleWorkers()) {
@@ -602,9 +642,13 @@ function spawnWorkers(
         port,
         ...(target.password != null ? { password: target.password } : {}),
       },
-      5000,
+      spawnCommandMs(),
     )
   }
+}
+
+function spawnCommandMs(): number {
+  return WORKER_TIMEOUT_MS
 }
 
 function sendCommand(ns: NS, wi: ManagedWorker, payload: WorkerCommandPayload, expectedMs: number): void {

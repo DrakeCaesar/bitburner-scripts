@@ -1,6 +1,7 @@
 import { NS } from "@ns"
 import type { WorkerDnetApi } from "./dnetApi.js"
 import type { WorkerCommand } from "./protocol.js"
+import { WORKER_SCRIPT } from "./constants.js"
 
 function normalizeFeedback(data: unknown): string | undefined {
   if (typeof data === "string") return data
@@ -182,7 +183,8 @@ export async function runProbe(
   } catch {
     neighbors = []
   }
-  const freeRam = ns.getServerMaxRam(workerHost) - ns.getServerUsedRam(workerHost)
+  const workerRam = ns.getScriptRam(WORKER_SCRIPT, workerHost)
+  const totalFree = ns.getServerMaxRam(workerHost) - ns.getServerUsedRam(workerHost)
   const blockedRam = dnet.getBlockedRam?.(workerHost) ?? 0
   ns.writePort(
     replyPort,
@@ -190,7 +192,7 @@ export async function runProbe(
       type: "probeResult",
       workerHost,
       neighbors,
-      freeRam,
+      freeRam: totalFree - workerRam,
       blockedRam,
     }),
   )

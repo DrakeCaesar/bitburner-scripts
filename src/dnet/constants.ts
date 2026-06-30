@@ -2,6 +2,7 @@
 
 export const DARKWEB = "darkweb"
 export const WORKER_SCRIPT = "dnet/worker/main.js"
+export const STASIS_SCRIPT = "dnet/stasis/stasisLink.js"
 export const LABYRINTH_MODEL = "(The Labyrinth)"
 
 /** Master broadcasts session config here; workers read each loop. */
