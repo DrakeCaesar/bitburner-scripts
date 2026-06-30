@@ -562,6 +562,12 @@ function initPortPool(): number[] {
   return pool
 }
 
+function pruneWorkersWithoutPorts(workerRegistry: Map<string, WorkerInfo>): void {
+  for (const [host, wi] of workerRegistry) {
+    if (wi.port <= 0) workerRegistry.delete(host)
+  }
+}
+
 function allocatePort(): number {
   if (!_portPool) _portPool = initPortPool()
   const port = _portPool.shift()
@@ -570,6 +576,7 @@ function allocatePort(): number {
 }
 
 function freePort(port: number): void {
+  if (port < PORT_POOL_START) return
   if (!_portPool) _portPool = initPortPool()
   _portPool.push(port)
 }
@@ -985,6 +992,7 @@ function sendWorkerCommand(
   payload: WorkerCommandPayload,
   now = Date.now(),
 ): void {
+  if (wi.port <= 0) return
   const command = withCommandDeadline(payload, estimateCommandMs(ns, dnet, payload), now)
   ns.writePort(wi.port, JSON.stringify(command))
   wi.lastCommand = command.type
@@ -1124,15 +1132,21 @@ async function drainReportPort(
 
         if (workerResp.type === "probeResult") {
           const existingWi = workerRegistry.get(workerResp.workerHost)
-          const wi: WorkerInfo = existingWi ?? { pid: 0, port: 0, replyPort: 0, neighbors: [], freeRam: 0, blockedRam: 0, probed: false, idle: false, lastCommand: null, lastCommandDetail: null, lastCommandAt: 0, lastReply: null, lastReplyAt: 0, lastProbedAt: 0, failures: 0, commandDeadlineAt: 0 }
-          if (!existingWi) workerRegistry.set(workerResp.workerHost, wi)
-          wi.neighbors = workerResp.targets
-          wi.freeRam = workerResp.freeRam
-          wi.blockedRam = workerResp.blockedRam
-          wi.probed = true
-          wi.lastProbedAt = now
-          wi.failures = 0
-          markWorkerIdle(wi, "probeResult", now)
+          if (!existingWi) {
+            masterLogThrottled(
+              ns,
+              `probe:unknown:${workerResp.workerHost}`,
+              `probeResult from unregistered worker ${workerResp.workerHost} (ignored)`,
+            )
+            continue
+          }
+          existingWi.neighbors = workerResp.targets
+          existingWi.freeRam = workerResp.freeRam
+          existingWi.blockedRam = workerResp.blockedRam
+          existingWi.probed = true
+          existingWi.lastProbedAt = now
+          existingWi.failures = 0
+          markWorkerIdle(existingWi, "probeResult", now)
           continue
         }
 
@@ -1628,25 +1642,24 @@ async function processReportsAndSpawns(
     const pw = reports.get(hostname)?.password ?? registry?.servers[hostname]?.password ?? null
     if (pw != null && !workerRegistry.has(hostname) && !spawning.has(hostname) && hostname !== DARKWEB) {
       for (const [, wi] of workerRegistry) {
-        if (wi.neighbors.includes(hostname) && wi.idle && wi.probed) {
-          const childPort = allocatePort()
-          spawning.add(hostname)
-          workerRegistry.set(hostname, {
-            pid: 0, port: childPort, replyPort: childPort + 1,
-            neighbors: [], freeRam: 0, blockedRam: 0,
-            probed: false, idle: false,
-            lastCommand: null, lastCommandDetail: null, lastCommandAt: 0,
-            lastReply: null, lastReplyAt: 0, lastProbedAt: 0, failures: 0, commandDeadlineAt: 0,
-          })
-          sendWorkerCommand(ns, dnet, wi, {
-            type: "spawn",
-            target: hostname,
-            sessionId,
-            port: childPort,
-            password: pw,
-          })
-          break
-        }
+        if (wi.port <= 0 || !wi.neighbors.includes(hostname) || !wi.idle || !wi.probed) continue
+        const childPort = allocatePort()
+        spawning.add(hostname)
+        workerRegistry.set(hostname, {
+          pid: 0, port: childPort, replyPort: childPort + 1,
+          neighbors: [], freeRam: 0, blockedRam: 0,
+          probed: false, idle: false,
+          lastCommand: null, lastCommandDetail: null, lastCommandAt: 0,
+          lastReply: null, lastReplyAt: 0, lastProbedAt: 0, failures: 0, commandDeadlineAt: 0,
+        })
+        sendWorkerCommand(ns, dnet, wi, {
+          type: "spawn",
+          target: hostname,
+          sessionId,
+          port: childPort,
+          password: pw,
+        })
+        break
       }
     }
   }
@@ -1902,6 +1915,8 @@ export async function runDarknetCrawl(
       await drainReportPort(ns, dnet, targetStates, solverTimings, workerRegistry, spawning, reports, activeOps, cacheOpens, sessionId, registry, staleReportLoops)
       pollTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
 
+      pruneWorkersWithoutPorts(workerRegistry)
+
       await dispatchTasks(ns, dnet, targetStates, workerRegistry, reports, exhaustedRecords)
 
       await finalizeCompletedTargets(ns, dnet, targetStates, reports, registry)
@@ -1967,6 +1982,8 @@ export async function runDarknetCrawl(
   while (ns.isRunning(pid)) {
     await drainReportPort(ns, dnet, targetStates, solverTimings, workerRegistry, spawning, reports, activeOps, cacheOpens, sessionId, registry, staleReportLoops)
     pollTextPort(ns, lorePort, loreSet, DARKNET_LORE_FILE)
+
+    pruneWorkersWithoutPorts(workerRegistry)
 
     await dispatchTasks(ns, dnet, targetStates, workerRegistry, reports, exhaustedRecords)
 
