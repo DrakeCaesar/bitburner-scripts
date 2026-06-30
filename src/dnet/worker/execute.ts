@@ -1,5 +1,5 @@
 import { NS } from "@ns"
-import type { DnetApi } from "../types.js"
+import type { WorkerDnetApi } from "./dnetApi.js"
 import type { WorkerCommand } from "./protocol.js"
 
 function normalizeFeedback(data: unknown): string | undefined {
@@ -26,7 +26,7 @@ function parseAuthLog(log: string, guess: string): { data: string; message: stri
 }
 
 async function scrapeFeedbackAfter401(
-  dnet: DnetApi,
+  dnet: WorkerDnetApi,
   target: string,
   guess: string,
 ): Promise<{ data: string; message: string } | null> {
@@ -39,7 +39,7 @@ async function scrapeFeedbackAfter401(
   }
 }
 
-function isNeighbor(dnet: DnetApi, target: string): boolean {
+function isNeighbor(dnet: WorkerDnetApi, target: string): boolean {
   try {
     return dnet.getServerDetails(target).isConnectedToCurrentServer
   } catch {
@@ -49,7 +49,7 @@ function isNeighbor(dnet: DnetApi, target: string): boolean {
 
 export async function executeCommand(
   ns: NS,
-  dnet: DnetApi,
+  dnet: WorkerDnetApi,
   cmd: WorkerCommand,
   replyPort: number,
 ): Promise<void> {
@@ -172,7 +172,7 @@ export async function executeCommand(
 
 export async function runProbe(
   ns: NS,
-  dnet: DnetApi,
+  dnet: WorkerDnetApi,
   replyPort: number,
 ): Promise<void> {
   const workerHost = ns.getHostname()
@@ -197,7 +197,7 @@ export async function runProbe(
 }
 
 export async function ensureSelfAuth(
-  dnet: DnetApi,
+  dnet: WorkerDnetApi,
   hostname: string,
   password: string | undefined,
 ): Promise<void> {

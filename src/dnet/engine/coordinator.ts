@@ -85,7 +85,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
     drainReplies(ns, workerPool, portPool, targets, passwords, attemptLog, dnet, pendingSpawns)
     processQueuedTargets(targets, attemptLog, dnet, passwords)
     scheduleRetries(targets, attemptLog)
-    spawnWorkers(ns, sessionId, workerPool, portPool, targets, pendingSpawns)
+    spawnWorkers(ns, sessionId, workerPool, portPool, targets, pendingSpawns, dnet)
     dispatchProbes(ns, workerPool)
     dispatchGuesses(ns, workerPool, targets, attemptLog, dnet)
     pruneWorkers(ns, workerPool, portPool, targets)
@@ -267,6 +267,8 @@ function noteHost(
       lastError: null,
     }
     targets.set(host, target)
+  } else if (details.hasSession && target.password == null && target.status !== "unsupported") {
+    target.status = "solved"
   }
 
   if (!target.neighborWorkers.includes(viaWorker)) {
@@ -567,11 +569,18 @@ function spawnWorkers(
   portPool: PortPool,
   targets: Map<string, AuthTarget>,
   pendingSpawns: Set<string>,
+  dnet: DnetApi,
 ): void {
   for (const target of targets.values()) {
-    if (target.status !== "solved" || !target.password) continue
+    if (target.host === DARKWEB) continue
     if (workerPool.workers.has(target.host)) continue
     if (pendingSpawns.has(target.host)) continue
+
+    const details = getServerDetails(dnet, target.host)
+    if (!details?.isOnline) continue
+
+    const authed = target.password != null || details.hasSession
+    if (!authed) continue
 
     const parent = [...workerPool.workers.values()].find(
       (w) => w.idle && w.neighbors.includes(target.host) && w.commandPort > 0,
@@ -586,7 +595,13 @@ function spawnWorkers(
     sendCommand(
       ns,
       parent,
-      { type: "spawn", target: target.host, sessionId, port, password: target.password },
+      {
+        type: "spawn",
+        target: target.host,
+        sessionId,
+        port,
+        ...(target.password != null ? { password: target.password } : {}),
+      },
       5000,
     )
   }

@@ -1,0 +1,17 @@
+/** Worker-only constants (do not import from dnet/constants.js — shared chunks pull in the master graph). */
+
+export const CONTROL_PORT = 45209
+export const WORKER_SCRIPT = "dnet/worker/main.js"
+
+/** Files copied to remote hosts when spawning workers. Worker subtree only. */
+export const WORKER_SCP_FILES = [
+  "dnet/worker/constants.js",
+  "dnet/worker/dnetApi.js",
+  "dnet/worker/protocol.js",
+  "dnet/worker/execute.js",
+  "dnet/worker/main.js",
+]
+
+export interface ControlMessage {
+  sessionId: number
+}

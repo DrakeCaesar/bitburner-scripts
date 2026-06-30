@@ -1,2 +1,5 @@
 /** Entry point: run dnet v2 darknet auth crawler with attempt-history dashboard. */
-export { main, autocomplete } from "./dnet/run.js"
+// Import-then-export (not export-from): viteburner only rewrites top-level import paths.
+import { autocomplete, main } from "./dnet/run.js"
+
+export { autocomplete, main }

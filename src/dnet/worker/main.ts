@@ -4,13 +4,13 @@ import {
   WORKER_SCRIPT,
   WORKER_SCP_FILES,
   type ControlMessage,
-} from "../constants.js"
-import type { DnetApi } from "../types.js"
+} from "./constants.js"
+import type { WorkerDnetApi } from "./dnetApi.js"
 import type { WorkerCommand } from "./protocol.js"
 import { executeCommand, ensureSelfAuth, runProbe } from "./execute.js"
 
 export async function main(ns: NS): Promise<void> {
-  const dnet = (ns as NS & { dnet?: DnetApi }).dnet
+  const dnet = (ns as NS & { dnet?: WorkerDnetApi }).dnet
   if (!dnet) return
 
   const sessionId = Number(ns.args[0])
