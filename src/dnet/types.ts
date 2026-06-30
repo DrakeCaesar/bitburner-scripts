@@ -70,8 +70,10 @@ export interface AuthTarget {
   guessCount: number
   retryAt: number | null
   lastError: string | null
-  /** After notNeighbor, wait for the next mutation probe round before guessing again. */
+  /** After notNeighbor, hold auth until an urgent probe refreshes neighbor links. */
   awaitProbeAfter: boolean
+  /** Worker that must finish an urgent probe before awaitProbeAfter clears. */
+  awaitProbeWorker: string | null
 }
 
 export type AttemptKind =

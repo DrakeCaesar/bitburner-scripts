@@ -30,6 +30,7 @@ import type {
 import {
   formatCommand,
   isInstantCommand,
+  NOT_NEIGHBOR_MESSAGE,
   parseWorkerResponse,
   usesWorkerDeadlines,
   type WorkerCommandPayload,
@@ -80,6 +81,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
   const pendingSpawns = new Set<string>()
   const spawnPlans = new Map<string, SpawnPlan>()
   const mutationSync = new MutationSync()
+  const urgentProbeHosts = new Set<string>()
 
   clearDnetGlobalPorts(ns)
   ensureMutationWatcher(ns)
@@ -126,6 +128,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       pendingSpawns,
       spawnPlans,
       mutationSync,
+      urgentProbeHosts,
       masterLog,
       sessionArchive,
     )
@@ -138,6 +141,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
     processQueuedTargets(targets, attemptLog, sessionArchive, dnet, passwords)
     scheduleRetries(targets, attemptLog)
     const dispatchCtx: WorkerDispatchCtx = { workerPool, portPool, pendingSpawns, spawnPlans, targets }
+    dispatchUrgentProbes(ns, workerPool, urgentProbeHosts, masterLog, dispatchCtx)
     spawnWorkers(
       ns,
       sessionId,
@@ -153,7 +157,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
     )
     dispatchReallocs(ns, dnet, workerPool, masterLog, dispatchCtx)
     dispatchGuesses(ns, workerPool, targets, attemptLog, dnet, masterLog, dispatchCtx)
-    dispatchBackgroundProbes(ns, workerPool, mutationSync, masterLog, dispatchCtx)
+    dispatchBackgroundProbes(ns, workerPool, mutationSync, urgentProbeHosts, masterLog, dispatchCtx)
 
     await options.onProgress(
       buildSnapshot(
@@ -236,6 +240,59 @@ function buildSnapshot(
   }
 }
 
+function requestUrgentProbe(host: string, urgentProbeHosts: Set<string>): void {
+  urgentProbeHosts.add(host)
+}
+
+function invalidateNeighborLink(
+  workerHost: string,
+  targetHost: string,
+  workerPool: WorkerPool,
+  targets: Map<string, AuthTarget>,
+): void {
+  const wi = workerPool.workers.get(workerHost)
+  if (wi) wi.neighbors = wi.neighbors.filter((h) => h !== targetHost)
+
+  const target = targets.get(targetHost)
+  if (target) {
+    target.neighborWorkers = target.neighborWorkers.filter((h) => h !== workerHost)
+  }
+}
+
+function scheduleNotNeighborProbes(
+  workerHost: string,
+  targetHost: string,
+  workerPool: WorkerPool,
+  targets: Map<string, AuthTarget>,
+  urgentProbeHosts: Set<string>,
+): void {
+  invalidateNeighborLink(workerHost, targetHost, workerPool, targets)
+  requestUrgentProbe(workerHost, urgentProbeHosts)
+
+  for (const wi of workerPool.workers.values()) {
+    if (wi.host === workerHost) continue
+    if (!wi.neighbors.includes(targetHost)) continue
+    wi.neighbors = wi.neighbors.filter((h) => h !== targetHost)
+    requestUrgentProbe(wi.host, urgentProbeHosts)
+  }
+}
+
+function finishUrgentProbe(
+  workerHost: string,
+  targets: Map<string, AuthTarget>,
+  urgentProbeHosts: Set<string>,
+): void {
+  if (!urgentProbeHosts.delete(workerHost)) return
+  for (const target of targets.values()) {
+    if (!target.awaitProbeAfter || target.awaitProbeWorker !== workerHost) continue
+    target.awaitProbeAfter = false
+    target.awaitProbeWorker = null
+    if (target.status === "waiting_worker" && target.lastError === "neighbor link lost") {
+      target.status = "active"
+    }
+  }
+}
+
 function drainReplies(
   ns: NS,
   workerPool: WorkerPool,
@@ -247,6 +304,7 @@ function drainReplies(
   pendingSpawns: Set<string>,
   spawnPlans: Map<string, SpawnPlan>,
   mutationSync: MutationSync,
+  urgentProbeHosts: Set<string>,
   masterLog: MasterActionLog,
   sessionArchive: SessionArchive,
 ): void {
@@ -292,6 +350,7 @@ function drainReplies(
             attemptLog,
           )
           mutationSync.markWorkerProbed(msg.workerHost, workerPool, ns)
+          finishUrgentProbe(msg.workerHost, targets, urgentProbeHosts)
           break
         case "spawnResult":
           wi.idle = true
@@ -317,11 +376,29 @@ function drainReplies(
             note: msg.success ? `pid ${msg.childPid}` : "spawn failed",
             message: msg.message,
           })
+          if (!msg.success && msg.message === NOT_NEIGHBOR_MESSAGE) {
+            scheduleNotNeighborProbes(
+              msg.workerHost,
+              msg.target,
+              workerPool,
+              targets,
+              urgentProbeHosts,
+            )
+          }
           break
         case "authResult":
           wi.idle = true
           wi.commandDeadlineAt = 0
-          onAuthResult(msg, targets, passwords, attemptLog, sessionArchive, dnet)
+          onAuthResult(
+            msg,
+            targets,
+            passwords,
+            attemptLog,
+            sessionArchive,
+            dnet,
+            workerPool,
+            urgentProbeHosts,
+          )
           break
         case "heartbleedResult":
           wi.idle = true
@@ -385,6 +462,7 @@ function noteHost(
       retryAt: null,
       lastError: null,
       awaitProbeAfter: false,
+      awaitProbeWorker: null,
     }
     targets.set(host, target)
   } else if (details.hasSession && target.password == null && target.status !== "unsupported") {
@@ -492,6 +570,8 @@ function onAuthResult(
   attemptLog: AttemptLog,
   sessionArchive: SessionArchive,
   dnet: DnetApi,
+  workerPool: WorkerPool,
+  urgentProbeHosts: Set<string>,
 ): void {
   const target = targets.get(msg.target)
   if (!target) return
@@ -513,11 +593,19 @@ function onAuthResult(
     message: msg.message,
   })
 
-  if (msg.message === "notNeighbor") {
+  if (msg.message === NOT_NEIGHBOR_MESSAGE) {
     undoDispatchedGuess(target)
     target.status = "waiting_worker"
     target.lastError = "neighbor link lost"
     target.awaitProbeAfter = true
+    target.awaitProbeWorker = msg.workerHost
+    scheduleNotNeighborProbes(
+      msg.workerHost,
+      msg.target,
+      workerPool,
+      targets,
+      urgentProbeHosts,
+    )
     return
   }
 
@@ -629,14 +717,35 @@ function scheduleRetries(targets: Map<string, AuthTarget>, log: AttemptLog): voi
   }
 }
 
+function dispatchUrgentProbes(
+  ns: NS,
+  workerPool: WorkerPool,
+  urgentProbeHosts: Set<string>,
+  masterLog: MasterActionLog,
+  ctx: WorkerDispatchCtx,
+): void {
+  for (const host of [...urgentProbeHosts]) {
+    const wi = workerPool.workers.get(host)
+    if (!wi || wi.commandPort <= 0) {
+      urgentProbeHosts.delete(host)
+      continue
+    }
+    if (!wi.idle) continue
+    sendCommand(ns, wi, { type: "probe" }, masterLog, ctx)
+  }
+}
+
 function dispatchBackgroundProbes(
   ns: NS,
   workerPool: WorkerPool,
   mutationSync: MutationSync,
+  urgentProbeHosts: Set<string>,
   masterLog: MasterActionLog,
   ctx: WorkerDispatchCtx,
 ): void {
   for (const wi of workerPool.workers.values()) {
+    if (!wi.idle || wi.commandPort <= 0) continue
+    if (urgentProbeHosts.has(wi.host)) continue
     if (!mutationSync.workerNeedsProbe(wi, ns)) continue
     sendCommand(ns, wi, { type: "probe" }, masterLog, ctx)
   }

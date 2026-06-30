@@ -1,5 +1,8 @@
 /** Worker command and response message types. */
 
+/** Worker result message when a command target is not a direct neighbor. */
+export const NOT_NEIGHBOR_MESSAGE = "notNeighbor"
+
 export type WorkerCommandPayload =
   | { type: "probe" }
   | { type: "auth"; target: string; solverId: string; guess: string; detail: string | null }

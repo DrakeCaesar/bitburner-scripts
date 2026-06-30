@@ -48,7 +48,10 @@ export class MutationSync {
       wi.probeSyncMutation = -1
     }
     for (const target of targets.values()) {
-      if (target.awaitProbeAfter) target.awaitProbeAfter = false
+      if (target.awaitProbeAfter) {
+        target.awaitProbeAfter = false
+        target.awaitProbeWorker = null
+      }
     }
     onAck?.(ts)
   }

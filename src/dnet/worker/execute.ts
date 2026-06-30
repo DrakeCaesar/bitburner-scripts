@@ -2,7 +2,7 @@ import { NS } from "@ns"
 import type { WorkerDnetApi } from "./dnetApi.js"
 import type { FormulasServerDetails } from "./taskTiming.js"
 import { estimateAuthMs, estimateHeartbleedMs, estimateReallocMs } from "./taskTiming.js"
-import type { NeighborProbeStatus, WorkerCommand } from "./protocol.js"
+import { NOT_NEIGHBOR_MESSAGE, type NeighborProbeStatus, type WorkerCommand } from "./protocol.js"
 import { WORKER_SCRIPT } from "./constants.js"
 import { copyWorkerFiles } from "./deploy.js"
 import { measureHostRam, priorityMet } from "./realloc.js"
@@ -88,7 +88,7 @@ export async function runAuthCommand(
   }
 
   if (!isNeighbor(dnet, cmd.target)) {
-    writeResult({ success: false, message: "notNeighbor" })
+    writeResult({ success: false, message: NOT_NEIGHBOR_MESSAGE })
     return
   }
 
@@ -282,7 +282,7 @@ export async function runSpawnCommand(
       neighbors = []
     }
     if (!neighbors.includes(cmd.target)) {
-      message = "not neighbor"
+      message = NOT_NEIGHBOR_MESSAGE
     }
 
     if (!message && cmd.password) {
