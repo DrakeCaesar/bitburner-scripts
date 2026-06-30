@@ -72,3 +72,9 @@ export function finalizeArchiveContent(ns: NS, fileName: string, content: string
   }
   ns.write(destPath, content, "w")
 }
+
+export function copyLiteratureFromHost(ns: NS, fileName: string, sourceHost: string): boolean {
+  const base = flatFileName(fileName)
+  if (ns.fileExists(base, "home")) return true
+  return ns.scp(base, "home", sourceHost)
+}

@@ -1,5 +1,5 @@
 import { NS } from "@ns"
-import { finalizeArchiveContent, loadDarknetTextSet, syncDarknetTextFile } from "../files/archive.js"
+import { copyLiteratureFromHost, finalizeArchiveContent, loadDarknetTextSet, syncDarknetTextFile } from "../files/archive.js"
 import type { CacheOpenRecord } from "../files/types.js"
 import {
   applyPasswordIntel,
@@ -44,6 +44,11 @@ export function applyWorkerFileMessage(ns: NS, raw: unknown, ctx: WorkerFileInte
 
     if (row.type === "archive" && typeof row.file === "string" && typeof row.content === "string") {
       finalizeArchiveContent(ns, row.file, row.content)
+      return true
+    }
+
+    if (row.type === "litCopy" && typeof row.file === "string" && typeof row.sourceHost === "string") {
+      copyLiteratureFromHost(ns, row.file, row.sourceHost)
       return true
     }
 

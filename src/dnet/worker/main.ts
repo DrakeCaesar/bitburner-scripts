@@ -76,7 +76,7 @@ export async function main(ns: NS): Promise<void> {
 
   const replyPort = commandPort + 1
   const hostname = ns.getHostname()
-  const selfPassword = typeof ns.args[2] === "string" && ns.args[2].length > 0 ? ns.args[2] : undefined
+  const selfPassword = typeof ns.args[2] === "string" ? ns.args[2] : undefined
 
   const { lorePort } = await waitForControlConfig(ns, sessionId)
   await ensureSelfAuth(dnet, hostname, selfPassword)

@@ -119,20 +119,26 @@ export async function archiveNewTextFilesOnCurrentHost(
 
   for (const file of files) {
     const base = flatFileName(file)
-    if (state.archivedFiles.has(base)) continue
     const ext = base.split(".").pop()
     switch (ext) {
-      case "lit":
       case "txt":
+        if (state.archivedFiles.has(base)) continue
         if (!ns.fileExists(file)) break
         queueArchiveContent(ns, base, ns.read(file), replyPort, lorePort, neighbors)
         state.archivedFiles.add(base)
+        break
+      case "lit":
+        if (ns.fileExists(base, "home")) break
+        ns.writePort(
+          replyPort,
+          JSON.stringify({ type: "litCopy", file: base, sourceHost: hostname }),
+        )
         break
     }
   }
 }
 
-/** Open new caches first (they may drop files), then archive new .txt/.lit. */
+/** Open new caches first (they may drop files), then archive new .txt and copy .lit. */
 export async function scanLocalServerFiles(
   ns: NS,
   dnet: WorkerDnetApi,
