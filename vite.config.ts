@@ -17,12 +17,10 @@ function homeDownloadLocation(file: string, _server: string): string | null {
   return `data/${normalized}`
 }
 
-/** Rewrite /src/libraries/*.ts paths to /libraries/*.js for Bitburner home. */
+/** Rewrite /src/foo/*.ts paths to /foo/*.js for Bitburner home (strips vite cache-bust ?t= too). */
 function rewriteGameImportPaths(code: string): string {
-  let next = code.replace(/\/src\/libraries\//g, "/libraries/")
-  next = next.replace(/(\/libraries\/[^'"]+)\.ts(?=['"])/g, "$1.js")
-  // Vite dev may emit .ts and ?t= cache-bust query strings; home only has .js modules.
-  // next = next.replace(/(\/libraries\/[^'"]+?)\.ts(\?[^'"]*)?(?=['"])/g, "$1.js")
+  let next = code.replace(/\/src\//g, "/")
+  next = next.replace(/(\/[^'"]+?)\.ts(\?[^'"]*)?(?=['"])/g, "$1.js")
   return next
 }
 

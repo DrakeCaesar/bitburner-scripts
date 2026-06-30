@@ -1,0 +1,132 @@
+/** Shared types for the dnet v2 darknet auth crawler. */
+
+export type PasswordFormat = "numeric" | "alphabetic" | "alphanumeric" | "ASCII" | "unicode"
+
+export interface ServerDetails {
+  hasSession: boolean
+  isOnline: boolean
+  isConnectedToCurrentServer: boolean
+  isStationary: boolean
+  blockedRam: number
+  modelId: string
+  passwordFormat: PasswordFormat
+  passwordHint: string
+  passwordLength: number
+  data: string
+  depth: number
+  difficulty: number
+  requiredCharismaSkill: number
+  logTrafficInterval: number
+}
+
+export interface DnetApi {
+  probe(): string[]
+  authenticate(
+    host: string,
+    password: string,
+    additionalMsec?: number,
+  ): Promise<{ success: boolean; code?: number; message?: string; data?: unknown }>
+  heartbleed(host: string, options?: { peek?: boolean }): Promise<{ success: boolean; logs: string[] }>
+  connectToSession?(host: string, password: string): { success: boolean }
+  getServerDetails(host?: string): ServerDetails
+  labreport?(): Promise<{
+    success: boolean
+    coords: number[]
+    north: boolean
+    east: boolean
+    south: boolean
+    west: boolean
+  }>
+  memoryReallocation?(host?: string): Promise<{ success: boolean }>
+  getBlockedRam?(host?: string): number
+}
+
+export type TargetStatus =
+  | "discovered"
+  | "queued"
+  | "active"
+  | "waiting_worker"
+  | "solved"
+  | "exhausted"
+  | "retry_wait"
+  | "no_solver"
+  | "unsupported"
+  | "offline"
+
+export interface AuthTarget {
+  host: string
+  modelId: string
+  format: PasswordFormat
+  status: TargetStatus
+  password: string | null
+  solverId: string | null
+  solverState: unknown | null
+  /** Monotonic session counter; increments on each solver restart. */
+  session: number
+  workerHost: string | null
+  neighborWorkers: string[]
+  pendingGuess: string | null
+  pendingDetail: string | null
+  guessCount: number
+  retryAt: number | null
+  lastError: string | null
+}
+
+export type AttemptKind =
+  | "session_start"
+  | "session_end"
+  | "guess_dispatch"
+  | "guess_result"
+  | "heartbleed"
+  | "probe"
+  | "spawn"
+  | "note"
+
+export interface AttemptRecord {
+  id: number
+  at: number
+  host: string
+  session: number
+  kind: AttemptKind
+  solverId: string
+  modelId: string
+  workerHost?: string
+  guess?: string
+  detail?: string
+  success?: boolean
+  feedback?: string
+  message?: string
+  heartbleedLogs?: readonly string[]
+  solverState?: unknown
+  note?: string
+}
+
+export interface WorkerSnapshot {
+  host: string
+  pid: number
+  commandPort: number
+  idle: boolean
+  neighbors: string[]
+  lastCommand: string | null
+  lastReply: string | null
+  freeRam: number
+  blockedRam: number
+}
+
+export interface CrawlSnapshot {
+  sessionId: number
+  targets: readonly AuthTarget[]
+  attempts: readonly AttemptRecord[]
+  workers: readonly WorkerSnapshot[]
+  summary: {
+    discovered: number
+    active: number
+    solved: number
+    exhausted: number
+    retryWait: number
+    noSolver: number
+    unsupported: number
+  }
+}
+
+export type ProgressHandler = (snapshot: CrawlSnapshot) => void | Promise<void>
