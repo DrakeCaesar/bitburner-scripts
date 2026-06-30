@@ -2,11 +2,11 @@ import { NS } from "@ns"
 import {
   CONTROL_PORT,
   WORKER_SCRIPT,
-  WORKER_SCP_FILES,
   type ControlMessage,
 } from "./constants.js"
 import type { WorkerDnetApi } from "./dnetApi.js"
 import type { WorkerCommand } from "./protocol.js"
+import { copyWorkerFiles } from "./deploy.js"
 import { executeCommand, ensureSelfAuth, runProbe } from "./execute.js"
 import { runReallocUntil } from "./realloc.js"
 
@@ -74,22 +74,22 @@ export async function main(ns: NS): Promise<void> {
       let success = false
       try {
         await runReallocUntil(ns, dnet, cmd.target, 1)
-        for (const file of WORKER_SCP_FILES) {
-          if (!ns.fileExists(file, "home")) continue
-          await ns.scp(file, cmd.target, "home")
-        }
-        const childRam = ns.getScriptRam(WORKER_SCRIPT, cmd.target)
-        const free = ns.getServerMaxRam(cmd.target) - ns.getServerUsedRam(cmd.target)
-        if (childRam <= free) {
-          childPid = ns.exec(
-            WORKER_SCRIPT,
-            cmd.target,
-            1,
-            activeSessionId,
-            cmd.port,
-            cmd.password ?? "",
-          )
-          success = childPid > 0
+        if (!(await copyWorkerFiles(ns, cmd.target, hostname))) {
+          success = false
+        } else {
+          const childRam = ns.getScriptRam(WORKER_SCRIPT, cmd.target)
+          const free = ns.getServerMaxRam(cmd.target) - ns.getServerUsedRam(cmd.target)
+          if (childRam <= free) {
+            childPid = ns.exec(
+              WORKER_SCRIPT,
+              cmd.target,
+              1,
+              activeSessionId,
+              cmd.port,
+              cmd.password ?? "",
+            )
+            success = childPid > 0
+          }
         }
       } catch {
         success = false

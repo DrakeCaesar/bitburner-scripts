@@ -10,6 +10,8 @@ export const WORKER_SCP_FILES = [
   "dnet/worker/dnetApi.js",
   "dnet/worker/protocol.js",
   "dnet/worker/execute.js",
+  "dnet/worker/realloc.js",
+  "dnet/worker/deploy.js",
   "dnet/worker/main.js",
 ]
 

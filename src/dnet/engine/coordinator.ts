@@ -6,7 +6,6 @@ import {
   LABYRINTH_MODEL,
   LOOP_INTERVAL_MS,
   WORKER_SCRIPT,
-  WORKER_SCP_FILES,
   WORKER_TIMEOUT_MS,
 } from "../constants.js"
 import { getServerDetails, tryConnect } from "../api/server.js"
@@ -34,6 +33,7 @@ import {
   readHostRam,
   reallocCommandMs,
 } from "./memoryPlan.js"
+import { copyWorkerFiles } from "../worker/deploy.js"
 
 const GUESS_MS = 800
 const PROBE_MS = 400
@@ -67,7 +67,10 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
   ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId }))
 
   await authDarkweb(dnet)
-  await scpWorkerFiles(ns)
+  if (!(await copyWorkerFiles(ns, DARKWEB, "home"))) {
+    options.onError?.("Failed to copy worker files to darkweb")
+    return
+  }
 
   const rootPort = portPool.allocate()
   if (rootPort <= 0) {
@@ -110,12 +113,6 @@ async function authDarkweb(dnet: DnetApi): Promise<void> {
     /* ignore */
   }
   tryConnect(dnet, DARKWEB, "")
-}
-
-async function scpWorkerFiles(ns: NS): Promise<void> {
-  for (const file of WORKER_SCP_FILES) {
-    if (ns.fileExists(file, "home")) await ns.scp(file, DARKWEB, "home")
-  }
 }
 
 function buildSnapshot(
