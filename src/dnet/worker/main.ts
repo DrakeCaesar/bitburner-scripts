@@ -7,7 +7,7 @@ import {
 import type { WorkerDnetApi } from "./dnetApi.js"
 import type { WorkerCommand } from "./protocol.js"
 import { copyWorkerFiles } from "./deploy.js"
-import { executeCommand, ensureSelfAuth, runProbe } from "./execute.js"
+import { ensureTargetAuth, executeCommand, ensureSelfAuth, runProbe } from "./execute.js"
 import { runReallocUntil } from "./realloc.js"
 
 export async function main(ns: NS): Promise<void> {
@@ -74,6 +74,7 @@ export async function main(ns: NS): Promise<void> {
       let success = false
       try {
         await runReallocUntil(ns, dnet, cmd.target, 1)
+        await ensureTargetAuth(dnet, cmd.target, cmd.password)
         if (!(await copyWorkerFiles(ns, cmd.target, hostname))) {
           success = false
         } else {

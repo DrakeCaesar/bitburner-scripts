@@ -15,12 +15,33 @@ export type WorkerCommandPayload =
 
 export type WorkerCommand = WorkerCommandPayload & CommandMeta
 
+export interface NeighborProbeStatus {
+  host: string
+  /** getServerDetails succeeded for this host. */
+  detailsKnown: boolean
+  isOnline: boolean
+  /** Direct link from the probing worker to this host. */
+  isConnected: boolean
+  /** Session for the probing worker PID on this host (only meaningful when connected). */
+  hasSession: boolean
+  workerRunning: boolean
+  /** ns.isRunning succeeded (only checked when connected and hasSession). */
+  workerKnown: boolean
+}
+
 export type WorkerResponse =
   | { type: "ready"; workerHost: string; pid: number }
   | { type: "executing"; workerHost: string; commandType: string; deadlineAt: number }
   | { type: "guessResult"; target: string; solverId: string; workerHost: string; guess: string; success: boolean; feedback?: string; message?: string; code?: number }
   | { type: "heartbleedResult"; target: string; solverId: string; logEntries: string[] }
-  | { type: "probeResult"; workerHost: string; neighbors: string[]; freeRam: number; blockedRam: number }
+  | {
+      type: "probeResult"
+      workerHost: string
+      neighbors: string[]
+      neighborStatus: readonly NeighborProbeStatus[]
+      freeRam: number
+      blockedRam: number
+    }
   | { type: "spawnResult"; workerHost: string; target: string; success: boolean; childPid: number }
   | { type: "reallocResult"; workerHost: string; priority: 1 | 2 | 3; freeRam: number; blockedRam: number }
 
@@ -70,6 +91,7 @@ export function parseWorkerResponse(raw: unknown): WorkerResponse | null {
           type: "probeResult",
           workerHost: row.workerHost,
           neighbors: Array.isArray(row.neighbors) ? row.neighbors.filter((n): n is string => typeof n === "string") : [],
+          neighborStatus: parseNeighborProbeStatus(row.neighborStatus),
           freeRam: typeof row.freeRam === "number" ? row.freeRam : 0,
           blockedRam: typeof row.blockedRam === "number" ? row.blockedRam : 0,
         }
@@ -100,6 +122,26 @@ export function parseWorkerResponse(raw: unknown): WorkerResponse | null {
   } catch {
     return null
   }
+}
+
+function parseNeighborProbeStatus(raw: unknown): NeighborProbeStatus[] {
+  if (!Array.isArray(raw)) return []
+  const out: NeighborProbeStatus[] = []
+  for (const row of raw) {
+    if (typeof row !== "object" || row === null) continue
+    const rec = row as Record<string, unknown>
+    if (typeof rec.host !== "string") continue
+    out.push({
+      host: rec.host,
+      detailsKnown: rec.detailsKnown === true,
+      isOnline: rec.isOnline === true,
+      isConnected: rec.isConnected === true,
+      hasSession: rec.hasSession === true,
+      workerRunning: rec.workerRunning === true,
+      workerKnown: rec.workerKnown === true,
+    })
+  }
+  return out
 }
 
 export function formatCommand(cmd: WorkerCommandPayload): string {

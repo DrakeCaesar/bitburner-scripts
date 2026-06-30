@@ -10,8 +10,10 @@ export interface WorkerDnetApi {
   heartbleed(host: string, options?: { peek?: boolean }): Promise<{ success: boolean; logs: string[] }>
   getServerDetails(host?: string): {
     hasSession: boolean
+    isOnline: boolean
     isConnectedToCurrentServer: boolean
   }
+  connectToSession?(host: string, password: string): { success: boolean }
   getBlockedRam?(host?: string): number
   memoryReallocation?(host?: string): Promise<{ success: boolean }>
 }

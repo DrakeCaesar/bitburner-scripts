@@ -93,11 +93,11 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
     drainReplies(ns, workerPool, portPool, targets, passwords, attemptLog, dnet, pendingSpawns)
     processQueuedTargets(targets, attemptLog, dnet, passwords)
     scheduleRetries(targets, attemptLog)
-    spawnWorkers(ns, sessionId, workerPool, portPool, targets, pendingSpawns, dnet)
+    pruneWorkers(ns, workerPool, portPool, targets, pendingSpawns)
+    spawnWorkers(ns, sessionId, workerPool, portPool, targets, pendingSpawns, dnet, passwords)
     dispatchReallocs(ns, dnet, workerPool)
     dispatchProbes(ns, workerPool)
     dispatchGuesses(ns, workerPool, targets, attemptLog, dnet)
-    pruneWorkers(ns, workerPool, portPool, targets)
 
     await options.onProgress(buildSnapshot(sessionId, targets, attemptLog, workerPool))
     await ns.sleep(LOOP_INTERVAL_MS)
@@ -189,15 +189,13 @@ function drainReplies(
           for (const neighbor of msg.neighbors) {
             noteHost(targets, dnet, neighbor, msg.workerHost)
           }
-          attemptLog.append({
-            host: wi.host,
-            session: 0,
-            kind: "probe",
-            solverId: "-",
-            modelId: "-",
-            workerHost: wi.host,
-            note: `${msg.neighbors.length} neighbors`,
-          })
+          reconcileProbeStatuses(
+            msg,
+            targets,
+            passwords,
+            dnet,
+            attemptLog,
+          )
           break
         case "spawnResult":
           wi.idle = true
@@ -290,6 +288,14 @@ function noteHost(
     targets.set(host, target)
   } else if (details.hasSession && target.password == null && target.status !== "unsupported") {
     target.status = "solved"
+  } else if (
+    details.isConnectedToCurrentServer &&
+    !details.hasSession &&
+    target.password == null &&
+    target.status === "solved"
+  ) {
+    target.status = "queued"
+    target.solverState = null
   }
 
   if (!target.neighborWorkers.includes(viaWorker)) {
@@ -610,17 +616,24 @@ function spawnWorkers(
   targets: Map<string, AuthTarget>,
   pendingSpawns: Set<string>,
   dnet: DnetApi,
+  passwords: Map<string, string>,
 ): void {
   for (const target of targets.values()) {
     if (target.host === DARKWEB) continue
-    if (workerPool.workers.has(target.host)) continue
+    if (workerPool.workers.has(target.host)) {
+      const wi = workerPool.workers.get(target.host)!
+      if (isWorkerAlive(ns, wi)) continue
+      dropWorker(ns, target.host, workerPool, portPool, pendingSpawns)
+    }
     if (pendingSpawns.has(target.host)) continue
 
     const details = getServerDetails(dnet, target.host)
     if (!details?.isOnline) continue
 
-    const authed = target.password != null || details.hasSession
+    const knownPassword = target.password ?? passwords.get(target.host) ?? null
+    const authed = knownPassword != null || details.hasSession
     if (!authed) continue
+    if (knownPassword != null) tryConnect(dnet, target.host, knownPassword)
 
     const parent = [...workerPool.workers.values()].find(
       (w) => w.idle && w.neighbors.includes(target.host) && w.commandPort > 0,
@@ -660,17 +673,110 @@ function sendCommand(ns: NS, wi: ManagedWorker, payload: WorkerCommandPayload, e
   ns.writePort(wi.commandPort, JSON.stringify({ ...payload, expectedMs, deadlineAt: wi.busyUntil }))
 }
 
+function isWorkerAlive(ns: NS, wi: ManagedWorker): boolean {
+  // PID is global; host-based isRunning from home is unreliable on darknet hosts.
+  if (wi.pid <= 0) return true
+  return ns.isRunning(wi.pid)
+}
+
+function dropWorker(
+  ns: NS,
+  host: string,
+  workerPool: WorkerPool,
+  portPool: PortPool,
+  pendingSpawns: Set<string>,
+): void {
+  pendingSpawns.delete(host)
+  const wi = workerPool.workers.get(host)
+  if (!wi) return
+  if (wi.commandPort > 0) portPool.release(wi.commandPort)
+  workerPool.remove(host)
+}
+
+function reconcileProbeStatuses(
+  msg: Extract<WorkerResponse, { type: "probeResult" }>,
+  targets: Map<string, AuthTarget>,
+  passwords: Map<string, string>,
+  dnet: DnetApi,
+  attemptLog: AttemptLog,
+): void {
+  let authedNoWorker = 0
+  let unauthed = 0
+  let skipped = 0
+
+  for (const st of msg.neighborStatus) {
+    if (!st.detailsKnown) {
+      skipped++
+      continue
+    }
+
+    const target = targets.get(st.host)
+    const knownPassword = target?.password ?? passwords.get(st.host) ?? null
+
+    if (!st.isOnline) {
+      if (target) target.status = "offline"
+      continue
+    }
+
+    // Not a direct neighbor of the probing worker right now — auth/worker flags are not trustworthy.
+    if (!st.isConnected) {
+      skipped++
+      continue
+    }
+
+    if (knownPassword != null) {
+      if (!st.hasSession) tryConnect(dnet, st.host, knownPassword)
+      if (target && target.status !== "unsupported" && target.status !== "offline") {
+        target.status = "solved"
+        target.password = knownPassword
+      }
+      if (st.workerKnown && !st.workerRunning) authedNoWorker++
+      continue
+    }
+
+    if (st.hasSession) {
+      if (target && target.status !== "unsupported" && target.status !== "offline") {
+        target.status = "solved"
+      }
+      if (st.workerKnown && !st.workerRunning) authedNoWorker++
+      continue
+    }
+
+    unauthed++
+    if (target?.status === "solved" && target.password == null && !passwords.has(st.host)) {
+      target.status = "queued"
+      target.solverState = null
+    }
+  }
+
+  attemptLog.append({
+    host: msg.workerHost,
+    session: 0,
+    kind: "probe",
+    solverId: "-",
+    modelId: "-",
+    workerHost: msg.workerHost,
+    note:
+      `${msg.neighbors.length} neighbors, ${unauthed} unauthed, ${authedNoWorker} authed/no worker` +
+      (skipped > 0 ? `, ${skipped} skipped (unknown/unreachable)` : ""),
+  })
+}
+
 function pruneWorkers(
   ns: NS,
   workerPool: WorkerPool,
   portPool: PortPool,
   targets: Map<string, AuthTarget>,
+  pendingSpawns: Set<string>,
 ): void {
   const now = Date.now()
   for (const [host, wi] of workerPool.workers) {
     if (wi.commandPort <= 0) {
-      portPool.release(wi.commandPort)
-      workerPool.remove(host)
+      dropWorker(ns, host, workerPool, portPool, pendingSpawns)
+      continue
+    }
+    if (!isWorkerAlive(ns, wi)) {
+      dropWorker(ns, host, workerPool, portPool, pendingSpawns)
       continue
     }
     if (!wi.idle && wi.busyUntil > 0 && now > wi.busyUntil + WORKER_TIMEOUT_MS) {

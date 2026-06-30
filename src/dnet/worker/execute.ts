@@ -1,6 +1,6 @@
 import { NS } from "@ns"
 import type { WorkerDnetApi } from "./dnetApi.js"
-import type { WorkerCommand } from "./protocol.js"
+import type { NeighborProbeStatus, WorkerCommand } from "./protocol.js"
 import { WORKER_SCRIPT } from "./constants.js"
 
 function normalizeFeedback(data: unknown): string | undefined {
@@ -171,6 +171,71 @@ export async function executeCommand(
   }
 }
 
+function probeNeighbor(
+  ns: NS,
+  dnet: WorkerDnetApi,
+  host: string,
+): NeighborProbeStatus {
+  let detailsKnown = false
+  let isOnline = false
+  let isConnected = false
+  let hasSession = false
+  try {
+    const details = dnet.getServerDetails(host)
+    detailsKnown = true
+    isOnline = details.isOnline
+    isConnected = details.isConnectedToCurrentServer
+    hasSession = details.hasSession
+  } catch {
+    return {
+      host,
+      detailsKnown: false,
+      isOnline: false,
+      isConnected: false,
+      hasSession: false,
+      workerRunning: false,
+      workerKnown: false,
+    }
+  }
+
+  let workerRunning = false
+  let workerKnown = false
+  // isRunning on a neighbor only works when this worker can reach it and has a session there.
+  if (isOnline && isConnected && hasSession) {
+    try {
+      workerRunning = ns.isRunning(WORKER_SCRIPT, host)
+      workerKnown = true
+    } catch {
+      workerKnown = false
+    }
+  }
+
+  return {
+    host,
+    detailsKnown,
+    isOnline,
+    isConnected,
+    hasSession,
+    workerRunning,
+    workerKnown,
+  }
+}
+
+export async function ensureTargetAuth(
+  dnet: WorkerDnetApi,
+  target: string,
+  password: string | undefined,
+): Promise<void> {
+  if (!password) return
+  try {
+    if (dnet.getServerDetails(target).hasSession) return
+    if (dnet.connectToSession?.(target, password).success) return
+    await dnet.authenticate(target, password)
+  } catch {
+    /* ignore */
+  }
+}
+
 export async function runProbe(
   ns: NS,
   dnet: WorkerDnetApi,
@@ -183,6 +248,7 @@ export async function runProbe(
   } catch {
     neighbors = []
   }
+  const neighborStatus = neighbors.map((host) => probeNeighbor(ns, dnet, host))
   const workerRam = ns.getScriptRam(WORKER_SCRIPT, workerHost)
   const totalFree = ns.getServerMaxRam(workerHost) - ns.getServerUsedRam(workerHost)
   const blockedRam = dnet.getBlockedRam?.(workerHost) ?? 0
@@ -192,6 +258,7 @@ export async function runProbe(
       type: "probeResult",
       workerHost,
       neighbors,
+      neighborStatus,
       freeRam: totalFree - workerRam,
       blockedRam,
     }),
