@@ -39,20 +39,16 @@ const TARGET_COLUMNS = [
 
 const ATTEMPT_COLUMNS = [
   col("Id", "right", 5),
-  col("When", "right", 8),
+  col("Start", "right", 8),
+  col("End", "right", 8),
+  col("Dur", "right", 7),
   col("Host", "left", W.host),
   col("Sess", "right", 4),
   col("Kind", "left", 14),
-  col("Guess", "left", 12),
+  col("Guess", "left", 10),
   col("OK", "center", 3),
-  col("Detail", "left", 14),
-  col("Feedback", "left", 18),
-]
-
-const ACTION_COLUMNS = [
-  col("Time", "right", 8),
-  col("Action", "left", 14),
-  col("Detail", "left", 48),
+  col("Detail", "left", 12),
+  col("Feedback", "left", 14),
 ]
 
 const WORKER_COLUMNS = [
@@ -135,11 +131,100 @@ function clock(ts: number): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
-function ago(ts: number): string {
-  const s = Math.floor((Date.now() - ts) / 1000)
-  if (s < 60) return `${s}s`
-  if (s < 3600) return `${Math.floor(s / 60)}m`
-  return `${Math.floor(s / 3600)}h`
+interface OpTiming {
+  startAt: number
+  endAt: number | null
+  ongoing: boolean
+}
+
+type TimelineEntry =
+  | { source: "attempt"; at: number; record: AttemptRecord }
+  | { source: "action"; at: number; record: MasterActionRecord }
+
+function buildTimeline(
+  attempts: readonly AttemptRecord[],
+  actions: readonly MasterActionRecord[],
+): TimelineEntry[] {
+  const rows: TimelineEntry[] = [
+    ...attempts.map((record) => ({ source: "attempt" as const, at: record.at, record })),
+    ...actions.map((record) => ({ source: "action" as const, at: record.at, record })),
+  ]
+  rows.sort((a, b) => a.at - b.at || timelineSortKey(a) - timelineSortKey(b))
+  return rows
+}
+
+function timelineSortKey(entry: TimelineEntry): number {
+  return entry.source === "attempt" ? entry.record.id : entry.record.id + 1_000_000
+}
+
+function indexAttemptTimings(attempts: readonly AttemptRecord[]): Map<number, OpTiming> {
+  const timings = new Map<number, OpTiming>()
+  const sessionOpen = new Map<string, { startId: number; startAt: number }>()
+  const guessOpen = new Map<string, { dispatchId: number; startAt: number }>()
+
+  for (const a of attempts) {
+    const sk = `${a.host}#${a.session}`
+
+    if (a.kind === "session_start") {
+      sessionOpen.set(sk, { startId: a.id, startAt: a.at })
+      timings.set(a.id, { startAt: a.at, endAt: null, ongoing: true })
+      continue
+    }
+
+    if (a.kind === "session_end") {
+      const open = sessionOpen.get(sk)
+      if (open) {
+        timings.set(open.startId, { startAt: open.startAt, endAt: a.at, ongoing: false })
+        sessionOpen.delete(sk)
+      }
+      timings.set(a.id, { startAt: open?.startAt ?? a.at, endAt: a.at, ongoing: false })
+      continue
+    }
+
+    if (a.kind === "guess_dispatch" && a.guess != null) {
+      const gk = `${sk}#${a.guess}`
+      guessOpen.set(gk, { dispatchId: a.id, startAt: a.at })
+      timings.set(a.id, { startAt: a.at, endAt: null, ongoing: true })
+      continue
+    }
+
+    if (a.kind === "guess_result" && a.guess != null) {
+      const gk = `${sk}#${a.guess}`
+      const open = guessOpen.get(gk)
+      if (open) {
+        timings.set(open.dispatchId, { startAt: open.startAt, endAt: a.at, ongoing: false })
+        guessOpen.delete(gk)
+      }
+      timings.set(a.id, { startAt: open?.startAt ?? a.at, endAt: a.at, ongoing: false })
+      continue
+    }
+
+    timings.set(a.id, { startAt: a.at, endAt: a.at, ongoing: false })
+  }
+
+  return timings
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`
+  const totalSec = Math.floor(ms / 1000)
+  if (totalSec < 60) return `${totalSec}s`
+  const min = Math.floor(totalSec / 60)
+  const sec = totalSec % 60
+  if (min < 60) return sec > 0 ? `${min}m${sec}s` : `${min}m`
+  const hr = Math.floor(min / 60)
+  const remMin = min % 60
+  return remMin > 0 ? `${hr}h${remMin}m` : `${hr}h`
+}
+
+function formatTiming(t: OpTiming, now: number): { start: string; end: string; dur: string } {
+  const start = clock(t.startAt)
+  if (t.ongoing || t.endAt == null) {
+    return { start, end: "...", dur: `${formatDuration(now - t.startAt)}+` }
+  }
+  const end = clock(t.endAt)
+  const dur = formatDuration(Math.max(0, t.endAt - t.startAt))
+  return { start, end, dur: t.endAt === t.startAt ? "-" : dur }
 }
 
 function truncate(s: string | undefined, max: number): string {
@@ -173,11 +258,6 @@ export async function renderDashboard(
         `failed ${failed.length}`,
     )
     .text(formatMutationLine(snap.mutation))
-    .table({
-      title: "Master actions (newest first)",
-      columns: ACTION_COLUMNS,
-      rows: [...snap.actions].reverse().map(actionRow),
-    })
 
   const sortedTargets = [...snap.targets].sort((a, b) => a.host.localeCompare(b.host))
   log.tab("targets").table({
@@ -186,11 +266,13 @@ export async function renderDashboard(
     rows: sortedTargets.map(targetRow),
   })
 
-  const recentAttempts = [...snap.attempts].slice(-100).reverse()
+  const timeline = buildTimeline(snap.attempts, snap.actions)
+  const attemptTimings = indexAttemptTimings(snap.attempts)
+  const recentTimeline = timeline.slice(-100).reverse()
   log.tab("attempts").table({
-    title: `Attempt log (newest first, showing ${recentAttempts.length} of ${snap.attempts.length})`,
+    title: `Activity log (newest first, ${recentTimeline.length} of ${timeline.length})`,
     columns: ATTEMPT_COLUMNS,
-    rows: recentAttempts.map(attemptRow),
+    rows: recentTimeline.map((entry) => timelineRow(entry, attemptTimings)),
   })
 
   log.tab("workers").table({
@@ -292,8 +374,53 @@ function failedEventRow(e: SessionEvent): string[] {
   ]
 }
 
-function actionRow(a: MasterActionRecord): string[] {
-  return [clock(a.at), a.action, truncate(a.detail, 48)]
+function actionRow(a: MasterActionRecord, now: number): string[] {
+  const timing = formatTiming({ startAt: a.at, endAt: a.at, ongoing: false }, now)
+  return [
+    String(a.id),
+    timing.start,
+    timing.end,
+    timing.dur,
+    "-",
+    "-",
+    a.action,
+    "-",
+    "-",
+    truncate(a.detail, 12),
+    "-",
+  ]
+}
+
+function timelineRow(entry: TimelineEntry, timings: Map<number, OpTiming>): string[] {
+  const now = Date.now()
+  if (entry.source === "action") {
+    return actionRow(entry.record, now)
+  }
+  return attemptRow(entry.record, timings, now)
+}
+
+function attemptRow(
+  a: AttemptRecord,
+  timings: Map<number, OpTiming>,
+  now: number,
+): string[] {
+  const timing = formatTiming(
+    timings.get(a.id) ?? { startAt: a.at, endAt: a.at, ongoing: false },
+    now,
+  )
+  return [
+    String(a.id),
+    timing.start,
+    timing.end,
+    timing.dur,
+    a.host,
+    String(a.session),
+    a.kind,
+    truncate(a.guess, 10),
+    a.success === true ? "Y" : a.success === false ? "N" : "-",
+    truncate(a.detail ?? a.note, 12),
+    truncate(a.feedback ?? a.message, 14),
+  ]
 }
 
 function targetRow(t: AuthTarget): string[] {
@@ -306,20 +433,6 @@ function targetRow(t: AuthTarget): string[] {
     t.solverId ?? "-",
     t.workerHost ?? "-",
     t.password ?? "-",
-  ]
-}
-
-function attemptRow(a: AttemptRecord): string[] {
-  return [
-    String(a.id),
-    ago(a.at),
-    a.host,
-    String(a.session),
-    a.kind,
-    truncate(a.guess, 12),
-    a.success === true ? "Y" : a.success === false ? "N" : "-",
-    truncate(a.detail ?? a.note, 14),
-    truncate(a.feedback ?? a.message, 18),
   ]
 }
 
