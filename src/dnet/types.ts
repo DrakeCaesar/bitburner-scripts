@@ -128,6 +128,8 @@ export interface MutationPortSnapshot {
   acked: number
   pending: number | null
   stale: boolean
+  /** Port ts advanced past the in-flight pending sync generation. */
+  pendingBehindPort: boolean
   /** Real-world time when the coordinator read the port this loop. */
   loopAt: number
 }

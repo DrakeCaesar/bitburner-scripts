@@ -1,6 +1,6 @@
 import { NS } from "@ns"
 import { MUTATION_PORT, MUTATION_WATCHER_SCRIPT } from "../constants.js"
-import type { WorkerPool } from "../pool/workers.js"
+import type { ManagedWorker, WorkerPool } from "../pool/workers.js"
 
 /** Tracks darknet mutation generations and full-network probe sync. */
 export class MutationSync {
@@ -51,17 +51,25 @@ export class MutationSync {
     if (wi) wi.probeSyncMutation = this.pendingMutationTs
   }
 
-  tryCompleteSync(workerPool: WorkerPool): boolean {
+  /** Workers with no live script yet (spawn placeholder) are excluded from sync rounds. */
+  workerMustSync(wi: ManagedWorker): boolean {
+    return wi.commandPort > 0 && wi.pid > 0
+  }
+
+  tryCompleteSync(ns: NS, workerPool: WorkerPool): boolean {
     const pending = this.pendingMutationTs
     if (pending === null) return false
-    if (workerPool.workers.size === 0) return false
 
+    let syncable = 0
     for (const wi of workerPool.workers.values()) {
-      if (wi.commandPort <= 0) continue
+      if (!this.workerMustSync(wi)) continue
+      syncable++
       if (wi.probeSyncMutation !== pending) return false
     }
+    if (syncable === 0) return false
 
-    this.ackedMutationTs = pending
+    const latest = this.peekMutationTs(ns)
+    this.ackedMutationTs = latest != null && latest > pending ? latest : pending
     this.pendingMutationTs = null
     return true
   }
@@ -69,9 +77,8 @@ export class MutationSync {
   allWorkersSynced(workerPool: WorkerPool): boolean {
     const pending = this.pendingMutationTs
     if (pending === null) return true
-    if (workerPool.workers.size === 0) return false
     for (const wi of workerPool.workers.values()) {
-      if (wi.commandPort <= 0) continue
+      if (!this.workerMustSync(wi)) continue
       if (wi.probeSyncMutation !== pending) return false
     }
     return true

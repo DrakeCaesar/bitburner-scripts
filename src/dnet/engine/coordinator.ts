@@ -114,7 +114,8 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       mutationSync,
       masterLog,
     )
-    if (mutationSync.tryCompleteSync(workerPool)) {
+    pruneWorkers(ns, workerPool, portPool, targets, pendingSpawns, masterLog)
+    if (mutationSync.tryCompleteSync(ns, workerPool)) {
       masterLog.append("sync", `complete mutation ${mutationSync.acked}`)
     }
 
@@ -138,7 +139,6 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
 
     processQueuedTargets(targets, attemptLog, dnet, passwords)
     scheduleRetries(targets, attemptLog)
-    pruneWorkers(ns, workerPool, portPool, targets, pendingSpawns, masterLog)
     spawnWorkers(
       ns,
       sessionId,
@@ -194,6 +194,10 @@ function buildSnapshot(
       acked: mutationSync.acked,
       pending: mutationSync.pending,
       stale: mutationPort.ts !== null && mutationPort.ts > mutationSync.acked,
+      pendingBehindPort:
+        mutationSync.pending != null &&
+        mutationPort.ts != null &&
+        mutationPort.ts > mutationSync.pending,
       loopAt,
     },
     workers: [...workerPool.workers.values()].map(
@@ -591,6 +595,7 @@ function dispatchSyncProbes(
 
   for (const wi of workerPool.workers.values()) {
     if (wi.commandPort <= 0) continue
+    if (!mutationSync.workerMustSync(wi)) continue
     if (wi.probeSyncMutation === pending) continue
     if (!wi.idle) continue
     sendCommand(ns, wi, { type: "probe" }, PROBE_MS, masterLog)
@@ -899,7 +904,11 @@ function pruneWorkers(
       dropWorker(ns, host, workerPool, portPool, pendingSpawns, masterLog, "no port")
       continue
     }
-    if (!isWorkerAlive(ns, wi)) {
+    if (wi.pid <= 0 && now - wi.lastActivityAt > WORKER_TIMEOUT_MS) {
+      dropWorker(ns, host, workerPool, portPool, pendingSpawns, masterLog, "spawn timeout")
+      continue
+    }
+    if (wi.pid > 0 && !isWorkerAlive(ns, wi)) {
       dropWorker(ns, host, workerPool, portPool, pendingSpawns, masterLog, "dead")
       continue
     }
