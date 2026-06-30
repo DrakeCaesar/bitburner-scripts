@@ -55,6 +55,12 @@ import {
 import { copyWorkerFiles } from "../worker/deploy.js"
 import { ensureMutationWatcher, MutationSync } from "./mutationSync.js"
 import { clearDnetGlobalPorts, clearWorkerPortPair } from "./ports.js"
+import {
+  availableAuthWorkers,
+  availableSpawnParents,
+  pickLeastBlockingWorker,
+  sortByWorkerScarcity,
+} from "./workerAssign.js"
 
 function cloneState<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -850,6 +856,9 @@ function dispatchP1Reallocs(
 ): void {
   if (!dnet.memoryReallocation || !dnet.getBlockedRam) return
 
+  type Candidate = { target: AuthTarget; existingPlan: SpawnPlan | undefined }
+  const candidates: Candidate[] = []
+
   for (const target of targets.values()) {
     if (target.host === DARKWEB) continue
     if (workerPool.workers.has(target.host)) {
@@ -869,12 +878,32 @@ function dispatchP1Reallocs(
     if (canSpawnWorker(ns, dnet, target.host, ram)) continue
     if (!needsRealloc(ns, dnet, target.host, 1, ram)) continue
 
-    const existingPlan = spawnPlans.get(target.host)
+    candidates.push({ target, existingPlan: spawnPlans.get(target.host) })
+  }
+
+  const spawnParentsFor = (host: string) => availableSpawnParents(workerPool, host, new Set())
+  const sorted = sortByWorkerScarcity(
+    candidates,
+    ({ target, existingPlan }) => {
+      const pinned = existingPlan ? workerPool.workers.get(existingPlan.parentHost) : null
+      if (pinned?.idle && pinned.commandPort > 0) return 1
+      return spawnParentsFor(target.host).length
+    },
+    ({ target }) => target.host,
+  )
+  const batchKeys = sorted.map(({ target }) => target.host)
+
+  for (const { target, existingPlan } of sorted) {
+    const knownPassword = target.password ?? passwords.get(target.host) ?? null
+    const pinned = existingPlan ? workerPool.workers.get(existingPlan.parentHost) : null
     const parent =
-      existingPlan != null
-        ? workerPool.workers.get(existingPlan.parentHost)
-        : [...workerPool.workers.values()].find(
-            (w) => w.idle && w.neighbors.includes(target.host) && w.commandPort > 0,
+      pinned?.idle && pinned.commandPort > 0
+        ? pinned
+        : pickLeastBlockingWorker(
+            target.host,
+            spawnParentsFor(target.host),
+            batchKeys,
+            spawnParentsFor,
           )
     if (!parent?.idle || parent.commandPort <= 0) continue
 
@@ -912,6 +941,9 @@ function dispatchGuesses(
   masterLog: MasterActionLog,
   ctx: WorkerDispatchCtx,
 ): void {
+  type Candidate = { target: AuthTarget; details: ServerDetails }
+  const candidates: Candidate[] = []
+
   for (const target of targets.values()) {
     if (target.status !== "active" && target.status !== "waiting_worker") continue
     if (target.pendingGuess != null) continue
@@ -926,7 +958,30 @@ function dispatchGuesses(
     const solver = lookupSolver(details)
     if (!solver || target.solverState == null) continue
 
-    const wi = workerPool.neighborForTarget(target.host, target.neighborWorkers)
+    candidates.push({ target, details })
+  }
+
+  const authWorkersFor = (host: string) => {
+    const target = targets.get(host)
+    if (!target) return []
+    return availableAuthWorkers(workerPool, target.neighborWorkers, new Set())
+  }
+
+  const sorted = sortByWorkerScarcity(
+    candidates,
+    ({ target }) => authWorkersFor(target.host).length,
+    ({ target }) => target.host,
+  )
+  const batchKeys = sorted.map(({ target }) => target.host)
+
+  for (const { target, details } of sorted) {
+    const solver = lookupSolver(details)!
+    const wi = pickLeastBlockingWorker(
+      target.host,
+      authWorkersFor(target.host),
+      batchKeys,
+      authWorkersFor,
+    )
     if (!wi) {
       target.status = "waiting_worker"
       continue
@@ -1008,10 +1063,20 @@ function spawnWorkers(
 ): void {
   for (const target of targets.values()) {
     if (target.host === DARKWEB) continue
+    if (!workerPool.workers.has(target.host)) continue
+    const wi = workerPool.workers.get(target.host)!
+    if (isWorkerAlive(ns, wi)) continue
+    dropWorker(ns, target.host, workerPool, portPool, pendingSpawns, spawnPlans, masterLog, "dead")
+  }
+
+  type Candidate = { target: AuthTarget; existingPlan: SpawnPlan | undefined }
+  const candidates: Candidate[] = []
+
+  for (const target of targets.values()) {
+    if (target.host === DARKWEB) continue
     if (workerPool.workers.has(target.host)) {
       const wi = workerPool.workers.get(target.host)!
       if (isWorkerAlive(ns, wi)) continue
-      dropWorker(ns, target.host, workerPool, portPool, pendingSpawns, spawnPlans, masterLog, "dead")
     }
     if (pendingSpawns.has(target.host)) continue
 
@@ -1021,19 +1086,40 @@ function spawnWorkers(
     const knownPassword = target.password ?? passwords.get(target.host) ?? null
     const authed = knownPassword != null || details.hasSession
     if (!authed) continue
-    if (knownPassword != null) tryConnect(dnet, target.host, knownPassword)
-
-    const existingPlan = spawnPlans.get(target.host)
-    const parent =
-      existingPlan != null
-        ? workerPool.workers.get(existingPlan.parentHost)
-        : [...workerPool.workers.values()].find(
-            (w) => w.idle && w.neighbors.includes(target.host) && w.commandPort > 0,
-          )
-    if (!parent?.idle || parent.commandPort <= 0) continue
 
     const ram = readHostRam(ns, dnet, target.host)
     if (!canSpawnWorker(ns, dnet, target.host, ram)) continue
+
+    candidates.push({ target, existingPlan: spawnPlans.get(target.host) })
+  }
+
+  const spawnParentsFor = (host: string) => availableSpawnParents(workerPool, host, new Set())
+  const sorted = sortByWorkerScarcity(
+    candidates,
+    ({ target, existingPlan }) => {
+      const pinned = existingPlan ? workerPool.workers.get(existingPlan.parentHost) : null
+      if (pinned?.idle && pinned.commandPort > 0) return 1
+      return spawnParentsFor(target.host).length
+    },
+    ({ target }) => target.host,
+  )
+  const batchKeys = sorted.map(({ target }) => target.host)
+
+  for (const { target, existingPlan } of sorted) {
+    const knownPassword = target.password ?? passwords.get(target.host) ?? null
+    if (knownPassword != null) tryConnect(dnet, target.host, knownPassword)
+
+    const pinned = existingPlan ? workerPool.workers.get(existingPlan.parentHost) : null
+    const parent =
+      pinned?.idle && pinned.commandPort > 0
+        ? pinned
+        : pickLeastBlockingWorker(
+            target.host,
+            spawnParentsFor(target.host),
+            batchKeys,
+            spawnParentsFor,
+          )
+    if (!parent?.idle || parent.commandPort <= 0) continue
 
     let plan = spawnPlans.get(target.host)
     if (!plan) {
