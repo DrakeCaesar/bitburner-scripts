@@ -6,11 +6,13 @@ import {
   W,
   type TabbedScriptLogBuilder,
 } from "@/libraries/scriptLogUiLayout.js"
+import { MUTATION_PORT } from "../constants.js"
 import type {
   AttemptRecord,
   AuthTarget,
   CrawlSnapshot,
   MasterActionRecord,
+  MutationPortSnapshot,
   WorkerSnapshot,
 } from "../types.js"
 
@@ -60,6 +62,15 @@ const WORKER_COLUMNS = [
   col("RAM", "right", 6),
 ]
 
+function formatMutationLine(m: MutationPortSnapshot): string {
+  const portTime = m.portTs != null ? clock(m.portTs) : "-"
+  const pending = m.pending != null ? String(m.pending) : "-"
+  return (
+    `mutation port ${MUTATION_PORT}  peek=${m.portRaw}  ts=${m.portTs ?? "-"} (${portTime})  ` +
+    `acked=${m.acked}  pending=${pending}  stale=${m.stale ? "Y" : "N"}  loop ${clock(m.loopAt)}`
+  )
+}
+
 function clock(ts: number): string {
   const d = new Date(ts)
   const pad = (n: number) => String(n).padStart(2, "0")
@@ -98,6 +109,7 @@ export async function renderDashboard(
         `exhausted ${s.exhausted}  retry ${s.retryWait}  no_solver ${s.noSolver}  ` +
         `unsupported ${s.unsupported}  attempts ${snap.attempts.length}  workers ${snap.workers.length}`,
     )
+    .text(formatMutationLine(snap.mutation))
     .table({
       title: "Master actions (newest first)",
       columns: ACTION_COLUMNS,

@@ -97,6 +97,9 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
   masterLog.append("startup", `root worker ${DARKWEB} pid ${rootPid} port ${rootPort}`)
 
   while (true) {
+    const loopAt = Date.now()
+    const mutationPort = mutationSync.peekPort(ns)
+
     ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId }))
 
     drainReplies(
@@ -126,7 +129,9 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
 
     if (!mutationSync.canDispatchActions()) {
       dispatchSyncProbes(ns, workerPool, mutationSync, masterLog)
-      await options.onProgress(buildSnapshot(sessionId, targets, attemptLog, masterLog, workerPool))
+      await options.onProgress(
+        buildSnapshot(sessionId, targets, attemptLog, masterLog, workerPool, mutationSync, mutationPort, loopAt),
+      )
       await ns.sleep(LOOP_INTERVAL_MS)
       continue
     }
@@ -148,7 +153,9 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
     dispatchReallocs(ns, dnet, workerPool, masterLog)
     dispatchGuesses(ns, workerPool, targets, attemptLog, dnet, masterLog)
 
-    await options.onProgress(buildSnapshot(sessionId, targets, attemptLog, masterLog, workerPool))
+    await options.onProgress(
+      buildSnapshot(sessionId, targets, attemptLog, masterLog, workerPool, mutationSync, mutationPort, loopAt),
+    )
     await ns.sleep(LOOP_INTERVAL_MS)
   }
 }
@@ -170,6 +177,9 @@ function buildSnapshot(
   attemptLog: AttemptLog,
   masterLog: MasterActionLog,
   workerPool: WorkerPool,
+  mutationSync: MutationSync,
+  mutationPort: { raw: string; ts: number | null },
+  loopAt: number,
 ): CrawlSnapshot {
   const all = [...targets.values()]
   const count = (s: TargetStatus) => all.filter((t) => t.status === s).length
@@ -178,6 +188,14 @@ function buildSnapshot(
     targets: all,
     attempts: attemptLog.all,
     actions: masterLog.all,
+    mutation: {
+      portRaw: mutationPort.raw,
+      portTs: mutationPort.ts,
+      acked: mutationSync.acked,
+      pending: mutationSync.pending,
+      stale: mutationPort.ts !== null && mutationPort.ts > mutationSync.acked,
+      loopAt,
+    },
     workers: [...workerPool.workers.values()].map(
       (w): WorkerSnapshot => ({
         host: w.host,

@@ -1,6 +1,12 @@
 import { NS } from "@ns"
 import { MUTATION_PORT } from "./constants.js"
 
+function clock(): string {
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
 /** Home watcher: posts the latest darknet mutation timestamp to MUTATION_PORT. */
 export async function main(ns: NS): Promise<void> {
   const dnet = (ns as NS & { dnet?: { nextMutation(): Promise<void> } }).dnet
@@ -10,11 +16,14 @@ export async function main(ns: NS): Promise<void> {
   }
 
   ns.clearPort(MUTATION_PORT)
+  ns.print(`mutationWatcher started port ${MUTATION_PORT} ${clock()}`)
   let first = true
 
   for (;;) {
     await dnet.nextMutation()
-    ns.writePort(MUTATION_PORT, String(Date.now()))
+    const ts = Date.now()
+    ns.writePort(MUTATION_PORT, String(ts))
+    ns.print(`${clock()}  mutation ts ${ts}`)
     if (!first) ns.readPort(MUTATION_PORT)
     first = false
   }

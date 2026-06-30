@@ -120,11 +120,24 @@ export interface MasterActionRecord {
   detail?: string
 }
 
+export interface MutationPortSnapshot {
+  /** Raw ns.peek() value from MUTATION_PORT at loop start. */
+  portRaw: string
+  /** Parsed port timestamp, or null if empty/invalid. */
+  portTs: number | null
+  acked: number
+  pending: number | null
+  stale: boolean
+  /** Real-world time when the coordinator read the port this loop. */
+  loopAt: number
+}
+
 export interface CrawlSnapshot {
   sessionId: number
   targets: readonly AuthTarget[]
   attempts: readonly AttemptRecord[]
   actions: readonly MasterActionRecord[]
+  mutation: MutationPortSnapshot
   workers: readonly WorkerSnapshot[]
   summary: {
     discovered: number

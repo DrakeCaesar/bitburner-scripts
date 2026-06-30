@@ -16,10 +16,14 @@ export class MutationSync {
   }
 
   peekMutationTs(ns: NS): number | null {
+    return this.peekPort(ns).ts
+  }
+
+  peekPort(ns: NS): { raw: string; ts: number | null } {
     const raw = ns.peek(MUTATION_PORT)
-    if (raw === "NULL PORT DATA") return null
+    if (raw === "NULL PORT DATA") return { raw: "(empty)", ts: null }
     const ts = Number(raw)
-    return Number.isFinite(ts) && ts > 0 ? ts : null
+    return { raw, ts: Number.isFinite(ts) && ts > 0 ? ts : null }
   }
 
   isStale(ns: NS): boolean {
