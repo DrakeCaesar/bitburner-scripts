@@ -5,6 +5,16 @@ import { flatFileName, isCacheFile, isLoreFile, isPasswordFile } from "./categor
 import { parsePasswordFileContent } from "./intel.js"
 import type { CacheOpenRecord } from "./types.js"
 
+export interface LocalFileScanState {
+  archivedFiles: Set<string>
+}
+
+export function createLocalFileScanState(): LocalFileScanState {
+  return {
+    archivedFiles: new Set(),
+  }
+}
+
 export function queueArchiveContent(
   ns: NS,
   fileName: string,
@@ -92,11 +102,12 @@ export async function openCacheFilesOnCurrentHost(
   }
 }
 
-export async function archiveTextFilesOnCurrentHost(
+export async function archiveNewTextFilesOnCurrentHost(
   ns: NS,
   replyPort: number,
   lorePort: number,
   neighbors: string[],
+  state: LocalFileScanState,
 ): Promise<void> {
   const hostname = ns.getHostname()
   let files: string[]
@@ -107,23 +118,27 @@ export async function archiveTextFilesOnCurrentHost(
   }
 
   for (const file of files) {
-    const ext = flatFileName(file).split(".").pop()
+    const base = flatFileName(file)
+    if (state.archivedFiles.has(base)) continue
+    const ext = base.split(".").pop()
     switch (ext) {
       case "lit":
       case "txt":
         if (!ns.fileExists(file)) break
-        queueArchiveContent(ns, flatFileName(file), ns.read(file), replyPort, lorePort, neighbors)
+        queueArchiveContent(ns, base, ns.read(file), replyPort, lorePort, neighbors)
+        state.archivedFiles.add(base)
         break
     }
   }
 }
 
-/** Open caches first (they may drop files), then read .txt/.lit. Runs once per worker. */
-export async function scanLocalServerOnce(
+/** Open new caches first (they may drop files), then archive new .txt/.lit. */
+export async function scanLocalServerFiles(
   ns: NS,
   dnet: WorkerDnetApi,
   replyPort: number,
   lorePort: number,
+  state: LocalFileScanState,
 ): Promise<void> {
   const hostname = ns.getHostname()
   try {
@@ -140,5 +155,5 @@ export async function scanLocalServerOnce(
   }
 
   await openCacheFilesOnCurrentHost(ns, dnet, replyPort, lorePort)
-  await archiveTextFilesOnCurrentHost(ns, replyPort, lorePort, neighbors)
+  await archiveNewTextFilesOnCurrentHost(ns, replyPort, lorePort, neighbors, state)
 }

@@ -3,7 +3,10 @@ import {
   CONTROL_PORT,
   type ControlMessage,
 } from "./constants.js"
-import { scanLocalServerOnce } from "../files/serverFiles.js"
+import {
+  createLocalFileScanState,
+  scanLocalServerFiles,
+} from "../files/serverFiles.js"
 import type { WorkerDnetApi } from "./dnetApi.js"
 import type { WorkerCommand } from "./protocol.js"
 import {
@@ -80,12 +83,13 @@ export async function main(ns: NS): Promise<void> {
 
   ns.writePort(replyPort, JSON.stringify({ type: "ready", workerHost: hostname, pid: ns.pid }))
 
-  await scanLocalServerOnce(ns, dnet, replyPort, lorePort)
-
+  const fileScanState = createLocalFileScanState()
   let activeSessionId = sessionId
 
   while (true) {
     activeSessionId = refreshSessionId(ns, activeSessionId)
+    await ensureSelfAuth(dnet, hostname, selfPassword)
+    await scanLocalServerFiles(ns, dnet, replyPort, lorePort, fileScanState)
 
     const raw = await readCommandPayload(ns, commandPort)
     if (!raw) continue
