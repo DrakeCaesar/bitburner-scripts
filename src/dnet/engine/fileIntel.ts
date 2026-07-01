@@ -35,14 +35,14 @@ export interface WorkerFileIntelCtx {
   loreFile: string
 }
 
-function parseLorePortEntry(raw: string): { kind: "journal" | "cache"; text: string } | null {
+function parseLorePortEntry(raw: string): { kind: "journal" | "literature"; text: string } | null {
   if (!raw) return null
   try {
     const parsed: unknown = JSON.parse(raw)
     if (typeof parsed === "object" && parsed !== null) {
       const row = parsed as Record<string, unknown>
-      if (row.kind === "cache" && typeof row.text === "string") {
-        return { kind: "cache", text: row.text }
+      if (row.kind === "literature" && typeof row.text === "string") {
+        return { kind: "literature", text: row.text }
       }
     }
   } catch {
@@ -51,8 +51,11 @@ function parseLorePortEntry(raw: string): { kind: "journal" | "cache"; text: str
   return { kind: "journal", text: raw }
 }
 
-function absorbLorePortEntry(store: DarknetLoreStore, entry: { kind: "journal" | "cache"; text: string }): boolean {
-  const bucket = entry.kind === "cache" ? store.cache : store.journal
+function absorbLorePortEntry(
+  store: DarknetLoreStore,
+  entry: { kind: "journal" | "literature"; text: string },
+): boolean {
+  const bucket = entry.kind === "literature" ? store.literature : store.journal
   if (bucket.has(entry.text)) return false
   bucket.add(entry.text)
   return true

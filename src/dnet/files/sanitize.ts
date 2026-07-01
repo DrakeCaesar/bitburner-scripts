@@ -1,4 +1,4 @@
-/** Strip cache-reward HTML down to plain text for lore storage. */
+/** Strip HTML down to plain text for lore storage (.lit files, etc.). */
 export function sanitizeHtmlToText(html: string): string {
   return html
     .replace(/<br\s*\/?>/gi, "\n")

@@ -3,7 +3,7 @@ import { DARKNET_LORE_FILE, DARKWEB_ARCHIVE_DIR, flatFileName } from "./categori
 
 export interface DarknetLoreStore {
   journal: Set<string>
-  cache: Set<string>
+  literature: Set<string>
 }
 
 function readStringSet(raw: unknown): Set<string> {
@@ -13,24 +13,24 @@ function readStringSet(raw: unknown): Set<string> {
 
 export function loadDarknetLoreStore(ns: NS, file: string = DARKNET_LORE_FILE): DarknetLoreStore {
   if (!ns.fileExists(file, "home")) {
-    return { journal: new Set(), cache: new Set() }
+    return { journal: new Set(), literature: new Set() }
   }
   try {
     const parsed: unknown = JSON.parse(ns.read(file))
     if (Array.isArray(parsed)) {
-      return { journal: readStringSet(parsed), cache: new Set() }
+      return { journal: readStringSet(parsed), literature: new Set() }
     }
     if (typeof parsed === "object" && parsed !== null) {
       const row = parsed as Record<string, unknown>
       return {
         journal: readStringSet(row.journal),
-        cache: readStringSet(row.cache),
+        literature: readStringSet(row.literature),
       }
     }
   } catch {
     /* ignore */
   }
-  return { journal: new Set(), cache: new Set() }
+  return { journal: new Set(), literature: new Set() }
 }
 
 export function syncDarknetLoreFile(
@@ -43,7 +43,7 @@ export function syncDarknetLoreFile(
     JSON.stringify(
       {
         journal: [...store.journal].sort(),
-        cache: [...store.cache].sort(),
+        literature: [...store.literature].sort(),
       },
       null,
       2,
@@ -59,7 +59,7 @@ export function loadDarknetTextSet(ns: NS, file: string = DARKNET_LORE_FILE): Se
 
 /** @deprecated use syncDarknetLoreFile */
 export function syncDarknetTextFile(ns: NS, textSet: Set<string>, file: string = DARKNET_LORE_FILE): void {
-  syncDarknetLoreFile(ns, { journal: textSet, cache: new Set() }, file)
+  syncDarknetLoreFile(ns, { journal: textSet, literature: new Set() }, file)
 }
 
 function archiveDestPath(fileName: string, suffix: number | null): string {

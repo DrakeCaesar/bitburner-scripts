@@ -55,7 +55,6 @@ export function reportCacheOpen(
   fileName: string,
   result: { message: string; karmaLoss: number },
   replyPort: number,
-  lorePort: number,
 ): void {
   const entry: CacheOpenRecord = {
     host,
@@ -66,19 +65,12 @@ export function reportCacheOpen(
   }
 
   ns.writePort(replyPort, JSON.stringify({ type: "cacheOpen", ...entry }))
-  if (lorePort > 0) {
-    const text = sanitizeHtmlToText(result.message)
-    if (text) {
-      ns.writePort(lorePort, JSON.stringify({ kind: "cache", text }))
-    }
-  }
 }
 
 export async function openCacheFilesOnCurrentHost(
   ns: NS,
   dnet: WorkerDnetApi,
   replyPort: number,
-  lorePort: number,
 ): Promise<void> {
   const hostname = ns.getHostname()
   let files: string[]
@@ -102,7 +94,7 @@ export async function openCacheFilesOnCurrentHost(
     if (!result.success) {
       continue
     }
-    reportCacheOpen(ns, hostname, cacheName, result, replyPort, lorePort)
+    reportCacheOpen(ns, hostname, cacheName, result, replyPort)
   }
 }
 
@@ -132,11 +124,21 @@ export async function archiveNewTextFilesOnCurrentHost(
         state.archivedFiles.add(base)
         break
       case "lit":
-        if (ns.fileExists(base, "home")) break
-        ns.writePort(
-          replyPort,
-          JSON.stringify({ type: "litCopy", file: base, sourceHost: hostname }),
-        )
+        if (state.archivedFiles.has(base)) continue
+        if (!ns.fileExists(file)) break
+        if (!ns.fileExists(base, "home")) {
+          ns.writePort(
+            replyPort,
+            JSON.stringify({ type: "litCopy", file: base, sourceHost: hostname }),
+          )
+        }
+        if (lorePort > 0) {
+          const text = sanitizeHtmlToText(ns.read(file))
+          if (text) {
+            ns.writePort(lorePort, JSON.stringify({ kind: "literature", text }))
+          }
+        }
+        state.archivedFiles.add(base)
         break
     }
   }
@@ -164,6 +166,6 @@ export async function scanLocalServerFiles(
     neighbors = []
   }
 
-  await openCacheFilesOnCurrentHost(ns, dnet, replyPort, lorePort)
+  await openCacheFilesOnCurrentHost(ns, dnet, replyPort)
   await archiveNewTextFilesOnCurrentHost(ns, replyPort, lorePort, neighbors, state)
 }
