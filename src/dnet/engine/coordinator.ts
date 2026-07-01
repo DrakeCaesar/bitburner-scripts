@@ -29,7 +29,7 @@ import { AttemptLog } from "../history/attemptLog.js"
 import { MasterActionLog } from "../history/masterActionLog.js"
 import { SessionArchive } from "../history/sessionArchive.js"
 import { PortPool, WorkerPool, type ManagedWorker } from "../pool/workers.js"
-import { lookupSolver, solverKey } from "../solvers/registry.js"
+import { lookupSolver, lookupSolverForTarget, solverKey } from "../solvers/registry.js"
 import type { SolverState } from "../solvers/types.js"
 import type {
   AuthTarget,
@@ -769,6 +769,20 @@ function onAuthResult(
   const target = targets.get(msg.target)
   if (!target) return
 
+  if (target.pendingGuess !== msg.guess || target.workerHost !== msg.workerHost) {
+    attemptLog.append({
+      host: target.host,
+      session: target.session,
+      kind: "note",
+      solverId: msg.solverId,
+      modelId: target.modelId,
+      workerHost: msg.workerHost,
+      guess: msg.guess,
+      note: "stale auth result ignored",
+    })
+    return
+  }
+
   target.pendingGuess = null
   target.pendingDetail = null
   target.workerHost = null
@@ -802,6 +816,12 @@ function onAuthResult(
     return
   }
 
+  if (isTransientAuthFailure(msg)) {
+    target.status = "waiting_worker"
+    target.lastError = msg.message ?? "server unavailable"
+    return
+  }
+
   target.guessCount += 1
 
   if (msg.success) {
@@ -825,8 +845,13 @@ function onAuthResult(
   }
 
   const details = getServerDetails(dnet, target.host)
-  const solver = details ? lookupSolver(details) : null
+  const solver = lookupSolverForTarget(target, details)
   if (!solver || target.solverState == null) {
+    if (details == null || details.isOnline === false) {
+      target.status = "offline"
+      target.lastError = msg.message ?? "server unreachable"
+      return
+    }
     target.status = "exhausted"
     target.retryAt = Date.now() + EXHAUSTED_RETRY_MS
     sessionArchive.archiveFailure(target.host, target.session, "solver state lost")
@@ -1526,6 +1551,19 @@ function reconcileProbeStatuses(
   })
 }
 
+function isLongRunningWorkerCommand(wi: ManagedWorker): boolean {
+  const cmd = wi.lastCommand ?? ""
+  return (
+    cmd.startsWith("auth:") || cmd.startsWith("heartbleed:") || cmd.startsWith("labreport:")
+  )
+}
+
+function isTransientAuthFailure(msg: { message?: string; code?: number }): boolean {
+  if (msg.code === 503) return true
+  const text = msg.message ?? ""
+  return text.includes("Service Unavail")
+}
+
 function failWorkerCommand(
   wi: ManagedWorker,
   targets: Map<string, AuthTarget>,
@@ -1536,6 +1574,12 @@ function failWorkerCommand(
   ns: NS,
   masterLog: MasterActionLog,
 ): void {
+  if (isLongRunningWorkerCommand(wi)) {
+    masterLog.append("timeout_extend", `${wi.host} command ${wi.lastCommand ?? "?"} (still running)`)
+    wi.commandDeadlineAt = Date.now() + WORKER_TIMEOUT_MS
+    return
+  }
+
   wi.idle = true
   wi.commandDeadlineAt = 0
   masterLog.append("timeout", `${wi.host} command ${wi.lastCommand ?? "?"}`)

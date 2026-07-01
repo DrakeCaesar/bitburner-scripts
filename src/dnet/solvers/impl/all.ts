@@ -1059,6 +1059,17 @@ const kingOfTheHill: SolverModule<KingOfTheHillState> = {
 
 // --- RateMyPix.Auth ---
 
+/** Count hot-pepper glyphs in RateMyPix feedback (e.g. "🌶️🌶️/6" or "0/6"). */
+function rateMyPixPepperCount(feedback: string): number {
+  const head = feedback.split("/")[0]?.trim() ?? ""
+  if (!head || head === "0") return 0
+  let count = 0
+  for (const ch of head) {
+    if (ch.codePointAt(0) === 0x1f336) count++
+  }
+  return count
+}
+
 function rateMyPixCharset(format: string): string {
   if (format === "alphabetic") return "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
   if (format === "alphanumeric" || format === "ASCII") return "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -1132,8 +1143,7 @@ const rateMyPix: SolverModule<RateMyPixState> = {
         return state
       }
       state.retries = 0
-      // Game returns "🌶🌶/N" or "0/N" — count 🌶 before the slash
-      const emojiCount = (fb.split("/")[0]?.match(/🌶/g) ?? []).length
+      const emojiCount = rateMyPixPepperCount(fb)
       if (emojiCount > 0) state.freq[guess[0]!] = emojiCount
       state.charIdx++
       // End of charset — validate
@@ -1161,8 +1171,10 @@ const rateMyPix: SolverModule<RateMyPixState> = {
 
     // Perm phase: prune by exact position match count
     const fb = result.feedback ?? ""
-    const pruneCount = (fb.split("/")[0]?.match(/🌶/g) ?? []).length
+    if (!fb) return state
+    const pruneCount = rateMyPixPepperCount(fb)
     state.candidates = state.candidates.filter((candidate) => {
+      if (candidate === guess) return false
       let matches = 0
       for (let i = 0; i < state.length; i++) {
         if (candidate[i] === guess[i]) matches++
