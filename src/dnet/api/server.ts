@@ -38,3 +38,12 @@ export function readStasisSnapshot(dnet: DnetApi): StasisSnapshot | null {
     return null
   }
 }
+
+/** Hostnames with an active stasis link (remote connectToSession + exec). */
+export function stasisLinkedHosts(dnet: DnetApi): ReadonlySet<string> {
+  try {
+    return new Set(dnet.getStasisLinkedServers?.() ?? [])
+  } catch {
+    return new Set()
+  }
+}

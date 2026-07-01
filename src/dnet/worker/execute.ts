@@ -363,14 +363,18 @@ export async function runSpawnCommand(
   let message = ""
 
   try {
-    let neighbors: string[] = []
-    try {
-      neighbors = dnet.probe()
-    } catch {
-      neighbors = []
-    }
-    if (!neighbors.includes(cmd.target)) {
-      message = NOT_NEIGHBOR_MESSAGE
+    const remote = cmd.remote === true
+
+    if (!remote) {
+      let neighbors: string[] = []
+      try {
+        neighbors = dnet.probe()
+      } catch {
+        neighbors = []
+      }
+      if (!neighbors.includes(cmd.target)) {
+        message = NOT_NEIGHBOR_MESSAGE
+      }
     }
 
     if (!message) {

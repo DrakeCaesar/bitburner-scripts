@@ -24,7 +24,7 @@ import {
   syncRegistryPasswords,
   type DarknetRegistry,
 } from "../registry.js"
-import { getServerDetails, readStasisSnapshot, tryConnect } from "../api/server.js"
+import { getServerDetails, readStasisSnapshot, stasisLinkedHosts, tryConnect } from "../api/server.js"
 import { AttemptLog } from "../history/attemptLog.js"
 import { MasterActionLog } from "../history/masterActionLog.js"
 import { SessionArchive } from "../history/sessionArchive.js"
@@ -63,6 +63,7 @@ import { clearDnetGlobalPorts, clearWorkerPortPair } from "./ports.js"
 import {
   availableAuthWorkers,
   availableSpawnParents,
+  isRemoteStasisSpawn,
   pickLeastBlockingWorker,
   sortByWorkerScarcity,
 } from "./workerAssign.js"
@@ -996,6 +997,8 @@ function dispatchP1Reallocs(
 ): void {
   if (!dnet.memoryReallocation || !dnet.getBlockedRam) return
 
+  const linked = stasisLinkedHosts(dnet)
+
   type Candidate = { target: AuthTarget; existingPlan: SpawnPlan | undefined }
   const candidates: Candidate[] = []
 
@@ -1022,7 +1025,11 @@ function dispatchP1Reallocs(
     candidates.push({ target, existingPlan: spawnPlans.get(target.host) })
   }
 
-  const spawnParentsFor = (host: string) => availableSpawnParents(workerPool, host, new Set())
+  const spawnParentsFor = (host: string) =>
+    availableSpawnParents(workerPool, host, new Set(), {
+      stasisLinked: linked,
+      allowRemoteRoot: false,
+    })
   const sorted = sortByWorkerScarcity(
     candidates,
     ({ target, existingPlan }) => {
@@ -1204,6 +1211,8 @@ function spawnWorkers(
   masterLog: MasterActionLog,
   ctx: WorkerDispatchCtx,
 ): void {
+  const linked = stasisLinkedHosts(dnet)
+
   for (const target of targets.values()) {
     if (target.host === DARKWEB) continue
     if (!workerPool.workers.has(target.host)) continue
@@ -1237,7 +1246,8 @@ function spawnWorkers(
     candidates.push({ target, existingPlan: spawnPlans.get(target.host) })
   }
 
-  const spawnParentsFor = (host: string) => availableSpawnParents(workerPool, host, new Set())
+  const spawnParentsFor = (host: string) =>
+    availableSpawnParents(workerPool, host, new Set(), { stasisLinked: linked })
   const sorted = sortByWorkerScarcity(
     candidates,
     ({ target, existingPlan }) => {
@@ -1295,6 +1305,7 @@ function spawnWorkers(
     }
 
     pendingSpawns.add(target.host)
+    const remote = isRemoteStasisSpawn(parent.host, target.host, linked)
     if (
       !sendCommand(
         ns,
@@ -1305,6 +1316,7 @@ function spawnWorkers(
           sessionId: plan.sessionId,
           port: plan.port,
           ...(plan.password != null ? { password: plan.password } : {}),
+          ...(remote ? { remote: true } : {}),
         },
         masterLog,
         ctx,
@@ -1320,7 +1332,9 @@ function commandDetail(host: string, payload: WorkerCommandPayload): string {
     case "probe":
       return host
     case "spawn":
-      return `${host} -> ${payload.target} port ${payload.port}`
+      return payload.remote
+        ? `${host} -> ${payload.target} port ${payload.port} (remote)`
+        : `${host} -> ${payload.target} port ${payload.port}`
     case "auth":
       return `${host} -> ${payload.target} ${payload.guess}`
     case "realloc":

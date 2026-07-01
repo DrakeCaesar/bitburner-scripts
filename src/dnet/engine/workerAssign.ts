@@ -1,3 +1,4 @@
+import { DARKWEB } from "../constants.js"
 import type { ManagedWorker, WorkerPool } from "../pool/workers.js"
 
 export function availableAuthWorkers(
@@ -18,10 +19,31 @@ export function availableSpawnParents(
   workerPool: WorkerPool,
   targetHost: string,
   reserved: ReadonlySet<string>,
+  options?: { stasisLinked?: ReadonlySet<string>; allowRemoteRoot?: boolean },
 ): ManagedWorker[] {
-  return workerPool
+  const stasisLinked = options?.stasisLinked
+  const allowRemoteRoot = options?.allowRemoteRoot !== false
+  const idle = workerPool
     .idleWorkers()
-    .filter((w) => !reserved.has(w.host) && w.neighbors.includes(targetHost))
+    .filter((w) => !reserved.has(w.host) && w.commandPort > 0)
+  const adjacent = idle.filter((w) => w.neighbors.includes(targetHost))
+
+  if (allowRemoteRoot && stasisLinked?.has(targetHost)) {
+    const root = idle.find((w) => w.host === DARKWEB)
+    if (root) {
+      return [root, ...adjacent.filter((w) => w.host !== DARKWEB)]
+    }
+  }
+  return adjacent
+}
+
+/** Darkweb root worker spawning onto a stasis-linked host (no adjacency required). */
+export function isRemoteStasisSpawn(
+  parentHost: string,
+  targetHost: string,
+  stasisLinked: ReadonlySet<string>,
+): boolean {
+  return parentHost === DARKWEB && stasisLinked.has(targetHost)
 }
 
 /** Fewest worker options first; zero-option targets sort last. */

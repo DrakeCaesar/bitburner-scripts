@@ -19,6 +19,7 @@ export interface WorkerDnetApi {
   ): Promise<{ success: boolean; logs: string[]; message?: string; code?: number }>
   getServerDetails(host?: string): WorkerServerDetails
   connectToSession?(host: string, password: string): { success: boolean }
+  getStasisLinkedServers?(returnByIP?: boolean): string[]
   getBlockedRam?(host?: string): number
   memoryReallocation?(host?: string): Promise<{ success: boolean }>
   openCache(filename: string, suppressToast?: boolean): { success: boolean; message: string; karmaLoss: number }

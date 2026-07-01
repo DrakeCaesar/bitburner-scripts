@@ -28,7 +28,15 @@ export type WorkerCommandPayload =
   | { type: "probe" }
   | { type: "auth"; target: string; solverId: string; guess: string; detail: string | null }
   | { type: "heartbleed"; target: string; solverId: string }
-  | { type: "spawn"; target: string; sessionId: number; port: number; password?: string }
+  | {
+      type: "spawn"
+      target: string
+      sessionId: number
+      port: number
+      password?: string
+      /** Spawn via stasis link (connectToSession + scp + exec at distance). */
+      remote?: boolean
+    }
   | { type: "realloc"; host: string; priority: 1 | 2 | 3 }
   | { type: "stasis" }
   | { type: "labreport"; target: string; solverId: string }
