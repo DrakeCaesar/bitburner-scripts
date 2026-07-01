@@ -1,5 +1,5 @@
 import { NS } from "@ns"
-import { STASIS_SCRIPT, WORKER_SCRIPT } from "./constants.js"
+import { STASIS_RAM_GB, WORKER_SCRIPT } from "./constants.js"
 import type { WorkerDnetApi } from "./dnetApi.js"
 
 /** 1 = worker RAM, 2 = worker + stasis RAM, 3 = clear all blocked RAM. */
@@ -19,7 +19,7 @@ function scriptRam(ns: NS, script: string, host: string): number {
 function ramTargetGb(ns: NS, host: string, priority: ReallocPriority): number {
   const workerRam = scriptRam(ns, WORKER_SCRIPT, host)
   if (priority === 1) return workerRam
-  if (priority === 2) return workerRam + scriptRam(ns, STASIS_SCRIPT, host)
+  if (priority === 2) return workerRam + STASIS_RAM_GB
   return 0
 }
 

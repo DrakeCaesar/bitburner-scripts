@@ -17,6 +17,7 @@ import {
   runReallocCommand,
   runSpawnCommand,
 } from "./execute.js"
+import { runStasisCommand } from "./stasisExec.js"
 
 /** NS with port wait API (available on current Bitburner fork). */
 type NSPortWait = NS & { nextPortWrite(port: number): Promise<void> }
@@ -115,6 +116,9 @@ export async function main(ns: NS): Promise<void> {
       await runHeartbleedCommand(ns, dnet, cmd, replyPort)
     } else if (cmd.type === "realloc") {
       await runReallocCommand(ns, dnet, cmd, replyPort)
+    } else if (cmd.type === "stasis") {
+      await ensureSelfAuth(dnet, hostname, selfPassword)
+      await runStasisCommand(ns, dnet, replyPort)
     }
   }
 }

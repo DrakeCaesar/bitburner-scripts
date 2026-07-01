@@ -56,6 +56,7 @@ import {
 } from "./memoryPlan.js"
 import { copyWorkerFiles } from "../worker/deploy.js"
 import { ensureMutationWatcher, MutationSync } from "./mutationSync.js"
+import { dispatchLabyrinthStasis } from "./labyrinthStasis.js"
 import { clearDnetGlobalPorts, clearWorkerPortPair } from "./ports.js"
 import {
   availableAuthWorkers,
@@ -79,13 +80,13 @@ interface SpawnPlan {
 
 export interface CoordinatorOptions {
   onProgress: ProgressHandler
-  onError?: (message: string) => void
+  onError?: (message: string) => void | Promise<void>
 }
 
 export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promise<void> {
   const dnet = (ns as NS & { dnet?: DnetApi }).dnet
   if (!dnet) {
-    options.onError?.("ns.dnet API not available")
+    await options.onError?.("ns.dnet API not available")
     return
   }
 
@@ -116,20 +117,20 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
   await authDarkweb(dnet)
   const darkwebScpError = await copyWorkerFiles(ns, DARKWEB, "home")
   if (darkwebScpError != null) {
-    options.onError?.(`Failed to copy worker files to darkweb: ${darkwebScpError}`)
+    await options.onError?.(`Failed to copy worker files to darkweb: ${darkwebScpError}`)
     return
   }
 
   const rootPort = portPool.allocate()
   if (rootPort <= 0) {
-    options.onError?.("No ports available")
+    await options.onError?.("No ports available")
     return
   }
   clearWorkerPortPair(ns, rootPort)
 
   const rootPid = ns.exec(WORKER_SCRIPT, DARKWEB, 1, sessionId, rootPort, "")
   if (rootPid <= 0) {
-    options.onError?.("Failed to start root worker on darkweb")
+    await options.onError?.("Failed to start root worker on darkweb")
     releaseWorkerPort(ns, portPool, rootPort)
     return
   }
@@ -200,6 +201,15 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       dispatchCtx,
     )
     dispatchP2Reallocs(ns, dnet, workerPool, masterLog, dispatchCtx)
+    dispatchLabyrinthStasis(
+      ns,
+      dnet,
+      workerPool,
+      targets,
+      passwords,
+      (wi) => isWorkerAlive(ns, wi),
+      (wi) => sendCommand(ns, wi, { type: "stasis" }, masterLog, dispatchCtx),
+    )
     dispatchGuesses(ns, workerPool, targets, attemptLog, dnet, masterLog, dispatchCtx)
     dispatchBackgroundProbes(ns, workerPool, mutationSync, urgentProbeHosts, masterLog, dispatchCtx)
     dispatchP3Reallocs(ns, dnet, workerPool, masterLog, dispatchCtx)
@@ -541,6 +551,21 @@ function drainReplies(
             modelId: "-",
             workerHost: wi.host,
             note: `realloc p${msg.priority} free ${msg.freeRam.toFixed(1)} blocked ${msg.blockedRam.toFixed(1)}`,
+          })
+          break
+        case "stasisResult":
+          wi.idle = true
+          wi.commandDeadlineAt = 0
+          attemptLog.append({
+            host: msg.workerHost,
+            session: 0,
+            kind: "note",
+            solverId: "-",
+            modelId: LABYRINTH_MODEL,
+            workerHost: msg.workerHost,
+            success: msg.success,
+            note: msg.success ? "stasis linked" : "stasis",
+            message: msg.success ? undefined : msg.message ?? "unknown failure",
           })
           break
       }
@@ -1248,6 +1273,8 @@ function commandDetail(host: string, payload: WorkerCommandPayload): string {
       return `${host} -> ${payload.target} ${payload.guess}`
     case "realloc":
       return `${host} -> ${payload.host} p${payload.priority}`
+    case "stasis":
+      return host
     case "heartbleed":
       return `${host} -> ${payload.target}`
     default:

@@ -30,6 +30,7 @@ export type WorkerCommandPayload =
   | { type: "heartbleed"; target: string; solverId: string }
   | { type: "spawn"; target: string; sessionId: number; port: number; password?: string }
   | { type: "realloc"; host: string; priority: 1 | 2 | 3 }
+  | { type: "stasis" }
   | { type: "exit" }
 
 export type WorkerCommand = WorkerCommandPayload
@@ -87,6 +88,7 @@ export type WorkerResponse =
       freeRam: number
       blockedRam: number
     }
+  | { type: "stasisResult"; workerHost: string; success: boolean; message?: string }
 
 export function parseWorkerResponse(raw: unknown): WorkerResponse | null {
   try {
@@ -161,6 +163,14 @@ export function parseWorkerResponse(raw: unknown): WorkerResponse | null {
           blockedRam: typeof row.blockedRam === "number" ? row.blockedRam : 0,
         }
       }
+      case "stasisResult":
+        if (typeof row.workerHost !== "string") return null
+        return {
+          type: "stasisResult",
+          workerHost: row.workerHost,
+          success: row.success === true,
+          message: typeof row.message === "string" ? row.message : undefined,
+        }
       default:
         return null
     }
@@ -201,6 +211,8 @@ export function formatCommand(cmd: WorkerCommandPayload): string {
       return `spawn:${cmd.target}`
     case "realloc":
       return `realloc:${cmd.host}:p${cmd.priority}`
+    case "stasis":
+      return "stasis"
     case "exit":
       return "exit"
   }

@@ -4,25 +4,35 @@ import { NS } from "@ns"
 export async function main(ns: NS): Promise<void> {
   const replyPort = Number(ns.args[0])
   const hostname = ns.getHostname()
-  const dnet = (ns as NS & { dnet?: { setStasisLink?(shouldLink?: boolean): Promise<{ success: boolean }> } }).dnet
+  const dnet = (ns as NS & {
+    dnet?: {
+      setStasisLink?(shouldLink?: boolean): Promise<{ success: boolean; message?: string }>
+    }
+  }).dnet
 
   let success = false
+  let message = "setStasisLink API missing"
   try {
     if (dnet?.setStasisLink) {
-      success = (await dnet.setStasisLink(true)).success
+      const result = await dnet.setStasisLink(true)
+      success = result.success
+      if (!success && typeof result.message === "string") {
+        message = result.message
+      } else if (success) {
+        message = ""
+      }
     }
-  } catch {
-    /* stasis may fail */
+  } catch (err) {
+    message = err instanceof Error ? err.message : "stasis error"
   }
 
   if (Number.isFinite(replyPort) && replyPort > 0) {
-    ns.writePort(
-      replyPort,
-      JSON.stringify({
-        type: "stasisResult",
-        workerHost: hostname,
-        success,
-      }),
-    )
+    const payload: { type: "stasisResult"; workerHost: string; success: boolean; message?: string } = {
+      type: "stasisResult",
+      workerHost: hostname,
+      success,
+    }
+    if (!success && message) payload.message = message
+    ns.writePort(replyPort, JSON.stringify(payload))
   }
 }

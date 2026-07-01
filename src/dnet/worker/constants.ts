@@ -3,7 +3,12 @@
 export const CONTROL_PORT = 45209
 export const LORE_PORT = 45207
 export const WORKER_SCRIPT = "dnet/worker/main.js"
-export const STASIS_SCRIPT = "dnet/stasis/stasisLink.js"
+
+/**
+ * Budget for dnet/stasis/stasisLink.js (measure with `mem` on home).
+ * Do not call getScriptRam on the stasis stub from worker code — RAM calc may pull setStasisLink in.
+ */
+export const STASIS_RAM_GB = 14
 
 /** Files copied to remote hosts when spawning workers. Worker subtree only. */
 export const WORKER_SCP_FILES = [
@@ -20,6 +25,7 @@ export const WORKER_SCP_FILES = [
   "dnet/worker/execute.js",
   "dnet/worker/realloc.js",
   "dnet/worker/deploy.js",
+  "dnet/worker/stasisExec.js",
   "dnet/worker/main.js",
 ]
 

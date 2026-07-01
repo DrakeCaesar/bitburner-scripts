@@ -50,7 +50,7 @@ const ATTEMPT_COLUMNS = [
   col("Guess", "left", 10),
   col("OK", "center", 3),
   col("Detail", "left", 12),
-  col("Feedback", "left", 14),
+  col("Feedback", "left", 22),
 ]
 
 const WORKER_COLUMNS = [
