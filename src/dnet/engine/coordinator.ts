@@ -18,6 +18,7 @@ import type { CacheOpenRecord } from "../files/types.js"
 import { applyWorkerFileMessage, createLoreStore, pollLorePort } from "./fileIntel.js"
 import {
   loadDarknetRegistry,
+  clearRegistryPassword,
   pruneInvalidRegistryHosts,
   saveDarknetRegistry,
   syncRegistryPasswords,
@@ -340,6 +341,58 @@ function finishUrgentProbe(
   }
 }
 
+/** Cached password failed at spawn; treat host as unknown and re-auth with live server details. */
+function invalidateKnownPassword(
+  ns: NS,
+  dnet: DnetApi,
+  registry: DarknetRegistry,
+  passwords: Map<string, string>,
+  targets: Map<string, AuthTarget>,
+  sessionArchive: SessionArchive,
+  attemptLog: AttemptLog,
+  host: string,
+): void {
+  passwords.delete(host)
+  clearRegistryPassword(registry, host)
+  saveDarknetRegistry(ns, registry)
+  sessionArchive.discardHost(host)
+
+  const target = targets.get(host)
+  if (!target) return
+
+  const details = getServerDetails(dnet, host)
+  if (!details?.isOnline) {
+    target.status = "offline"
+    target.password = null
+    target.lastError = "stale password"
+    return
+  }
+
+  target.modelId = details.modelId
+  target.format = details.passwordFormat
+  target.password = null
+  target.solverId = null
+  target.solverState = null
+  target.status = details.modelId === LABYRINTH_MODEL ? "unsupported" : "queued"
+  target.pendingGuess = null
+  target.pendingDetail = null
+  target.workerHost = null
+  target.guessCount = 0
+  target.retryAt = null
+  target.lastError = "stale password"
+  target.awaitProbeAfter = false
+  target.awaitProbeWorker = null
+
+  attemptLog.append({
+    host,
+    session: target.session,
+    kind: "note",
+    solverId: "-",
+    modelId: target.modelId,
+    note: "stale password cleared",
+  })
+}
+
 function drainReplies(
   ns: NS,
   workerPool: WorkerPool,
@@ -440,6 +493,17 @@ function drainReplies(
               workerPool,
               targets,
               urgentProbeHosts,
+            )
+          } else if (!msg.success && msg.message === "auth failed") {
+            invalidateKnownPassword(
+              ns,
+              dnet,
+              fileIntelCtx.registry,
+              passwords,
+              targets,
+              sessionArchive,
+              attemptLog,
+              msg.target,
             )
           }
           break
@@ -862,6 +926,7 @@ function dispatchP1Reallocs(
 
   for (const target of targets.values()) {
     if (target.host === DARKWEB) continue
+    if (target.status !== "solved") continue
     if (workerPool.workers.has(target.host)) {
       const wi = workerPool.workers.get(target.host)!
       if (isWorkerAlive(ns, wi)) continue
@@ -1075,6 +1140,7 @@ function spawnWorkers(
 
   for (const target of targets.values()) {
     if (target.host === DARKWEB) continue
+    if (target.status !== "solved") continue
     if (workerPool.workers.has(target.host)) {
       const wi = workerPool.workers.get(target.host)!
       if (isWorkerAlive(ns, wi)) continue

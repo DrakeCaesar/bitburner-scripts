@@ -89,6 +89,14 @@ export function saveDarknetRegistry(ns: NS, registry: DarknetRegistry): void {
   ns.write(DARKNET_REGISTRY_FILE, JSON.stringify(registry, null, 2), "w")
 }
 
+export function clearRegistryPassword(registry: DarknetRegistry, host: string): void {
+  const entry = registry.servers[host]
+  if (!entry) return
+  entry.password = null
+  entry.timestamp = null
+  entry.passwordHints = []
+}
+
 export function pruneInvalidRegistryHosts(dnet: DnetApi, registry: DarknetRegistry): string[] {
   const removed: string[] = []
   for (const hostname of Object.keys(registry.servers)) {
