@@ -2,7 +2,7 @@ import { NS } from "@ns"
 import { STASIS_SCRIPT, WORKER_SCRIPT } from "../constants.js"
 import type { DnetApi } from "../types.js"
 
-/** 1 = worker RAM, 2 = worker + stasis RAM, 3 = clear all blocked RAM. */
+/** 1 = worker RAM, 2 = worker + stasis RAM, 3 = one opportunistic blocked-RAM clear step when idle. */
 export type ReallocPriority = 1 | 2 | 3
 
 export interface HostRamSnapshot {

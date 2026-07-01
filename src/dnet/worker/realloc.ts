@@ -2,7 +2,7 @@ import { NS } from "@ns"
 import { STASIS_RAM_GB, WORKER_SCRIPT } from "./constants.js"
 import type { WorkerDnetApi } from "./dnetApi.js"
 
-/** 1 = worker RAM, 2 = worker + stasis RAM, 3 = clear all blocked RAM. */
+/** 1 = worker RAM, 2 = worker + stasis RAM, 3 = one opportunistic blocked-RAM clear step. */
 export type ReallocPriority = 1 | 2 | 3
 
 export interface HostRamSnapshot {
@@ -35,6 +35,23 @@ export function priorityMet(ns: NS, dnet: WorkerDnetApi, host: string, priority:
   if (priority === 3) return blockedRam <= 0
   if (blockedRam <= 0) return true
   return freeRam >= ramTargetGb(ns, host, priority)
+}
+
+/** Run at most one memoryReallocation call (P3 idle cleanup). */
+export async function runReallocOnce(
+  ns: NS,
+  dnet: WorkerDnetApi,
+  host: string,
+): Promise<HostRamSnapshot> {
+  if (!dnet.memoryReallocation) return measureHostRam(ns, dnet, host)
+  const { blockedRam } = measureHostRam(ns, dnet, host)
+  if (blockedRam <= 0) return measureHostRam(ns, dnet, host)
+  try {
+    await dnet.memoryReallocation(host)
+  } catch {
+    /* ignore */
+  }
+  return measureHostRam(ns, dnet, host)
 }
 
 /** Run memoryReallocation until the priority target is met or blocked RAM is cleared. */

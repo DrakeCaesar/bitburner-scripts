@@ -1004,6 +1004,7 @@ function dispatchP3Reallocs(
 ): void {
   if (!dnet.memoryReallocation || !dnet.getBlockedRam) return
 
+  // One realloc step per idle pass; worker returns before auth/probes on later loops.
   for (const wi of workerPool.idleWorkers()) {
     const ram = readHostRam(ns, dnet, wi.host)
     wi.blockedRam = ram.blockedRam

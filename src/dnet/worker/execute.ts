@@ -10,7 +10,7 @@ import {
 } from "./protocol.js"
 import { WORKER_SCRIPT } from "./constants.js"
 import { copyWorkerFiles } from "./deploy.js"
-import { measureHostRam, priorityMet } from "./realloc.js"
+import { measureHostRam, priorityMet, runReallocOnce } from "./realloc.js"
 
 function normalizeFeedback(data: unknown): string | undefined {
   if (typeof data === "string") return data
@@ -322,6 +322,18 @@ export async function runReallocCommand(
 
   if (!dnet.memoryReallocation) {
     const ram = measureHostRam(ns, dnet, host)
+    writeResult(ram.freeRam, ram.blockedRam)
+    return
+  }
+
+  if (cmd.priority === 3) {
+    if (priorityMet(ns, dnet, host, cmd.priority)) {
+      const ram = measureHostRam(ns, dnet, host)
+      writeResult(ram.freeRam, ram.blockedRam)
+      return
+    }
+    writeDeadline()
+    const ram = await runReallocOnce(ns, dnet, host)
     writeResult(ram.freeRam, ram.blockedRam)
     return
   }
