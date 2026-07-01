@@ -1,5 +1,11 @@
 import { NS } from "@ns"
-import { copyLiteratureFromHost, finalizeArchiveContent, loadDarknetTextSet, syncDarknetTextFile } from "../files/archive.js"
+import {
+  copyLiteratureFromHost,
+  finalizeArchiveContent,
+  loadDarknetLoreStore,
+  syncDarknetLoreFile,
+  type DarknetLoreStore,
+} from "../files/archive.js"
 import type { CacheOpenRecord } from "../files/types.js"
 import {
   applyPasswordIntel,
@@ -25,8 +31,31 @@ function parseCacheOpen(row: Record<string, unknown>): CacheOpenRecord | null {
 export interface WorkerFileIntelCtx {
   registry: DarknetRegistry
   cacheOpens: CacheOpenRecord[]
-  loreSet: Set<string>
+  loreStore: DarknetLoreStore
   loreFile: string
+}
+
+function parseLorePortEntry(raw: string): { kind: "journal" | "cache"; text: string } | null {
+  if (!raw) return null
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed === "object" && parsed !== null) {
+      const row = parsed as Record<string, unknown>
+      if (row.kind === "cache" && typeof row.text === "string") {
+        return { kind: "cache", text: row.text }
+      }
+    }
+  } catch {
+    /* plain journal text from .txt lore files */
+  }
+  return { kind: "journal", text: raw }
+}
+
+function absorbLorePortEntry(store: DarknetLoreStore, entry: { kind: "journal" | "cache"; text: string }): boolean {
+  const bucket = entry.kind === "cache" ? store.cache : store.journal
+  if (bucket.has(entry.text)) return false
+  bucket.add(entry.text)
+  return true
 }
 
 /** Handle archive / cacheOpen / passwordIntel messages on worker reply ports. */
@@ -63,29 +92,29 @@ export function applyWorkerFileMessage(ns: NS, raw: unknown, ctx: WorkerFileInte
   return false
 }
 
-export function pollLorePort(ns: NS, lorePort: number, loreSet: Set<string>, loreFile: string): void {
+export function pollLorePort(ns: NS, lorePort: number, store: DarknetLoreStore, loreFile: string): void {
   while (true) {
     const raw = ns.peek(lorePort)
     if (raw === "NULL PORT DATA") break
     ns.readPort(lorePort)
     if (typeof raw !== "string") continue
-    if (loreSet.has(raw)) continue
-    loreSet.add(raw)
-    syncDarknetTextFile(ns, loreSet, loreFile)
+    const entry = parseLorePortEntry(raw)
+    if (!entry || !absorbLorePortEntry(store, entry)) continue
+    syncDarknetLoreFile(ns, store, loreFile)
   }
 }
 
-export function drainLorePort(ns: NS, lorePort: number, loreSet: Set<string>, loreFile: string): void {
+export function drainLorePort(ns: NS, lorePort: number, store: DarknetLoreStore, loreFile: string): void {
   while (true) {
     const raw = ns.readPort(lorePort)
     if (raw === "NULL PORT DATA") break
     if (typeof raw !== "string") continue
-    if (loreSet.has(raw)) continue
-    loreSet.add(raw)
-    syncDarknetTextFile(ns, loreSet, loreFile)
+    const entry = parseLorePortEntry(raw)
+    if (!entry || !absorbLorePortEntry(store, entry)) continue
+    syncDarknetLoreFile(ns, store, loreFile)
   }
 }
 
-export function createLoreSet(ns: NS, loreFile: string): Set<string> {
-  return loadDarknetTextSet(ns, loreFile)
+export function createLoreStore(ns: NS, loreFile: string): DarknetLoreStore {
+  return loadDarknetLoreStore(ns, loreFile)
 }

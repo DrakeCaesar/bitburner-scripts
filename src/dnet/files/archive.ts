@@ -1,20 +1,65 @@
 import { NS } from "@ns"
 import { DARKNET_LORE_FILE, DARKWEB_ARCHIVE_DIR, flatFileName } from "./categorize.js"
 
-export function loadDarknetTextSet(ns: NS, file: string = DARKNET_LORE_FILE): Set<string> {
-  if (!ns.fileExists(file, "home")) return new Set()
-  try {
-    const parsed: unknown = JSON.parse(ns.read(file))
-    if (!Array.isArray(parsed)) return new Set()
-    return new Set(parsed.filter((item): item is string => typeof item === "string"))
-  } catch {
-    return new Set()
-  }
+export interface DarknetLoreStore {
+  journal: Set<string>
+  cache: Set<string>
 }
 
+function readStringSet(raw: unknown): Set<string> {
+  if (!Array.isArray(raw)) return new Set()
+  return new Set(raw.filter((item): item is string => typeof item === "string"))
+}
+
+export function loadDarknetLoreStore(ns: NS, file: string = DARKNET_LORE_FILE): DarknetLoreStore {
+  if (!ns.fileExists(file, "home")) {
+    return { journal: new Set(), cache: new Set() }
+  }
+  try {
+    const parsed: unknown = JSON.parse(ns.read(file))
+    if (Array.isArray(parsed)) {
+      return { journal: readStringSet(parsed), cache: new Set() }
+    }
+    if (typeof parsed === "object" && parsed !== null) {
+      const row = parsed as Record<string, unknown>
+      return {
+        journal: readStringSet(row.journal),
+        cache: readStringSet(row.cache),
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return { journal: new Set(), cache: new Set() }
+}
+
+export function syncDarknetLoreFile(
+  ns: NS,
+  store: DarknetLoreStore,
+  file: string = DARKNET_LORE_FILE,
+): void {
+  ns.write(
+    file,
+    JSON.stringify(
+      {
+        journal: [...store.journal].sort(),
+        cache: [...store.cache].sort(),
+      },
+      null,
+      2,
+    ),
+    "w",
+  )
+}
+
+/** @deprecated use loadDarknetLoreStore */
+export function loadDarknetTextSet(ns: NS, file: string = DARKNET_LORE_FILE): Set<string> {
+  return loadDarknetLoreStore(ns, file).journal
+}
+
+/** @deprecated use syncDarknetLoreFile */
 export function syncDarknetTextFile(ns: NS, textSet: Set<string>, file: string = DARKNET_LORE_FILE): void {
-  const sorted = [...textSet].sort()
-  ns.write(file, JSON.stringify(sorted, null, 2), "w")
+  syncDarknetLoreFile(ns, { journal: textSet, cache: new Set() }, file)
 }
 
 function archiveDestPath(fileName: string, suffix: number | null): string {

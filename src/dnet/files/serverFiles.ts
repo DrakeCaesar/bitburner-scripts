@@ -3,6 +3,7 @@ import type { WorkerDnetApi } from "../worker/dnetApi.js"
 import { finalizeArchiveContent } from "./archive.js"
 import { flatFileName, isCacheFile, isLoreFile, isPasswordFile } from "./categorize.js"
 import { parsePasswordFileContent } from "./intel.js"
+import { sanitizeHtmlToText } from "./sanitize.js"
 import type { CacheOpenRecord } from "./types.js"
 
 export interface LocalFileScanState {
@@ -54,6 +55,7 @@ export function reportCacheOpen(
   fileName: string,
   result: { message: string; karmaLoss: number },
   replyPort: number,
+  lorePort: number,
 ): void {
   const entry: CacheOpenRecord = {
     host,
@@ -64,12 +66,19 @@ export function reportCacheOpen(
   }
 
   ns.writePort(replyPort, JSON.stringify({ type: "cacheOpen", ...entry }))
+  if (lorePort > 0) {
+    const text = sanitizeHtmlToText(result.message)
+    if (text) {
+      ns.writePort(lorePort, JSON.stringify({ kind: "cache", text }))
+    }
+  }
 }
 
 export async function openCacheFilesOnCurrentHost(
   ns: NS,
   dnet: WorkerDnetApi,
   replyPort: number,
+  lorePort: number,
 ): Promise<void> {
   const hostname = ns.getHostname()
   let files: string[]
@@ -93,7 +102,7 @@ export async function openCacheFilesOnCurrentHost(
     if (!result.success) {
       continue
     }
-    reportCacheOpen(ns, hostname, cacheName, result, replyPort)
+    reportCacheOpen(ns, hostname, cacheName, result, replyPort, lorePort)
   }
 }
 
@@ -155,6 +164,6 @@ export async function scanLocalServerFiles(
     neighbors = []
   }
 
-  await openCacheFilesOnCurrentHost(ns, dnet, replyPort)
+  await openCacheFilesOnCurrentHost(ns, dnet, replyPort, lorePort)
   await archiveNewTextFilesOnCurrentHost(ns, replyPort, lorePort, neighbors, state)
 }

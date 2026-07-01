@@ -13,8 +13,9 @@ import {
   WORKER_TIMEOUT_MS,
 } from "../constants.js"
 import { DARKNET_LORE_FILE } from "../files/categorize.js"
+import type { DarknetLoreStore } from "../files/archive.js"
 import type { CacheOpenRecord } from "../files/types.js"
-import { applyWorkerFileMessage, createLoreSet, pollLorePort } from "./fileIntel.js"
+import { applyWorkerFileMessage, createLoreStore, pollLorePort } from "./fileIntel.js"
 import {
   loadDarknetRegistry,
   pruneInvalidRegistryHosts,
@@ -102,9 +103,9 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
   const registry = loadDarknetRegistry(ns)
   pruneInvalidRegistryHosts(dnet, registry)
   saveDarknetRegistry(ns, registry)
-  const loreSet = createLoreSet(ns, DARKNET_LORE_FILE)
+  const loreStore = createLoreStore(ns, DARKNET_LORE_FILE)
   const cacheOpens: CacheOpenRecord[] = []
-  const fileIntelCtx = { registry, cacheOpens, loreSet, loreFile: DARKNET_LORE_FILE }
+  const fileIntelCtx = { registry, cacheOpens, loreStore, loreFile: DARKNET_LORE_FILE }
 
   clearDnetGlobalPorts(ns)
   ensureMutationWatcher(ns)
@@ -158,7 +159,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       masterLog,
       sessionArchive,
     )
-    pollLorePort(ns, LORE_PORT, loreSet, DARKNET_LORE_FILE)
+    pollLorePort(ns, LORE_PORT, loreStore, DARKNET_LORE_FILE)
     syncRegistryPasswords(dnet, registry, passwords, targets, tryConnect)
     checkCommandDeadlines(workerPool, targets, spawnPlans, pendingSpawns, portPool, ns, masterLog)
     pruneWorkers(ns, workerPool, portPool, targets, pendingSpawns, spawnPlans, masterLog)
@@ -354,7 +355,7 @@ function drainReplies(
   fileIntelCtx: {
     registry: DarknetRegistry
     cacheOpens: CacheOpenRecord[]
-    loreSet: Set<string>
+    loreStore: DarknetLoreStore
     loreFile: string
   },
   masterLog: MasterActionLog,

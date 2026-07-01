@@ -435,11 +435,19 @@ function loadTextFile(ns: NS): string[] {
   if (!ns.fileExists(DARKNET_TEXT_FILE, "home")) return []
   try {
     const parsed: unknown = JSON.parse(ns.read(DARKNET_TEXT_FILE))
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter((item): item is string => typeof item === "string")
+    if (Array.isArray(parsed)) {
+      return parsed.filter((item): item is string => typeof item === "string")
+    }
+    if (typeof parsed === "object" && parsed !== null) {
+      const journal = (parsed as Record<string, unknown>).journal
+      if (Array.isArray(journal)) {
+        return journal.filter((item): item is string => typeof item === "string")
+      }
+    }
   } catch {
     return []
   }
+  return []
 }
 
 function renderGroupTable(
