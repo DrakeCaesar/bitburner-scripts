@@ -3,6 +3,27 @@
 /** Worker result message when a command target is not a direct neighbor. */
 export const NOT_NEIGHBOR_MESSAGE = "notNeighbor"
 
+/** Auth returned 401 (expected wrong guess) but heartbleed did not yield model feedback. */
+export function noAuthFeedbackMessage(hb: {
+  success: boolean
+  logs: string[]
+  message?: string
+}): string {
+  if (!hb.success) {
+    if (hb.message === "Direct Connection Required") {
+      return "no auth feedback (not connected)"
+    }
+    if (hb.message === "Not Enough Charisma") {
+      return "no auth feedback (charisma too low)"
+    }
+    if (hb.message && hb.message !== "Unauthorized" && hb.message !== "Success") {
+      return `no auth feedback (${hb.message})`
+    }
+    return "no auth feedback (heartbleed failed)"
+  }
+  return "no auth feedback (empty log)"
+}
+
 export type WorkerCommandPayload =
   | { type: "probe" }
   | { type: "auth"; target: string; solverId: string; guess: string; detail: string | null }

@@ -2,7 +2,12 @@ import { NS } from "@ns"
 import type { WorkerDnetApi } from "./dnetApi.js"
 import type { FormulasServerDetails } from "./taskTiming.js"
 import { estimateAuthMs, estimateHeartbleedMs, estimateReallocMs } from "./taskTiming.js"
-import { NOT_NEIGHBOR_MESSAGE, type NeighborProbeStatus, type WorkerCommand } from "./protocol.js"
+import {
+  NOT_NEIGHBOR_MESSAGE,
+  noAuthFeedbackMessage,
+  type NeighborProbeStatus,
+  type WorkerCommand,
+} from "./protocol.js"
 import { WORKER_SCRIPT } from "./constants.js"
 import { copyWorkerFiles } from "./deploy.js"
 import { measureHostRam, priorityMet } from "./realloc.js"
@@ -127,7 +132,7 @@ export async function runAuthCommand(
       if (!hb.success || hb.logs.length === 0) {
         writeResult({
           success: false,
-          message: result.message,
+          message: noAuthFeedbackMessage(hb),
           code: result.code,
         })
         return
@@ -147,7 +152,7 @@ export async function runAuthCommand(
       await dnet.heartbleed(cmd.target)
     }
   } catch {
-    writeResult({ success: false })
+    writeResult({ success: false, message: "auth command error" })
   }
 }
 

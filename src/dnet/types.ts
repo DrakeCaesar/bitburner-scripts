@@ -26,7 +26,10 @@ export interface DnetApi {
     password: string,
     additionalMsec?: number,
   ): Promise<{ success: boolean; code?: number; message?: string; data?: unknown }>
-  heartbleed(host: string, options?: { peek?: boolean }): Promise<{ success: boolean; logs: string[] }>
+  heartbleed(
+    host: string,
+    options?: { peek?: boolean },
+  ): Promise<{ success: boolean; logs: string[]; message?: string; code?: number }>
   connectToSession?(host: string, password: string): { success: boolean }
   getServerDetails(host?: string): ServerDetails
   openCache(filename: string, suppressToast?: boolean): { success: boolean; message: string; karmaLoss: number }

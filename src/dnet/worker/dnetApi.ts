@@ -13,7 +13,10 @@ export interface WorkerDnetApi {
     password: string,
     additionalMsec?: number,
   ): Promise<{ success: boolean; code?: number; message?: string; data?: unknown }>
-  heartbleed(host: string, options?: { peek?: boolean }): Promise<{ success: boolean; logs: string[] }>
+  heartbleed(
+    host: string,
+    options?: { peek?: boolean },
+  ): Promise<{ success: boolean; logs: string[]; message?: string; code?: number }>
   getServerDetails(host?: string): WorkerServerDetails
   connectToSession?(host: string, password: string): { success: boolean }
   getBlockedRam?(host?: string): number
