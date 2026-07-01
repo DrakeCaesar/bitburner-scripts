@@ -70,6 +70,11 @@ export function estimateHeartbleedMs(ns: NS, details: FormulasServerDetails): nu
   }
 }
 
+/** Wall-clock ms for one dnet.labreport call. */
+export function estimateLabreportMs(ns: NS, details: FormulasServerDetails): number {
+  return estimateAuthMs(ns, details, "")
+}
+
 /** Wall-clock ms for one dnet.memoryReallocation call (charisma-scaled in game source). */
 export function estimateReallocMs(ns: NS): number {
   const charisma = ns.getPlayer().skills.charisma

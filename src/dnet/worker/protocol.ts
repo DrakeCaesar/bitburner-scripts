@@ -31,6 +31,7 @@ export type WorkerCommandPayload =
   | { type: "spawn"; target: string; sessionId: number; port: number; password?: string }
   | { type: "realloc"; host: string; priority: 1 | 2 | 3 }
   | { type: "stasis" }
+  | { type: "labreport"; target: string; solverId: string }
   | { type: "exit" }
 
 export type WorkerCommand = WorkerCommandPayload
@@ -89,6 +90,17 @@ export type WorkerResponse =
       blockedRam: number
     }
   | { type: "stasisResult"; workerHost: string; success: boolean; message?: string }
+  | {
+      type: "labreportResult"
+      target: string
+      solverId: string
+      workerHost: string
+      coords: [number, number]
+      north: boolean
+      east: boolean
+      south: boolean
+      west: boolean
+    }
 
 export function parseWorkerResponse(raw: unknown): WorkerResponse | null {
   try {
@@ -171,6 +183,24 @@ export function parseWorkerResponse(raw: unknown): WorkerResponse | null {
           success: row.success === true,
           message: typeof row.message === "string" ? row.message : undefined,
         }
+      case "labreportResult": {
+        if (typeof row.target !== "string" || typeof row.solverId !== "string") return null
+        if (!Array.isArray(row.coords) || row.coords.length < 2) return null
+        const x = Number(row.coords[0])
+        const y = Number(row.coords[1])
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return null
+        return {
+          type: "labreportResult",
+          target: row.target,
+          solverId: row.solverId,
+          workerHost: typeof row.workerHost === "string" ? row.workerHost : "",
+          coords: [x, y],
+          north: row.north === true,
+          east: row.east === true,
+          south: row.south === true,
+          west: row.west === true,
+        }
+      }
       default:
         return null
     }
@@ -213,13 +243,15 @@ export function formatCommand(cmd: WorkerCommandPayload): string {
       return `realloc:${cmd.host}:p${cmd.priority}`
     case "stasis":
       return "stasis"
+    case "labreport":
+      return `labreport:${cmd.target}`
     case "exit":
       return "exit"
   }
 }
 
 export function usesWorkerDeadlines(cmd: WorkerCommandPayload): boolean {
-  return cmd.type === "auth" || cmd.type === "heartbleed" || cmd.type === "realloc"
+  return cmd.type === "auth" || cmd.type === "heartbleed" || cmd.type === "realloc" || cmd.type === "labreport"
 }
 
 export function isInstantCommand(cmd: WorkerCommandPayload): boolean {

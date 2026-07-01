@@ -16,6 +16,7 @@ import {
   runHeartbleedCommand,
   runReallocCommand,
   runSpawnCommand,
+  runLabreportCommand,
 } from "./execute.js"
 import { runStasisCommand } from "./stasisExec.js"
 
@@ -119,6 +120,8 @@ export async function main(ns: NS): Promise<void> {
     } else if (cmd.type === "stasis") {
       await ensureSelfAuth(dnet, hostname, selfPassword)
       await runStasisCommand(ns, dnet, replyPort)
+    } else if (cmd.type === "labreport") {
+      await runLabreportCommand(ns, dnet, cmd, replyPort)
     }
   }
 }

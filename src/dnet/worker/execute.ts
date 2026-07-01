@@ -1,7 +1,7 @@
 import { NS } from "@ns"
 import type { WorkerDnetApi } from "./dnetApi.js"
 import type { FormulasServerDetails } from "./taskTiming.js"
-import { estimateAuthMs, estimateHeartbleedMs, estimateReallocMs } from "./taskTiming.js"
+import { estimateAuthMs, estimateHeartbleedMs, estimateLabreportMs, estimateReallocMs } from "./taskTiming.js"
 import {
   NOT_NEIGHBOR_MESSAGE,
   noAuthFeedbackMessage,
@@ -33,6 +33,19 @@ function parseAuthLog(log: string, guess: string): { data: string; message: stri
   } catch {
     return null
   }
+}
+
+function isLabyrinthMoveGuess(guess: string): boolean {
+  return guess === "n" || guess === "e" || guess === "s" || guess === "w"
+}
+
+function labyrinthMoveMessage(message: string | undefined): boolean {
+  if (!message) return false
+  return (
+    message.includes("You have moved to") ||
+    message.includes("still at") ||
+    message.includes("You cannot go that way")
+  )
 }
 
 function isNeighbor(dnet: WorkerDnetApi, target: string): boolean {
@@ -125,6 +138,16 @@ export async function runAuthCommand(
       return
     }
 
+    if (isLabyrinthMoveGuess(cmd.guess) && labyrinthMoveMessage(result.message)) {
+      writeResult({
+        success: false,
+        feedback: normalizeFeedback(result.data),
+        message: result.message,
+        code: result.code,
+      })
+      return
+    }
+
     while (true) {
       writeDeadline(Date.now() + estimateHeartbleedMs(ns, details))
 
@@ -153,6 +176,66 @@ export async function runAuthCommand(
     }
   } catch {
     writeResult({ success: false, message: "auth command error" })
+  }
+}
+
+export async function runLabreportCommand(
+  ns: NS,
+  dnet: WorkerDnetApi,
+  cmd: Extract<WorkerCommand, { type: "labreport" }>,
+  replyPort: number,
+): Promise<void> {
+  const workerHost = ns.getHostname()
+
+  const writeResult = (payload: {
+    coords: [number, number]
+    north: boolean
+    east: boolean
+    south: boolean
+    west: boolean
+  }): void => {
+    ns.writePort(
+      replyPort,
+      JSON.stringify({
+        type: "labreportResult",
+        target: cmd.target,
+        solverId: cmd.solverId,
+        workerHost,
+        ...payload,
+      }),
+    )
+  }
+
+  if (!dnet.labreport) return
+
+  const details = readFormulasDetails(dnet, cmd.target)
+  if (details) {
+    ns.writePort(
+      replyPort,
+      JSON.stringify({
+        type: "deadline",
+        workerHost,
+        commandType: "labreport",
+        deadlineAt: Date.now() + estimateLabreportMs(ns, details),
+      }),
+    )
+  }
+
+  try {
+    const result = await dnet.labreport()
+    if (!result.success || !Array.isArray(result.coords) || result.coords.length < 2) return
+    const x = Number(result.coords[0])
+    const y = Number(result.coords[1])
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return
+    writeResult({
+      coords: [x, y],
+      north: result.north === true,
+      east: result.east === true,
+      south: result.south === true,
+      west: result.west === true,
+    })
+  } catch {
+    /* coordinator handles timeout */
   }
 }
 

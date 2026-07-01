@@ -18,6 +18,8 @@ export interface GuessResult {
 export interface SolverContext {
   target: string
   details: ServerDetails
+  /** Labyrinth explorers: game tracks maze position per worker PID. */
+  workerHost?: string
 }
 
 export interface SolverModule<S extends SolverState = SolverState> {

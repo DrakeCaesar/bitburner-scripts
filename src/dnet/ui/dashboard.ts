@@ -7,6 +7,7 @@ import {
   type TabbedScriptLogBuilder,
 } from "@/libraries/scriptLogUiLayout.js"
 import { MUTATION_PORT } from "../constants.js"
+import { renderLabyrinthOverview } from "./labyrinthMap.js"
 import type {
   AttemptRecord,
   AuthTarget,
@@ -290,6 +291,8 @@ function parseCommandHosts(action: string, detail: string | undefined): { actor:
     }
     case "heartbleed":
       return { actor, remote: rest }
+    case "labreport":
+      return { actor, remote: rest }
     default:
       return { actor, remote: rest }
   }
@@ -322,6 +325,7 @@ export async function renderDashboard(
     )
 
   renderStasisOverview(log.tab("overview"), snap.stasis)
+  renderLabyrinthOverview(log.tab("overview"), snap.labyrinths)
 
   const sortedTargets = [...snap.targets].sort((a, b) => a.host.localeCompare(b.host))
   log.tab("targets").table({

@@ -57,6 +57,8 @@ import {
 import { copyWorkerFiles } from "../worker/deploy.js"
 import { ensureMutationWatcher, MutationSync } from "./mutationSync.js"
 import { dispatchLabyrinthStasis } from "./labyrinthStasis.js"
+import { dispatchLabyrinth, snapshotLabyrinths } from "./labyrinthDispatch.js"
+import { applyLabreport, type LabyrinthState } from "../solvers/labyrinth.js"
 import { clearDnetGlobalPorts, clearWorkerPortPair } from "./ports.js"
 import {
   availableAuthWorkers,
@@ -210,6 +212,13 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       (wi) => isWorkerAlive(ns, wi),
       (wi) => sendCommand(ns, wi, { type: "stasis" }, masterLog, dispatchCtx),
     )
+    dispatchLabyrinth({
+      workerPool,
+      targets,
+      attemptLog,
+      cloneState,
+      sendCommand: (wi, payload) => sendCommand(ns, wi, payload, masterLog, dispatchCtx),
+    })
     dispatchGuesses(ns, workerPool, targets, attemptLog, dnet, masterLog, dispatchCtx)
     dispatchBackgroundProbes(ns, workerPool, mutationSync, urgentProbeHosts, masterLog, dispatchCtx)
     dispatchP3Reallocs(ns, dnet, workerPool, masterLog, dispatchCtx)
@@ -286,6 +295,7 @@ function buildSnapshot(
       }),
     ),
     stasis: readStasisSnapshot(dnet),
+    labyrinths: snapshotLabyrinths(targets),
     summary: {
       discovered: count("discovered") + count("queued"),
       active: count("active") + count("waiting_worker"),
@@ -383,7 +393,7 @@ function invalidateKnownPassword(
   target.password = null
   target.solverId = null
   target.solverState = null
-  target.status = details.modelId === LABYRINTH_MODEL ? "unsupported" : "queued"
+  target.status = "queued"
   target.pendingGuess = null
   target.pendingDetail = null
   target.workerHost = null
@@ -568,6 +578,11 @@ function drainReplies(
             message: msg.success ? undefined : msg.message ?? "unknown failure",
           })
           break
+        case "labreportResult":
+          wi.idle = true
+          wi.commandDeadlineAt = 0
+          onLabreportResult(msg, targets, attemptLog)
+          break
       }
     }
   }
@@ -587,7 +602,7 @@ function noteHost(
   if (!target) {
     const status: TargetStatus =
       details.modelId === LABYRINTH_MODEL
-        ? "unsupported"
+        ? "queued"
         : details.hasSession
           ? "solved"
           : "queued"
@@ -658,12 +673,6 @@ function startAuthSession(
   log: AttemptLog,
   sessionArchive: SessionArchive,
 ): void {
-  if (details.modelId === LABYRINTH_MODEL) {
-    target.status = "unsupported"
-    target.lastError = "Labyrinth solver not implemented in dnet v2 yet"
-    return
-  }
-
   const solver = lookupSolver(details)
   if (!solver) {
     target.status = "no_solver"
@@ -707,6 +716,43 @@ function undoDispatchedGuess(target: AuthTarget): void {
   if (st.dispatched === true) {
     target.solverState = { ...st, dispatched: false }
   }
+}
+
+function onLabreportResult(
+  msg: Extract<WorkerResponse, { type: "labreportResult" }>,
+  targets: Map<string, AuthTarget>,
+  attemptLog: AttemptLog,
+): void {
+  const target = targets.get(msg.target)
+  if (!target) return
+
+  target.pendingGuess = null
+  target.pendingDetail = null
+  target.workerHost = null
+
+  if (target.solverState != null) {
+    target.solverState = applyLabreport(target.solverState as LabyrinthState, {
+      workerHost: msg.workerHost,
+      coords: msg.coords,
+      north: msg.north,
+      east: msg.east,
+      south: msg.south,
+      west: msg.west,
+    })
+  }
+
+  attemptLog.append({
+    host: target.host,
+    session: target.session,
+    kind: "note",
+    solverId: msg.solverId,
+    modelId: target.modelId,
+    workerHost: msg.workerHost,
+    note: `labreport @ ${msg.coords.join(",")}`,
+    solverState: cloneState(target.solverState),
+  })
+
+  target.status = "active"
 }
 
 function onAuthResult(
@@ -758,9 +804,11 @@ function onAuthResult(
   target.guessCount += 1
 
   if (msg.success) {
+    const password =
+      target.modelId === LABYRINTH_MODEL ? msg.feedback ?? msg.guess : msg.guess
     target.status = "solved"
-    target.password = msg.guess
-    passwords.set(target.host, msg.guess)
+    target.password = password
+    passwords.set(target.host, password)
     attemptLog.append({
       host: target.host,
       session: target.session,
@@ -771,7 +819,7 @@ function onAuthResult(
       guess: msg.guess,
       note: "solved",
     })
-    tryConnect(dnet, target.host, msg.guess)
+    tryConnect(dnet, target.host, password)
     return
   }
 
@@ -784,7 +832,9 @@ function onAuthResult(
     return
   }
 
-  const ctx = details ? { target: target.host, details } : undefined
+  const ctx = details
+    ? { target: target.host, details, workerHost: msg.workerHost || undefined }
+    : undefined
   target.solverState = solver.applyResult(
     target.solverState as SolverState,
     msg.guess,
@@ -1046,6 +1096,8 @@ function dispatchGuesses(
       continue
     }
 
+    if (details.modelId === LABYRINTH_MODEL) continue
+
     const solver = lookupSolver(details)
     if (!solver || target.solverState == null) continue
 
@@ -1276,6 +1328,8 @@ function commandDetail(host: string, payload: WorkerCommandPayload): string {
     case "stasis":
       return host
     case "heartbleed":
+      return `${host} -> ${payload.target}`
+    case "labreport":
       return `${host} -> ${payload.target}`
     default:
       return host

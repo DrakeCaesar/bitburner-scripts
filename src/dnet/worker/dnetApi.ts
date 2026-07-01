@@ -22,4 +22,13 @@ export interface WorkerDnetApi {
   getBlockedRam?(host?: string): number
   memoryReallocation?(host?: string): Promise<{ success: boolean }>
   openCache(filename: string, suppressToast?: boolean): { success: boolean; message: string; karmaLoss: number }
+  labreport?(): Promise<{
+    success: boolean
+    coords: number[]
+    north: boolean
+    east: boolean
+    south: boolean
+    west: boolean
+    message?: string
+  }>
 }

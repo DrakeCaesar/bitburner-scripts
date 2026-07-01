@@ -1,11 +1,12 @@
 import type { ServerDetails } from "../types.js"
 import type { SolverModule } from "./types.js"
 import { LABYRINTH_MODEL } from "../constants.js"
+import { labyrinthSolver } from "./labyrinth.js"
 import { SOLVER_MODULES, bellaCuoreRange } from "./impl/all.js"
 
 export function lookupSolver(details: ServerDetails): SolverModule | null {
   if (details.modelId === LABYRINTH_MODEL) {
-    return null
+    return labyrinthSolver
   }
   if (details.modelId === "BellaCuore" && details.passwordFormat === "numeric" && details.data.includes(",")) {
     return bellaCuoreRange

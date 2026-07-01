@@ -189,6 +189,14 @@ export interface StasisSnapshot {
   linkedHosts: readonly string[]
 }
 
+export interface LabyrinthMapSnapshot {
+  hostname: string
+  status: string
+  pendingWorker: string | null
+  pendingCommand: string | null
+  state: unknown
+}
+
 export interface CrawlSnapshot {
   sessionId: number
   targets: readonly AuthTarget[]
@@ -198,6 +206,7 @@ export interface CrawlSnapshot {
   mutation: MutationPortSnapshot
   workers: readonly WorkerSnapshot[]
   stasis: StasisSnapshot | null
+  labyrinths: readonly LabyrinthMapSnapshot[]
   summary: {
     discovered: number
     active: number
