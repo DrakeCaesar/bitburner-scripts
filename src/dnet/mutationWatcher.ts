@@ -17,15 +17,13 @@ export async function main(ns: NS): Promise<void> {
 
   ns.clearPort(MUTATION_PORT)
   ns.print(`mutationWatcher started port ${MUTATION_PORT} ${clock()}`)
-  let first = true
 
   for (;;) {
     await dnet.nextMutation()
     const ts = Date.now()
+    ns.clearPort(MUTATION_PORT)
     ns.writePort(MUTATION_PORT, String(ts))
     ns.print(`${clock()}  mutation ts ${ts}`)
-    if (!first) ns.readPort(MUTATION_PORT)
-    first = false
   }
 }
 
