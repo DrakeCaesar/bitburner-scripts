@@ -1,6 +1,6 @@
 import { type ReactNode } from "@ns"
 import { getReact } from "@/libraries/scriptLogUi.js"
-import { buildMapGrid, type LabyrinthState, type MapGridChar } from "../solvers/labyrinth.js"
+import { buildMapGrid, sessionDisplayCoords, type LabyrinthState, type MapGridChar } from "../solvers/labyrinth.js"
 import type { LabyrinthMapSnapshot } from "../types.js"
 
 const BLOCK = "\u2588"
@@ -26,9 +26,10 @@ function workerLegend(state: LabyrinthState): string[] {
     const host = workers[i]!
     const sess = state.sessions[host]
     const letter = WORKER_LETTERS[i] ?? String(i + 1)
-    const pos = sess?.coords ? `@ ${sess.coords.join(",")}` : ""
+    const pos = sess ? sessionDisplayCoords(sess) : null
+    const posLabel = pos ? `@ ${pos.join(",")}` : ""
     const phase = sess && sess.phase !== "done" ? ` (${sess.phase})` : ""
-    lines.push(`${letter} ${host}${pos}${phase}`)
+    lines.push(`${letter} ${host}${posLabel}${phase}`)
   }
   return lines
 }
@@ -41,24 +42,27 @@ function buildLabyrinthMapReact(snapshot: LabyrinthMapSnapshot): ReactNode {
   }
 
   const grid = buildMapGrid(state.map, state.sessions)
+  const legend = workerLegend(state)
   if (!grid) {
+    const pending =
+      snapshot.pendingCommand != null
+        ? `pending ${snapshot.pendingCommand} via ${snapshot.pendingWorker ?? "?"}`
+        : null
     return React.createElement(
       "div",
       { style: { fontFamily: "monospace", marginBottom: 4 } },
-      `${snapshot.hostname}: no cells mapped yet`,
+      [
+        React.createElement("div", { key: "hdr" }, `${snapshot.hostname}: no cells mapped yet`),
+        pending ? React.createElement("div", { key: "pend" }, pending) : null,
+        legend.length > 0
+          ? React.createElement("div", { key: "workers" }, `Workers: ${legend.join("  |  ")}`)
+          : null,
+      ].filter(Boolean),
     )
   }
 
   const workers = Object.keys(state.sessions).sort()
-  const workerAt = new Map<string, string>()
-  for (let i = 0; i < workers.length; i++) {
-    const host = workers[i]!
-    const sess = state.sessions[host]
-    if (!sess?.coords) continue
-    const key = `${sess.coords[0]},${sess.coords[1]}`
-    const letter = WORKER_LETTERS[i] ?? String(i + 1)
-    workerAt.set(key, workerAt.has(key) ? "*" : letter)
-  }
+  const workerAt = grid.workerMarkers
 
   const seenCount = Object.values(state.map).filter((c) => c.seen).length
   const header = `${snapshot.hostname}  status ${snapshot.status}  explored ${seenCount} cell(s)  ${workers.length} explorer(s)`
@@ -106,7 +110,6 @@ function buildLabyrinthMapReact(snapshot: LabyrinthMapSnapshot): ReactNode {
     ),
   )
 
-  const legend = workerLegend(state)
   const children = [
     React.createElement("div", { key: "hdr", style: { marginBottom: 2 } }, header),
     React.createElement(

@@ -235,9 +235,16 @@ export interface MapGrid {
 
 const WORKER_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
+export function sessionDisplayCoords(sess: {
+  coords: [number, number] | null
+  lastCoords: [number, number] | null
+}): [number, number] | null {
+  return sess.coords ?? sess.lastCoords
+}
+
 export function buildMapGrid(
   map: Record<string, LabyrinthCellWalls>,
-  sessions: Record<string, { coords: [number, number] | null }>,
+  sessions: Record<string, { coords: [number, number] | null; lastCoords?: [number, number] | null }>,
 ): MapGrid | null {
   const known = new Set<string>()
   for (const [k, cell] of Object.entries(map)) {
@@ -249,8 +256,13 @@ export function buildMapGrid(
   for (let i = 0; i < workers.length; i++) {
     const host = workers[i]!
     const sess = sessions[host]
-    if (!sess?.coords) continue
-    const k = cellKey(sess.coords[0], sess.coords[1])
+    if (!sess) continue
+    const pos = sessionDisplayCoords({
+      coords: sess.coords,
+      lastCoords: sess.lastCoords ?? null,
+    })
+    if (!pos) continue
+    const k = cellKey(pos[0], pos[1])
     known.add(k)
     const letter = WORKER_LETTERS[i] ?? String(i + 1)
     const prev = workerMarkers.get(k)

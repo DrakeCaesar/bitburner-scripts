@@ -23,6 +23,8 @@ export interface LabyrinthWalls {
 export interface LabyrinthSession {
   path: LabyrinthDir[]
   coords: [number, number] | null
+  /** Last known cell (kept while coords cleared during labreport). */
+  lastCoords: [number, number] | null
   walls: LabyrinthWalls | null
   phase: LabyrinthPhase
 }

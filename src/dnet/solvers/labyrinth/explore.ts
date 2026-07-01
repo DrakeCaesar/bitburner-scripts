@@ -24,7 +24,7 @@ import type {
 } from "./types.js"
 
 function freshSession(): LabyrinthSession {
-  return { path: [], coords: null, walls: null, phase: "labreport" }
+  return { path: [], coords: null, lastCoords: null, walls: null, phase: "labreport" }
 }
 
 function session(state: LabyrinthState, workerHost: string): LabyrinthSession {
@@ -32,6 +32,10 @@ function session(state: LabyrinthState, workerHost: string): LabyrinthSession {
     state.sessions[workerHost] = freshSession()
   }
   return state.sessions[workerHost]!
+}
+
+export function ensureWorkerSession(state: LabyrinthState, workerHost: string): LabyrinthSession {
+  return session(state, workerHost)
 }
 
 export function needsLabreport(state: LabyrinthState, workerHost: string): boolean {
@@ -87,16 +91,24 @@ export function repairState(state: LabyrinthState): LabyrinthState {
   return state
 }
 
+export function exploredCellCount(map: LabyrinthState["map"]): number {
+  return Object.values(map).filter((c) => c.seen).length
+}
+
 export function anyWorkRemaining(state: LabyrinthState, workerHosts: string[]): boolean {
   repairState(state)
+  if (workerHosts.length === 0) return false
+
+  if (exploredCellCount(state.map) === 0) {
+    return true
+  }
+
   if (globalFrontierRemaining(state.map)) {
     for (const host of workerHosts) {
       const sess = state.sessions[host]
       if (!sess || sessionCanContinue(state, sess)) return true
     }
-    for (const host of workerHosts) {
-      if (!state.sessions[host]) return true
-    }
+    return true
   }
   return false
 }
@@ -133,6 +145,7 @@ export function applyLabreport(state: LabyrinthState, report: LabreportPayload):
   ensureMap(state)
   const sess = session(state, report.workerHost)
   sess.coords = report.coords
+  sess.lastCoords = report.coords
   sess.walls = {
     north: report.north,
     east: report.east,
@@ -158,6 +171,8 @@ export function applyMoveResult(
     if (sess.coords) {
       ensureMap(state)
       confirmMovePassage(state.map, sess.coords[0], sess.coords[1], dir)
+      const [dx, dy] = LABYRINTH_DIRS[dir]
+      sess.lastCoords = [sess.coords[0] + dx, sess.coords[1] + dy]
     }
     const last = sess.path[sess.path.length - 1]
     if (last && dir === LABYRINTH_OPPOSITE[last]) {

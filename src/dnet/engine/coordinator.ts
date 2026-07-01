@@ -896,6 +896,11 @@ function scheduleRetries(targets: Map<string, AuthTarget>, log: AttemptLog): voi
   const now = Date.now()
   for (const target of targets.values()) {
     if (target.status !== "exhausted") continue
+    if (target.modelId === LABYRINTH_MODEL) {
+      target.status = "waiting_worker"
+      target.retryAt = null
+      continue
+    }
     if (target.retryAt != null && now < target.retryAt) {
       target.status = "retry_wait"
       continue

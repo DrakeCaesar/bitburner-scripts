@@ -7,12 +7,14 @@ import {
   applyLabreport,
   applyMoveResult,
   buildLabyrinthSnapshots,
+  ensureWorkerSession,
+  exploredCellCount,
   labyrinthSolver,
   needsLabreport,
   planMove,
   repairState,
 } from "./labyrinth/explore.js"
-import { buildMapGrid, globalFrontierRemaining } from "./labyrinth/map.js"
+import { buildMapGrid, globalFrontierRemaining, sessionDisplayCoords } from "./labyrinth/map.js"
 import type {
   LabreportPayload,
   LabyrinthSnapshot,
@@ -26,11 +28,14 @@ export {
   applyMoveResult,
   buildLabyrinthSnapshots,
   buildMapGrid,
+  ensureWorkerSession,
+  exploredCellCount,
   globalFrontierRemaining,
   labyrinthSolver,
   needsLabreport,
   planMove,
   repairState,
+  sessionDisplayCoords,
 }
 
 export type { LabreportPayload, LabyrinthSnapshot, LabyrinthState, MapGrid, MapGridChar }
