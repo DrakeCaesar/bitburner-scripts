@@ -6,15 +6,22 @@ import {
   anyWorkRemaining,
   applyLabreport,
   applyMoveResult,
+  assignFrontierClaims,
   buildLabyrinthSnapshots,
+  clearLabyrinthPending,
   ensureWorkerSession,
   exploredCellCount,
+  labyrinthPendingMatches,
   labyrinthSolver,
+  labyrinthWorkerPending,
   needsLabreport,
   planMove,
+  pruneLabyrinthWorker,
+  pruneLabyrinthWorkers,
   repairState,
+  setLabyrinthPending,
 } from "./labyrinth/explore.js"
-import { buildMapGrid, globalFrontierRemaining, sessionDisplayCoords } from "./labyrinth/map.js"
+import { buildMapGrid, frontierCells, globalFrontierRemaining, sessionDisplayCoords } from "./labyrinth/map.js"
 import type {
   LabreportPayload,
   LabyrinthSnapshot,
@@ -26,16 +33,31 @@ export {
   anyWorkRemaining,
   applyLabreport,
   applyMoveResult,
+  assignFrontierClaims,
   buildLabyrinthSnapshots,
   buildMapGrid,
+  clearLabyrinthPending,
   ensureWorkerSession,
   exploredCellCount,
+  frontierCells,
   globalFrontierRemaining,
+  labyrinthPendingMatches,
   labyrinthSolver,
+  labyrinthWorkerPending,
   needsLabreport,
   planMove,
+  pruneLabyrinthWorker,
+  pruneLabyrinthWorkers,
   repairState,
   sessionDisplayCoords,
+  setLabyrinthPending,
 }
 
-export type { LabreportPayload, LabyrinthSnapshot, LabyrinthState, MapGrid, MapGridChar }
+export type {
+  BuildMapGridOptions,
+  LabreportPayload,
+  LabyrinthSnapshot,
+  LabyrinthState,
+  MapGrid,
+  MapGridChar,
+}

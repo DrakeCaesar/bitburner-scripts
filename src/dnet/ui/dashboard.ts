@@ -350,7 +350,10 @@ function populateOverviewTab(log: TabbedScriptLogBuilder, snap: CrawlSnapshot): 
     )
 
   renderStasisOverview(log.tab("overview"), snap.stasis)
-  renderLabyrinthOverview(log.tab("overview"), snap.labyrinths)
+  renderLabyrinthOverview(log.tab("overview"), snap.labyrinths, {
+    stasisLinked: snap.stasis?.linkedHosts ?? [],
+    workers: snap.workers,
+  })
 }
 
 function populateTargetsTab(log: TabbedScriptLogBuilder, snap: CrawlSnapshot): void {

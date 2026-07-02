@@ -33,6 +33,10 @@ export interface LabyrinthState extends SolverState {
   type: "labyrinth"
   map: Record<string, LabyrinthCellWalls>
   sessions: Record<string, LabyrinthSession>
+  /** workerHost -> in-flight command (labreport or move dir) awaiting a reply. */
+  pending: Record<string, string>
+  /** unexplored cell key -> workerHost exploring that frontier cell. */
+  claims: Record<string, string>
 }
 
 export interface LabreportPayload {

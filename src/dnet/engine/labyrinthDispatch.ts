@@ -1,11 +1,15 @@
 import { LABYRINTH_MODEL } from "../constants.js"
 import type { AttemptLog } from "../history/attemptLog.js"
 import {
+  assignFrontierClaims,
   buildLabyrinthSnapshots,
   ensureWorkerSession,
+  labyrinthWorkerPending,
   needsLabreport,
   planMove,
+  pruneLabyrinthWorkers,
   repairState,
+  setLabyrinthPending,
   type LabyrinthState,
 } from "../solvers/labyrinth.js"
 import type { AuthTarget } from "../types.js"
@@ -26,7 +30,16 @@ export function labyrinthExplorers(workerPool: WorkerPool, labyrinthHost: string
     if (wi.host !== labyrinthHost && !wi.neighbors.includes(labyrinthHost)) continue
     out.push(wi)
   }
-  return out.sort((a, b) => a.host.localeCompare(b.host))
+  return out
+}
+
+function sortExplorers(workers: ManagedWorker[], stasisLinked: ReadonlySet<string>): ManagedWorker[] {
+  return [...workers].sort((a, b) => {
+    const sa = stasisLinked.has(a.host) ? 0 : 1
+    const sb = stasisLinked.has(b.host) ? 0 : 1
+    if (sa !== sb) return sa - sb
+    return a.host.localeCompare(b.host)
+  })
 }
 
 /** Labyrinths never exhaust; restore any stale exhausted/retry state. */
@@ -44,19 +57,19 @@ export interface LabyrinthDispatchDeps {
   workerPool: WorkerPool
   targets: Map<string, AuthTarget>
   attemptLog: AttemptLog
+  stasisLinked: ReadonlySet<string>
   sendCommand: (wi: ManagedWorker, payload: WorkerCommandPayload) => boolean
   cloneState: <T>(value: T) => T
 }
 
 export function dispatchLabyrinth(deps: LabyrinthDispatchDeps): void {
-  const { workerPool, targets, attemptLog, sendCommand, cloneState } = deps
+  const { workerPool, targets, attemptLog, stasisLinked, sendCommand, cloneState } = deps
 
   keepLabyrinthPending(targets)
 
   for (const target of targets.values()) {
     if (target.modelId !== LABYRINTH_MODEL) continue
     if (target.status !== "active" && target.status !== "waiting_worker") continue
-    if (target.pendingGuess != null) continue
     if (target.awaitProbeAfter) continue
 
     const lab = asLabyrinthState(target.solverState)
@@ -64,11 +77,27 @@ export function dispatchLabyrinth(deps: LabyrinthDispatchDeps): void {
 
     repairState(lab)
 
-    const explorers = labyrinthExplorers(workerPool, target.host)
+    const explorers = sortExplorers(labyrinthExplorers(workerPool, target.host), stasisLinked)
+    const explorerHosts = new Set(explorers.map((wi) => wi.host))
+    pruneLabyrinthWorkers(lab, explorerHosts)
+
+    if (explorers.length === 0) {
+      target.status = "waiting_worker"
+      continue
+    }
+
+    assignFrontierClaims(
+      lab,
+      explorers.map((wi) => wi.host),
+      stasisLinked,
+    )
 
     let dispatchedThisLoop = false
+
     for (const wi of explorers) {
       const workerHost = wi.host
+      if (labyrinthWorkerPending(lab, workerHost)) continue
+
       const sess = lab.sessions[workerHost]
 
       if (needsLabreport(lab, workerHost)) {
@@ -82,9 +111,10 @@ export function dispatchLabyrinth(deps: LabyrinthDispatchDeps): void {
         ) {
           continue
         }
+        setLabyrinthPending(lab, workerHost, "labreport")
+        target.workerHost = workerHost
         target.pendingGuess = "labreport"
         target.pendingDetail = `labreport@${workerHost}`
-        target.workerHost = workerHost
         target.status = "active"
         dispatchedThisLoop = true
         attemptLog.append({
@@ -119,9 +149,10 @@ export function dispatchLabyrinth(deps: LabyrinthDispatchDeps): void {
         continue
       }
 
+      setLabyrinthPending(lab, workerHost, dir)
+      target.workerHost = workerHost
       target.pendingGuess = dir
       target.pendingDetail = `move ${dir}@${workerHost}`
-      target.workerHost = workerHost
       target.status = "active"
       dispatchedThisLoop = true
       attemptLog.append({
@@ -139,6 +170,9 @@ export function dispatchLabyrinth(deps: LabyrinthDispatchDeps): void {
 
     if (!dispatchedThisLoop) {
       target.status = "waiting_worker"
+      target.pendingGuess = null
+      target.pendingDetail = null
+      target.workerHost = null
     }
   }
 }

@@ -164,6 +164,127 @@ export function globalFrontierRemaining(map: Record<string, LabyrinthCellWalls>)
   return false
 }
 
+/** Unexplored cells reachable in one open step from any explored cell. */
+export function frontierCells(map: Record<string, LabyrinthCellWalls>): string[] {
+  const out = new Set<string>()
+  for (const [key, walls] of Object.entries(map)) {
+    if (!walls.seen) continue
+    const pos = parseCellKey(key)
+    if (!pos) continue
+    const [x, y] = pos
+    for (const dir of WALL_ORDER) {
+      const wallKey = DIR_TO_WALL[dir]
+      if (walls[wallKey] !== true) continue
+      const [dx, dy] = LABYRINTH_DIRS[dir]
+      const nkey = cellKey(x + dx, y + dy)
+      if (!cellExplored(map, nkey)) out.add(nkey)
+    }
+  }
+  return [...out].sort()
+}
+
+function canStepToTarget(
+  map: Record<string, LabyrinthCellWalls>,
+  x: number,
+  y: number,
+  targetX: number,
+  targetY: number,
+): boolean {
+  for (const dir of WALL_ORDER) {
+    const [dx, dy] = LABYRINTH_DIRS[dir]
+    if (x + dx !== targetX || y + dy !== targetY) continue
+    if (passable(map, x, y, dir)) return true
+  }
+  return false
+}
+
+/** Shortest explored-path distance to a cell we can step into from (x, y). */
+export function bfsDistanceToTarget(
+  map: Record<string, LabyrinthCellWalls>,
+  startX: number,
+  startY: number,
+  targetX: number,
+  targetY: number,
+): number | null {
+  if (canStepToTarget(map, startX, startY, targetX, targetY)) return 0
+
+  const startKey = cellKey(startX, startY)
+  if (!cellExplored(map, startKey)) return null
+
+  type Node = { x: number; y: number; dist: number }
+  const queue: Node[] = [{ x: startX, y: startY, dist: 0 }]
+  const visited = new Set<string>([startKey])
+
+  while (queue.length > 0) {
+    const { x, y, dist } = queue.shift()!
+    for (const dir of WALL_ORDER) {
+      if (!passable(map, x, y, dir)) continue
+      const [dx, dy] = LABYRINTH_DIRS[dir]
+      const nx = x + dx
+      const ny = y + dy
+      if (canStepToTarget(map, nx, ny, targetX, targetY)) return dist + 1
+      const nkey = cellKey(nx, ny)
+      if (!cellExplored(map, nkey) || visited.has(nkey)) continue
+      visited.add(nkey)
+      queue.push({ x: nx, y: ny, dist: dist + 1 })
+    }
+  }
+  return null
+}
+
+/** First step on an explored path toward stepping into (targetX, targetY). */
+export function bfsFirstStepToward(
+  map: Record<string, LabyrinthCellWalls>,
+  startX: number,
+  startY: number,
+  targetX: number,
+  targetY: number,
+): LabyrinthDir | null {
+  if (canStepToTarget(map, startX, startY, targetX, targetY)) {
+    for (const dir of WALL_ORDER) {
+      const [dx, dy] = LABYRINTH_DIRS[dir]
+      if (startX + dx === targetX && startY + dy === targetY && passable(map, startX, startY, dir)) {
+        return dir
+      }
+    }
+  }
+
+  const startKey = cellKey(startX, startY)
+  if (!cellExplored(map, startKey)) return null
+
+  type Node = { x: number; y: number; first: LabyrinthDir }
+  const queue: Node[] = []
+  const visited = new Set<string>([startKey])
+
+  for (const dir of WALL_ORDER) {
+    if (!passable(map, startX, startY, dir)) continue
+    const [dx, dy] = LABYRINTH_DIRS[dir]
+    const nx = startX + dx
+    const ny = startY + dy
+    const nkey = cellKey(nx, ny)
+    if (canStepToTarget(map, nx, ny, targetX, targetY)) return dir
+    if (!cellExplored(map, nkey) || visited.has(nkey)) continue
+    visited.add(nkey)
+    queue.push({ x: nx, y: ny, first: dir })
+  }
+
+  while (queue.length > 0) {
+    const { x, y, first } = queue.shift()!
+    for (const dir of WALL_ORDER) {
+      if (!passable(map, x, y, dir)) continue
+      const [dx, dy] = LABYRINTH_DIRS[dir]
+      const nx = x + dx
+      const ny = y + dy
+      const nkey = cellKey(nx, ny)
+      if (canStepToTarget(map, nx, ny, targetX, targetY)) return first
+      if (!cellExplored(map, nkey) || visited.has(nkey)) continue
+      visited.add(nkey)
+      queue.push({ x: nx, y: ny, first })
+    }
+  }
+  return null
+}
+
 /** First step toward the nearest cell beyond the exploration frontier. */
 export function bfsFirstStep(
   map: Record<string, LabyrinthCellWalls>,
@@ -220,7 +341,14 @@ export function ensureMap(state: {
   return state.map
 }
 
-export type MapGridChar = "wall" | "open" | "unknown" | "worker"
+export type MapGridChar = "wall" | "open" | "unknown" | "worker" | "frontier" | "claimed"
+
+export interface BuildMapGridOptions {
+  /** Unexplored logical cell keys on the exploration frontier. */
+  frontier?: readonly string[]
+  /** Frontier cell key -> worker host owning the claim. */
+  claims?: Record<string, string>
+}
 
 export interface MapGrid {
   minX: number
@@ -231,6 +359,8 @@ export interface MapGrid {
   cells: MapGridChar[][]
   /** Worker markers at logical cell keys. */
   workerMarkers: Map<string, string>
+  /** Claimed frontier cell key -> worker letter. */
+  claimMarkers: Map<string, string>
 }
 
 const WORKER_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -245,14 +375,25 @@ export function sessionDisplayCoords(sess: {
 export function buildMapGrid(
   map: Record<string, LabyrinthCellWalls>,
   sessions: Record<string, { coords: [number, number] | null; lastCoords?: [number, number] | null }>,
+  options?: BuildMapGridOptions,
 ): MapGrid | null {
   const known = new Set<string>()
   for (const [k, cell] of Object.entries(map)) {
     if (cell.seen) known.add(k)
   }
 
+  const frontierSet = new Set(options?.frontier ?? [])
+  for (const k of frontierSet) known.add(k)
+
   const workerMarkers = new Map<string, string>()
+  const claimMarkers = new Map<string, string>()
   const workers = Object.keys(sessions).sort()
+  const letterForHost = new Map<string, string>()
+  for (let i = 0; i < workers.length; i++) {
+    const host = workers[i]!
+    letterForHost.set(host, WORKER_LETTERS[i] ?? String(i + 1))
+  }
+
   for (let i = 0; i < workers.length; i++) {
     const host = workers[i]!
     const sess = sessions[host]
@@ -264,9 +405,15 @@ export function buildMapGrid(
     if (!pos) continue
     const k = cellKey(pos[0], pos[1])
     known.add(k)
-    const letter = WORKER_LETTERS[i] ?? String(i + 1)
+    const letter = letterForHost.get(host)!
     const prev = workerMarkers.get(k)
     workerMarkers.set(k, prev ? "*" : letter)
+  }
+
+  for (const [cell, host] of Object.entries(options?.claims ?? {})) {
+    if (!frontierSet.has(cell)) continue
+    const letter = letterForHost.get(host)
+    if (letter) claimMarkers.set(cell, letter)
   }
 
   if (known.size === 0) return null
@@ -308,8 +455,13 @@ export function buildMapGrid(
     if (!pos) continue
     const [x, y] = pos
     const [gx, gy] = toGrid(x, y)
+    const explored = map[k]?.seen === true
     if (workerMarkers.has(k)) {
       cells[gy]![gx] = "worker"
+    } else if (!explored && claimMarkers.has(k)) {
+      cells[gy]![gx] = "claimed"
+    } else if (!explored && frontierSet.has(k)) {
+      cells[gy]![gx] = "frontier"
     } else {
       cells[gy]![gx] = "open"
     }
@@ -346,5 +498,5 @@ export function buildMapGrid(
     setEdge(gy, gx - 1, walls.west, "ew")
   }
 
-  return { minX, minY, width: gw, height: gh, cells, workerMarkers }
+  return { minX, minY, width: gw, height: gh, cells, workerMarkers, claimMarkers }
 }

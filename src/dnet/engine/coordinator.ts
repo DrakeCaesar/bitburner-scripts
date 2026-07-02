@@ -66,7 +66,7 @@ import { copyWorkerFiles } from "../worker/deploy.js"
 import { ensureMutationWatcher, MutationSync } from "./mutationSync.js"
 import { dispatchLabyrinthStasis } from "./labyrinthStasis.js"
 import { dispatchLabyrinth, snapshotLabyrinths } from "./labyrinthDispatch.js"
-import { applyLabreport, type LabyrinthState } from "../solvers/labyrinth.js"
+import { applyLabreport, clearLabyrinthPending, labyrinthPendingMatches, pruneLabyrinthWorker, type LabyrinthState } from "../solvers/labyrinth.js"
 import { clearDnetGlobalPorts, clearWorkerPortPair } from "./ports.js"
 import { killAllWorkers, killAllWorkersSync } from "./workerLifecycle.js"
 import {
@@ -284,6 +284,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       targets,
       attemptLog,
       cloneState,
+      stasisLinked: stasisLinkedHosts(dnet),
       sendCommand: (wi, payload) => sendCommand(ns, wi, payload, masterLog, dispatchCtx),
     })
     dispatchP3Reallocs(ns, dnet, workerPool, masterLog, dispatchCtx)
@@ -796,9 +797,32 @@ function onLabreportResult(
   const target = targets.get(msg.target)
   if (!target) return
 
-  target.pendingGuess = null
-  target.pendingDetail = null
-  target.workerHost = null
+  const lab =
+    target.solverState != null && typeof target.solverState === "object"
+      ? (target.solverState as LabyrinthState)
+      : null
+  if (lab?.type === "labyrinth") {
+    if (!labyrinthPendingMatches(lab, msg.workerHost, "labreport")) {
+      attemptLog.append({
+        host: target.host,
+        session: target.session,
+        kind: "note",
+        solverId: msg.solverId,
+        modelId: target.modelId,
+        workerHost: msg.workerHost,
+        guess: "labreport",
+        note: "stale labreport ignored",
+      })
+      return
+    }
+    clearLabyrinthPending(lab, msg.workerHost)
+  }
+
+  if (target.workerHost === msg.workerHost && target.pendingGuess === "labreport") {
+    target.pendingGuess = null
+    target.pendingDetail = null
+    target.workerHost = null
+  }
 
   if (target.solverState != null) {
     target.solverState = applyLabreport(target.solverState as LabyrinthState, {
@@ -838,7 +862,34 @@ function onAuthResult(
   const target = targets.get(msg.target)
   if (!target) return
 
-  if (target.pendingGuess !== msg.guess || target.workerHost !== msg.workerHost) {
+  const lab =
+    target.modelId === LABYRINTH_MODEL &&
+    target.solverState != null &&
+    typeof target.solverState === "object"
+      ? (target.solverState as LabyrinthState)
+      : null
+
+  if (lab?.type === "labyrinth") {
+    if (!labyrinthPendingMatches(lab, msg.workerHost, msg.guess)) {
+      attemptLog.append({
+        host: target.host,
+        session: target.session,
+        kind: "note",
+        solverId: msg.solverId,
+        modelId: target.modelId,
+        workerHost: msg.workerHost,
+        guess: msg.guess,
+        note: "stale labyrinth move ignored",
+      })
+      return
+    }
+    clearLabyrinthPending(lab, msg.workerHost)
+    if (target.workerHost === msg.workerHost && target.pendingGuess === msg.guess) {
+      target.pendingGuess = null
+      target.pendingDetail = null
+      target.workerHost = null
+    }
+  } else if (target.pendingGuess !== msg.guess || target.workerHost !== msg.workerHost) {
     attemptLog.append({
       host: target.host,
       session: target.session,
@@ -850,11 +901,11 @@ function onAuthResult(
       note: "stale auth result ignored",
     })
     return
+  } else {
+    target.pendingGuess = null
+    target.pendingDetail = null
+    target.workerHost = null
   }
-
-  target.pendingGuess = null
-  target.pendingDetail = null
-  target.workerHost = null
 
   attemptLog.append({
     host: target.host,
@@ -871,6 +922,9 @@ function onAuthResult(
 
   if (msg.message === NOT_NEIGHBOR_MESSAGE) {
     undoDispatchedGuess(target)
+    if (lab?.type === "labyrinth") {
+      pruneLabyrinthWorker(lab, msg.workerHost)
+    }
     if (
       markBlockedOnWorker(target, dnet, passwords, "neighbor link lost", sessionArchive)
     ) {
@@ -1488,6 +1542,18 @@ function abortSpawnPlan(
 function clearTargetWorkerRefs(ctx: WorkerDispatchCtx, workerHost: string): void {
   if (!ctx.targets) return
   for (const t of ctx.targets.values()) {
+    if (t.modelId === LABYRINTH_MODEL && t.solverState != null && typeof t.solverState === "object") {
+      const lab = t.solverState as LabyrinthState
+      if (lab.type === "labyrinth") {
+        pruneLabyrinthWorker(lab, workerHost)
+      }
+      if (t.workerHost === workerHost) {
+        t.workerHost = null
+        t.pendingGuess = null
+        t.pendingDetail = null
+      }
+      continue
+    }
     if (t.workerHost !== workerHost) continue
     t.workerHost = null
     t.pendingGuess = null
