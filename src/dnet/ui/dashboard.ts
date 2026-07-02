@@ -20,6 +20,10 @@ import type {
   WorkerSnapshot,
 } from "../types.js"
 
+const TIMELINE_DISPLAY_LIMIT = 80
+const TIMELINE_INDEX_LIMIT = 300
+const FAILED_EVENT_DISPLAY_LIMIT = 120
+
 const TABS = [
   { id: "overview", label: "Overview" },
   { id: "targets", label: "Targets" },
@@ -89,7 +93,7 @@ export class DnetDashboard {
   private lastFailedCount = 0
 
   constructor() {
-    this.log = createTabbedTailLog([...TABS])
+    this.log = createTabbedTailLog([...TABS], undefined, { lazyInactivePanels: true })
   }
 
   onFailedRowClick(rowIndex: number): void {
@@ -304,16 +308,37 @@ export async function renderDashboard(
   snap: CrawlSnapshot,
 ): Promise<void> {
   const log = dashboard.log
-  const s = snap.summary
-  const failed = snap.failedSessions
-  dashboard.applyFailedSelection(failed)
-  const selected =
-    failed.find((f) => f.id === dashboard.selectedFailedSessionId) ?? null
-  const selectedRowIndex =
-    selected != null ? failed.findIndex((f) => f.id === selected.id) : undefined
+  const activeTab = log.getActiveTabId()
 
   log.clearPanels()
 
+  switch (activeTab) {
+    case "overview":
+      populateOverviewTab(log, snap)
+      break
+    case "targets":
+      populateTargetsTab(log, snap)
+      break
+    case "attempts":
+      populateAttemptsTab(log, snap)
+      break
+    case "workers":
+      populateWorkersTab(log, snap)
+      break
+    case "failed":
+      populateFailedTab(log, dashboard, snap)
+      break
+    default:
+      populateOverviewTab(log, snap)
+      break
+  }
+
+  await renderTabbedTailLog(ns, log)
+}
+
+function populateOverviewTab(log: TabbedScriptLogBuilder, snap: CrawlSnapshot): void {
+  const s = snap.summary
+  const failed = snap.failedSessions
   log
     .tab("overview")
     .text(
@@ -326,35 +351,52 @@ export async function renderDashboard(
 
   renderStasisOverview(log.tab("overview"), snap.stasis)
   renderLabyrinthOverview(log.tab("overview"), snap.labyrinths)
+}
 
+function populateTargetsTab(log: TabbedScriptLogBuilder, snap: CrawlSnapshot): void {
   const sortedTargets = [...snap.targets].sort((a, b) => a.host.localeCompare(b.host))
   log.tab("targets").table({
     title: "Auth targets",
     columns: TARGET_COLUMNS,
     rows: sortedTargets.map(targetRow),
   })
+}
 
-  const timeline = buildTimeline(snap.attempts, snap.actions)
-  const attemptTimings = indexAttemptTimings(snap.attempts)
-  const recentTimeline = timeline.slice(-100).reverse()
+function populateAttemptsTab(log: TabbedScriptLogBuilder, snap: CrawlSnapshot): void {
+  const recentAttempts = snap.attempts.slice(-TIMELINE_INDEX_LIMIT)
+  const timeline = buildTimeline(recentAttempts, snap.actions)
+  const attemptTimings = indexAttemptTimings(recentAttempts)
+  const recentTimeline = timeline.slice(-TIMELINE_DISPLAY_LIMIT).reverse()
   log
     .tab("attempts")
     .text(formatMutationLine(snap.mutation))
     .table({
-    title: `Activity log (newest first, ${recentTimeline.length} of ${timeline.length})`,
-    columns: ATTEMPT_COLUMNS,
-    rows: recentTimeline.map((entry) => timelineRow(entry, attemptTimings)),
-  })
+      title: `Activity log (newest first, ${recentTimeline.length} of ${timeline.length})`,
+      columns: ATTEMPT_COLUMNS,
+      rows: recentTimeline.map((entry) => timelineRow(entry, attemptTimings)),
+    })
+}
 
+function populateWorkersTab(log: TabbedScriptLogBuilder, snap: CrawlSnapshot): void {
   log.tab("workers").table({
     title: "Workers",
     columns: WORKER_COLUMNS,
     rows: snap.workers.map(workerRow),
   })
+}
 
+function populateFailedTab(
+  log: TabbedScriptLogBuilder,
+  dashboard: DnetDashboard,
+  snap: CrawlSnapshot,
+): void {
+  const failed = snap.failedSessions
+  dashboard.applyFailedSelection(failed)
+  const selected =
+    failed.find((f) => f.id === dashboard.selectedFailedSessionId) ?? null
+  const selectedRowIndex =
+    selected != null ? failed.findIndex((f) => f.id === selected.id) : undefined
   renderFailedTab(log, dashboard, failed, selected, selectedRowIndex)
-
-  await renderTabbedTailLog(ns, log)
 }
 
 function renderFailedTab(
@@ -407,13 +449,17 @@ function renderFailedTab(
     ],
   })
 
+  const events =
+    selected.events.length > FAILED_EVENT_DISPLAY_LIMIT
+      ? selected.events.slice(-FAILED_EVENT_DISPLAY_LIMIT)
+      : selected.events
   tab.table({
-    title: `Session log (${selected.events.length} events)`,
+    title: `Session log (${events.length} of ${selected.events.length} events, newest)`,
     columns: FAILED_EVENT_COLUMNS,
-    rows: selected.events.map(failedEventRow),
+    rows: events.map(failedEventRow),
   })
 
-  for (const event of selected.events) {
+  for (const event of events) {
     if (event.kind !== "heartbleed" || !event.heartbleedLogs?.length) continue
     tab.section(`Heartbleed ${clock(event.at)}`)
     for (const line of event.heartbleedLogs) {

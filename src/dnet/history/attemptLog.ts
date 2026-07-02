@@ -1,5 +1,8 @@
 import type { AttemptKind, AttemptRecord } from "../types.js"
 
+/** Ring buffer cap; keeps dashboard timeline and timing index bounded. */
+const MAX_ATTEMPT_RECORDS = 800
+
 export class AttemptLog {
   private nextId = 1
   private records: AttemptRecord[] = []
@@ -21,6 +24,9 @@ export class AttemptLog {
       at: entry.at ?? Date.now(),
     }
     this.records.push(record)
+    if (this.records.length > MAX_ATTEMPT_RECORDS) {
+      this.records.splice(0, this.records.length - MAX_ATTEMPT_RECORDS)
+    }
     this.onAppend?.(record)
     return record
   }

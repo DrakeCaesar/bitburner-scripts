@@ -198,8 +198,9 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
     processQueuedTargets(targets, attemptLog, sessionArchive, dnet, passwords)
     scheduleRetries(targets, attemptLog)
     const dispatchCtx: WorkerDispatchCtx = { workerPool, portPool, pendingSpawns, spawnPlans, targets }
-    // Dispatch priority: urgent probe -> stasis -> spawn -> auth -> P1 -> P2 -> labyrinth -> probe -> P3
+    // Dispatch priority: urgent probe -> scheduled probe -> stasis -> spawn -> auth -> P1 -> P2 -> labyrinth -> P3
     dispatchUrgentProbes(ns, workerPool, urgentProbeHosts, masterLog, dispatchCtx)
+    dispatchBackgroundProbes(ns, workerPool, mutationSync, urgentProbeHosts, masterLog, dispatchCtx)
     dispatchLabyrinthStasis(
       ns,
       dnet,
@@ -244,7 +245,6 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       cloneState,
       sendCommand: (wi, payload) => sendCommand(ns, wi, payload, masterLog, dispatchCtx),
     })
-    dispatchBackgroundProbes(ns, workerPool, mutationSync, urgentProbeHosts, masterLog, dispatchCtx)
     dispatchP3Reallocs(ns, dnet, workerPool, masterLog, dispatchCtx)
 
     await options.onProgress(

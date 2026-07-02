@@ -21,7 +21,8 @@ export async function main(ns: NS): Promise<void> {
     await runCoordinator(ns, {
       onProgress: async (snap) => {
         const now = Date.now()
-        if (now - lastRender < 400) return
+        const tabRefresh = dashboard.log.hasPendingLayoutRefresh()
+        if (!tabRefresh && now - lastRender < 400) return
         lastRender = now
         await renderDashboard(ns, dashboard, snap)
       },
