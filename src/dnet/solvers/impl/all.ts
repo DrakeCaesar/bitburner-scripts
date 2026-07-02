@@ -10,6 +10,16 @@ import {
   php54HintDigits,
   php54PermutationAt,
   php54PermutationCount,
+  MAX_MASTERMIND_CANDIDATES,
+  sortedCharsToMultiset,
+  multisetPermutationCount,
+  multisetPermutationAt,
+  mastermindCartesianAt,
+  mastermindSurvivorCount,
+  filterMastermindSurvivors,
+  pickMastermindGuessIndexed,
+  mastermindSurvivorsAll,
+  type MastermindSurvivors,
 } from '../helpers.js'
 import { COMMON_PASSWORDS, DEFAULT_FACTORY_PASSWORDS } from '../data/commonPasswords.js'
 
@@ -671,159 +681,317 @@ const bellaCuoreRange: SolverModule<BellaCuoreRangeState> = {
 
 // --- DeepGreen (Mastermind) ---
 
-const MAX_MASTERMIND_CANDIDATES = 10000
-const MINIMAX_THRESHOLD = 500
-
-function generateMastermindCandidates(length: number, charset: string): string[] | null {
-  if (length <= 0) return null
-  const size = charset.length ** length
-  if (size > MAX_MASTERMIND_CANDIDATES) return null
-  const out: string[] = []
-  const build = (prefix: string): void => {
-    if (prefix.length === length) { out.push(prefix); return }
-    for (let i = 0; i < charset.length; i++) { build(prefix + charset[i]) }
-  }
-  build("")
-  return out
-}
-
-/** Generate all unique permutations of a multiset of characters. */
-function multisetPermutations(chars: string[]): string[] {
-  const results: string[] = []
-  const sorted = [...chars].sort()
-  const used = new Array(sorted.length).fill(false)
-
-  function backtrack(current: string[]): void {
-    if (current.length === sorted.length) {
-      results.push(current.join(""))
-      return
-    }
-    for (let i = 0; i < sorted.length; i++) {
-      if (used[i]) continue
-      if (i > 0 && sorted[i] === sorted[i - 1] && !used[i - 1]) continue
-      used[i] = true
-      current.push(sorted[i]!)
-      backtrack(current)
-      current.pop()
-      used[i] = false
-    }
-  }
-  backtrack([])
-  return results
-}
-
-function pickMastermindGuess(candidates: string[]): string {
-  if (candidates.length > MINIMAX_THRESHOLD) {
-    return candidates[Math.floor(Math.random() * candidates.length)]!
-  }
-  let bestGuess = candidates[0]!
-  let bestWorstBucket = candidates.length + 1
-  for (const guess of candidates) {
-    const buckets = new Map<string, number>()
-    for (const secret of candidates) {
-      const fb = mastermindFeedback(secret, guess)
-      const key = `${fb.exact},${fb.misplaced}`
-      buckets.set(key, (buckets.get(key) ?? 0) + 1)
-    }
-    const worstBucket = Math.max(...buckets.values())
-    if (worstBucket < bestWorstBucket) {
-      bestWorstBucket = worstBucket
-      bestGuess = guess
-    }
-  }
-  return bestGuess
+interface DeepGreenCountBatch {
+  /** Batch guess sent for this group (length = password length). */
+  guess: string
+  /** Chars from the batch to probe with repeat guesses (test chars only, not pad). */
+  chars: string[]
+  exact: number
+  misplaced: number
+  charIdx: number
+  /** Sum of min(count(c), occ(c) in batch guess); skip rest when >= exact + misplaced. */
+  explained: number
 }
 
 interface DeepGreenState extends SolverState {
   type: "deepGreen"
   charset: string
   length: number
-  // Two-phase strategy for large character spaces (>10K candidates):
-  // Phase 1 — count occurrences of each charset character
-  // Phase 2 — solve via permutation candidates + minimax
   charCounts: Record<string, number>
-  charList: string[]
-  charIdx: number
   totalCount: number
-  candidates: string[]
+  /** Phase 1: batch elimination, then repeat-char counts, optional tail for unpadded leftovers. */
+  phase1Mode: "batch" | "count" | "tail"
+  pool: string[]
+  eliminated: Record<string, boolean>
+  /** First eliminated char; pads partial batches to password length. */
+  padChar: string | null
+  countBatches: DeepGreenCountBatch[]
+  countBatchIdx: number
+  tailIdx: number
+  // Phase 2 — index into cartesian or multiset permutation space
+  permCartesian: boolean
+  permChars: string[]
+  permCounts: number[]
+  permTotal: number
+  survivors: MastermindSurvivors
+}
+
+function deepGreenInitPhase1(state: DeepGreenState): void {
+  state.phase1Mode = "batch"
+  state.pool = state.charset.split("")
+  state.eliminated = {}
+  state.padChar = null
+  state.countBatches = []
+  state.countBatchIdx = 0
+  state.tailIdx = 0
+  state.charCounts = {}
+  state.totalCount = 0
+}
+
+function deepGreenOccInGuess(guess: string, ch: string): number {
+  let n = 0
+  for (const c of guess) if (c === ch) n++
+  return n
+}
+
+function deepGreenUniqueTestChars(testChars: readonly string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const c of testChars) {
+    if (seen.has(c)) continue
+    seen.add(c)
+    out.push(c)
+  }
+  return out
+}
+
+function deepGreenMarkEliminated(state: DeepGreenState, ch: string): void {
+  if (state.eliminated[ch]) return
+  state.eliminated[ch] = true
+  if (state.padChar === null) state.padChar = ch
+  state.pool = state.pool.filter((c) => c !== ch)
+}
+
+function deepGreenRemoveFromPool(state: DeepGreenState, chars: readonly string[]): void {
+  const drop = new Set(chars)
+  state.pool = state.pool.filter((c) => !drop.has(c))
+}
+
+/** Build next batch guess from pool, or null when pool empty / tail fallback needed. */
+function deepGreenBuildBatchGuess(state: DeepGreenState): string | null {
+  if (state.pool.length === 0) return null
+  const testChars = state.pool.slice(0, Math.min(state.length, state.pool.length))
+  if (testChars.length < state.length && state.padChar === null) return null
+  const guessChars = [...testChars]
+  while (guessChars.length < state.length) {
+    guessChars.push(state.padChar!)
+  }
+  return guessChars.join("")
+}
+
+function deepGreenBatchTestChars(state: DeepGreenState): string[] {
+  const testLen = Math.min(state.pool.length, state.length)
+  return deepGreenUniqueTestChars(state.pool.slice(0, testLen))
+}
+
+function deepGreenMaybeEnterPhase2(state: DeepGreenState): boolean {
+  if (state.totalCount < state.length) return false
+  deepGreenEnterPhase2(state, deepGreenMultisetChars(state))
+  return true
+}
+
+function deepGreenPhase2Guess(state: DeepGreenState): { guess: string; detail: string } | null {
+  const count = mastermindSurvivorCount(state.survivors, state.permTotal)
+  if (count === 0) return null
+  const guess = pickMastermindGuessIndexed(
+    state.survivors,
+    state.permTotal,
+    (index) => deepGreenSecretAt(state, index),
+  )
+  return { guess, detail: `${count} cand` }
+}
+
+function deepGreenNextCountGuess(state: DeepGreenState): { guess: string; detail: string } | null {
+  while (state.countBatchIdx < state.countBatches.length) {
+    const batch = state.countBatches[state.countBatchIdx]!
+    while (batch.charIdx < batch.chars.length) {
+      const ch = batch.chars[batch.charIdx]!
+      if (state.eliminated[ch] || state.charCounts[ch] !== undefined) {
+        batch.charIdx++
+        continue
+      }
+      return { guess: ch.repeat(state.length), detail: `count ${ch}` }
+    }
+    state.countBatchIdx++
+  }
+  if (state.pool.length > 0) {
+    state.phase1Mode = "tail"
+    state.tailIdx = 0
+    return deepGreenNextTailGuess(state)
+  }
+  deepGreenEnterPhase2(state, deepGreenMultisetChars(state))
+  return deepGreenPhase2Guess(state)
+}
+
+function deepGreenNextTailGuess(state: DeepGreenState): { guess: string; detail: string } | null {
+  while (state.tailIdx < state.pool.length) {
+    const ch = state.pool[state.tailIdx]!
+    if (state.eliminated[ch] || state.charCounts[ch] !== undefined) {
+      state.tailIdx++
+      continue
+    }
+    return { guess: ch.repeat(state.length), detail: `count ${ch}` }
+  }
+  deepGreenEnterPhase2(state, deepGreenMultisetChars(state))
+  return deepGreenPhase2Guess(state)
+}
+
+function deepGreenApplyBatchResult(
+  state: DeepGreenState,
+  batchGuess: string,
+  fb: { exact: number; misplaced: number },
+): void {
+  const testChars = deepGreenBatchTestChars(state)
+  if (fb.exact === 0 && fb.misplaced === 0) {
+    for (const c of testChars) deepGreenMarkEliminated(state, c)
+    return
+  }
+  state.countBatches.push({
+    guess: batchGuess,
+    chars: testChars,
+    exact: fb.exact,
+    misplaced: fb.misplaced,
+    charIdx: 0,
+    explained: 0,
+  })
+  deepGreenRemoveFromPool(state, testChars)
+}
+
+function deepGreenApplyCountResult(
+  state: DeepGreenState,
+  fb: { exact: number; misplaced: number },
+): void {
+  const batch = state.countBatches[state.countBatchIdx]
+  if (!batch) return
+  const ch = batch.chars[batch.charIdx]!
+  const count = fb.exact
+  state.charCounts[ch] = count
+  state.totalCount += count
+  if (count === 0) deepGreenMarkEliminated(state, ch)
+  batch.explained += Math.min(count, deepGreenOccInGuess(batch.guess, ch))
+  if (batch.explained >= batch.exact + batch.misplaced) {
+    batch.charIdx = batch.chars.length
+  } else {
+    batch.charIdx++
+  }
+}
+
+function deepGreenApplyTailResult(
+  state: DeepGreenState,
+  fb: { exact: number; misplaced: number },
+): void {
+  const ch = state.pool[state.tailIdx]!
+  const count = fb.exact
+  state.charCounts[ch] = count
+  state.totalCount += count
+  if (count === 0) deepGreenMarkEliminated(state, ch)
+  state.tailIdx++
+}
+
+function deepGreenMultisetChars(state: DeepGreenState): string[] {
+  const digits: string[] = []
+  for (const [c, cnt] of Object.entries(state.charCounts)) {
+    for (let i = 0; i < cnt; i++) digits.push(c)
+  }
+  while (digits.length < state.length) digits.push(state.charset[0]!)
+  return digits.slice(0, state.length)
+}
+
+function deepGreenEnterPhase2(state: DeepGreenState, multisetChars: string[]): void {
+  const { chars, counts } = sortedCharsToMultiset([...multisetChars].sort())
+  state.permCartesian = false
+  state.permChars = chars
+  state.permCounts = counts
+  state.permTotal = multisetPermutationCount(counts)
+  state.survivors = mastermindSurvivorsAll()
+  state.totalCount = state.length
+}
+
+function deepGreenSecretAt(state: DeepGreenState, index: number): string {
+  if (state.permCartesian) {
+    return mastermindCartesianAt(state.charset, state.length, index)!
+  }
+  return multisetPermutationAt(state.permChars, state.permCounts, index)!
 }
 
 const deepGreen: SolverModule<DeepGreenState> = {
   init(details) {
     const charset = mastermindCharset(details.passwordFormat)
-    const initial = generateMastermindCandidates(details.passwordLength, charset)
-    if (initial) {
-      // Small space — direct enumeration
-      return {
-        type: "deepGreen", charset, length: details.passwordLength,
-        charCounts: {}, charList: [], charIdx: 0,
-        totalCount: details.passwordLength, candidates: initial,
-      }
+    const cartSize = charset.length ** details.passwordLength
+    const base: DeepGreenState = {
+      type: "deepGreen",
+      charset,
+      length: details.passwordLength,
+      charCounts: {},
+      totalCount: 0,
+      phase1Mode: "batch",
+      pool: [],
+      eliminated: {},
+      padChar: null,
+      countBatches: [],
+      countBatchIdx: 0,
+      tailIdx: 0,
+      permCartesian: false,
+      permChars: [],
+      permCounts: [],
+      permTotal: 0,
+      survivors: mastermindSurvivorsAll(),
     }
-    // Large space — phase 1: count characters
-    return {
-      type: "deepGreen", charset, length: details.passwordLength,
-      charCounts: {}, charList: charset.split(""), charIdx: 0,
-      totalCount: 0, candidates: [],
+    if (cartSize <= MAX_MASTERMIND_CANDIDATES) {
+      base.totalCount = details.passwordLength
+      base.permCartesian = true
+      base.permTotal = cartSize
+      return base
     }
+    deepGreenInitPhase1(base)
+    return base
   },
   nextGuess(state) {
-    // Phase 2: permutation-based solving
     if (state.totalCount >= state.length) {
-      if (state.candidates.length === 0) return null
-      return { guess: pickMastermindGuess(state.candidates), detail: `${state.candidates.length} cand` }
+      return deepGreenPhase2Guess(state)
     }
-    // Phase 1: count occurrences of each charset character
-    if (state.charIdx < state.charList.length) {
-      const ch = state.charList[state.charIdx]!
-      return { guess: ch.repeat(state.length), detail: `count ${ch}` }
+
+    if (state.phase1Mode === "batch") {
+      const batchGuess = deepGreenBuildBatchGuess(state)
+      if (batchGuess !== null) {
+        return { guess: batchGuess, detail: "batch" }
+      }
+      if (state.pool.length > 0 && state.padChar === null) {
+        state.phase1Mode = "tail"
+        state.tailIdx = 0
+        return deepGreenNextTailGuess(state)
+      }
+      state.phase1Mode = "count"
+      return deepGreenNextCountGuess(state)
     }
-    // Exhausted charset without finding all chars — build whatever we have
-    const digits: string[] = []
-    for (const [c, cnt] of Object.entries(state.charCounts)) {
-      for (let i = 0; i < cnt; i++) digits.push(c)
+
+    if (state.phase1Mode === "count") {
+      return deepGreenNextCountGuess(state)
     }
-    while (digits.length < state.length) digits.push(state.charset[0]!)
-    state.candidates = multisetPermutations(digits.slice(0, state.length))
-    state.totalCount = state.length
-    return state.candidates.length > 0
-      ? { guess: pickMastermindGuess(state.candidates), detail: `${state.candidates.length} cand` }
-      : null
+
+    return deepGreenNextTailGuess(state)
   },
   applyResult(state, guess, result) {
     if (result.success) return state
 
     if (state.totalCount < state.length) {
-      // Phase 1: parse counting feedback
       const fbRaw = result.feedback ?? ""
       const fb = parseMastermindFeedback(fbRaw)
-      if (!fb) return state // unparseable — retry same guess
-      const ch = state.charList[state.charIdx]!
-      // Guessing "CCCCCCC" → exact = count of C in the password
-      state.charCounts[ch] = fb.exact
-      state.totalCount += fb.exact
-      state.charIdx++
-      // Early exit if we've accounted for all positions
-      if (state.totalCount >= state.length || state.charIdx >= state.charList.length) {
-        const digits: string[] = []
-        for (const [c, cnt] of Object.entries(state.charCounts)) {
-          for (let i = 0; i < cnt; i++) digits.push(c)
-        }
-        while (digits.length < state.length) digits.push(state.charset[0]!)
-        state.candidates = multisetPermutations(digits.slice(0, state.length))
-        state.totalCount = state.length
+      if (!fb) return state
+
+      if (state.phase1Mode === "batch") {
+        deepGreenApplyBatchResult(state, guess, fb)
+      } else if (state.phase1Mode === "count") {
+        deepGreenApplyCountResult(state, fb)
+        if (deepGreenMaybeEnterPhase2(state)) return state
+      } else {
+        deepGreenApplyTailResult(state, fb)
+        if (deepGreenMaybeEnterPhase2(state)) return state
       }
       return state
     }
 
-    // Phase 2: filter permutation candidates
     const fbRaw = result.feedback ?? ""
     const fb = parseMastermindFeedback(fbRaw)
     if (!fb) return state
-    state.candidates = state.candidates.filter((secret) => {
-      const f = mastermindFeedback(secret, guess)
-      return f.exact === fb.exact && f.misplaced === fb.misplaced
-    })
+    state.survivors = filterMastermindSurvivors(
+      state.survivors,
+      state.permTotal,
+      (index) => {
+        const f = mastermindFeedback(deepGreenSecretAt(state, index), guess)
+        return f.exact === fb.exact && f.misplaced === fb.misplaced
+      },
+    )
     return state
   },
 }

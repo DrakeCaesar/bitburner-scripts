@@ -157,85 +157,25 @@ export function parseSimpleArithmeticExpression(expression: string): number {
 export const MAX_MASTERMIND_CANDIDATES = 10_000
 export const MINIMAX_THRESHOLD = 500
 
-export function generateMastermindCandidates(length: number, charset: string): string[] | null {
-  if (length <= 0) return null
-  if (charset.length ** length > MAX_MASTERMIND_CANDIDATES) return null
-  const out: string[] = []
-  const build = (prefix: string): void => {
-    if (prefix.length === length) {
-      out.push(prefix)
-      return
-    }
-    for (let i = 0; i < charset.length; i++) build(prefix + charset[i])
-  }
-  build("")
-  return out
-}
-
-export function multisetPermutations(chars: string[]): string[] {
-  const results: string[] = []
-  const sorted = [...chars].sort()
-  const used = new Array(sorted.length).fill(false)
-  function backtrack(current: string[]): void {
-    if (current.length === sorted.length) {
-      results.push(current.join(""))
-      return
-    }
-    for (let i = 0; i < sorted.length; i++) {
-      if (used[i]) continue
-      if (i > 0 && sorted[i] === sorted[i - 1] && !used[i - 1]) continue
-      used[i] = true
-      current.push(sorted[i]!)
-      backtrack(current)
-      current.pop()
-      used[i] = false
-    }
-  }
-  backtrack([])
-  return results
-}
-
-export function pickMastermindGuess(candidates: string[]): string {
-  if (candidates.length > MINIMAX_THRESHOLD) {
-    return candidates[Math.floor(Math.random() * candidates.length)]!
-  }
-  let bestGuess = candidates[0]!
-  let bestWorst = candidates.length + 1
-  for (const guess of candidates) {
-    const buckets = new Map<string, number>()
-    for (const secret of candidates) {
-      const fb = mastermindFeedback(secret, guess)
-      const key = `${fb.exact},${fb.misplaced}`
-      buckets.set(key, (buckets.get(key) ?? 0) + 1)
-    }
-    const worst = Math.max(...buckets.values())
-    if (worst < bestWorst) {
-      bestWorst = worst
-      bestGuess = guess
-    }
-  }
-  return bestGuess
-}
-
-function php54Factorial(n: number): number {
+function multisetFactorial(n: number): number {
   let product = 1
   for (let i = 2; i <= n; i++) product *= i
   return product
 }
 
 /** Multiset permutation count: n! / (c1! * c2! * ...). */
-function php54MultisetCount(counts: readonly number[]): number {
+export function multisetPermutationCount(counts: readonly number[]): number {
   let n = 0
   let denom = 1
   for (const c of counts) {
     n += c
-    denom *= php54Factorial(c)
+    denom *= multisetFactorial(c)
   }
-  return php54Factorial(n) / denom
+  return multisetFactorial(n) / denom
 }
 
-function php54SortedCounts(digits: string): { chars: string[]; counts: number[] } {
-  const sorted = digits.split("").sort()
+/** Build sorted unique chars + counts from a sorted char list. */
+export function sortedCharsToMultiset(sorted: readonly string[]): { chars: string[]; counts: number[] } {
   const chars: string[] = []
   const counts: number[] = []
   for (const ch of sorted) {
@@ -249,30 +189,34 @@ function php54SortedCounts(digits: string): { chars: string[]; counts: number[] 
   return { chars, counts }
 }
 
-/** Extract sorted hint digits; null when hint does not match password length. */
-export function php54HintDigits(hint: string, length: number): string | null {
-  const digits = hint.replace(/\D/g, "")
-  if (digits.length !== length) return null
-  return digits
-}
-
-/** Number of distinct permutations of PHP 5.4 sorted hint digits. */
-export function php54PermutationCount(hint: string, length: number): number {
-  const digits = php54HintDigits(hint, length)
-  if (digits === null) return 0
-  return php54MultisetCount(php54SortedCounts(digits).counts)
+/** Nth string (0-based) in depth-first lexicographic order over charset^length. */
+export function mastermindCartesianAt(charset: string, length: number, index: number): string | null {
+  if (length <= 0) return null
+  const base = charset.length
+  const size = base ** length
+  if (index < 0 || index >= size) return null
+  let k = index
+  let out = ""
+  for (let pos = 0; pos < length; pos++) {
+    const pow = base ** (length - 1 - pos)
+    const ci = Math.floor(k / pow)
+    k -= ci * pow
+    out += charset[ci]!
+  }
+  return out
 }
 
 /** Nth permutation (0-based) in lexicographic multiset order, without enumerating all. */
-export function php54PermutationAt(hint: string, length: number, index: number): string | null {
-  const digits = php54HintDigits(hint, length)
-  if (digits === null) return null
-
-  const { chars, counts } = php54SortedCounts(digits)
-  const total = php54MultisetCount(counts)
+export function multisetPermutationAt(
+  chars: readonly string[],
+  counts: readonly number[],
+  index: number,
+): string | null {
+  const total = multisetPermutationCount(counts)
   if (index < 0 || index >= total) return null
 
   const remaining = [...counts]
+  const length = remaining.reduce((a, b) => a + b, 0)
   let k = index
   const out: string[] = []
 
@@ -281,7 +225,7 @@ export function php54PermutationAt(hint: string, length: number, index: number):
     for (let i = 0; i < chars.length; i++) {
       if (remaining[i]! <= 0) continue
       remaining[i]!--
-      const ways = php54MultisetCount(remaining)
+      const ways = multisetPermutationCount(remaining)
       if (k < ways) {
         out.push(chars[i]!)
         placed = true
@@ -294,6 +238,156 @@ export function php54PermutationAt(hint: string, length: number, index: number):
   }
 
   return out.join("")
+}
+
+/** Switch from bitset to index list when survivor count drops below this. */
+export const MASTERMIND_LIST_THRESHOLD = 5000
+
+export type MastermindSurvivors =
+  | { mode: "all" }
+  | { mode: "bitset"; bits: Uint32Array; count: number }
+  | { mode: "list"; indices: number[] }
+
+export function mastermindSurvivorsAll(): MastermindSurvivors {
+  return { mode: "all" }
+}
+
+function mastermindBitGet(bits: Uint32Array, index: number): boolean {
+  return (bits[index >> 5]! & (1 << (index & 31))) !== 0
+}
+
+function mastermindBitSet(bits: Uint32Array, index: number): void {
+  bits[index >> 5]! |= 1 << (index & 31)
+}
+
+function mastermindCreateBitset(total: number): Uint32Array {
+  const words = Math.ceil(total / 32)
+  return new Uint32Array(words)
+}
+
+function mastermindSurvivorIndexAtSlot(survivors: MastermindSurvivors, total: number, slot: number): number {
+  if (survivors.mode === "list") return survivors.indices[slot]!
+  if (survivors.mode === "all") return slot
+  let seen = 0
+  for (let i = 0; i < total; i++) {
+    if (mastermindBitGet(survivors.bits, i)) {
+      if (seen === slot) return i
+      seen++
+    }
+  }
+  return 0
+}
+
+export function mastermindSurvivorCount(survivors: MastermindSurvivors, total: number): number {
+  if (survivors.mode === "all") return total
+  if (survivors.mode === "list") return survivors.indices.length
+  return survivors.count
+}
+
+function mastermindIndicesFromBitset(bits: Uint32Array, total: number): number[] {
+  const indices: number[] = []
+  for (let i = 0; i < total; i++) {
+    if (mastermindBitGet(bits, i)) indices.push(i)
+  }
+  return indices
+}
+
+function mastermindCompactSurvivors(bits: Uint32Array, total: number, count: number): MastermindSurvivors {
+  if (count <= MASTERMIND_LIST_THRESHOLD) {
+    return { mode: "list", indices: mastermindIndicesFromBitset(bits, total) }
+  }
+  return { mode: "bitset", bits, count }
+}
+
+export function filterMastermindSurvivors(
+  survivors: MastermindSurvivors,
+  total: number,
+  keep: (index: number) => boolean,
+): MastermindSurvivors {
+  if (survivors.mode === "list") {
+    return { mode: "list", indices: survivors.indices.filter((i) => keep(i)) }
+  }
+
+  const bits = mastermindCreateBitset(total)
+  let count = 0
+
+  if (survivors.mode === "all") {
+    for (let i = 0; i < total; i++) {
+      if (!keep(i)) continue
+      mastermindBitSet(bits, i)
+      count++
+    }
+  } else {
+    for (let i = 0; i < total; i++) {
+      if (!mastermindBitGet(survivors.bits, i) || !keep(i)) continue
+      mastermindBitSet(bits, i)
+      count++
+    }
+  }
+
+  if (count === 0) return { mode: "list", indices: [] }
+  return mastermindCompactSurvivors(bits, total, count)
+}
+
+/** Pick a mastermind probe from survivor indices; materialize strings on demand. */
+export function pickMastermindGuessIndexed(
+  survivors: MastermindSurvivors,
+  total: number,
+  secretAt: (index: number) => string,
+): string {
+  const count = mastermindSurvivorCount(survivors, total)
+  if (count === 0) return ""
+
+  const atSlot = (slot: number): string =>
+    secretAt(mastermindSurvivorIndexAtSlot(survivors, total, slot))
+
+  if (count > MINIMAX_THRESHOLD) {
+    return atSlot(Math.floor(Math.random() * count))
+  }
+
+  let bestGuess = atSlot(0)
+  let bestWorst = count + 1
+  for (let gi = 0; gi < count; gi++) {
+    const guess = atSlot(gi)
+    const buckets = new Map<string, number>()
+    for (let si = 0; si < count; si++) {
+      const fb = mastermindFeedback(atSlot(si), guess)
+      const key = `${fb.exact},${fb.misplaced}`
+      buckets.set(key, (buckets.get(key) ?? 0) + 1)
+    }
+    const worst = Math.max(...buckets.values(), 0)
+    if (worst < bestWorst) {
+      bestWorst = worst
+      bestGuess = guess
+    }
+  }
+  return bestGuess
+}
+
+function php54SortedCounts(digits: string): { chars: string[]; counts: number[] } {
+  return sortedCharsToMultiset(digits.split("").sort())
+}
+
+/** Extract sorted hint digits; null when hint does not match password length. */
+export function php54HintDigits(hint: string, length: number): string | null {
+  const digits = hint.replace(/\D/g, "")
+  if (digits.length !== length) return null
+  return digits
+}
+
+/** Number of distinct permutations of PHP 5.4 sorted hint digits. */
+export function php54PermutationCount(hint: string, length: number): number {
+  const digits = php54HintDigits(hint, length)
+  if (digits === null) return 0
+  return multisetPermutationCount(php54SortedCounts(digits).counts)
+}
+
+/** Nth permutation (0-based) in lexicographic multiset order, without enumerating all. */
+export function php54PermutationAt(hint: string, length: number, index: number): string | null {
+  const digits = php54HintDigits(hint, length)
+  if (digits === null) return null
+  const { chars, counts } = php54SortedCounts(digits)
+  return multisetPermutationAt(chars, counts, index)
 }
 
 export function crtCombineBigInt(r1: bigint, m1: bigint, r2: bigint, m2: bigint): { r: bigint; m: bigint } | null {
