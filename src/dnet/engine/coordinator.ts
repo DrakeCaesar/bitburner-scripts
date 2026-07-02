@@ -175,20 +175,16 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
     processQueuedTargets(targets, attemptLog, sessionArchive, dnet, passwords)
     scheduleRetries(targets, attemptLog)
     const dispatchCtx: WorkerDispatchCtx = { workerPool, portPool, pendingSpawns, spawnPlans, targets }
-    // Dispatch priority: urgent probe -> P1 RAM -> spawn -> P2 RAM -> auth -> background probe -> P3 RAM
+    // Dispatch priority: urgent probe -> stasis -> spawn -> auth -> P1 -> P2 -> labyrinth -> probe -> P3
     dispatchUrgentProbes(ns, workerPool, urgentProbeHosts, masterLog, dispatchCtx)
-    dispatchP1Reallocs(
+    dispatchLabyrinthStasis(
       ns,
-      sessionId,
-      workerPool,
-      portPool,
-      targets,
-      pendingSpawns,
-      spawnPlans,
       dnet,
+      workerPool,
+      targets,
       passwords,
-      masterLog,
-      dispatchCtx,
+      (wi) => isWorkerAlive(ns, wi),
+      (wi) => sendCommand(ns, wi, { type: "stasis" }, masterLog, dispatchCtx),
     )
     spawnWorkers(
       ns,
@@ -203,16 +199,21 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       masterLog,
       dispatchCtx,
     )
-    dispatchP2Reallocs(ns, dnet, workerPool, masterLog, dispatchCtx)
-    dispatchLabyrinthStasis(
+    dispatchGuesses(ns, workerPool, targets, attemptLog, dnet, masterLog, dispatchCtx)
+    dispatchP1Reallocs(
       ns,
-      dnet,
+      sessionId,
       workerPool,
+      portPool,
       targets,
+      pendingSpawns,
+      spawnPlans,
+      dnet,
       passwords,
-      (wi) => isWorkerAlive(ns, wi),
-      (wi) => sendCommand(ns, wi, { type: "stasis" }, masterLog, dispatchCtx),
+      masterLog,
+      dispatchCtx,
     )
+    dispatchP2Reallocs(ns, dnet, workerPool, masterLog, dispatchCtx)
     dispatchLabyrinth({
       workerPool,
       targets,
@@ -220,7 +221,6 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       cloneState,
       sendCommand: (wi, payload) => sendCommand(ns, wi, payload, masterLog, dispatchCtx),
     })
-    dispatchGuesses(ns, workerPool, targets, attemptLog, dnet, masterLog, dispatchCtx)
     dispatchBackgroundProbes(ns, workerPool, mutationSync, urgentProbeHosts, masterLog, dispatchCtx)
     dispatchP3Reallocs(ns, dnet, workerPool, masterLog, dispatchCtx)
 
