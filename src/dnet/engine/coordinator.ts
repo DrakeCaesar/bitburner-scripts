@@ -60,6 +60,7 @@ import { dispatchLabyrinthStasis } from "./labyrinthStasis.js"
 import { dispatchLabyrinth, snapshotLabyrinths } from "./labyrinthDispatch.js"
 import { applyLabreport, type LabyrinthState } from "../solvers/labyrinth.js"
 import { clearDnetGlobalPorts, clearWorkerPortPair } from "./ports.js"
+import { killAllWorkers, killAllWorkersSync } from "./workerLifecycle.js"
 import {
   availableAuthWorkers,
   availableSpawnParents,
@@ -70,6 +71,23 @@ import {
 
 function cloneState<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
+}
+
+function shutdownWorkers(
+  ns: NS,
+  workerPool: WorkerPool,
+  dnet: DnetApi,
+  registry: DarknetRegistry,
+): void {
+  for (const wi of workerPool.workers.values()) {
+    if (wi.commandPort <= 0) continue
+    try {
+      ns.writePort(wi.commandPort, JSON.stringify({ type: "exit" }))
+    } catch {
+      /* port gone */
+    }
+  }
+  killAllWorkersSync(ns, dnet, registry)
 }
 
 interface SpawnPlan {
@@ -112,6 +130,11 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
   const cacheOpens: CacheOpenRecord[] = []
   const fileIntelCtx = { registry, cacheOpens, loreStore, loreFile: DARKNET_LORE_FILE }
 
+  ns.atExit(() => {
+    shutdownWorkers(ns, workerPool, dnet, registry)
+  })
+
+  await killAllWorkers(ns, dnet, registry)
   clearDnetGlobalPorts(ns)
   ensureMutationWatcher(ns)
   ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId, lorePort: LORE_PORT }))
