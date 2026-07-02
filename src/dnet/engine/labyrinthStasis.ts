@@ -2,6 +2,7 @@ import type { NS } from "@ns"
 import { LABYRINTH_MODEL } from "../constants.js"
 import { getServerDetails, readStasisSnapshot } from "../api/server.js"
 import { canExecStasis } from "./memoryPlan.js"
+import { isTargetAuthed } from "./targetState.js"
 import type { AuthTarget, DnetApi } from "../types.js"
 import type { ManagedWorker, WorkerPool } from "../pool/workers.js"
 
@@ -51,12 +52,11 @@ export function workerHostAuthed(
   targets: Map<string, AuthTarget>,
   passwords: Map<string, string>,
 ): boolean {
+  const target = targets.get(host)
+  if (target) return isTargetAuthed(target, dnet, passwords)
   const details = getServerDetails(dnet, host)
   if (details?.hasSession) return true
-  const target = targets.get(host)
-  if (target?.password != null) return true
-  if (passwords.has(host)) return true
-  return target?.status === "solved"
+  return passwords.has(host)
 }
 
 export function dispatchLabyrinthStasis(

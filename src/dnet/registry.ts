@@ -1,5 +1,6 @@
 import { NS } from "@ns"
 import { getServerDetails } from "./api/server.js"
+import { markTargetAuthed } from "./engine/targetState.js"
 import type { AuthTarget, DnetApi } from "./types.js"
 
 export interface PasswordHintRecord {
@@ -193,7 +194,6 @@ export function syncRegistryPasswords(
     tryConnect(dnet, entry.hostname, entry.password)
     const target = targets.get(entry.hostname)
     if (!target || target.status === "unsupported" || target.status === "offline") continue
-    target.status = "solved"
-    target.password = entry.password
+    markTargetAuthed(target, dnet, { password: entry.password, passwords })
   }
 }

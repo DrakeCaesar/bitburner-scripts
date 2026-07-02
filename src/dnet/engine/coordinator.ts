@@ -25,6 +25,14 @@ import {
   type DarknetRegistry,
 } from "../registry.js"
 import { getServerDetails, readStasisSnapshot, stasisLinkedHosts, tryConnect } from "../api/server.js"
+import {
+  isTargetAuthed,
+  isTargetReadyForWorker,
+  markBlockedOnWorker,
+  markTargetAuthed,
+  markTargetSessionLost,
+  syncAllTargetAuthState,
+} from "./targetState.js"
 import { AttemptLog } from "../history/attemptLog.js"
 import { MasterActionLog } from "../history/masterActionLog.js"
 import { SessionArchive } from "../history/sessionArchive.js"
@@ -171,6 +179,17 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
 
     ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId, lorePort: LORE_PORT }))
 
+    const dispatchCtx: WorkerDispatchCtx = {
+      workerPool,
+      portPool,
+      pendingSpawns,
+      spawnPlans,
+      targets,
+      dnet,
+      passwords,
+      sessionArchive,
+    }
+
     drainReplies(
       ns,
       workerPool,
@@ -186,10 +205,23 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       fileIntelCtx,
       masterLog,
       sessionArchive,
+      dispatchCtx,
     )
     pollLorePort(ns, LORE_PORT, loreStore, DARKNET_LORE_FILE)
     syncRegistryPasswords(dnet, registry, passwords, targets, tryConnect)
-    checkCommandDeadlines(workerPool, targets, spawnPlans, pendingSpawns, portPool, ns, masterLog)
+    syncAllTargetAuthState(targets, dnet, passwords, sessionArchive)
+    checkCommandDeadlines(
+      workerPool,
+      targets,
+      spawnPlans,
+      pendingSpawns,
+      portPool,
+      ns,
+      masterLog,
+      dnet,
+      passwords,
+      sessionArchive,
+    )
     pruneWorkers(ns, workerPool, portPool, targets, pendingSpawns, spawnPlans, masterLog)
     mutationSync.tick(ns, workerPool, targets, (ts) => {
       masterLog.append("sync", `mutation ${ts} (background probes)`)
@@ -197,7 +229,6 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
 
     processQueuedTargets(targets, attemptLog, sessionArchive, dnet, passwords)
     scheduleRetries(targets, attemptLog)
-    const dispatchCtx: WorkerDispatchCtx = { workerPool, portPool, pendingSpawns, spawnPlans, targets }
     // Dispatch priority: urgent probe -> scheduled probe -> stasis -> spawn -> auth -> P1 -> P2 -> labyrinth -> P3
     dispatchUrgentProbes(ns, workerPool, urgentProbeHosts, masterLog, dispatchCtx)
     dispatchBackgroundProbes(ns, workerPool, mutationSync, urgentProbeHosts, masterLog, dispatchCtx)
@@ -223,7 +254,17 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       masterLog,
       dispatchCtx,
     )
-    dispatchGuesses(ns, workerPool, targets, attemptLog, dnet, masterLog, dispatchCtx)
+    dispatchGuesses(
+      ns,
+      workerPool,
+      targets,
+      passwords,
+      attemptLog,
+      dnet,
+      sessionArchive,
+      masterLog,
+      dispatchCtx,
+    )
     dispatchP1Reallocs(
       ns,
       sessionId,
@@ -457,6 +498,7 @@ function drainReplies(
   },
   masterLog: MasterActionLog,
   sessionArchive: SessionArchive,
+  dispatchCtx: WorkerDispatchCtx,
 ): void {
   for (const wi of [...workerPool.workers.values()]) {
     if (wi.commandPort <= 0) continue
@@ -475,13 +517,7 @@ function drainReplies(
           wi.pid = msg.pid
           wi.idle = true
           wi.commandDeadlineAt = 0
-          sendCommand(
-            ns,
-            wi,
-            { type: "probe" },
-            masterLog,
-            { workerPool, portPool, pendingSpawns, spawnPlans, targets },
-          )
+          sendCommand(ns, wi, { type: "probe" }, masterLog, dispatchCtx)
           break
         case "deadline":
           wi.idle = false
@@ -494,7 +530,7 @@ function drainReplies(
           wi.freeRam = msg.freeRam
           wi.blockedRam = msg.blockedRam
           for (const neighbor of msg.neighbors) {
-            noteHost(targets, dnet, neighbor, msg.workerHost)
+            noteHost(targets, dnet, neighbor, msg.workerHost, passwords, sessionArchive)
           }
           reconcileProbeStatuses(
             msg,
@@ -502,6 +538,7 @@ function drainReplies(
             passwords,
             dnet,
             attemptLog,
+            sessionArchive,
           )
           mutationSync.markWorkerProbed(msg.workerHost, workerPool, ns)
           finishUrgentProbe(msg.workerHost, targets, urgentProbeHosts)
@@ -617,6 +654,8 @@ function noteHost(
   dnet: DnetApi,
   host: string,
   viaWorker: string,
+  passwords: Map<string, string>,
+  sessionArchive: SessionArchive,
 ): void {
   if (host === DARKWEB) return
   const details = getServerDetails(dnet, host)
@@ -650,16 +689,18 @@ function noteHost(
       awaitProbeWorker: null,
     }
     targets.set(host, target)
-  } else if (details.hasSession && target.password == null && target.status !== "unsupported") {
-    target.status = "solved"
+    if (details.hasSession) {
+      markTargetAuthed(target, dnet, { passwords, sessionArchive })
+    }
+  } else if (isTargetAuthed(target, dnet, passwords)) {
+    markTargetAuthed(target, dnet, { passwords, sessionArchive })
   } else if (
     details.isConnectedToCurrentServer &&
     !details.hasSession &&
     target.password == null &&
     target.status === "solved"
   ) {
-    target.status = "queued"
-    target.solverState = null
+    markTargetSessionLost(target)
   }
 
   if (!target.neighborWorkers.includes(viaWorker)) {
@@ -681,13 +722,11 @@ function processQueuedTargets(
       target.status = "offline"
       continue
     }
-    if (details.hasSession && passwords.has(target.host)) {
-      target.status = "solved"
-      target.password = passwords.get(target.host)!
-      sessionArchive.discardHost(target.host)
+    if (isTargetAuthed(target, dnet, passwords)) {
+      markTargetAuthed(target, dnet, { passwords, sessionArchive })
       continue
     }
-    startAuthSession(target, details, attemptLog, sessionArchive)
+    startAuthSession(target, details, attemptLog, sessionArchive, dnet, passwords)
   }
 }
 
@@ -696,7 +735,14 @@ function startAuthSession(
   details: ServerDetails,
   log: AttemptLog,
   sessionArchive: SessionArchive,
+  dnet: DnetApi,
+  passwords: Map<string, string>,
 ): void {
+  if (isTargetAuthed(target, dnet, passwords)) {
+    markTargetAuthed(target, dnet, { passwords, sessionArchive })
+    return
+  }
+
   const solver = lookupSolver(details)
   if (!solver) {
     target.status = "no_solver"
@@ -825,8 +871,11 @@ function onAuthResult(
 
   if (msg.message === NOT_NEIGHBOR_MESSAGE) {
     undoDispatchedGuess(target)
-    target.status = "waiting_worker"
-    target.lastError = "neighbor link lost"
+    if (
+      markBlockedOnWorker(target, dnet, passwords, "neighbor link lost", sessionArchive)
+    ) {
+      return
+    }
     target.awaitProbeAfter = true
     target.awaitProbeWorker = msg.workerHost
     scheduleNotNeighborProbes(
@@ -840,8 +889,9 @@ function onAuthResult(
   }
 
   if (isTransientAuthFailure(msg)) {
-    target.status = "waiting_worker"
-    target.lastError = msg.message ?? "server unavailable"
+    if (markBlockedOnWorker(target, dnet, passwords, msg.message ?? "server unavailable", sessionArchive)) {
+      return
+    }
     return
   }
 
@@ -850,9 +900,8 @@ function onAuthResult(
   if (msg.success) {
     const password =
       target.modelId === LABYRINTH_MODEL ? msg.feedback ?? msg.guess : msg.guess
-    target.status = "solved"
-    target.password = password
     passwords.set(target.host, password)
+    markTargetAuthed(target, dnet, { password, passwords, sessionArchive })
     attemptLog.append({
       host: target.host,
       session: target.session,
@@ -863,7 +912,6 @@ function onAuthResult(
       guess: msg.guess,
       note: "solved",
     })
-    tryConnect(dnet, target.host, password)
     return
   }
 
@@ -901,6 +949,10 @@ function onAuthResult(
     note: "state after failed guess",
   })
 
+  if (isTargetAuthed(target, dnet, passwords)) {
+    markTargetAuthed(target, dnet, { passwords, sessionArchive })
+    return
+  }
   target.status = "active"
 }
 
@@ -1058,7 +1110,8 @@ function dispatchP1Reallocs(
 
   for (const target of targets.values()) {
     if (target.host === DARKWEB) continue
-    if (target.status !== "solved") continue
+    if (!isTargetReadyForWorker(target, dnet, passwords)) continue
+    markTargetAuthed(target, dnet, { passwords })
     if (workerPool.workers.has(target.host)) {
       const wi = workerPool.workers.get(target.host)!
       if (isWorkerAlive(ns, wi)) continue
@@ -1067,10 +1120,6 @@ function dispatchP1Reallocs(
 
     const details = getServerDetails(dnet, target.host)
     if (!details?.isOnline) continue
-
-    const knownPassword = target.password ?? passwords.get(target.host) ?? null
-    const authed = knownPassword != null || details.hasSession
-    if (!authed) continue
 
     const ram = readHostRam(ns, dnet, target.host)
     if (canSpawnWorker(ns, dnet, target.host, ram)) continue
@@ -1138,8 +1187,10 @@ function dispatchGuesses(
   ns: NS,
   workerPool: WorkerPool,
   targets: Map<string, AuthTarget>,
+  passwords: Map<string, string>,
   attemptLog: AttemptLog,
   dnet: DnetApi,
+  sessionArchive: SessionArchive,
   masterLog: MasterActionLog,
   ctx: WorkerDispatchCtx,
 ): void {
@@ -1154,6 +1205,11 @@ function dispatchGuesses(
     const details = getServerDetails(dnet, target.host)
     if (!details?.isOnline) {
       target.status = "offline"
+      continue
+    }
+
+    if (isTargetAuthed(target, dnet, passwords)) {
+      markTargetAuthed(target, dnet, { passwords, sessionArchive })
       continue
     }
 
@@ -1187,14 +1243,14 @@ function dispatchGuesses(
       authWorkersFor,
     )
     if (!wi) {
-      target.status = "waiting_worker"
+      if (markBlockedOnWorker(target, dnet, passwords, "no auth worker", sessionArchive)) continue
       continue
     }
 
     const next = solver.nextGuess(target.solverState as SolverState, { target: target.host, details })
     if (!next) {
       if (target.lastError === "neighbor link lost") {
-        target.status = "waiting_worker"
+        if (markBlockedOnWorker(target, dnet, passwords, "neighbor link lost", sessionArchive)) continue
         continue
       }
       target.status = "exhausted"
@@ -1228,7 +1284,7 @@ function dispatchGuesses(
       )
     ) {
       undoDispatchedGuess(target)
-      target.status = "waiting_worker"
+      if (markBlockedOnWorker(target, dnet, passwords, "auth send failed", sessionArchive)) continue
       continue
     }
 
@@ -1280,7 +1336,8 @@ function spawnWorkers(
 
   for (const target of targets.values()) {
     if (target.host === DARKWEB) continue
-    if (target.status !== "solved") continue
+    if (!isTargetReadyForWorker(target, dnet, passwords)) continue
+    markTargetAuthed(target, dnet, { passwords })
     if (workerPool.workers.has(target.host)) {
       const wi = workerPool.workers.get(target.host)!
       if (isWorkerAlive(ns, wi)) continue
@@ -1289,10 +1346,6 @@ function spawnWorkers(
 
     const details = getServerDetails(dnet, target.host)
     if (!details?.isOnline) continue
-
-    const knownPassword = target.password ?? passwords.get(target.host) ?? null
-    const authed = knownPassword != null || details.hasSession
-    if (!authed) continue
 
     const ram = readHostRam(ns, dnet, target.host)
     if (!canSpawnWorker(ns, dnet, target.host, ram)) continue
@@ -1410,6 +1463,9 @@ interface WorkerDispatchCtx {
   pendingSpawns: Set<string>
   spawnPlans: Map<string, SpawnPlan>
   targets?: Map<string, AuthTarget>
+  dnet: DnetApi
+  passwords: Map<string, string>
+  sessionArchive: SessionArchive
 }
 
 function abortSpawnPlan(
@@ -1429,12 +1485,15 @@ function abortSpawnPlan(
   workerPool.remove(targetHost)
 }
 
-function clearTargetWorkerRefs(targets: Map<string, AuthTarget>, workerHost: string): void {
-  for (const t of targets.values()) {
+function clearTargetWorkerRefs(ctx: WorkerDispatchCtx, workerHost: string): void {
+  if (!ctx.targets) return
+  for (const t of ctx.targets.values()) {
     if (t.workerHost !== workerHost) continue
     t.workerHost = null
     t.pendingGuess = null
-    if (t.status === "active") t.status = "waiting_worker"
+    if (t.status === "active") {
+      markBlockedOnWorker(t, ctx.dnet, ctx.passwords, "worker dropped", ctx.sessionArchive)
+    }
   }
 }
 
@@ -1451,7 +1510,7 @@ function sendCommand(
   }
   if (wi.pid > 0 && !ns.isRunning(wi.pid)) {
     dropWorker(ns, wi.host, ctx.workerPool, ctx.portPool, ctx.pendingSpawns, ctx.spawnPlans, masterLog, "dead")
-    if (ctx.targets) clearTargetWorkerRefs(ctx.targets, wi.host)
+    if (ctx.targets) clearTargetWorkerRefs(ctx, wi.host)
     return false
   }
 
@@ -1512,6 +1571,7 @@ function reconcileProbeStatuses(
   passwords: Map<string, string>,
   dnet: DnetApi,
   attemptLog: AttemptLog,
+  sessionArchive: SessionArchive,
 ): void {
   let authedNoWorker = 0
   let unauthed = 0
@@ -1540,8 +1600,7 @@ function reconcileProbeStatuses(
     if (knownPassword != null) {
       if (!st.hasSession) tryConnect(dnet, st.host, knownPassword)
       if (target && target.status !== "unsupported" && target.status !== "offline") {
-        target.status = "solved"
-        target.password = knownPassword
+        markTargetAuthed(target, dnet, { password: knownPassword, passwords, sessionArchive })
       }
       if (st.workerKnown && !st.workerRunning) authedNoWorker++
       continue
@@ -1549,7 +1608,7 @@ function reconcileProbeStatuses(
 
     if (st.hasSession) {
       if (target && target.status !== "unsupported" && target.status !== "offline") {
-        target.status = "solved"
+        markTargetAuthed(target, dnet, { passwords, sessionArchive })
       }
       if (st.workerKnown && !st.workerRunning) authedNoWorker++
       continue
@@ -1557,8 +1616,7 @@ function reconcileProbeStatuses(
 
     unauthed++
     if (target?.status === "solved" && target.password == null && !passwords.has(st.host)) {
-      target.status = "queued"
-      target.solverState = null
+      markTargetSessionLost(target)
     }
   }
 
@@ -1597,6 +1655,9 @@ function failWorkerCommand(
   portPool: PortPool,
   ns: NS,
   masterLog: MasterActionLog,
+  dnet: DnetApi,
+  passwords: Map<string, string>,
+  sessionArchive: SessionArchive,
 ): void {
   if (isLongRunningWorkerCommand(wi)) {
     masterLog.append("timeout_extend", `${wi.host} command ${wi.lastCommand ?? "?"} (still running)`)
@@ -1612,7 +1673,11 @@ function failWorkerCommand(
     undoDispatchedGuess(t)
     t.workerHost = null
     t.pendingGuess = null
-    t.status = "active"
+    if (isTargetAuthed(t, dnet, passwords)) {
+      markTargetAuthed(t, dnet, { passwords, sessionArchive })
+    } else {
+      t.status = "active"
+    }
   }
   for (const [targetHost, plan] of spawnPlans) {
     if (plan.parentHost === wi.host) {
@@ -1629,13 +1694,28 @@ function checkCommandDeadlines(
   portPool: PortPool,
   ns: NS,
   masterLog: MasterActionLog,
+  dnet: DnetApi,
+  passwords: Map<string, string>,
+  sessionArchive: SessionArchive,
 ): void {
   const now = Date.now()
   for (const wi of workerPool.workers.values()) {
     if (wi.idle) continue
     if (wi.commandDeadlineAt <= 0) continue
     if (now <= wi.commandDeadlineAt + DEADLINE_GRACE_MS) continue
-    failWorkerCommand(wi, targets, spawnPlans, pendingSpawns, workerPool, portPool, ns, masterLog)
+    failWorkerCommand(
+      wi,
+      targets,
+      spawnPlans,
+      pendingSpawns,
+      workerPool,
+      portPool,
+      ns,
+      masterLog,
+      dnet,
+      passwords,
+      sessionArchive,
+    )
   }
 }
 

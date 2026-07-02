@@ -110,6 +110,11 @@ export async function runAuthCommand(
     return
   }
 
+  if (dnet.getServerDetails(cmd.target).hasSession) {
+    writeResult({ success: true, feedback: cmd.guess })
+    return
+  }
+
   const details = readFormulasDetails(dnet, cmd.target)
   if (!details) {
     writeResult({ success: false, message: "noDetails" })
