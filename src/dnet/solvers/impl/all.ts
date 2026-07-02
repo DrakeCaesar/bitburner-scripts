@@ -8,7 +8,7 @@ import {
   parseBoolFeedback,
   bigMoPasswordFromProbes,
 } from '../helpers.js'
-import { COMMON_PASSWORDS } from '../data/commonPasswords.js'
+import { COMMON_PASSWORDS, DEFAULT_FACTORY_PASSWORDS } from '../data/commonPasswords.js'
 
 // --- ZeroLogon ---
 
@@ -522,45 +522,24 @@ const topPass: SolverModule<TopPassState> = {
   },
 }
 
-// --- FreshInstall (numeric) ---
+// --- FreshInstall_1.0 (factory default dictionary) ---
 
 interface FreshInstallState extends SolverState { type: "freshInstall"; remaining: string[] }
 
 const freshInstall: SolverModule<FreshInstallState> = {
   init(details) {
-    if (details.passwordFormat !== "numeric") return { type: "freshInstall", remaining: [] }
-    const zeros = "0".repeat(details.passwordLength)
-    const sequence = "123456789".slice(0, details.passwordLength)
-    return { type: "freshInstall", remaining: zeros === sequence ? [zeros] : [zeros, sequence] }
+    const remaining = DEFAULT_FACTORY_PASSWORDS.filter((p) => p.length === details.passwordLength)
+    return { type: "freshInstall", remaining: [...remaining] }
   },
   nextGuess(state) {
     if (state.remaining.length === 0) return null
-    const guess = state.remaining.pop()!
-    return { guess, detail: `freshInstall (${state.remaining.length + 1} left)` }
+    const guess = state.remaining.shift()!
+    return { guess, detail: `default (${state.remaining.length} left)` }
   },
   applyResult(state, _guess, result) {
     if (result.success) state.remaining = []
     return state
   },
-}
-
-// --- FreshInstall (alphabetic) ---
-
-interface FreshInstallAlphaState extends SolverState { type: "freshInstallAlpha"; dispatched: boolean; guess: string | null }
-
-const freshInstallAlpha: SolverModule<FreshInstallAlphaState> = {
-  init(details) {
-    if (details.passwordFormat === "numeric") return { type: "freshInstallAlpha", dispatched: true, guess: null }
-    if (details.passwordLength === 5) return { type: "freshInstallAlpha", dispatched: false, guess: "admin" }
-    if (details.passwordLength === 8) return { type: "freshInstallAlpha", dispatched: false, guess: "password" }
-    return { type: "freshInstallAlpha", dispatched: true, guess: null }
-  },
-  nextGuess(state) {
-    if (state.dispatched || !state.guess) return null
-    state.dispatched = true
-    return { guess: state.guess, detail: "freshInstall" }
-  },
-  applyResult(state, _guess, _result) { return state },
 }
 
 // ============================================================
@@ -1563,7 +1542,7 @@ export const SOLVER_MODULES: Record<string, SolverModule> = {
   'EuroZone Free|ASCII': euroZone, 'EuroZone Free|alphabetic': euroZone,
   'TopPass|alphabetic': topPass, 'TopPass|alphanumeric': topPass, 'TopPass|ASCII': topPass,
   'FreshInstall_1.0|numeric': freshInstall,
-  'FreshInstall_1.0|alphabetic': freshInstallAlpha, 'FreshInstall_1.0|alphanumeric': freshInstallAlpha, 'FreshInstall_1.0|ASCII': freshInstallAlpha,
+  'FreshInstall_1.0|alphabetic': freshInstall, 'FreshInstall_1.0|alphanumeric': freshInstall, 'FreshInstall_1.0|ASCII': freshInstall,
   'NIL|numeric': nilSolver, 'NIL|alphabetic': nilSolver, 'NIL|alphanumeric': nilSolver,
   'AccountsManager_4.2|numeric': accountsManager,
   'DeepGreen|numeric': deepGreen, 'DeepGreen|alphabetic': deepGreen, 'DeepGreen|alphanumeric': deepGreen, 'DeepGreen|ASCII': deepGreen,

@@ -1,3 +1,6 @@
+/** FreshInstall_1.0 factory defaults (matches game defaultSettingsDictionary). */
+export const DEFAULT_FACTORY_PASSWORDS = ["admin", "password", "0000", "12345"] as const
+
 export const COMMON_PASSWORDS: readonly string[] = [
   "123456",
   "password",
