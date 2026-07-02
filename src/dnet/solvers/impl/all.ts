@@ -1,29 +1,10 @@
+/** All dnet auth solvers and their helpers (single module). */
 import type { ServerDetails } from '../../types.js'
 import type { SolverModule, SolverState } from '../types.js'
-import {
-  romanToDecimal,
-  mastermindCharset,
-  mastermindFeedback,
-  parseMastermindFeedback,
-  parseBoolFeedback,
-  bigMoPasswordFromProbes,
-  php54HintDigits,
-  php54PermutationAt,
-  php54PermutationCount,
-  MAX_MASTERMIND_CANDIDATES,
-  sortedCharsToMultiset,
-  multisetPermutationCount,
-  multisetPermutationAt,
-  mastermindCartesianAt,
-  mastermindSurvivorCount,
-  filterMastermindSurvivors,
-  pickMastermindGuessIndexed,
-  mastermindSurvivorsAll,
-  type MastermindSurvivors,
-} from '../helpers.js'
 import { COMMON_PASSWORDS, DEFAULT_FACTORY_PASSWORDS } from '../data/commonPasswords.js'
 
-// --- ZeroLogon ---
+#region ZeroLogon
+
 
 interface ZeroLogonState extends SolverState { type: "zeroLogon"; dispatched: boolean }
 
@@ -39,7 +20,10 @@ const zeroLogon: SolverModule<ZeroLogonState> = {
   applyResult(state, _guess, _result) { return state },
 }
 
-// --- CloudBlare(tm) ---
+#endregion
+
+#region CloudBlare(tm)
+
 
 interface CloudBlareState extends SolverState { type: "cloudBlare"; dispatched: boolean; guess: string | null }
 
@@ -60,7 +44,10 @@ const cloudBlare: SolverModule<CloudBlareState> = {
   applyResult(state, _guess, _result) { return state },
 }
 
-// --- DeskMemo_3.1 ---
+#endregion
+
+#region DeskMemo_3.1
+
 
 interface DeskMemoState extends SolverState { type: "deskMemo"; dispatched: boolean; guess: string | null }
 
@@ -78,7 +65,30 @@ const deskMemo: SolverModule<DeskMemoState> = {
   applyResult(state, _guess, _result) { return state },
 }
 
-// --- BellaCuore single-value ---
+#endregion
+
+#region BellaCuore single-value
+
+#region BellaCuore helpers
+
+function romanToDecimal(roman: string): number | null {
+  const trimmed = roman.trim()
+  if (trimmed.toLowerCase() === "nulla") return 0
+  const values: Record<string, number> = { I: 1, V: 5, X: 10, L: 50, C: 100, D: 500, M: 1000 }
+  const upper = trimmed.toUpperCase()
+  if (!upper || !/^[IVXLCDM]+$/.test(upper)) return null
+  let total = 0
+  for (let i = 0; i < upper.length; i++) {
+    const current = values[upper[i]!]
+    const next = values[upper[i + 1]!]
+    if (current === undefined) return null
+    total += next !== undefined && current < next ? -current : current
+  }
+  return total
+}
+
+#endregion
+
 
 interface BellaCuoreSingleState extends SolverState { type: "bellaCuoreSingle"; dispatched: boolean; guess: string | null }
 
@@ -103,41 +113,12 @@ const bellaCuoreSingle: SolverModule<BellaCuoreSingleState> = {
   applyResult(state, _guess, _result) { return state },
 }
 
-// --- OctantVoxel (base-N conversion, including fractional bases like 15.1) ---
+#endregion
+
+#region OctantVoxel (base-N conversion, including fractional bases like 15.1)
+
 
 interface OctantVoxelState extends SolverState { type: "octantVoxel"; dispatched: boolean; guess: string | null }
-
-const OCTANT_VOXEL_DIGITS = "0123456789abcdef"
-
-function octantVoxelDigitValue(ch: string): number | null {
-  const idx = OCTANT_VOXEL_DIGITS.indexOf(ch.toLowerCase())
-  return idx >= 0 ? idx : null
-}
-
-function parseBaseNToDecimal(base: number, numberStr: string): number | null {
-  const maxDigit = Math.ceil(base) - 1
-  const dotIdx = numberStr.indexOf(".")
-  const intPart = dotIdx >= 0 ? numberStr.slice(0, dotIdx) : numberStr
-  const fracPart = dotIdx >= 0 ? numberStr.slice(dotIdx + 1) : ""
-
-  let value = 0
-
-  // Integer part (positions ≥ 0)
-  for (let i = 0; i < intPart.length; i++) {
-    const dv = octantVoxelDigitValue(intPart[intPart.length - 1 - i]!)
-    if (dv === null || dv > maxDigit) return null
-    value += dv * base ** i
-  }
-
-  // Fractional part (positions < 0)
-  for (let i = 0; i < fracPart.length; i++) {
-    const dv = octantVoxelDigitValue(fracPart[i]!)
-    if (dv === null || dv > maxDigit) return null
-    value += dv * base ** -(i + 1)
-  }
-
-  return value
-}
 
 const octantVoxel: SolverModule<OctantVoxelState> = {
   init(details) {
@@ -163,76 +144,165 @@ const octantVoxel: SolverModule<OctantVoxelState> = {
   applyResult(state, _guess, _result) { return state },
 }
 
-// --- MathML ---
-//
-// Game uses parseSimpleArithmeticExpression (not eval). Data may include unicode
-// operators and a comma-suffix code-injection trap; only the part before "," counts.
+#endregion
+
+#region MathML
+
+#region MathML helpers
+
+const OCTANT_DIGITS = "0123456789abcdef"
+
+function octantDigit(ch: string): number | null {
+  const idx = OCTANT_DIGITS.indexOf(ch.toLowerCase())
+  return idx >= 0 ? idx : null
+}
+
+function parseBaseNToDecimal(base: number, numberStr: string): number | null {
+  const maxDigit = Math.ceil(base) - 1
+  const dotIdx = numberStr.indexOf(".")
+  const intPart = dotIdx >= 0 ? numberStr.slice(0, dotIdx) : numberStr
+  const fracPart = dotIdx >= 0 ? numberStr.slice(dotIdx + 1) : ""
+  let value = 0
+  for (let i = 0; i < intPart.length; i++) {
+    const dv = octantDigit(intPart[intPart.length - 1 - i]!)
+    if (dv === null || dv > maxDigit) return null
+    value += dv * base ** i
+  }
+  for (let i = 0; i < fracPart.length; i++) {
+    const dv = octantDigit(fracPart[i]!)
+    if (dv === null || dv > maxDigit) return null
+    value += dv * base ** -(i + 1)
+  }
+  return value
+}
 
 function cleanArithmeticExpression(expression: string): string {
   return expression
-    .replaceAll("\u04B3", "*").replaceAll("\u0445", "*")
-    .replaceAll("\u00F7", "/").replaceAll("\u2796", "-")
-    .replaceAll("\u2795", "+").replaceAll("\u2212", "-")
-    .replaceAll("\u00D7", "*").replaceAll("\u00B7", "*").replaceAll("\u2217", "*")
+    .replaceAll("\u04B3", "*")
+    .replaceAll("\u0445", "*")
+    .replaceAll("\u00F7", "/")
+    .replaceAll("\u2796", "-")
+    .replaceAll("\u2795", "+")
+    .replaceAll("\u2212", "-")
+    .replaceAll("\u00D7", "*")
+    .replaceAll("\u00B7", "*")
+    .replaceAll("\u2217", "*")
     .replaceAll("ns.exit(),", "")
     .split(",")[0]!
 }
 
-/** Mirrors bitburner-src ServerGenerator.parseSimpleArithmeticExpression. */
 function parseSimpleArithmeticExpression(expression: string): number {
   const tokens = cleanArithmeticExpression(expression).split("")
-
   let currentDepth = 0
   const depth = tokens.map((token) => {
-    if (token === "(") {
-      currentDepth += 1
-    } else if (token === ")") {
+    if (token === "(") currentDepth += 1
+    else if (token === ")") {
       currentDepth -= 1
       return currentDepth + 1
     }
     return currentDepth
   })
   const depth1Start = depth.indexOf(1)
-  const firstZeroAfterDepth1Start = depth.indexOf(0, depth1Start)
-  const depth1End = firstZeroAfterDepth1Start === -1 ? depth.length - 1 : firstZeroAfterDepth1Start - 1
+  const firstZeroAfter = depth.indexOf(0, depth1Start)
+  const depth1End = firstZeroAfter === -1 ? depth.length - 1 : firstZeroAfter - 1
   if (depth1Start !== -1) {
-    const subExpression = tokens.slice(depth1Start + 1, depth1End).join("")
-    const result = parseSimpleArithmeticExpression(subExpression)
+    const sub = tokens.slice(depth1Start + 1, depth1End).join("")
+    const result = parseSimpleArithmeticExpression(sub)
     tokens.splice(depth1Start, depth1End - depth1Start + 1, result.toString())
     return parseSimpleArithmeticExpression(tokens.join(""))
   }
-
-  let remainingExpression = tokens.join("")
-  const multiplicationDivisionRegex = /(-?\d*\.?\d+) *([*/]) *(-?\d*\.?\d+)/
-  let match = remainingExpression.match(multiplicationDivisionRegex)
+  let remaining = tokens.join("")
+  const mulDiv = /(-?\d*\.?\d+) *([*/]) *(-?\d*\.?\d+)/
+  let match = remaining.match(mulDiv)
   while (match) {
     const left = match[1]!
-    const operator = match[2]!
+    const op = match[2]!
     const right = match[3]!
-    const result = operator === "*"
-      ? parseFloat(left) * parseFloat(right)
-      : parseFloat(left) / parseFloat(right)
-    const resultString = Math.abs(result) < 0.000001 ? result.toFixed(20) : result.toString()
-    remainingExpression = remainingExpression.replace(match[0], resultString)
-    match = remainingExpression.match(multiplicationDivisionRegex)
+    const result = op === "*" ? parseFloat(left) * parseFloat(right) : parseFloat(left) / parseFloat(right)
+    const resultStr = Math.abs(result) < 0.000001 ? result.toFixed(20) : result.toString()
+    remaining = remaining.replace(match[0], resultStr)
+    match = remaining.match(mulDiv)
   }
-
-  const additionSubtractionRegex = /(-?\d*\.?\d+) *([+-]) *(-?\d*\.?\d+)/
-  match = remainingExpression.match(additionSubtractionRegex)
+  const addSub = /(-?\d*\.?\d+) *([+-]) *(-?\d*\.?\d+)/
+  match = remaining.match(addSub)
   while (match) {
     const left = match[1]!
-    const operator = match[2]!
+    const op = match[2]!
     const right = match[3]!
-    const result = operator === "+"
-      ? parseFloat(left) + parseFloat(right)
-      : parseFloat(left) - parseFloat(right)
-    remainingExpression = remainingExpression.replace(match[0], result.toString())
-    match = remainingExpression.match(additionSubtractionRegex)
+    const result = op === "+" ? parseFloat(left) + parseFloat(right) : parseFloat(left) - parseFloat(right)
+    remaining = remaining.replace(match[0], result.toString())
+    match = remaining.match(addSub)
   }
-
-  const leftover = remainingExpression.match(/(-?\d*\.?\d+)/)
+  const leftover = remaining.match(/(-?\d*\.?\d+)/)
   return parseFloat(leftover?.[1] ?? "NaN")
 }
+
+function cleanArithmeticExpression(expression: string): string {
+  return expression
+    .replaceAll("\u04B3", "*")
+    .replaceAll("\u0445", "*")
+    .replaceAll("\u00F7", "/")
+    .replaceAll("\u2796", "-")
+    .replaceAll("\u2795", "+")
+    .replaceAll("\u2212", "-")
+    .replaceAll("\u00D7", "*")
+    .replaceAll("\u00B7", "*")
+    .replaceAll("\u2217", "*")
+    .replaceAll("ns.exit(),", "")
+    .split(",")[0]!
+}
+
+function parseSimpleArithmeticExpression(expression: string): number {
+  const tokens = cleanArithmeticExpression(expression).split("")
+  let currentDepth = 0
+  const depth = tokens.map((token) => {
+    if (token === "(") currentDepth += 1
+    else if (token === ")") {
+      currentDepth -= 1
+      return currentDepth + 1
+    }
+    return currentDepth
+  })
+  const depth1Start = depth.indexOf(1)
+  const firstZeroAfter = depth.indexOf(0, depth1Start)
+  const depth1End = firstZeroAfter === -1 ? depth.length - 1 : firstZeroAfter - 1
+  if (depth1Start !== -1) {
+    const sub = tokens.slice(depth1Start + 1, depth1End).join("")
+    const result = parseSimpleArithmeticExpression(sub)
+    tokens.splice(depth1Start, depth1End - depth1Start + 1, result.toString())
+    return parseSimpleArithmeticExpression(tokens.join(""))
+  }
+  let remaining = tokens.join("")
+  const mulDiv = /(-?\d*\.?\d+) *([*/]) *(-?\d*\.?\d+)/
+  let match = remaining.match(mulDiv)
+  while (match) {
+    const left = match[1]!
+    const op = match[2]!
+    const right = match[3]!
+    const result = op === "*" ? parseFloat(left) * parseFloat(right) : parseFloat(left) / parseFloat(right)
+    const resultStr = Math.abs(result) < 0.000001 ? result.toFixed(20) : result.toString()
+    remaining = remaining.replace(match[0], resultStr)
+    match = remaining.match(mulDiv)
+  }
+  const addSub = /(-?\d*\.?\d+) *([+-]) *(-?\d*\.?\d+)/
+  match = remaining.match(addSub)
+  while (match) {
+    const left = match[1]!
+    const op = match[2]!
+    const right = match[3]!
+    const result = op === "+" ? parseFloat(left) + parseFloat(right) : parseFloat(left) - parseFloat(right)
+    remaining = remaining.replace(match[0], result.toString())
+    match = remaining.match(addSub)
+  }
+  const leftover = remaining.match(/(-?\d*\.?\d+)/)
+  return parseFloat(leftover?.[1] ?? "NaN")
+}
+
+#endregion
+
+//
+// Game uses parseSimpleArithmeticExpression (not eval). Data may include unicode
+// operators and a comma-suffix code-injection trap; only the part before "," counts.
 
 interface MathMLState extends SolverState { type: "mathML"; dispatched: boolean; guess: string | null }
 
@@ -253,7 +323,10 @@ const mathML: SolverModule<MathMLState> = {
   applyResult(state, _guess, _result) { return state },
 }
 
-// --- PrimeTime 2 ---
+#endregion
+
+#region PrimeTime 2
+
 
 const LARGE_PRIMES = [
   2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71,
@@ -323,7 +396,10 @@ const primeTime2: SolverModule<PrimeTime2State> = {
   },
 }
 
-// --- 110100100 (binary-to-text) ---
+#endregion
+
+#region 110100100 (binary-to-text)
+
 
 interface BinaryToTextState extends SolverState { type: "binaryToText"; dispatched: boolean; guess: string | null }
 
@@ -348,7 +424,10 @@ const binaryToText: SolverModule<BinaryToTextState> = {
   applyResult(state, _guess, _result) { return state },
 }
 
-// --- OrdoXenos (XOR decryption) ---
+#endregion
+
+#region OrdoXenos (XOR decryption)
+
 
 interface OrdoXenosState extends SolverState { type: "ordoXenos"; dispatched: boolean; guess: string | null }
 
@@ -378,7 +457,10 @@ const ordoXenos: SolverModule<OrdoXenosState> = {
   applyResult(state, _guess, _result) { return state },
 }
 
-// --- Pr0verFl0 (buffer overflow) ---
+#endregion
+
+#region Pr0verFl0 (buffer overflow)
+
 
 interface ProverFloState extends SolverState { type: "proverFlo"; dispatched: boolean; guess: string | null }
 
@@ -395,11 +477,10 @@ const proverFlo: SolverModule<ProverFloState> = {
   applyResult(state, _guess, _result) { return state },
 }
 
-// ============================================================
-// Candidate-list solvers
-// ============================================================
+#endregion
 
-// --- Laika4 ---
+#region Laika4
+
 
 interface Laika4State extends SolverState { type: "laika4"; remaining: string[] }
 
@@ -421,7 +502,127 @@ const laika4: SolverModule<Laika4State> = {
   },
 }
 
-// --- PHP 5.4 ---
+#endregion
+
+#region PHP 5.4
+
+#region Shared multiset permutations
+
+function multisetFactorial(n: number): number {
+  let product = 1
+  for (let i = 2; i <= n; i++) product *= i
+  return product
+}
+
+/** Multiset permutation count: n! / (c1! * c2! * ...). */
+function multisetPermutationCount(counts: readonly number[]): number {
+  let n = 0
+  let denom = 1
+  for (const c of counts) {
+    n += c
+    denom *= multisetFactorial(c)
+  }
+  return multisetFactorial(n) / denom
+}
+
+/** Build sorted unique chars + counts from a sorted char list. */
+function sortedCharsToMultiset(sorted: readonly string[]): { chars: string[]; counts: number[] } {
+  const chars: string[] = []
+  const counts: number[] = []
+  for (const ch of sorted) {
+    if (chars.length > 0 && chars[chars.length - 1] === ch) {
+      counts[counts.length - 1]!++
+    } else {
+      chars.push(ch)
+      counts.push(1)
+    }
+  }
+  return { chars, counts }
+}
+
+/** Nth string (0-based) in depth-first lexicographic order over charset^length. */
+function mastermindCartesianAt(charset: string, length: number, index: number): string | null {
+  if (length <= 0) return null
+  const base = charset.length
+  const size = base ** length
+  if (index < 0 || index >= size) return null
+  let k = index
+  let out = ""
+  for (let pos = 0; pos < length; pos++) {
+    const pow = base ** (length - 1 - pos)
+    const ci = Math.floor(k / pow)
+    k -= ci * pow
+    out += charset[ci]!
+  }
+  return out
+}
+
+/** Nth permutation (0-based) in lexicographic multiset order, without enumerating all. */
+function multisetPermutationAt(
+  chars: readonly string[],
+  counts: readonly number[],
+  index: number,
+): string | null {
+  const total = multisetPermutationCount(counts)
+  if (index < 0 || index >= total) return null
+
+  const remaining = [...counts]
+  const length = remaining.reduce((a, b) => a + b, 0)
+  let k = index
+  const out: string[] = []
+
+  for (let pos = 0; pos < length; pos++) {
+    let placed = false
+    for (let i = 0; i < chars.length; i++) {
+      if (remaining[i]! <= 0) continue
+      remaining[i]!--
+      const ways = multisetPermutationCount(remaining)
+      if (k < ways) {
+        out.push(chars[i]!)
+        placed = true
+        break
+      }
+      k -= ways
+      remaining[i]!++
+    }
+    if (!placed) return null
+  }
+
+  return out.join("")
+}
+
+#endregion
+
+#region PHP 5.4 helpers
+
+function php54SortedCounts(digits: string): { chars: string[]; counts: number[] } {
+  return sortedCharsToMultiset(digits.split("").sort())
+}
+
+/** Extract sorted hint digits; null when hint does not match password length. */
+function php54HintDigits(hint: string, length: number): string | null {
+  const digits = hint.replace(/\D/g, "")
+  if (digits.length !== length) return null
+  return digits
+}
+
+/** Number of distinct permutations of PHP 5.4 sorted hint digits. */
+function php54PermutationCount(hint: string, length: number): number {
+  const digits = php54HintDigits(hint, length)
+  if (digits === null) return 0
+  return multisetPermutationCount(php54SortedCounts(digits).counts)
+}
+
+/** Nth permutation (0-based) in lexicographic multiset order, without enumerating all. */
+function php54PermutationAt(hint: string, length: number, index: number): string | null {
+  const digits = php54HintDigits(hint, length)
+  if (digits === null) return null
+  const { chars, counts } = php54SortedCounts(digits)
+  return multisetPermutationAt(chars, counts, index)
+}
+
+#endregion
+
 
 interface Php54State extends SolverState {
   type: "php54"
@@ -457,7 +658,10 @@ const php54: SolverModule<Php54State> = {
   },
 }
 
-// --- EuroZone Free ---
+#endregion
+
+#region EuroZone Free
+
 
 interface EuroZoneState extends SolverState { type: "euroZone"; remaining: string[] }
 
@@ -507,7 +711,10 @@ const euroZone: SolverModule<EuroZoneState> = {
   },
 }
 
-// --- TopPass ---
+#endregion
+
+#region TopPass
+
 
 interface TopPassState extends SolverState { type: "topPass"; remaining: string[] }
 
@@ -527,7 +734,10 @@ const topPass: SolverModule<TopPassState> = {
   },
 }
 
-// --- FreshInstall_1.0 (factory default dictionary) ---
+#endregion
+
+#region FreshInstall_1.0 (factory default dictionary)
+
 
 interface FreshInstallState extends SolverState { type: "freshInstall"; remaining: string[] }
 
@@ -547,11 +757,10 @@ const freshInstall: SolverModule<FreshInstallState> = {
   },
 }
 
-// ============================================================
-// Sequential interactive solvers
-// ============================================================
+#endregion
 
-// --- NIL ---
+#region NIL
+
 
 interface NilState extends SolverState {
   type: "nil"
@@ -621,7 +830,10 @@ const nilSolver: SolverModule<NilState> = {
   },
 }
 
-// --- AccountsManager_4.2 ---
+#endregion
+
+#region AccountsManager_4.2
+
 
 interface AccountsManagerState extends SolverState { type: "accountsManager"; lo: number; hi: number; length: number }
 
@@ -651,7 +863,10 @@ const accountsManager: SolverModule<AccountsManagerState> = {
   },
 }
 
-// --- BellaCuore range ---
+#endregion
+
+#region BellaCuore range
+
 
 interface BellaCuoreRangeState extends SolverState { type: "bellaCuoreRange"; lo: number; hi: number; length: number }
 
@@ -679,7 +894,218 @@ const bellaCuoreRange: SolverModule<BellaCuoreRangeState> = {
   },
 }
 
-// --- DeepGreen (Mastermind) ---
+#endregion
+
+#region DeepGreen (Mastermind)
+
+#region DeepGreen helpers
+
+function mastermindCharset(format: string): string {
+  switch (format) {
+    case "numeric":
+      return "0123456789"
+    case "alphabetic":
+      return "abcdefghijklmnopqrstuvwxyz"
+    case "alphanumeric":
+      return "0123456789abcdefghijklmnopqrstuvwxyz"
+    default:
+      return "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+  }
+}
+
+function mastermindFeedback(secret: string, guess: string): { exact: number; misplaced: number } {
+  let exact = 0
+  const secretRem: string[] = []
+  const guessRem: string[] = []
+  for (let i = 0; i < secret.length; i++) {
+    if (secret[i] === guess[i]) exact++
+    else {
+      secretRem.push(secret[i]!)
+      guessRem.push(guess[i]!)
+    }
+  }
+  let misplaced = 0
+  const used = secretRem.map(() => false)
+  for (const ch of guessRem) {
+    const idx = secretRem.findIndex((s, i) => !used[i] && s === ch)
+    if (idx >= 0) {
+      used[idx] = true
+      misplaced++
+    }
+  }
+  return { exact, misplaced }
+}
+
+function parseMastermindFeedback(data: string): { exact: number; misplaced: number } | null {
+  const parts = data.split(",")
+  if (parts.length !== 2) return null
+  const exact = Number(parts[0]?.trim())
+  const misplaced = Number(parts[1]?.trim())
+  if (!Number.isInteger(exact) || !Number.isInteger(misplaced)) return null
+  return { exact, misplaced }
+}
+
+/** Switch from bitset to index list when survivor count drops below this. */
+const MASTERMIND_LIST_THRESHOLD = 5000
+
+type MastermindSurvivors =
+  | { mode: "all" }
+  | { mode: "bitset"; bits: Uint32Array; count: number }
+  | { mode: "list"; indices: number[] }
+
+function mastermindSurvivorsAll(): MastermindSurvivors {
+  return { mode: "all" }
+}
+
+function mastermindBitGet(bits: Uint32Array, index: number): boolean {
+  return (bits[index >> 5]! & (1 << (index & 31))) !== 0
+}
+
+function mastermindBitSet(bits: Uint32Array, index: number): void {
+  bits[index >> 5]! |= 1 << (index & 31)
+}
+
+function mastermindCreateBitset(total: number): Uint32Array {
+  const words = Math.ceil(total / 32)
+  return new Uint32Array(words)
+}
+
+function mastermindSurvivorIndexAtSlot(survivors: MastermindSurvivors, total: number, slot: number): number {
+  if (survivors.mode === "list") return survivors.indices[slot]!
+  if (survivors.mode === "all") return slot
+  let seen = 0
+  for (let i = 0; i < total; i++) {
+    if (mastermindBitGet(survivors.bits, i)) {
+      if (seen === slot) return i
+      seen++
+    }
+  }
+  return 0
+}
+
+function mastermindSurvivorCount(survivors: MastermindSurvivors, total: number): number {
+  if (survivors.mode === "all") return total
+  if (survivors.mode === "list") return survivors.indices.length
+  return survivors.count
+}
+
+function mastermindIndicesFromBitset(bits: Uint32Array, total: number): number[] {
+  const indices: number[] = []
+  for (let i = 0; i < total; i++) {
+    if (mastermindBitGet(bits, i)) indices.push(i)
+  }
+  return indices
+}
+
+function mastermindCompactSurvivors(bits: Uint32Array, total: number, count: number): MastermindSurvivors {
+  if (count <= MASTERMIND_LIST_THRESHOLD) {
+    return { mode: "list", indices: mastermindIndicesFromBitset(bits, total) }
+  }
+  return { mode: "bitset", bits, count }
+}
+
+function filterMastermindSurvivors(
+  survivors: MastermindSurvivors,
+  total: number,
+  keep: (index: number) => boolean,
+): MastermindSurvivors {
+  if (survivors.mode === "list") {
+    return { mode: "list", indices: survivors.indices.filter((i) => keep(i)) }
+  }
+
+  const bits = mastermindCreateBitset(total)
+  let count = 0
+
+  if (survivors.mode === "all") {
+    for (let i = 0; i < total; i++) {
+      if (!keep(i)) continue
+      mastermindBitSet(bits, i)
+      count++
+    }
+  } else {
+    for (let i = 0; i < total; i++) {
+      if (!mastermindBitGet(survivors.bits, i) || !keep(i)) continue
+      mastermindBitSet(bits, i)
+      count++
+    }
+  }
+
+  if (count === 0) return { mode: "list", indices: [] }
+  return mastermindCompactSurvivors(bits, total, count)
+}
+
+/** Pick a mastermind probe from survivor indices; materialize strings on demand. */
+function pickMastermindGuessIndexed(
+  survivors: MastermindSurvivors,
+  total: number,
+  secretAt: (index: number) => string,
+): string {
+  const count = mastermindSurvivorCount(survivors, total)
+  if (count === 0) return ""
+
+  const atSlot = (slot: number): string =>
+    secretAt(mastermindSurvivorIndexAtSlot(survivors, total, slot))
+
+  if (count > MINIMAX_THRESHOLD) {
+    return atSlot(Math.floor(Math.random() * count))
+  }
+
+  let bestGuess = atSlot(0)
+  let bestWorst = count + 1
+  for (let gi = 0; gi < count; gi++) {
+    const guess = atSlot(gi)
+    const buckets = new Map<string, number>()
+    for (let si = 0; si < count; si++) {
+      const fb = mastermindFeedback(atSlot(si), guess)
+      const key = `${fb.exact},${fb.misplaced}`
+      buckets.set(key, (buckets.get(key) ?? 0) + 1)
+    }
+    const worst = Math.max(...buckets.values(), 0)
+    if (worst < bestWorst) {
+      bestWorst = worst
+      bestGuess = guess
+    }
+  }
+  return bestGuess
+}
+
+/** Pick a mastermind probe from survivor indices; materialize strings on demand. */
+function pickMastermindGuessIndexed(
+  survivors: MastermindSurvivors,
+  total: number,
+  secretAt: (index: number) => string,
+): string {
+  const count = mastermindSurvivorCount(survivors, total)
+  if (count === 0) return ""
+
+  const atSlot = (slot: number): string =>
+    secretAt(mastermindSurvivorIndexAtSlot(survivors, total, slot))
+
+  if (count > MINIMAX_THRESHOLD) {
+    return atSlot(Math.floor(Math.random() * count))
+  }
+
+  let bestGuess = atSlot(0)
+  let bestWorst = count + 1
+  for (let gi = 0; gi < count; gi++) {
+    const guess = atSlot(gi)
+    const buckets = new Map<string, number>()
+    for (let si = 0; si < count; si++) {
+      const fb = mastermindFeedback(atSlot(si), guess)
+      const key = `${fb.exact},${fb.misplaced}`
+      buckets.set(key, (buckets.get(key) ?? 0) + 1)
+    }
+    const worst = Math.max(...buckets.values(), 0)
+    if (worst < bestWorst) {
+      bestWorst = worst
+      bestGuess = guess
+    }
+  }
+  return bestGuess
+}
+
+#endregion
+
 
 interface DeepGreenCountBatch {
   /** Batch guess sent for this group (length = password length). */
@@ -996,7 +1422,20 @@ const deepGreen: SolverModule<DeepGreenState> = {
   },
 }
 
-// --- Factori-Os ---
+#endregion
+
+#region Factori-Os
+
+#region Factori-Os helpers
+
+function parseBoolFeedback(data: unknown): boolean | null {
+  if (data === true || data === "true") return true
+  if (data === false || data === "false") return false
+  return null
+}
+
+#endregion
+
 
 const FACTORIOS_PRIMES = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97]
 
@@ -1101,7 +1540,10 @@ const factoriOs: SolverModule<FactoriOsState> = {
   },
 }
 
-// --- KingOfTheHill ---
+#endregion
+
+#region KingOfTheHill
+
 //
 // Multi-scale search: sweep the numeric range at descending step sizes,
 // each pass zooming into ±prev_step around the best value found so far.
@@ -1199,7 +1641,10 @@ const kingOfTheHill: SolverModule<KingOfTheHillState> = {
   },
 }
 
-// --- RateMyPix.Auth ---
+#endregion
+
+#region RateMyPix.Auth
+
 
 /** Count hot-pepper glyphs in RateMyPix feedback (e.g. "🌶️🌶️/6" or "0/6"). */
 function rateMyPixPepperCount(feedback: string): number {
@@ -1327,7 +1772,10 @@ const rateMyPix: SolverModule<RateMyPixState> = {
   },
 }
 
-// --- TimingAttack (2G_cellular) ---
+#endregion
+
+#region TimingAttack (2G_cellular)
+
 
 interface TimingAttackState extends SolverState {
   type: "timingAttack"
@@ -1395,7 +1843,10 @@ const timingAttack: SolverModule<TimingAttackState> = {
   },
 }
 
-// --- OpenWebAccessPoint (packetSniffer) ---
+#endregion
+
+#region OpenWebAccessPoint (packetSniffer)
+
 //
 // Two difficulty levels from game source:
 //   Difficulty <= 16: password embedded as " hostname:password " in varied noise
@@ -1591,7 +2042,60 @@ const openWebAccessPoint: SolverModule<OpenWebAccessPointState> = {
   },
 }
 
-// --- BigMo%od (triple modulo) ---
+#endregion
+
+#region BigMo%od (triple modulo)
+
+#region BigMo helpers
+
+function crtCombineBigInt(r1: bigint, m1: bigint, r2: bigint, m2: bigint): { r: bigint; m: bigint } | null {
+  let a = m1
+  let b = m2
+  let s0 = 1n
+  let s1 = 0n
+  while (b !== 0n) {
+    const q = a / b
+    ;[a, b] = [b, a - q * b]
+    ;[s0, s1] = [s1, s0 - q * s1]
+  }
+  const g = a
+  if ((r2 - r1) % g !== 0n) return null
+  const lcm = (m1 / g) * m2
+  const x = (r1 + ((r2 - r1) / g) * s0 * m1) % lcm
+  return { r: ((x % lcm) + lcm) % lcm, m: lcm }
+}
+
+function bigMoPasswordFromProbes(
+  resolved: { d: number; r: number }[],
+  pwMin: number,
+  pwMax: number,
+  length: number,
+): string | null {
+  if (resolved.length === 0) return null
+  let r = BigInt(resolved[0]!.r)
+  let m = BigInt(resolved[0]!.d)
+  for (let i = 1; i < resolved.length; i++) {
+    const combined = crtCombineBigInt(r, m, BigInt(resolved[i]!.r), BigInt(resolved[i]!.d))
+    if (!combined) return null
+    r = combined.r
+    m = combined.m
+  }
+  const pwMinB = BigInt(pwMin)
+  const pwMaxB = BigInt(pwMax)
+  let candidate = r
+  if (candidate < pwMinB) {
+    const k = (pwMinB - r + m - 1n) / m
+    candidate = r + k * m
+  }
+  if (candidate > pwMaxB) return null
+  const raw = candidate.toString()
+  if (raw.length > length) return null
+  if (raw.length < length) return raw.padStart(length, "0")
+  return raw
+}
+
+#endregion
+
 //
 // Game formula: (password % n) % (((n - 1) % 32) + 1)
 // Probe with n > password so feedback equals password % d for d = ((n-1)%32)+1.
@@ -1685,7 +2189,9 @@ const bigMoSolver: SolverModule<BigMoState> = {
   },
 }
 
+#endregion
 
+#region Solver registry
 
 export const SOLVER_MODULES: Record<string, SolverModule> = {
   'ZeroLogon|numeric': zeroLogon, 'ZeroLogon|alphabetic': zeroLogon,
@@ -1718,3 +2224,5 @@ export const SOLVER_MODULES: Record<string, SolverModule> = {
 }
 
 export { bellaCuoreRange }
+
+#endregion
