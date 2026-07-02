@@ -217,31 +217,83 @@ export function pickMastermindGuess(candidates: string[]): string {
   return bestGuess
 }
 
-export function php54Candidates(hint: string, length: number): string[] {
-  const digits = hint.replace(/\D/g, "")
-  if (digits.length !== length) return []
-  const seen = new Set<string>()
-  const result: string[] = []
-  function permute(arr: string[], start: number): void {
-    if (start === arr.length) {
-      const s = arr.join("")
-      if (!seen.has(s)) {
-        seen.add(s)
-        result.push(s)
-      }
-      return
-    }
-    const used = new Set<string>()
-    for (let i = start; i < arr.length; i++) {
-      if (used.has(arr[i]!)) continue
-      used.add(arr[i]!)
-      ;[arr[start], arr[i]] = [arr[i]!, arr[start]!]
-      permute(arr, start + 1)
-      ;[arr[start], arr[i]] = [arr[i]!, arr[start]!]
+function php54Factorial(n: number): number {
+  let product = 1
+  for (let i = 2; i <= n; i++) product *= i
+  return product
+}
+
+/** Multiset permutation count: n! / (c1! * c2! * ...). */
+function php54MultisetCount(counts: readonly number[]): number {
+  let n = 0
+  let denom = 1
+  for (const c of counts) {
+    n += c
+    denom *= php54Factorial(c)
+  }
+  return php54Factorial(n) / denom
+}
+
+function php54SortedCounts(digits: string): { chars: string[]; counts: number[] } {
+  const sorted = digits.split("").sort()
+  const chars: string[] = []
+  const counts: number[] = []
+  for (const ch of sorted) {
+    if (chars.length > 0 && chars[chars.length - 1] === ch) {
+      counts[counts.length - 1]!++
+    } else {
+      chars.push(ch)
+      counts.push(1)
     }
   }
-  permute(digits.split(""), 0)
-  return result
+  return { chars, counts }
+}
+
+/** Extract sorted hint digits; null when hint does not match password length. */
+export function php54HintDigits(hint: string, length: number): string | null {
+  const digits = hint.replace(/\D/g, "")
+  if (digits.length !== length) return null
+  return digits
+}
+
+/** Number of distinct permutations of PHP 5.4 sorted hint digits. */
+export function php54PermutationCount(hint: string, length: number): number {
+  const digits = php54HintDigits(hint, length)
+  if (digits === null) return 0
+  return php54MultisetCount(php54SortedCounts(digits).counts)
+}
+
+/** Nth permutation (0-based) in lexicographic multiset order, without enumerating all. */
+export function php54PermutationAt(hint: string, length: number, index: number): string | null {
+  const digits = php54HintDigits(hint, length)
+  if (digits === null) return null
+
+  const { chars, counts } = php54SortedCounts(digits)
+  const total = php54MultisetCount(counts)
+  if (index < 0 || index >= total) return null
+
+  const remaining = [...counts]
+  let k = index
+  const out: string[] = []
+
+  for (let pos = 0; pos < length; pos++) {
+    let placed = false
+    for (let i = 0; i < chars.length; i++) {
+      if (remaining[i]! <= 0) continue
+      remaining[i]!--
+      const ways = php54MultisetCount(remaining)
+      if (k < ways) {
+        out.push(chars[i]!)
+        placed = true
+        break
+      }
+      k -= ways
+      remaining[i]!++
+    }
+    if (!placed) return null
+  }
+
+  return out.join("")
 }
 
 export function crtCombineBigInt(r1: bigint, m1: bigint, r2: bigint, m2: bigint): { r: bigint; m: bigint } | null {

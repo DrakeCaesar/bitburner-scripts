@@ -7,6 +7,9 @@ import {
   parseMastermindFeedback,
   parseBoolFeedback,
   bigMoPasswordFromProbes,
+  php54HintDigits,
+  php54PermutationAt,
+  php54PermutationCount,
 } from '../helpers.js'
 import { COMMON_PASSWORDS, DEFAULT_FACTORY_PASSWORDS } from '../data/commonPasswords.js'
 
@@ -410,44 +413,36 @@ const laika4: SolverModule<Laika4State> = {
 
 // --- PHP 5.4 ---
 
-interface Php54State extends SolverState { type: "php54"; remaining: string[] }
-
-function php54Candidates(hint: string, length: number): string[] {
-  const digits = hint.replace(/\D/g, "")
-  if (digits.length !== length) return []
-  const seen = new Set<string>()
-  const result: string[] = []
-  function permute(arr: string[], start: number) {
-    if (start === arr.length) {
-      const s = arr.join("")
-      if (!seen.has(s)) { seen.add(s); result.push(s) }
-      return
-    }
-    const used = new Set<string>()
-    for (let i = start; i < arr.length; i++) {
-      if (used.has(arr[i]!)) continue
-      used.add(arr[i]!)
-      ;[arr[start], arr[i]] = [arr[i]!, arr[start]!]
-      permute(arr, start + 1)
-      ;[arr[start], arr[i]] = [arr[i]!, arr[start]!]
-    }
-  }
-  permute(digits.split(""), 0)
-  return result
+interface Php54State extends SolverState {
+  type: "php54"
+  /** Sorted hint digits (small string, not a candidate list). */
+  digits: string
+  index: number
+  total: number
 }
 
 const php54: SolverModule<Php54State> = {
   init(details) {
-    const candidates = php54Candidates(details.passwordHint, details.passwordLength)
-    return { type: "php54", remaining: candidates }
+    const digits = php54HintDigits(details.passwordHint, details.passwordLength)
+    if (digits === null) {
+      return { type: "php54", digits: "", index: 0, total: 0 }
+    }
+    return {
+      type: "php54",
+      digits,
+      index: 0,
+      total: php54PermutationCount(details.passwordHint, details.passwordLength),
+    }
   },
   nextGuess(state) {
-    if (state.remaining.length === 0) return null
-    const guess = state.remaining.pop()!
-    return { guess, detail: `php54 (${state.remaining.length + 1} left)` }
+    if (state.total === 0 || state.index >= state.total) return null
+    const guess = php54PermutationAt(state.digits, state.digits.length, state.index)
+    if (guess === null) return null
+    state.index++
+    return { guess, detail: `php54 (${state.total - state.index} left)` }
   },
   applyResult(state, _guess, result) {
-    if (result.success) state.remaining = []
+    if (result.success) state.index = state.total
     return state
   },
 }
