@@ -342,7 +342,7 @@ function populateOverviewTab(log: TabbedScriptLogBuilder, snap: CrawlSnapshot): 
   log
     .tab("overview")
     .text(
-      `dnet v2  session ${snap.sessionId}  ` +
+      `dnet  session ${snap.sessionId}  ` +
         `targets ${snap.targets.length}  active ${s.active}  solved ${s.solved}  ` +
         `exhausted ${s.exhausted}  retry ${s.retryWait}  no_solver ${s.noSolver}  ` +
         `unsupported ${s.unsupported}  attempts ${snap.attempts.length}  workers ${snap.workers.length}  ` +

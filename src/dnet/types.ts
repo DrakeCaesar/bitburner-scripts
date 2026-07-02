@@ -1,4 +1,4 @@
-/** Shared types for the dnet v2 darknet auth crawler. */
+/** Shared types for the dnet darknet auth crawler. */
 
 export type PasswordFormat = "numeric" | "alphabetic" | "alphanumeric" | "ASCII" | "unicode"
 

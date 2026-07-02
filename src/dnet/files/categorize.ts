@@ -1,4 +1,4 @@
-/** Server file categorization (ported from darknet/config.ts). */
+/** Server file categorization for darkweb archives. */
 
 export const DARKNET_LORE_FILE = "darknet-lore.json"
 export const DARKWEB_ARCHIVE_DIR = "darkweb"

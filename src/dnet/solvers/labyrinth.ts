@@ -1,5 +1,5 @@
 /**
- * Labyrinth solver public API for dnet v2.
+ * Labyrinth solver public API for dnet.
  * Import-then-export only (no export-from): viteburner rewrites top-level imports, not re-exports.
  */
 import {

@@ -1,5 +1,5 @@
 import { NS } from "@ns"
-import type { DarknetRegistry } from "./darknetCrawl.js"
+import type { DarknetRegistry } from "./dnet/registry.js"
 
 const REGISTRY_FILE = "darknet-registry.json"
 

@@ -1,6 +1,6 @@
 import { NS } from "@ns"
 import { col, createTailLog, openTailLog, W } from "./libraries/scriptLogUiLayout.js"
-import { isLoreFile } from "./darknetCrawl.js"
+import { isLoreFile } from "./dnet/files/categorize.js"
 
 const DARKWEB_ARCHIVE_DIR = "darkweb"
 const CONTENT_PREVIEW_LENGTH = 140
@@ -401,7 +401,7 @@ function renderPasswordListSection(
     const best = sorted[0]!
     const lines = best.words.map((w) => `  "${w}",`)
     const block = `// ${best.words.length} password(s) merged from ${sources.length} snapshot(s)\nconst DARKWEB_COMMON_PASSWORDS: readonly string[] = [\n${lines.join("\n")}\n]`
-    log.text("Copy-paste into darknetCrawl.ts DARKWEB_COMMON_PASSWORDS:")
+    log.text("Copy-paste into src/dnet/solvers/data/commonPasswords.ts COMMON_PASSWORDS:")
     log.text(block)
   }
 }

@@ -11,7 +11,7 @@ const DEFAULT_DATA =
 
 const DEFAULT_LENGTH = 8
 
-// --- Copied from src/darknet/solverState.ts (MathML) ---
+/** Copied from src/dnet/solvers/impl/all.ts (MathML). */
 
 function cleanArithmeticExpression(expression) {
   return expression

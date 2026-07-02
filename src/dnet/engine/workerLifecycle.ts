@@ -4,7 +4,7 @@ import { DARKWEB, WORKER_SCRIPT } from "../constants.js"
 import type { DarknetRegistry } from "../registry.js"
 import type { DnetApi } from "../types.js"
 
-/** Hosts that may run a dnet worker (same set as legacy crawlWorkerHosts). */
+/** Hosts that may run a dnet worker. */
 export function workerHosts(ns: NS, registry: DarknetRegistry): string[] {
   const hosts = new Set<string>([ns.getHostname(), DARKWEB])
   for (const hostname of Object.keys(registry.servers)) {

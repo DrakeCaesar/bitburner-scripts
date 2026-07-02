@@ -14,7 +14,7 @@ export function clearWorkerPortPair(ns: NS, commandPort: number): void {
   ns.clearPort(commandPort + 1)
 }
 
-/** Clear all dnet v2 Netscript ports before a fresh crawl session. */
+/** Clear all dnet Netscript ports before a fresh crawl session. */
 export function clearDnetGlobalPorts(ns: NS): void {
   ns.clearPort(MUTATION_PORT)
   ns.clearPort(LORE_PORT)

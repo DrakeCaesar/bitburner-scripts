@@ -1,4 +1,4 @@
-/** Constants for dnet v2 (separate port range from legacy darknet crawl). */
+/** Constants for dnet (dedicated Netscript port range). */
 
 export const DARKWEB = "darkweb"
 export const WORKER_SCRIPT = "dnet/worker/main.js"

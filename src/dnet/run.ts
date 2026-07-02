@@ -6,7 +6,7 @@ import { openTailLog, renderTabbedTailLog } from "@/libraries/scriptLogUiLayout.
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL")
   ns.clearLog()
-  openTailLog(ns, "dnet v2")
+  openTailLog(ns, "dnet")
 
   const dashboard = createDashboard()
   let lastRender = 0

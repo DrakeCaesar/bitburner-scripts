@@ -36,7 +36,7 @@ function actualModulus(n) {
   return ((n - 1) % 32) + 1
 }
 
-/** Copied from src/darknet/solverState.ts — uses JS Number (same precision limits). */
+/** Copied from src/dnet/solvers/impl/all.ts — uses JS Number (same precision limits). */
 function crtCombineNumber(r1, m1, r2, m2) {
   let [old_r, r] = [m1, m2]
   let [old_s, s] = [1, 0]
