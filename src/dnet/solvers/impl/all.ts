@@ -3,7 +3,7 @@ import type { ServerDetails } from '../../types.js'
 import type { SolverModule, SolverState } from '../types.js'
 import { COMMON_PASSWORDS, DEFAULT_FACTORY_PASSWORDS } from '../data/commonPasswords.js'
 
-#region ZeroLogon
+// #region ZeroLogon
 
 
 interface ZeroLogonState extends SolverState { type: "zeroLogon"; dispatched: boolean }
@@ -20,9 +20,9 @@ const zeroLogon: SolverModule<ZeroLogonState> = {
   applyResult(state, _guess, _result) { return state },
 }
 
-#endregion
+// #endregion
 
-#region CloudBlare(tm)
+// #region CloudBlare(tm)
 
 
 interface CloudBlareState extends SolverState { type: "cloudBlare"; dispatched: boolean; guess: string | null }
@@ -44,9 +44,9 @@ const cloudBlare: SolverModule<CloudBlareState> = {
   applyResult(state, _guess, _result) { return state },
 }
 
-#endregion
+// #endregion
 
-#region DeskMemo_3.1
+// #region DeskMemo_3.1
 
 
 interface DeskMemoState extends SolverState { type: "deskMemo"; dispatched: boolean; guess: string | null }
@@ -65,11 +65,11 @@ const deskMemo: SolverModule<DeskMemoState> = {
   applyResult(state, _guess, _result) { return state },
 }
 
-#endregion
+// #endregion
 
-#region BellaCuore single-value
+// #region BellaCuore single-value
 
-#region BellaCuore helpers
+// #region BellaCuore helpers
 
 function romanToDecimal(roman: string): number | null {
   const trimmed = roman.trim()
@@ -87,7 +87,7 @@ function romanToDecimal(roman: string): number | null {
   return total
 }
 
-#endregion
+// #endregion
 
 
 interface BellaCuoreSingleState extends SolverState { type: "bellaCuoreSingle"; dispatched: boolean; guess: string | null }
@@ -113,9 +113,9 @@ const bellaCuoreSingle: SolverModule<BellaCuoreSingleState> = {
   applyResult(state, _guess, _result) { return state },
 }
 
-#endregion
+// #endregion
 
-#region OctantVoxel (base-N conversion, including fractional bases like 15.1)
+// #region OctantVoxel (base-N conversion, including fractional bases like 15.1)
 
 
 interface OctantVoxelState extends SolverState { type: "octantVoxel"; dispatched: boolean; guess: string | null }
@@ -144,11 +144,11 @@ const octantVoxel: SolverModule<OctantVoxelState> = {
   applyResult(state, _guess, _result) { return state },
 }
 
-#endregion
+// #endregion
 
-#region MathML
+// #region MathML
 
-#region MathML helpers
+// #region MathML helpers
 
 const OCTANT_DIGITS = "0123456789abcdef"
 
@@ -237,68 +237,7 @@ function parseSimpleArithmeticExpression(expression: string): number {
   return parseFloat(leftover?.[1] ?? "NaN")
 }
 
-function cleanArithmeticExpression(expression: string): string {
-  return expression
-    .replaceAll("\u04B3", "*")
-    .replaceAll("\u0445", "*")
-    .replaceAll("\u00F7", "/")
-    .replaceAll("\u2796", "-")
-    .replaceAll("\u2795", "+")
-    .replaceAll("\u2212", "-")
-    .replaceAll("\u00D7", "*")
-    .replaceAll("\u00B7", "*")
-    .replaceAll("\u2217", "*")
-    .replaceAll("ns.exit(),", "")
-    .split(",")[0]!
-}
-
-function parseSimpleArithmeticExpression(expression: string): number {
-  const tokens = cleanArithmeticExpression(expression).split("")
-  let currentDepth = 0
-  const depth = tokens.map((token) => {
-    if (token === "(") currentDepth += 1
-    else if (token === ")") {
-      currentDepth -= 1
-      return currentDepth + 1
-    }
-    return currentDepth
-  })
-  const depth1Start = depth.indexOf(1)
-  const firstZeroAfter = depth.indexOf(0, depth1Start)
-  const depth1End = firstZeroAfter === -1 ? depth.length - 1 : firstZeroAfter - 1
-  if (depth1Start !== -1) {
-    const sub = tokens.slice(depth1Start + 1, depth1End).join("")
-    const result = parseSimpleArithmeticExpression(sub)
-    tokens.splice(depth1Start, depth1End - depth1Start + 1, result.toString())
-    return parseSimpleArithmeticExpression(tokens.join(""))
-  }
-  let remaining = tokens.join("")
-  const mulDiv = /(-?\d*\.?\d+) *([*/]) *(-?\d*\.?\d+)/
-  let match = remaining.match(mulDiv)
-  while (match) {
-    const left = match[1]!
-    const op = match[2]!
-    const right = match[3]!
-    const result = op === "*" ? parseFloat(left) * parseFloat(right) : parseFloat(left) / parseFloat(right)
-    const resultStr = Math.abs(result) < 0.000001 ? result.toFixed(20) : result.toString()
-    remaining = remaining.replace(match[0], resultStr)
-    match = remaining.match(mulDiv)
-  }
-  const addSub = /(-?\d*\.?\d+) *([+-]) *(-?\d*\.?\d+)/
-  match = remaining.match(addSub)
-  while (match) {
-    const left = match[1]!
-    const op = match[2]!
-    const right = match[3]!
-    const result = op === "+" ? parseFloat(left) + parseFloat(right) : parseFloat(left) - parseFloat(right)
-    remaining = remaining.replace(match[0], result.toString())
-    match = remaining.match(addSub)
-  }
-  const leftover = remaining.match(/(-?\d*\.?\d+)/)
-  return parseFloat(leftover?.[1] ?? "NaN")
-}
-
-#endregion
+// #endregion
 
 //
 // Game uses parseSimpleArithmeticExpression (not eval). Data may include unicode
@@ -323,9 +262,9 @@ const mathML: SolverModule<MathMLState> = {
   applyResult(state, _guess, _result) { return state },
 }
 
-#endregion
+// #endregion
 
-#region PrimeTime 2
+// #region PrimeTime 2
 
 
 const LARGE_PRIMES = [
@@ -396,9 +335,9 @@ const primeTime2: SolverModule<PrimeTime2State> = {
   },
 }
 
-#endregion
+// #endregion
 
-#region 110100100 (binary-to-text)
+// #region 110100100 (binary-to-text)
 
 
 interface BinaryToTextState extends SolverState { type: "binaryToText"; dispatched: boolean; guess: string | null }
@@ -424,9 +363,9 @@ const binaryToText: SolverModule<BinaryToTextState> = {
   applyResult(state, _guess, _result) { return state },
 }
 
-#endregion
+// #endregion
 
-#region OrdoXenos (XOR decryption)
+// #region OrdoXenos (XOR decryption)
 
 
 interface OrdoXenosState extends SolverState { type: "ordoXenos"; dispatched: boolean; guess: string | null }
@@ -457,9 +396,9 @@ const ordoXenos: SolverModule<OrdoXenosState> = {
   applyResult(state, _guess, _result) { return state },
 }
 
-#endregion
+// #endregion
 
-#region Pr0verFl0 (buffer overflow)
+// #region Pr0verFl0 (buffer overflow)
 
 
 interface ProverFloState extends SolverState { type: "proverFlo"; dispatched: boolean; guess: string | null }
@@ -477,9 +416,9 @@ const proverFlo: SolverModule<ProverFloState> = {
   applyResult(state, _guess, _result) { return state },
 }
 
-#endregion
+// #endregion
 
-#region Laika4
+// #region Laika4
 
 
 interface Laika4State extends SolverState { type: "laika4"; remaining: string[] }
@@ -502,11 +441,11 @@ const laika4: SolverModule<Laika4State> = {
   },
 }
 
-#endregion
+// #endregion
 
-#region PHP 5.4
+// #region PHP 5.4
 
-#region Shared multiset permutations
+// #region Shared multiset permutations
 
 function multisetFactorial(n: number): number {
   let product = 1
@@ -591,9 +530,9 @@ function multisetPermutationAt(
   return out.join("")
 }
 
-#endregion
+// #endregion
 
-#region PHP 5.4 helpers
+// #region PHP 5.4 helpers
 
 function php54SortedCounts(digits: string): { chars: string[]; counts: number[] } {
   return sortedCharsToMultiset(digits.split("").sort())
@@ -621,7 +560,7 @@ function php54PermutationAt(hint: string, length: number, index: number): string
   return multisetPermutationAt(chars, counts, index)
 }
 
-#endregion
+// #endregion
 
 
 interface Php54State extends SolverState {
@@ -658,9 +597,9 @@ const php54: SolverModule<Php54State> = {
   },
 }
 
-#endregion
+// #endregion
 
-#region EuroZone Free
+// #region EuroZone Free
 
 
 interface EuroZoneState extends SolverState { type: "euroZone"; remaining: string[] }
@@ -711,9 +650,9 @@ const euroZone: SolverModule<EuroZoneState> = {
   },
 }
 
-#endregion
+// #endregion
 
-#region TopPass
+// #region TopPass
 
 
 interface TopPassState extends SolverState { type: "topPass"; remaining: string[] }
@@ -734,9 +673,9 @@ const topPass: SolverModule<TopPassState> = {
   },
 }
 
-#endregion
+// #endregion
 
-#region FreshInstall_1.0 (factory default dictionary)
+// #region FreshInstall_1.0 (factory default dictionary)
 
 
 interface FreshInstallState extends SolverState { type: "freshInstall"; remaining: string[] }
@@ -757,9 +696,9 @@ const freshInstall: SolverModule<FreshInstallState> = {
   },
 }
 
-#endregion
+// #endregion
 
-#region NIL
+// #region NIL
 
 
 interface NilState extends SolverState {
@@ -830,9 +769,9 @@ const nilSolver: SolverModule<NilState> = {
   },
 }
 
-#endregion
+// #endregion
 
-#region AccountsManager_4.2
+// #region AccountsManager_4.2
 
 
 interface AccountsManagerState extends SolverState { type: "accountsManager"; lo: number; hi: number; length: number }
@@ -863,9 +802,9 @@ const accountsManager: SolverModule<AccountsManagerState> = {
   },
 }
 
-#endregion
+// #endregion
 
-#region BellaCuore range
+// #region BellaCuore range
 
 
 interface BellaCuoreRangeState extends SolverState { type: "bellaCuoreRange"; lo: number; hi: number; length: number }
@@ -894,11 +833,11 @@ const bellaCuoreRange: SolverModule<BellaCuoreRangeState> = {
   },
 }
 
-#endregion
+// #endregion
 
-#region DeepGreen (Mastermind)
+// #region DeepGreen (Mastermind)
 
-#region DeepGreen helpers
+// #region DeepGreen helpers
 
 function mastermindCharset(format: string): string {
   switch (format) {
@@ -944,6 +883,9 @@ function parseMastermindFeedback(data: string): { exact: number; misplaced: numb
   if (!Number.isInteger(exact) || !Number.isInteger(misplaced)) return null
   return { exact, misplaced }
 }
+
+const MAX_MASTERMIND_CANDIDATES = 10_000
+const MINIMAX_THRESHOLD = 500
 
 /** Switch from bitset to index list when survivor count drops below this. */
 const MASTERMIND_LIST_THRESHOLD = 5000
@@ -1069,43 +1011,7 @@ function pickMastermindGuessIndexed(
   return bestGuess
 }
 
-/** Pick a mastermind probe from survivor indices; materialize strings on demand. */
-function pickMastermindGuessIndexed(
-  survivors: MastermindSurvivors,
-  total: number,
-  secretAt: (index: number) => string,
-): string {
-  const count = mastermindSurvivorCount(survivors, total)
-  if (count === 0) return ""
-
-  const atSlot = (slot: number): string =>
-    secretAt(mastermindSurvivorIndexAtSlot(survivors, total, slot))
-
-  if (count > MINIMAX_THRESHOLD) {
-    return atSlot(Math.floor(Math.random() * count))
-  }
-
-  let bestGuess = atSlot(0)
-  let bestWorst = count + 1
-  for (let gi = 0; gi < count; gi++) {
-    const guess = atSlot(gi)
-    const buckets = new Map<string, number>()
-    for (let si = 0; si < count; si++) {
-      const fb = mastermindFeedback(atSlot(si), guess)
-      const key = `${fb.exact},${fb.misplaced}`
-      buckets.set(key, (buckets.get(key) ?? 0) + 1)
-    }
-    const worst = Math.max(...buckets.values(), 0)
-    if (worst < bestWorst) {
-      bestWorst = worst
-      bestGuess = guess
-    }
-  }
-  return bestGuess
-}
-
-#endregion
-
+// #endregion
 
 interface DeepGreenCountBatch {
   /** Batch guess sent for this group (length = password length). */
@@ -1422,11 +1328,11 @@ const deepGreen: SolverModule<DeepGreenState> = {
   },
 }
 
-#endregion
+// #endregion
 
-#region Factori-Os
+// #region Factori-Os
 
-#region Factori-Os helpers
+// #region Factori-Os helpers
 
 function parseBoolFeedback(data: unknown): boolean | null {
   if (data === true || data === "true") return true
@@ -1434,7 +1340,7 @@ function parseBoolFeedback(data: unknown): boolean | null {
   return null
 }
 
-#endregion
+// #endregion
 
 
 const FACTORIOS_PRIMES = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97]
@@ -1540,9 +1446,9 @@ const factoriOs: SolverModule<FactoriOsState> = {
   },
 }
 
-#endregion
+// #endregion
 
-#region KingOfTheHill
+// #region KingOfTheHill
 
 //
 // Multi-scale search: sweep the numeric range at descending step sizes,
@@ -1641,9 +1547,9 @@ const kingOfTheHill: SolverModule<KingOfTheHillState> = {
   },
 }
 
-#endregion
+// #endregion
 
-#region RateMyPix.Auth
+// #region RateMyPix.Auth
 
 
 /** Count hot-pepper glyphs in RateMyPix feedback (e.g. "🌶️🌶️/6" or "0/6"). */
@@ -1663,21 +1569,35 @@ function rateMyPixCharset(format: string): string {
   return "0123456789"
 }
 
-function generateRateMyPixPermutations(freq: Record<string, number>, length: number): string[] {
-  const uniqueChars = Object.keys(freq).sort()
-  const remaining = { ...freq }
-  const out: string[] = []
-  function build(prefix: string) {
-    if (prefix.length === length) { out.push(prefix); return }
-    for (const ch of uniqueChars) {
-      if (!(remaining[ch]! > 0)) continue
-      remaining[ch]!--
-      build(prefix + ch)
-      remaining[ch]!++
-    }
+function rateMyPixFreqToMultiset(freq: Record<string, number>, length: number): { chars: string[]; counts: number[] } {
+  const digits: string[] = []
+  for (const [ch, cnt] of Object.entries(freq)) {
+    for (let i = 0; i < cnt; i++) digits.push(ch)
   }
-  build("")
-  return out
+  while (digits.length < length) digits.push(Object.keys(freq)[0] ?? "0")
+  return sortedCharsToMultiset(digits.slice(0, length).sort())
+}
+
+function rateMyPixSecretAt(state: RateMyPixState, index: number): string {
+  return multisetPermutationAt(state.permChars, state.permCounts, index)!
+}
+
+function rateMyPixExactMatchCount(secret: string, guess: string): number {
+  let matches = 0
+  for (let i = 0; i < secret.length; i++) {
+    if (secret[i] === guess[i]) matches++
+  }
+  return matches
+}
+
+function rateMyPixEnterPermPhase(state: RateMyPixState): boolean {
+  const { chars, counts } = rateMyPixFreqToMultiset(state.freq, state.length)
+  state.permChars = chars
+  state.permCounts = counts
+  state.permTotal = multisetPermutationCount(counts)
+  state.survivors = mastermindSurvivorsAll()
+  state.phase = "perm"
+  return state.permTotal > 0
 }
 
 interface RateMyPixState extends SolverState {
@@ -1686,7 +1606,10 @@ interface RateMyPixState extends SolverState {
   charIdx: number
   freq: Record<string, number>
   phase: "freq" | "perm"
-  candidates: string[]
+  permChars: string[]
+  permCounts: number[]
+  permTotal: number
+  survivors: MastermindSurvivors
   length: number
   retries: number   // retry count for unparseable feedback in freq phase
 }
@@ -1696,7 +1619,9 @@ const rateMyPix: SolverModule<RateMyPixState> = {
     return {
       type: "rateMyPix",
       charset: rateMyPixCharset(details.passwordFormat),
-      charIdx: 0, freq: {}, phase: "freq", candidates: [],
+      charIdx: 0, freq: {}, phase: "freq",
+      permChars: [], permCounts: [], permTotal: 0,
+      survivors: mastermindSurvivorsAll(),
       length: details.passwordLength,
       retries: 0,
     }
@@ -1707,16 +1632,13 @@ const rateMyPix: SolverModule<RateMyPixState> = {
         const ch = state.charset[state.charIdx]!
         return { guess: ch.repeat(state.length), detail: `freq ${ch}` }
       }
-      // Frequency phase done — generate permutations
-      state.candidates = generateRateMyPixPermutations(state.freq, state.length)
-      state.phase = "perm"
-      if (state.candidates.length === 0) return null
+      if (!rateMyPixEnterPermPhase(state)) return null
     }
-    if (state.phase === "perm") {
-      if (state.candidates.length === 0) return null
-      return { guess: state.candidates[0]!, detail: `${state.candidates.length} cand` }
-    }
-    return null
+    const count = mastermindSurvivorCount(state.survivors, state.permTotal)
+    if (count === 0) return null
+    const idx = mastermindSurvivorIndexAtSlot(state.survivors, state.permTotal, 0)
+    const guess = rateMyPixSecretAt(state, idx)
+    return { guess, detail: `${count} cand` }
   },
   applyResult(state, guess, result) {
     if (result.success) return state
@@ -1756,25 +1678,26 @@ const rateMyPix: SolverModule<RateMyPixState> = {
       return state
     }
 
-    // Perm phase: prune by exact position match count
+    // Perm phase: prune by exact-position match count (pepper count)
     const fb = result.feedback ?? ""
     if (!fb) return state
     const pruneCount = rateMyPixPepperCount(fb)
-    state.candidates = state.candidates.filter((candidate) => {
-      if (candidate === guess) return false
-      let matches = 0
-      for (let i = 0; i < state.length; i++) {
-        if (candidate[i] === guess[i]) matches++
-      }
-      return matches === pruneCount
-    })
+    state.survivors = filterMastermindSurvivors(
+      state.survivors,
+      state.permTotal,
+      (index) => {
+        const secret = rateMyPixSecretAt(state, index)
+        if (secret === guess) return false
+        return rateMyPixExactMatchCount(secret, guess) === pruneCount
+      },
+    )
     return state
   },
 }
 
-#endregion
+// #endregion
 
-#region TimingAttack (2G_cellular)
+// #region TimingAttack (2G_cellular)
 
 
 interface TimingAttackState extends SolverState {
@@ -1843,9 +1766,9 @@ const timingAttack: SolverModule<TimingAttackState> = {
   },
 }
 
-#endregion
+// #endregion
 
-#region OpenWebAccessPoint (packetSniffer)
+// #region OpenWebAccessPoint (packetSniffer)
 
 //
 // Two difficulty levels from game source:
@@ -2042,11 +1965,11 @@ const openWebAccessPoint: SolverModule<OpenWebAccessPointState> = {
   },
 }
 
-#endregion
+// #endregion
 
-#region BigMo%od (triple modulo)
+// #region BigMo%od (triple modulo)
 
-#region BigMo helpers
+// #region BigMo helpers
 
 function crtCombineBigInt(r1: bigint, m1: bigint, r2: bigint, m2: bigint): { r: bigint; m: bigint } | null {
   let a = m1
@@ -2094,7 +2017,7 @@ function bigMoPasswordFromProbes(
   return raw
 }
 
-#endregion
+// #endregion
 
 //
 // Game formula: (password % n) % (((n - 1) % 32) + 1)
@@ -2189,9 +2112,9 @@ const bigMoSolver: SolverModule<BigMoState> = {
   },
 }
 
-#endregion
+// #endregion
 
-#region Solver registry
+// #region Solver registry
 
 export const SOLVER_MODULES: Record<string, SolverModule> = {
   'ZeroLogon|numeric': zeroLogon, 'ZeroLogon|alphabetic': zeroLogon,
@@ -2225,4 +2148,4 @@ export const SOLVER_MODULES: Record<string, SolverModule> = {
 
 export { bellaCuoreRange }
 
-#endregion
+// #endregion
