@@ -29,6 +29,8 @@ export interface TableConfig {
   title?: string
   /** Row indices after which to add separators (0-indexed) */
   separatorAfter?: number[]
+  /** Stable key for monotonic column width memory across renders. */
+  widthKey?: string
 }
 
 /** Configuration for building a key-value table (2 columns) */
@@ -41,6 +43,8 @@ export interface KeyValueTableConfig {
   separatorAfter?: number[]
   /** Alignment for values column (default: right) */
   valueAlign?: Alignment
+  /** Stable key for monotonic column width memory across renders. */
+  widthKey?: string
 }
 
 /** Configuration for building a 3-column table (common pattern) */
@@ -55,6 +59,8 @@ export interface ThreeColumnTableConfig {
   separatorAfter?: number[]
   /** Alignment for each column (default: left, right, right) */
   align?: [Alignment, Alignment, Alignment]
+  /** Stable key for monotonic column width memory across renders. */
+  widthKey?: string
 }
 
 /**

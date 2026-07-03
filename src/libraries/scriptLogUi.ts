@@ -711,16 +711,37 @@ function primeChWidthPx(fontSizePx: number): void {
   }
 }
 
+/** Per-table running max column widths (content chars incl. cell pad); never shrinks at runtime. */
+const columnWidthMemoryCh = new Map<string, number[]>()
+
+function rememberColumnWidthsCh(key: string, widthsCh: number[]): number[] {
+  const prev = columnWidthMemoryCh.get(key)
+  if (prev == null) {
+    columnWidthMemoryCh.set(key, [...widthsCh])
+    return widthsCh
+  }
+  const merged = widthsCh.map((w, i) => Math.max(w, prev[i] ?? 0))
+  for (let i = widthsCh.length; i < prev.length; i++) {
+    merged.push(prev[i]!)
+  }
+  columnWidthMemoryCh.set(key, merged)
+  return merged
+}
+
 /** Monospace column width in whole characters (content + horizontal pad on both sides). */
 function computeColumnWidthsCh(config: TableConfig): number[] {
-  return config.columns.map((col, colIdx) => {
+  const widthsCh = config.columns.map((col, colIdx) => {
     let maxChars = col.header.length
     for (const row of config.rows) {
       if (row[colIdx]) maxChars = Math.max(maxChars, row[colIdx].length)
     }
-    const contentChars = Math.max(maxChars, col.minWidth ?? 0)
-    return contentChars + CELL_HORIZONTAL_PAD_CH * 2
+    if (col.minWidth != null) maxChars = Math.max(maxChars, col.minWidth)
+    return maxChars + CELL_HORIZONTAL_PAD_CH * 2
   })
+  if (config.widthKey) {
+    return rememberColumnWidthsCh(config.widthKey, widthsCh)
+  }
+  return widthsCh
 }
 
 /** Whole-pixel column width: integer ch x integer px/ch (same value used in colgroup). */
@@ -833,9 +854,10 @@ function estimateTabBarHeightPx(layout: TableLayout): number {
 }
 
 function keyValueToReactTableConfig(config: KeyValueTableConfig): ReactTableConfig {
-  const { rows, title, separatorAfter = [], valueAlign = "right" } = config
+  const { rows, title, separatorAfter = [], valueAlign = "right", widthKey } = config
   return {
     title,
+    widthKey,
     columns: [
       { header: "", align: "left" },
       { header: "", align: valueAlign },
@@ -846,9 +868,10 @@ function keyValueToReactTableConfig(config: KeyValueTableConfig): ReactTableConf
 }
 
 function threeColumnToReactTableConfig(config: ThreeColumnTableConfig): ReactTableConfig {
-  const { headers, rows, title, separatorAfter = [], align = ["left", "right", "right"] } = config
+  const { headers, rows, title, separatorAfter = [], align = ["left", "right", "right"], widthKey } = config
   return {
     title,
+    widthKey,
     columns: [
       { header: headers[0], align: align[0] },
       { header: headers[1], align: align[1] },

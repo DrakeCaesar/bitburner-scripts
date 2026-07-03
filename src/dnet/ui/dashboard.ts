@@ -3,7 +3,6 @@ import {
   col,
   createTabbedTailLog,
   renderTabbedTailLog,
-  W,
   type TabbedScriptLogBuilder,
 } from "@/libraries/scriptLogUiLayout.js"
 import { MUTATION_PORT } from "../constants.js"
@@ -39,92 +38,100 @@ const TABS = [
 ] as const
 
 const TARGET_COLUMNS = [
-  col("Host", "left", W.host),
-  col("Model", "left", 16),
-  col("Status", "left", 14),
-  col("Session", "right", 7),
-  col("Guesses", "right", 7),
-  col("Solver", "left", 14),
-  col("Worker", "left", W.host),
-  col("Password", "left", 12),
+  col("Host", "left"),
+  col("Model", "left"),
+  col("Status", "left"),
+  col("Session", "right"),
+  col("Guesses", "right"),
+  col("Solver", "left"),
+  col("Worker", "left"),
+  col("Password", "left"),
 ]
 
 const ATTEMPT_COLUMNS = [
-  col("Id", "right", 5),
-  col("Start", "right", 8),
-  col("End", "right", 8),
-  col("Dur", "right", 7),
-  col("Host", "left", W.host),
-  col("Target", "left", W.host),
-  col("Sess", "right", 4),
-  col("Kind", "left", 14),
-  col("Guess", "left", 10),
-  col("OK", "center", 3),
-  col("Detail", "left", 12),
-  col("Feedback", "left", 22),
+  col("Id", "right"),
+  col("Start", "right"),
+  col("End", "right"),
+  col("Dur", "right"),
+  col("Host", "left"),
+  col("Target", "left"),
+  col("Sess", "right"),
+  col("Kind", "left"),
+  col("Guess", "left"),
+  col("OK", "center"),
+  col("Detail", "left"),
+  col("Feedback", "left"),
 ]
 
 const WORKER_COLUMNS = [
-  col("Host", "left", W.host),
-  col("Depth", "right", 5),
-  col("Port", "right", 6),
-  col("Idle", "center", 4),
-  col("Cmd", "left", 16),
-  col("Reply", "left", 14),
-  col("Ngbrs", "right", 5),
-  col("RAM", "right", 6),
+  col("Host", "left"),
+  col("Depth", "right"),
+  col("Port", "right"),
+  col("Idle", "center"),
+  col("Cmd", "left"),
+  col("Reply", "left"),
+  col("Ngbrs", "right"),
+  col("RAM", "right"),
 ]
 
 const FAILED_LIST_COLUMNS = [
-  col("Host", "left", W.host),
-  col("Sess", "right", 4),
-  col("Solver", "left", 14),
-  col("Guesses", "right", 7),
-  col("Reason", "left", 18),
-  col("Ended", "right", 8),
+  col("Host", "left"),
+  col("Sess", "right"),
+  col("Solver", "left"),
+  col("Guesses", "right"),
+  col("Reason", "left"),
+  col("Ended", "right"),
 ]
 
 const FAILED_EVENT_COLUMNS = [
-  col("Time", "right", 8),
-  col("Kind", "left", 14),
-  col("Guess", "left", 14),
-  col("OK", "center", 3),
-  col("Feedback", "left", 16),
-  col("Detail", "left", 20),
+  col("Time", "right"),
+  col("Kind", "left"),
+  col("Guess", "left"),
+  col("OK", "center"),
+  col("Feedback", "left"),
+  col("Detail", "left"),
 ]
 
 const TIMEOUT_LIST_COLUMNS = [
-  col("Worker", "left", W.host),
-  col("Cmd", "left", 14),
-  col("Target", "left", W.host),
-  col("Actual", "right", 8),
-  col("Est", "right", 8),
-  col("Slip", "right", 7),
-  col("Ended", "right", 8),
+  col("Worker", "left"),
+  col("Cmd", "left"),
+  col("Target", "left"),
+  col("Actual", "right"),
+  col("Est", "right"),
+  col("Slip", "right"),
+  col("Ended", "right"),
 ]
 
 const TIMEOUT_EVENT_COLUMNS = [
-  col("Time", "right", 8),
-  col("Kind", "left", 14),
-  col("Deadline", "right", 8),
-  col("Est", "right", 8),
-  col("Real", "right", 8),
-  col("Note", "left", 24),
+  col("Time", "right"),
+  col("Kind", "left"),
+  col("Deadline", "right"),
+  col("Est", "right"),
+  col("Real", "right"),
+  col("Note", "left"),
 ]
 
 const TIMEOUT_ACTION_COLUMNS = [
-  col("Time", "right", 8),
-  col("Action", "left", 14),
-  col("Detail", "left", 40),
+  col("Time", "right"),
+  col("Action", "left"),
+  col("Detail", "left"),
 ]
 
 const TIMEOUT_STATS_COLUMNS = [
-  col("Cmd", "left", 14),
-  col("N", "right", 5),
-  col("Min", "right", 8),
-  col("Avg", "right", 8),
-  col("Max", "right", 8),
+  col("Cmd", "left"),
+  col("N", "right"),
+  col("Min", "right"),
+  col("Avg", "right"),
+  col("Max", "right"),
 ]
+
+function tableKey(tab: string, name: string): string {
+  return `dnet:${tab}:${name}`
+}
+
+function dashCell(s: string | undefined | null): string {
+  return s && s.length > 0 ? s : "-"
+}
 
 
 export class DnetDashboard {
@@ -324,15 +331,9 @@ function formatTiming(t: OpTiming, now: number): { start: string; end: string; d
   return { start, end, dur: t.endAt === t.startAt ? "-" : dur }
 }
 
-function truncate(s: string | undefined, max: number): string {
-  if (!s) return "-"
-  return s.length <= max ? s : s.slice(0, max - 1) + "."
-}
-
-/** Remote command target when it differs from the acting host. */
 function formatActivityTarget(actorHost: string, remoteHost: string | undefined): string {
   if (!remoteHost || remoteHost === actorHost || actorHost === "-") return "-"
-  return truncate(remoteHost, W.host)
+  return remoteHost
 }
 
 function attemptTargetColumn(a: AttemptRecord): string {
@@ -433,6 +434,7 @@ function populateTargetsTab(log: TabbedScriptLogBuilder, snap: CrawlSnapshot): v
   const sortedTargets = [...snap.targets].sort((a, b) => a.host.localeCompare(b.host))
   log.tab("targets").table({
     title: "Auth targets",
+    widthKey: tableKey("targets", "auth-targets"),
     columns: TARGET_COLUMNS,
     rows: sortedTargets.map(targetRow),
   })
@@ -448,6 +450,7 @@ function populateAttemptsTab(log: TabbedScriptLogBuilder, snap: CrawlSnapshot): 
     .text(formatMutationLine(snap.mutation))
     .table({
       title: `Activity log (newest first, ${recentTimeline.length} of ${timeline.length})`,
+      widthKey: tableKey("attempts", "timeline"),
       columns: ATTEMPT_COLUMNS,
       rows: recentTimeline.map((entry) => timelineRow(entry, attemptTimings)),
     })
@@ -456,6 +459,7 @@ function populateAttemptsTab(log: TabbedScriptLogBuilder, snap: CrawlSnapshot): 
 function populateWorkersTab(log: TabbedScriptLogBuilder, snap: CrawlSnapshot): void {
   log.tab("workers").table({
     title: "Workers",
+    widthKey: tableKey("workers", "list"),
     columns: WORKER_COLUMNS,
     rows: snap.workers.map(workerRow),
   })
@@ -493,6 +497,7 @@ function renderFailedTab(
 
   tab.table({
     title: "Archived sessions (newest first)",
+    widthKey: tableKey("failed", "sessions"),
     columns: FAILED_LIST_COLUMNS,
     rows: failed.map(failedSessionRow),
     selectedRowIndex: selectedRowIndex != null && selectedRowIndex >= 0 ? selectedRowIndex : undefined,
@@ -512,13 +517,14 @@ function renderFailedTab(
   const a = selected.assignment
   tab.keyValueTable({
     title: "Assignment",
+    widthKey: tableKey("failed", "assignment"),
     rows: [
       { label: "Host", value: a.host },
       { label: "Model", value: a.modelId },
       { label: "Format", value: a.format },
       { label: "Length", value: String(a.passwordLength) },
-      { label: "Hint", value: a.passwordHint || "-" },
-      { label: "Data", value: truncate(a.data, 80) },
+      { label: "Hint", value: dashCell(a.passwordHint) },
+      { label: "Data", value: dashCell(a.data) },
       { label: "Depth", value: String(a.depth) },
       { label: "Difficulty", value: String(a.difficulty) },
       { label: "Charisma", value: String(a.requiredCharismaSkill) },
@@ -531,6 +537,7 @@ function renderFailedTab(
       : selected.events
   tab.table({
     title: `Session log (${events.length} of ${selected.events.length} events, newest)`,
+    widthKey: tableKey("failed", "events"),
     columns: FAILED_EVENT_COLUMNS,
     rows: events.map(failedEventRow),
   })
@@ -551,7 +558,7 @@ function failedSessionRow(s: FailedAuthSession): string[] {
     String(s.session),
     s.solverId,
     String(guesses),
-    truncate(s.reason, 18),
+    s.reason,
     clock(s.archivedAt),
   ]
 }
@@ -560,10 +567,10 @@ function failedEventRow(e: SessionEvent): string[] {
   return [
     clock(e.at),
     e.kind,
-    truncate(e.guess, 14),
+    dashCell(e.guess),
     e.success === true ? "Y" : e.success === false ? "N" : "-",
-    truncate(e.feedback ?? e.message, 16),
-    truncate(e.detail ?? e.note, 20),
+    dashCell(e.feedback ?? e.message),
+    dashCell(e.detail ?? e.note),
   ]
 }
 
@@ -603,6 +610,7 @@ function renderTimeoutsTab(
   if (slipStats.length > 0) {
     tab.table({
       title: "Deadline slip by command (end - deadline, avg desc; negative = early)",
+      widthKey: tableKey("timeouts", "slip-stats"),
       columns: TIMEOUT_STATS_COLUMNS,
       rows: slipStats.map(deadlineSlipStatsRow),
     })
@@ -612,6 +620,7 @@ function renderTimeoutsTab(
 
   tab.table({
     title: "Archived timeouts (newest first)",
+    widthKey: tableKey("timeouts", "list"),
     columns: TIMEOUT_LIST_COLUMNS,
     rows: timeouts.map(timeoutListRow),
     selectedRowIndex: selectedRowIndex != null && selectedRowIndex >= 0 ? selectedRowIndex : undefined,
@@ -631,6 +640,7 @@ function renderTimeoutsTab(
 
   tab.keyValueTable({
     title: "Timing summary",
+    widthKey: tableKey("timeouts", "summary"),
     rows: [
       { label: "Worker", value: selected.workerHost },
       { label: "Command", value: selected.command },
@@ -658,6 +668,7 @@ function renderTimeoutsTab(
       : selected.events
   tab.table({
     title: `Deadline timeline (${events.length} of ${selected.events.length} events)`,
+    widthKey: tableKey("timeouts", "timeline"),
     columns: TIMEOUT_EVENT_COLUMNS,
     rows: events.map((event) => timeoutEventRow(event, selected.dispatchedAt)),
   })
@@ -665,6 +676,7 @@ function renderTimeoutsTab(
   if (selected.masterActions.length > 0) {
     tab.table({
       title: `Master actions during command (${selected.masterActions.length})`,
+      widthKey: tableKey("timeouts", "actions"),
       columns: TIMEOUT_ACTION_COLUMNS,
       rows: selected.masterActions.map(timeoutActionRow),
     })
@@ -675,7 +687,7 @@ function timeoutListRow(t: FailedCommandDeadline): string[] {
   return [
     t.workerHost,
     t.commandType,
-    truncate(t.targetHost, W.host),
+    dashCell(t.targetHost),
     formatDuration(t.actualMs),
     formatDuration(t.estimatedMs),
     formatDuration(t.slipMs),
@@ -701,12 +713,12 @@ function timeoutEventRow(event: DeadlineTimelineEvent, dispatchedAt: number): st
     event.deadlineAt != null ? clock(event.deadlineAt) : "-",
     event.estimatedMs != null ? formatDuration(event.estimatedMs) : "-",
     formatDuration(Math.max(0, elapsed)),
-    truncate(event.note, 24),
+    dashCell(event.note),
   ]
 }
 
 function timeoutActionRow(action: MasterActionRecord): string[] {
-  return [clock(action.at), action.action, truncate(action.detail, 40)]
+  return [clock(action.at), action.action, dashCell(action.detail)]
 }
 
 function actionRow(a: MasterActionRecord, now: number): string[] {
@@ -717,13 +729,13 @@ function actionRow(a: MasterActionRecord, now: number): string[] {
     timing.start,
     timing.end,
     timing.dur,
-    truncate(actor, W.host),
+    actor,
     formatActivityTarget(actor, remote),
     "-",
     a.action,
     "-",
     "-",
-    truncate(a.detail, 12),
+    dashCell(a.detail),
     "-",
   ]
 }
@@ -754,10 +766,10 @@ function attemptRow(
     attemptTargetColumn(a),
     String(a.session),
     a.kind,
-    truncate(a.guess, 10),
+    dashCell(a.guess),
     a.success === true ? "Y" : a.success === false ? "N" : "-",
-    truncate(a.detail ?? a.note, 12),
-    truncate(a.feedback ?? a.message, 14),
+    dashCell(a.detail ?? a.note),
+    dashCell(a.feedback ?? a.message),
   ]
 }
 
