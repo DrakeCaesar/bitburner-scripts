@@ -95,6 +95,68 @@ function releaseWorkerClaim(state: LabyrinthState, workerHost: string): void {
   }
 }
 
+function workerPosition(sess: LabyrinthSession | undefined): [number, number] | null {
+  return sess?.coords ?? sess?.lastCoords ?? null
+}
+
+function manhattanGoalDistance(cell: string, goal: [number, number]): number {
+  const pos = parseCellKey(cell)
+  if (!pos) return Infinity
+  return Math.abs(pos[0] - goal[0]) + Math.abs(pos[1] - goal[1])
+}
+
+function explorersReachableToGoal(
+  state: LabyrinthState,
+  explorerHosts: readonly string[],
+  goal: [number, number],
+): Array<{ host: string; dist: number }> {
+  const out: Array<{ host: string; dist: number }> = []
+  for (const host of explorerHosts) {
+    const pos = workerPosition(state.sessions[host])
+    if (!pos) continue
+    const dist = bfsDistanceToTarget(state.map, pos[0], pos[1], goal[0], goal[1])
+    if (dist !== null) out.push({ host, dist })
+  }
+  return out
+}
+
+function assignGoalClaim(
+  state: LabyrinthState,
+  explorerHosts: readonly string[],
+  stasisLinked: ReadonlySet<string>,
+  goal: [number, number],
+): boolean {
+  const claims = ensureClaims(state)
+  const goalKey = cellKey(goal[0], goal[1])
+  const reachable = explorersReachableToGoal(state, explorerHosts, goal)
+  if (reachable.length === 0) {
+    delete claims[goalKey]
+    return false
+  }
+
+  reachable.sort((a, b) => {
+    if (a.dist !== b.dist) return a.dist - b.dist
+    const sa = stasisLinked.has(a.host) ? 0 : 1
+    const sb = stasisLinked.has(b.host) ? 0 : 1
+    if (sa !== sb) return sa - sb
+    return a.host.localeCompare(b.host)
+  })
+
+  const bestHost = reachable[0]!.host
+  const bestPos = workerPosition(state.sessions[bestHost])
+  if (bestPos && bestPos[0] === goal[0] && bestPos[1] === goal[1]) {
+    delete claims[goalKey]
+    return true
+  }
+
+  if (claims[goalKey] !== bestHost) {
+    delete claims[goalKey]
+    releaseWorkerClaim(state, bestHost)
+    claims[goalKey] = bestHost
+  }
+  return true
+}
+
 /** Assign distinct frontier cells to idle explorers; stasis-linked workers pick first. */
 export function assignFrontierClaims(
   state: LabyrinthState,
@@ -104,8 +166,13 @@ export function assignFrontierClaims(
   ensureMap(state)
   const claims = ensureClaims(state)
   const frontier = new Set(frontierCells(state.map))
+  const goal = state.goal ?? null
+  const goalKey = goal ? cellKey(goal[0], goal[1]) : null
+  const goalReachable =
+    goal != null ? assignGoalClaim(state, explorerHosts, stasisLinked, goal) : false
 
   for (const [cell, host] of Object.entries(claims)) {
+    if (cell === goalKey) continue
     if (!frontier.has(cell) || !explorerHosts.includes(host)) {
       delete claims[cell]
     }
@@ -130,12 +197,20 @@ export function assignFrontierClaims(
 
     let bestCell: string | null = null
     let bestDist = Infinity
+    let bestGoalDist = Infinity
     for (const cell of unclaimed) {
       const target = parseCellKey(cell)
       if (!target) continue
       const dist = bfsDistanceToTarget(state.map, pos[0], pos[1], target[0], target[1])
       if (dist === null) continue
-      if (dist < bestDist) {
+      if (goal != null && !goalReachable) {
+        const goalDist = manhattanGoalDistance(cell, goal)
+        if (goalDist < bestGoalDist || (goalDist === bestGoalDist && dist < bestDist)) {
+          bestGoalDist = goalDist
+          bestDist = dist
+          bestCell = cell
+        }
+      } else if (dist < bestDist) {
         bestDist = dist
         bestCell = cell
       }

@@ -577,6 +577,8 @@ export function buildMapGrid(
   }
 
   const frontierSet = new Set(options?.frontier ?? [])
+  const goalKey =
+    options?.goal != null ? cellKey(options.goal[0], options.goal[1]) : null
   for (const k of frontierSet) known.add(k)
   if (options?.goal != null) {
     known.add(cellKey(options.goal[0], options.goal[1]))
@@ -612,7 +614,7 @@ export function buildMapGrid(
   }
 
   for (const [cell, host] of Object.entries(options?.claims ?? {})) {
-    if (!frontierSet.has(cell)) continue
+    if (!frontierSet.has(cell) && cell !== goalKey) continue
     if (letterForHost.has(host)) claimTargets.add(cell)
   }
 
@@ -715,7 +717,8 @@ export function buildMapGrid(
 
     let claimKey: string | null = null
     for (const [cell, claimHost] of Object.entries(options?.claims ?? {})) {
-      if (claimHost === host && frontierSet.has(cell)) {
+      if (claimHost !== host) continue
+      if (frontierSet.has(cell) || cell === goalKey) {
         claimKey = cell
         break
       }
