@@ -1,4 +1,5 @@
 import type { AttemptKind, AttemptRecord } from "../types.js"
+import { shouldLogAttempt } from "./attemptLogFilters.js"
 
 /** Ring buffer cap; keeps dashboard timeline and timing index bounded. */
 const MAX_ATTEMPT_RECORDS = 800
@@ -17,7 +18,9 @@ export class AttemptLog {
     return this.records.filter((r) => r.host === host)
   }
 
-  append(entry: Omit<AttemptRecord, "id" | "at"> & { at?: number }): AttemptRecord {
+  append(entry: Omit<AttemptRecord, "id" | "at"> & { at?: number }): AttemptRecord | null {
+    if (!shouldLogAttempt(entry)) return null
+
     const record: AttemptRecord = {
       ...entry,
       id: this.nextId++,
