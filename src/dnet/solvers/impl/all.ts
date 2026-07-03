@@ -1343,7 +1343,16 @@ function parseBoolFeedback(data: unknown): boolean | null {
 // #endregion
 
 
+/** Matches ServerGenerator.smallPrimes — tested first. */
 const FACTORIOS_PRIMES = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97]
+/** Matches ServerGenerator.largePrimes — appended at difficulty > 12 (and twice at > 24). */
+const FACTORIOS_LARGE_PRIMES = [
+  1069, 1409, 1471, 1567, 1597, 1601, 1697, 1747, 1801, 1889, 1979, 1999, 2063, 2207, 2371, 2503, 2539, 2693, 2741,
+  2753, 2801, 2819, 2837, 2909, 2939, 3169, 3389, 3571, 3761, 3881, 4217, 4289, 4547, 4729, 4789, 4877, 4943, 4951,
+  4957, 5393, 5417, 5419, 5441, 5519, 5527, 5647, 5779, 5881, 6007, 6089, 6133, 6389, 6451, 6469, 6547, 6661, 6719,
+  6841, 7103, 7549, 7559, 7573, 7691, 7753, 7867, 8053, 8081, 8221, 8329, 8599, 8677, 8761, 8839, 8963, 9103, 9199,
+  9343, 9467, 9551, 9601, 9739, 9749, 9859,
+]
 
 interface FactoriOsState extends SolverState {
   type: "factoriOs"
@@ -1357,6 +1366,28 @@ interface FactoriOsState extends SolverState {
   needsRecheck: boolean
   /** Probe with 0 first; game reports bogus "divisible" (password % 0 is NaN). */
   probedZero: boolean
+  /** After small primes, continue with largePrimes when product is still too short. */
+  largePhase: boolean
+}
+
+function factoriOsPrimeList(state: FactoriOsState): readonly number[] {
+  return state.largePhase ? FACTORIOS_LARGE_PRIMES : FACTORIOS_PRIMES
+}
+
+function factoriOsPrimeAt(state: FactoriOsState): number {
+  return factoriOsPrimeList(state)[state.primeIdx]!
+}
+
+function factoriOsExhaustPrimeSearch(state: FactoriOsState): void {
+  state.primeIdx = factoriOsPrimeList(state).length
+}
+
+/** Large-prime factors that can still yield a password of the target length. */
+function factoriOsLargePrimeRange(product: number, length: number): { min: number; max: number } {
+  return {
+    min: Math.ceil(10 ** (length - 1) / product),
+    max: Math.floor((10 ** length - 1) / product),
+  }
 }
 
 const factoriOs: SolverModule<FactoriOsState> = {
@@ -1368,6 +1399,7 @@ const factoriOs: SolverModule<FactoriOsState> = {
       length: details.passwordLength, finalDispatched: false,
       needsRecheck: false,
       probedZero: false,
+      largePhase: false,
     }
   },
   nextGuess(state) {
@@ -1375,33 +1407,45 @@ const factoriOs: SolverModule<FactoriOsState> = {
     if (!state.probedZero) {
       return { guess: "0", detail: "factoriOs discard" }
     }
-    if (state.phase === "prime" || state.needsRecheck) {
-      state.needsRecheck = false
-      // Find next prime that fits within length
-      while (state.primeIdx < FACTORIOS_PRIMES.length) {
-        const p = FACTORIOS_PRIMES[state.primeIdx]!
-        const pStr = String(p)
-        if (pStr.length > state.length) { state.primeIdx = FACTORIOS_PRIMES.length; break }
-        return { guess: pStr, detail: `prime ${p}` }
-      }
-      // All primes exhausted, submit product
-      const pw = String(state.product)
-      if (pw.length !== state.length) return null
-      state.finalDispatched = true
-      return { guess: pw, detail: "factor product" }
-    }
 
-    // Power phase: test next power of the current prime
-    if (String(state.nextPower).length <= state.length) {
-      return { guess: String(state.nextPower), detail: `pow ${state.nextPower}` }
+    for (;;) {
+      if (state.phase === "prime" || state.needsRecheck) {
+        state.needsRecheck = false
+        const primes = factoriOsPrimeList(state)
+        const largeRange = state.largePhase ? factoriOsLargePrimeRange(state.product, state.length) : null
+        while (state.primeIdx < primes.length) {
+          const p = primes[state.primeIdx]!
+          if (largeRange && (p < largeRange.min || p > largeRange.max)) {
+            state.primeIdx++
+            continue
+          }
+          const pStr = String(p)
+          if (pStr.length > state.length) {
+            factoriOsExhaustPrimeSearch(state)
+            break
+          }
+          return { guess: pStr, detail: `prime ${p}` }
+        }
+        if (!state.largePhase && String(state.product).length < state.length) {
+          state.largePhase = true
+          state.primeIdx = 0
+          continue
+        }
+        const pw = String(state.product)
+        if (pw.length !== state.length) return null
+        state.finalDispatched = true
+        return { guess: pw, detail: "factor product" }
+      }
+
+      if (String(state.nextPower).length <= state.length) {
+        return { guess: String(state.nextPower), detail: `pow ${state.nextPower}` }
+      }
+      state.product *= state.currentPower
+      if (String(state.product).length > state.length) return null
+      state.phase = "prime"
+      state.primeIdx++
+      state.needsRecheck = true
     }
-    // Power too large — done with this prime, go back to prime phase
-    state.product *= state.currentPower
-    if (String(state.product).length > state.length) return null
-    state.phase = "prime"
-    state.primeIdx++
-    state.needsRecheck = true
-    return null // master calls nextGuess again, needsRecheck triggers prime check
   },
   applyResult(state, guess, result) {
     if (result.success) return state
@@ -1432,12 +1476,14 @@ const factoriOs: SolverModule<FactoriOsState> = {
       if (fb) {
         // This power divides — accumulate and try next
         state.currentPower = state.nextPower
-        const base = FACTORIOS_PRIMES[state.primeIdx]!
-        state.nextPower = state.currentPower * base
+        state.nextPower = state.currentPower * factoriOsPrimeAt(state)
       } else {
         // Power doesn't divide — done with this prime
         state.product *= state.currentPower
-        if (String(state.product).length > state.length) { state.primeIdx = FACTORIOS_PRIMES.length; return state }
+        if (String(state.product).length > state.length) {
+          factoriOsExhaustPrimeSearch(state)
+          return state
+        }
         state.phase = "prime"
         state.primeIdx++
       }

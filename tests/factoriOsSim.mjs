@@ -12,6 +12,32 @@
 const FACTORIOS_PRIMES = [
   2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97,
 ]
+const FACTORIOS_LARGE_PRIMES = [
+  1069, 1409, 1471, 1567, 1597, 1601, 1697, 1747, 1801, 1889, 1979, 1999, 2063, 2207, 2371, 2503, 2539, 2693, 2741,
+  2753, 2801, 2819, 2837, 2909, 2939, 3169, 3389, 3571, 3761, 3881, 4217, 4289, 4547, 4729, 4789, 4877, 4943, 4951,
+  4957, 5393, 5417, 5419, 5441, 5519, 5527, 5647, 5779, 5881, 6007, 6089, 6133, 6389, 6451, 6469, 6547, 6661, 6719,
+  6841, 7103, 7549, 7559, 7573, 7691, 7753, 7867, 8053, 8081, 8221, 8329, 8599, 8677, 8761, 8839, 8963, 9103, 9199,
+  9343, 9467, 9551, 9601, 9739, 9749, 9859,
+]
+
+function factoriOsPrimeList(state) {
+  return state.largePhase ? FACTORIOS_LARGE_PRIMES : FACTORIOS_PRIMES
+}
+
+function factoriOsPrimeAt(state) {
+  return factoriOsPrimeList(state)[state.primeIdx]
+}
+
+function factoriOsExhaustPrimeSearch(state) {
+  state.primeIdx = factoriOsPrimeList(state).length
+}
+
+function factoriOsLargePrimeRange(product, length) {
+  return {
+    min: Math.ceil(10 ** (length - 1) / product),
+    max: Math.floor((10 ** length - 1) / product),
+  }
+}
 
 /** Matches src/DarkNet/effects/authentication.ts divisibilityTest branch. */
 function factoriOsProbeResult(password, guess) {
@@ -60,6 +86,7 @@ function initFactoriOsState(passwordLength) {
     finalDispatched: false,
     needsRecheck: false,
     probedZero: false,
+    largePhase: false,
   }
 }
 
@@ -69,32 +96,45 @@ function factoriOsNextGuess(state) {
   if (!state.probedZero) {
     return { guess: "0", detail: "factoriOs discard" }
   }
-  if (state.phase === "prime" || state.needsRecheck) {
-    state.needsRecheck = false
-    while (state.primeIdx < FACTORIOS_PRIMES.length) {
-      const p = FACTORIOS_PRIMES[state.primeIdx]
-      const pStr = String(p)
-      if (pStr.length > state.length) {
-        state.primeIdx = FACTORIOS_PRIMES.length
-        break
-      }
-      return { guess: pStr, detail: `prime ${p}` }
-    }
-    const pw = String(state.product)
-    if (pw.length !== state.length) return null
-    state.finalDispatched = true
-    return { guess: pw, detail: "factor product" }
-  }
 
-  if (String(state.nextPower).length <= state.length) {
-    return { guess: String(state.nextPower), detail: `pow ${state.nextPower}` }
+  for (;;) {
+    if (state.phase === "prime" || state.needsRecheck) {
+      state.needsRecheck = false
+      const primes = factoriOsPrimeList(state)
+      const largeRange = state.largePhase ? factoriOsLargePrimeRange(state.product, state.length) : null
+      while (state.primeIdx < primes.length) {
+        const p = primes[state.primeIdx]
+        if (largeRange && (p < largeRange.min || p > largeRange.max)) {
+          state.primeIdx++
+          continue
+        }
+        const pStr = String(p)
+        if (pStr.length > state.length) {
+          factoriOsExhaustPrimeSearch(state)
+          break
+        }
+        return { guess: pStr, detail: `prime ${p}` }
+      }
+      if (!state.largePhase && String(state.product).length < state.length) {
+        state.largePhase = true
+        state.primeIdx = 0
+        continue
+      }
+      const pw = String(state.product)
+      if (pw.length !== state.length) return null
+      state.finalDispatched = true
+      return { guess: pw, detail: "factor product" }
+    }
+
+    if (String(state.nextPower).length <= state.length) {
+      return { guess: String(state.nextPower), detail: `pow ${state.nextPower}` }
+    }
+    state.product *= state.currentPower
+    if (String(state.product).length > state.length) return null
+    state.phase = "prime"
+    state.primeIdx++
+    state.needsRecheck = true
   }
-  state.product *= state.currentPower
-  if (String(state.product).length > state.length) return null
-  state.phase = "prime"
-  state.primeIdx++
-  state.needsRecheck = true
-  return null
 }
 
 /** Mirror of factoriOs.applyResult in solverState.ts */
@@ -122,12 +162,11 @@ function factoriOsApplyResult(state, guess, result) {
     if (fb === null) return state
     if (fb) {
       state.currentPower = state.nextPower
-      const base = FACTORIOS_PRIMES[state.primeIdx]
-      state.nextPower = state.currentPower * base
+      state.nextPower = state.currentPower * factoriOsPrimeAt(state)
     } else {
       state.product *= state.currentPower
       if (String(state.product).length > state.length) {
-        state.primeIdx = FACTORIOS_PRIMES.length
+        factoriOsExhaustPrimeSearch(state)
         return state
       }
       state.phase = "prime"
@@ -208,11 +247,11 @@ function simulateSolver(password, passwordLength, { maxSteps = 200, reinitOnFail
   return { password, passwordLength, cycles, log, finalState: snapshot(state) }
 }
 
-/** BigInt prime-power factorization using the same prime list as the solver. */
+/** BigInt prime-power factorization using the same prime lists as the solver. */
 function referenceFactorization(password) {
   let n = BigInt(password)
   const factors = []
-  for (const p of FACTORIOS_PRIMES) {
+  for (const p of [...FACTORIOS_PRIMES, ...FACTORIOS_LARGE_PRIMES]) {
     const pb = BigInt(p)
     if (pb * pb > n && n > 1n) {
       if (n > 1n) factors.push({ prime: Number(n), power: 1 })
@@ -285,7 +324,7 @@ console.log(`guess=0 feedback=${zeroProbe.feedback} message=${zeroProbe.message}
 console.log("\n--- Reference factorization (BigInt) ---")
 const ref = referenceFactorization(password)
 console.log(ref)
-const primeSet = new Set(FACTORIOS_PRIMES)
+const primeSet = new Set([...FACTORIOS_PRIMES, ...FACTORIOS_LARGE_PRIMES])
 const missingFactors = ref.factors.filter((f) => !primeSet.has(f.prime))
 if (missingFactors.length > 0) {
   console.log(
@@ -295,7 +334,7 @@ if (missingFactors.length > 0) {
     missingFactors.map((f) => `${f.prime}^${f.power}`).join(", "),
   )
   console.log(
-    "Game may include largePrimes at high difficulty; solver only tests up to 97.",
+    "Game may include prime factor(s) outside solver lists (small + large).",
   )
 }
 
