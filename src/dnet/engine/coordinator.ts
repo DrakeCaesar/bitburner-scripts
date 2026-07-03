@@ -409,6 +409,8 @@ function buildSnapshot(
     actions: masterLog.all,
     failedSessions: sessionArchive.failedSessions,
     failedDeadlines: deadlineArchive.failedDeadlines,
+    deadlineSlipStats: deadlineArchive.commandDeadlineSlipStats,
+    completedCommandCount: deadlineArchive.completedCommandCount,
     mutation: {
       portRaw: mutationPort.raw,
       portTs: mutationPort.ts,
@@ -1724,7 +1726,7 @@ function commandTarget(payload: WorkerCommandPayload): string | undefined {
 }
 
 function completeTrackedCommand(ctx: WorkerDispatchCtx, workerHost: string): void {
-  ctx.deadlineArchive.complete(workerHost)
+  ctx.deadlineArchive.complete(workerHost, Date.now())
 }
 
 function commandDetail(host: string, payload: WorkerCommandPayload): string {

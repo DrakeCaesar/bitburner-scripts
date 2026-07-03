@@ -1,5 +1,17 @@
 import { DEADLINE_GRACE_MS } from "../constants.js"
-import type { DeadlineTimelineEvent, FailedCommandDeadline, MasterActionRecord } from "../types.js"
+import type {
+  CommandDeadlineSlipStats,
+  DeadlineTimelineEvent,
+  FailedCommandDeadline,
+  MasterActionRecord,
+} from "../types.js"
+
+interface SlipAccumulator {
+  count: number
+  sum: number
+  minMs: number
+  maxMs: number
+}
 
 interface ActiveCommandTrack {
   id: string
@@ -21,9 +33,34 @@ export class DeadlineArchive {
   private nextSeq = 1
   private active = new Map<string, ActiveCommandTrack>()
   private failed = new Map<string, FailedCommandDeadline>()
+  private slipStats = new Map<string, SlipAccumulator>()
+  private slipStatsSorted: CommandDeadlineSlipStats[] | null = null
+  private completedCommands = 0
 
   get failedDeadlines(): readonly FailedCommandDeadline[] {
     return [...this.failed.values()].sort((a, b) => b.failedAt - a.failedAt)
+  }
+
+  get commandDeadlineSlipStats(): readonly CommandDeadlineSlipStats[] {
+    if (this.slipStatsSorted == null) {
+      const stats: CommandDeadlineSlipStats[] = []
+      for (const [commandType, acc] of this.slipStats) {
+        stats.push({
+          commandType,
+          count: acc.count,
+          minMs: acc.minMs,
+          avgMs: acc.sum / acc.count,
+          maxMs: acc.maxMs,
+        })
+      }
+      stats.sort((a, b) => b.avgMs - a.avgMs)
+      this.slipStatsSorted = stats
+    }
+    return this.slipStatsSorted
+  }
+
+  get completedCommandCount(): number {
+    return this.completedCommands
   }
 
   begin(
@@ -91,7 +128,10 @@ export class DeadlineArchive {
     })
   }
 
-  complete(workerHost: string): void {
+  complete(workerHost: string, endedAt: number): void {
+    const track = this.active.get(workerHost)
+    if (!track) return
+    this.recordSlip(track, endedAt)
     this.active.delete(workerHost)
   }
 
@@ -105,9 +145,12 @@ export class DeadlineArchive {
     this.active.delete(workerHost)
 
     const finalDeadlineAt = track.currentDeadlineAt
+    const slipMs = at - finalDeadlineAt
     const estimatedDeadlineAt = track.workerDeadlineAt ?? track.initialDeadlineAt
     const estimatedMs = estimatedDeadlineAt - track.dispatchedAt
     const actualMs = at - track.dispatchedAt
+
+    this.recordSlip(track, at)
 
     track.events.push({
       at,
@@ -131,11 +174,29 @@ export class DeadlineArchive {
       finalDeadlineAt,
       estimatedMs,
       actualMs,
-      overdueMs: Math.max(0, at - finalDeadlineAt - DEADLINE_GRACE_MS),
+      slipMs,
+      overdueMs: Math.max(0, slipMs - DEADLINE_GRACE_MS),
       extended: track.extended,
       reason: track.extended ? "timeout after extension" : "timeout",
       events: [...track.events],
       masterActions: masterActions.slice(track.masterActionFromIndex),
     })
+  }
+
+  private recordSlip(track: ActiveCommandTrack, endedAt: number): void {
+    const slipMs = endedAt - track.currentDeadlineAt
+    const acc = this.slipStats.get(track.commandType) ?? {
+      count: 0,
+      sum: 0,
+      minMs: Number.POSITIVE_INFINITY,
+      maxMs: Number.NEGATIVE_INFINITY,
+    }
+    acc.count++
+    acc.sum += slipMs
+    acc.minMs = Math.min(acc.minMs, slipMs)
+    acc.maxMs = Math.max(acc.maxMs, slipMs)
+    this.slipStats.set(track.commandType, acc)
+    this.completedCommands++
+    this.slipStatsSorted = null
   }
 }

@@ -15,6 +15,7 @@ import type {
   DeadlineTimelineEvent,
   FailedAuthSession,
   FailedCommandDeadline,
+  CommandDeadlineSlipStats,
   MasterActionRecord,
   MutationPortSnapshot,
   SessionEvent,
@@ -97,7 +98,7 @@ const TIMEOUT_LIST_COLUMNS = [
   col("Target", "left", W.host),
   col("Actual", "right", 8),
   col("Est", "right", 8),
-  col("Over", "right", 7),
+  col("Slip", "right", 7),
   col("Ended", "right", 8),
 ]
 
@@ -115,6 +116,15 @@ const TIMEOUT_ACTION_COLUMNS = [
   col("Action", "left", 14),
   col("Detail", "left", 40),
 ]
+
+const TIMEOUT_STATS_COLUMNS = [
+  col("Cmd", "left", 14),
+  col("N", "right", 5),
+  col("Min", "right", 8),
+  col("Avg", "right", 8),
+  col("Max", "right", 8),
+]
+
 
 export class DnetDashboard {
   readonly log: TabbedScriptLogBuilder
@@ -288,15 +298,17 @@ function indexAttemptTimings(attempts: readonly AttemptRecord[]): Map<number, Op
 }
 
 function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`
-  const totalSec = Math.floor(ms / 1000)
-  if (totalSec < 60) return `${totalSec}s`
+  const sign = ms < 0 ? "-" : ""
+  const abs = Math.abs(ms)
+  if (abs < 1000) return `${sign}${abs}ms`
+  const totalSec = Math.floor(abs / 1000)
+  if (totalSec < 60) return `${sign}${totalSec}s`
   const min = Math.floor(totalSec / 60)
   const sec = totalSec % 60
-  if (min < 60) return sec > 0 ? `${min}m${sec}s` : `${min}m`
+  if (min < 60) return sec > 0 ? `${sign}${min}m${sec}s` : `${sign}${min}m`
   const hr = Math.floor(min / 60)
   const remMin = min % 60
-  return remMin > 0 ? `${hr}h${remMin}m` : `${hr}h`
+  return remMin > 0 ? `${sign}${hr}h${remMin}m` : `${sign}${hr}h`
 }
 
 function formatTiming(t: OpTiming, now: number): { start: string; end: string; dur: string } {
@@ -558,26 +570,40 @@ function populateTimeoutsTab(
   snap: CrawlSnapshot,
 ): void {
   const timeouts = snap.failedDeadlines
+  const slipStats = snap.deadlineSlipStats
+  const completedCount = snap.completedCommandCount
   dashboard.applyTimeoutSelection(timeouts)
   const selected = timeouts.find((t) => t.id === dashboard.selectedTimeoutId) ?? null
   const selectedRowIndex =
     selected != null ? timeouts.findIndex((t) => t.id === selected.id) : undefined
-  renderTimeoutsTab(log, dashboard, timeouts, selected, selectedRowIndex)
+  renderTimeoutsTab(log, dashboard, timeouts, slipStats, completedCount, selected, selectedRowIndex)
 }
 
 function renderTimeoutsTab(
   log: TabbedScriptLogBuilder,
   dashboard: DnetDashboard,
   timeouts: readonly FailedCommandDeadline[],
+  slipStats: readonly CommandDeadlineSlipStats[],
+  completedCount: number,
   selected: FailedCommandDeadline | null,
   selectedRowIndex: number | undefined,
 ): void {
   const tab = log.tab("timeouts")
   tab.text(
     timeouts.length === 0
-      ? "No command deadline timeouts archived yet."
+      ? completedCount === 0
+        ? "No command deadline data yet."
+        : `No coordinator timeouts yet (${completedCount} completed commands tracked).`
       : `Command deadline timeouts (${timeouts.length}). Click a row to inspect estimated vs actual timing.`,
   )
+
+  if (slipStats.length > 0) {
+    tab.table({
+      title: "Deadline slip by command (end - deadline, avg desc; negative = early)",
+      columns: TIMEOUT_STATS_COLUMNS,
+      rows: slipStats.map(deadlineSlipStatsRow),
+    })
+  }
 
   if (timeouts.length === 0) return
 
@@ -616,7 +642,8 @@ function renderTimeoutsTab(
       { label: "Final deadline", value: clock(selected.finalDeadlineAt) },
       { label: "Estimated", value: formatDuration(selected.estimatedMs) },
       { label: "Actual", value: formatDuration(selected.actualMs) },
-      { label: "Overdue", value: formatDuration(selected.overdueMs) },
+      { label: "Slip", value: formatDuration(selected.slipMs) },
+      { label: "Overdue (+grace)", value: formatDuration(selected.overdueMs) },
       { label: "Extended", value: selected.extended ? "Y" : "N" },
       { label: "Reason", value: selected.reason },
     ],
@@ -648,8 +675,18 @@ function timeoutListRow(t: FailedCommandDeadline): string[] {
     truncate(t.targetHost, W.host),
     formatDuration(t.actualMs),
     formatDuration(t.estimatedMs),
-    t.overdueMs > 0 ? formatDuration(t.overdueMs) : "-",
+    formatDuration(t.slipMs),
     clock(t.failedAt),
+  ]
+}
+
+function deadlineSlipStatsRow(s: CommandDeadlineSlipStats): string[] {
+  return [
+    s.commandType,
+    String(s.count),
+    formatDuration(s.minMs),
+    formatDuration(s.avgMs),
+    formatDuration(s.maxMs),
   ]
 }
 

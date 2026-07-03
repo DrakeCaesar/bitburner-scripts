@@ -183,11 +183,23 @@ export interface FailedCommandDeadline {
   finalDeadlineAt: number
   estimatedMs: number
   actualMs: number
+  /** endedAt - finalDeadlineAt (no grace); positive = past worker/coordinator deadline. */
+  slipMs: number
+  /** max(0, endedAt - finalDeadlineAt - grace); only meaningful on coordinator timeout. */
   overdueMs: number
   extended: boolean
   reason: string
   events: readonly DeadlineTimelineEvent[]
   masterActions: readonly MasterActionRecord[]
+}
+
+/** Running min/avg/max slip stats per command type (updated on each completion). */
+export interface CommandDeadlineSlipStats {
+  commandType: string
+  count: number
+  minMs: number
+  avgMs: number
+  maxMs: number
 }
 
 export interface WorkerSnapshot {
@@ -247,6 +259,8 @@ export interface CrawlSnapshot {
   actions: readonly MasterActionRecord[]
   failedSessions: readonly FailedAuthSession[]
   failedDeadlines: readonly FailedCommandDeadline[]
+  deadlineSlipStats: readonly CommandDeadlineSlipStats[]
+  completedCommandCount: number
   mutation: MutationPortSnapshot
   workers: readonly WorkerSnapshot[]
   stasis: StasisSnapshot | null
