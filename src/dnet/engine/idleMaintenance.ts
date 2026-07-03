@@ -212,7 +212,19 @@ function hasPendingStasisWork(ctx: IdleMaintenanceCtx): boolean {
   return false
 }
 
-/** Command lowest-depth idle workers to induce migration on a connected neighbor. Returns true if any sent. */
+/** True when worker has a connected non-stationary neighbor shallower than itself. */
+function workerCanMigrateShallowerNeighbor(dnet: DnetApi, wi: ManagedWorker): boolean {
+  if (wi.depth == null || wi.neighbors.length === 0) return false
+  for (const host of wi.neighbors) {
+    const details = getServerDetails(dnet, host)
+    if (!details?.isOnline) continue
+    if (details.isStationary) continue
+    if (details.depth < wi.depth) return true
+  }
+  return false
+}
+
+/** Command deepest idle workers to induce migration on a shallower connected neighbor. */
 export function dispatchIdleMigrations(
   ctx: IdleMaintenanceCtx,
   sendMigrate: (wi: ManagedWorker, payload: Extract<WorkerCommandPayload, { type: "migrate" }>) => boolean,
@@ -222,15 +234,27 @@ export function dispatchIdleMigrations(
   const idle = ctx.workerPool.idleWorkers().filter((wi) => wi.depth != null)
   if (idle.length === 0) return false
 
-  const minDepth = Math.min(...idle.map((wi) => wi.depth!))
-  const candidates = idle
-    .filter((wi) => wi.depth === minDepth)
-    .sort((a, b) => a.host.localeCompare(b.host))
+  const byDepth = new Map<number, ManagedWorker[]>()
+  for (const wi of idle) {
+    const depth = wi.depth!
+    const row = byDepth.get(depth) ?? []
+    row.push(wi)
+    byDepth.set(depth, row)
+  }
+
+  const depths = [...byDepth.keys()].sort((a, b) => b - a)
 
   let sent = false
-  for (const wi of candidates) {
-    if (wi.neighbors.length === 0) continue
-    if (sendMigrate(wi, { type: "migrate" })) sent = true
+  for (const depth of depths) {
+    const candidates = byDepth
+      .get(depth)!
+      .filter((wi) => workerCanMigrateShallowerNeighbor(ctx.dnet, wi))
+      .sort((a, b) => a.host.localeCompare(b.host))
+    if (candidates.length === 0) continue
+    for (const wi of candidates) {
+      if (sendMigrate(wi, { type: "migrate" })) sent = true
+    }
+    break
   }
   return sent
 }

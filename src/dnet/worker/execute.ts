@@ -369,7 +369,11 @@ export async function runReallocCommand(
   }
 }
 
-function pickMigrateTarget(dnet: WorkerDnetApi, neighbors: readonly string[]): string | null {
+function pickMigrateTarget(
+  dnet: WorkerDnetApi,
+  neighbors: readonly string[],
+  workerDepth: number | null,
+): string | null {
   let best: { host: string; depth: number } | null = null
   for (const host of neighbors) {
     try {
@@ -377,6 +381,7 @@ function pickMigrateTarget(dnet: WorkerDnetApi, neighbors: readonly string[]): s
       if (!details.isOnline) continue
       if (!details.isConnectedToCurrentServer) continue
       if (details.isStationary) continue
+      if (workerDepth != null && details.depth >= workerDepth) continue
       if (best == null || details.depth < best.depth) {
         best = { host, depth: details.depth }
       }
@@ -431,9 +436,10 @@ export async function runMigrateCommand(
     neighbors = []
   }
 
-  const target = pickMigrateTarget(dnet, neighbors)
+  const workerDepth = dnetHostDepth(dnet, workerHost)
+  const target = pickMigrateTarget(dnet, neighbors, workerDepth)
   if (!target) {
-    writeResult("", false, "no connected non-stationary neighbor")
+    writeResult("", false, "no connected non-stationary shallower neighbor")
     return
   }
 
