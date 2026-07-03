@@ -153,6 +153,43 @@ export interface FailedAuthSession {
   events: readonly SessionEvent[]
 }
 
+export type DeadlineEventKind =
+  | "dispatched"
+  | "worker_deadline"
+  | "timeout_extend"
+  | "timed_out"
+
+export interface DeadlineTimelineEvent {
+  at: number
+  kind: DeadlineEventKind
+  deadlineAt?: number
+  /** Expected total duration from dispatch to worker/coordinator deadline. */
+  estimatedMs?: number
+  /** Elapsed time since dispatch at this event. */
+  elapsedMs?: number
+  note?: string
+}
+
+export interface FailedCommandDeadline {
+  id: string
+  workerHost: string
+  command: string
+  commandType: string
+  targetHost?: string
+  dispatchedAt: number
+  failedAt: number
+  initialDeadlineAt: number
+  workerDeadlineAt: number | null
+  finalDeadlineAt: number
+  estimatedMs: number
+  actualMs: number
+  overdueMs: number
+  extended: boolean
+  reason: string
+  events: readonly DeadlineTimelineEvent[]
+  masterActions: readonly MasterActionRecord[]
+}
+
 export interface WorkerSnapshot {
   host: string
   pid: number
@@ -209,6 +246,7 @@ export interface CrawlSnapshot {
   attempts: readonly AttemptRecord[]
   actions: readonly MasterActionRecord[]
   failedSessions: readonly FailedAuthSession[]
+  failedDeadlines: readonly FailedCommandDeadline[]
   mutation: MutationPortSnapshot
   workers: readonly WorkerSnapshot[]
   stasis: StasisSnapshot | null

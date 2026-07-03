@@ -12,7 +12,9 @@ import type {
   AttemptRecord,
   AuthTarget,
   CrawlSnapshot,
+  DeadlineTimelineEvent,
   FailedAuthSession,
+  FailedCommandDeadline,
   MasterActionRecord,
   MutationPortSnapshot,
   SessionEvent,
@@ -23,6 +25,7 @@ import type {
 const TIMELINE_DISPLAY_LIMIT = 80
 const TIMELINE_INDEX_LIMIT = 300
 const FAILED_EVENT_DISPLAY_LIMIT = 120
+const TIMEOUT_EVENT_DISPLAY_LIMIT = 120
 
 const TABS = [
   { id: "overview", label: "Overview" },
@@ -30,6 +33,7 @@ const TABS = [
   { id: "attempts", label: "Attempts" },
   { id: "workers", label: "Workers" },
   { id: "failed", label: "Failed" },
+  { id: "timeouts", label: "Timeouts" },
 ] as const
 
 const TARGET_COLUMNS = [
@@ -87,11 +91,39 @@ const FAILED_EVENT_COLUMNS = [
   col("Detail", "left", 20),
 ]
 
+const TIMEOUT_LIST_COLUMNS = [
+  col("Worker", "left", W.host),
+  col("Cmd", "left", 14),
+  col("Target", "left", W.host),
+  col("Actual", "right", 8),
+  col("Est", "right", 8),
+  col("Over", "right", 7),
+  col("Ended", "right", 8),
+]
+
+const TIMEOUT_EVENT_COLUMNS = [
+  col("Time", "right", 8),
+  col("Kind", "left", 14),
+  col("Deadline", "right", 8),
+  col("Est", "right", 8),
+  col("Real", "right", 8),
+  col("Note", "left", 24),
+]
+
+const TIMEOUT_ACTION_COLUMNS = [
+  col("Time", "right", 8),
+  col("Action", "left", 14),
+  col("Detail", "left", 40),
+]
+
 export class DnetDashboard {
   readonly log: TabbedScriptLogBuilder
   selectedFailedSessionId: string | null = null
   private pendingFailedRow = -1
   private lastFailedCount = 0
+  selectedTimeoutId: string | null = null
+  private pendingTimeoutRow = -1
+  private lastTimeoutCount = 0
 
   constructor() {
     this.log = createTabbedTailLog([...TABS], undefined, { lazyInactivePanels: true })
@@ -99,6 +131,10 @@ export class DnetDashboard {
 
   onFailedRowClick(rowIndex: number): void {
     this.pendingFailedRow = rowIndex
+  }
+
+  onTimeoutRowClick(rowIndex: number): void {
+    this.pendingTimeoutRow = rowIndex
   }
 
   applyFailedSelection(failed: readonly FailedAuthSession[]): void {
@@ -116,6 +152,23 @@ export class DnetDashboard {
       this.selectedFailedSessionId = failed[0]!.id
     }
     this.lastFailedCount = failed.length
+  }
+
+  applyTimeoutSelection(timeouts: readonly FailedCommandDeadline[]): void {
+    if (this.pendingTimeoutRow >= 0 && this.pendingTimeoutRow < timeouts.length) {
+      this.selectedTimeoutId = timeouts[this.pendingTimeoutRow]!.id
+      this.pendingTimeoutRow = -1
+    }
+
+    const ids = new Set(timeouts.map((s) => s.id))
+    if (this.selectedTimeoutId != null && !ids.has(this.selectedTimeoutId)) {
+      this.selectedTimeoutId = null
+    }
+
+    if (timeouts.length > this.lastTimeoutCount && timeouts.length > 0) {
+      this.selectedTimeoutId = timeouts[0]!.id
+    }
+    this.lastTimeoutCount = timeouts.length
   }
 }
 
@@ -329,6 +382,9 @@ export async function renderDashboard(
     case "failed":
       populateFailedTab(log, dashboard, snap)
       break
+    case "timeouts":
+      populateTimeoutsTab(log, dashboard, snap)
+      break
     default:
       populateOverviewTab(log, snap)
       break
@@ -340,6 +396,7 @@ export async function renderDashboard(
 function populateOverviewTab(log: TabbedScriptLogBuilder, snap: CrawlSnapshot): void {
   const s = snap.summary
   const failed = snap.failedSessions
+  const timeouts = snap.failedDeadlines
   log
     .tab("overview")
     .text(
@@ -347,7 +404,7 @@ function populateOverviewTab(log: TabbedScriptLogBuilder, snap: CrawlSnapshot): 
         `targets ${snap.targets.length}  active ${s.active}  solved ${s.solved}  ` +
         `exhausted ${s.exhausted}  retry ${s.retryWait}  no_solver ${s.noSolver}  ` +
         `unsupported ${s.unsupported}  attempts ${snap.attempts.length}  workers ${snap.workers.length}  ` +
-        `failed ${failed.length}`,
+        `failed ${failed.length}  timeouts ${timeouts.length}`,
     )
 
   renderStasisOverview(log.tab("overview"), snap.stasis)
@@ -493,6 +550,123 @@ function failedEventRow(e: SessionEvent): string[] {
     truncate(e.feedback ?? e.message, 16),
     truncate(e.detail ?? e.note, 20),
   ]
+}
+
+function populateTimeoutsTab(
+  log: TabbedScriptLogBuilder,
+  dashboard: DnetDashboard,
+  snap: CrawlSnapshot,
+): void {
+  const timeouts = snap.failedDeadlines
+  dashboard.applyTimeoutSelection(timeouts)
+  const selected = timeouts.find((t) => t.id === dashboard.selectedTimeoutId) ?? null
+  const selectedRowIndex =
+    selected != null ? timeouts.findIndex((t) => t.id === selected.id) : undefined
+  renderTimeoutsTab(log, dashboard, timeouts, selected, selectedRowIndex)
+}
+
+function renderTimeoutsTab(
+  log: TabbedScriptLogBuilder,
+  dashboard: DnetDashboard,
+  timeouts: readonly FailedCommandDeadline[],
+  selected: FailedCommandDeadline | null,
+  selectedRowIndex: number | undefined,
+): void {
+  const tab = log.tab("timeouts")
+  tab.text(
+    timeouts.length === 0
+      ? "No command deadline timeouts archived yet."
+      : `Command deadline timeouts (${timeouts.length}). Click a row to inspect estimated vs actual timing.`,
+  )
+
+  if (timeouts.length === 0) return
+
+  tab.table({
+    title: "Archived timeouts (newest first)",
+    columns: TIMEOUT_LIST_COLUMNS,
+    rows: timeouts.map(timeoutListRow),
+    selectedRowIndex: selectedRowIndex != null && selectedRowIndex >= 0 ? selectedRowIndex : undefined,
+    onRowClick: (rowIndex) => dashboard.onTimeoutRowClick(rowIndex),
+  })
+
+  if (!selected) {
+    tab.text("No timeout selected.")
+    return
+  }
+
+  tab.text(
+    `${selected.workerHost}  ${selected.command}  ` +
+      `dispatched ${clock(selected.dispatchedAt)}  failed ${clock(selected.failedAt)}  ` +
+      `reason ${selected.reason}`,
+  )
+
+  tab.keyValueTable({
+    title: "Timing summary",
+    rows: [
+      { label: "Worker", value: selected.workerHost },
+      { label: "Command", value: selected.command },
+      { label: "Target", value: selected.targetHost ?? "-" },
+      { label: "Dispatched", value: clock(selected.dispatchedAt) },
+      { label: "Failed", value: clock(selected.failedAt) },
+      { label: "Initial deadline", value: clock(selected.initialDeadlineAt) },
+      {
+        label: "Worker deadline",
+        value: selected.workerDeadlineAt != null ? clock(selected.workerDeadlineAt) : "(none)",
+      },
+      { label: "Final deadline", value: clock(selected.finalDeadlineAt) },
+      { label: "Estimated", value: formatDuration(selected.estimatedMs) },
+      { label: "Actual", value: formatDuration(selected.actualMs) },
+      { label: "Overdue", value: formatDuration(selected.overdueMs) },
+      { label: "Extended", value: selected.extended ? "Y" : "N" },
+      { label: "Reason", value: selected.reason },
+    ],
+  })
+
+  const events =
+    selected.events.length > TIMEOUT_EVENT_DISPLAY_LIMIT
+      ? selected.events.slice(-TIMEOUT_EVENT_DISPLAY_LIMIT)
+      : selected.events
+  tab.table({
+    title: `Deadline timeline (${events.length} of ${selected.events.length} events)`,
+    columns: TIMEOUT_EVENT_COLUMNS,
+    rows: events.map((event) => timeoutEventRow(event, selected.dispatchedAt)),
+  })
+
+  if (selected.masterActions.length > 0) {
+    tab.table({
+      title: `Master actions during command (${selected.masterActions.length})`,
+      columns: TIMEOUT_ACTION_COLUMNS,
+      rows: selected.masterActions.map(timeoutActionRow),
+    })
+  }
+}
+
+function timeoutListRow(t: FailedCommandDeadline): string[] {
+  return [
+    t.workerHost,
+    t.commandType,
+    truncate(t.targetHost, W.host),
+    formatDuration(t.actualMs),
+    formatDuration(t.estimatedMs),
+    t.overdueMs > 0 ? formatDuration(t.overdueMs) : "-",
+    clock(t.failedAt),
+  ]
+}
+
+function timeoutEventRow(event: DeadlineTimelineEvent, dispatchedAt: number): string[] {
+  const elapsed = event.elapsedMs ?? event.at - dispatchedAt
+  return [
+    clock(event.at),
+    event.kind,
+    event.deadlineAt != null ? clock(event.deadlineAt) : "-",
+    event.estimatedMs != null ? formatDuration(event.estimatedMs) : "-",
+    formatDuration(Math.max(0, elapsed)),
+    truncate(event.note, 24),
+  ]
+}
+
+function timeoutActionRow(action: MasterActionRecord): string[] {
+  return [clock(action.at), action.action, truncate(action.detail, 40)]
 }
 
 function actionRow(a: MasterActionRecord, now: number): string[] {

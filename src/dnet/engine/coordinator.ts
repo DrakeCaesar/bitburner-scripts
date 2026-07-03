@@ -34,6 +34,7 @@ import {
   syncAllTargetAuthState,
 } from "./targetState.js"
 import { AttemptLog } from "../history/attemptLog.js"
+import { DeadlineArchive } from "../history/deadlineArchive.js"
 import { MasterActionLog } from "../history/masterActionLog.js"
 import { SessionArchive } from "../history/sessionArchive.js"
 import { PortPool, WorkerPool, type ManagedWorker } from "../pool/workers.js"
@@ -162,6 +163,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
 
   const sessionId = Date.now()
   const sessionArchive = new SessionArchive()
+  const deadlineArchive = new DeadlineArchive()
   const attemptLog = new AttemptLog((r) => sessionArchive.recordAttempt(r))
   const masterLog = new MasterActionLog()
   const portPool = new PortPool()
@@ -232,6 +234,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       passwords,
       sessionArchive,
       idleMaintenanceGate,
+      deadlineArchive,
     }
 
     await drainReplies(
@@ -268,8 +271,9 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       passwords,
       sessionArchive,
       idleMaintenanceGate,
+      deadlineArchive,
     )
-    pruneWorkers(ns, workerPool, portPool, targets, pendingSpawns, spawnPlans, masterLog, idleMaintenanceGate)
+    pruneWorkers(ns, workerPool, portPool, targets, pendingSpawns, spawnPlans, masterLog, idleMaintenanceGate, deadlineArchive)
     mutationSync.tick(ns, workerPool, targets, (ts) => {
       masterLog.append("sync", `mutation ${ts} (background probes)`)
     })
@@ -365,6 +369,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
         mutationPort,
         loopAt,
         dnet,
+        deadlineArchive,
       ),
     )
     await ns.sleep(LOOP_INTERVAL_MS)
@@ -393,6 +398,7 @@ function buildSnapshot(
   mutationPort: { raw: string; ts: number | null },
   loopAt: number,
   dnet: DnetApi,
+  deadlineArchive: DeadlineArchive,
 ): CrawlSnapshot {
   const all = [...targets.values()]
   const count = (s: TargetStatus) => all.filter((t) => t.status === s).length
@@ -402,6 +408,7 @@ function buildSnapshot(
     attempts: attemptLog.all,
     actions: masterLog.all,
     failedSessions: sessionArchive.failedSessions,
+    failedDeadlines: deadlineArchive.failedDeadlines,
     mutation: {
       portRaw: mutationPort.raw,
       portTs: mutationPort.ts,
@@ -590,8 +597,15 @@ async function drainReplies(
         case "deadline":
           wi.idle = false
           wi.commandDeadlineAt = msg.deadlineAt
+          dispatchCtx.deadlineArchive.onWorkerDeadline(
+            msg.workerHost,
+            Date.now(),
+            msg.deadlineAt,
+            msg.commandType,
+          )
           break
         case "probeResult":
+          completeTrackedCommand(dispatchCtx, msg.workerHost)
           wi.idle = true
           wi.commandDeadlineAt = 0
           wi.neighbors = msg.neighbors
@@ -619,6 +633,7 @@ async function drainReplies(
           idleMaintenanceGate.markProbed(msg.workerHost)
           break
         case "spawnResult":
+          completeTrackedCommand(dispatchCtx, msg.workerHost)
           wi.idle = true
           wi.commandDeadlineAt = 0
           pendingSpawns.delete(msg.target)
@@ -664,6 +679,7 @@ async function drainReplies(
           }
           break
         case "authResult":
+          completeTrackedCommand(dispatchCtx, msg.workerHost)
           wi.idle = true
           wi.commandDeadlineAt = 0
           await onAuthResult(
@@ -679,11 +695,13 @@ async function drainReplies(
           )
           break
         case "heartbleedResult":
+          completeTrackedCommand(dispatchCtx, wi.host)
           wi.idle = true
           wi.commandDeadlineAt = 0
           await onHeartbleedResult(msg, targets, attemptLog, dnet, solverBridge)
           break
         case "reallocResult":
+          completeTrackedCommand(dispatchCtx, wi.host)
           wi.idle = true
           wi.commandDeadlineAt = 0
           if (msg.host === wi.host) {
@@ -701,6 +719,7 @@ async function drainReplies(
           })
           break
         case "migrateResult":
+          completeTrackedCommand(dispatchCtx, msg.workerHost)
           wi.idle = true
           wi.commandDeadlineAt = 0
           attemptLog.append({
@@ -718,6 +737,7 @@ async function drainReplies(
           })
           break
         case "stasisResult":
+          completeTrackedCommand(dispatchCtx, msg.workerHost)
           wi.idle = true
           wi.commandDeadlineAt = 0
           attemptLog.append({
@@ -733,6 +753,7 @@ async function drainReplies(
           })
           break
         case "labreportResult":
+          completeTrackedCommand(dispatchCtx, msg.workerHost)
           wi.idle = true
           wi.commandDeadlineAt = 0
           onLabreportResult(msg, targets, attemptLog)
@@ -1582,7 +1603,7 @@ function spawnWorkers(
     if (!workerPool.workers.has(target.host)) continue
     const wi = workerPool.workers.get(target.host)!
     if (isWorkerAlive(ns, wi)) continue
-    dropWorker(ns, target.host, workerPool, portPool, pendingSpawns, spawnPlans, masterLog, "dead", ctx.idleMaintenanceGate)
+    dropWorker(ns, target.host, workerPool, portPool, pendingSpawns, spawnPlans, masterLog, "dead", ctx.idleMaintenanceGate, ctx.deadlineArchive)
   }
 
   type Candidate = { target: AuthTarget; existingPlan: SpawnPlan | undefined }
@@ -1688,6 +1709,24 @@ function spawnWorkers(
   }
 }
 
+function commandTarget(payload: WorkerCommandPayload): string | undefined {
+  switch (payload.type) {
+    case "auth":
+    case "heartbleed":
+    case "labreport":
+    case "spawn":
+      return payload.target
+    case "realloc":
+      return payload.host
+    default:
+      return undefined
+  }
+}
+
+function completeTrackedCommand(ctx: WorkerDispatchCtx, workerHost: string): void {
+  ctx.deadlineArchive.complete(workerHost)
+}
+
 function commandDetail(host: string, payload: WorkerCommandPayload): string {
   switch (payload.type) {
     case "probe":
@@ -1723,6 +1762,7 @@ interface WorkerDispatchCtx {
   passwords: Map<string, string>
   sessionArchive: SessionArchive
   idleMaintenanceGate: IdleMaintenanceGate
+  deadlineArchive: DeadlineArchive
 }
 
 function abortSpawnPlan(
@@ -1775,11 +1815,11 @@ function sendCommand(
   ctx: WorkerDispatchCtx,
 ): boolean {
   if (wi.commandPort <= 0) {
-    dropWorker(ns, wi.host, ctx.workerPool, ctx.portPool, ctx.pendingSpawns, ctx.spawnPlans, masterLog, "no port", ctx.idleMaintenanceGate)
+    dropWorker(ns, wi.host, ctx.workerPool, ctx.portPool, ctx.pendingSpawns, ctx.spawnPlans, masterLog, "no port", ctx.idleMaintenanceGate, ctx.deadlineArchive)
     return false
   }
   if (wi.pid > 0 && !ns.isRunning(wi.pid)) {
-    dropWorker(ns, wi.host, ctx.workerPool, ctx.portPool, ctx.pendingSpawns, ctx.spawnPlans, masterLog, "dead", ctx.idleMaintenanceGate)
+    dropWorker(ns, wi.host, ctx.workerPool, ctx.portPool, ctx.pendingSpawns, ctx.spawnPlans, masterLog, "dead", ctx.idleMaintenanceGate, ctx.deadlineArchive)
     if (ctx.targets) clearTargetWorkerRefs(ctx, wi.host)
     return false
   }
@@ -1798,6 +1838,15 @@ function sendCommand(
 
   ns.writePort(wi.commandPort, JSON.stringify(payload))
   masterLog.append(payload.type, commandDetail(wi.host, payload))
+  ctx.deadlineArchive.begin(
+    wi.host,
+    formatCommand(payload),
+    payload.type,
+    now,
+    wi.commandDeadlineAt,
+    masterLog.all.length - 1,
+    commandTarget(payload),
+  )
   return true
 }
 
@@ -1822,6 +1871,7 @@ function dropWorker(
   masterLog: MasterActionLog,
   reason: string,
   idleMaintenanceGate?: IdleMaintenanceGate,
+  deadlineArchive?: DeadlineArchive,
 ): void {
   pendingSpawns.delete(host)
   for (const [targetHost, plan] of [...spawnPlans]) {
@@ -1834,6 +1884,7 @@ function dropWorker(
   if (wi.commandPort > 0) releaseWorkerPort(ns, portPool, wi.commandPort)
   workerPool.remove(host)
   idleMaintenanceGate?.abandonHost(host)
+  deadlineArchive?.abandon(host)
   masterLog.append("prune", `${host} (${reason})`)
 }
 
@@ -1931,16 +1982,22 @@ function failWorkerCommand(
   passwords: Map<string, string>,
   sessionArchive: SessionArchive,
   idleMaintenanceGate?: IdleMaintenanceGate,
+  deadlineArchive?: DeadlineArchive,
 ): void {
   if (isLongRunningWorkerCommand(wi)) {
+    const extendedAt = Date.now()
+    const newDeadlineAt = extendedAt + WORKER_TIMEOUT_MS
     masterLog.append("timeout_extend", `${wi.host} command ${wi.lastCommand ?? "?"} (still running)`)
-    wi.commandDeadlineAt = Date.now() + WORKER_TIMEOUT_MS
+    wi.commandDeadlineAt = newDeadlineAt
+    deadlineArchive?.onTimeoutExtend(wi.host, extendedAt, newDeadlineAt)
     return
   }
 
+  const failedAt = Date.now()
   wi.idle = true
   wi.commandDeadlineAt = 0
   masterLog.append("timeout", `${wi.host} command ${wi.lastCommand ?? "?"}`)
+  deadlineArchive?.onTimedOut(wi.host, failedAt, masterLog.all)
   if (wi.lastCommand === "probe") {
     idleMaintenanceGate?.markProbed(wi.host)
   }
@@ -1974,6 +2031,7 @@ function checkCommandDeadlines(
   passwords: Map<string, string>,
   sessionArchive: SessionArchive,
   idleMaintenanceGate: IdleMaintenanceGate,
+  deadlineArchive: DeadlineArchive,
 ): void {
   const now = Date.now()
   for (const wi of workerPool.workers.values()) {
@@ -1993,6 +2051,7 @@ function checkCommandDeadlines(
       passwords,
       sessionArchive,
       idleMaintenanceGate,
+      deadlineArchive,
     )
   }
 }
@@ -2006,19 +2065,20 @@ function pruneWorkers(
   spawnPlans: Map<string, SpawnPlan>,
   masterLog: MasterActionLog,
   idleMaintenanceGate: IdleMaintenanceGate,
+  deadlineArchive: DeadlineArchive,
 ): void {
   const now = Date.now()
   for (const [host, wi] of workerPool.workers) {
     if (wi.commandPort <= 0) {
-      dropWorker(ns, host, workerPool, portPool, pendingSpawns, spawnPlans, masterLog, "no port", idleMaintenanceGate)
+      dropWorker(ns, host, workerPool, portPool, pendingSpawns, spawnPlans, masterLog, "no port", idleMaintenanceGate, deadlineArchive)
       continue
     }
     if (wi.pid <= 0 && now - wi.lastActivityAt > WORKER_TIMEOUT_MS) {
-      dropWorker(ns, host, workerPool, portPool, pendingSpawns, spawnPlans, masterLog, "spawn timeout", idleMaintenanceGate)
+      dropWorker(ns, host, workerPool, portPool, pendingSpawns, spawnPlans, masterLog, "spawn timeout", idleMaintenanceGate, deadlineArchive)
       continue
     }
     if (wi.pid > 0 && !isWorkerAlive(ns, wi)) {
-      dropWorker(ns, host, workerPool, portPool, pendingSpawns, spawnPlans, masterLog, "dead", idleMaintenanceGate)
+      dropWorker(ns, host, workerPool, portPool, pendingSpawns, spawnPlans, masterLog, "dead", idleMaintenanceGate, deadlineArchive)
       continue
     }
   }
