@@ -1528,14 +1528,6 @@ function factoriOsExhaustPrimeSearch(state: FactoriOsState): void {
   state.primeIdx = factoriOsPrimeList(state).length
 }
 
-/** Large-prime factors that can still yield a password of the target length. */
-function factoriOsLargePrimeRange(product: number, length: number): { min: number; max: number } {
-  return {
-    min: Math.ceil(10 ** (length - 1) / product),
-    max: Math.floor((10 ** length - 1) / product),
-  }
-}
-
 const factoriOs: SolverModule<FactoriOsState> = {
   init(details) {
     return {
@@ -1558,13 +1550,8 @@ const factoriOs: SolverModule<FactoriOsState> = {
       if (state.phase === "prime" || state.needsRecheck) {
         state.needsRecheck = false
         const primes = factoriOsPrimeList(state)
-        const largeRange = state.largePhase ? factoriOsLargePrimeRange(state.product, state.length) : null
         while (state.primeIdx < primes.length) {
           const p = primes[state.primeIdx]!
-          if (largeRange && (p < largeRange.min || p > largeRange.max)) {
-            state.primeIdx++
-            continue
-          }
           const pStr = String(p)
           if (pStr.length > state.length) {
             factoriOsExhaustPrimeSearch(state)
