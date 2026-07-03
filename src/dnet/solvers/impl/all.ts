@@ -1522,12 +1522,97 @@ const factoriOs: SolverModule<FactoriOsState> = {
 // Refinement factor ≈ 8 (ceil(step / 8)) keeps probe count bounded.
 // Total probes: ~50 (len ≤ 3), ~100 (len ≤ 6), ~150 (len ≤ 10).
 
+/** Side-hill summits stay at or below ~7400; the main peak reads higher when nearby. */
+const KING_MAIN_PEAK_ALTITUDE = 7500
+
+/** Finer global rescans before narrowing when the best summit looks like a side hill. */
+function kingOfTheHillStartRescan(state: KingOfTheHillState, phase: number): void {
+  const span = state.max - state.min
+  state.rescanPhase = phase
+  state.finished = false
+  state.finals = []
+  state.finalIdx = 0
+  state.sweepIdx = state.min
+  state.sweepEnd = state.max
+  state.passNum = 900 + phase
+  if (phase === 1) {
+    state.step = Math.max(1, Math.ceil(span / 80))
+  } else if (phase === 2) {
+    state.step = Math.max(1, Math.ceil(span / 250))
+  } else {
+    state.step = Math.max(1, Math.ceil(span / 800))
+  }
+}
+
+function kingOfTheHillNeedsRescan(state: KingOfTheHillState): boolean {
+  return state.bestAlt != null && state.bestAlt < KING_MAIN_PEAK_ALTITUDE
+}
+
+function kingOfTheHillMaybeRescan(state: KingOfTheHillState): boolean {
+  if (!kingOfTheHillNeedsRescan(state)) return false
+  if (state.rescanPhase >= 3) return false
+  kingOfTheHillStartRescan(state, state.rescanPhase + 1)
+  return true
+}
+
+/** Parse altitude from auth feedback or heartbleed message text. */
+function parseKingOfTheHillAltitude(feedback: unknown, message?: string): number | null {
+  if (typeof feedback === "number" && Number.isFinite(feedback)) return feedback
+  if (typeof feedback === "string") {
+    const trimmed = feedback.trim()
+    if (trimmed.length > 0) {
+      const direct = Number(trimmed)
+      if (Number.isFinite(direct)) return direct
+    }
+  }
+  if (typeof message === "string") {
+    const fromMessage = message.match(/current altitude:\s*([-\d.]+)/i)
+    if (fromMessage) {
+      const alt = Number(fromMessage[1])
+      if (Number.isFinite(alt)) return alt
+    }
+  }
+  return null
+}
+
+function kingOfTheHillBuildFinals(state: KingOfTheHillState): number[] {
+  const span = state.max - state.min
+  const out: number[] = []
+  if (span <= 12) {
+    for (let d = 0; d <= span; d++) {
+      if (d === 0) {
+        if (state.bestVal >= state.min && state.bestVal <= state.max) out.push(state.bestVal)
+        continue
+      }
+      for (const sign of [-1, 1] as const) {
+        const c = state.bestVal + sign * d
+        if (c >= state.min && c <= state.max) out.push(c)
+      }
+    }
+    return out
+  }
+
+  const nearMainPeak = state.bestAlt != null && state.bestAlt >= KING_MAIN_PEAK_ALTITUDE
+  const maxRadius = nearMainPeak ? 9 : Math.min(99, Math.max(25, Math.ceil(span / 40)))
+  for (let d = 0; d <= maxRadius; d++) {
+    if (d === 0) {
+      if (state.bestVal >= state.min && state.bestVal <= state.max) out.push(state.bestVal)
+      continue
+    }
+    for (const sign of [-1, 1] as const) {
+      const c = state.bestVal + sign * d
+      if (c >= state.min && c <= state.max) out.push(c)
+    }
+  }
+  return out
+}
+
 interface KingOfTheHillState extends SolverState {
   type: "kingOfTheHill"
   min: number
   max: number
   bestVal: number
-  bestAlt: number
+  bestAlt: number | null
   step: number       // current sweep step size
   sweepIdx: number   // next value to probe
   sweepEnd: number   // end of current pass
@@ -1536,6 +1621,8 @@ interface KingOfTheHillState extends SolverState {
   finals: number[]   // bestVal ± small offsets
   finalIdx: number
   dispatched: boolean
+  /** Global rescan passes run when best altitude looks like a side hill (0..3). */
+  rescanPhase: number
 }
 
 const kingOfTheHill: SolverModule<KingOfTheHillState> = {
@@ -1546,11 +1633,12 @@ const kingOfTheHill: SolverModule<KingOfTheHillState> = {
     return {
       type: "kingOfTheHill",
       min, max,
-      bestVal: min, bestAlt: -Infinity,
+      bestVal: min, bestAlt: null,
       step, sweepIdx: min, sweepEnd: max,
       passNum: 0,
       finished: false, finals: [], finalIdx: 0,
       dispatched: false,
+      rescanPhase: 0,
     }
   },
   nextGuess(state) {
@@ -1558,7 +1646,7 @@ const kingOfTheHill: SolverModule<KingOfTheHillState> = {
 
     // If pass complete → refine and start next pass
     while (state.sweepIdx > state.sweepEnd) {
-      if (state.bestAlt <= 0 && state.passNum === 0) {
+      if ((state.bestAlt == null || state.bestAlt <= 0) && state.passNum === 0) {
         // Coarse pass found nothing — scan entire range at step 1 (tiny range?)
         state.sweepIdx = state.min
         state.sweepEnd = state.max
@@ -1566,10 +1654,15 @@ const kingOfTheHill: SolverModule<KingOfTheHillState> = {
         state.passNum = 999 // last pass
         continue
       }
+
+      // Side-hill false peak — rescan globally at finer steps before narrowing
+      if (kingOfTheHillMaybeRescan(state)) continue
+
       // Narrow around best: next pass covers ±prev_step of best
       const prevStep = state.step
       state.step = Math.max(1, Math.ceil(prevStep / 8))
       if (state.step >= prevStep) {
+        if (kingOfTheHillMaybeRescan(state)) continue
         // Refinement saturated — build final candidates
         state.finished = true
         break
@@ -1587,11 +1680,7 @@ const kingOfTheHill: SolverModule<KingOfTheHillState> = {
 
     // Finished scanning — try candidates around best value
     if (state.finals.length === 0) {
-      // Build ordered list: best first, then ±1, ±2, ±3
-      for (const d of [0, -1, 1, -2, 2, -3, 3]) {
-        const c = state.bestVal + d
-        if (c >= state.min && c <= state.max) state.finals.push(c)
-      }
+      state.finals = kingOfTheHillBuildFinals(state)
     }
     if (state.finalIdx < state.finals.length) {
       const c = state.finals[state.finalIdx++]!
@@ -1603,8 +1692,12 @@ const kingOfTheHill: SolverModule<KingOfTheHillState> = {
   applyResult(state, _guess, result) {
     if (result.success) return state
     const g = Number(_guess)
-    const alt = typeof result.feedback === "string" ? Number(result.feedback) : 0
-    if (alt > state.bestAlt) { state.bestAlt = alt; state.bestVal = g }
+    const alt = parseKingOfTheHillAltitude(result.feedback, result.message)
+    if (alt == null) return state
+    if (state.bestAlt == null || alt > state.bestAlt) {
+      state.bestAlt = alt
+      state.bestVal = g
+    }
     return state
   },
 }

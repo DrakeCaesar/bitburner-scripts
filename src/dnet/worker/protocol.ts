@@ -24,6 +24,13 @@ export function noAuthFeedbackMessage(hb: {
   return "no auth feedback (empty log)"
 }
 
+export function parseAuthFeedback(data: unknown): string | undefined {
+  if (typeof data === "string") return data
+  if (typeof data === "boolean") return data ? "true" : "false"
+  if (typeof data === "number" && Number.isFinite(data)) return String(data)
+  return undefined
+}
+
 export type WorkerCommandPayload =
   | { type: "probe" }
   | { type: "auth"; target: string; solverId: string; guess: string; detail: string | null }
@@ -148,7 +155,7 @@ export function parseWorkerResponse(raw: unknown): WorkerResponse | null {
           workerHost: typeof row.workerHost === "string" ? row.workerHost : "",
           guess: typeof row.guess === "string" ? row.guess : "",
           success: row.success === true,
-          feedback: typeof row.feedback === "string" ? row.feedback : undefined,
+          feedback: parseAuthFeedback(row.feedback),
           message: typeof row.message === "string" ? row.message : undefined,
           code: typeof row.code === "number" ? row.code : undefined,
         }

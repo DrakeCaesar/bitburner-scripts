@@ -7,6 +7,7 @@ import {
   noAuthFeedbackMessage,
   type NeighborProbeStatus,
   type WorkerCommand,
+  parseAuthFeedback,
 } from "./protocol.js"
 import { WORKER_SCRIPT } from "./constants.js"
 import { copyWorkerFiles } from "./deploy.js"
@@ -25,9 +26,10 @@ function parseAuthLog(log: string, guess: string): { data: string; message: stri
     if (typeof entry !== "object" || entry === null) return null
     const rec = entry as Record<string, unknown>
     if (String(rec.passwordAttempted) !== guess) return null
-    if (rec.code !== 401) return null
+    const code = rec.code
+    if (code !== 401 && code !== "401") return null
     if (typeof rec.message !== "string") return null
-    const data = normalizeFeedback(rec.data)
+    const data = parseAuthFeedback(rec.data)
     if (data === undefined) return null
     return { data, message: rec.message }
   } catch {
@@ -166,7 +168,7 @@ export async function runAuthCommand(
         return
       }
 
-      const matched = parseAuthLog(hb.logs[0]!, cmd.guess)
+      const matched = hb.logs.map((log) => parseAuthLog(log, cmd.guess)).find((row) => row != null)
       if (matched) {
         writeResult({
           success: false,
