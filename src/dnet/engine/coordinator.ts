@@ -65,6 +65,7 @@ import {
 import { copyWorkerFiles } from "../worker/deploy.js"
 import { ensureMutationWatcher, MutationSync } from "./mutationSync.js"
 import { dispatchLabyrinthStasis } from "./labyrinthStasis.js"
+import { dispatchIdleMaintenance, IdleMaintenanceGate } from "./idleMaintenance.js"
 import { dispatchLabyrinth, snapshotLabyrinths } from "./labyrinthDispatch.js"
 import { applyLabreport, clearLabyrinthPending, labyrinthPendingMatches, pruneLabyrinthWorker, type LabyrinthState } from "../solvers/labyrinth.js"
 import { clearDnetGlobalPorts, clearWorkerPortPair } from "./ports.js"
@@ -131,6 +132,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
   const spawnPlans = new Map<string, SpawnPlan>()
   const mutationSync = new MutationSync()
   const urgentProbeHosts = new Set<string>()
+  const idleMaintenanceGate = new IdleMaintenanceGate()
   const registry = loadDarknetRegistry(ns)
   pruneInvalidRegistryHosts(dnet, registry)
   saveDarknetRegistry(ns, registry)
@@ -188,6 +190,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       dnet,
       passwords,
       sessionArchive,
+      idleMaintenanceGate,
     }
 
     drainReplies(
@@ -206,6 +209,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       masterLog,
       sessionArchive,
       dispatchCtx,
+      idleMaintenanceGate,
     )
     pollLorePort(ns, LORE_PORT, loreStore, DARKNET_LORE_FILE)
     syncRegistryPasswords(dnet, registry, passwords, targets, tryConnect)
@@ -222,14 +226,14 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       passwords,
       sessionArchive,
     )
-    pruneWorkers(ns, workerPool, portPool, targets, pendingSpawns, spawnPlans, masterLog)
+    pruneWorkers(ns, workerPool, portPool, targets, pendingSpawns, spawnPlans, masterLog, idleMaintenanceGate)
     mutationSync.tick(ns, workerPool, targets, (ts) => {
       masterLog.append("sync", `mutation ${ts} (background probes)`)
     })
 
     processQueuedTargets(targets, attemptLog, sessionArchive, dnet, passwords)
     scheduleRetries(targets, attemptLog)
-    // Dispatch priority: urgent probe -> scheduled probe -> stasis -> spawn -> auth -> P1 -> P2 -> labyrinth -> P3
+    // Dispatch priority: ... -> labyrinth -> idle probe sweep -> migrate -> P3
     dispatchUrgentProbes(ns, workerPool, urgentProbeHosts, masterLog, dispatchCtx)
     dispatchBackgroundProbes(ns, workerPool, mutationSync, urgentProbeHosts, masterLog, dispatchCtx)
     dispatchLabyrinthStasis(
@@ -287,6 +291,21 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       stasisLinked: stasisLinkedHosts(dnet),
       sendCommand: (wi, payload) => sendCommand(ns, wi, payload, masterLog, dispatchCtx),
     })
+    const idleCtx = {
+      ns,
+      dnet,
+      workerPool,
+      targets,
+      passwords,
+      pendingSpawns,
+      spawnPlans,
+    }
+    dispatchIdleMaintenance(
+      idleCtx,
+      idleMaintenanceGate,
+      (wi) => sendCommand(ns, wi, { type: "probe" }, masterLog, dispatchCtx),
+      (wi, payload) => sendCommand(ns, wi, payload, masterLog, dispatchCtx),
+    )
     dispatchP3Reallocs(ns, dnet, workerPool, masterLog, dispatchCtx)
 
     await options.onProgress(
@@ -501,6 +520,7 @@ function drainReplies(
   masterLog: MasterActionLog,
   sessionArchive: SessionArchive,
   dispatchCtx: WorkerDispatchCtx,
+  idleMaintenanceGate: IdleMaintenanceGate,
 ): void {
   for (const wi of [...workerPool.workers.values()]) {
     if (wi.commandPort <= 0) continue
@@ -550,6 +570,7 @@ function drainReplies(
           )
           mutationSync.markWorkerProbed(msg.workerHost, workerPool, ns)
           finishUrgentProbe(msg.workerHost, targets, urgentProbeHosts)
+          idleMaintenanceGate.markProbed(msg.workerHost)
           break
         case "spawnResult":
           wi.idle = true
@@ -630,6 +651,23 @@ function drainReplies(
             modelId: "-",
             workerHost: wi.host,
             note: `realloc p${msg.priority} free ${msg.freeRam.toFixed(1)} blocked ${msg.blockedRam.toFixed(1)}`,
+          })
+          break
+        case "migrateResult":
+          wi.idle = true
+          wi.commandDeadlineAt = 0
+          attemptLog.append({
+            host: msg.target || wi.host,
+            session: 0,
+            kind: "note",
+            solverId: "-",
+            modelId: "-",
+            workerHost: wi.host,
+            success: msg.success,
+            note: msg.success
+              ? `migrate ${msg.target}`
+              : `migrate failed${msg.message ? `: ${msg.message}` : ""}`,
+            message: msg.message,
           })
           break
         case "stasisResult":
@@ -1389,7 +1427,7 @@ function spawnWorkers(
     if (!workerPool.workers.has(target.host)) continue
     const wi = workerPool.workers.get(target.host)!
     if (isWorkerAlive(ns, wi)) continue
-    dropWorker(ns, target.host, workerPool, portPool, pendingSpawns, spawnPlans, masterLog, "dead")
+    dropWorker(ns, target.host, workerPool, portPool, pendingSpawns, spawnPlans, masterLog, "dead", ctx.idleMaintenanceGate)
   }
 
   type Candidate = { target: AuthTarget; existingPlan: SpawnPlan | undefined }
@@ -1507,6 +1545,8 @@ function commandDetail(host: string, payload: WorkerCommandPayload): string {
       return `${host} -> ${payload.target} ${payload.guess}`
     case "realloc":
       return `${host} -> ${payload.host} p${payload.priority}`
+    case "migrate":
+      return `${host} migrate`
     case "stasis":
       return host
     case "heartbleed":
@@ -1527,6 +1567,7 @@ interface WorkerDispatchCtx {
   dnet: DnetApi
   passwords: Map<string, string>
   sessionArchive: SessionArchive
+  idleMaintenanceGate: IdleMaintenanceGate
 }
 
 function abortSpawnPlan(
@@ -1578,11 +1619,11 @@ function sendCommand(
   ctx: WorkerDispatchCtx,
 ): boolean {
   if (wi.commandPort <= 0) {
-    dropWorker(ns, wi.host, ctx.workerPool, ctx.portPool, ctx.pendingSpawns, ctx.spawnPlans, masterLog, "no port")
+    dropWorker(ns, wi.host, ctx.workerPool, ctx.portPool, ctx.pendingSpawns, ctx.spawnPlans, masterLog, "no port", ctx.idleMaintenanceGate)
     return false
   }
   if (wi.pid > 0 && !ns.isRunning(wi.pid)) {
-    dropWorker(ns, wi.host, ctx.workerPool, ctx.portPool, ctx.pendingSpawns, ctx.spawnPlans, masterLog, "dead")
+    dropWorker(ns, wi.host, ctx.workerPool, ctx.portPool, ctx.pendingSpawns, ctx.spawnPlans, masterLog, "dead", ctx.idleMaintenanceGate)
     if (ctx.targets) clearTargetWorkerRefs(ctx, wi.host)
     return false
   }
@@ -1624,6 +1665,7 @@ function dropWorker(
   spawnPlans: Map<string, SpawnPlan>,
   masterLog: MasterActionLog,
   reason: string,
+  idleMaintenanceGate?: IdleMaintenanceGate,
 ): void {
   pendingSpawns.delete(host)
   for (const [targetHost, plan] of [...spawnPlans]) {
@@ -1635,6 +1677,7 @@ function dropWorker(
   if (!wi) return
   if (wi.commandPort > 0) releaseWorkerPort(ns, portPool, wi.commandPort)
   workerPool.remove(host)
+  idleMaintenanceGate?.abandonHost(host)
   masterLog.append("prune", `${host} (${reason})`)
 }
 
@@ -1800,19 +1843,20 @@ function pruneWorkers(
   pendingSpawns: Set<string>,
   spawnPlans: Map<string, SpawnPlan>,
   masterLog: MasterActionLog,
+  idleMaintenanceGate: IdleMaintenanceGate,
 ): void {
   const now = Date.now()
   for (const [host, wi] of workerPool.workers) {
     if (wi.commandPort <= 0) {
-      dropWorker(ns, host, workerPool, portPool, pendingSpawns, spawnPlans, masterLog, "no port")
+      dropWorker(ns, host, workerPool, portPool, pendingSpawns, spawnPlans, masterLog, "no port", idleMaintenanceGate)
       continue
     }
     if (wi.pid <= 0 && now - wi.lastActivityAt > WORKER_TIMEOUT_MS) {
-      dropWorker(ns, host, workerPool, portPool, pendingSpawns, spawnPlans, masterLog, "spawn timeout")
+      dropWorker(ns, host, workerPool, portPool, pendingSpawns, spawnPlans, masterLog, "spawn timeout", idleMaintenanceGate)
       continue
     }
     if (wi.pid > 0 && !isWorkerAlive(ns, wi)) {
-      dropWorker(ns, host, workerPool, portPool, pendingSpawns, spawnPlans, masterLog, "dead")
+      dropWorker(ns, host, workerPool, portPool, pendingSpawns, spawnPlans, masterLog, "dead", idleMaintenanceGate)
       continue
     }
   }

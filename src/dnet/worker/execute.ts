@@ -1,7 +1,7 @@
 import { NS } from "@ns"
 import type { WorkerDnetApi } from "./dnetApi.js"
 import type { FormulasServerDetails } from "./taskTiming.js"
-import { estimateAuthMs, estimateHeartbleedMs, estimateLabreportMs, estimateReallocMs } from "./taskTiming.js"
+import { estimateAuthMs, estimateHeartbleedMs, estimateLabreportMs, estimateMigrateMs, estimateReallocMs } from "./taskTiming.js"
 import {
   NOT_NEIGHBOR_MESSAGE,
   noAuthFeedbackMessage,
@@ -364,6 +364,83 @@ export async function runReallocCommand(
       writeResult(ram.freeRam, ram.blockedRam)
       return
     }
+  }
+}
+
+function pickMigrateTarget(dnet: WorkerDnetApi, neighbors: readonly string[]): string | null {
+  let best: { host: string; depth: number } | null = null
+  for (const host of neighbors) {
+    try {
+      const details = dnet.getServerDetails(host)
+      if (!details.isOnline) continue
+      if (!details.isConnectedToCurrentServer) continue
+      if (details.isStationary) continue
+      if (best == null || details.depth < best.depth) {
+        best = { host, depth: details.depth }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return best?.host ?? null
+}
+
+export async function runMigrateCommand(
+  ns: NS,
+  dnet: WorkerDnetApi,
+  replyPort: number,
+): Promise<void> {
+  const workerHost = ns.getHostname()
+
+  const writeDeadline = (): void => {
+    ns.writePort(
+      replyPort,
+      JSON.stringify({
+        type: "deadline",
+        workerHost,
+        commandType: "migrate",
+        deadlineAt: Date.now() + estimateMigrateMs(ns),
+      }),
+    )
+  }
+
+  const writeResult = (target: string, success: boolean, message?: string): void => {
+    ns.writePort(
+      replyPort,
+      JSON.stringify({
+        type: "migrateResult",
+        workerHost,
+        target,
+        success,
+        ...(message ? { message } : {}),
+      }),
+    )
+  }
+
+  if (!dnet.induceServerMigration) {
+    writeResult("", false, "induceServerMigration unavailable")
+    return
+  }
+
+  let neighbors: string[] = []
+  try {
+    neighbors = dnet.probe()
+  } catch {
+    neighbors = []
+  }
+
+  const target = pickMigrateTarget(dnet, neighbors)
+  if (!target) {
+    writeResult("", false, "no connected non-stationary neighbor")
+    return
+  }
+
+  writeDeadline()
+  try {
+    const result = await dnet.induceServerMigration(target)
+    writeResult(target, result.success, result.message)
+  } catch {
+    writeResult(target, false, "induceServerMigration failed")
   }
 }
 

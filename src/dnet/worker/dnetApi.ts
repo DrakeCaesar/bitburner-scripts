@@ -23,6 +23,8 @@ export interface WorkerDnetApi {
   connectToSession?(host: string, password: string): { success: boolean }
   getStasisLinkedServers?(returnByIP?: boolean): string[]
   getBlockedRam?(host?: string): number
+  /** Induce migration on a directly connected neighbor (not self). ~6s. */
+  induceServerMigration?(host: string): Promise<{ success: boolean; code?: number; message?: string }>
   memoryReallocation?(host?: string): Promise<{ success: boolean }>
   openCache(filename: string, suppressToast?: boolean): { success: boolean; message: string; karmaLoss: number }
   labreport?(): Promise<{

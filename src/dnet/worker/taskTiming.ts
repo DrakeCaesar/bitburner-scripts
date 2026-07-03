@@ -80,3 +80,8 @@ export function estimateReallocMs(ns: NS): number {
   const charisma = ns.getPlayer().skills.charisma
   return Math.max(8000 * (500 / (500 + charisma)), 200) || FALLBACK_REALLOC_MS
 }
+
+/** Wall-clock ms for dnet.induceServerMigration (fixed ~6s in game source). */
+export function estimateMigrateMs(_ns: NS): number {
+  return 6000
+}

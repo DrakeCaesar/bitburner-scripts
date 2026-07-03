@@ -45,6 +45,8 @@ export interface DnetApi {
   getBlockedRam?(host?: string): number
   /** Darknet depth of host (defaults to current server). Returns -1 when unknown. */
   getDepth?(host?: string): number
+  /** Induce migration on a directly connected neighbor (not self). ~6s. */
+  induceServerMigration?(host: string): Promise<{ success: boolean; code?: number; message?: string }>
   setStasisLink?(shouldLink?: boolean): Promise<{ success: boolean; code?: number; message?: string }>
   getStasisLinkLimit?(): number
   getStasisLinkedServers?(returnByIP?: boolean): string[]

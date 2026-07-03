@@ -38,6 +38,7 @@ export type WorkerCommandPayload =
       remote?: boolean
     }
   | { type: "realloc"; host: string; priority: 1 | 2 | 3 }
+  | { type: "migrate" }
   | { type: "stasis" }
   | { type: "labreport"; target: string; solverId: string }
   | { type: "exit" }
@@ -91,6 +92,13 @@ export type WorkerResponse =
       target: string
       success: boolean
       childPid: number
+      message?: string
+    }
+  | {
+      type: "migrateResult"
+      workerHost: string
+      target: string
+      success: boolean
       message?: string
     }
   | {
@@ -188,6 +196,15 @@ export function parseWorkerResponse(raw: unknown): WorkerResponse | null {
           blockedRam: typeof row.blockedRam === "number" ? row.blockedRam : 0,
         }
       }
+      case "migrateResult":
+        if (typeof row.workerHost !== "string" || typeof row.target !== "string") return null
+        return {
+          type: "migrateResult",
+          workerHost: row.workerHost,
+          target: row.target,
+          success: row.success === true,
+          message: typeof row.message === "string" ? row.message : undefined,
+        }
       case "stasisResult":
         if (typeof row.workerHost !== "string") return null
         return {
@@ -259,6 +276,8 @@ export function formatCommand(cmd: WorkerCommandPayload): string {
       return `spawn:${cmd.target}`
     case "realloc":
       return `realloc:${cmd.host}:p${cmd.priority}`
+    case "migrate":
+      return "migrate"
     case "stasis":
       return "stasis"
     case "labreport":
@@ -269,7 +288,13 @@ export function formatCommand(cmd: WorkerCommandPayload): string {
 }
 
 export function usesWorkerDeadlines(cmd: WorkerCommandPayload): boolean {
-  return cmd.type === "auth" || cmd.type === "heartbleed" || cmd.type === "realloc" || cmd.type === "labreport"
+  return (
+    cmd.type === "auth" ||
+    cmd.type === "heartbleed" ||
+    cmd.type === "realloc" ||
+    cmd.type === "labreport" ||
+    cmd.type === "migrate"
+  )
 }
 
 export function isInstantCommand(cmd: WorkerCommandPayload): boolean {

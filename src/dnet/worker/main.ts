@@ -14,6 +14,7 @@ import {
   ensureSelfAuth,
   runProbe,
   runHeartbleedCommand,
+  runMigrateCommand,
   runReallocCommand,
   runSpawnCommand,
   runLabreportCommand,
@@ -117,6 +118,9 @@ export async function main(ns: NS): Promise<void> {
       await runHeartbleedCommand(ns, dnet, cmd, replyPort)
     } else if (cmd.type === "realloc") {
       await runReallocCommand(ns, dnet, cmd, replyPort)
+    } else if (cmd.type === "migrate") {
+      await ensureSelfAuth(dnet, hostname, selfPassword)
+      await runMigrateCommand(ns, dnet, replyPort)
     } else if (cmd.type === "stasis") {
       await ensureSelfAuth(dnet, hostname, selfPassword)
       await runStasisCommand(ns, dnet, replyPort)
