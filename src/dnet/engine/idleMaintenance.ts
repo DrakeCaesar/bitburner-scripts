@@ -6,7 +6,8 @@ import {
   isTargetAuthed,
   isTargetReadyForWorker,
 } from "./targetState.js"
-import { availableSpawnParents } from "./workerAssign.js"
+import { availableAuthWorkers, availableSpawnParents } from "./workerAssign.js"
+import type { MutationSync } from "./mutationSync.js"
 import { labyrinthExplorers } from "./labyrinthDispatch.js"
 import { collectLabyrinthHosts, labyrinthNeighborWorkerHosts, workerHostAuthed } from "./labyrinthStasis.js"
 import { lookupSolver } from "../solvers/registry.js"
@@ -103,6 +104,7 @@ function hasPendingAuthWork(ctx: IdleMaintenanceCtx): boolean {
 
     const solver = lookupSolver(details)
     if (!solver || target.solverState == null) continue
+    if (availableAuthWorkers(ctx.workerPool, target.neighborWorkers, new Set()).length === 0) continue
     return true
   }
   return false
@@ -233,6 +235,21 @@ export function dispatchIdleMigrations(
   return sent
 }
 
+function beginIdleProbeSweep(
+  gate: IdleMaintenanceGate,
+  workerPool: WorkerPool,
+  mutationSync: MutationSync | undefined,
+  ns: NS,
+): void {
+  gate.beginSweep(workerPool)
+  if (!mutationSync) return
+  for (const wi of workerPool.workers.values()) {
+    if (wi.commandPort > 0 && !mutationSync.workerNeedsProbe(wi, ns)) {
+      gate.markProbed(wi.host)
+    }
+  }
+}
+
 /**
  * Idle maintenance: probe every worker, wait for all probeResult replies, then migrate.
  * Resets when non-idle work appears.
@@ -242,6 +259,7 @@ export function dispatchIdleMaintenance(
   gate: IdleMaintenanceGate,
   sendProbe: (wi: ManagedWorker) => boolean,
   sendMigrate: (wi: ManagedWorker, payload: Extract<WorkerCommandPayload, { type: "migrate" }>) => boolean,
+  mutationSync?: MutationSync,
 ): void {
   if (!isIdleMaintenanceOnly(ctx)) {
     gate.reset()
@@ -249,7 +267,7 @@ export function dispatchIdleMaintenance(
   }
 
   if (!gate.isProbing() && !gate.isReady()) {
-    gate.beginSweep(ctx.workerPool)
+    beginIdleProbeSweep(gate, ctx.workerPool, mutationSync, ctx.ns)
   }
 
   if (gate.isProbing()) {

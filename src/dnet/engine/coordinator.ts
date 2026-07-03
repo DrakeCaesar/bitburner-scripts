@@ -267,6 +267,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       dnet,
       passwords,
       sessionArchive,
+      idleMaintenanceGate,
     )
     pruneWorkers(ns, workerPool, portPool, targets, pendingSpawns, spawnPlans, masterLog, idleMaintenanceGate)
     mutationSync.tick(ns, workerPool, targets, (ts) => {
@@ -348,6 +349,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       idleMaintenanceGate,
       (wi) => sendCommand(ns, wi, { type: "probe" }, masterLog, dispatchCtx),
       (wi, payload) => sendCommand(ns, wi, payload, masterLog, dispatchCtx),
+      mutationSync,
     )
     dispatchP3Reallocs(ns, dnet, workerPool, masterLog, dispatchCtx)
 
@@ -1928,6 +1930,7 @@ function failWorkerCommand(
   dnet: DnetApi,
   passwords: Map<string, string>,
   sessionArchive: SessionArchive,
+  idleMaintenanceGate?: IdleMaintenanceGate,
 ): void {
   if (isLongRunningWorkerCommand(wi)) {
     masterLog.append("timeout_extend", `${wi.host} command ${wi.lastCommand ?? "?"} (still running)`)
@@ -1938,6 +1941,9 @@ function failWorkerCommand(
   wi.idle = true
   wi.commandDeadlineAt = 0
   masterLog.append("timeout", `${wi.host} command ${wi.lastCommand ?? "?"}`)
+  if (wi.lastCommand === "probe") {
+    idleMaintenanceGate?.markProbed(wi.host)
+  }
   for (const t of targets.values()) {
     if (t.workerHost !== wi.host) continue
     t.workerHost = null
@@ -1967,6 +1973,7 @@ function checkCommandDeadlines(
   dnet: DnetApi,
   passwords: Map<string, string>,
   sessionArchive: SessionArchive,
+  idleMaintenanceGate: IdleMaintenanceGate,
 ): void {
   const now = Date.now()
   for (const wi of workerPool.workers.values()) {
@@ -1985,6 +1992,7 @@ function checkCommandDeadlines(
       dnet,
       passwords,
       sessionArchive,
+      idleMaintenanceGate,
     )
   }
 }
