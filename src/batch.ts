@@ -125,7 +125,7 @@ export async function main(ns: NS) {
     }
 
     const batchDelay = 5
-    const ramThreshold = 0.1
+    const ramThreshold = 1
     const nodeRamLimit = Infinity
 
     const myCores = ns.getServer(nodes[0]).cpuCores
