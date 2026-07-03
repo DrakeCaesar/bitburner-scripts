@@ -90,12 +90,84 @@ export function saveDarknetRegistry(ns: NS, registry: DarknetRegistry): void {
   ns.write(DARKNET_REGISTRY_FILE, JSON.stringify(registry, null, 2), "w")
 }
 
-export function clearRegistryPassword(registry: DarknetRegistry, host: string): void {
+/** In-memory registry with dirty tracking; flush to disk only when changed. */
+export class RegistryStore {
+  private dirty = false
+
+  constructor(readonly data: DarknetRegistry) {}
+
+  markDirty(): void {
+    this.dirty = true
+  }
+
+  flush(ns: NS): void {
+    if (!this.dirty) return
+    saveDarknetRegistry(ns, this.data)
+    this.dirty = false
+  }
+
+  pruneInvalidHosts(dnet: DnetApi): void {
+    if (pruneInvalidRegistryHosts(dnet, this.data).length > 0) {
+      this.dirty = true
+    }
+  }
+
+  clearPassword(host: string): void {
+    if (!clearRegistryPassword(this.data, host)) return
+    this.dirty = true
+  }
+
+  /** Persist a cracked or confirmed password for a host (solver or reconnect). */
+  recordServerPassword(host: string, password: string, timestamp: number): void {
+    if (!recordServerPassword(this.data, host, password, timestamp)) return
+    this.dirty = true
+  }
+
+  applyPasswordIntel(raw: unknown): void {
+    if (!applyPasswordIntel(this.data, raw)) return
+    this.dirty = true
+  }
+}
+
+export function clearRegistryPassword(registry: DarknetRegistry, host: string): boolean {
   const entry = registry.servers[host]
-  if (!entry) return
+  if (!entry) return false
+  if (entry.password == null && entry.timestamp == null && entry.passwordHints.length === 0) {
+    return false
+  }
   entry.password = null
   entry.timestamp = null
   entry.passwordHints = []
+  return true
+}
+
+/** @returns true when registry data changed. */
+export function recordServerPassword(
+  registry: DarknetRegistry,
+  host: string,
+  password: string,
+  timestamp: number,
+): boolean {
+  const server = registry.servers[host]
+  if (server) {
+    if (
+      server.password === password &&
+      server.timestamp != null &&
+      server.timestamp >= timestamp
+    ) {
+      return false
+    }
+    server.password = password
+    server.timestamp = timestamp
+    return true
+  }
+  registry.servers[host] = {
+    hostname: host,
+    password,
+    timestamp,
+    passwordHints: [],
+  }
+  return true
 }
 
 export function pruneInvalidRegistryHosts(dnet: DnetApi, registry: DarknetRegistry): string[] {
@@ -109,14 +181,16 @@ export function pruneInvalidRegistryHosts(dnet: DnetApi, registry: DarknetRegist
   return removed
 }
 
-export function applyPasswordIntel(registry: DarknetRegistry, raw: unknown): void {
+/** @returns true when registry data changed. */
+export function applyPasswordIntel(registry: DarknetRegistry, raw: unknown): boolean {
   const parsed = raw as Record<string, unknown>
-  if (!Array.isArray(parsed.entries)) return
+  if (!Array.isArray(parsed.entries)) return false
   const msgTimestamp = typeof parsed.timestamp === "number" ? parsed.timestamp : Date.now()
   const sourceHost = typeof parsed.sourceHost === "string" ? parsed.sourceHost : "unknown"
   const neighbors: string[] = Array.isArray(parsed.neighbors)
     ? parsed.neighbors.filter((n): n is string => typeof n === "string")
     : []
+  let changed = false
 
   for (const entry of parsed.entries) {
     const e = entry as Record<string, unknown>
@@ -129,18 +203,8 @@ export function applyPasswordIntel(registry: DarknetRegistry, raw: unknown): voi
       if (kind === "explicit") {
         const host = typeof e.host === "string" ? e.host.trim() : null
         if (!host) continue
-        const server = registry.servers[host]
-        if (server) {
-          if (server.timestamp != null && server.timestamp >= msgTimestamp) continue
-          server.password = password
-          server.timestamp = msgTimestamp
-        } else {
-          registry.servers[host] = {
-            hostname: host,
-            password,
-            timestamp: msgTimestamp,
-            passwordHints: [],
-          }
+        if (recordServerPassword(registry, host, password, msgTimestamp)) {
+          changed = true
         }
       } else {
         const dedupKey = `${password}|${sourceHost}`
@@ -154,6 +218,7 @@ export function applyPasswordIntel(registry: DarknetRegistry, raw: unknown): voi
             neighborHosts: neighbors,
             timestamp: msgTimestamp,
           })
+          changed = true
         }
       }
     } else if (kind === "hint") {
@@ -176,9 +241,12 @@ export function applyPasswordIntel(registry: DarknetRegistry, raw: unknown): voi
             passwordHints: [record],
           }
         }
+        changed = true
       }
     }
   }
+
+  return changed
 }
 
 export function syncRegistryPasswords(

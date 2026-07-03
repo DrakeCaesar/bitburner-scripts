@@ -8,9 +8,7 @@ import {
 } from "../files/archive.js"
 import type { CacheOpenRecord } from "../files/types.js"
 import {
-  applyPasswordIntel,
-  type DarknetRegistry,
-  saveDarknetRegistry,
+  type RegistryStore,
 } from "../registry.js"
 
 function parseCacheOpen(row: Record<string, unknown>): CacheOpenRecord | null {
@@ -29,7 +27,7 @@ function parseCacheOpen(row: Record<string, unknown>): CacheOpenRecord | null {
 }
 
 export interface WorkerFileIntelCtx {
-  registry: DarknetRegistry
+  registryStore: RegistryStore
   cacheOpens: CacheOpenRecord[]
   loreStore: DarknetLoreStore
   loreFile: string
@@ -85,8 +83,7 @@ export function applyWorkerFileMessage(ns: NS, raw: unknown, ctx: WorkerFileInte
     }
 
     if (row.type === "passwordIntel") {
-      applyPasswordIntel(ctx.registry, parsed)
-      saveDarknetRegistry(ns, ctx.registry)
+      ctx.registryStore.applyPasswordIntel(parsed)
       return true
     }
   } catch {

@@ -18,9 +18,7 @@ import type { CacheOpenRecord } from "../files/types.js"
 import { applyWorkerFileMessage, createLoreStore, pollLorePort } from "./fileIntel.js"
 import {
   loadDarknetRegistry,
-  clearRegistryPassword,
-  pruneInvalidRegistryHosts,
-  saveDarknetRegistry,
+  RegistryStore,
   syncRegistryPasswords,
   type DarknetRegistry,
 } from "../registry.js"
@@ -176,14 +174,15 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
   const urgentProbeHosts = new Set<string>()
   const idleMaintenanceGate = new IdleMaintenanceGate()
   const solverBridge = createSolverBridge(ns)
-  const registry = loadDarknetRegistry(ns)
-  pruneInvalidRegistryHosts(dnet, registry)
-  saveDarknetRegistry(ns, registry)
+  const registryStore = new RegistryStore(loadDarknetRegistry(ns))
+  registryStore.pruneInvalidHosts(dnet)
+  const registry = registryStore.data
   const loreStore = createLoreStore(ns, DARKNET_LORE_FILE)
   const cacheOpens: CacheOpenRecord[] = []
-  const fileIntelCtx = { registry, cacheOpens, loreStore, loreFile: DARKNET_LORE_FILE }
+  const fileIntelCtx = { registryStore, cacheOpens, loreStore, loreFile: DARKNET_LORE_FILE }
 
   ns.atExit(() => {
+    registryStore.flush(ns)
     shutdownWorkers(ns, workerPool, dnet, registry)
   })
 
@@ -372,6 +371,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
         deadlineArchive,
       ),
     )
+    registryStore.flush(ns)
     await ns.sleep(LOOP_INTERVAL_MS)
   }
 }
@@ -503,9 +503,8 @@ function finishUrgentProbe(
 
 /** Cached password failed at spawn; treat host as unknown and re-auth with live server details. */
 function invalidateKnownPassword(
-  ns: NS,
   dnet: DnetApi,
-  registry: DarknetRegistry,
+  registryStore: RegistryStore,
   passwords: Map<string, string>,
   targets: Map<string, AuthTarget>,
   sessionArchive: SessionArchive,
@@ -513,8 +512,7 @@ function invalidateKnownPassword(
   host: string,
 ): void {
   passwords.delete(host)
-  clearRegistryPassword(registry, host)
-  saveDarknetRegistry(ns, registry)
+  registryStore.clearPassword(host)
   sessionArchive.discardHost(host)
 
   const target = targets.get(host)
@@ -566,7 +564,7 @@ async function drainReplies(
   mutationSync: MutationSync,
   urgentProbeHosts: Set<string>,
   fileIntelCtx: {
-    registry: DarknetRegistry
+    registryStore: RegistryStore
     cacheOpens: CacheOpenRecord[]
     loreStore: DarknetLoreStore
     loreFile: string
@@ -669,9 +667,8 @@ async function drainReplies(
             )
           } else if (!msg.success && msg.message === "auth failed") {
             invalidateKnownPassword(
-              ns,
               dnet,
-              fileIntelCtx.registry,
+              fileIntelCtx.registryStore,
               passwords,
               targets,
               sessionArchive,
@@ -694,6 +691,7 @@ async function drainReplies(
             workerPool,
             urgentProbeHosts,
             solverBridge,
+            fileIntelCtx.registryStore,
           )
           break
         case "heartbleedResult":
@@ -998,6 +996,7 @@ async function onAuthResult(
   workerPool: WorkerPool,
   urgentProbeHosts: Set<string>,
   solverBridge: SolverBridge,
+  registryStore: RegistryStore,
 ): Promise<void> {
   const target = targets.get(msg.target)
   if (!target) return
@@ -1093,7 +1092,9 @@ async function onAuthResult(
   if (msg.success) {
     const password =
       target.modelId === LABYRINTH_MODEL ? msg.feedback ?? msg.guess : msg.guess
+    const solvedAt = Date.now()
     passwords.set(target.host, password)
+    registryStore.recordServerPassword(target.host, password, solvedAt)
     markTargetAuthed(target, dnet, { password, passwords, sessionArchive })
     attemptLog.append({
       host: target.host,
