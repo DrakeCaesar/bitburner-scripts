@@ -1081,7 +1081,14 @@ function deepGreenMarkEliminated(state: DeepGreenState, ch: string): void {
   if (state.eliminated[ch]) return
   state.eliminated[ch] = true
   if (state.padChar === null) state.padChar = ch
-  state.pool = state.pool.filter((c) => c !== ch)
+}
+
+function deepGreenActivePool(state: DeepGreenState): string[] {
+  return state.pool.filter((c) => !state.eliminated[c])
+}
+
+function deepGreenUncountedPoolChars(state: DeepGreenState): string[] {
+  return state.pool.filter((c) => !state.eliminated[c] && state.charCounts[c] === undefined)
 }
 
 function deepGreenRemoveFromPool(state: DeepGreenState, chars: readonly string[]): void {
@@ -1091,8 +1098,9 @@ function deepGreenRemoveFromPool(state: DeepGreenState, chars: readonly string[]
 
 /** Build next batch guess from pool, or null when pool empty / tail fallback needed. */
 function deepGreenBuildBatchGuess(state: DeepGreenState): string | null {
-  if (state.pool.length === 0) return null
-  const testChars = state.pool.slice(0, Math.min(state.length, state.pool.length))
+  const active = deepGreenActivePool(state)
+  if (active.length === 0) return null
+  const testChars = active.slice(0, Math.min(state.length, active.length))
   if (testChars.length < state.length && state.padChar === null) return null
   const guessChars = [...testChars]
   while (guessChars.length < state.length) {
@@ -1102,8 +1110,9 @@ function deepGreenBuildBatchGuess(state: DeepGreenState): string | null {
 }
 
 function deepGreenBatchTestChars(state: DeepGreenState): string[] {
-  const testLen = Math.min(state.pool.length, state.length)
-  return deepGreenUniqueTestChars(state.pool.slice(0, testLen))
+  const active = deepGreenActivePool(state)
+  const testLen = Math.min(active.length, state.length)
+  return deepGreenUniqueTestChars(active.slice(0, testLen))
 }
 
 function deepGreenMaybeEnterPhase2(state: DeepGreenState): boolean {
@@ -1136,11 +1145,16 @@ function deepGreenNextCountGuess(state: DeepGreenState): { guess: string; detail
     }
     state.countBatchIdx++
   }
-  if (state.pool.length > 0) {
+  if (deepGreenUncountedPoolChars(state).length > 0) {
     state.phase1Mode = "tail"
     state.tailIdx = 0
     return deepGreenNextTailGuess(state)
   }
+  return deepGreenFinishPhase1(state)
+}
+
+function deepGreenFinishPhase1(state: DeepGreenState): { guess: string; detail: string } | null {
+  if (state.totalCount < state.length) return null
   deepGreenEnterPhase2(state, deepGreenMultisetChars(state))
   return deepGreenPhase2Guess(state)
 }
@@ -1154,8 +1168,7 @@ function deepGreenNextTailGuess(state: DeepGreenState): { guess: string; detail:
     }
     return { guess: ch.repeat(state.length), detail: `count ${ch}` }
   }
-  deepGreenEnterPhase2(state, deepGreenMultisetChars(state))
-  return deepGreenPhase2Guess(state)
+  return deepGreenFinishPhase1(state)
 }
 
 function deepGreenApplyBatchResult(
@@ -1215,7 +1228,6 @@ function deepGreenMultisetChars(state: DeepGreenState): string[] {
   for (const [c, cnt] of Object.entries(state.charCounts)) {
     for (let i = 0; i < cnt; i++) digits.push(c)
   }
-  while (digits.length < state.length) digits.push(state.charset[0]!)
   return digits.slice(0, state.length)
 }
 
@@ -1278,7 +1290,11 @@ const deepGreen: SolverModule<DeepGreenState> = {
       if (batchGuess !== null) {
         return { guess: batchGuess, detail: "batch" }
       }
-      if (state.pool.length > 0 && state.padChar === null) {
+      if (state.countBatchIdx < state.countBatches.length) {
+        state.phase1Mode = "count"
+        return deepGreenNextCountGuess(state)
+      }
+      if (deepGreenUncountedPoolChars(state).length > 0 && state.padChar === null) {
         state.phase1Mode = "tail"
         state.tailIdx = 0
         return deepGreenNextTailGuess(state)
