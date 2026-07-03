@@ -456,6 +456,19 @@ export async function runSpawnCommand(
   )
 }
 
+function dnetHostDepth(dnet: WorkerDnetApi, host: string): number | null {
+  try {
+    if (dnet.getDepth) {
+      const depth = dnet.getDepth(host)
+      return depth >= 0 ? depth : null
+    }
+    const details = dnet.getServerDetails(host)
+    return details.isOnline ? details.depth : null
+  } catch {
+    return null
+  }
+}
+
 function probeNeighbor(
   ns: NS,
   dnet: WorkerDnetApi,
@@ -465,12 +478,14 @@ function probeNeighbor(
   let isOnline = false
   let isConnected = false
   let hasSession = false
+  let depth: number | null = null
   try {
     const details = dnet.getServerDetails(host)
     detailsKnown = true
     isOnline = details.isOnline
     isConnected = details.isConnectedToCurrentServer
     hasSession = details.hasSession
+    depth = isOnline ? details.depth : null
   } catch {
     return {
       host,
@@ -480,6 +495,7 @@ function probeNeighbor(
       hasSession: false,
       workerRunning: false,
       workerKnown: false,
+      depth: null,
     }
   }
 
@@ -494,6 +510,8 @@ function probeNeighbor(
     }
   }
 
+  if (depth === null) depth = dnetHostDepth(dnet, host)
+
   return {
     host,
     detailsKnown,
@@ -502,6 +520,7 @@ function probeNeighbor(
     hasSession,
     workerRunning,
     workerKnown,
+    depth,
   }
 }
 
@@ -536,6 +555,7 @@ export async function runProbe(
   const workerRam = ns.getScriptRam(WORKER_SCRIPT, workerHost)
   const totalFree = ns.getServerMaxRam(workerHost) - ns.getServerUsedRam(workerHost)
   const blockedRam = dnet.getBlockedRam?.(workerHost) ?? 0
+  const workerDepth = dnetHostDepth(dnet, workerHost)
   ns.writePort(
     replyPort,
     JSON.stringify({
@@ -543,6 +563,7 @@ export async function runProbe(
       workerHost,
       neighbors,
       neighborStatus,
+      workerDepth,
       freeRam: totalFree - workerRam,
       blockedRam,
     }),

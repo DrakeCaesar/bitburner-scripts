@@ -353,6 +353,7 @@ function buildSnapshot(
         pid: w.pid,
         commandPort: w.commandPort,
         idle: w.idle,
+        depth: w.depth,
         neighbors: w.neighbors,
         lastCommand: w.lastCommand,
         lastReply: w.lastReply,
@@ -530,6 +531,12 @@ function drainReplies(
           wi.neighbors = msg.neighbors
           wi.freeRam = msg.freeRam
           wi.blockedRam = msg.blockedRam
+          if (msg.workerDepth != null) wi.depth = msg.workerDepth
+          for (const st of msg.neighborStatus) {
+            if (st.depth == null) continue
+            const neighborWorker = workerPool.workers.get(st.host)
+            if (neighborWorker) neighborWorker.depth = st.depth
+          }
           for (const neighbor of msg.neighbors) {
             noteHost(targets, dnet, neighbor, msg.workerHost, passwords, sessionArchive)
           }

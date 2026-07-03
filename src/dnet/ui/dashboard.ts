@@ -60,6 +60,7 @@ const ATTEMPT_COLUMNS = [
 
 const WORKER_COLUMNS = [
   col("Host", "left", W.host),
+  col("Depth", "right", 5),
   col("Port", "right", 6),
   col("Idle", "center", 4),
   col("Cmd", "left", 16),
@@ -562,6 +563,7 @@ function targetRow(t: AuthTarget): string[] {
 function workerRow(w: WorkerSnapshot): string[] {
   return [
     w.host,
+    w.depth != null ? String(w.depth) : "-",
     String(w.commandPort),
     w.idle ? "Y" : "N",
     w.lastCommand ?? "-",

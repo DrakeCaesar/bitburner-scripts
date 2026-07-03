@@ -56,6 +56,8 @@ export interface NeighborProbeStatus {
   workerRunning: boolean
   /** ns.isRunning succeeded (only checked when connected and hasSession). */
   workerKnown: boolean
+  /** Darknet depth from getDepth / getServerDetails when detailsKnown. */
+  depth: number | null
 }
 
 export type WorkerResponse =
@@ -78,6 +80,8 @@ export type WorkerResponse =
       workerHost: string
       neighbors: string[]
       neighborStatus: readonly NeighborProbeStatus[]
+      /** Probing worker host depth from getDepth / getServerDetails. */
+      workerDepth: number | null
       freeRam: number
       blockedRam: number
     }
@@ -157,6 +161,7 @@ export function parseWorkerResponse(raw: unknown): WorkerResponse | null {
           workerHost: row.workerHost,
           neighbors: Array.isArray(row.neighbors) ? row.neighbors.filter((n): n is string => typeof n === "string") : [],
           neighborStatus: parseNeighborProbeStatus(row.neighborStatus),
+          workerDepth: parseOptionalDepth(row.workerDepth),
           freeRam: typeof row.freeRam === "number" ? row.freeRam : 0,
           blockedRam: typeof row.blockedRam === "number" ? row.blockedRam : 0,
         }
@@ -217,6 +222,10 @@ export function parseWorkerResponse(raw: unknown): WorkerResponse | null {
   }
 }
 
+function parseOptionalDepth(raw: unknown): number | null {
+  return typeof raw === "number" && Number.isFinite(raw) && raw >= 0 ? raw : null
+}
+
 function parseNeighborProbeStatus(raw: unknown): NeighborProbeStatus[] {
   if (!Array.isArray(raw)) return []
   const out: NeighborProbeStatus[] = []
@@ -232,6 +241,7 @@ function parseNeighborProbeStatus(raw: unknown): NeighborProbeStatus[] {
       hasSession: rec.hasSession === true,
       workerRunning: rec.workerRunning === true,
       workerKnown: rec.workerKnown === true,
+      depth: parseOptionalDepth(rec.depth),
     })
   }
   return out

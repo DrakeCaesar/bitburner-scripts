@@ -18,6 +18,8 @@ export interface WorkerDnetApi {
     options?: { peek?: boolean },
   ): Promise<{ success: boolean; logs: string[]; message?: string; code?: number }>
   getServerDetails(host?: string): WorkerServerDetails
+  /** Darknet depth of host (defaults to current server). Returns -1 when unknown. */
+  getDepth?(host?: string): number
   connectToSession?(host: string, password: string): { success: boolean }
   getStasisLinkedServers?(returnByIP?: boolean): string[]
   getBlockedRam?(host?: string): number

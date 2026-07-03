@@ -43,6 +43,8 @@ export interface DnetApi {
   }>
   memoryReallocation?(host?: string): Promise<{ success: boolean }>
   getBlockedRam?(host?: string): number
+  /** Darknet depth of host (defaults to current server). Returns -1 when unknown. */
+  getDepth?(host?: string): number
   setStasisLink?(shouldLink?: boolean): Promise<{ success: boolean; code?: number; message?: string }>
   getStasisLinkLimit?(): number
   getStasisLinkedServers?(returnByIP?: boolean): string[]
@@ -154,6 +156,8 @@ export interface WorkerSnapshot {
   pid: number
   commandPort: number
   idle: boolean
+  /** Last known darknet depth from probe (null if not yet probed). */
+  depth: number | null
   neighbors: string[]
   lastCommand: string | null
   lastReply: string | null

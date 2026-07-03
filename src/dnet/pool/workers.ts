@@ -33,6 +33,8 @@ export interface ManagedWorker {
   commandDeadlineAt: number
   /** Mutation generation this worker last probed for (-1 = not synced). */
   probeSyncMutation: number
+  /** Last known darknet depth from probe (null if not yet probed). */
+  depth: number | null
   freeRam: number
   blockedRam: number
 }
@@ -53,6 +55,7 @@ export class WorkerPool {
       lastActivityAt: Date.now(),
       commandDeadlineAt: 0,
       probeSyncMutation: -1,
+      depth: null,
       freeRam: 0,
       blockedRam: 0,
     }
