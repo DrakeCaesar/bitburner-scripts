@@ -60,3 +60,9 @@ export function attemptLogCommand(
 export function shouldLogAttempt(entry: Pick<AttemptRecord, "kind" | "guess" | "note">): boolean {
   return ATTEMPT_LOG_ENABLED[attemptLogCommand(entry)]
 }
+
+/** Master dispatch rows in the attempts tab use action names that match command types. */
+export function shouldLogMasterAction(action: string): boolean {
+  if (!Object.hasOwn(ATTEMPT_LOG_ENABLED, action)) return true
+  return ATTEMPT_LOG_ENABLED[action as AttemptLogCommand]
+}

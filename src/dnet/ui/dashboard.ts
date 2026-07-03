@@ -8,6 +8,7 @@ import {
 } from "@/libraries/scriptLogUiLayout.js"
 import { MUTATION_PORT } from "../constants.js"
 import { renderLabyrinthOverview } from "./labyrinthMap.js"
+import { shouldLogMasterAction } from "../history/attemptLogFilters.js"
 import type {
   AttemptRecord,
   AuthTarget,
@@ -239,7 +240,9 @@ function buildTimeline(
 ): TimelineEntry[] {
   const rows: TimelineEntry[] = [
     ...attempts.map((record) => ({ source: "attempt" as const, at: record.at, record })),
-    ...actions.map((record) => ({ source: "action" as const, at: record.at, record })),
+    ...actions
+      .filter((record) => shouldLogMasterAction(record.action))
+      .map((record) => ({ source: "action" as const, at: record.at, record })),
   ]
   rows.sort((a, b) => a.at - b.at || timelineSortKey(a) - timelineSortKey(b))
   return rows
