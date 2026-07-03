@@ -9,7 +9,7 @@ import {
   type WorkerCommand,
   parseAuthFeedback,
 } from "./protocol.js"
-import { parseLabradarGoal } from "../solvers/labyrinth/radar.js"
+import { parseLabradarGoal } from "../solvers/labyrinth/parseGoal.js"
 import { WORKER_SCRIPT } from "./constants.js"
 import { copyWorkerFiles } from "./deploy.js"
 import { measureHostRam, priorityMet, runReallocOnce } from "./realloc.js"

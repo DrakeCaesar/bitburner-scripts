@@ -21,14 +21,14 @@ import {
   repairState,
   setLabyrinthPending,
 } from "./labyrinth/explore.js"
-import { buildMapGrid, frontierCells, globalFrontierRemaining, LABRADAR_RANGE, mergeLabradarAscii, sessionDisplayCoords } from "./labyrinth/map.js"
+import { buildMapGrid, frontierCells, globalFrontierRemaining, mergeLabradarAscii, sessionDisplayCoords } from "./labyrinth/map.js"
+import { LABRADAR_RANGE, parseLabradarGoal } from "./labyrinth/parseGoal.js"
 import {
   applyLabradar,
   LABRADAR_GRID_SPACING,
   labradarWorkRemaining,
   markRadarBucket,
   needsLabradar,
-  parseLabradarGoal,
   radarBucketKey,
 } from "./labyrinth/radar.js"
 import type {

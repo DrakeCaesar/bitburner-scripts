@@ -27,6 +27,7 @@ export const WORKER_SCP_FILES = [
   "dnet/worker/deploy.js",
   "dnet/worker/stasisExec.js",
   "dnet/worker/main.js",
+  "dnet/solvers/labyrinth/parseGoal.js",
 ]
 
 export interface ControlMessage {

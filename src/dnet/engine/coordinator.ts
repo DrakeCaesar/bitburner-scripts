@@ -68,7 +68,7 @@ import {
   needsRealloc,
   readHostRam,
 } from "./memoryPlan.js"
-import { copyWorkerFiles } from "../worker/deploy.js"
+import { copyWorkerFiles, describeWorkerExecFailure } from "../worker/deploy.js"
 import { ensureMutationWatcher, MutationSync } from "./mutationSync.js"
 import { bootstrapStasisLinkedWorkers } from "./stasisBootstrap.js"
 import { dispatchLabyrinthStasis } from "./labyrinthStasis.js"
@@ -231,7 +231,9 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
 
     const rootPid = ns.exec(WORKER_SCRIPT, DARKWEB, 1, sessionId, rootPort, "")
     if (rootPid <= 0) {
-      await options.onError?.("Failed to start root worker on darkweb")
+      const detail = describeWorkerExecFailure(ns, DARKWEB, WORKER_SCRIPT)
+      await options.onError?.(`Failed to start root worker on darkweb: ${detail}`)
+      masterLog.append("startup", `root worker exec failed: ${detail}`)
       releaseWorkerPort(ns, portPool, rootPort)
       return
     }

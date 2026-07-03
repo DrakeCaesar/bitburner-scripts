@@ -1,4 +1,5 @@
-import { LABRADAR_RANGE, mergeLabradarAscii, sessionDisplayCoords } from "./map.js"
+import { mergeLabradarAscii, sessionDisplayCoords } from "./map.js"
+import { LABRADAR_RANGE, parseLabradarGoal } from "./parseGoal.js"
 import type { LabyrinthState } from "./types.js"
 
 /**
@@ -16,25 +17,6 @@ export function radarBucketKey(x: number, y: number): string {
   const bx = Math.floor(x / LABRADAR_GRID_SPACING) * LABRADAR_GRID_SPACING
   const by = Math.floor(y / LABRADAR_GRID_SPACING) * LABRADAR_GRID_SPACING
   return `${bx},${by}`
-}
-
-/** Parse goal "X" from labradar message relative to worker position at call time. */
-export function parseLabradarGoal(
-  message: string,
-  originX: number,
-  originY: number,
-): [number, number] | null {
-  const lines = message.split("\n").filter((line) => line.length > 0)
-  if (lines.length === 0) return null
-  const range = LABRADAR_RANGE
-  for (let row = 0; row < lines.length; row++) {
-    const line = lines[row]!
-    for (let col = 0; col < line.length; col++) {
-      if (line[col] !== "X") continue
-      return [originX - range + col, originY - range + row]
-    }
-  }
-  return null
 }
 
 export function needsLabradar(state: LabyrinthState, workerHost: string): boolean {

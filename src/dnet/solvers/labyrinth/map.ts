@@ -1,4 +1,5 @@
 import type { LabyrinthCellWalls, LabyrinthDir, LabyrinthWallSide, LabyrinthWalls } from "./types.js"
+import { LABRADAR_RANGE } from "./parseGoal.js"
 
 export const LABYRINTH_DIRS: Record<LabyrinthDir, [number, number]> = {
   n: [0, -2],
@@ -22,9 +23,6 @@ export const DIR_TO_WALL: Record<LabyrinthDir, LabyrinthWallSide> = {
 }
 
 export const WALL_ORDER: readonly LabyrinthDir[] = ["n", "e", "s", "w"]
-
-/** Half-width of labradar ASCII view (game getSurroundingsVisualized range=3). */
-export const LABRADAR_RANGE = 3
 
 export function cellKey(x: number, y: number): string {
   return `${x},${y}`
