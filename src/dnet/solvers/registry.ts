@@ -29,4 +29,25 @@ export function solverKey(details: ServerDetails): string {
   return `${details.modelId}|${details.passwordFormat}`
 }
 
+/** Registry key for web-worker solver dispatch; null for labyrinth (inline on main thread). */
+export function solverWorkerKey(details: ServerDetails): string | null {
+  if (details.modelId === LABYRINTH_MODEL) return null
+  if (details.modelId === "BellaCuore" && details.passwordFormat === "numeric" && details.data.includes(",")) {
+    return "BellaCuore|numeric|range"
+  }
+  const key = solverKey(details)
+  return SOLVER_MODULES[key] ? key : null
+}
+
+/** Worker key from target metadata when live server details are unavailable. */
+export function solverWorkerKeyForTarget(target: AuthTarget, details: ServerDetails | null): string | null {
+  if (target.modelId === LABYRINTH_MODEL) return null
+  if (details) return solverWorkerKey(details)
+  if (target.modelId === "BellaCuore" && target.format === "numeric") {
+    return "BellaCuore|numeric"
+  }
+  const key = `${target.modelId}|${target.format}`
+  return SOLVER_MODULES[key] ? key : null
+}
+
 export { SOLVER_MODULES }

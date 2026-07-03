@@ -13,7 +13,7 @@ export async function main(ns: NS): Promise<void> {
 
   const showError = async (message: string): Promise<void> => {
     dashboard.log.clearPanels()
-    dashboard.log.tab("overview").text(`ERROR: ${message}`)
+    dashboard.log.tab("overview").text(message.startsWith("ERROR:") ? message : `ERROR: ${message}`)
     await renderTabbedTailLog(ns, dashboard.log)
   }
 

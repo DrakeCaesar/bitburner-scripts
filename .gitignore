@@ -7,6 +7,7 @@
 # Distributable
 /dist/
 /playground/dist/
+/src/dnet/solvers/solverWorker.js
 
 # IPvGO native / WASM engine build artifacts
 ipvgo-engine/build/

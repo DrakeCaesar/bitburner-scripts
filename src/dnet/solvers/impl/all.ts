@@ -2184,6 +2184,7 @@ export const SOLVER_MODULES: Record<string, SolverModule> = {
   'CloudBlare(tm)|numeric': cloudBlare,
   'DeskMemo_3.1|numeric': deskMemo,
   'BellaCuore|numeric': bellaCuoreSingle,
+  'BellaCuore|numeric|range': bellaCuoreRange,
   'OctantVoxel|numeric': octantVoxel,
   'MathML|ASCII': mathML, 'MathML|numeric': mathML, 'MathML|alphabetic': mathML, 'MathML|alphanumeric': mathML,
   'PrimeTime 2|numeric': primeTime2,

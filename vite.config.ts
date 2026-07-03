@@ -1,6 +1,10 @@
 /* eslint-env node */
 import { defineConfig } from "viteburner"
 import { resolve } from "path"
+import { createRequire } from "node:module"
+
+const require = createRequire(import.meta.url)
+const { bundleSolverWorker } = require("./build/bundleSolverWorker.cjs")
 
 /** Game scripts pushed from src/ — do not download back into data/. */
 function isGameScriptFile(file: string): boolean {
@@ -46,8 +50,34 @@ function bitburnerImportPaths() {
   }
 }
 
+/** Emit import-free IIFE for browser Worker blob (like contractWorker). */
+function solverWorkerBundle() {
+  let bundled = bundleSolverWorker()
+
+  return {
+    name: "solver-worker-bundle",
+    enforce: "pre" as const,
+    buildStart() {
+      bundled = bundleSolverWorker()
+    },
+    configureServer(server) {
+      server.watcher.on("change", (file) => {
+        const norm = file.replace(/\\/g, "/")
+        if (!norm.includes("/dnet/solvers/")) return
+        if (norm.endsWith("/solverWorker.js")) return
+        bundled = bundleSolverWorker()
+      })
+    },
+    transform(code: string, id: string) {
+      const norm = id.replace(/\\/g, "/")
+      if (!norm.endsWith("/dnet/solvers/solverWorker.js")) return
+      return { code: bundled, map: null }
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [bitburnerImportPaths()],
+  plugins: [solverWorkerBundle(), bitburnerImportPaths()],
   server: {
     watch: {
       ignored: ["**/ipvgo-engine/**"],

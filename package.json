@@ -17,7 +17,8 @@
   "main": "index.js",
   "types": "./NetscriptDefinitions.d.ts",
   "scripts": {
-    "dev": "node build/dev.cjs",
+    "dev": "node build/bundleSolverWorker.cjs && node build/dev.cjs",
+    "bundle:solver-worker": "node build/bundleSolverWorker.cjs",
     "lint": "prettier --write . && eslint . --fix && sort-package-json",
     "up": "pnpm upgrade && sort-package-json",
     "watch": "pnpm run watch:init && pnpm run watch:all",
@@ -101,7 +102,8 @@
   "eslintIgnore": [
     "node_modules/**",
     "dist/**",
-    "NetscriptDefinitions.d.ts"
+    "NetscriptDefinitions.d.ts",
+    "src/dnet/solvers/solverWorker.js"
   ],
   "devDependencies": {
     "@types/node": "^24.9.1",
@@ -111,6 +113,7 @@
     "chokidar": "^4.0.3",
     "concurrently": "^9.2.1",
     "cspell": "^9.2.2",
+    "esbuild": "^0.28.1",
     "eslint": "^9.38.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-import": "^2.32.0",

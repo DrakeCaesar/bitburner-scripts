@@ -37,7 +37,8 @@ import { AttemptLog } from "../history/attemptLog.js"
 import { MasterActionLog } from "../history/masterActionLog.js"
 import { SessionArchive } from "../history/sessionArchive.js"
 import { PortPool, WorkerPool, type ManagedWorker } from "../pool/workers.js"
-import { lookupSolver, lookupSolverForTarget, solverKey } from "../solvers/registry.js"
+import { lookupSolver, lookupSolverForTarget, solverKey, solverWorkerKey, solverWorkerKeyForTarget } from "../solvers/registry.js"
+import { createSolverBridge, type SolverBridge } from "../solvers/solverBridge.js"
 import type { SolverState } from "../solvers/types.js"
 import type {
   AuthTarget,
@@ -133,6 +134,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
   const mutationSync = new MutationSync()
   const urgentProbeHosts = new Set<string>()
   const idleMaintenanceGate = new IdleMaintenanceGate()
+  const solverBridge = createSolverBridge(ns)
   const registry = loadDarknetRegistry(ns)
   pruneInvalidRegistryHosts(dnet, registry)
   saveDarknetRegistry(ns, registry)
@@ -193,7 +195,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       idleMaintenanceGate,
     }
 
-    drainReplies(
+    await drainReplies(
       ns,
       workerPool,
       portPool,
@@ -210,6 +212,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       sessionArchive,
       dispatchCtx,
       idleMaintenanceGate,
+      solverBridge,
     )
     pollLorePort(ns, LORE_PORT, loreStore, DARKNET_LORE_FILE)
     syncRegistryPasswords(dnet, registry, passwords, targets, tryConnect)
@@ -231,7 +234,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       masterLog.append("sync", `mutation ${ts} (background probes)`)
     })
 
-    processQueuedTargets(targets, attemptLog, sessionArchive, dnet, passwords)
+    await processQueuedTargets(targets, attemptLog, sessionArchive, dnet, passwords, solverBridge)
     scheduleRetries(targets, attemptLog)
     // Dispatch priority: ... -> labyrinth -> idle probe sweep -> migrate -> P3
     dispatchUrgentProbes(ns, workerPool, urgentProbeHosts, masterLog, dispatchCtx)
@@ -258,7 +261,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       masterLog,
       dispatchCtx,
     )
-    dispatchGuesses(
+    await dispatchGuesses(
       ns,
       workerPool,
       targets,
@@ -268,6 +271,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       sessionArchive,
       masterLog,
       dispatchCtx,
+      solverBridge,
     )
     dispatchP1Reallocs(
       ns,
@@ -499,7 +503,7 @@ function invalidateKnownPassword(
   })
 }
 
-function drainReplies(
+async function drainReplies(
   ns: NS,
   workerPool: WorkerPool,
   portPool: PortPool,
@@ -521,7 +525,8 @@ function drainReplies(
   sessionArchive: SessionArchive,
   dispatchCtx: WorkerDispatchCtx,
   idleMaintenanceGate: IdleMaintenanceGate,
-): void {
+  solverBridge: SolverBridge,
+): Promise<void> {
   for (const wi of [...workerPool.workers.values()]) {
     if (wi.commandPort <= 0) continue
     while (ns.peek(wi.replyPort) !== "NULL PORT DATA") {
@@ -620,7 +625,7 @@ function drainReplies(
         case "authResult":
           wi.idle = true
           wi.commandDeadlineAt = 0
-          onAuthResult(
+          await onAuthResult(
             msg,
             targets,
             passwords,
@@ -629,12 +634,13 @@ function drainReplies(
             dnet,
             workerPool,
             urgentProbeHosts,
+            solverBridge,
           )
           break
         case "heartbleedResult":
           wi.idle = true
           wi.commandDeadlineAt = 0
-          onHeartbleedResult(msg, targets, attemptLog, dnet)
+          await onHeartbleedResult(msg, targets, attemptLog, dnet, solverBridge)
           break
         case "reallocResult":
           wi.idle = true
@@ -754,13 +760,14 @@ function noteHost(
   }
 }
 
-function processQueuedTargets(
+async function processQueuedTargets(
   targets: Map<string, AuthTarget>,
   attemptLog: AttemptLog,
   sessionArchive: SessionArchive,
   dnet: DnetApi,
   passwords: Map<string, string>,
-): void {
+  solverBridge: SolverBridge,
+): Promise<void> {
   for (const target of targets.values()) {
     if (target.status !== "queued") continue
     const details = getServerDetails(dnet, target.host)
@@ -772,18 +779,19 @@ function processQueuedTargets(
       markTargetAuthed(target, dnet, { passwords, sessionArchive })
       continue
     }
-    startAuthSession(target, details, attemptLog, sessionArchive, dnet, passwords)
+    await startAuthSession(target, details, attemptLog, sessionArchive, dnet, passwords, solverBridge)
   }
 }
 
-function startAuthSession(
+async function startAuthSession(
   target: AuthTarget,
   details: ServerDetails,
   log: AttemptLog,
   sessionArchive: SessionArchive,
   dnet: DnetApi,
   passwords: Map<string, string>,
-): void {
+  solverBridge: SolverBridge,
+): Promise<void> {
   if (isTargetAuthed(target, dnet, passwords)) {
     markTargetAuthed(target, dnet, { passwords, sessionArchive })
     return
@@ -805,7 +813,19 @@ function startAuthSession(
   }
 
   target.session += 1
-  const state = solver.init(details)
+  const workerKey = solverWorkerKey(details)
+  let state: SolverState
+  if (solverBridge.usesWorkerSolver(workerKey)) {
+    state = await solverBridge.init(workerKey, details, {
+      host: target.host,
+      modelId: target.modelId,
+      session: target.session,
+    })
+  } else if (details.modelId === LABYRINTH_MODEL) {
+    state = solverBridge.initInline(details.modelId, details)
+  } else {
+    state = solver.init(details)
+  }
   target.solverId = (state as SolverState).type
   target.solverState = state
   target.status = "waiting_worker"
@@ -894,7 +914,7 @@ function onLabreportResult(
   target.status = "active"
 }
 
-function onAuthResult(
+async function onAuthResult(
   msg: Extract<WorkerResponse, { type: "authResult" }>,
   targets: Map<string, AuthTarget>,
   passwords: Map<string, string>,
@@ -903,7 +923,8 @@ function onAuthResult(
   dnet: DnetApi,
   workerPool: WorkerPool,
   urgentProbeHosts: Set<string>,
-): void {
+  solverBridge: SolverBridge,
+): Promise<void> {
   const target = targets.get(msg.target)
   if (!target) return
 
@@ -1031,12 +1052,33 @@ function onAuthResult(
   const ctx = details
     ? { target: target.host, details, workerHost: msg.workerHost || undefined }
     : undefined
-  target.solverState = solver.applyResult(
-    target.solverState as SolverState,
-    msg.guess,
-    { success: false, feedback: msg.feedback, message: msg.message },
-    ctx,
-  )
+  const failResult = { success: false, feedback: msg.feedback, message: msg.message }
+  const workerKey = solverWorkerKeyForTarget(target, details)
+  if (solverBridge.usesWorkerSolver(workerKey)) {
+    target.solverState = await solverBridge.applyResult(
+      workerKey,
+      target.solverState as SolverState,
+      msg.guess,
+      failResult,
+      ctx,
+      {
+        host: target.host,
+        modelId: target.modelId,
+        session: target.session,
+        solverId: target.solverId ?? undefined,
+        feedback: msg.feedback,
+      },
+    )
+  } else {
+    target.solverState = solverBridge.applyResultInline(
+      workerKey,
+      target.modelId,
+      target.solverState as SolverState,
+      msg.guess,
+      failResult,
+      ctx,
+    )
+  }
 
   attemptLog.append({
     host: target.host,
@@ -1055,12 +1097,13 @@ function onAuthResult(
   target.status = "active"
 }
 
-function onHeartbleedResult(
+async function onHeartbleedResult(
   msg: Extract<WorkerResponse, { type: "heartbleedResult" }>,
   targets: Map<string, AuthTarget>,
   attemptLog: AttemptLog,
   dnet: DnetApi,
-): void {
+  solverBridge: SolverBridge,
+): Promise<void> {
   const target = targets.get(msg.target)
   if (!target) return
 
@@ -1075,8 +1118,29 @@ function onHeartbleedResult(
 
   const details = getServerDetails(dnet, target.host)
   const solver = details ? lookupSolver(details) : null
+  const workerKey = solverWorkerKeyForTarget(target, details)
   if (solver?.applyHeartbleed && target.solverState != null) {
-    target.solverState = solver.applyHeartbleed(target.solverState as SolverState, msg.logEntries)
+    if (solverBridge.usesWorkerSolver(workerKey)) {
+      target.solverState = await solverBridge.applyHeartbleed(
+        workerKey,
+        target.solverState as SolverState,
+        msg.logEntries,
+        {
+          host: target.host,
+          modelId: target.modelId,
+          session: target.session,
+          solverId: target.solverId ?? undefined,
+        },
+      )
+    } else if (workerKey) {
+      target.solverState = solverBridge.applyHeartbleedInline(
+        workerKey,
+        target.solverState as SolverState,
+        msg.logEntries,
+      )
+    } else {
+      target.solverState = solver.applyHeartbleed(target.solverState as SolverState, msg.logEntries)
+    }
     attemptLog.append({
       host: target.host,
       session: target.session,
@@ -1282,7 +1346,7 @@ function dispatchP1Reallocs(
   }
 }
 
-function dispatchGuesses(
+async function dispatchGuesses(
   ns: NS,
   workerPool: WorkerPool,
   targets: Map<string, AuthTarget>,
@@ -1292,7 +1356,8 @@ function dispatchGuesses(
   sessionArchive: SessionArchive,
   masterLog: MasterActionLog,
   ctx: WorkerDispatchCtx,
-): void {
+  solverBridge: SolverBridge,
+): Promise<void> {
   type Candidate = { target: AuthTarget; details: ServerDetails }
   const candidates: Candidate[] = []
 
@@ -1334,7 +1399,6 @@ function dispatchGuesses(
   const batchKeys = sorted.map(({ target }) => target.host)
 
   for (const { target, details } of sorted) {
-    const solver = lookupSolver(details)!
     const wi = pickLeastBlockingWorker(
       target.host,
       authWorkersFor(target.host),
@@ -1346,7 +1410,21 @@ function dispatchGuesses(
       continue
     }
 
-    const next = solver.nextGuess(target.solverState as SolverState, { target: target.host, details })
+    const workerKey = solverWorkerKey(details)
+    if (!solverBridge.usesWorkerSolver(workerKey)) continue
+
+    const { state, guess: next } = await solverBridge.nextGuess(
+      workerKey,
+      target.solverState as SolverState,
+      { target: target.host, details },
+      {
+        host: target.host,
+        modelId: target.modelId,
+        session: target.session,
+        solverId: target.solverId ?? undefined,
+      },
+    )
+    target.solverState = state
     if (!next) {
       if (target.lastError === "neighbor link lost") {
         if (markBlockedOnWorker(target, dnet, passwords, "neighbor link lost", sessionArchive)) continue
