@@ -23,6 +23,9 @@ export const DIR_TO_WALL: Record<LabyrinthDir, LabyrinthWallSide> = {
 
 export const WALL_ORDER: readonly LabyrinthDir[] = ["n", "e", "s", "w"]
 
+/** Half-width of labradar ASCII view (game getSurroundingsVisualized range=3). */
+export const LABRADAR_RANGE = 3
+
 export function cellKey(x: number, y: number): string {
   return `${x},${y}`
 }
@@ -59,6 +62,105 @@ function prunePropagationStubs(map: Record<string, LabyrinthCellWalls>): void {
     }
     delete map[key]
   }
+}
+
+/** Game maze wall tile in labradar ASCII (Darknet labyrinth.ts WALL). */
+const LAB_ASCII_WALL = "\u2588"
+
+function labradarCharPassable(ch: string | undefined): boolean | null {
+  if (ch == null || ch.length === 0) return null
+  if (ch === " " || ch === "@" || ch === "X") return true
+  if (ch === LAB_ASCII_WALL || ch === "#") return false
+  return null
+}
+
+function labradarTileAt(
+  lines: readonly string[],
+  originX: number,
+  originY: number,
+  gx: number,
+  gy: number,
+): string | undefined {
+  const col = gx - originX + LABRADAR_RANGE
+  const row = gy - originY + LABRADAR_RANGE
+  if (row < 0 || col < 0 || row >= lines.length) return undefined
+  const line = lines[row]!
+  if (col >= line.length) return undefined
+  return line[col]!
+}
+
+function sameRoomParity(x: number, y: number, originX: number, originY: number): boolean {
+  return (x & 1) === (originX & 1) && (y & 1) === (originY & 1)
+}
+
+function resolveRadarWall(observed: boolean | null, existing: boolean | null | undefined): boolean {
+  if (observed != null) return observed
+  if (existing != null) return existing
+  return false
+}
+
+/**
+ * Merge a 7x7 labradar ASCII view into the shared map (rooms + corridor passages).
+ * Uses the same tile layout as getSurroundingsVisualized / getLocationStatus in game source.
+ */
+export function mergeLabradarAscii(
+  map: Record<string, LabyrinthCellWalls>,
+  originX: number,
+  originY: number,
+  message: string,
+): number {
+  const lines = message.split("\n").filter((line) => line.length > 0)
+  if (lines.length === 0) return 0
+
+  let merged = 0
+  const minX = originX - LABRADAR_RANGE
+  const maxX = originX + LABRADAR_RANGE
+  const minY = originY - LABRADAR_RANGE
+  const maxY = originY + LABRADAR_RANGE
+
+  for (let ry = minY; ry <= maxY; ry++) {
+    for (let rx = minX; rx <= maxX; rx++) {
+      if (!sameRoomParity(rx, ry, originX, originY)) continue
+
+      const center = labradarTileAt(lines, originX, originY, rx, ry)
+      if (labradarCharPassable(center) !== true) continue
+
+      const pick = (gx: number, gy: number): boolean | null =>
+        labradarCharPassable(labradarTileAt(lines, originX, originY, gx, gy))
+
+      const northObs = pick(rx, ry - 1)
+      const southObs = pick(rx, ry + 1)
+      const eastObs = pick(rx + 1, ry)
+      const westObs = pick(rx - 1, ry)
+
+      if (northObs == null && southObs == null && eastObs == null && westObs == null) continue
+
+      const existing = map[cellKey(rx, ry)]
+      const walls: LabyrinthWalls = {
+        north: resolveRadarWall(northObs, existing?.north),
+        east: resolveRadarWall(eastObs, existing?.east),
+        south: resolveRadarWall(southObs, existing?.south),
+        west: resolveRadarWall(westObs, existing?.west),
+      }
+
+      mergeCell(map, rx, ry, walls)
+      merged++
+
+      const propagate: [boolean, number, number, LabyrinthWallSide][] = [
+        [walls.north, 0, -2, "south"],
+        [walls.east, 2, 0, "west"],
+        [walls.south, 0, 2, "north"],
+        [walls.west, -2, 0, "east"],
+      ]
+      for (const [open, dx, dy, opposite] of propagate) {
+        if (!open) continue
+        ensureCell(map, cellKey(rx + dx, ry + dy))[opposite] = true
+      }
+    }
+  }
+
+  prunePropagationStubs(map)
+  return merged
 }
 
 /** Merge labreport walls into the shared map and propagate to adjacent cells. */
@@ -422,7 +524,7 @@ export function ensureMap(state: {
   return state.map
 }
 
-export type MapGridChar = "wall" | "open" | "unknown" | "worker" | "frontier" | "claimed"
+export type MapGridChar = "wall" | "open" | "unknown" | "worker" | "frontier" | "claimed" | "goal"
 
 export interface BuildMapGridOptions {
   /** Unexplored logical cell keys on the exploration frontier. */
@@ -431,6 +533,8 @@ export interface BuildMapGridOptions {
   claims?: Record<string, string>
   /** Stable host order for A-Z letter assignment (defaults to sorted session keys). */
   workerHostOrder?: readonly string[]
+  /** Goal cell from labradar (rendered as X). */
+  goal?: [number, number] | null
 }
 
 export interface MapPathSegment {
@@ -474,6 +578,9 @@ export function buildMapGrid(
 
   const frontierSet = new Set(options?.frontier ?? [])
   for (const k of frontierSet) known.add(k)
+  if (options?.goal != null) {
+    known.add(cellKey(options.goal[0], options.goal[1]))
+  }
 
   const workerMarkers = new Map<string, string>()
   const claimTargets = new Set<string>()
@@ -551,6 +658,12 @@ export function buildMapGrid(
     const explored = map[k]?.seen === true
     if (workerMarkers.has(k)) {
       cells[gy]![gx] = "worker"
+    } else if (
+      options?.goal != null &&
+      x === options.goal[0] &&
+      y === options.goal[1]
+    ) {
+      cells[gy]![gx] = "goal"
     } else if (!explored && claimTargets.has(k)) {
       cells[gy]![gx] = "claimed"
     } else if (!explored && frontierSet.has(k)) {

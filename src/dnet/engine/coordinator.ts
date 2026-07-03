@@ -75,7 +75,7 @@ import { dispatchLabyrinthStasis } from "./labyrinthStasis.js"
 import { dispatchIdleMaintenance, IdleMaintenanceGate } from "./idleMaintenance.js"
 import { handleStaleTopologyFailure } from "./topologyFailure.js"
 import { dispatchLabyrinth, snapshotLabyrinths } from "./labyrinthDispatch.js"
-import { applyLabreport, clearLabyrinthPending, labyrinthPendingMatches, pruneLabyrinthWorker, type LabyrinthState } from "../solvers/labyrinth.js"
+import { applyLabreport, applyLabradar, clearLabyrinthPending, labyrinthPendingMatches, markRadarBucket, pruneLabyrinthWorker, type LabyrinthState } from "../solvers/labyrinth.js"
 import { clearDnetGlobalPorts, clearWorkerPortPair } from "./ports.js"
 import { killAllWorkers, killAllWorkersSync } from "./workerLifecycle.js"
 import {
@@ -777,6 +777,12 @@ async function drainReplies(
           wi.commandDeadlineAt = 0
           onLabreportResult(msg, targets, attemptLog)
           break
+        case "labradarResult":
+          completeTrackedCommand(dispatchCtx, msg.workerHost)
+          wi.idle = true
+          wi.commandDeadlineAt = 0
+          onLabradarResult(msg, targets, attemptLog)
+          break
         case "restoreSessionResult":
           completeTrackedCommand(dispatchCtx, msg.workerHost)
           wi.idle = true
@@ -1073,6 +1079,80 @@ function onLabreportResult(
     modelId: target.modelId,
     workerHost: msg.workerHost,
     note: `labreport @ ${msg.coords.join(",")}`,
+    solverState: cloneState(target.solverState),
+  })
+
+  target.status = "active"
+}
+
+function onLabradarResult(
+  msg: Extract<WorkerResponse, { type: "labradarResult" }>,
+  targets: Map<string, AuthTarget>,
+  attemptLog: AttemptLog,
+): void {
+  const target = targets.get(msg.target)
+  if (!target) return
+
+  const lab =
+    target.solverState != null && typeof target.solverState === "object"
+      ? (target.solverState as LabyrinthState)
+      : null
+
+  if (lab?.type === "labyrinth") {
+    const pendingMatch = labyrinthPendingMatches(lab, msg.workerHost, "labradar")
+    if (pendingMatch) {
+      clearLabyrinthPending(lab, msg.workerHost)
+    } else if (!msg.success) {
+      attemptLog.append({
+        host: target.host,
+        session: target.session,
+        kind: "note",
+        solverId: msg.solverId,
+        modelId: target.modelId,
+        workerHost: msg.workerHost,
+        guess: "labradar",
+        note: "stale labradar ignored",
+      })
+      return
+    }
+  }
+
+  if (target.workerHost === msg.workerHost && target.pendingGuess === "labradar") {
+    target.pendingGuess = null
+    target.pendingDetail = null
+    target.workerHost = null
+  }
+
+  const origin = msg.origin
+  let mergedCells = 0
+  if (lab?.type === "labyrinth" && origin) {
+    if (msg.success && msg.message) {
+      mergedCells = applyLabradar(lab, msg.workerHost, msg.message, origin)
+    } else {
+      markRadarBucket(lab, origin[0], origin[1])
+    }
+  }
+
+  const goalNote =
+    lab?.goal != null
+      ? `goal @ ${lab.goal.join(",")}`
+      : msg.success
+        ? mergedCells > 0
+          ? `labradar merged ${mergedCells} cells`
+          : "labradar (no goal in range)"
+        : "labradar failed"
+
+  attemptLog.append({
+    host: target.host,
+    session: target.session,
+    kind: "note",
+    solverId: msg.solverId,
+    modelId: target.modelId,
+    workerHost: msg.workerHost,
+    guess: "labradar",
+    success: msg.success,
+    note: goalNote,
+    message: msg.message,
     solverState: cloneState(target.solverState),
   })
 
@@ -1822,6 +1902,7 @@ function commandTarget(payload: WorkerCommandPayload): string | undefined {
     case "auth":
     case "heartbleed":
     case "labreport":
+    case "labradar":
     case "spawn":
     case "migrate":
       return payload.target
@@ -1855,6 +1936,8 @@ function commandDetail(host: string, payload: WorkerCommandPayload): string {
     case "heartbleed":
       return `${host} -> ${payload.target}`
     case "labreport":
+      return `${host} -> ${payload.target}`
+    case "labradar":
       return `${host} -> ${payload.target}`
     case "restoreSession":
       return `${host} -> ${payload.target}`
@@ -2074,7 +2157,7 @@ function reconcileProbeStatuses(
 function isLongRunningWorkerCommand(wi: ManagedWorker): boolean {
   const cmd = wi.lastCommand ?? ""
   return (
-    cmd.startsWith("auth:") || cmd.startsWith("heartbleed:") || cmd.startsWith("labreport:")
+    cmd.startsWith("auth:") || cmd.startsWith("heartbleed:") || cmd.startsWith("labreport:") || cmd.startsWith("labradar:")
   )
 }
 

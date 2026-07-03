@@ -19,6 +19,7 @@ import {
   runRestoreSessionCommand,
   runSpawnCommand,
   runLabreportCommand,
+  runLabradarCommand,
 } from "./execute.js"
 import { runStasisCommand } from "./stasisExec.js"
 
@@ -127,6 +128,8 @@ export async function main(ns: NS): Promise<void> {
       await runStasisCommand(ns, dnet, replyPort)
     } else if (cmd.type === "labreport") {
       await runLabreportCommand(ns, dnet, cmd, replyPort)
+    } else if (cmd.type === "labradar") {
+      await runLabradarCommand(ns, dnet, cmd, replyPort)
     } else if (cmd.type === "restoreSession") {
       await ensureSelfAuth(dnet, hostname, selfPassword)
       await runRestoreSessionCommand(ns, dnet, cmd, replyPort)

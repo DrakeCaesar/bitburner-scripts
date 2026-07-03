@@ -10,6 +10,7 @@ export type AttemptLogCommand =
   | "migrate"
   | "stasis"
   | "labreport"
+  | "labradar"
   | "exit"
   | "session"
   | "note"
@@ -27,6 +28,7 @@ export const ATTEMPT_LOG_ENABLED: Record<AttemptLogCommand, boolean> = {
   migrate: true,
   stasis: true,
   labreport: true,
+  labradar: true,
   exit: true,
   session: true,
   note: true,
@@ -44,12 +46,13 @@ export function attemptLogCommand(
       return "heartbleed"
     case "guess_dispatch":
     case "guess_result":
-      return entry.guess === "labreport" ? "labreport" : "auth"
+      return entry.guess === "labreport" ? "labreport" : entry.guess === "labradar" ? "labradar" : "auth"
     case "session_start":
     case "session_end":
       return "session"
     case "note":
       if (entry.guess === "labreport") return "labreport"
+      if (entry.guess === "labradar") return "labradar"
       if (entry.note?.startsWith("realloc ")) return "realloc"
       if (entry.note?.startsWith("migrate")) return "migrate"
       if (entry.note === "stasis linked" || entry.note === "stasis") return "stasis"

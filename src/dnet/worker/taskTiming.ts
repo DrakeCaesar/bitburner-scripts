@@ -75,6 +75,11 @@ export function estimateLabreportMs(ns: NS, details: FormulasServerDetails): num
   return estimateAuthMs(ns, details, "")
 }
 
+/** Wall-clock ms for one dnet.labradar call (same auth delay as labreport in game source). */
+export function estimateLabradarMs(ns: NS, details: FormulasServerDetails): number {
+  return estimateLabreportMs(ns, details)
+}
+
 /** Wall-clock ms for one dnet.memoryReallocation call (charisma-scaled in game source). */
 export function estimateReallocMs(ns: NS): number {
   const charisma = ns.getPlayer().skills.charisma

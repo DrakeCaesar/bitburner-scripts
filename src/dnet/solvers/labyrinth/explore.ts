@@ -332,7 +332,7 @@ export function applyMoveResult(
 
 export const labyrinthSolver: SolverModule<LabyrinthState> = {
   init(_details: ServerDetails): LabyrinthState {
-    return { type: "labyrinth", map: {}, sessions: {}, pending: {}, claims: {} }
+    return { type: "labyrinth", map: {}, sessions: {}, pending: {}, claims: {}, goal: null, radarBuckets: {} }
   },
 
   nextGuess(state, ctx): GuessRequest | null {

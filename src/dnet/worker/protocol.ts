@@ -59,6 +59,7 @@ export type WorkerCommandPayload =
   | { type: "migrate"; target: string }
   | { type: "stasis" }
   | { type: "labreport"; target: string; solverId: string }
+  | { type: "labradar"; target: string; solverId: string; origin: [number, number] }
   | { type: "restoreSession"; target: string; password?: string }
   | { type: "exit" }
 
@@ -143,6 +144,16 @@ export type WorkerResponse =
       east?: boolean
       south?: boolean
       west?: boolean
+    }
+  | {
+      type: "labradarResult"
+      target: string
+      solverId: string
+      workerHost: string
+      success: boolean
+      message?: string
+      origin?: [number, number]
+      goal?: [number, number] | null
     }
   | {
       type: "restoreSessionResult"
@@ -276,6 +287,35 @@ export function parseWorkerResponse(raw: unknown): WorkerResponse | null {
           west: row.west === true,
         }
       }
+      case "labradarResult": {
+        if (typeof row.target !== "string" || typeof row.solverId !== "string") return null
+        const workerHost = typeof row.workerHost === "string" ? row.workerHost : ""
+        const message = typeof row.message === "string" ? row.message : undefined
+        let origin: [number, number] | undefined
+        if (Array.isArray(row.origin) && row.origin.length >= 2) {
+          const ox = Number(row.origin[0])
+          const oy = Number(row.origin[1])
+          if (Number.isFinite(ox) && Number.isFinite(oy)) origin = [ox, oy]
+        }
+        let goal: [number, number] | null | undefined
+        if (row.goal === null) {
+          goal = null
+        } else if (Array.isArray(row.goal) && row.goal.length >= 2) {
+          const gx = Number(row.goal[0])
+          const gy = Number(row.goal[1])
+          if (Number.isFinite(gx) && Number.isFinite(gy)) goal = [gx, gy]
+        }
+        return {
+          type: "labradarResult",
+          target: row.target,
+          solverId: row.solverId,
+          workerHost,
+          success: row.success === true,
+          message,
+          origin,
+          goal,
+        }
+      }
       case "restoreSessionResult":
         if (typeof row.workerHost !== "string" || typeof row.target !== "string") return null
         return {
@@ -336,6 +376,8 @@ export function formatCommand(cmd: WorkerCommandPayload): string {
       return "stasis"
     case "labreport":
       return `labreport:${cmd.target}`
+    case "labradar":
+      return `labradar:${cmd.target}`
     case "restoreSession":
       return `restoreSession:${cmd.target}`
     case "exit":
@@ -349,6 +391,7 @@ export function usesWorkerDeadlines(cmd: WorkerCommandPayload): boolean {
     cmd.type === "heartbleed" ||
     cmd.type === "realloc" ||
     cmd.type === "labreport" ||
+    cmd.type === "labradar" ||
     cmd.type === "migrate"
   )
 }

@@ -33,6 +33,7 @@ const CELL_STYLES: Record<MapGridChar, { bg: string; fg: string; char: string }>
   worker: { bg: "#1565c0", fg: "#fff", char: "@" },
   frontier: { bg: "#1b3a1b", fg: "#8bc34a", char: "?" },
   claimed: { bg: "#3e2723", fg: "#ffcc80", char: "!" },
+  goal: { bg: "#f9a825", fg: "#000", char: "X" },
 }
 
 export interface LabyrinthOverviewContext {
@@ -206,6 +207,10 @@ function renderMapGrid(
             letter = w === "*" ? "*" : w
             bg = letterToColor.get(w) ?? CELL_STYLES.worker.bg
             fg = "#000"
+          } else if (kind === "goal") {
+            letter = "X"
+            bg = CELL_STYLES.goal.bg
+            fg = CELL_STYLES.goal.fg
           }
         }
 
@@ -315,6 +320,7 @@ function renderStats(
     `claims ${claimCount}`,
     `pending ${pendingCount}`,
     `explorers ${explorers}`,
+    state.goal != null ? `goal ${state.goal.join(",")}` : "goal ?",
   ]
 
   return React.createElement(
@@ -351,6 +357,7 @@ function renderLegend(React: ReturnType<typeof getReact>, workerRows: WorkerRow[
     "space corridor",
     "? unknown / open frontier",
     "! claim target (no letter)",
+    "X goal (labradar)",
     "A-Z explorer at current position",
     "colored - or | route to claim",
   ]
@@ -502,6 +509,7 @@ function buildLabyrinthMapReact(
     frontier,
     claims: state.claims ?? {},
     workerHostOrder,
+    goal: state.goal ?? null,
   })
 
   if (!grid) {
@@ -554,6 +562,7 @@ export function renderLabyrinthOverview(
             frontier: frontierList,
             claims: state.claims ?? {},
             workerHostOrder,
+            goal: state.goal ?? null,
           })
         : null
     const mapH = grid ? grid.height * 14 + 16 : 0

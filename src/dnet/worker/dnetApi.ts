@@ -36,4 +36,5 @@ export interface WorkerDnetApi {
     west: boolean
     message?: string
   }>
+  labradar?(): Promise<{ success: boolean; message?: string }>
 }

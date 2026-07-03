@@ -1,7 +1,7 @@
 import { NS } from "@ns"
 import type { WorkerDnetApi } from "./dnetApi.js"
 import type { FormulasServerDetails } from "./taskTiming.js"
-import { estimateAuthMs, estimateHeartbleedMs, estimateLabreportMs, estimateMigrateMs, estimateReallocMs } from "./taskTiming.js"
+import { estimateAuthMs, estimateHeartbleedMs, estimateLabradarMs, estimateLabreportMs, estimateMigrateMs, estimateReallocMs } from "./taskTiming.js"
 import {
   NOT_NEIGHBOR_MESSAGE,
   noAuthFeedbackMessage,
@@ -9,6 +9,7 @@ import {
   type WorkerCommand,
   parseAuthFeedback,
 } from "./protocol.js"
+import { parseLabradarGoal } from "../solvers/labyrinth/radar.js"
 import { WORKER_SCRIPT } from "./constants.js"
 import { copyWorkerFiles } from "./deploy.js"
 import { measureHostRam, priorityMet, runReallocOnce } from "./realloc.js"
@@ -276,6 +277,69 @@ export async function runLabreportCommand(
     })
   } catch {
     writeFailure("labreport error")
+  }
+}
+
+export async function runLabradarCommand(
+  ns: NS,
+  dnet: WorkerDnetApi,
+  cmd: Extract<WorkerCommand, { type: "labradar" }>,
+  replyPort: number,
+): Promise<void> {
+  const workerHost = ns.getHostname()
+  const [originX, originY] = cmd.origin
+
+  const writeResult = (payload: {
+    success: boolean
+    message?: string
+    goal?: [number, number] | null
+  }): void => {
+    ns.writePort(
+      replyPort,
+      JSON.stringify({
+        type: "labradarResult",
+        target: cmd.target,
+        solverId: cmd.solverId,
+        workerHost,
+        origin: [originX, originY] as [number, number],
+        ...payload,
+      }),
+    )
+  }
+
+  if (!dnet.labradar) {
+    writeResult({ success: false, message: "labradar API unavailable" })
+    return
+  }
+
+  if (!isNeighbor(dnet, cmd.target)) {
+    writeResult({ success: false, message: NOT_NEIGHBOR_MESSAGE })
+    return
+  }
+
+  const details = readFormulasDetails(dnet, cmd.target)
+  if (details) {
+    ns.writePort(
+      replyPort,
+      JSON.stringify({
+        type: "deadline",
+        workerHost,
+        commandType: "labradar",
+        deadlineAt: Date.now() + estimateLabradarMs(ns, details),
+      }),
+    )
+  }
+
+  try {
+    const result = await dnet.labradar()
+    if (!result.success || typeof result.message !== "string") {
+      writeResult({ success: false, message: result.message ?? "labradar failed", goal: null })
+      return
+    }
+    const goal = parseLabradarGoal(result.message, originX, originY)
+    writeResult({ success: true, message: result.message, goal })
+  } catch {
+    writeResult({ success: false, message: "labradar error", goal: null })
   }
 }
 

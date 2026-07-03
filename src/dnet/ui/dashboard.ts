@@ -367,6 +367,8 @@ function parseCommandHosts(action: string, detail: string | undefined): { actor:
       return { actor, remote: rest }
     case "labreport":
       return { actor, remote: rest }
+    case "labradar":
+      return { actor, remote: rest }
     default:
       return { actor, remote: rest }
   }

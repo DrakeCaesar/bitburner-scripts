@@ -37,6 +37,10 @@ export interface LabyrinthState extends SolverState {
   pending: Record<string, string>
   /** unexplored cell key -> workerHost exploring that frontier cell. */
   claims: Record<string, string>
+  /** Goal cell from labradar "X" (shared across workers). */
+  goal?: [number, number] | null
+  /** Radar bucket keys already scanned while goal was unknown. */
+  radarBuckets?: Record<string, true>
 }
 
 export interface LabreportPayload {

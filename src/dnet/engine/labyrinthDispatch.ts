@@ -5,6 +5,7 @@ import {
   buildLabyrinthSnapshots,
   ensureWorkerSession,
   labyrinthWorkerPending,
+  needsLabradar,
   needsLabreport,
   planMove,
   pruneLabyrinthWorkers,
@@ -149,6 +150,37 @@ export function dispatchLabyrinth(deps: LabyrinthDispatchDeps): void {
           workerHost,
           guess: "labreport",
           detail: `labreport@${workerHost}`,
+          solverState: cloneState(lab),
+        })
+        continue
+      }
+
+      if (needsLabradar(lab, workerHost) && sess?.coords) {
+        if (
+          !sendCommand(wi, {
+            type: "labradar",
+            target: target.host,
+            solverId: target.solverId ?? "labyrinth",
+            origin: sess.coords,
+          })
+        ) {
+          continue
+        }
+        setLabyrinthPending(lab, workerHost, "labradar")
+        target.workerHost = workerHost
+        target.pendingGuess = "labradar"
+        target.pendingDetail = `labradar@${workerHost}`
+        target.status = "active"
+        dispatchedThisLoop = true
+        attemptLog.append({
+          host: target.host,
+          session: target.session,
+          kind: "guess_dispatch",
+          solverId: target.solverId ?? "labyrinth",
+          modelId: target.modelId,
+          workerHost,
+          guess: "labradar",
+          detail: `labradar@${workerHost}`,
           solverState: cloneState(lab),
         })
         continue

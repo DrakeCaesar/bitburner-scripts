@@ -21,17 +21,27 @@ import {
   repairState,
   setLabyrinthPending,
 } from "./labyrinth/explore.js"
-import { buildMapGrid, frontierCells, globalFrontierRemaining, sessionDisplayCoords } from "./labyrinth/map.js"
+import { buildMapGrid, frontierCells, globalFrontierRemaining, LABRADAR_RANGE, mergeLabradarAscii, sessionDisplayCoords } from "./labyrinth/map.js"
+import {
+  applyLabradar,
+  LABRADAR_GRID_SPACING,
+  labradarWorkRemaining,
+  markRadarBucket,
+  needsLabradar,
+  parseLabradarGoal,
+  radarBucketKey,
+} from "./labyrinth/radar.js"
 import type {
   LabreportPayload,
   LabyrinthSnapshot,
   LabyrinthState,
 } from "./labyrinth/types.js"
-import type { MapGrid, MapGridChar } from "./labyrinth/map.js"
+import type { MapGrid, MapGridChar, BuildMapGridOptions } from "./labyrinth/map.js"
 
 export {
   anyWorkRemaining,
   applyLabreport,
+  applyLabradar,
   applyMoveResult,
   assignFrontierClaims,
   buildLabyrinthSnapshots,
@@ -41,13 +51,21 @@ export {
   exploredCellCount,
   frontierCells,
   globalFrontierRemaining,
+  LABRADAR_GRID_SPACING,
+  LABRADAR_RANGE,
+  labradarWorkRemaining,
+  mergeLabradarAscii,
   labyrinthPendingMatches,
   labyrinthSolver,
   labyrinthWorkerPending,
+  markRadarBucket,
+  needsLabradar,
   needsLabreport,
+  parseLabradarGoal,
   planMove,
   pruneLabyrinthWorker,
   pruneLabyrinthWorkers,
+  radarBucketKey,
   repairState,
   sessionDisplayCoords,
   setLabyrinthPending,
