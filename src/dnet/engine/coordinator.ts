@@ -38,7 +38,7 @@ import { MasterActionLog } from "../history/masterActionLog.js"
 import { SessionArchive } from "../history/sessionArchive.js"
 import { PortPool, WorkerPool, type ManagedWorker } from "../pool/workers.js"
 import { lookupSolver, lookupSolverForTarget, solverKey, solverWorkerKey, solverWorkerKeyForTarget } from "../solvers/registry.js"
-import { createSolverBridge, type SolverBridge } from "../solvers/solverBridge.js"
+import { createSolverBridge, SolverWorkerFatalError, solverWorkerFailureReason, type SolverBridge } from "../solvers/solverBridge.js"
 import type { SolverState } from "../solvers/types.js"
 import type {
   AuthTarget,
@@ -81,6 +81,45 @@ import {
 
 function cloneState<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
+}
+
+function markSolverWorkerFailure(
+  target: AuthTarget,
+  err: SolverWorkerFatalError,
+  attemptLog: AttemptLog,
+  solverBridge: SolverBridge,
+): void {
+  solverBridge.resetWorker()
+
+  target.pendingGuess = null
+  target.pendingDetail = null
+  target.workerHost = null
+
+  const reason = solverWorkerFailureReason(err)
+  target.status = "exhausted"
+  target.retryAt = Date.now() + EXHAUSTED_RETRY_MS
+  target.lastError = reason
+
+  attemptLog.append({
+    host: target.host,
+    session: target.session,
+    kind: "note",
+    solverId: target.solverId ?? "-",
+    modelId: target.modelId,
+    note: err.message.split("\n").join(" | "),
+    solverState: target.solverState != null ? cloneState(target.solverState) : undefined,
+  })
+
+  attemptLog.append({
+    host: target.host,
+    session: target.session,
+    kind: "session_end",
+    solverId: target.solverId ?? "-",
+    modelId: target.modelId,
+    success: false,
+    note: reason,
+    solverState: target.solverState != null ? cloneState(target.solverState) : undefined,
+  })
 }
 
 function shutdownWorkers(
@@ -814,34 +853,53 @@ async function startAuthSession(
 
   target.session += 1
   const workerKey = solverWorkerKey(details)
+  const provisionalSolverId = workerKey ?? details.modelId
+  sessionArchive.beginSession(target.host, target.session, provisionalSolverId, details)
+
+  log.append({
+    host: target.host,
+    session: target.session,
+    kind: "session_start",
+    solverId: provisionalSolverId,
+    modelId: target.modelId,
+    note: `session ${target.session}`,
+  })
+
   let state: SolverState
-  if (solverBridge.usesWorkerSolver(workerKey)) {
-    state = await solverBridge.init(workerKey, details, {
-      host: target.host,
-      modelId: target.modelId,
-      session: target.session,
-    })
-  } else if (details.modelId === LABYRINTH_MODEL) {
-    state = solverBridge.initInline(details.modelId, details)
-  } else {
-    state = solver.init(details)
+  try {
+    if (solverBridge.usesWorkerSolver(workerKey)) {
+      state = await solverBridge.init(workerKey, details, {
+        host: target.host,
+        modelId: target.modelId,
+        session: target.session,
+      })
+    } else if (details.modelId === LABYRINTH_MODEL) {
+      state = solverBridge.initInline(details.modelId, details)
+    } else {
+      state = solver.init(details)
+    }
+  } catch (err) {
+    if (err instanceof SolverWorkerFatalError) {
+      markSolverWorkerFailure(target, err, log, solverBridge)
+      return
+    }
+    throw err
   }
+
   target.solverId = (state as SolverState).type
   target.solverState = state
   target.status = "waiting_worker"
   target.pendingGuess = null
   target.lastError = null
 
-  sessionArchive.beginSession(target.host, target.session, target.solverId, details)
-
   log.append({
     host: target.host,
     session: target.session,
-    kind: "session_start",
+    kind: "note",
     solverId: target.solverId,
     modelId: target.modelId,
     solverState: cloneState(state),
-    note: `session ${target.session}`,
+    note: "solver initialized",
   })
 }
 
@@ -1054,30 +1112,38 @@ async function onAuthResult(
     : undefined
   const failResult = { success: false, feedback: msg.feedback, message: msg.message }
   const workerKey = solverWorkerKeyForTarget(target, details)
-  if (solverBridge.usesWorkerSolver(workerKey)) {
-    target.solverState = await solverBridge.applyResult(
-      workerKey,
-      target.solverState as SolverState,
-      msg.guess,
-      failResult,
-      ctx,
-      {
-        host: target.host,
-        modelId: target.modelId,
-        session: target.session,
-        solverId: target.solverId ?? undefined,
-        feedback: msg.feedback,
-      },
-    )
-  } else {
-    target.solverState = solverBridge.applyResultInline(
-      workerKey,
-      target.modelId,
-      target.solverState as SolverState,
-      msg.guess,
-      failResult,
-      ctx,
-    )
+  try {
+    if (solverBridge.usesWorkerSolver(workerKey)) {
+      target.solverState = await solverBridge.applyResult(
+        workerKey,
+        target.solverState as SolverState,
+        msg.guess,
+        failResult,
+        ctx,
+        {
+          host: target.host,
+          modelId: target.modelId,
+          session: target.session,
+          solverId: target.solverId ?? undefined,
+          feedback: msg.feedback,
+        },
+      )
+    } else {
+      target.solverState = solverBridge.applyResultInline(
+        workerKey,
+        target.modelId,
+        target.solverState as SolverState,
+        msg.guess,
+        failResult,
+        ctx,
+      )
+    }
+  } catch (err) {
+    if (err instanceof SolverWorkerFatalError) {
+      markSolverWorkerFailure(target, err, attemptLog, solverBridge)
+      return
+    }
+    throw err
   }
 
   attemptLog.append({
@@ -1120,26 +1186,34 @@ async function onHeartbleedResult(
   const solver = details ? lookupSolver(details) : null
   const workerKey = solverWorkerKeyForTarget(target, details)
   if (solver?.applyHeartbleed && target.solverState != null) {
-    if (solverBridge.usesWorkerSolver(workerKey)) {
-      target.solverState = await solverBridge.applyHeartbleed(
-        workerKey,
-        target.solverState as SolverState,
-        msg.logEntries,
-        {
-          host: target.host,
-          modelId: target.modelId,
-          session: target.session,
-          solverId: target.solverId ?? undefined,
-        },
-      )
-    } else if (workerKey) {
-      target.solverState = solverBridge.applyHeartbleedInline(
-        workerKey,
-        target.solverState as SolverState,
-        msg.logEntries,
-      )
-    } else {
-      target.solverState = solver.applyHeartbleed(target.solverState as SolverState, msg.logEntries)
+    try {
+      if (solverBridge.usesWorkerSolver(workerKey)) {
+        target.solverState = await solverBridge.applyHeartbleed(
+          workerKey,
+          target.solverState as SolverState,
+          msg.logEntries,
+          {
+            host: target.host,
+            modelId: target.modelId,
+            session: target.session,
+            solverId: target.solverId ?? undefined,
+          },
+        )
+      } else if (workerKey) {
+        target.solverState = solverBridge.applyHeartbleedInline(
+          workerKey,
+          target.solverState as SolverState,
+          msg.logEntries,
+        )
+      } else {
+        target.solverState = solver.applyHeartbleed(target.solverState as SolverState, msg.logEntries)
+      }
+    } catch (err) {
+      if (err instanceof SolverWorkerFatalError) {
+        markSolverWorkerFailure(target, err, attemptLog, solverBridge)
+        return
+      }
+      throw err
     }
     attemptLog.append({
       host: target.host,
@@ -1413,17 +1487,29 @@ async function dispatchGuesses(
     const workerKey = solverWorkerKey(details)
     if (!solverBridge.usesWorkerSolver(workerKey)) continue
 
-    const { state, guess: next } = await solverBridge.nextGuess(
-      workerKey,
-      target.solverState as SolverState,
-      { target: target.host, details },
-      {
-        host: target.host,
-        modelId: target.modelId,
-        session: target.session,
-        solverId: target.solverId ?? undefined,
-      },
-    )
+    let state: SolverState
+    let next: { guess: string; detail: string | null } | null
+    try {
+      const result = await solverBridge.nextGuess(
+        workerKey,
+        target.solverState as SolverState,
+        { target: target.host, details },
+        {
+          host: target.host,
+          modelId: target.modelId,
+          session: target.session,
+          solverId: target.solverId ?? undefined,
+        },
+      )
+      state = result.state
+      next = result.guess
+    } catch (err) {
+      if (err instanceof SolverWorkerFatalError) {
+        markSolverWorkerFailure(target, err, attemptLog, solverBridge)
+        continue
+      }
+      throw err
+    }
     target.solverState = state
     if (!next) {
       if (target.lastError === "neighbor link lost") {

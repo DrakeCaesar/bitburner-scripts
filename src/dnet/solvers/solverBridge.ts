@@ -63,6 +63,10 @@ export class SolverWorkerFatalError extends Error {
   }
 }
 
+export function solverWorkerFailureReason(err: SolverWorkerFatalError): string {
+  return `solver web worker ${err.fatalCause}`
+}
+
 type WorkerResponsePayload = {
   id: number
   state?: SolverState
@@ -210,6 +214,26 @@ export class SolverBridge {
     return solver.applyHeartbleed(state, logs)
   }
 
+  /** Tear down the worker after a recoverable failure; a new worker is spawned on the next request. */
+  resetWorker(skipId?: number): void {
+    for (const [id, pending] of [...this.pending]) {
+      if (id === skipId) continue
+      clearTimeout(pending.timer)
+      pending.reject(
+        new SolverWorkerFatalError("crash", pending.ctx, "solver worker reset"),
+      )
+      this.pending.delete(id)
+    }
+    if (this.worker) {
+      this.worker.terminate()
+      this.worker = null
+    }
+    if (this.objectUrl) {
+      URL.revokeObjectURL(this.objectUrl)
+      this.objectUrl = null
+    }
+  }
+
   terminate(): void {
     this.terminated = true
     for (const [id, pending] of this.pending) {
@@ -278,7 +302,6 @@ export class SolverBridge {
       URL.revokeObjectURL(this.objectUrl)
       this.objectUrl = null
     }
-    this.terminated = true
   }
 
   private dispatch(
@@ -310,7 +333,7 @@ export class SolverBridge {
         if (!pending) return
         clearTimeout(pending.timer)
         this.pending.delete(id)
-        this.terminate()
+        this.resetWorker()
         reject(new SolverWorkerFatalError("timeout", ctx))
       }, SOLVER_WORKER_TIMEOUT_MS)
 
