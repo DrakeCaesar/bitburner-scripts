@@ -150,30 +150,32 @@ const octantVoxel: SolverModule<OctantVoxelState> = {
 
 // #region MathML helpers
 
-const OCTANT_DIGITS = "0123456789abcdef"
+const BASE_N_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
-function octantDigit(ch: string): number | null {
-  const idx = OCTANT_DIGITS.indexOf(ch.toLowerCase())
+function baseNDigitValue(ch: string): number | null {
+  const idx = BASE_N_CHARS.indexOf(ch.toUpperCase())
   return idx >= 0 ? idx : null
 }
 
+/** Matches game parseBaseNNumberString (supports fractional bases like 16.6). */
 function parseBaseNToDecimal(base: number, numberStr: string): number | null {
-  const maxDigit = Math.ceil(base) - 1
-  const dotIdx = numberStr.indexOf(".")
-  const intPart = dotIdx >= 0 ? numberStr.slice(0, dotIdx) : numberStr
-  const fracPart = dotIdx >= 0 ? numberStr.slice(dotIdx + 1) : ""
-  let value = 0
-  for (let i = 0; i < intPart.length; i++) {
-    const dv = octantDigit(intPart[intPart.length - 1 - i]!)
-    if (dv === null || dv > maxDigit) return null
-    value += dv * base ** i
+  let result = 0
+  let index = 0
+  let digit = numberStr.split(".")[0]!.length - 1
+
+  while (index < numberStr.length) {
+    const ch = numberStr[index]!
+    if (ch === ".") {
+      index += 1
+      continue
+    }
+    const dv = baseNDigitValue(ch)
+    if (dv === null) return null
+    result += dv * base ** digit
+    index += 1
+    digit -= 1
   }
-  for (let i = 0; i < fracPart.length; i++) {
-    const dv = octantDigit(fracPart[i]!)
-    if (dv === null || dv > maxDigit) return null
-    value += dv * base ** -(i + 1)
-  }
-  return value
+  return result
 }
 
 function cleanArithmeticExpression(expression: string): string {
