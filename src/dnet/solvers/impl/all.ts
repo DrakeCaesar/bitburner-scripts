@@ -1025,6 +1025,12 @@ interface DeepGreenCountBatch {
   explained: number
 }
 
+interface DeepGreenConstraint {
+  guess: string
+  exact: number
+  misplaced: number
+}
+
 interface DeepGreenState extends SolverState {
   type: "deepGreen"
   charset: string
@@ -1040,6 +1046,8 @@ interface DeepGreenState extends SolverState {
   countBatches: DeepGreenCountBatch[]
   countBatchIdx: number
   tailIdx: number
+  /** Phase 1 guess feedback replayed when entering phase 2. */
+  constraints: DeepGreenConstraint[]
   // Phase 2 — index into cartesian or multiset permutation space
   permCartesian: boolean
   permChars: string[]
@@ -1058,6 +1066,41 @@ function deepGreenInitPhase1(state: DeepGreenState): void {
   state.tailIdx = 0
   state.charCounts = {}
   state.totalCount = 0
+  state.constraints = []
+}
+
+function deepGreenRecordConstraint(
+  state: DeepGreenState,
+  guess: string,
+  fb: { exact: number; misplaced: number },
+): void {
+  state.constraints.push({ guess, exact: fb.exact, misplaced: fb.misplaced })
+}
+
+function deepGreenReplayConstraints(state: DeepGreenState): void {
+  if (state.constraints.length === 0) return
+  state.survivors = filterMastermindSurvivors(
+    state.survivors,
+    state.permTotal,
+    (index) => {
+      const secret = deepGreenSecretAt(state, index)
+      return state.constraints.every((c) => {
+        const f = mastermindFeedback(secret, c.guess)
+        return f.exact === c.exact && f.misplaced === c.misplaced
+      })
+    },
+  )
+}
+
+function deepGreenCloseOutBatch(state: DeepGreenState, batch: DeepGreenCountBatch): void {
+  if (batch.explained < batch.exact + batch.misplaced) return
+  if (batch.exact + batch.misplaced === 0) return
+  for (const c of batch.chars) {
+    if (state.charCounts[c] !== undefined) continue
+    state.charCounts[c] = 0
+    if (!state.eliminated[c]) deepGreenMarkEliminated(state, c)
+  }
+  batch.charIdx = batch.chars.length
 }
 
 function deepGreenOccInGuess(guess: string, ch: string): number {
@@ -1154,8 +1197,30 @@ function deepGreenNextCountGuess(state: DeepGreenState): { guess: string; detail
 }
 
 function deepGreenFinishPhase1(state: DeepGreenState): { guess: string; detail: string } | null {
-  if (state.totalCount < state.length) return null
-  deepGreenEnterPhase2(state, deepGreenMultisetChars(state))
+  if (state.totalCount >= state.length) {
+    deepGreenEnterPhase2(state, deepGreenMultisetChars(state))
+    return deepGreenPhase2Guess(state)
+  }
+
+  const active = deepGreenActivePool(state)
+  const charset =
+    active.length > 0
+      ? active.join("")
+      : Object.entries(state.charCounts)
+          .filter(([, cnt]) => cnt > 0)
+          .map(([ch]) => ch)
+          .join("")
+  if (charset.length === 0) return null
+
+  const cartSize = charset.length ** state.length
+  if (cartSize > MAX_MASTERMIND_CANDIDATES) return null
+
+  state.permCartesian = true
+  state.charset = charset
+  state.permTotal = cartSize
+  state.survivors = mastermindSurvivorsAll()
+  state.totalCount = state.length
+  deepGreenReplayConstraints(state)
   return deepGreenPhase2Guess(state)
 }
 
@@ -1177,8 +1242,23 @@ function deepGreenApplyBatchResult(
   fb: { exact: number; misplaced: number },
 ): void {
   const testChars = deepGreenBatchTestChars(state)
+  const isFullBatch = testChars.length >= state.length
+
   if (fb.exact === 0 && fb.misplaced === 0) {
-    for (const c of testChars) deepGreenMarkEliminated(state, c)
+    if (isFullBatch) {
+      for (const c of testChars) deepGreenMarkEliminated(state, c)
+    } else {
+      // Partial batch (padded): repeat-count each test char instead of eliminating on (0,0).
+      state.countBatches.push({
+        guess: batchGuess,
+        chars: testChars,
+        exact: 0,
+        misplaced: 0,
+        charIdx: 0,
+        explained: 0,
+      })
+      deepGreenRemoveFromPool(state, testChars)
+    }
     return
   }
   state.countBatches.push({
@@ -1204,9 +1284,8 @@ function deepGreenApplyCountResult(
   state.totalCount += count
   if (count === 0) deepGreenMarkEliminated(state, ch)
   batch.explained += Math.min(count, deepGreenOccInGuess(batch.guess, ch))
-  if (batch.explained >= batch.exact + batch.misplaced) {
-    batch.charIdx = batch.chars.length
-  } else {
+  deepGreenCloseOutBatch(state, batch)
+  if (batch.charIdx < batch.chars.length) {
     batch.charIdx++
   }
 }
@@ -1239,6 +1318,7 @@ function deepGreenEnterPhase2(state: DeepGreenState, multisetChars: string[]): v
   state.permTotal = multisetPermutationCount(counts)
   state.survivors = mastermindSurvivorsAll()
   state.totalCount = state.length
+  deepGreenReplayConstraints(state)
 }
 
 function deepGreenSecretAt(state: DeepGreenState, index: number): string {
@@ -1265,6 +1345,7 @@ const deepGreen: SolverModule<DeepGreenState> = {
       countBatches: [],
       countBatchIdx: 0,
       tailIdx: 0,
+      constraints: [],
       permCartesian: false,
       permChars: [],
       permCounts: [],
@@ -1318,13 +1399,20 @@ const deepGreen: SolverModule<DeepGreenState> = {
       if (!fb) return state
 
       if (state.phase1Mode === "batch") {
+        const testChars = deepGreenBatchTestChars(state)
+        const deferConstraint =
+          testChars.length < state.length && fb.exact === 0 && fb.misplaced === 0
+        if (!deferConstraint) deepGreenRecordConstraint(state, guess, fb)
         deepGreenApplyBatchResult(state, guess, fb)
-      } else if (state.phase1Mode === "count") {
-        deepGreenApplyCountResult(state, fb)
-        if (deepGreenMaybeEnterPhase2(state)) return state
       } else {
-        deepGreenApplyTailResult(state, fb)
-        if (deepGreenMaybeEnterPhase2(state)) return state
+        deepGreenRecordConstraint(state, guess, fb)
+        if (state.phase1Mode === "count") {
+          deepGreenApplyCountResult(state, fb)
+          if (deepGreenMaybeEnterPhase2(state)) return state
+        } else {
+          deepGreenApplyTailResult(state, fb)
+          if (deepGreenMaybeEnterPhase2(state)) return state
+        }
       }
       return state
     }
@@ -1332,6 +1420,7 @@ const deepGreen: SolverModule<DeepGreenState> = {
     const fbRaw = result.feedback ?? ""
     const fb = parseMastermindFeedback(fbRaw)
     if (!fb) return state
+    deepGreenRecordConstraint(state, guess, fb)
     state.survivors = filterMastermindSurvivors(
       state.survivors,
       state.permTotal,
