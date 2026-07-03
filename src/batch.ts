@@ -5,6 +5,7 @@ import {
   calculateBatchThreads,
   calculateBatchTimings,
   BATCH_HACK_INCOME_PORT,
+  capParallelBatches,
   executeBatches,
   getBatchHackingScripts,
 } from "./libraries/batchExecution.js"
@@ -244,7 +245,7 @@ export async function main(ns: NS) {
     const batchConfigDuration = batchConfigEndTime - batchConfigStartTime
     const prepToBatchGap = batchConfigStartTime - prepEndTime
 
-    const maxBatches = Math.floor((totalMaxRam / threads.totalBatchRam) * ramThreshold)
+    const maxBatches = capParallelBatches(Math.floor((totalMaxRam / threads.totalBatchRam) * ramThreshold))
     const batches = maxBatches
 
     const lastBatchOffset = (batches - 1) * timings.effectiveBatchDelay * 4

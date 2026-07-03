@@ -19,6 +19,13 @@ import { BATCH_HACK_INCOME_PORT, HACK_INCOME_PORT_CAPACITY } from "./ports.js"
 
 export { BATCH_HACK_INCOME_PORT, HACK_INCOME_PORT_CAPACITY }
 
+/** Cap parallel HWGW batches to avoid browser OOM from too many ns.exec instances. */
+export const MAX_PARALLEL_BATCHES = 25000
+
+export function capParallelBatches(batches: number): number {
+  return Math.min(batches, MAX_PARALLEL_BATCHES)
+}
+
 const EMPTY_PORT_DATA = "NULL PORT DATA"
 
 /** Drain at half the time needed to fill the port (50 writes × batch interval). */
@@ -257,7 +264,7 @@ export async function executeBatches(
     timings
   const scripts = getBatchHackingScripts(debug)
 
-  const maxBatches = Math.floor((totalMaxRam / totalBatchRam) * ramThreshold)
+  const maxBatches = capParallelBatches(Math.floor((totalMaxRam / totalBatchRam) * ramThreshold))
   const batches = batchLimit !== undefined ? Math.min(batchLimit, maxBatches) : maxBatches
 
   const hackScriptRam = ns.getScriptRam(scripts.hack)

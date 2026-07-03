@@ -9,7 +9,7 @@ import {
   wkn1ServerInstance,
   wkn2ServerInstance,
 } from "./batchCalculations.js"
-import { calculateBatchTimings } from "./batchExecution.js"
+import { calculateBatchTimings, capParallelBatches } from "./batchExecution.js"
 import { crawl } from "./crawl.js"
 import { formatGameTimeMs } from "./format.js"
 import { distributeBatchesAcrossNodes, getAllNodes } from "./serverManagement.js"
@@ -224,7 +224,7 @@ export function analyzeServerThresholds(
 
     if (totalBatchRam > nodeRamLimit) return null
 
-    const estimatedBatches = Math.floor(totalMaxRam / totalBatchRam)
+    const estimatedBatches = capParallelBatches(Math.floor(totalMaxRam / totalBatchRam))
     let batches: number
 
     if (estimatedBatches > MAX_BATCHES_FOR_SIMULATION || totalMaxRam > MAX_RAM_FOR_SIMULATION) {
