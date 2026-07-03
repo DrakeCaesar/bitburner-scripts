@@ -118,47 +118,30 @@ export interface ServerProfitability {
 // Configuration constants for optimization fallback
 const MAX_BATCHES_FOR_SIMULATION = 1000
 const MAX_RAM_FOR_SIMULATION = Math.pow(2, 20) // 1,048,576 GB
-const THRESHOLD_SWEEP_STEPS = 200
-/** Fraction of money left after hack — edge bands [0, 1%] and [99%, 100%]. */
-const THRESHOLD_EDGE_BAND = 0.01
-const THRESHOLD_EDGE_SAMPLES = 80
+/** Money-left fraction just above 0% (steal ~100%). */
+const THRESHOLD_MIN = 1e-12
+/** Money-left fraction just below 100% (steal ~0%). */
+const THRESHOLD_MAX = 1 - 1e-12
+const THRESHOLD_SEARCH_MAX_STEPS = 100
 
-function linspaceThresholds(min: number, max: number, count: number): number[] {
-  if (count <= 0) return []
-  if (count === 1) return [(min + max) / 2]
-  const thresholds: number[] = []
-  for (let i = 0; i < count; i++) {
-    thresholds.push(min + (i / (count - 1)) * (max - min))
-  }
-  return thresholds
+/** Keep thresholds in (0, 1) for formulas; only clamps numerical drift. */
+function sanitizeThreshold(t: number): number {
+  if (t <= 0) return THRESHOLD_MIN
+  if (t >= 1) return THRESHOLD_MAX
+  return t
 }
 
-/**
- * Most samples in 0–1% and 99–100%; the 1–99% range gets the remainder (sparse).
- */
-export function generateSweepThresholds(count = THRESHOLD_SWEEP_STEPS - 1): number[] {
-  const edgeSamples = Math.min(
-    THRESHOLD_EDGE_SAMPLES,
-    Math.floor((count - 1) / 2)
-  )
-  const middleSamples = count - edgeSamples * 2
+/** Geometric midpoint in log-space between two money-left thresholds. */
+function geometricMidThreshold(lo: number, hi: number): number {
+  return sanitizeThreshold(Math.sqrt(lo * hi))
+}
 
-  const lowMin = 0.001
-  const lowMax = THRESHOLD_EDGE_BAND
-  const highMin = 1 - THRESHOLD_EDGE_BAND
-  const highMax = 0.999
-
-  const low = linspaceThresholds(lowMin, lowMax, edgeSamples)
-  const middle =
-    middleSamples > 0
-      ? Array.from({ length: middleSamples }, (_, j) => {
-          const t = (j + 1) / (middleSamples + 1)
-          return lowMax + t * (highMin - lowMax)
-        })
-      : []
-  const high = linspaceThresholds(highMin, highMax, edgeSamples)
-
-  return [...low, ...middle, ...high].map((t) => Math.min(0.999, Math.max(0.001, t)))
+/** Ternary-search split points between lo and hi in log-space (1/3 and 2/3 along the ratio). */
+function geometricTernarySplit(lo: number, hi: number): { m1: number; m2: number } {
+  const ratio = hi / lo
+  const m1 = sanitizeThreshold(lo * Math.pow(ratio, 1 / 3))
+  const m2 = sanitizeThreshold(lo * Math.pow(ratio, 2 / 3))
+  return { m1, m2 }
 }
 
 export interface AnalyzeServerThresholdsOptions {
@@ -184,7 +167,7 @@ export interface ServerThresholdAnalysis {
   bestBatches: number
 }
 
-/** Sweep hack thresholds for one prepared server; same model as batch cycle planning. */
+/** Find best hack threshold via log-space ternary search (~0% .. ~100% money left). */
 export function analyzeServerThresholds(
   ns: NS,
   server: Server,
@@ -209,15 +192,18 @@ export function analyzeServerThresholds(
   const { effectiveBatchDelay } = timings
 
   const rows: ThresholdComparisonRow[] = []
-  let optimalThreshold = 0.5
+  const rowByThreshold = new Map<string, ThresholdComparisonRow>()
+  let optimalThreshold = THRESHOLD_MIN
   let bestMoneyPerSecond = 0
   let bestMoneyPerSecondPrepped = 0
   let bestBatchRam = 0
   let bestBatches = 0
 
-  const sweepThresholds = generateSweepThresholds()
+  const evaluateThreshold = (testThreshold: number): ThresholdComparisonRow | null => {
+    const key = testThreshold.toFixed(9)
+    const cached = rowByThreshold.get(key)
+    if (cached) return cached
 
-  for (const testThreshold of sweepThresholds) {
     const { server: hackServer, player: hackPlayer } = hackServerInstance(server, player)
     const hackThreads = calculateHackThreads(hackServer, hackPlayer, moneyMax, testThreshold, ns)
 
@@ -236,7 +222,7 @@ export function analyzeServerThresholds(
       growScriptRam * growThreads +
       weakenScriptRam * wkn2Threads
 
-    if (totalBatchRam > nodeRamLimit) continue
+    if (totalBatchRam > nodeRamLimit) return null
 
     const estimatedBatches = Math.floor(totalMaxRam / totalBatchRam)
     let batches: number
@@ -275,7 +261,7 @@ export function analyzeServerThresholds(
     const moneyPerSecond = totalTime > 0 ? (totalMoney / totalTime) * 1000 : 0
     const moneyPerSecondPrepped = batchRunTime > 0 ? (totalMoney / batchRunTime) * 1000 : 0
 
-    rows.push({
+    const row: ThresholdComparisonRow = {
       threshold: testThreshold,
       cycleTime,
       moneyPerBatch,
@@ -283,7 +269,9 @@ export function analyzeServerThresholds(
       moneyPerSecond,
       batches,
       batchRam: totalBatchRam,
-    })
+    }
+    rowByThreshold.set(key, row)
+    rows.push(row)
 
     if (moneyPerSecond > bestMoneyPerSecond) {
       bestMoneyPerSecond = moneyPerSecond
@@ -295,7 +283,52 @@ export function analyzeServerThresholds(
     if (moneyPerSecondPrepped > bestMoneyPerSecondPrepped) {
       bestMoneyPerSecondPrepped = moneyPerSecondPrepped
     }
+
+    return row
   }
+
+  const moneyPerSecondAt = (t: number): number => evaluateThreshold(t)?.moneyPerSecond ?? -1
+
+  // Log-space ternary search from ~0% .. ~100% money left (steal ~100% .. ~0%).
+  let lo = THRESHOLD_MIN
+  let hi = THRESHOLD_MAX
+  evaluateThreshold(lo)
+  evaluateThreshold(hi)
+
+  let evaluations = 2
+  while (evaluations < THRESHOLD_SEARCH_MAX_STEPS && hi / lo > 1 + 1e-9) {
+    const { m1, m2 } = geometricTernarySplit(lo, hi)
+    if (m1 <= lo || m2 >= hi || m2 <= m1) break
+
+    const mps1 = moneyPerSecondAt(m1)
+    evaluations++
+    const mps2 = moneyPerSecondAt(m2)
+    evaluations++
+
+    if (mps1 < 0 && mps2 < 0) {
+      lo = m1
+      if (hi / lo <= 1 + 1e-9) break
+      continue
+    }
+    if (mps1 < 0) {
+      lo = m1
+      continue
+    }
+    if (mps2 < 0) {
+      hi = m2
+      continue
+    }
+
+    if (mps1 < mps2) lo = m1
+    else hi = m2
+  }
+
+  // Final midpoint check when search stalls on an edge.
+  if (evaluations < THRESHOLD_SEARCH_MAX_STEPS && hi / lo > 1 + 1e-9) {
+    evaluateThreshold(geometricMidThreshold(lo, hi))
+  }
+
+  rows.sort((a, b) => a.threshold - b.threshold)
 
   return {
     rows,
