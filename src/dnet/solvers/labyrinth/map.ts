@@ -285,6 +285,87 @@ export function bfsFirstStepToward(
   return null
 }
 
+/** Explored-room path from start to a frontier claim (includes the claim cell). */
+export function bfsPathToClaim(
+  map: Record<string, LabyrinthCellWalls>,
+  startX: number,
+  startY: number,
+  targetX: number,
+  targetY: number,
+): [number, number][] | null {
+  const startKey = cellKey(startX, startY)
+  if (!cellExplored(map, startKey)) return null
+  if (startX === targetX && startY === targetY) return [[startX, startY]]
+
+  const parent = new Map<string, string | null>()
+  parent.set(startKey, null)
+  const queue: string[] = [startKey]
+  let goalKey: string | null = null
+
+  while (queue.length > 0) {
+    const key = queue.shift()!
+    const pos = parseCellKey(key)
+    if (!pos) continue
+    const [x, y] = pos
+    if (canStepToTarget(map, x, y, targetX, targetY)) {
+      goalKey = key
+      break
+    }
+    for (const dir of WALL_ORDER) {
+      if (!passable(map, x, y, dir)) continue
+      const [dx, dy] = LABYRINTH_DIRS[dir]
+      const nkey = cellKey(x + dx, y + dy)
+      if (!cellExplored(map, nkey) || parent.has(nkey)) continue
+      parent.set(nkey, key)
+      queue.push(nkey)
+    }
+  }
+
+  if (goalKey == null) return null
+
+  const path: [number, number][] = []
+  let cur: string | null = goalKey
+  while (cur != null) {
+    const pos = parseCellKey(cur)
+    if (!pos) break
+    path.unshift(pos)
+    cur = parent.get(cur) ?? null
+  }
+  path.push([targetX, targetY])
+  return path
+}
+
+function corridorAxis(
+  from: [number, number],
+  to: [number, number],
+): "ns" | "ew" | null {
+  const [x1, y1] = from
+  const [x2, y2] = to
+  if (x1 === x2 && Math.abs(y2 - y1) === 2) return "ns"
+  if (y1 === y2 && Math.abs(x2 - x1) === 2) return "ew"
+  return null
+}
+
+/** Grid corridor cell between two adjacent logical room cells. */
+export function corridorGridBetween(
+  minX: number,
+  minY: number,
+  from: [number, number],
+  to: [number, number],
+): [number, number] | null {
+  const toGrid = (x: number, y: number): [number, number] => [
+    ((x - minX) / 2) * 2,
+    ((y - minY) / 2) * 2,
+  ]
+  const [gx1, gy1] = toGrid(from[0], from[1])
+  const [gx2, gy2] = toGrid(to[0], to[1])
+  if (gx2 > gx1) return [gy1, gx1 + 1]
+  if (gx2 < gx1) return [gy1, gx1 - 1]
+  if (gy2 > gy1) return [gy1 + 1, gx1]
+  if (gy2 < gy1) return [gy1 - 1, gx1]
+  return null
+}
+
 /** First step toward the nearest cell beyond the exploration frontier. */
 export function bfsFirstStep(
   map: Record<string, LabyrinthCellWalls>,
@@ -352,6 +433,11 @@ export interface BuildMapGridOptions {
   workerHostOrder?: readonly string[]
 }
 
+export interface MapPathSegment {
+  letter: string
+  axis: "ns" | "ew"
+}
+
 export interface MapGrid {
   minX: number
   minY: number
@@ -361,8 +447,10 @@ export interface MapGrid {
   cells: MapGridChar[][]
   /** Worker markers at logical cell keys. */
   workerMarkers: Map<string, string>
-  /** Claimed frontier cell key -> worker letter. */
-  claimMarkers: Map<string, string>
+  /** Claimed frontier logical cell key (route target, no letter). */
+  claimTargets: Set<string>
+  /** Corridor grid key "gy,gx" -> worker route segment. */
+  pathSegments: Map<string, MapPathSegment>
 }
 
 const WORKER_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -388,7 +476,8 @@ export function buildMapGrid(
   for (const k of frontierSet) known.add(k)
 
   const workerMarkers = new Map<string, string>()
-  const claimMarkers = new Map<string, string>()
+  const claimTargets = new Set<string>()
+  const pathSegments = new Map<string, MapPathSegment>()
   const workers =
     options?.workerHostOrder != null && options.workerHostOrder.length > 0
       ? [...options.workerHostOrder]
@@ -417,8 +506,7 @@ export function buildMapGrid(
 
   for (const [cell, host] of Object.entries(options?.claims ?? {})) {
     if (!frontierSet.has(cell)) continue
-    const letter = letterForHost.get(host)
-    if (letter) claimMarkers.set(cell, letter)
+    if (letterForHost.has(host)) claimTargets.add(cell)
   }
 
   if (known.size === 0) return null
@@ -463,7 +551,7 @@ export function buildMapGrid(
     const explored = map[k]?.seen === true
     if (workerMarkers.has(k)) {
       cells[gy]![gx] = "worker"
-    } else if (!explored && claimMarkers.has(k)) {
+    } else if (!explored && claimTargets.has(k)) {
       cells[gy]![gx] = "claimed"
     } else if (!explored && frontierSet.has(k)) {
       cells[gy]![gx] = "frontier"
@@ -503,5 +591,43 @@ export function buildMapGrid(
     setEdge(gy, gx - 1, walls.west, "ew")
   }
 
-  return { minX, minY, width: gw, height: gh, cells, workerMarkers, claimMarkers }
+  for (const host of workers) {
+    const sess = sessions[host]
+    if (!sess) continue
+    const pos = sessionDisplayCoords({
+      coords: sess.coords,
+      lastCoords: sess.lastCoords ?? null,
+    })
+    if (!pos) continue
+
+    let claimKey: string | null = null
+    for (const [cell, claimHost] of Object.entries(options?.claims ?? {})) {
+      if (claimHost === host && frontierSet.has(cell)) {
+        claimKey = cell
+        break
+      }
+    }
+    if (claimKey == null) continue
+    const target = parseCellKey(claimKey)
+    if (!target) continue
+    if (pos[0] === target[0] && pos[1] === target[1]) continue
+
+    const path = bfsPathToClaim(map, pos[0], pos[1], target[0], target[1])
+    if (path == null || path.length < 2) continue
+    const letter = letterForHost.get(host)
+    if (!letter) continue
+
+    for (let i = 0; i < path.length - 1; i++) {
+      const from = path[i]!
+      const to = path[i + 1]!
+      const axis = corridorAxis(from, to)
+      if (!axis) continue
+      const corridor = corridorGridBetween(minX, minY, from, to)
+      if (!corridor) continue
+      const [cy, cx] = corridor
+      pathSegments.set(`${cy},${cx}`, { letter, axis })
+    }
+  }
+
+  return { minX, minY, width: gw, height: gh, cells, workerMarkers, claimTargets, pathSegments }
 }

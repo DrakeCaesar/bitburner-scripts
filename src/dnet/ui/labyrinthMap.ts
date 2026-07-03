@@ -53,6 +53,15 @@ function shortenHost(host: string, max = 22): string {
   return `${host.slice(0, max - 3)}...`
 }
 
+function colorWithAlpha(hex: string, alpha: number): string {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
+  if (!m) return hex
+  const r = Number.parseInt(m[1]!, 16)
+  const g = Number.parseInt(m[2]!, 16)
+  const b = Number.parseInt(m[3]!, 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
 function claimForWorker(state: LabyrinthState, workerHost: string): string | null {
   const claims = state.claims ?? {}
   for (const [cell, host] of Object.entries(claims)) {
@@ -188,19 +197,22 @@ function renderMapGrid(
         let fg = CELL_STYLES[displayKind].fg
 
         const logicalKey = logicalCellAt(grid, gx, gy)
+        const pathKey = `${gy},${gx}`
+        const pathSeg = grid.pathSegments.get(pathKey)
+
         if (logicalKey) {
           const w = grid.workerMarkers.get(logicalKey)
           if (w) {
             letter = w === "*" ? "*" : w
             bg = letterToColor.get(w) ?? CELL_STYLES.worker.bg
             fg = "#000"
-          } else if (kind === "claimed") {
-            letter = grid.claimMarkers.get(logicalKey)
-            if (letter) {
-              bg = letterToColor.get(letter) ?? CELL_STYLES.claimed.bg
-              fg = "#000"
-            }
           }
+        }
+
+        if (!letter && pathSeg) {
+          letter = pathSeg.axis === "ns" ? "|" : "-"
+          bg = colorWithAlpha(letterToColor.get(pathSeg.letter) ?? CELL_STYLES.open.bg, 0.85)
+          fg = "#000"
         }
 
         const style = CELL_STYLES[displayKind]
@@ -338,8 +350,9 @@ function renderLegend(React: ReturnType<typeof getReact>, workerRows: WorkerRow[
     "# wall",
     "space corridor",
     "? unknown / open frontier",
-    "! claimed frontier (letter = owner)",
-    "A-Z explorer on map",
+    "! claim target (no letter)",
+    "A-Z explorer at current position",
+    "colored - or | route to claim",
   ]
 
   const mapWorkers = workerRows.filter((r) => r.pos !== "-")
