@@ -51,7 +51,7 @@ import type {
 import {
   formatCommand,
   isInstantCommand,
-  NOT_NEIGHBOR_MESSAGE,
+  isStaleTopologyFailure,
   parseWorkerResponse,
   usesWorkerDeadlines,
   type WorkerCommandPayload,
@@ -66,6 +66,7 @@ import { copyWorkerFiles } from "../worker/deploy.js"
 import { ensureMutationWatcher, MutationSync } from "./mutationSync.js"
 import { dispatchLabyrinthStasis } from "./labyrinthStasis.js"
 import { dispatchIdleMaintenance, IdleMaintenanceGate } from "./idleMaintenance.js"
+import { handleStaleTopologyFailure } from "./topologyFailure.js"
 import { dispatchLabyrinth, snapshotLabyrinths } from "./labyrinthDispatch.js"
 import { applyLabreport, clearLabyrinthPending, labyrinthPendingMatches, pruneLabyrinthWorker, type LabyrinthState } from "../solvers/labyrinth.js"
 import { clearDnetGlobalPorts, clearWorkerPortPair } from "./ports.js"
@@ -448,43 +449,6 @@ function buildSnapshot(
   }
 }
 
-function requestUrgentProbe(host: string, urgentProbeHosts: Set<string>): void {
-  urgentProbeHosts.add(host)
-}
-
-function invalidateNeighborLink(
-  workerHost: string,
-  targetHost: string,
-  workerPool: WorkerPool,
-  targets: Map<string, AuthTarget>,
-): void {
-  const wi = workerPool.workers.get(workerHost)
-  if (wi) wi.neighbors = wi.neighbors.filter((h) => h !== targetHost)
-
-  const target = targets.get(targetHost)
-  if (target) {
-    target.neighborWorkers = target.neighborWorkers.filter((h) => h !== workerHost)
-  }
-}
-
-function scheduleNotNeighborProbes(
-  workerHost: string,
-  targetHost: string,
-  workerPool: WorkerPool,
-  targets: Map<string, AuthTarget>,
-  urgentProbeHosts: Set<string>,
-): void {
-  invalidateNeighborLink(workerHost, targetHost, workerPool, targets)
-  requestUrgentProbe(workerHost, urgentProbeHosts)
-
-  for (const wi of workerPool.workers.values()) {
-    if (wi.host === workerHost) continue
-    if (!wi.neighbors.includes(targetHost)) continue
-    wi.neighbors = wi.neighbors.filter((h) => h !== targetHost)
-    requestUrgentProbe(wi.host, urgentProbeHosts)
-  }
-}
-
 function finishUrgentProbe(
   workerHost: string,
   targets: Map<string, AuthTarget>,
@@ -657,13 +621,14 @@ async function drainReplies(
             note: msg.success ? `pid ${msg.childPid}` : "spawn failed",
             message: msg.message,
           })
-          if (!msg.success && msg.message === NOT_NEIGHBOR_MESSAGE) {
-            scheduleNotNeighborProbes(
+          if (!msg.success && isStaleTopologyFailure(msg.message)) {
+            handleStaleTopologyFailure(
               msg.workerHost,
               msg.target,
               workerPool,
               targets,
               urgentProbeHosts,
+              idleMaintenanceGate,
             )
           } else if (!msg.success && msg.message === "auth failed") {
             invalidateKnownPassword(
@@ -692,6 +657,7 @@ async function drainReplies(
             urgentProbeHosts,
             solverBridge,
             fileIntelCtx.registryStore,
+            idleMaintenanceGate,
           )
           break
         case "heartbleedResult":
@@ -735,6 +701,16 @@ async function drainReplies(
               : `migrate failed${msg.message ? `: ${msg.message}` : ""}`,
             message: msg.message,
           })
+          if (!msg.success && isStaleTopologyFailure(msg.message)) {
+            handleStaleTopologyFailure(
+              msg.workerHost,
+              msg.target || null,
+              workerPool,
+              targets,
+              urgentProbeHosts,
+              idleMaintenanceGate,
+            )
+          }
           break
         case "stasisResult":
           completeTrackedCommand(dispatchCtx, msg.workerHost)
@@ -997,6 +973,7 @@ async function onAuthResult(
   urgentProbeHosts: Set<string>,
   solverBridge: SolverBridge,
   registryStore: RegistryStore,
+  idleMaintenanceGate: IdleMaintenanceGate,
 ): Promise<void> {
   const target = targets.get(msg.target)
   if (!target) return
@@ -1059,7 +1036,7 @@ async function onAuthResult(
     message: msg.message,
   })
 
-  if (msg.message === NOT_NEIGHBOR_MESSAGE) {
+  if (isStaleTopologyFailure(msg.message)) {
     if (lab?.type === "labyrinth") {
       pruneLabyrinthWorker(lab, msg.workerHost)
     }
@@ -1070,12 +1047,13 @@ async function onAuthResult(
     }
     target.awaitProbeAfter = true
     target.awaitProbeWorker = msg.workerHost
-    scheduleNotNeighborProbes(
+    handleStaleTopologyFailure(
       msg.workerHost,
       msg.target,
       workerPool,
       targets,
       urgentProbeHosts,
+      idleMaintenanceGate,
     )
     return
   }
@@ -1718,6 +1696,7 @@ function commandTarget(payload: WorkerCommandPayload): string | undefined {
     case "heartbleed":
     case "labreport":
     case "spawn":
+    case "migrate":
       return payload.target
     case "realloc":
       return payload.host
@@ -1743,7 +1722,7 @@ function commandDetail(host: string, payload: WorkerCommandPayload): string {
     case "realloc":
       return `${host} -> ${payload.host} p${payload.priority}`
     case "migrate":
-      return `${host} migrate`
+      return `${host} -> ${payload.target}`
     case "stasis":
       return host
     case "heartbleed":

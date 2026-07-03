@@ -52,6 +52,12 @@ export class IdleMaintenanceGate {
     this.markProbed(host)
   }
 
+  /** Block idle migrate until this worker completes a fresh probe. */
+  requireProbe(host: string): void {
+    this.active = true
+    this.pendingProbes.add(host)
+  }
+
   pendingHosts(): readonly string[] {
     return [...this.pendingProbes]
   }
@@ -212,16 +218,30 @@ function hasPendingStasisWork(ctx: IdleMaintenanceCtx): boolean {
   return false
 }
 
+/** Pick shallowest connected non-stationary neighbor shallower than the worker. */
+export function pickMigrateTarget(
+  dnet: DnetApi,
+  neighbors: readonly string[],
+  workerDepth: number | null,
+): string | null {
+  let best: { host: string; depth: number } | null = null
+  for (const host of neighbors) {
+    const details = getServerDetails(dnet, host)
+    if (!details?.isOnline) continue
+    if (!details.isConnectedToCurrentServer) continue
+    if (details.isStationary) continue
+    if (workerDepth != null && details.depth >= workerDepth) continue
+    if (best == null || details.depth < best.depth) {
+      best = { host, depth: details.depth }
+    }
+  }
+  return best?.host ?? null
+}
+
 /** True when worker has a connected non-stationary neighbor shallower than itself. */
 function workerCanMigrateShallowerNeighbor(dnet: DnetApi, wi: ManagedWorker): boolean {
   if (wi.depth == null || wi.neighbors.length === 0) return false
-  for (const host of wi.neighbors) {
-    const details = getServerDetails(dnet, host)
-    if (!details?.isOnline) continue
-    if (details.isStationary) continue
-    if (details.depth < wi.depth) return true
-  }
-  return false
+  return pickMigrateTarget(dnet, wi.neighbors, wi.depth) != null
 }
 
 /** Command deepest idle workers to induce migration on a shallower connected neighbor. */
@@ -252,7 +272,9 @@ export function dispatchIdleMigrations(
       .sort((a, b) => a.host.localeCompare(b.host))
     if (candidates.length === 0) continue
     for (const wi of candidates) {
-      if (sendMigrate(wi, { type: "migrate" })) sent = true
+      const target = pickMigrateTarget(ctx.dnet, wi.neighbors, wi.depth)
+      if (!target) continue
+      if (sendMigrate(wi, { type: "migrate", target })) sent = true
     }
     break
   }

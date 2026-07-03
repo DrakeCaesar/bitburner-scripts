@@ -120,7 +120,7 @@ export async function main(ns: NS): Promise<void> {
       await runReallocCommand(ns, dnet, cmd, replyPort)
     } else if (cmd.type === "migrate") {
       await ensureSelfAuth(dnet, hostname, selfPassword)
-      await runMigrateCommand(ns, dnet, replyPort)
+      await runMigrateCommand(ns, dnet, cmd, replyPort)
     } else if (cmd.type === "stasis") {
       await ensureSelfAuth(dnet, hostname, selfPassword)
       await runStasisCommand(ns, dnet, replyPort)

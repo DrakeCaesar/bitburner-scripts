@@ -369,35 +369,14 @@ export async function runReallocCommand(
   }
 }
 
-function pickMigrateTarget(
-  dnet: WorkerDnetApi,
-  neighbors: readonly string[],
-  workerDepth: number | null,
-): string | null {
-  let best: { host: string; depth: number } | null = null
-  for (const host of neighbors) {
-    try {
-      const details = dnet.getServerDetails(host)
-      if (!details.isOnline) continue
-      if (!details.isConnectedToCurrentServer) continue
-      if (details.isStationary) continue
-      if (workerDepth != null && details.depth >= workerDepth) continue
-      if (best == null || details.depth < best.depth) {
-        best = { host, depth: details.depth }
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-  return best?.host ?? null
-}
-
 export async function runMigrateCommand(
   ns: NS,
   dnet: WorkerDnetApi,
+  cmd: Extract<WorkerCommand, { type: "migrate" }>,
   replyPort: number,
 ): Promise<void> {
   const workerHost = ns.getHostname()
+  const target = cmd.target
 
   const writeDeadline = (): void => {
     ns.writePort(
@@ -411,7 +390,7 @@ export async function runMigrateCommand(
     )
   }
 
-  const writeResult = (target: string, success: boolean, message?: string): void => {
+  const writeResult = (success: boolean, message?: string): void => {
     ns.writePort(
       replyPort,
       JSON.stringify({
@@ -425,30 +404,21 @@ export async function runMigrateCommand(
   }
 
   if (!dnet.induceServerMigration) {
-    writeResult("", false, "induceServerMigration unavailable")
+    writeResult(false, "induceServerMigration unavailable")
     return
   }
 
-  let neighbors: string[] = []
-  try {
-    neighbors = dnet.probe()
-  } catch {
-    neighbors = []
-  }
-
-  const workerDepth = dnetHostDepth(dnet, workerHost)
-  const target = pickMigrateTarget(dnet, neighbors, workerDepth)
-  if (!target) {
-    writeResult("", false, "no connected non-stationary shallower neighbor")
+  if (!isNeighbor(dnet, target)) {
+    writeResult(false, NOT_NEIGHBOR_MESSAGE)
     return
   }
 
   writeDeadline()
   try {
     const result = await dnet.induceServerMigration(target)
-    writeResult(target, result.success, result.message)
+    writeResult(result.success, result.message)
   } catch {
-    writeResult(target, false, "induceServerMigration failed")
+    writeResult(false, "induceServerMigration failed")
   }
 }
 

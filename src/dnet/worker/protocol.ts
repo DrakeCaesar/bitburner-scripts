@@ -3,6 +3,17 @@
 /** Worker result message when a command target is not a direct neighbor. */
 export const NOT_NEIGHBOR_MESSAGE = "notNeighbor"
 
+const NOT_CONNECTED_AUTH_FEEDBACK = "no auth feedback (not connected)"
+
+/** True when failure means neighbor/topology state is stale — re-probe before retrying. */
+export function isStaleTopologyFailure(message: string | undefined): boolean {
+  if (!message) return false
+  return (
+    message === NOT_NEIGHBOR_MESSAGE ||
+    message === NOT_CONNECTED_AUTH_FEEDBACK
+  )
+}
+
 /** Auth returned 401 (expected wrong guess) but heartbleed did not yield model feedback. */
 export function noAuthFeedbackMessage(hb: {
   success: boolean
@@ -45,7 +56,7 @@ export type WorkerCommandPayload =
       remote?: boolean
     }
   | { type: "realloc"; host: string; priority: 1 | 2 | 3 }
-  | { type: "migrate" }
+  | { type: "migrate"; target: string }
   | { type: "stasis" }
   | { type: "labreport"; target: string; solverId: string }
   | { type: "exit" }
@@ -284,7 +295,7 @@ export function formatCommand(cmd: WorkerCommandPayload): string {
     case "realloc":
       return `realloc:${cmd.host}:p${cmd.priority}`
     case "migrate":
-      return "migrate"
+      return `migrate:${cmd.target}`
     case "stasis":
       return "stasis"
     case "labreport":
