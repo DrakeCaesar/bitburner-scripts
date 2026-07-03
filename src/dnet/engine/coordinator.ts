@@ -70,6 +70,7 @@ import {
 } from "./memoryPlan.js"
 import { copyWorkerFiles } from "../worker/deploy.js"
 import { ensureMutationWatcher, MutationSync } from "./mutationSync.js"
+import { bootstrapStasisLinkedWorkers } from "./stasisBootstrap.js"
 import { dispatchLabyrinthStasis } from "./labyrinthStasis.js"
 import { dispatchIdleMaintenance, IdleMaintenanceGate } from "./idleMaintenance.js"
 import { handleStaleTopologyFailure } from "./topologyFailure.js"
@@ -200,29 +201,48 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
   ns.writePort(CONTROL_PORT, JSON.stringify({ sessionId, lorePort: LORE_PORT }))
   masterLog.append("startup", "ports cleared, mutation watcher started")
 
-  await authDarkweb(dnet)
-  const darkwebScpError = await copyWorkerFiles(ns, DARKWEB, "home")
-  if (darkwebScpError != null) {
-    await options.onError?.(`Failed to copy worker files to darkweb: ${darkwebScpError}`)
-    return
+  syncRegistryPasswords(dnet, registry, passwords, targets, tryConnect)
+  await bootstrapStasisLinkedWorkers(
+    ns,
+    dnet,
+    sessionId,
+    registry,
+    passwords,
+    targets,
+    workerPool,
+    portPool,
+    masterLog,
+  )
+
+  if (!workerPool.workers.has(DARKWEB)) {
+    await authDarkweb(dnet)
+    const darkwebScpError = await copyWorkerFiles(ns, DARKWEB, "home")
+    if (darkwebScpError != null) {
+      await options.onError?.(`Failed to copy worker files to darkweb: ${darkwebScpError}`)
+      return
+    }
+
+    const rootPort = portPool.allocate()
+    if (rootPort <= 0) {
+      await options.onError?.("No ports available")
+      return
+    }
+    clearWorkerPortPair(ns, rootPort)
+
+    const rootPid = ns.exec(WORKER_SCRIPT, DARKWEB, 1, sessionId, rootPort, "")
+    if (rootPid <= 0) {
+      await options.onError?.("Failed to start root worker on darkweb")
+      releaseWorkerPort(ns, portPool, rootPort)
+      return
+    }
+
+    workerPool.register(DARKWEB, rootPid, rootPort)
+    masterLog.append("startup", `root worker ${DARKWEB} pid ${rootPid} port ${rootPort}`)
+  } else {
+    await authDarkweb(dnet)
+    masterLog.append("startup", `root worker ${DARKWEB} already running from stasis bootstrap`)
   }
 
-  const rootPort = portPool.allocate()
-  if (rootPort <= 0) {
-    await options.onError?.("No ports available")
-    return
-  }
-  clearWorkerPortPair(ns, rootPort)
-
-  const rootPid = ns.exec(WORKER_SCRIPT, DARKWEB, 1, sessionId, rootPort, "")
-  if (rootPid <= 0) {
-    await options.onError?.("Failed to start root worker on darkweb")
-    releaseWorkerPort(ns, portPool, rootPort)
-    return
-  }
-
-  workerPool.register(DARKWEB, rootPid, rootPort)
-  masterLog.append("startup", `root worker ${DARKWEB} pid ${rootPid} port ${rootPort}`)
   syncRegistryPasswords(dnet, registry, passwords, targets, tryConnect)
 
   while (true) {

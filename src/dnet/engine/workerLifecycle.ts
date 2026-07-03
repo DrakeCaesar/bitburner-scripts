@@ -1,14 +1,19 @@
 import { NS } from "@ns"
-import { tryConnect } from "../api/server.js"
+import { tryConnect, stasisLinkedHosts } from "../api/server.js"
 import { DARKWEB, WORKER_SCRIPT } from "../constants.js"
 import type { DarknetRegistry } from "../registry.js"
 import type { DnetApi } from "../types.js"
 
 /** Hosts that may run a dnet worker. */
-export function workerHosts(ns: NS, registry: DarknetRegistry): string[] {
+export function workerHosts(ns: NS, registry: DarknetRegistry, dnet?: DnetApi): string[] {
   const hosts = new Set<string>([ns.getHostname(), DARKWEB])
   for (const hostname of Object.keys(registry.servers)) {
     hosts.add(hostname)
+  }
+  if (dnet) {
+    for (const host of stasisLinkedHosts(dnet)) {
+      hosts.add(host)
+    }
   }
   return [...hosts]
 }
@@ -34,7 +39,7 @@ function killWorkersOnHost(
 /** scriptKill dnet/worker/main.js on every candidate host (no delay). */
 export function killAllWorkersSync(ns: NS, dnet: DnetApi, registry: DarknetRegistry): void {
   const masterHost = ns.getHostname()
-  for (const host of workerHosts(ns, registry)) {
+  for (const host of workerHosts(ns, registry, dnet)) {
     killWorkersOnHost(ns, dnet, registry, host, masterHost)
   }
 }
