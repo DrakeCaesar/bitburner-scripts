@@ -435,17 +435,6 @@ export function bfsPathToClaim(
   return path
 }
 
-function corridorAxis(
-  from: [number, number],
-  to: [number, number],
-): "ns" | "ew" | null {
-  const [x1, y1] = from
-  const [x2, y2] = to
-  if (x1 === x2 && Math.abs(y2 - y1) === 2) return "ns"
-  if (y1 === y2 && Math.abs(x2 - x1) === 2) return "ew"
-  return null
-}
-
 /** Grid corridor cell between two adjacent logical room cells. */
 export function corridorGridBetween(
   minX: number,
@@ -535,9 +524,10 @@ export interface BuildMapGridOptions {
   goal?: [number, number] | null
 }
 
-export interface MapPathSegment {
+export interface MapRoutePath {
   letter: string
-  axis: "ns" | "ew"
+  /** Grid coordinates (gx, gy) through rooms and corridor cells. */
+  points: [number, number][]
 }
 
 export interface MapGrid {
@@ -551,8 +541,8 @@ export interface MapGrid {
   workerMarkers: Map<string, string>
   /** Claimed frontier logical cell key (route target, no letter). */
   claimTargets: Set<string>
-  /** Corridor grid key "gy,gx" -> worker route segment. */
-  pathSegments: Map<string, MapPathSegment>
+  /** Worker route polylines in grid coordinates. */
+  routePaths: MapRoutePath[]
 }
 
 const WORKER_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -584,7 +574,7 @@ export function buildMapGrid(
 
   const workerMarkers = new Map<string, string>()
   const claimTargets = new Set<string>()
-  const pathSegments = new Map<string, MapPathSegment>()
+  const routePaths: MapRoutePath[] = []
   const workers =
     options?.workerHostOrder != null && options.workerHostOrder.length > 0
       ? [...options.workerHostOrder]
@@ -731,17 +721,21 @@ export function buildMapGrid(
     const letter = letterForHost.get(host)
     if (!letter) continue
 
-    for (let i = 0; i < path.length - 1; i++) {
-      const from = path[i]!
-      const to = path[i + 1]!
-      const axis = corridorAxis(from, to)
-      if (!axis) continue
-      const corridor = corridorGridBetween(minX, minY, from, to)
-      if (!corridor) continue
-      const [cy, cx] = corridor
-      pathSegments.set(`${cy},${cx}`, { letter, axis })
+    const points: [number, number][] = []
+    for (let i = 0; i < path.length; i++) {
+      const [lx, ly] = path[i]!
+      const [gx, gy] = toGrid(lx, ly)
+      points.push([gx, gy])
+      if (i < path.length - 1) {
+        const corridor = corridorGridBetween(minX, minY, path[i]!, path[i + 1]!)
+        if (corridor) {
+          const [cy, cx] = corridor
+          points.push([cx, cy])
+        }
+      }
     }
+    if (points.length >= 2) routePaths.push({ letter, points })
   }
 
-  return { minX, minY, width: gw, height: gh, cells, workerMarkers, claimTargets, pathSegments }
+  return { minX, minY, width: gw, height: gh, cells, workerMarkers, claimTargets, routePaths }
 }

@@ -54,15 +54,6 @@ function shortenHost(host: string, max = 22): string {
   return `${host.slice(0, max - 3)}...`
 }
 
-function colorWithAlpha(hex: string, alpha: number): string {
-  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
-  if (!m) return hex
-  const r = Number.parseInt(m[1]!, 16)
-  const g = Number.parseInt(m[2]!, 16)
-  const b = Number.parseInt(m[3]!, 16)
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`
-}
-
 function claimForWorker(state: LabyrinthState, workerHost: string): string | null {
   const claims = state.claims ?? {}
   for (const [cell, host] of Object.entries(claims)) {
@@ -180,12 +171,47 @@ function logicalCellAt(grid: MapGrid, gx: number, gy: number): string | null {
   return `${logicalX},${logicalY}`
 }
 
+const MAP_CELL_PX = 12
+
+/** Shorten a route by half a grid cell at each end so lines stop at cell edges. */
+function trimRouteEnds(
+  points: readonly [number, number][],
+  halfCell: number,
+): [number, number][] {
+  if (points.length < 2) return [...points]
+
+  const stepToward = (
+    from: [number, number],
+    toward: [number, number],
+    dist: number,
+  ): [number, number] => {
+    const dx = toward[0] - from[0]
+    const dy = toward[1] - from[1]
+    const len = Math.hypot(dx, dy)
+    if (len === 0) return from
+    const move = Math.min(dist, len * 0.49)
+    return [from[0] + (dx / len) * move, from[1] + (dy / len) * move]
+  }
+
+  const out = points.map((p) => [...p] as [number, number])
+  out[0] = stepToward(out[0]!, out[1]!, halfCell)
+  const last = out.length - 1
+  out[last] = stepToward(out[last]!, out[last - 1]!, halfCell)
+  return out
+}
+
+function gridPointToPx(gx: number, gy: number): string {
+  return `${gx * MAP_CELL_PX + MAP_CELL_PX / 2},${gy * MAP_CELL_PX + MAP_CELL_PX / 2}`
+}
+
 function renderMapGrid(
   React: ReturnType<typeof getReact>,
   grid: MapGrid,
   workerRows: WorkerRow[],
 ): ReactNode {
   const letterToColor = new Map(workerRows.map((w) => [w.letter, w.color]))
+  const mapW = grid.width * MAP_CELL_PX
+  const mapH = grid.height * MAP_CELL_PX
 
   const rows = grid.cells.map((row, gy) =>
     React.createElement(
@@ -198,8 +224,6 @@ function renderMapGrid(
         let fg = CELL_STYLES[displayKind].fg
 
         const logicalKey = logicalCellAt(grid, gx, gy)
-        const pathKey = `${gy},${gx}`
-        const pathSeg = grid.pathSegments.get(pathKey)
 
         if (logicalKey) {
           const w = grid.workerMarkers.get(logicalKey)
@@ -214,12 +238,6 @@ function renderMapGrid(
           }
         }
 
-        if (!letter && pathSeg) {
-          letter = pathSeg.axis === "ns" ? "|" : "-"
-          bg = colorWithAlpha(letterToColor.get(pathSeg.letter) ?? CELL_STYLES.open.bg, 0.85)
-          fg = "#000"
-        }
-
         const style = CELL_STYLES[displayKind]
         return React.createElement(
           "span",
@@ -228,9 +246,9 @@ function renderMapGrid(
             style: {
               fontFamily: "monospace",
               fontSize: "11px",
-              width: "12px",
-              height: "12px",
-              lineHeight: "12px",
+              width: `${MAP_CELL_PX}px`,
+              height: `${MAP_CELL_PX}px`,
+              lineHeight: `${MAP_CELL_PX}px`,
               display: "inline-block",
               textAlign: "center",
               backgroundColor: bg,
@@ -246,6 +264,22 @@ function renderMapGrid(
     ),
   )
 
+  const routeLines = grid.routePaths.map((route, index) => {
+    const color = letterToColor.get(route.letter) ?? CELL_STYLES.open.fg
+    const trimmed = trimRouteEnds(route.points, 0.5)
+    const points = trimmed.map(([gx, gy]) => gridPointToPx(gx, gy)).join(" ")
+    return React.createElement("polyline", {
+      key: `route-${route.letter}-${index}`,
+      points,
+      fill: "none",
+      stroke: color,
+      strokeWidth: 2.5,
+      strokeLinecap: "butt",
+      strokeLinejoin: "round",
+      opacity: 0.95,
+    })
+  })
+
   return React.createElement(
     "div",
     {
@@ -257,7 +291,40 @@ function renderMapGrid(
         backgroundColor: "#0d0d0d",
       },
     },
-    rows,
+    React.createElement(
+      "div",
+      {
+        style: {
+          position: "relative",
+          width: `${mapW}px`,
+          height: `${mapH}px`,
+        },
+      },
+      [
+        React.createElement(
+          "div",
+          { key: "cells", style: { position: "relative", zIndex: 1 } },
+          rows,
+        ),
+        React.createElement(
+          "svg",
+          {
+            key: "routes",
+            width: mapW,
+            height: mapH,
+            style: {
+              position: "absolute",
+              left: 0,
+              top: 0,
+              zIndex: 2,
+              pointerEvents: "none",
+              overflow: "visible",
+            },
+          },
+          routeLines,
+        ),
+      ],
+    ),
   )
 }
 
@@ -359,7 +426,7 @@ function renderLegend(React: ReturnType<typeof getReact>, workerRows: WorkerRow[
     "! claim target (no letter)",
     "X goal (labradar)",
     "A-Z explorer at current position",
-    "colored - or | route to claim",
+    "colored line route to claim",
   ]
 
   const mapWorkers = workerRows.filter((r) => r.pos !== "-")
