@@ -112,7 +112,7 @@ export async function runAuthCommand(
     return
   }
 
-  if (dnet.getServerDetails(cmd.target).hasSession) {
+  if (dnet.getServerDetails(cmd.target).hasSession && !isLabyrinthMoveGuess(cmd.guess)) {
     writeResult({ success: true, feedback: cmd.guess })
     return
   }
@@ -194,7 +194,21 @@ export async function runLabreportCommand(
 ): Promise<void> {
   const workerHost = ns.getHostname()
 
-  const writeResult = (payload: {
+  const writeFailure = (message: string): void => {
+    ns.writePort(
+      replyPort,
+      JSON.stringify({
+        type: "labreportResult",
+        target: cmd.target,
+        solverId: cmd.solverId,
+        workerHost,
+        success: false,
+        message,
+      }),
+    )
+  }
+
+  const writeSuccess = (payload: {
     coords: [number, number]
     north: boolean
     east: boolean
@@ -208,12 +222,21 @@ export async function runLabreportCommand(
         target: cmd.target,
         solverId: cmd.solverId,
         workerHost,
+        success: true,
         ...payload,
       }),
     )
   }
 
-  if (!dnet.labreport) return
+  if (!dnet.labreport) {
+    writeFailure("labreport API unavailable")
+    return
+  }
+
+  if (!isNeighbor(dnet, cmd.target)) {
+    writeFailure(NOT_NEIGHBOR_MESSAGE)
+    return
+  }
 
   const details = readFormulasDetails(dnet, cmd.target)
   if (details) {
@@ -230,11 +253,21 @@ export async function runLabreportCommand(
 
   try {
     const result = await dnet.labreport()
-    if (!result.success || !Array.isArray(result.coords) || result.coords.length < 2) return
+    if (!result.success) {
+      writeFailure(result.message ?? "labreport failed")
+      return
+    }
+    if (!Array.isArray(result.coords) || result.coords.length < 2) {
+      writeFailure("labreport returned invalid coords")
+      return
+    }
     const x = Number(result.coords[0])
     const y = Number(result.coords[1])
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return
-    writeResult({
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      writeFailure("labreport returned invalid coords")
+      return
+    }
+    writeSuccess({
       coords: [x, y],
       north: result.north === true,
       east: result.east === true,
@@ -242,7 +275,7 @@ export async function runLabreportCommand(
       west: result.west === true,
     })
   } catch {
-    /* coordinator handles timeout */
+    writeFailure("labreport error")
   }
 }
 

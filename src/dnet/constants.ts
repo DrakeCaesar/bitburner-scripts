@@ -23,7 +23,7 @@ export const LOOP_INTERVAL_MS = 10
 export const EXHAUSTED_RETRY_MS = 20_000
 export const WORKER_TIMEOUT_MS = 120_000
 /** Grace after a worker-reported deadline before the coordinator treats the command as failed. */
-export const DEADLINE_GRACE_MS = 50
+export const DEADLINE_GRACE_MS = 1000
 /** Initial window for the worker to post its first reply (deadline or final result) on auth. */
 export const FIRST_REPLY_MS = 50
 /** Fallback if probeResult/spawnResult never arrives (no worker deadline messages). */

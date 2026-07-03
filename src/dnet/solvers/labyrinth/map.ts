@@ -348,6 +348,8 @@ export interface BuildMapGridOptions {
   frontier?: readonly string[]
   /** Frontier cell key -> worker host owning the claim. */
   claims?: Record<string, string>
+  /** Stable host order for A-Z letter assignment (defaults to sorted session keys). */
+  workerHostOrder?: readonly string[]
 }
 
 export interface MapGrid {
@@ -387,7 +389,10 @@ export function buildMapGrid(
 
   const workerMarkers = new Map<string, string>()
   const claimMarkers = new Map<string, string>()
-  const workers = Object.keys(sessions).sort()
+  const workers =
+    options?.workerHostOrder != null && options.workerHostOrder.length > 0
+      ? [...options.workerHostOrder]
+      : Object.keys(sessions).sort()
   const letterForHost = new Map<string, string>()
   for (let i = 0; i < workers.length; i++) {
     const host = workers[i]!

@@ -1,5 +1,6 @@
 import { type ReactNode } from "@ns"
-import { getReact } from "@/libraries/scriptLogUi.js"
+import { buildReactTable, getReact } from "@/libraries/scriptLogUi.js"
+import { col } from "@/libraries/scriptLogUiLayout.js"
 import {
   buildMapGrid,
   exploredCellCount,
@@ -123,57 +124,43 @@ function workerAvailability(
   }
 }
 
+function sortedAdjacentHosts(ctx: LabyrinthOverviewContext, labHost: string): string[] {
+  return (ctx.workers ?? [])
+    .filter((w) => isLabAdjacent(w.host, labHost, w))
+    .map((w) => w.host)
+    .sort()
+}
+
 function buildWorkerRows(state: LabyrinthState, ctx: LabyrinthOverviewContext, labHost: string): WorkerRow[] {
   const workerSnap = new Map((ctx.workers ?? []).map((w) => [w.host, w]))
   const stasis = new Set(ctx.stasisLinked ?? [])
-  const sessionHosts = Object.keys(state.sessions).sort()
-  const seen = new Set<string>()
+  const adjacentHosts = sortedAdjacentHosts(ctx, labHost)
+  const letterByHost = new Map(adjacentHosts.map((host, i) => [host, workerLetter(i)]))
+  const colorByHost = new Map(adjacentHosts.map((host, i) => [host, workerColor(i)]))
 
-  const rows: WorkerRow[] = sessionHosts.map((host, i) => {
-    seen.add(host)
-    const sess = state.sessions[host]!
-    const pos = sessionDisplayCoords(sess)
+  return adjacentHosts.map((host, index) => {
+    const sess = state.sessions[host]
+    const pos = sess ? sessionDisplayCoords(sess) : null
     const snap = workerSnap.get(host)
-    const claim = claimForWorker(state, host)
+    const claim = sess ? claimForWorker(state, host) : null
     const pending = state.pending?.[host] ?? ""
-    const avail = workerAvailability(snap, labHost, pending, true)
+    const inSession = sess != null
+    const avail = workerAvailability(snap, labHost, pending, inSession)
 
     return {
-      letter: workerLetter(i),
-      color: workerColor(i),
+      letter: letterByHost.get(host) ?? workerLetter(index),
+      color: colorByHost.get(host) ?? workerColor(index),
       host,
       stasis: stasis.has(host),
       pos: pos ? pos.join(",") : "-",
-      phase: sess.phase,
+      phase: sess?.phase ?? "-",
       pending: pending || "-",
       claim: claim ?? "-",
-      pathDepth: sess.path.length,
-      inSession: true,
+      pathDepth: sess?.path.length ?? 0,
+      inSession,
       ...avail,
     }
   })
-
-  const poolHosts = [...workerSnap.keys()].filter((h) => !seen.has(h)).sort()
-  for (const host of poolHosts) {
-    const snap = workerSnap.get(host)!
-    if (!isLabAdjacent(host, labHost, snap)) continue
-    const avail = workerAvailability(snap, labHost, "", false)
-    rows.push({
-      letter: "-",
-      color: "#444",
-      host,
-      stasis: stasis.has(host),
-      pos: "-",
-      phase: "-",
-      pending: "-",
-      claim: "-",
-      pathDepth: 0,
-      inSession: false,
-      ...avail,
-    })
-  }
-
-  return rows
 }
 
 function logicalCellAt(grid: MapGrid, gx: number, gy: number): string | null {
@@ -201,19 +188,18 @@ function renderMapGrid(
         let fg = CELL_STYLES[displayKind].fg
 
         const logicalKey = logicalCellAt(grid, gx, gy)
-        if (logicalKey && (kind === "worker" || kind === "open")) {
+        if (logicalKey) {
           const w = grid.workerMarkers.get(logicalKey)
           if (w) {
-            displayKind = "worker"
             letter = w === "*" ? "*" : w
             bg = letterToColor.get(w) ?? CELL_STYLES.worker.bg
             fg = "#000"
-          }
-        } else if (logicalKey && kind === "claimed") {
-          letter = grid.claimMarkers.get(logicalKey)
-          if (letter) {
-            bg = letterToColor.get(letter) ?? CELL_STYLES.claimed.bg
-            fg = "#000"
+          } else if (kind === "claimed") {
+            letter = grid.claimMarkers.get(logicalKey)
+            if (letter) {
+              bg = letterToColor.get(letter) ?? CELL_STYLES.claimed.bg
+              fg = "#000"
+            }
           }
         }
 
@@ -258,8 +244,21 @@ function renderMapGrid(
   )
 }
 
-function renderWorkerPanel(React: ReturnType<typeof getReact>, rows: WorkerRow[]): ReactNode {
+const LABYRINTH_EXPLORER_COLUMNS = [
+  col("", "center"),
+  col("Host", "left"),
+  col("Stasis", "center"),
+  col("Pos", "right"),
+  col("Phase", "left"),
+  col("Pending", "left"),
+  col("Claim", "left"),
+  col("Path", "right"),
+  col("Status", "left"),
+]
+
+function renderWorkerPanel(rows: WorkerRow[]): ReactNode {
   if (rows.length === 0) {
+    const React = getReact()
     return React.createElement(
       "div",
       { style: { fontFamily: "monospace", opacity: 0.7, fontSize: "11px" } },
@@ -267,82 +266,21 @@ function renderWorkerPanel(React: ReturnType<typeof getReact>, rows: WorkerRow[]
     )
   }
 
-  const header = React.createElement(
-    "div",
-    {
-      style: {
-        display: "grid",
-        gridTemplateColumns: "24px 1fr 36px 52px 64px 56px 52px 36px 1fr",
-        gap: "4px",
-        fontWeight: "bold",
-        fontSize: "10px",
-        opacity: 0.75,
-        marginBottom: 4,
-        fontFamily: "monospace",
-      },
-    },
-    ["", "Host", "Stasis", "Pos", "Phase", "Pending", "Claim", "Path", "Status"].map((label, i) =>
-      React.createElement("span", { key: `h-${i}` }, label),
-    ),
-  )
-
-  const body = rows.map((row) =>
-    React.createElement(
-      "div",
-      {
-        key: row.host,
-        style: {
-          display: "grid",
-          gridTemplateColumns: "24px 1fr 36px 52px 64px 56px 52px 36px 1fr",
-          gap: "4px",
-          fontSize: "10px",
-          fontFamily: "monospace",
-          marginBottom: 2,
-          alignItems: "center",
-        },
-      },
-      [
-        React.createElement(
-          "span",
-          {
-            key: "letter",
-            style: {
-              backgroundColor: row.inSession ? row.color : "#333",
-              color: row.inSession ? "#000" : "#888",
-              fontWeight: "bold",
-              textAlign: "center",
-              borderRadius: 2,
-            },
-          },
-          row.letter,
-        ),
-        React.createElement("span", { key: "host", title: row.host }, shortenHost(row.host, 28)),
-        React.createElement("span", { key: "stasis" }, row.stasis ? "yes" : "no"),
-        React.createElement("span", { key: "pos" }, row.pos),
-        React.createElement("span", { key: "phase" }, row.phase),
-        React.createElement("span", { key: "pending" }, row.pending),
-        React.createElement("span", { key: "claim" }, row.claim),
-        React.createElement("span", { key: "path" }, row.inSession ? String(row.pathDepth) : "-"),
-        React.createElement(
-          "span",
-          {
-            key: "status",
-            style: {
-              opacity: row.availability === "available" ? 1 : row.availability === "active" ? 1 : 0.65,
-            },
-          },
-          row.availabilityLabel,
-        ),
-      ],
-    ),
-  )
-
-  return React.createElement(
-    "div",
-    { style: { minWidth: 420, maxWidth: 560 } },
-    header,
-    ...body,
-  )
+  return buildReactTable({
+    widthKey: "dnet/labyrinth/explorers",
+    columns: LABYRINTH_EXPLORER_COLUMNS,
+    rows: rows.map((row) => [
+      row.letter,
+      row.host,
+      row.stasis ? "yes" : "no",
+      row.pos,
+      row.phase,
+      row.pending,
+      row.claim,
+      row.inSession ? String(row.pathDepth) : "-",
+      row.availabilityLabel,
+    ]),
+  })
 }
 
 function renderStats(
@@ -404,16 +342,16 @@ function renderLegend(React: ReturnType<typeof getReact>, workerRows: WorkerRow[
     "A-Z explorer on map",
   ]
 
-  const sessionRows = workerRows.filter((r) => r.inSession)
-  const poolRows = workerRows.filter((r) => !r.inSession)
+  const mapWorkers = workerRows.filter((r) => r.pos !== "-")
+  const poolRows = workerRows.filter((r) => r.pos === "-")
 
   const sessionLegend =
-    sessionRows.length === 0
+    mapWorkers.length === 0
       ? React.createElement("div", { key: "no-session", style: { opacity: 0.7 } }, "No explorers in maze yet")
       : React.createElement(
           "div",
           { key: "session-legend" },
-          sessionRows.map((row) =>
+          mapWorkers.map((row) =>
             React.createElement(
               "div",
               {
@@ -468,14 +406,28 @@ function renderLegend(React: ReturnType<typeof getReact>, workerRows: WorkerRow[
             React.createElement(
               "div",
               { key: "pool-hdr", style: { opacity: 0.75, marginBottom: 3 } },
-              "Adjacent pool workers (not exploring):",
+              "Adjacent pool workers (no position yet):",
             ),
             ...poolRows.map((row) =>
               React.createElement(
                 "div",
                 { key: row.host, style: { display: "flex", flexDirection: "row", gap: 8, marginBottom: 2 } },
                 [
-                  React.createElement("span", { key: "dash", style: { width: 18, textAlign: "center" } }, "-"),
+                  React.createElement(
+                    "span",
+                    {
+                      key: "badge",
+                      style: {
+                        backgroundColor: row.color,
+                        color: "#000",
+                        fontWeight: "bold",
+                        width: 18,
+                        textAlign: "center",
+                        borderRadius: 2,
+                      },
+                    },
+                    row.letter,
+                  ),
                   React.createElement(
                     "span",
                     { key: "host", style: { minWidth: 140 }, title: row.host },
@@ -532,9 +484,11 @@ function buildLabyrinthMapReact(
 
   const frontier = frontierCells(state.map)
   const workerRows = buildWorkerRows(state, ctx, snapshot.hostname)
+  const workerHostOrder = workerRows.map((r) => r.host)
   const grid = buildMapGrid(state.map, state.sessions, {
     frontier,
     claims: state.claims ?? {},
+    workerHostOrder,
   })
 
   if (!grid) {
@@ -544,7 +498,7 @@ function buildLabyrinthMapReact(
       [
         renderStats(React, snapshot, state, frontier.length),
         React.createElement("div", { key: "empty" }, "No cells mapped yet -- waiting for labreport"),
-        renderWorkerPanel(React, workerRows),
+        renderWorkerPanel(workerRows),
         renderLegend(React, workerRows),
       ],
     )
@@ -561,7 +515,7 @@ function buildLabyrinthMapReact(
           key: "body",
           style: { display: "flex", flexDirection: "row", gap: 12, alignItems: "flex-start", flexWrap: "wrap" },
         },
-        [renderMapGrid(React, grid, workerRows), renderWorkerPanel(React, workerRows)],
+        [renderMapGrid(React, grid, workerRows), renderWorkerPanel(workerRows)],
       ),
       renderLegend(React, workerRows),
     ],
@@ -578,12 +532,17 @@ export function renderLabyrinthOverview(
   for (const snap of sorted) {
     const state = snap.state as LabyrinthState | null
     const frontierList = state?.type === "labyrinth" ? frontierCells(state.map) : []
-    const grid =
-      state?.type === "labyrinth"
-        ? buildMapGrid(state.map, state.sessions, { frontier: frontierList, claims: state.claims ?? {} })
-        : null
     const workerRows =
       state?.type === "labyrinth" ? buildWorkerRows(state, ctx, snap.hostname) : []
+    const workerHostOrder = workerRows.map((r) => r.host)
+    const grid =
+      state?.type === "labyrinth"
+        ? buildMapGrid(state.map, state.sessions, {
+            frontier: frontierList,
+            claims: state.claims ?? {},
+            workerHostOrder,
+          })
+        : null
     const mapH = grid ? grid.height * 14 + 16 : 0
     const mapW = grid ? grid.width * 13 + 16 : 0
     const heightPx = Math.max(200, mapH + 160 + workerRows.length * 14)

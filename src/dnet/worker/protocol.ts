@@ -136,11 +136,13 @@ export type WorkerResponse =
       target: string
       solverId: string
       workerHost: string
-      coords: [number, number]
-      north: boolean
-      east: boolean
-      south: boolean
-      west: boolean
+      success: boolean
+      message?: string
+      coords?: [number, number]
+      north?: boolean
+      east?: boolean
+      south?: boolean
+      west?: boolean
     }
   | {
       type: "restoreSessionResult"
@@ -244,6 +246,18 @@ export function parseWorkerResponse(raw: unknown): WorkerResponse | null {
         }
       case "labreportResult": {
         if (typeof row.target !== "string" || typeof row.solverId !== "string") return null
+        const workerHost = typeof row.workerHost === "string" ? row.workerHost : ""
+        const message = typeof row.message === "string" ? row.message : undefined
+        if (row.success === false) {
+          return {
+            type: "labreportResult",
+            target: row.target,
+            solverId: row.solverId,
+            workerHost,
+            success: false,
+            message,
+          }
+        }
         if (!Array.isArray(row.coords) || row.coords.length < 2) return null
         const x = Number(row.coords[0])
         const y = Number(row.coords[1])
@@ -252,7 +266,9 @@ export function parseWorkerResponse(raw: unknown): WorkerResponse | null {
           type: "labreportResult",
           target: row.target,
           solverId: row.solverId,
-          workerHost: typeof row.workerHost === "string" ? row.workerHost : "",
+          workerHost,
+          success: true,
+          message,
           coords: [x, y],
           north: row.north === true,
           east: row.east === true,

@@ -22,6 +22,28 @@ function asLabyrinthState(state: unknown): LabyrinthState | null {
   return row.type === "labyrinth" ? row : null
 }
 
+/** Drop in-flight flags for workers that are idle (e.g. after a silent command failure). */
+function reconcileLabyrinthPending(lab: LabyrinthState, workerPool: WorkerPool): void {
+  if (!lab.pending) return
+  for (const host of Object.keys(lab.pending)) {
+    const wi = workerPool.workers.get(host)
+    if (!wi?.idle) continue
+    delete lab.pending[host]
+  }
+}
+
+/** All pool workers on the labyrinth or directly adjacent (idle or busy). */
+export function labyrinthAdjacentWorkerHosts(workerPool: WorkerPool, labyrinthHost: string): Set<string> {
+  const hosts = new Set<string>()
+  for (const [host, wi] of workerPool.workers) {
+    if (wi.commandPort <= 0) continue
+    if (host === labyrinthHost || wi.neighbors.includes(labyrinthHost)) {
+      hosts.add(host)
+    }
+  }
+  return hosts
+}
+
 /** Idle workers that can reach the labyrinth (on it or directly adjacent). */
 export function labyrinthExplorers(workerPool: WorkerPool, labyrinthHost: string): ManagedWorker[] {
   const out: ManagedWorker[] = []
@@ -76,10 +98,11 @@ export function dispatchLabyrinth(deps: LabyrinthDispatchDeps): void {
     if (!lab) continue
 
     repairState(lab)
+    reconcileLabyrinthPending(lab, workerPool)
 
+    const adjacentHosts = labyrinthAdjacentWorkerHosts(workerPool, target.host)
     const explorers = sortExplorers(labyrinthExplorers(workerPool, target.host), stasisLinked)
-    const explorerHosts = new Set(explorers.map((wi) => wi.host))
-    pruneLabyrinthWorkers(lab, explorerHosts)
+    pruneLabyrinthWorkers(lab, adjacentHosts)
 
     if (explorers.length === 0) {
       target.status = "waiting_worker"

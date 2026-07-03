@@ -1000,7 +1000,10 @@ function onLabreportResult(
       ? (target.solverState as LabyrinthState)
       : null
   if (lab?.type === "labyrinth") {
-    if (!labyrinthPendingMatches(lab, msg.workerHost, "labreport")) {
+    const pendingMatch = labyrinthPendingMatches(lab, msg.workerHost, "labreport")
+    if (pendingMatch) {
+      clearLabyrinthPending(lab, msg.workerHost)
+    } else if (!msg.success) {
       attemptLog.append({
         host: target.host,
         session: target.session,
@@ -1012,8 +1015,18 @@ function onLabreportResult(
         note: "stale labreport ignored",
       })
       return
+    } else {
+      attemptLog.append({
+        host: target.host,
+        session: target.session,
+        kind: "note",
+        solverId: msg.solverId,
+        modelId: target.modelId,
+        workerHost: msg.workerHost,
+        guess: "labreport",
+        note: "orphan labreport applied",
+      })
     }
-    clearLabyrinthPending(lab, msg.workerHost)
   }
 
   if (target.workerHost === msg.workerHost && target.pendingGuess === "labreport") {
@@ -1022,14 +1035,33 @@ function onLabreportResult(
     target.workerHost = null
   }
 
+  if (!msg.success) {
+    attemptLog.append({
+      host: target.host,
+      session: target.session,
+      kind: "note",
+      solverId: msg.solverId,
+      modelId: target.modelId,
+      workerHost: msg.workerHost,
+      guess: "labreport",
+      success: false,
+      note: "labreport failed",
+      message: msg.message,
+    })
+    target.status = "waiting_worker"
+    return
+  }
+
+  if (msg.coords == null) return
+
   if (target.solverState != null) {
     target.solverState = applyLabreport(target.solverState as LabyrinthState, {
       workerHost: msg.workerHost,
       coords: msg.coords,
-      north: msg.north,
-      east: msg.east,
-      south: msg.south,
-      west: msg.west,
+      north: msg.north === true,
+      east: msg.east === true,
+      south: msg.south === true,
+      west: msg.west === true,
     })
   }
 
@@ -1045,6 +1077,16 @@ function onLabreportResult(
   })
 
   target.status = "active"
+}
+
+function clearWorkerLabyrinthPending(targets: Map<string, AuthTarget>, workerHost: string): void {
+  for (const target of targets.values()) {
+    if (target.modelId !== LABYRINTH_MODEL) continue
+    if (target.solverState == null || typeof target.solverState !== "object") continue
+    const lab = target.solverState as LabyrinthState
+    if (lab.type !== "labyrinth") continue
+    clearLabyrinthPending(lab, workerHost)
+  }
 }
 
 async function onAuthResult(
@@ -2070,6 +2112,7 @@ function failWorkerCommand(
   const failedAt = Date.now()
   wi.idle = true
   wi.commandDeadlineAt = 0
+  clearWorkerLabyrinthPending(targets, wi.host)
   masterLog.append("timeout", `${wi.host} command ${wi.lastCommand ?? "?"}`)
   deadlineArchive?.onTimedOut(wi.host, failedAt, masterLog.all)
   if (wi.lastCommand === "probe") {
