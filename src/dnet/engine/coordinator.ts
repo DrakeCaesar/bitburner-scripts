@@ -903,15 +903,6 @@ async function startAuthSession(
   })
 }
 
-function undoDispatchedGuess(target: AuthTarget): void {
-  const state = target.solverState
-  if (state == null || typeof state !== "object") return
-  const st = state as { dispatched?: boolean }
-  if (st.dispatched === true) {
-    target.solverState = { ...st, dispatched: false }
-  }
-}
-
 function onLabreportResult(
   msg: Extract<WorkerResponse, { type: "labreportResult" }>,
   targets: Map<string, AuthTarget>,
@@ -1045,7 +1036,6 @@ async function onAuthResult(
   })
 
   if (msg.message === NOT_NEIGHBOR_MESSAGE) {
-    undoDispatchedGuess(target)
     if (lab?.type === "labyrinth") {
       pruneLabyrinthWorker(lab, msg.workerHost)
     }
@@ -1546,7 +1536,6 @@ async function dispatchGuesses(
         ctx,
       )
     ) {
-      undoDispatchedGuess(target)
       if (markBlockedOnWorker(target, dnet, passwords, "auth send failed", sessionArchive)) continue
       continue
     }
@@ -1769,6 +1758,7 @@ function clearTargetWorkerRefs(ctx: WorkerDispatchCtx, workerHost: string): void
     if (t.workerHost !== workerHost) continue
     t.workerHost = null
     t.pendingGuess = null
+    t.pendingDetail = null
     if (t.status === "active") {
       markBlockedOnWorker(t, ctx.dnet, ctx.passwords, "worker dropped", ctx.sessionArchive)
     }
@@ -1950,9 +1940,9 @@ function failWorkerCommand(
   masterLog.append("timeout", `${wi.host} command ${wi.lastCommand ?? "?"}`)
   for (const t of targets.values()) {
     if (t.workerHost !== wi.host) continue
-    undoDispatchedGuess(t)
     t.workerHost = null
     t.pendingGuess = null
+    t.pendingDetail = null
     if (isTargetAuthed(t, dnet, passwords)) {
       markTargetAuthed(t, dnet, { passwords, sessionArchive })
     } else {

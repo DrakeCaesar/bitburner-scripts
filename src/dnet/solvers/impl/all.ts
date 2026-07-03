@@ -1,7 +1,34 @@
-/** All dnet auth solvers and their helpers (single module). */
 import type { ServerDetails } from '../../types.js'
 import type { SolverModule, SolverState } from '../types.js'
 import { COMMON_PASSWORDS, DEFAULT_FACTORY_PASSWORDS } from '../data/commonPasswords.js'
+
+/** Mark a single-shot solver done after a real auth attempt reaches the target. */
+function finishSingleShot(state: { dispatched: boolean }): void {
+  state.dispatched = true
+}
+
+/** Drop a list candidate after a failed auth (pop-from-end iterators). */
+function consumeFromEnd(remaining: string[], guess: string, success: boolean): void {
+  if (success) {
+    remaining.length = 0
+    return
+  }
+  const idx = remaining.lastIndexOf(guess)
+  if (idx >= 0) remaining.splice(idx, 1)
+}
+
+/** Drop a list candidate after a failed auth (shift-from-front iterators). */
+function consumeFromFront(remaining: string[], guess: string, success: boolean): void {
+  if (success) {
+    remaining.length = 0
+    return
+  }
+  if (remaining[0] === guess) remaining.shift()
+  else {
+    const idx = remaining.indexOf(guess)
+    if (idx >= 0) remaining.splice(idx, 1)
+  }
+}
 
 // #region ZeroLogon
 
@@ -14,10 +41,12 @@ const zeroLogon: SolverModule<ZeroLogonState> = {
   },
   nextGuess(state) {
     if (state.dispatched) return null
-    state.dispatched = true
     return { guess: "", detail: "zeroLogon" }
   },
-  applyResult(state, _guess, _result) { return state },
+  applyResult(state, _guess, _result) {
+    finishSingleShot(state)
+    return state
+  },
 }
 
 // #endregion
@@ -38,10 +67,12 @@ const cloudBlare: SolverModule<CloudBlareState> = {
   },
   nextGuess(state) {
     if (state.dispatched || !state.guess) return null
-    state.dispatched = true
     return { guess: state.guess, detail: "cloudBlare" }
   },
-  applyResult(state, _guess, _result) { return state },
+  applyResult(state, _guess, _result) {
+    finishSingleShot(state)
+    return state
+  },
 }
 
 // #endregion
@@ -59,10 +90,12 @@ const deskMemo: SolverModule<DeskMemoState> = {
   },
   nextGuess(state) {
     if (state.dispatched || !state.guess) return null
-    state.dispatched = true
     return { guess: state.guess, detail: "deskMemo" }
   },
-  applyResult(state, _guess, _result) { return state },
+  applyResult(state, _guess, _result) {
+    finishSingleShot(state)
+    return state
+  },
 }
 
 // #endregion
@@ -107,10 +140,12 @@ const bellaCuoreSingle: SolverModule<BellaCuoreSingleState> = {
   },
   nextGuess(state) {
     if (state.dispatched || !state.guess) return null
-    state.dispatched = true
     return { guess: state.guess, detail: "bellaCuore" }
   },
-  applyResult(state, _guess, _result) { return state },
+  applyResult(state, _guess, _result) {
+    finishSingleShot(state)
+    return state
+  },
 }
 
 // #endregion
@@ -138,10 +173,12 @@ const octantVoxel: SolverModule<OctantVoxelState> = {
   },
   nextGuess(state) {
     if (state.dispatched || !state.guess) return null
-    state.dispatched = true
     return { guess: state.guess, detail: "octantVoxel" }
   },
-  applyResult(state, _guess, _result) { return state },
+  applyResult(state, _guess, _result) {
+    finishSingleShot(state)
+    return state
+  },
 }
 
 // #endregion
@@ -258,10 +295,12 @@ const mathML: SolverModule<MathMLState> = {
   },
   nextGuess(state) {
     if (state.dispatched || !state.guess) return null
-    state.dispatched = true
     return { guess: state.guess, detail: "mathML" }
   },
-  applyResult(state, _guess, _result) { return state },
+  applyResult(state, _guess, _result) {
+    finishSingleShot(state)
+    return state
+  },
 }
 
 // #endregion
@@ -322,17 +361,16 @@ const primeTime2: SolverModule<PrimeTime2State> = {
   },
   nextGuess(state) {
     if (state.dispatched) return null
-    while (state.factorIdx < state.factors.length) {
-      const guess = state.factors[state.factorIdx]!
-      state.factorIdx++
-      return { guess, detail: `primeTime2` }
-    }
-    state.dispatched = true
-    return null
+    if (state.factorIdx >= state.factors.length) return null
+    return { guess: state.factors[state.factorIdx]!, detail: `primeTime2` }
   },
   applyResult(state, _guess, result) {
-    if (result.success) { state.dispatched = true }
-    // On failure, nextGuess will try the next factor
+    if (result.success) {
+      state.dispatched = true
+      return state
+    }
+    state.factorIdx++
+    if (state.factorIdx >= state.factors.length) state.dispatched = true
     return state
   },
 }
@@ -359,10 +397,12 @@ const binaryToText: SolverModule<BinaryToTextState> = {
   },
   nextGuess(state) {
     if (state.dispatched || !state.guess) return null
-    state.dispatched = true
     return { guess: state.guess, detail: "110100100" }
   },
-  applyResult(state, _guess, _result) { return state },
+  applyResult(state, _guess, _result) {
+    finishSingleShot(state)
+    return state
+  },
 }
 
 // #endregion
@@ -392,10 +432,12 @@ const ordoXenos: SolverModule<OrdoXenosState> = {
   },
   nextGuess(state) {
     if (state.dispatched || !state.guess) return null
-    state.dispatched = true
     return { guess: state.guess, detail: "ordoXenos" }
   },
-  applyResult(state, _guess, _result) { return state },
+  applyResult(state, _guess, _result) {
+    finishSingleShot(state)
+    return state
+  },
 }
 
 // #endregion
@@ -412,10 +454,12 @@ const proverFlo: SolverModule<ProverFloState> = {
   },
   nextGuess(state) {
     if (state.dispatched || !state.guess) return null
-    state.dispatched = true
     return { guess: state.guess, detail: "proverFlo" }
   },
-  applyResult(state, _guess, _result) { return state },
+  applyResult(state, _guess, _result) {
+    finishSingleShot(state)
+    return state
+  },
 }
 
 // #endregion
@@ -434,11 +478,11 @@ const laika4: SolverModule<Laika4State> = {
   },
   nextGuess(state) {
     if (state.remaining.length === 0) return null
-    const guess = state.remaining.pop()!
-    return { guess, detail: `laika4 (${state.remaining.length + 1} left)` }
+    const guess = state.remaining[state.remaining.length - 1]!
+    return { guess, detail: `laika4 (${state.remaining.length} left)` }
   },
-  applyResult(state, _guess, result) {
-    if (result.success) state.remaining = []
+  applyResult(state, guess, result) {
+    consumeFromEnd(state.remaining, guess, result.success)
     return state
   },
 }
@@ -590,11 +634,11 @@ const php54: SolverModule<Php54State> = {
     if (state.total === 0 || state.index >= state.total) return null
     const guess = php54PermutationAt(state.digits, state.digits.length, state.index)
     if (guess === null) return null
-    state.index++
-    return { guess, detail: `php54 (${state.total - state.index} left)` }
+    return { guess, detail: `php54 (${state.total - state.index - 1} left)` }
   },
   applyResult(state, _guess, result) {
     if (result.success) state.index = state.total
+    else state.index++
     return state
   },
 }
@@ -643,11 +687,11 @@ const euroZone: SolverModule<EuroZoneState> = {
   },
   nextGuess(state) {
     if (state.remaining.length === 0) return null
-    const guess = state.remaining.pop()!
-    return { guess, detail: `euroZone (${state.remaining.length + 1} left)` }
+    const guess = state.remaining[state.remaining.length - 1]!
+    return { guess, detail: `euroZone (${state.remaining.length} left)` }
   },
-  applyResult(state, _guess, result) {
-    if (result.success) state.remaining = []
+  applyResult(state, guess, result) {
+    consumeFromEnd(state.remaining, guess, result.success)
     return state
   },
 }
@@ -666,11 +710,11 @@ const topPass: SolverModule<TopPassState> = {
   },
   nextGuess(state) {
     if (state.remaining.length === 0) return null
-    const guess = state.remaining.pop()!
-    return { guess, detail: `topPass (${state.remaining.length + 1} left)` }
+    const guess = state.remaining[state.remaining.length - 1]!
+    return { guess, detail: `topPass (${state.remaining.length} left)` }
   },
-  applyResult(state, _guess, result) {
-    if (result.success) state.remaining = []
+  applyResult(state, guess, result) {
+    consumeFromEnd(state.remaining, guess, result.success)
     return state
   },
 }
@@ -689,11 +733,11 @@ const freshInstall: SolverModule<FreshInstallState> = {
   },
   nextGuess(state) {
     if (state.remaining.length === 0) return null
-    const guess = state.remaining.shift()!
+    const guess = state.remaining[0]!
     return { guess, detail: `default (${state.remaining.length} left)` }
   },
-  applyResult(state, _guess, result) {
-    if (result.success) state.remaining = []
+  applyResult(state, guess, result) {
+    consumeFromFront(state.remaining, guess, result.success)
     return state
   },
 }
@@ -726,11 +770,8 @@ const nilSolver: SolverModule<NilState> = {
   },
   nextGuess(state) {
     if (state.chars.every((d) => d !== null)) {
-      if (!state.finalDispatched) {
-        state.finalDispatched = true
-        return { guess: state.chars.join(""), detail: "NIL final" }
-      }
-      return null
+      if (state.finalDispatched) return null
+      return { guess: state.chars.join(""), detail: "NIL final" }
     }
     if (state.charIdx < state.charset.length) {
       const ch = state.charset[state.charIdx]!
@@ -740,11 +781,8 @@ const nilSolver: SolverModule<NilState> = {
     for (let i = 0; i < state.chars.length; i++) {
       if (state.chars[i] === null) state.chars[i] = state.charset[0]!
     }
-    if (!state.finalDispatched) {
-      state.finalDispatched = true
-      return { guess: state.chars.join(""), detail: "NIL final (fallback)" }
-    }
-    return null
+    if (state.finalDispatched) return null
+    return { guess: state.chars.join(""), detail: "NIL final (fallback)" }
   },
   applyResult(state, guess, result) {
     if (result.success) return state
@@ -766,6 +804,8 @@ const nilSolver: SolverModule<NilState> = {
           state.charIdx++
         }
       }
+    } else {
+      state.finalDispatched = true
     }
     return state
   },
@@ -1566,7 +1606,6 @@ const factoriOs: SolverModule<FactoriOsState> = {
         }
         const pw = String(state.product)
         if (pw.length !== state.length) return null
-        state.finalDispatched = true
         return { guess: pw, detail: "factor product" }
       }
 
@@ -1586,6 +1625,11 @@ const factoriOs: SolverModule<FactoriOsState> = {
     // Divisor 0 always bogus; discard even if feedback says "true" or guess was lost on timeout.
     if (guess === "0" || guess === "") {
       if (!state.probedZero) state.probedZero = true
+      return state
+    }
+
+    if (guess === String(state.product) && String(state.product).length === state.length) {
+      state.finalDispatched = true
       return state
     }
 
@@ -1791,7 +1835,6 @@ const kingOfTheHill: SolverModule<KingOfTheHillState> = {
 
     if (!state.finished) {
       const g = state.sweepIdx
-      state.sweepIdx += state.step
       return { guess: String(g), detail: `p${state.passNum}-${g}` }
     }
 
@@ -1800,14 +1843,18 @@ const kingOfTheHill: SolverModule<KingOfTheHillState> = {
       state.finals = kingOfTheHillBuildFinals(state)
     }
     if (state.finalIdx < state.finals.length) {
-      const c = state.finals[state.finalIdx++]!
+      const c = state.finals[state.finalIdx]!
       return { guess: String(c), detail: `final ${c}` }
     }
-    state.dispatched = true
     return null
   },
   applyResult(state, _guess, result) {
     if (result.success) return state
+    if (!state.finished) {
+      state.sweepIdx += state.step
+    } else if (state.finalIdx < state.finals.length) {
+      state.finalIdx++
+    }
     const g = Number(_guess)
     const alt = parseKingOfTheHillAltitude(result.feedback, result.message)
     if (alt == null) return state
@@ -2012,8 +2059,16 @@ function rateMyPixPlaceNextGuess(state: RateMyPixState): { guess: string; detail
   rateMyPixPlaceResolve(state)
 
   if (state.solved.every((ch) => ch !== null)) {
-    state.finalDispatched = true
     return { guess: state.solved.join(""), detail: "place final" }
+  }
+
+  if (state.placePending) {
+    const pending = state.placePending
+    const guess = rateMyPixBuildPlaceGuess(state, pending.char, new Set(pending.left))
+    return {
+      guess,
+      detail: `place ${pending.char} ${pending.need}/${pending.left.length + pending.right.length}`,
+    }
   }
 
   const task = state.placeStack[state.placeStack.length - 1]
@@ -2023,20 +2078,19 @@ function rateMyPixPlaceNextGuess(state: RateMyPixState): { guess: string; detail
   const mid = Math.ceil(task.pool.length / 2)
   const left = task.pool.slice(0, mid)
   const right = task.pool.slice(mid)
-  const popped = state.placeStack.pop()!
 
   state.placePending = {
-    char: popped.char,
-    need: popped.need,
+    char: task.char,
+    need: task.need,
     left,
     right,
     baseline: rateMyPixSolvedCount(state),
   }
 
-  const guess = rateMyPixBuildPlaceGuess(state, popped.char, new Set(left))
+  const guess = rateMyPixBuildPlaceGuess(state, task.char, new Set(left))
   return {
     guess,
-    detail: `place ${popped.char} ${popped.need}/${popped.pool.length}`,
+    detail: `place ${task.char} ${task.need}/${task.pool.length}`,
   }
 }
 
@@ -2122,6 +2176,7 @@ const rateMyPix: SolverModule<RateMyPixState> = {
       if (!fb || !state.placePending) return state
       const pending = state.placePending
       state.placePending = null
+      if (state.placeStack.length > 0) state.placeStack.pop()
 
       const peppers = rateMyPixPepperCount(fb)
       let leftCount = peppers - pending.baseline
@@ -2142,6 +2197,9 @@ const rateMyPix: SolverModule<RateMyPixState> = {
           need: leftCount,
           pool: [...pending.left],
         })
+      }
+      if (state.solved.every((ch) => ch !== null) && guess === state.solved.join("")) {
+        state.finalDispatched = true
       }
       return state
     }
@@ -2207,12 +2265,14 @@ const timingAttack: SolverModule<TimingAttackState> = {
       }
       return { guess, detail: `pos ${state.pos} try ${ch}` }
     }
-    // All positions resolved, dispatch final
-    state.finalDispatched = true
     return { guess: state.chars.join(""), detail: "final" }
   },
   applyResult(state, guess, result) {
     if (result.success) return state
+    if (state.pos >= state.length) {
+      state.finalDispatched = true
+      return state
+    }
     if (state.finalDispatched) return state
 
     const msg = result.message ?? ""
@@ -2391,8 +2451,7 @@ const openWebAccessPoint: SolverModule<OpenWebAccessPointState> = {
     if (state.phase === "iterate") {
       if (state.candidateIdx < state.candidates.length) {
         const guess = state.candidates[state.candidateIdx]!
-        state.candidateIdx++
-        return { guess, detail: `cand ${state.candidateIdx}/${state.candidates.length}` }
+        return { guess, detail: `cand ${state.candidateIdx + 1}/${state.candidates.length}` }
       }
     }
     return null
@@ -2427,6 +2486,10 @@ const openWebAccessPoint: SolverModule<OpenWebAccessPointState> = {
       state.triedGuesses.push(guess)
       state.captures.push(fb)
       return openWebAfterCapture(state)
+    }
+
+    if (state.phase === "iterate") {
+      state.candidateIdx++
     }
 
     return state
@@ -2548,26 +2611,19 @@ const bigMoSolver: SolverModule<BigMoState> = {
     if (state.phase === "probe") {
       if (state.probeIdx < state.probes.length) {
         const p = state.probes[state.probeIdx]!
-        // Return the probe — applyResult will store feedback at this index
         return { guess: String(p.n), detail: `bigMo d=${p.d}` }
       }
-      state.phase = "solve"
     }
     if (state.phase === "solve") {
       const resolved = state.probes.filter((p) => p.r !== null) as { d: number; r: number }[]
-      if (resolved.length === 0) {
-        state.finalDispatched = true
-        return null
-      }
+      if (resolved.length === 0) return null
       const padded = bigMoPasswordFromProbes(resolved, state.pwMin, state.pwMax, state.length)
-      state.finalDispatched = true
       if (!padded) return null
       return { guess: padded, detail: "bigMo CRT" }
     }
-    state.finalDispatched = true
     return null
   },
-  applyResult(state, _guess, result) {
+  applyResult(state, guess, result) {
     if (result.success) return state
     if (state.phase === "probe" && state.probeIdx < state.probes.length) {
       const fb = typeof result.feedback === "string" ? Number(result.feedback) : NaN
@@ -2575,6 +2631,11 @@ const bigMoSolver: SolverModule<BigMoState> = {
         state.probes[state.probeIdx]!.r = fb
       }
       state.probeIdx++
+      if (state.probeIdx >= state.probes.length) state.phase = "solve"
+      return state
+    }
+    if (state.phase === "solve") {
+      state.finalDispatched = true
     }
     return state
   },
