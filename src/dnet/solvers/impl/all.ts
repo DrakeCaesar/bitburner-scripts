@@ -1797,6 +1797,7 @@ const kingOfTheHill: SolverModule<KingOfTheHillState> = {
 
 // #region RateMyPix.Auth
 
+const MAX_RATEMYPIX_PERM = 100_000
 
 /** Count hot-pepper glyphs in RateMyPix feedback (e.g. "🌶️🌶️/6" or "0/6"). */
 function rateMyPixPepperCount(feedback: string): number {
@@ -1813,6 +1814,44 @@ function rateMyPixCharset(format: string): string {
   if (format === "alphabetic") return "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
   if (format === "alphanumeric" || format === "ASCII") return "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
   return "0123456789"
+}
+
+/** Charset char with zero freq-phase hits — safe filler for placement probes. */
+function rateMyPixPickFiller(charset: string, freq: Record<string, number>): string {
+  for (const ch of charset) {
+    if (!freq[ch]) return ch
+  }
+  return charset[0]!
+}
+
+function rateMyPixNormalizeFreq(state: RateMyPixState): void {
+  let total = Object.values(state.freq).reduce((a, b) => a + b, 0)
+  if (total > state.length) {
+    const entries = Object.entries(state.freq).sort((a, b) => b[1] - a[1])
+    let excess = total - state.length
+    for (const [ch, cnt] of entries) {
+      if (excess <= 0) break
+      const drop = Math.min(excess, cnt)
+      const next = cnt - drop
+      if (next <= 0) delete state.freq[ch]
+      else state.freq[ch] = next
+      excess -= drop
+    }
+    total = state.length
+  }
+  if (total < state.length) {
+    let remaining = state.length - total
+    for (const ch of state.charset) {
+      if (remaining <= 0) break
+      if (state.freq[ch]) continue
+      state.freq[ch] = 1
+      remaining--
+    }
+    if (remaining > 0) {
+      const known = Object.keys(state.freq)[0] ?? state.charset[0]!
+      state.freq[known] = (state.freq[known] ?? 0) + remaining
+    }
+  }
 }
 
 function rateMyPixFreqToMultiset(freq: Record<string, number>, length: number): { chars: string[]; counts: number[] } {
@@ -1836,14 +1875,143 @@ function rateMyPixExactMatchCount(secret: string, guess: string): number {
   return matches
 }
 
-function rateMyPixEnterPermPhase(state: RateMyPixState): boolean {
+function rateMyPixSolvedCount(state: RateMyPixState): number {
+  let n = 0
+  for (const ch of state.solved) if (ch !== null) n++
+  return n
+}
+
+function rateMyPixBuildPlaceGuess(
+  state: RateMyPixState,
+  probeChar: string,
+  probeOn: ReadonlySet<number>,
+): string {
+  const out: string[] = []
+  for (let i = 0; i < state.length; i++) {
+    const fixed = state.solved[i]
+    if (fixed !== null) out.push(fixed)
+    else if (probeOn.has(i)) out.push(probeChar)
+    else out.push(state.filler)
+  }
+  return out.join("")
+}
+
+interface RateMyPixPlaceTask {
+  char: string
+  need: number
+  pool: number[]
+}
+
+interface RateMyPixPlacePending {
+  char: string
+  need: number
+  left: number[]
+  right: number[]
+  baseline: number
+}
+
+function rateMyPixEnterPlacePhase(state: RateMyPixState): void {
+  state.phase = "place"
+  state.filler = rateMyPixPickFiller(state.charset, state.freq)
+  state.solved = Array.from({ length: state.length }, () => null)
+  state.placeStack = []
+  state.placePending = null
+  state.finalDispatched = false
+
+  const entries = Object.entries(state.freq)
+    .filter(([, cnt]) => cnt > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const [ch, count] = entries[i]!
+    state.placeStack.push({ char: ch, need: count, pool: [] })
+  }
+}
+
+function rateMyPixFinishFreqPhase(state: RateMyPixState): boolean {
+  rateMyPixNormalizeFreq(state)
   const { chars, counts } = rateMyPixFreqToMultiset(state.freq, state.length)
   state.permChars = chars
   state.permCounts = counts
   state.permTotal = multisetPermutationCount(counts)
-  state.survivors = mastermindSurvivorsAll()
-  state.phase = "perm"
-  return state.permTotal > 0
+  state.filler = rateMyPixPickFiller(state.charset, state.freq)
+  if (state.permTotal <= 0) return false
+
+  if (state.permTotal <= MAX_RATEMYPIX_PERM) {
+    state.phase = "perm"
+    state.survivors = mastermindSurvivorsAll()
+    state.solved = []
+    state.placeStack = []
+    state.placePending = null
+    state.finalDispatched = false
+    return true
+  }
+
+  rateMyPixEnterPlacePhase(state)
+  return true
+}
+
+function rateMyPixPlaceEnsurePool(state: RateMyPixState, task: RateMyPixPlaceTask): void {
+  if (task.pool.length > 0) return
+  for (let i = 0; i < state.length; i++) {
+    if (state.solved[i] === null) task.pool.push(i)
+  }
+}
+
+/** Resolve finished placement tasks without a network round-trip. */
+function rateMyPixPlaceResolve(state: RateMyPixState): void {
+  while (state.placeStack.length > 0) {
+    const task = state.placeStack[state.placeStack.length - 1]!
+    rateMyPixPlaceEnsurePool(state, task)
+    if (task.need <= 0 || task.pool.length === 0) {
+      state.placeStack.pop()
+      continue
+    }
+    if (task.need === task.pool.length) {
+      for (const i of task.pool) state.solved[i] = task.char
+      state.placeStack.pop()
+      continue
+    }
+    if (task.need === 1 && task.pool.length === 1) {
+      state.solved[task.pool[0]!] = task.char
+      state.placeStack.pop()
+      continue
+    }
+    break
+  }
+}
+
+function rateMyPixPlaceNextGuess(state: RateMyPixState): { guess: string; detail: string } | null {
+  if (state.finalDispatched) return null
+
+  rateMyPixPlaceResolve(state)
+
+  if (state.solved.every((ch) => ch !== null)) {
+    state.finalDispatched = true
+    return { guess: state.solved.join(""), detail: "place final" }
+  }
+
+  const task = state.placeStack[state.placeStack.length - 1]
+  if (!task) return null
+
+  rateMyPixPlaceEnsurePool(state, task)
+  const mid = Math.ceil(task.pool.length / 2)
+  const left = task.pool.slice(0, mid)
+  const right = task.pool.slice(mid)
+  const popped = state.placeStack.pop()!
+
+  state.placePending = {
+    char: popped.char,
+    need: popped.need,
+    left,
+    right,
+    baseline: rateMyPixSolvedCount(state),
+  }
+
+  const guess = rateMyPixBuildPlaceGuess(state, popped.char, new Set(left))
+  return {
+    guess,
+    detail: `place ${popped.char} ${popped.need}/${popped.pool.length}`,
+  }
 }
 
 interface RateMyPixState extends SolverState {
@@ -1851,13 +2019,18 @@ interface RateMyPixState extends SolverState {
   charset: string
   charIdx: number
   freq: Record<string, number>
-  phase: "freq" | "perm"
+  phase: "freq" | "perm" | "place"
   permChars: string[]
   permCounts: number[]
   permTotal: number
   survivors: MastermindSurvivors
   length: number
   retries: number   // retry count for unparseable feedback in freq phase
+  filler: string
+  solved: (string | null)[]
+  placeStack: RateMyPixPlaceTask[]
+  placePending: RateMyPixPlacePending | null
+  finalDispatched: boolean
 }
 
 const rateMyPix: SolverModule<RateMyPixState> = {
@@ -1870,6 +2043,11 @@ const rateMyPix: SolverModule<RateMyPixState> = {
       survivors: mastermindSurvivorsAll(),
       length: details.passwordLength,
       retries: 0,
+      filler: "",
+      solved: [],
+      placeStack: [],
+      placePending: null,
+      finalDispatched: false,
     }
   },
   nextGuess(state) {
@@ -1878,12 +2056,20 @@ const rateMyPix: SolverModule<RateMyPixState> = {
         const ch = state.charset[state.charIdx]!
         return { guess: ch.repeat(state.length), detail: `freq ${ch}` }
       }
-      if (!rateMyPixEnterPermPhase(state)) return null
+      if (!rateMyPixFinishFreqPhase(state)) return null
     }
+
+    if (state.phase === "place") {
+      return rateMyPixPlaceNextGuess(state)
+    }
+
     const count = mastermindSurvivorCount(state.survivors, state.permTotal)
     if (count === 0) return null
-    const idx = mastermindSurvivorIndexAtSlot(state.survivors, state.permTotal, 0)
-    const guess = rateMyPixSecretAt(state, idx)
+    const guess = pickMastermindGuessIndexed(
+      state.survivors,
+      state.permTotal,
+      (index) => rateMyPixSecretAt(state, index),
+    )
     return { guess, detail: `${count} cand` }
   },
   applyResult(state, guess, result) {
@@ -1901,25 +2087,35 @@ const rateMyPix: SolverModule<RateMyPixState> = {
       const emojiCount = rateMyPixPepperCount(fb)
       if (emojiCount > 0) state.freq[guess[0]!] = emojiCount
       state.charIdx++
-      // End of charset — validate
-      if (state.charIdx >= state.charset.length) {
-        const total = Object.values(state.freq).reduce((a, b) => a + b, 0)
-        if (total < state.length) {
-          // Some chars undetected (possibly outside charset).
-          // Pad with the first charset character to reach length.
-          let remaining = state.length - total
-          for (const ch of state.charset) {
-            if (remaining <= 0) break
-            if (state.freq[ch]) continue
-            state.freq[ch] = 1
-            remaining--
-          }
-          // Still short — just put the rest on the first known char
-          if (remaining > 0) {
-            const known = Object.keys(state.freq)[0] ?? state.charset[0]!
-            state.freq[known] = (state.freq[known] ?? 0) + remaining
-          }
-        }
+      if (state.charIdx >= state.charset.length) rateMyPixNormalizeFreq(state)
+      return state
+    }
+
+    if (state.phase === "place") {
+      const fb = result.feedback ?? ""
+      if (!fb || !state.placePending) return state
+      const pending = state.placePending
+      state.placePending = null
+
+      const peppers = rateMyPixPepperCount(fb)
+      let leftCount = peppers - pending.baseline
+      if (!Number.isFinite(leftCount)) leftCount = 0
+      leftCount = Math.max(0, Math.min(leftCount, pending.need, pending.left.length))
+      const rightCount = pending.need - leftCount
+
+      if (rightCount > 0) {
+        state.placeStack.push({
+          char: pending.char,
+          need: rightCount,
+          pool: [...pending.right],
+        })
+      }
+      if (leftCount > 0) {
+        state.placeStack.push({
+          char: pending.char,
+          need: leftCount,
+          pool: [...pending.left],
+        })
       }
       return state
     }
