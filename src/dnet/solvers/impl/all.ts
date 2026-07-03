@@ -2377,7 +2377,7 @@ export const SOLVER_MODULES: Record<string, SolverModule> = {
   'Laika4|alphabetic': laika4,
   'PHP 5.4|numeric': php54,
   'EuroZone Free|ASCII': euroZone, 'EuroZone Free|alphabetic': euroZone,
-  'TopPass|alphabetic': topPass, 'TopPass|alphanumeric': topPass, 'TopPass|ASCII': topPass,
+  'TopPass|numeric': topPass, 'TopPass|alphabetic': topPass, 'TopPass|alphanumeric': topPass, 'TopPass|ASCII': topPass,
   'FreshInstall_1.0|numeric': freshInstall,
   'FreshInstall_1.0|alphabetic': freshInstall, 'FreshInstall_1.0|alphanumeric': freshInstall, 'FreshInstall_1.0|ASCII': freshInstall,
   'NIL|numeric': nilSolver, 'NIL|alphabetic': nilSolver, 'NIL|alphanumeric': nilSolver,
