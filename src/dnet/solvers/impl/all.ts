@@ -846,9 +846,9 @@ function mastermindCharset(format: string): string {
     case "numeric":
       return "0123456789"
     case "alphabetic":
-      return "abcdefghijklmnopqrstuvwxyz"
+      return "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
     case "alphanumeric":
-      return "0123456789abcdefghijklmnopqrstuvwxyz"
+      return "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
     default:
       return "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
   }
@@ -886,7 +886,7 @@ function parseMastermindFeedback(data: string): { exact: number; misplaced: numb
   return { exact, misplaced }
 }
 
-const MAX_MASTERMIND_CANDIDATES = 10_000
+const MAX_MASTERMIND_CANDIDATES = 100_000
 const MINIMAX_THRESHOLD = 500
 
 /** Switch from bitset to index list when survivor count drops below this. */
@@ -1035,6 +1035,8 @@ interface DeepGreenConstraint {
 
 interface DeepGreenState extends SolverState {
   type: "deepGreen"
+  /** Full charset at init; state.charset may narrow in phase 2. */
+  initialCharset: string
   charset: string
   length: number
   charCounts: Record<string, number>
@@ -1060,7 +1062,7 @@ interface DeepGreenState extends SolverState {
 
 function deepGreenInitPhase1(state: DeepGreenState): void {
   state.phase1Mode = "batch"
-  state.pool = state.charset.split("")
+  state.pool = state.initialCharset.split("")
   state.eliminated = {}
   state.padChar = null
   state.countBatches = []
@@ -1069,6 +1071,35 @@ function deepGreenInitPhase1(state: DeepGreenState): void {
   state.charCounts = {}
   state.totalCount = 0
   state.constraints = []
+}
+
+/** Chars still allowed in the password after phase 1 (unknown or positive count). */
+function deepGreenPhase1Charset(state: DeepGreenState): string {
+  let out = ""
+  for (const ch of state.initialCharset) {
+    if (state.charCounts[ch] === 0) continue
+    if (state.eliminated[ch] && state.charCounts[ch] === undefined) continue
+    out += ch
+  }
+  return out
+}
+
+/** Initial-charset letters not yet repeat-counted. */
+function deepGreenUnknownCharsetChars(state: DeepGreenState): string[] {
+  return state.initialCharset.split("").filter(
+    (ch) => state.charCounts[ch] === undefined && !state.eliminated[ch],
+  )
+}
+
+function deepGreenStartUnknownTail(state: DeepGreenState): void {
+  const unknown = deepGreenUnknownCharsetChars(state)
+  if (unknown.length === 0) return
+  state.phase1Mode = "tail"
+  state.tailIdx = 0
+  const inPool = new Set(state.pool)
+  for (const ch of unknown) {
+    if (!inPool.has(ch)) state.pool.push(ch)
+  }
 }
 
 function deepGreenRecordConstraint(
@@ -1195,23 +1226,25 @@ function deepGreenNextCountGuess(state: DeepGreenState): { guess: string; detail
     state.tailIdx = 0
     return deepGreenNextTailGuess(state)
   }
+  if (state.totalCount < state.length) {
+    deepGreenStartUnknownTail(state)
+    if (state.phase1Mode === "tail") return deepGreenNextTailGuess(state)
+  }
   return deepGreenFinishPhase1(state)
 }
 
 function deepGreenFinishPhase1(state: DeepGreenState): { guess: string; detail: string } | null {
+  if (state.totalCount < state.length) {
+    deepGreenStartUnknownTail(state)
+    if (state.phase1Mode === "tail") return deepGreenNextTailGuess(state)
+  }
+
   if (state.totalCount >= state.length) {
     deepGreenEnterPhase2(state, deepGreenMultisetChars(state))
     return deepGreenPhase2Guess(state)
   }
 
-  const active = deepGreenActivePool(state)
-  const charset =
-    active.length > 0
-      ? active.join("")
-      : Object.entries(state.charCounts)
-          .filter(([, cnt]) => cnt > 0)
-          .map(([ch]) => ch)
-          .join("")
+  const charset = deepGreenPhase1Charset(state)
   if (charset.length === 0) return null
 
   const cartSize = charset.length ** state.length
@@ -1223,6 +1256,7 @@ function deepGreenFinishPhase1(state: DeepGreenState): { guess: string; detail: 
   state.survivors = mastermindSurvivorsAll()
   state.totalCount = state.length
   deepGreenReplayConstraints(state)
+  if (mastermindSurvivorCount(state.survivors, state.permTotal) === 0) return null
   return deepGreenPhase2Guess(state)
 }
 
@@ -1336,6 +1370,7 @@ const deepGreen: SolverModule<DeepGreenState> = {
     const cartSize = charset.length ** details.passwordLength
     const base: DeepGreenState = {
       type: "deepGreen",
+      initialCharset: charset,
       charset,
       length: details.passwordLength,
       charCounts: {},
@@ -1381,6 +1416,10 @@ const deepGreen: SolverModule<DeepGreenState> = {
         state.phase1Mode = "tail"
         state.tailIdx = 0
         return deepGreenNextTailGuess(state)
+      }
+      if (state.totalCount < state.length) {
+        deepGreenStartUnknownTail(state)
+        if (state.phase1Mode === "tail") return deepGreenNextTailGuess(state)
       }
       state.phase1Mode = "count"
       return deepGreenNextCountGuess(state)
