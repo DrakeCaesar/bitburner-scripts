@@ -59,6 +59,7 @@ export type WorkerCommandPayload =
   | { type: "migrate"; target: string }
   | { type: "stasis" }
   | { type: "labreport"; target: string; solverId: string }
+  | { type: "restoreSession"; target: string; password?: string }
   | { type: "exit" }
 
 export type WorkerCommand = WorkerCommandPayload
@@ -101,6 +102,8 @@ export type WorkerResponse =
       neighborStatus: readonly NeighborProbeStatus[]
       /** Probing worker host depth from getDepth / getServerDetails. */
       workerDepth: number | null
+      /** Session for the probing worker PID on its own host. */
+      selfHasSession: boolean
       freeRam: number
       blockedRam: number
     }
@@ -138,6 +141,13 @@ export type WorkerResponse =
       east: boolean
       south: boolean
       west: boolean
+    }
+  | {
+      type: "restoreSessionResult"
+      workerHost: string
+      target: string
+      success: boolean
+      message?: string
     }
 
 export function parseWorkerResponse(raw: unknown): WorkerResponse | null {
@@ -188,6 +198,7 @@ export function parseWorkerResponse(raw: unknown): WorkerResponse | null {
           neighbors: Array.isArray(row.neighbors) ? row.neighbors.filter((n): n is string => typeof n === "string") : [],
           neighborStatus: parseNeighborProbeStatus(row.neighborStatus),
           workerDepth: parseOptionalDepth(row.workerDepth),
+          selfHasSession: row.selfHasSession === true,
           freeRam: typeof row.freeRam === "number" ? row.freeRam : 0,
           blockedRam: typeof row.blockedRam === "number" ? row.blockedRam : 0,
         }
@@ -249,6 +260,15 @@ export function parseWorkerResponse(raw: unknown): WorkerResponse | null {
           west: row.west === true,
         }
       }
+      case "restoreSessionResult":
+        if (typeof row.workerHost !== "string" || typeof row.target !== "string") return null
+        return {
+          type: "restoreSessionResult",
+          workerHost: row.workerHost,
+          target: row.target,
+          success: row.success === true,
+          message: typeof row.message === "string" ? row.message : undefined,
+        }
       default:
         return null
     }
@@ -300,6 +320,8 @@ export function formatCommand(cmd: WorkerCommandPayload): string {
       return "stasis"
     case "labreport":
       return `labreport:${cmd.target}`
+    case "restoreSession":
+      return `restoreSession:${cmd.target}`
     case "exit":
       return "exit"
   }
@@ -316,5 +338,5 @@ export function usesWorkerDeadlines(cmd: WorkerCommandPayload): boolean {
 }
 
 export function isInstantCommand(cmd: WorkerCommandPayload): boolean {
-  return cmd.type === "probe" || cmd.type === "spawn"
+  return cmd.type === "probe" || cmd.type === "spawn" || cmd.type === "restoreSession"
 }

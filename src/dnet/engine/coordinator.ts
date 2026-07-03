@@ -26,11 +26,17 @@ import { getServerDetails, readStasisSnapshot, stasisLinkedHosts, tryConnect } f
 import {
   isTargetAuthed,
   isTargetReadyForWorker,
+  knownPassword,
   markBlockedOnWorker,
   markTargetAuthed,
   markTargetSessionLost,
   syncAllTargetAuthState,
 } from "./targetState.js"
+import {
+  dispatchSessionRestore,
+  enqueueSelfSessionRestoreFromProbe,
+  SessionRestoreQueue,
+} from "./sessionRestore.js"
 import { AttemptLog } from "../history/attemptLog.js"
 import { DeadlineArchive } from "../history/deadlineArchive.js"
 import { MasterActionLog } from "../history/masterActionLog.js"
@@ -174,6 +180,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
   const mutationSync = new MutationSync()
   const urgentProbeHosts = new Set<string>()
   const idleMaintenanceGate = new IdleMaintenanceGate()
+  const sessionRestoreQueue = new SessionRestoreQueue()
   const solverBridge = createSolverBridge(ns)
   const registryStore = new RegistryStore(loadDarknetRegistry(ns))
   registryStore.pruneInvalidHosts(dnet)
@@ -235,6 +242,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       sessionArchive,
       idleMaintenanceGate,
       deadlineArchive,
+      sessionRestoreQueue,
     }
 
     await drainReplies(
@@ -272,6 +280,7 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
       sessionArchive,
       idleMaintenanceGate,
       deadlineArchive,
+      sessionRestoreQueue,
     )
     pruneWorkers(ns, workerPool, portPool, targets, pendingSpawns, spawnPlans, masterLog, idleMaintenanceGate, deadlineArchive)
     mutationSync.tick(ns, workerPool, targets, (ts) => {
@@ -283,6 +292,12 @@ export async function runCoordinator(ns: NS, options: CoordinatorOptions): Promi
     // Dispatch priority: ... -> labyrinth -> idle probe sweep -> migrate -> P3
     dispatchUrgentProbes(ns, workerPool, urgentProbeHosts, masterLog, dispatchCtx)
     dispatchBackgroundProbes(ns, workerPool, mutationSync, urgentProbeHosts, masterLog, dispatchCtx)
+    dispatchSessionRestore({
+      ns,
+      workerPool,
+      queue: sessionRestoreQueue,
+      sendCommand: (wi, payload) => sendCommand(ns, wi, payload, masterLog, dispatchCtx),
+    })
     dispatchLabyrinthStasis(
       ns,
       dnet,
@@ -591,6 +606,14 @@ async function drainReplies(
             dnet,
             attemptLog,
             sessionArchive,
+            dispatchCtx.sessionRestoreQueue,
+          )
+          enqueueSelfSessionRestoreFromProbe(
+            dispatchCtx.sessionRestoreQueue,
+            msg.workerHost,
+            msg.selfHasSession,
+            targets,
+            passwords,
           )
           mutationSync.markWorkerProbed(msg.workerHost, workerPool, ns)
           finishUrgentProbe(msg.workerHost, targets, urgentProbeHosts)
@@ -733,6 +756,48 @@ async function drainReplies(
           wi.idle = true
           wi.commandDeadlineAt = 0
           onLabreportResult(msg, targets, attemptLog)
+          break
+        case "restoreSessionResult":
+          completeTrackedCommand(dispatchCtx, msg.workerHost)
+          wi.idle = true
+          wi.commandDeadlineAt = 0
+          dispatchCtx.sessionRestoreQueue.clearInFlight(msg.workerHost, msg.target)
+          attemptLog.append({
+            host: msg.target,
+            session: 0,
+            kind: "note",
+            solverId: "-",
+            modelId: targets.get(msg.target)?.modelId ?? "-",
+            workerHost: msg.workerHost,
+            success: msg.success,
+            note: msg.success ? "session restored" : "session restore failed",
+            message: msg.message,
+          })
+          if (msg.success) {
+            const target = targets.get(msg.target)
+            if (target) {
+              markTargetAuthed(target, dnet, { passwords, sessionArchive })
+            }
+          } else if (isStaleTopologyFailure(msg.message)) {
+            handleStaleTopologyFailure(
+              msg.workerHost,
+              msg.target,
+              workerPool,
+              targets,
+              urgentProbeHosts,
+              idleMaintenanceGate,
+            )
+          } else if (msg.message === "auth failed") {
+            invalidateKnownPassword(
+              dnet,
+              fileIntelCtx.registryStore,
+              passwords,
+              targets,
+              sessionArchive,
+              attemptLog,
+              msg.target,
+            )
+          }
           break
       }
     }
@@ -1729,6 +1794,8 @@ function commandDetail(host: string, payload: WorkerCommandPayload): string {
       return `${host} -> ${payload.target}`
     case "labreport":
       return `${host} -> ${payload.target}`
+    case "restoreSession":
+      return `${host} -> ${payload.target}`
     default:
       return host
   }
@@ -1745,6 +1812,7 @@ interface WorkerDispatchCtx {
   sessionArchive: SessionArchive
   idleMaintenanceGate: IdleMaintenanceGate
   deadlineArchive: DeadlineArchive
+  sessionRestoreQueue: SessionRestoreQueue
 }
 
 function abortSpawnPlan(
@@ -1877,6 +1945,7 @@ function reconcileProbeStatuses(
   dnet: DnetApi,
   attemptLog: AttemptLog,
   sessionArchive: SessionArchive,
+  sessionRestoreQueue: SessionRestoreQueue,
 ): void {
   let authedNoWorker = 0
   let unauthed = 0
@@ -1889,7 +1958,7 @@ function reconcileProbeStatuses(
     }
 
     const target = targets.get(st.host)
-    const knownPassword = target?.password ?? passwords.get(st.host) ?? null
+    const password = target ? knownPassword(target, passwords) : passwords.get(st.host) ?? null
 
     if (!st.isOnline) {
       if (target) target.status = "offline"
@@ -1902,10 +1971,12 @@ function reconcileProbeStatuses(
       continue
     }
 
-    if (knownPassword != null) {
-      if (!st.hasSession) tryConnect(dnet, st.host, knownPassword)
+    if (password != null) {
+      if (!st.hasSession) {
+        sessionRestoreQueue.enqueue(msg.workerHost, st.host, password)
+      }
       if (target && target.status !== "unsupported" && target.status !== "offline") {
-        markTargetAuthed(target, dnet, { password: knownPassword, passwords, sessionArchive })
+        markTargetAuthed(target, dnet, { password, passwords, sessionArchive })
       }
       if (st.workerKnown && !st.workerRunning) authedNoWorker++
       continue
@@ -1965,6 +2036,7 @@ function failWorkerCommand(
   sessionArchive: SessionArchive,
   idleMaintenanceGate?: IdleMaintenanceGate,
   deadlineArchive?: DeadlineArchive,
+  sessionRestoreQueue?: SessionRestoreQueue,
 ): void {
   if (isLongRunningWorkerCommand(wi)) {
     const extendedAt = Date.now()
@@ -1982,6 +2054,9 @@ function failWorkerCommand(
   deadlineArchive?.onTimedOut(wi.host, failedAt, masterLog.all)
   if (wi.lastCommand === "probe") {
     idleMaintenanceGate?.markProbed(wi.host)
+  }
+  if (wi.lastCommand?.startsWith("restoreSession:") && sessionRestoreQueue) {
+    sessionRestoreQueue.clearInFlight(wi.host, wi.lastCommand.slice("restoreSession:".length))
   }
   for (const t of targets.values()) {
     if (t.workerHost !== wi.host) continue
@@ -2014,6 +2089,7 @@ function checkCommandDeadlines(
   sessionArchive: SessionArchive,
   idleMaintenanceGate: IdleMaintenanceGate,
   deadlineArchive: DeadlineArchive,
+  sessionRestoreQueue: SessionRestoreQueue,
 ): void {
   const now = Date.now()
   for (const wi of workerPool.workers.values()) {
@@ -2034,6 +2110,7 @@ function checkCommandDeadlines(
       sessionArchive,
       idleMaintenanceGate,
       deadlineArchive,
+      sessionRestoreQueue,
     )
   }
 }

@@ -16,6 +16,7 @@ import {
   runHeartbleedCommand,
   runMigrateCommand,
   runReallocCommand,
+  runRestoreSessionCommand,
   runSpawnCommand,
   runLabreportCommand,
 } from "./execute.js"
@@ -126,6 +127,9 @@ export async function main(ns: NS): Promise<void> {
       await runStasisCommand(ns, dnet, replyPort)
     } else if (cmd.type === "labreport") {
       await runLabreportCommand(ns, dnet, cmd, replyPort)
+    } else if (cmd.type === "restoreSession") {
+      await ensureSelfAuth(dnet, hostname, selfPassword)
+      await runRestoreSessionCommand(ns, dnet, cmd, replyPort)
     }
   }
 }

@@ -579,6 +579,52 @@ function probeNeighbor(
   }
 }
 
+export async function runRestoreSessionCommand(
+  ns: NS,
+  dnet: WorkerDnetApi,
+  cmd: Extract<WorkerCommand, { type: "restoreSession" }>,
+  replyPort: number,
+): Promise<void> {
+  const workerHost = ns.getHostname()
+
+  const writeResult = (success: boolean, message?: string): void => {
+    ns.writePort(
+      replyPort,
+      JSON.stringify({
+        type: "restoreSessionResult",
+        workerHost,
+        target: cmd.target,
+        success,
+        ...(message ? { message } : {}),
+      }),
+    )
+  }
+
+  if (cmd.target !== workerHost && !isNeighbor(dnet, cmd.target)) {
+    writeResult(false, NOT_NEIGHBOR_MESSAGE)
+    return
+  }
+
+  try {
+    if (dnet.getServerDetails(cmd.target).hasSession) {
+      writeResult(true)
+      return
+    }
+    if (cmd.password === undefined) {
+      writeResult(false, "auth failed")
+      return
+    }
+    await ensureTargetAuth(dnet, cmd.target, cmd.password)
+    if (dnet.getServerDetails(cmd.target).hasSession) {
+      writeResult(true)
+      return
+    }
+    writeResult(false, "auth failed")
+  } catch {
+    writeResult(false, "auth failed")
+  }
+}
+
 export async function ensureTargetAuth(
   dnet: WorkerDnetApi,
   target: string,
@@ -611,6 +657,12 @@ export async function runProbe(
   const totalFree = ns.getServerMaxRam(workerHost) - ns.getServerUsedRam(workerHost)
   const blockedRam = dnet.getBlockedRam?.(workerHost) ?? 0
   const workerDepth = dnetHostDepth(dnet, workerHost)
+  let selfHasSession = false
+  try {
+    selfHasSession = dnet.getServerDetails(workerHost).hasSession
+  } catch {
+    selfHasSession = false
+  }
   ns.writePort(
     replyPort,
     JSON.stringify({
@@ -619,6 +671,7 @@ export async function runProbe(
       neighbors,
       neighborStatus,
       workerDepth,
+      selfHasSession,
       freeRam: totalFree - workerRam,
       blockedRam,
     }),
