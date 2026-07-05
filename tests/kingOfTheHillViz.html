@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KingOfTheHill altitude profiles</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0d0d0d;
+      --panel: #161616;
+      --border: rgba(255, 255, 255, 0.12);
+      --text: #d4d4d4;
+      --muted: #888;
+      --curve: #4fc3f7;
+      --curve-near: #81c784;
+      --password: #f9a825;
+      --side-hill: rgba(229, 115, 115, 0.55);
+      --main-peak: rgba(129, 199, 132, 0.45);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 16px 20px 32px;
+      font-family: Consolas, "Courier New", monospace;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    h1 {
+      margin: 0 0 4px;
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      margin-bottom: 16px;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 20px;
+      align-items: end;
+      padding: 12px 14px;
+      margin-bottom: 16px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+    }
+
+    label {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    input[type="number"],
+    input[type="range"] {
+      font: inherit;
+      color: var(--text);
+      background: #111;
+      border: 1px solid var(--border);
+      padding: 4px 6px;
+    }
+
+    input[type="range"] {
+      width: 160px;
+      padding: 0;
+    }
+
+    button {
+      font: inherit;
+      color: #000;
+      background: var(--password);
+      border: none;
+      padding: 6px 12px;
+      cursor: pointer;
+    }
+
+    button:hover { filter: brightness(1.08); }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 18px;
+      margin-bottom: 16px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+    .swatch {
+      width: 18px;
+      height: 3px;
+      display: inline-block;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(460px, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      padding: 10px 12px 12px;
+    }
+
+    .card h2 {
+      margin: 0 0 6px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .meta {
+      color: var(--muted);
+      margin-bottom: 8px;
+      font-size: 11px;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 180px;
+      background: #0a0a0a;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .note {
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    code { color: #ccc; }
+  </style>
+</head>
+<body>
+  <h1>KingOfTheHill altitude profiles</h1>
+  <p class="subtitle">
+    Ten deterministic assignments (same seed as <code>kingOfTheHillSim.mjs</code>).
+    Y = altitude returned by auth; X = full valid guess range for password length.
+  </p>
+
+  <div class="controls">
+    <label>Seed<input id="seed" type="number" value="1265595496" /></label>
+    <label>Difficulty<input id="difficulty" type="number" value="60" min="1" max="60" /></label>
+    <label>Sample points<input id="points" type="number" value="1200" min="200" max="4000" step="100" /></label>
+    <button id="render" type="button">Redraw</button>
+  </div>
+
+  <div class="legend">
+    <span><i class="swatch" style="background: var(--curve)"></i> full graph (side hills)</span>
+    <span><i class="swatch" style="background: var(--curve-near)"></i> within 3% of password (main hill only)</span>
+    <span><i class="swatch" style="background: var(--password); height: 12px; width: 2px"></i> true password</span>
+    <span><i class="swatch" style="background: var(--side-hill)"></i> 7500 m side-hill ceiling</span>
+    <span><i class="swatch" style="background: var(--main-peak)"></i> 10000 m main peak</span>
+  </div>
+
+  <div id="grid" class="grid"></div>
+
+  <p class="note">
+    Open via a local static server if module import fails
+    (<code>pnpm dlx serve tests</code> then visit
+    <code>/kingOfTheHillViz.html</code>).
+  </p>
+
+  <script type="module">
+    import {
+      DEFAULT_SEED,
+      DEFAULT_COUNT,
+      DEFAULT_DIFFICULTY,
+      KING_MAIN_PEAK_ALTITUDE,
+      generateAssignments,
+      runSolver,
+      sampleAltitudeProfile,
+    } from "./kingOfTheHillCore.mjs"
+
+    const grid = document.getElementById("grid")
+    const seedInput = document.getElementById("seed")
+    const difficultyInput = document.getElementById("difficulty")
+    const pointsInput = document.getElementById("points")
+    const renderBtn = document.getElementById("render")
+
+    seedInput.value = String(DEFAULT_SEED)
+    difficultyInput.value = String(DEFAULT_DIFFICULTY)
+
+    function formatNum(n) {
+      if (n >= 1e9) return `${(n / 1e9).toFixed(3)}e9`
+      if (n >= 1e6) return `${(n / 1e6).toFixed(2)}e6`
+      return String(n)
+    }
+
+    function drawChart(canvas, profile, solverResult, title) {
+      const dpr = window.devicePixelRatio || 1
+      const rect = canvas.getBoundingClientRect()
+      const w = Math.max(320, Math.floor(rect.width * dpr))
+      const h = Math.floor(rect.height * dpr)
+      canvas.width = w
+      canvas.height = h
+
+      const ctx = canvas.getContext("2d")
+      const pad = { l: 48 * dpr, r: 12 * dpr, t: 14 * dpr, b: 28 * dpr }
+      const plotW = w - pad.l - pad.r
+      const plotH = h - pad.t - pad.b
+
+      const { points, password, min, max } = profile
+      const maxAlt = 10500
+      const xMin = min
+      const xMax = max
+
+      const xScale = (x) => pad.l + ((x - xMin) / (xMax - xMin)) * plotW
+      const yScale = (alt) => pad.t + plotH - (alt / maxAlt) * plotH
+
+      ctx.fillStyle = "#0a0a0a"
+      ctx.fillRect(0, 0, w, h)
+
+      // grid + reference lines
+      ctx.strokeStyle = "rgba(255,255,255,0.06)"
+      ctx.lineWidth = 1
+      for (let alt of [2500, 5000, 7500, 10000]) {
+        const y = yScale(alt)
+        ctx.beginPath()
+        ctx.moveTo(pad.l, y)
+        ctx.lineTo(w - pad.r, y)
+        ctx.stroke()
+      }
+
+      ctx.setLineDash([6 * dpr, 4 * dpr])
+      ctx.strokeStyle = "rgba(229, 115, 115, 0.55)"
+      ctx.beginPath()
+      ctx.moveTo(pad.l, yScale(KING_MAIN_PEAK_ALTITUDE))
+      ctx.lineTo(w - pad.r, yScale(KING_MAIN_PEAK_ALTITUDE))
+      ctx.stroke()
+
+      ctx.strokeStyle = "rgba(129, 199, 132, 0.45)"
+      ctx.beginPath()
+      ctx.moveTo(pad.l, yScale(10000))
+      ctx.lineTo(w - pad.r, yScale(10000))
+      ctx.stroke()
+      ctx.setLineDash([])
+
+      // password marker
+      const pwX = xScale(password)
+      ctx.strokeStyle = "#f9a825"
+      ctx.lineWidth = 2 * dpr
+      ctx.beginPath()
+      ctx.moveTo(pwX, pad.t)
+      ctx.lineTo(pwX, h - pad.b)
+      ctx.stroke()
+
+      // altitude curve (split color at near zone boundary)
+      function strokeSegment(segment, color) {
+        if (segment.length < 2) return
+        ctx.strokeStyle = color
+        ctx.lineWidth = 2 * dpr
+        ctx.lineJoin = "round"
+        ctx.lineCap = "round"
+        ctx.beginPath()
+        ctx.moveTo(xScale(segment[0].x), yScale(segment[0].altitude))
+        for (let i = 1; i < segment.length; i++) {
+          ctx.lineTo(xScale(segment[i].x), yScale(segment[i].altitude))
+        }
+        ctx.stroke()
+      }
+
+      let seg = []
+      let segNear = null
+      for (const pt of points) {
+        const isNear = pt.nearZone
+        if (segNear === null) {
+          segNear = isNear
+          seg = [pt]
+          continue
+        }
+        if (isNear !== segNear) {
+          strokeSegment(seg, segNear ? "#81c784" : "#4fc3f7")
+          seg = [seg[seg.length - 1], pt]
+          segNear = isNear
+        } else {
+          seg.push(pt)
+        }
+      }
+      if (seg.length) strokeSegment(seg, segNear ? "#81c784" : "#4fc3f7")
+
+      // axes labels
+      ctx.fillStyle = "#888"
+      ctx.font = `${10 * dpr}px Consolas, monospace`
+      ctx.textAlign = "right"
+      ctx.textBaseline = "middle"
+      for (let alt of [0, 5000, 10000]) {
+        ctx.fillText(String(alt), pad.l - 6 * dpr, yScale(alt))
+      }
+
+      ctx.textAlign = "center"
+      ctx.textBaseline = "top"
+      ctx.fillText(formatNum(xMin), pad.l, h - pad.b + 6 * dpr)
+      ctx.fillText(formatNum(password), pwX, h - pad.b + 6 * dpr)
+      ctx.fillText(formatNum(xMax), w - pad.r, h - pad.b + 6 * dpr)
+
+      canvas.title = title
+    }
+
+    function renderAll() {
+      const seed = Number(seedInput.value) || DEFAULT_SEED
+      const difficulty = Number(difficultyInput.value) || DEFAULT_DIFFICULTY
+      const pointCount = Number(pointsInput.value) || 1200
+
+      grid.replaceChildren()
+      const assignments = generateAssignments(seed, DEFAULT_COUNT, difficulty)
+
+      for (const { index, assignment } of assignments) {
+        const solver = runSolver(assignment)
+        const profile = sampleAltitudeProfile(assignment, { pointCount })
+
+        const card = document.createElement("article")
+        card.className = "card"
+
+        const h2 = document.createElement("h2")
+        h2.textContent = `#${index}  password ${assignment.password}`
+        card.appendChild(h2)
+
+        const meta = document.createElement("div")
+        meta.className = "meta"
+        meta.textContent = [
+          `guesses ${solver.guesses}`,
+          solver.solved ? "solved" : "FAILED",
+          `best ${solver.bestVal} @ ${solver.bestAlt?.toFixed(1) ?? "?"} m`,
+          `range ${formatNum(profile.min)} .. ${formatNum(profile.max)}`,
+        ].join("  |  ")
+        card.appendChild(meta)
+
+        const canvas = document.createElement("canvas")
+        card.appendChild(canvas)
+        grid.appendChild(card)
+
+        drawChart(
+          canvas,
+          profile,
+          solver,
+          `Assignment ${index}: password ${assignment.password}`,
+        )
+      }
+    }
+
+    renderBtn.addEventListener("click", renderAll)
+    window.addEventListener("resize", () => {
+      clearTimeout(window._kothResize)
+      window._kothResize = setTimeout(renderAll, 150)
+    })
+
+    renderAll()
+  </script>
+</body>
+</html>
