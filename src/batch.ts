@@ -1,6 +1,5 @@
 import { NS } from "@ns"
 import { copyRequiredScripts, killOtherInstances, prepareServerMultiNode } from "./libraries/batchCalculations.js"
-import { autoNuke } from "./autoNuke.js"
 import {
   calculateBatchThreads,
   calculateBatchTimings,
@@ -14,9 +13,8 @@ import {
   buildThresholdComparisonTableConfig,
   findBestTarget,
 } from "./libraries/findBestTarget.js"
-import { purchasePrograms, purchaseTorRouter } from "./libraries/purchasePrograms.js"
-import { purchaseServers } from "./libraries/purchaseServer.js"
-import { sumBatchWorkerRam } from "./libraries/ramUtils.js"
+import { sumBatchWorkerRam, getEffectiveMaxRam } from "./libraries/ramUtils.js"
+import { DEFAULT_BATCH_OPTIONS, type BatchOptions } from "./libraries/batchOptions.js"
 import type { ReactTableConfig } from "./libraries/scriptLogUiLayout.js"
 import {
   createTabbedTailLog,
@@ -31,7 +29,6 @@ import {
   killHackingScriptsForTarget,
   parseBatchArgs,
 } from "./libraries/serverManagement.js"
-import { joinWorthyFactionInvitations } from "./libraries/factionInvites.js"
 import { formatGameTimeMs } from "./libraries/format.js"
 
 const BATCH_TABS: TabDefinition[] = [
@@ -46,6 +43,9 @@ const BATCH_TABS: TabDefinition[] = [
 /** While a batch cycle runs, exec shareRam on leftover worker RAM each second until the last op finishes. */
 const SHARE_LEFTOVER_RAM_WHILE_BATCHING = false
 
+/** Batch algorithm options — edit here or override fields for benchmark runs. */
+const options: BatchOptions = DEFAULT_BATCH_OPTIONS
+
 export async function main(ns: NS) {
   const batchOptions = parseBatchArgs(ns.args)
   const playerHackLevel = batchOptions.playerHackLevel
@@ -57,10 +57,6 @@ export async function main(ns: NS) {
   const renderLog = () => renderTabbedTailLog(ns, tabbedLog)
   const whileAsleep = (ms: number) => sleepUntilTabLayoutRefresh(ns, tabbedLog, ms).then(() => undefined)
   const fmtTime = (ms: number) => formatGameTimeMs(ms, (m) => ns.format.time(m))
-
-  const logSetup = (message: string) => {
-    tabbedLog.tab("setup").text(message)
-  }
 
   // Append only during prep sim — re-render at phase boundaries so React tab clicks are not reset every line
   const prepLogOptions = {
@@ -88,25 +84,7 @@ export async function main(ns: NS) {
       )
     }
 
-    const joinedFactions = joinWorthyFactionInvitations(ns)
-    if (joinedFactions.length > 0) {
-      tabbedLog.tab("setup").text(`Joined factions: ${joinedFactions.join(", ")}`)
-    }
-
-    // ns.scriptKill("autoWorkFactions.js", "home") — batch does not start it; leave faction work running if launched elsewhere
-    ns.scriptKill("contractSolver.js", "home")
-    ns.exec("contractSolver.js", "home", 1, "solve", "quiet")
-
-    purchaseTorRouter(ns, logSetup)
-    purchasePrograms(ns, logSetup)
-    await autoNuke(ns, logSetup)
     await renderLog()
-
-    const wasUpgraded = purchaseServers(ns)
-    if (wasUpgraded) {
-      tabbedLog.tab("setup").text("Server was purchased/upgraded, restarting batch cycle...")
-      await renderLog()
-    }
 
     const nodes = getNodesForBatching(ns, batchOptions)
 
@@ -125,24 +103,26 @@ export async function main(ns: NS) {
       await copyRequiredScripts(ns, node, debug)
     }
 
-    const batchDelay = 5
-    const ramThreshold = 1
-    const nodeRamLimit = Infinity
+    const batchDelay = options.batchDelay
+    const ramThreshold = options.ramThreshold
+    const nodeRamLimit = Math.min(...nodes.map((node) => getEffectiveMaxRam(ns, node, options.homeReserveGb)))
 
     const myCores = ns.getServer(nodes[0]).cpuCores
     killAllHackingScriptsOnNodes(ns, nodes)
     const target = await findBestTarget(
       ns,
-      sumBatchWorkerRam(ns, nodes),
+      sumBatchWorkerRam(ns, nodes, options.homeReserveGb),
       nodeRamLimit,
       myCores,
       batchDelay,
       nodes,
       playerHackLevel,
-      10
+      10,
+      undefined,
+      options
     )
     killHackingScriptsForTarget(ns, nodes, target.serverName)
-    let totalMaxRam = sumBatchWorkerRam(ns, nodes)
+    let totalMaxRam = sumBatchWorkerRam(ns, nodes, options.homeReserveGb)
     const player = ns.getPlayer()
 
     const workerModeLabel =
@@ -181,6 +161,7 @@ export async function main(ns: NS) {
     const prepEstimate = await prepareServerMultiNode(ns, nodes, target.serverName, {
       dryRun: true,
       showVerbose: debug,
+      options,
       ...prepLogOptions,
     })
     const calcEndTime = Date.now()
@@ -202,6 +183,7 @@ export async function main(ns: NS) {
       dryRun: false,
       predictedIterations: prepEstimate.iterationDetails,
       debug,
+      options,
       ...prepLogOptions,
     })
     const prepEndTime = Date.now()
@@ -231,6 +213,7 @@ export async function main(ns: NS) {
       totalMaxRam,
       ramThreshold,
       nodeRamLimit,
+      options,
       logMessage: logBatch,
       debug,
       shareLeftoverRamWhileBatching: SHARE_LEFTOVER_RAM_WHILE_BATCHING,
@@ -245,7 +228,10 @@ export async function main(ns: NS) {
     const batchConfigDuration = batchConfigEndTime - batchConfigStartTime
     const prepToBatchGap = batchConfigStartTime - prepEndTime
 
-    const maxBatches = capParallelBatches(Math.floor((totalMaxRam / threads.totalBatchRam) * ramThreshold))
+    const maxBatches = capParallelBatches(
+      Math.floor((totalMaxRam / threads.totalBatchRam) * ramThreshold),
+      options.maxParallelBatches
+    )
     const batches = maxBatches
 
     const lastBatchOffset = (batches - 1) * timings.effectiveBatchDelay * 4

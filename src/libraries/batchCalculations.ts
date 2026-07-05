@@ -1,5 +1,6 @@
 import { NS, Person, Player, Server } from "@ns"
 import { crawl } from "./crawl.js"
+import { DEFAULT_BATCH_OPTIONS, resolveBatchOptions, type BatchOptions } from "./batchOptions.js"
 import { getAvailableRam, getEffectiveMaxRam } from "./ramUtils.js"
 import { buildTable, type TableConfig } from "./tableBuilder.js"
 /**
@@ -57,9 +58,11 @@ export function updatePlayerWithXp(player: Player, xpGained: number, ns: NS): Pl
   updatedPlayer.exp.hacking += xpGained
 
   // Recalculate hacking skill level from total XP
+  // const hackingLevelMult = ns.getBitNodeMultipliers().HackingLevelMultiplier
+  const hackingLevelMult = 1
   updatedPlayer.skills.hacking = ns.formulas.skills.calculateSkill(
     updatedPlayer.exp.hacking,
-    updatedPlayer.mults.hacking * ns.getBitNodeMultipliers().HackingLevelMultiplier
+    updatedPlayer.mults.hacking * hackingLevelMult
   )
 
   return updatedPlayer
@@ -78,9 +81,11 @@ export function updatePlayerWithKahanXp(player: Player, xpKahan: KahanSum, ns: N
   updatedPlayer.exp.hacking = xpKahan.sum
 
   // Recalculate hacking skill level from total XP
+  // const hackingLevelMult = ns.getBitNodeMultipliers().HackingLevelMultiplier
+  const hackingLevelMult = 1
   updatedPlayer.skills.hacking = ns.formulas.skills.calculateSkill(
     updatedPlayer.exp.hacking,
-    updatedPlayer.mults.hacking * ns.getBitNodeMultipliers().HackingLevelMultiplier
+    updatedPlayer.mults.hacking * hackingLevelMult
   )
 
   return updatedPlayer
@@ -114,21 +119,27 @@ export function wkn2ServerInstance(server: Server, player: Player, growThreads: 
   return { server: serverCopy, player }
 }
 
+function weakenPerThread(myCores: number): number {
+  return 0.05 * (1 + (myCores - 1) / 16)
+}
+
 export function calculateHackThreads(server: Server, player: Person, moneyMax: number, hackThreshold: number, ns: NS) {
   const hackPct = ns.formulas.hacking.hackPercent(server, player)
   return Math.floor((moneyMax - moneyMax * hackThreshold) / (hackPct * moneyMax))
 }
 
-export function calculateWeakThreads(server: Server, player: Player, myCores: number) {
-  const addedSecurity = server.hackDifficulty! - server.minDifficulty!
-  return Math.max(1, Math.ceil(addedSecurity / (0.05 * (1 + (myCores - 1) / 16))))
+export function calculateWeakThreads(
+  server: Server,
+  player: Player,
+  myCores: number,
+  options: BatchOptions = DEFAULT_BATCH_OPTIONS
+) {
+  const addedSecurity = (server.hackDifficulty! - server.minDifficulty!) * options.weakenSecurityTopUp
+  return Math.max(1, Math.ceil(addedSecurity / weakenPerThread(myCores)))
 }
 
 /**
- * Calculate grow threads needed to reach target money, with configurable thread top-up.
- * The top-up ensures we don't fall short due to rounding or precision issues.
- * @param topUp - Multiplier or additive amount to apply. Default adds 1 thread.
- *                Examples: 1 (add 1 thread), 1.1 (multiply by 1.1), 1.05 (multiply by 1.05)
+ * Calculate grow threads needed to reach target money, with a configurable top-up multiplier.
  */
 export function calculateGrowThreads(
   server: Server,
@@ -136,13 +147,14 @@ export function calculateGrowThreads(
   moneyMax: number,
   myCores: number,
   ns: NS,
-  topUp: number = 1.1
+  options: BatchOptions = DEFAULT_BATCH_OPTIONS
 ) {
+  const growTopUp = options.growThreadsTopUp
   const baseThreads = ns.formulas.hacking.growThreads(server, player, moneyMax, myCores)
-  if (topUp > 1 && topUp < 2) {
-    return Math.ceil(baseThreads * topUp)
+  if (growTopUp > 1 && growTopUp < 2) {
+    return Math.ceil(baseThreads * growTopUp)
   } else {
-    return Math.ceil(baseThreads + topUp)
+    return Math.ceil(baseThreads + growTopUp)
   }
 }
 
@@ -197,17 +209,17 @@ export async function copyRequiredScripts(ns: NS, host: string, debug = false) {
  * @param ns - Netscript API
  * @param nodes - Array of server names to use for prep operations
  * @param target - Target server to prepare
- * @param options - Configuration options
- * @param options.dryRun - If true, only simulates without executing (default: false)
- * @param options.showVerbose - If true and dryRun=true, displays detailed simulation output
- * @param options.predictedIterations - If provided and dryRun=false, compares actual vs predicted
- * @param options.debug - If true and dryRun=false, displays execution debug info
+ * @param prepOptions - Configuration options
+ * @param prepOptions.dryRun - If true, only simulates without executing (default: false)
+ * @param prepOptions.showVerbose - If true and dryRun=true, displays detailed simulation output
+ * @param prepOptions.predictedIterations - If provided and dryRun=false, compares actual vs predicted
+ * @param prepOptions.debug - If true and dryRun=false, displays execution debug info
  */
 export async function prepareServerMultiNode(
   ns: NS,
   nodes: string[],
   target: string,
-  options: {
+  prepOptions: {
     dryRun?: boolean
     showVerbose?: boolean
     predictedIterations?: Array<{
@@ -222,6 +234,7 @@ export async function prepareServerMultiNode(
     debug?: boolean
     logMessage?: (message: string) => void
     logTable?: (config: TableConfig) => void
+    options?: Partial<BatchOptions>
   } = {}
 ): Promise<{
   totalTime: number
@@ -239,7 +252,9 @@ export async function prepareServerMultiNode(
   secTolerance?: number
   myCores?: number
 }> {
-  const { dryRun = false, showVerbose = false, predictedIterations, debug = false, logMessage, logTable } = options
+  const { dryRun = false, showVerbose = false, predictedIterations, debug = false, logMessage, logTable, options: optionOverrides } =
+    prepOptions
+  const options = resolveBatchOptions(optionOverrides)
   const server = ns.getServer(target)
   let player = ns.getPlayer()
   const moneyMax = server.moneyMax ?? 0
@@ -280,7 +295,7 @@ export async function prepareServerMultiNode(
   // Helper to calculate weaken threads needed for a given security reduction
   const calcWeakenThreads = (secToReduce: number): number => {
     if (secToReduce <= 0) return 0
-    return Math.ceil(secToReduce / (0.05 * (1 + (myCores - 1) / 16)))
+    return Math.ceil((secToReduce * options.weakenSecurityTopUp) / weakenPerThread(myCores))
   }
 
   // Helper to calculate optimal grow and weaken threads by simulating distribution across nodes
@@ -296,7 +311,7 @@ export async function prepareServerMultiNode(
     // If we need both money and weaken, use binary search to find optimal grow amount
     // that can be distributed across nodes with enough weaken to reach min security
     if (needsMoney && needsWeaken) {
-      const growThreadsIdeal = calculateGrowThreads(currentServer, currentPlayer, moneyMax, myCores, ns)
+      const growThreadsIdeal = calculateGrowThreads(currentServer, currentPlayer, moneyMax, myCores, ns, options)
 
       // Binary search for maximum grow threads that:
       // 1. Can be distributed across nodes
@@ -366,7 +381,7 @@ export async function prepareServerMultiNode(
       }
     } else if (needsMoney) {
       // Only need grow (security already at min) - must offset grow's security increase
-      const growThreadsIdeal = calculateGrowThreads(currentServer, currentPlayer, moneyMax, myCores, ns)
+      const growThreadsIdeal = calculateGrowThreads(currentServer, currentPlayer, moneyMax, myCores, ns, options)
 
       // Binary search for maximum grow threads that can be distributed with enough weaken to offset security
       let low = 0
@@ -437,9 +452,9 @@ export async function prepareServerMultiNode(
     let remainingWeaken = weakenThreadsTarget
 
     for (const node of nodes) {
-      const totalRam = getEffectiveMaxRam(ns, node)
+      const totalRam = getEffectiveMaxRam(ns, node, options.homeReserveGb)
       const usedRam = ns.getServerUsedRam(node)
-      const availRam = getAvailableRam(ns, node)
+      const availRam = getAvailableRam(ns, node, options.homeReserveGb)
       let nodeGrowThreads = 0
       let nodeWeakenThreads = 0
 
@@ -848,7 +863,13 @@ export function calculatePrepTime(
   return result as any // TypeScript workaround - the function returns a Promise but callers expect sync
 }
 
-export async function prepareServer(ns: NS, host: string, target: string) {
+export async function prepareServer(
+  ns: NS,
+  host: string,
+  target: string,
+  prepOptions: { options?: Partial<BatchOptions> } = {}
+) {
+  const options = resolveBatchOptions(prepOptions.options)
   const moneyMax = ns.getServerMaxMoney(target)
   const baseSecurity = ns.getServerMinSecurityLevel(target)
   const secTolerance = 0
@@ -885,7 +906,7 @@ export async function prepareServer(ns: NS, host: string, target: string) {
 
     // Calculate threads needed for grow
     if (currentMoney < moneyMax * moneyTolerance) {
-      const growThreadsNeeded = calculateGrowThreads(serverActual, player, moneyMax, myCores, ns)
+      const growThreadsNeeded = calculateGrowThreads(serverActual, player, moneyMax, myCores, ns, options)
       const maxGrowThreads = Math.floor(currentAvailableRam / growScriptRam)
       growThreads = Math.min(growThreadsNeeded, maxGrowThreads)
     }
@@ -897,7 +918,10 @@ export async function prepareServer(ns: NS, host: string, target: string) {
     const totalSecToReduce = currentExcessSec + growSecurityIncrease
 
     if (totalSecToReduce > secTolerance) {
-      const weakenThreadsNeeded = Math.max(1, Math.ceil(totalSecToReduce / (0.05 * (1 + (myCores - 1) / 16))))
+      const weakenThreadsNeeded = Math.max(
+        1,
+        Math.ceil((totalSecToReduce * options.weakenSecurityTopUp) / weakenPerThread(myCores))
+      )
       const ramAfterGrow = currentAvailableRam - growThreads * growScriptRam
       const maxWeakenThreads = Math.floor(ramAfterGrow / weakenScriptRam)
       weakenThreads = Math.min(weakenThreadsNeeded, maxWeakenThreads)
@@ -951,7 +975,8 @@ export function getServersToPrep(
   targetWeakenTime: number,
   enableParallel: boolean,
   totalMaxRam: number,
-  prepScriptRam: number
+  prepScriptRam: number,
+  prepParallelRamFraction: number = DEFAULT_BATCH_OPTIONS.prepParallelRamFraction
 ): ServerPrepInfo[] {
   const serversToPrep: ServerPrepInfo[] = [{ name: targetServer, weakenTime: targetWeakenTime }]
 
@@ -989,10 +1014,11 @@ export function getServersToPrep(
   otherServers.sort((a, b) => a.weakenTime - b.weakenTime)
 
   // Check how many other servers we can fit
+  const prepRamBudget = totalMaxRam * prepParallelRamFraction
   let totalPrepRamNeeded = prepScriptRam
   for (const srv of otherServers) {
     const nextRamNeeded = totalPrepRamNeeded + prepScriptRam
-    if (nextRamNeeded <= totalMaxRam * 0.9) {
+    if (nextRamNeeded <= prepRamBudget) {
       serversToPrep.push(srv)
       totalPrepRamNeeded = nextRamNeeded
     } else {

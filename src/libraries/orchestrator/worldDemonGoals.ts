@@ -164,9 +164,8 @@ function checkWorldDaemonRoot(ns: NS): GoalCheckResult {
 /**
  * Top-level run goal: reach w0r1d_d43m0n (backdoor step disabled for now).
  *
- * Singularity-backed background work (faction rep, gym, megacorp) must be started
- * before infiltration DOM automation — infiltration blocks focused UI but prior work
- * keeps running. Future orchestrator stops will reuse autoInfiltration patterns.
+ * Singularity-backed background work (factions, purchases, batch) will plug into
+ * orchestrator via backgroundServices.ts once we decide how each task should run.
  */
 export function getWorldDaemonBackdoorGoal(): GoalDefinition {
   return {

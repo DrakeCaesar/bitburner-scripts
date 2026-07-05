@@ -27,8 +27,8 @@ function statusLabel(status: GoalStatus): string {
 /**
  * Top-level automation entry after augmentation install.
  *
- * Plans from the end goal downward; execution stops are added incrementally.
- * Background singularity work + infiltration stacking will plug in here later.
+ * Plans from the end goal downward. Background services (batch, factions, purchases)
+ * live in libraries/orchestrator/backgroundServices.ts — not wired here yet.
  */
 export async function main(ns: NS): Promise<void> {
   ns.disableLog("ALL")

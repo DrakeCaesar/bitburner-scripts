@@ -10,9 +10,10 @@ import {
   wkn2ServerInstance,
 } from "./batchCalculations.js"
 import { calculateBatchTimings, capParallelBatches } from "./batchExecution.js"
+import { DEFAULT_BATCH_OPTIONS, type BatchOptions } from "./batchOptions.js"
 import { crawl } from "./crawl.js"
 import { formatGameTimeMs } from "./format.js"
-import { distributeBatchesAcrossNodes, getAllNodes } from "./serverManagement.js"
+import { getAllNodes } from "./serverManagement.js"
 import { buildTable } from "./tableBuilder.js"
 import { col, W, type ReactTableConfig } from "./scriptLogUiLayout.js"
 import { getEffectiveMaxRam } from "./ramUtils.js"
@@ -116,8 +117,8 @@ export interface ServerProfitability {
 }
 
 // Configuration constants for optimization fallback
-const MAX_BATCHES_FOR_SIMULATION = 1000
-const MAX_RAM_FOR_SIMULATION = Math.pow(2, 20) // 1,048,576 GB
+// const MAX_BATCHES_FOR_SIMULATION = 1000
+// const MAX_RAM_FOR_SIMULATION = Math.pow(2, 20) // 1,048,576 GB
 /** Money-left fraction just above 0% (steal ~100%). */
 const THRESHOLD_MIN = 1e-12
 /** Money-left fraction just below 100% (steal ~0%). */
@@ -156,6 +157,7 @@ export interface AnalyzeServerThresholdsOptions {
   hackScriptRam: number
   weakenScriptRam: number
   growScriptRam: number
+  options?: BatchOptions
 }
 
 export interface ServerThresholdAnalysis {
@@ -171,7 +173,7 @@ export interface ServerThresholdAnalysis {
 export function analyzeServerThresholds(
   ns: NS,
   server: Server,
-  options: AnalyzeServerThresholdsOptions
+  analyzeOptions: AnalyzeServerThresholdsOptions
 ): ServerThresholdAnalysis {
   const {
     totalMaxRam,
@@ -185,7 +187,8 @@ export function analyzeServerThresholds(
     hackScriptRam,
     weakenScriptRam,
     growScriptRam,
-  } = options
+    options = DEFAULT_BATCH_OPTIONS,
+  } = analyzeOptions
 
   const moneyMax = server.moneyMax!
   const timings = calculateBatchTimings(ns, server, player, batchDelay)
@@ -208,13 +211,13 @@ export function analyzeServerThresholds(
     const hackThreads = calculateHackThreads(hackServer, hackPlayer, moneyMax, testThreshold, ns)
 
     const { server: wkn1Server, player: wkn1Player } = wkn1ServerInstance(server, player, hackThreads, ns)
-    const wkn1Threads = calculateWeakThreads(wkn1Server, wkn1Player, myCores)
+    const wkn1Threads = calculateWeakThreads(wkn1Server, wkn1Player, myCores, options)
 
     const { server: growServer, player: growPlayer } = growServerInstance(server, player, testThreshold)
-    const growThreads = calculateGrowThreads(growServer, growPlayer, moneyMax, myCores, ns)
+    const growThreads = calculateGrowThreads(growServer, growPlayer, moneyMax, myCores, ns, options)
 
     const { server: wkn2Server, player: wkn2Player } = wkn2ServerInstance(server, player, growThreads, ns, myCores)
-    const wkn2Threads = calculateWeakThreads(wkn2Server, wkn2Player, myCores)
+    const wkn2Threads = calculateWeakThreads(wkn2Server, wkn2Player, myCores, options)
 
     const totalBatchRam =
       hackScriptRam * hackThreads +
@@ -224,31 +227,34 @@ export function analyzeServerThresholds(
 
     if (totalBatchRam > nodeRamLimit) return null
 
-    const estimatedBatches = capParallelBatches(Math.floor(totalMaxRam / totalBatchRam))
-    let batches: number
+    const estimatedBatches = capParallelBatches(
+      Math.floor((totalMaxRam / totalBatchRam) * options.ramThreshold),
+      options.maxParallelBatches
+    )
+    const batches = estimatedBatches
 
-    if (estimatedBatches > MAX_BATCHES_FOR_SIMULATION || totalMaxRam > MAX_RAM_FOR_SIMULATION) {
-      batches = estimatedBatches
-    } else {
-      const testOperations: Array<{
-        ram: number
-        scriptPath: string
-        args: unknown[]
-        threads: number
-        batchIndex: number
-      }> = []
-
-      for (let b = 0; b < estimatedBatches; b++) {
-        testOperations.push(
-          { ram: hackScriptRam * hackThreads, scriptPath: "/hacking/hack.js", args: [], threads: hackThreads, batchIndex: b },
-          { ram: weakenScriptRam * wkn1Threads, scriptPath: "/hacking/weaken.js", args: [], threads: wkn1Threads, batchIndex: b },
-          { ram: growScriptRam * growThreads, scriptPath: "/hacking/grow.js", args: [], threads: growThreads, batchIndex: b },
-          { ram: weakenScriptRam * wkn2Threads, scriptPath: "/hacking/weaken.js", args: [], threads: wkn2Threads, batchIndex: b }
-        )
-      }
-
-      batches = distributeBatchesAcrossNodes(ns, nodes, testOperations).completeBatches
-    }
+    // if (estimatedBatches > MAX_BATCHES_FOR_SIMULATION || totalMaxRam > MAX_RAM_FOR_SIMULATION) {
+    //   batches = estimatedBatches
+    // } else {
+    //   const testOperations: Array<{
+    //     ram: number
+    //     scriptPath: string
+    //     args: unknown[]
+    //     threads: number
+    //     batchIndex: number
+    //   }> = []
+    //
+    //   for (let b = 0; b < estimatedBatches; b++) {
+    //     testOperations.push(
+    //       { ram: hackScriptRam * hackThreads, scriptPath: "/hacking/hack.js", args: [], threads: hackThreads, batchIndex: b },
+    //       { ram: weakenScriptRam * wkn1Threads, scriptPath: "/hacking/weaken.js", args: [], threads: wkn1Threads, batchIndex: b },
+    //       { ram: growScriptRam * growThreads, scriptPath: "/hacking/grow.js", args: [], threads: growThreads, batchIndex: b },
+    //       { ram: weakenScriptRam * wkn2Threads, scriptPath: "/hacking/weaken.js", args: [], threads: wkn2Threads, batchIndex: b }
+    //     )
+    //   }
+    //
+    //   batches = distributeBatchesAcrossNodes(ns, nodes, testOperations).completeBatches
+    // }
 
     const moneyPerBatch = moneyMax * (1 - testThreshold)
     const moneyPerCycle = moneyPerBatch * batches
@@ -406,7 +412,8 @@ export async function analyzeAllServers(
   batchDelay: number,
   nodes: string[],
   playerHackLevel?: number,
-  batchCycles: number = 20
+  batchCycles: number = 20,
+  options: BatchOptions = DEFAULT_BATCH_OPTIONS
 ): Promise<{ servers: ServerProfitability[]; thresholdByServer: Map<string, ThresholdComparisonRow[]> }> {
   // Get all servers
   const knownServers = new Set<string>()
@@ -440,10 +447,15 @@ export async function analyzeAllServers(
     hackScriptRam,
     weakenScriptRam,
     growScriptRam,
+    options,
   }
 
   for (const targetName of hackableServers) {
-    const prepTimeResult = await prepareServerMultiNode(ns, nodes, targetName, { dryRun: true, showVerbose: false })
+    const prepTimeResult = await prepareServerMultiNode(ns, nodes, targetName, {
+      dryRun: true,
+      showVerbose: false,
+      options,
+    })
     const prepTime = prepTimeResult.totalTime
 
     const server = ns.getServer(targetName)
@@ -488,7 +500,8 @@ export async function findBestTarget(
   nodes: string[],
   playerHackLevel?: number,
   batchCycles: number = 3,
-  logMessage?: (message: string) => void
+  logMessage?: (message: string) => void,
+  options: BatchOptions = DEFAULT_BATCH_OPTIONS
 ): Promise<BestTargetResult> {
   const { servers: profitabilityData, thresholdByServer } = await analyzeAllServers(
     ns,
@@ -498,7 +511,8 @@ export async function findBestTarget(
     batchDelay,
     nodes,
     playerHackLevel,
-    batchCycles
+    batchCycles,
+    options
   )
 
   logMessage?.(`Analyzed ${profitabilityData.length} hackable servers`)
@@ -536,5 +550,4 @@ export async function main(ns: NS) {
   ns.tprint(buildTable(buildProfitabilityTableConfig(ns, result.servers)))
   ns.tprint("")
   ns.tprint(`Best target: ${result.serverName} (${(result.hackThreshold * 100).toFixed(2)}%, ${ns.format.number(result.moneyPerSecond)}/s)`)
-  ns.tprint(`To start batching: run batch.js`)
 }

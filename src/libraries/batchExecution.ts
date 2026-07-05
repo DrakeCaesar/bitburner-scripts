@@ -12,6 +12,7 @@ import {
   wkn1ServerInstance,
   wkn2ServerInstance,
 } from "./batchCalculations.js"
+import { DEFAULT_BATCH_OPTIONS, type BatchOptions } from "./batchOptions.js"
 import { getEffectiveMaxRam } from "./ramUtils.js"
 import type { LogFn } from "./logFn.js"
 import { distributeBatchesAcrossNodes } from "./serverManagement.js"
@@ -20,10 +21,12 @@ import { BATCH_HACK_INCOME_PORT, HACK_INCOME_PORT_CAPACITY } from "./ports.js"
 export { BATCH_HACK_INCOME_PORT, HACK_INCOME_PORT_CAPACITY }
 
 /** Cap parallel HWGW batches to avoid browser OOM from too many ns.exec instances. */
-export const MAX_PARALLEL_BATCHES = 25000
-
-export function capParallelBatches(batches: number): number {
-  return Math.min(batches, MAX_PARALLEL_BATCHES)
+export function capParallelBatches(
+  batches: number,
+  maxParallelBatches: number = DEFAULT_BATCH_OPTIONS.maxParallelBatches
+): number {
+  if (!Number.isFinite(maxParallelBatches)) return batches
+  return Math.min(batches, maxParallelBatches)
 }
 
 const EMPTY_PORT_DATA = "NULL PORT DATA"
@@ -134,6 +137,7 @@ export interface BatchConfig {
   totalMaxRam: number
   ramThreshold: number
   nodeRamLimit: number
+  options?: BatchOptions
   debug?: boolean
   logMessage?: LogFn
   /** Exec shareRam on idle worker RAM while waiting for the batch cycle to finish. */
@@ -145,7 +149,7 @@ export interface BatchConfig {
 }
 
 export function calculateBatchThreads(ns: NS, config: BatchConfig) {
-  const { server, player, hackThreshold, myCores, nodeRamLimit, debug = false } = config
+  const { server, player, hackThreshold, myCores, nodeRamLimit, debug = false, options = DEFAULT_BATCH_OPTIONS } = config
   const moneyMax = server.moneyMax!
   const scripts = getBatchHackingScripts(debug)
 
@@ -162,13 +166,13 @@ export function calculateBatchThreads(ns: NS, config: BatchConfig) {
     const hackThreads = calculateHackThreads(hackServer, hackPlayer, moneyMax, actualThreshold, ns)
 
     const { server: wkn1Server, player: wkn1Player } = wkn1ServerInstance(server, player, hackThreads, ns)
-    const wkn1Threads = calculateWeakThreads(wkn1Server, wkn1Player, myCores)
+    const wkn1Threads = calculateWeakThreads(wkn1Server, wkn1Player, myCores, options)
 
     const { server: growServer, player: growPlayer } = growServerInstance(server, player, actualThreshold)
-    const growThreads = calculateGrowThreads(growServer, growPlayer, moneyMax, myCores, ns)
+    const growThreads = calculateGrowThreads(growServer, growPlayer, moneyMax, myCores, ns, options)
 
     const { server: wkn2Server, player: wkn2Player } = wkn2ServerInstance(server, player, growThreads, ns, myCores)
-    const wkn2Threads = calculateWeakThreads(wkn2Server, wkn2Player, myCores)
+    const wkn2Threads = calculateWeakThreads(wkn2Server, wkn2Player, myCores, options)
 
     const hackServerRam = hackScriptRam * hackThreads
     const wkn1ServerRam = weakenScriptRam * wkn1Threads
@@ -257,6 +261,7 @@ export async function executeBatches(
     shareLeftoverRamWhileBatching = false,
     whileAsleep,
     usePorts = true,
+    options = DEFAULT_BATCH_OPTIONS,
   } = config
   const log = logMessage ?? (() => {})
   const { totalBatchRam, actualThreshold } = threads
@@ -264,7 +269,7 @@ export async function executeBatches(
     timings
   const scripts = getBatchHackingScripts(debug)
 
-  const maxBatches = capParallelBatches(Math.floor((totalMaxRam / totalBatchRam) * ramThreshold))
+  const maxBatches = capParallelBatches(Math.floor((totalMaxRam / totalBatchRam) * ramThreshold), options.maxParallelBatches)
   const batches = batchLimit !== undefined ? Math.min(batchLimit, maxBatches) : maxBatches
 
   const hackScriptRam = ns.getScriptRam(scripts.hack)
@@ -297,14 +302,14 @@ export async function executeBatches(
 
     // Calculate weaken1 threads and XP with player state after hack (e.g., level 11)
     const { server: wkn1Server, player: wkn1Player } = wkn1ServerInstance(server, playerAfterHack, hackThreads, ns)
-    const wkn1Threads = calculateWeakThreads(wkn1Server, wkn1Player, myCores)
+    const wkn1Threads = calculateWeakThreads(wkn1Server, wkn1Player, myCores, options)
     const wkn1Xp = calculateOperationXp(server, playerAfterHack, wkn1Threads, ns)
     xpKahan = kahanAdd(xpKahan, wkn1Xp)
     const playerAfterWkn1 = updatePlayerWithKahanXp(currentPlayer, xpKahan, ns)
 
     // Calculate grow threads and XP with player state after weaken1 (e.g., level 12)
     const { server: growServer, player: growPlayer } = growServerInstance(server, playerAfterWkn1, actualThreshold)
-    const growThreads = calculateGrowThreads(growServer, growPlayer, moneyMax, myCores, ns)
+    const growThreads = calculateGrowThreads(growServer, growPlayer, moneyMax, myCores, ns, options)
     const growXp = calculateOperationXp(server, playerAfterWkn1, growThreads, ns)
     xpKahan = kahanAdd(xpKahan, growXp)
     const playerAfterGrow = updatePlayerWithKahanXp(currentPlayer, xpKahan, ns)
@@ -317,7 +322,7 @@ export async function executeBatches(
       ns,
       myCores
     )
-    const wkn2Threads = calculateWeakThreads(wkn2Server, wkn2Player, myCores)
+    const wkn2Threads = calculateWeakThreads(wkn2Server, wkn2Player, myCores, options)
     const wkn2Xp = calculateOperationXp(server, playerAfterGrow, wkn2Threads, ns)
     xpKahan = kahanAdd(xpKahan, wkn2Xp)
     const playerAfterWkn2 = updatePlayerWithKahanXp(currentPlayer, xpKahan, ns)
@@ -432,7 +437,7 @@ export async function executeBatches(
             if (!ns.fileExists(scriptPath, node)) {
               ns.scp(scriptPath, node)
             }
-            const availableRam = getEffectiveMaxRam(ns, node) - ns.getServerUsedRam(node)
+            const availableRam = getEffectiveMaxRam(ns, node, options.homeReserveGb) - ns.getServerUsedRam(node)
             const threads = Math.floor(availableRam / scriptRam)
             if (threads > 0) {
               ns.exec(scriptPath, node, threads)
