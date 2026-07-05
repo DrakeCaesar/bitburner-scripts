@@ -27,6 +27,8 @@ struct Args {
   int tournamentSize = 3;
   int eliteCount = 2;
   int stagnationGens = 12;
+  int radicalStagnationGens = 144;
+  int radicalReseedPeriod = 48;
   double immigrantFraction = 0.1;
   double stagnationImmigrantFraction = 0.35;
   double eliteMutationRate = 0.12;
@@ -52,6 +54,8 @@ void printHelp() {
       << "  --mutation-rate F   Per-gene mutation chance (default 0.35)\n"
       << "  --macro-mutation F  Jump-to-random gene chance when mutating (default 0.08)\n"
       << "  --stagnation N      Gens without global best before diversity boost (default 12)\n"
+      << "  --radical-stagnation N  Gens before full random reseed (default 144)\n"
+      << "  --radical-period N  Repeat radical reseed every N stagnant gens (default 48)\n"
       << "  --tournament N      Tournament selection size (default 3)\n"
       << "  --elite N           Elite individuals per generation (default 2)\n"
       << "  --load PATH         Load seed config JSON\n"
@@ -79,6 +83,8 @@ bool parseArgs(int argc, char** argv, Args* args) {
     else if (arg == "--mutation-rate") args->mutationRate = std::stod(need("--mutation-rate"));
     else if (arg == "--macro-mutation") args->macroMutationRate = std::stod(need("--macro-mutation"));
     else if (arg == "--stagnation") args->stagnationGens = std::stoi(need("--stagnation"));
+    else if (arg == "--radical-stagnation") args->radicalStagnationGens = std::stoi(need("--radical-stagnation"));
+    else if (arg == "--radical-period") args->radicalReseedPeriod = std::stoi(need("--radical-period"));
     else if (arg == "--tournament") args->tournamentSize = std::stoi(need("--tournament"));
     else if (arg == "--elite") args->eliteCount = std::stoi(need("--elite"));
     else if (arg == "--load") args->loadPath = need("--load");
@@ -139,10 +145,17 @@ class RateLimitedPrinter {
     maybeFlushLocked(std::chrono::steady_clock::now());
   }
 
+  void printNow(const std::string& line) {
+    std::lock_guard<std::mutex> lock(mu_);
+    pending_.clear();
+    std::cout << line << '\n' << std::flush;
+    lastPrint_ = std::chrono::steady_clock::now();
+  }
+
   void flush() {
     std::lock_guard<std::mutex> lock(mu_);
     if (!pending_.empty()) {
-      std::cout << pending_ << '\n';
+      std::cout << pending_ << '\n' << std::flush;
       pending_.clear();
       lastPrint_ = std::chrono::steady_clock::now();
     }
@@ -152,7 +165,7 @@ class RateLimitedPrinter {
   void maybeFlushLocked(std::chrono::steady_clock::time_point now) {
     if (pending_.empty()) return;
     if (lastPrint_.time_since_epoch().count() != 0 && now - lastPrint_ < interval_) return;
-    std::cout << pending_ << '\n';
+    std::cout << pending_ << '\n' << std::flush;
     pending_.clear();
     lastPrint_ = now;
   }
@@ -176,25 +189,34 @@ void evaluatePopulationParallel(const std::vector<koth::Assignment>& assignments
                                 int threads, std::atomic<int64_t>& evaluations, koth::EvalScore& globalBest,
                                 std::mutex& bestMu, SaveContext& saveCtx, RateLimitedPrinter& progress, int generation) {
   const int workerCount = std::max(1, threads);
+  const size_t popSize = population.size();
   std::atomic<size_t> next{0};
+  std::atomic<size_t> completed{0};
   std::vector<std::thread> workers;
   workers.reserve(static_cast<size_t>(workerCount));
+
+  progress.printNow("gen " + std::to_string(generation) + " evaluating " + std::to_string(popSize) +
+                    " individuals (" + std::to_string(assignments.size()) + " assignments each)...");
 
   for (int t = 0; t < workerCount; ++t) {
     workers.emplace_back([&]() {
       while (!g_stop.load()) {
         const size_t i = next.fetch_add(1);
-        if (i >= population.size()) break;
+        if (i >= popSize) break;
         koth::EvalScore score = koth::evaluateImprovedConfig(assignments, population[i]);
         scores[i] = score;
         evaluations.fetch_add(1);
+        const size_t done = completed.fetch_add(1) + 1;
+
+        progress.println("gen " + std::to_string(generation) + " evaluating " + std::to_string(done) + "/" +
+                         std::to_string(popSize) + " | total evals " + std::to_string(evaluations.load()));
 
         std::lock_guard<std::mutex> lock(bestMu);
         if (score.fitness < globalBest.fitness) {
           globalBest = score;
           trySaveBest(saveCtx, globalBest);
-          progress.println("  [gen " + std::to_string(generation) + " " + std::to_string(i + 1) + "/" +
-                           std::to_string(population.size()) + "] NEW BEST: " + formatScore(score));
+          progress.printNow("  [gen " + std::to_string(generation) + " " + std::to_string(i + 1) + "/" +
+                            std::to_string(popSize) + "] NEW BEST: " + formatScore(score));
         }
       }
     });
@@ -217,7 +239,17 @@ std::vector<koth::ImprovedConfig> buildInitialPopulation(int population, const k
   std::vector<koth::ImprovedConfig> pop;
   pop.push_back(koth::normalizeImprovedConfig(koth::defaultImprovedConfig()));
   if (loaded) pop.push_back(koth::normalizeImprovedConfig(*loaded));
-  while (static_cast<int>(pop.size()) < population) pop.push_back(koth::randomIndividual(rng));
+  const koth::ImprovedConfig& seedCfg = loaded ? *loaded : koth::defaultImprovedConfig();
+  const int randomSlots = std::max(1, population / 8);
+  int randomAdded = 0;
+  while (static_cast<int>(pop.size()) < population) {
+    if (randomAdded < randomSlots) {
+      pop.push_back(koth::randomIndividual(rng));
+      ++randomAdded;
+    } else {
+      pop.push_back(koth::mutateConfig(seedCfg, 0.35, 0.08, rng));
+    }
+  }
   pop.resize(static_cast<size_t>(population));
   return pop;
 }
@@ -243,6 +275,7 @@ struct ExplorationParams {
   double randomParentProb = 0.0;
   double bestRandomCrossProb = 0.0;
   int restartPulseRandom = 0;
+  bool radicalReseed = false;
 };
 
 ExplorationParams computeExploration(int stagnationCount, const Args& args) {
@@ -283,6 +316,11 @@ ExplorationParams computeExploration(int stagnationCount, const Args& args) {
   p.hofCrossCount = std::min(p.hofCrossCount, std::max(0, pop / 10));
   p.immigrantCount = std::min(p.immigrantCount, std::max(1, pop / 3));
   p.restartPulseRandom = std::min(p.restartPulseRandom, std::max(0, pop / 4));
+
+  if (stagnationCount >= args.radicalStagnationGens && args.radicalReseedPeriod > 0 &&
+      (stagnationCount - args.radicalStagnationGens) % args.radicalReseedPeriod == 0) {
+    p.radicalReseed = true;
+  }
   return p;
 }
 
@@ -307,10 +345,21 @@ ScoredIndividual selectParent(const std::vector<ScoredIndividual>& scored, int t
 }
 
 std::string formatExploration(const ExplorationParams& explore) {
-  if (explore.tier == 0) return "";
-  std::string msg = " tier " + std::to_string(explore.tier);
+  if (explore.tier == 0 && !explore.radicalReseed) return "";
+  std::string msg;
+  if (explore.tier > 0) msg = " tier " + std::to_string(explore.tier);
   if (explore.restartPulse) msg += " restart-pulse";
+  if (explore.radicalReseed) msg += " radical-reseed";
   return msg;
+}
+
+std::vector<koth::ImprovedConfig> buildRadicalPopulation(int population, std::mt19937& rng) {
+  std::vector<koth::ImprovedConfig> pop;
+  pop.reserve(static_cast<size_t>(population));
+  while (static_cast<int>(pop.size()) < population) {
+    pop.push_back(koth::randomIndividual(rng));
+  }
+  return pop;
 }
 
 }  // namespace
@@ -365,6 +414,7 @@ int main(int argc, char** argv) {
     updateHallOfFame(hallOfFame, loadedScore, 8);
   }
   std::cout << "\n";
+  std::cout << "Starting genetic search...\n" << std::flush;
 
   std::vector<koth::ImprovedConfig> population = buildInitialPopulation(args.population, loadedPtr, rng);
   std::mutex bestMu;
@@ -409,7 +459,12 @@ int main(int argc, char** argv) {
     if (stagnationCount > 0) {
       line += " | stagnation " + std::to_string(stagnationCount) + formatExploration(explore);
     }
-    progress.println(line);
+    progress.printNow(line);
+
+    if (explore.radicalReseed) {
+      population = buildRadicalPopulation(args.population, rng);
+      continue;
+    }
 
     std::vector<koth::ImprovedConfig> next;
     next.reserve(population.size());

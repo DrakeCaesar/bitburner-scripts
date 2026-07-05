@@ -493,13 +493,18 @@ EvalScore evaluateImprovedConfig(const std::vector<Assignment>& assignments, con
   score.total = static_cast<int>(assignments.size());
   score.minGuesses = std::numeric_limits<int>::max();
 
-  for (const auto& assignment : assignments) {
-    const SolverResult r = runSolverImproved(assignment, cfg);
+  for (size_t i = 0; i < assignments.size(); ++i) {
+    const SolverResult r = runSolverImproved(assignments[i], cfg);
     if (r.solved) {
       ++score.solved;
       score.totalGuesses += r.guesses;
       score.maxGuesses = std::max(score.maxGuesses, r.guesses);
       score.minGuesses = std::min(score.minGuesses, r.guesses);
+    } else if (r.guesses >= SOLVER_MAX_PROBES) {
+      score.unsolved = score.total - score.solved;
+      score.fitness = computeImprovedFitness(score.unsolved, score.totalGuesses, score.maxGuesses);
+      score.avgGuesses = 0.0;
+      return score;
     }
   }
 

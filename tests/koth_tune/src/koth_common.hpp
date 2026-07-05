@@ -36,6 +36,10 @@ inline constexpr uint32_t DEFAULT_SEED = 0x4b6f7468u;
 inline constexpr int DEFAULT_DIFFICULTY = 60;
 inline constexpr int DEFAULT_COUNT = 100;
 
+// Hard cap so random GA configs cannot probe billions of times on one assignment.
+inline constexpr int SOLVER_MAX_PROBES = 5000;
+inline constexpr int TERNARY_MAX_LINEAR_SCAN = 64;
+
 inline int64_t clampInt64(int64_t v, int64_t lo, int64_t hi) {
   return std::max(lo, std::min(hi, v));
 }

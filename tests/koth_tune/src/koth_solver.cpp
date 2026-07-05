@@ -27,6 +27,7 @@ struct ProbeSession {
   int64_t max;
   int guesses = 0;
   bool solved = false;
+  bool exhausted = false;
   int64_t bestVal = 0;
   double bestAlt = -1.0;
   std::unordered_map<int64_t, double> samples;
@@ -40,10 +41,15 @@ struct ProbeSession {
   };
 
   ProbeResult probe(int64_t x) {
+    if (exhausted || solved) return {0.0, false, false};
     const int64_t xi = x;
     if (xi < min || xi > max) return {0.0, false, false};
     const auto it = samples.find(xi);
     if (it != samples.end()) return {it->second, true, true};
+    if (guesses >= SOLVER_MAX_PROBES) {
+      exhausted = true;
+      return {0.0, false, false};
+    }
     ++guesses;
     double alt = 0.0;
     if (authKingOfTheHill(server, xi, &alt)) {
@@ -62,12 +68,12 @@ struct ProbeSession {
     if (step <= 0) step = 1;
     for (int64_t x = start; x <= end; x += step) {
       probe(x);
-      if (solved) return;
+      if (solved || exhausted) return;
       if (hasStop && bestAlt >= stopAlt) return;
     }
     if (end >= start && end <= max && samples.find(end) == samples.end()) {
       probe(end);
-      if (solved) return;
+      if (solved || exhausted) return;
       if (hasStop && bestAlt >= stopAlt) return;
     }
   }
@@ -221,15 +227,22 @@ void tryGaussianPeakEstimate(ProbeSession& session, int64_t mn, int64_t mx, int6
 }
 
 void tryTernaryPeakSearch(ProbeSession& session, int64_t lo, int64_t hi, int maxIters, int widthStop) {
-  if (lo >= hi) return;
+  if (lo >= hi || session.solved || session.exhausted) return;
+  const int64_t initialWidth = hi - lo;
+  const int safeWidthStop = std::max(1, widthStop);
+  const int minIters =
+      static_cast<int>(std::ceil(std::log(static_cast<double>(initialWidth) / static_cast<double>(safeWidthStop)) /
+                                 std::log(1.5)));
+  const int itersBudget = std::min(64, std::max(maxIters, minIters));
+
   int iters = 0;
-  while (hi - lo > widthStop && iters < maxIters && !session.solved) {
+  while (hi - lo > safeWidthStop && iters < itersBudget && !session.solved && !session.exhausted) {
     const int64_t m1 = lo + (hi - lo) / 3;
     const int64_t m2 = hi - (hi - lo) / 3;
     const double a1 = session.probe(m1).alt;
-    if (session.solved) return;
+    if (session.solved || session.exhausted) return;
     const double a2 = session.probe(m2).alt;
-    if (session.solved) return;
+    if (session.solved || session.exhausted) return;
     if (a1 < a2) {
       lo = m1;
     } else {
@@ -237,9 +250,17 @@ void tryTernaryPeakSearch(ProbeSession& session, int64_t lo, int64_t hi, int max
     }
     ++iters;
   }
-  for (int64_t x = lo; x <= hi && !session.solved; ++x) {
-    session.probe(x);
+
+  const int64_t width = hi - lo;
+  if (width <= TERNARY_MAX_LINEAR_SCAN) {
+    for (int64_t x = lo; x <= hi && !session.solved && !session.exhausted; ++x) {
+      session.probe(x);
+    }
+    return;
   }
+
+  const int64_t step = std::max<int64_t>(1, ceilDiv(width, safeWidthStop));
+  session.sweep(lo, hi, step, 0.0, false);
 }
 
 void tryExpandFromBest(ProbeSession& session, int64_t mn, int64_t mx, int64_t gaussWidth, double stopAlt,
@@ -248,7 +269,7 @@ void tryExpandFromBest(ProbeSession& session, int64_t mn, int64_t mx, int64_t ga
   int64_t step = 1;
   const int64_t maxStep = std::max<int64_t>(1, ceilDiv(gaussWidth, cfg.expandMaxStepDivisor));
   const int64_t mult = std::max<int64_t>(2, cfg.expandStepMultiplier);
-  while (step <= maxStep && !session.solved) {
+  while (step <= maxStep && !session.solved && !session.exhausted) {
     bool improved = false;
     for (const int sign : {-1, 1}) {
       const int64_t x = session.bestVal + static_cast<int64_t>(sign) * step;
@@ -314,7 +335,7 @@ void findHillBySubdivision(ProbeSession& session, int64_t lo, int64_t hi, int qu
                            int64_t fullMax, int hillCount, int passwordLength, int64_t gaussWidth,
                            const ImprovedConfig& cfg) {
   int64_t step = hi - lo;
-  for (int round = 0; round < quickRounds && !session.solved; ++round) {
+  for (int round = 0; round < quickRounds && !session.solved && !session.exhausted; ++round) {
     const int64_t nextStep = std::max<int64_t>(1, ceilDiv(step, 2));
     if (nextStep >= step) break;
     step = nextStep;
@@ -351,7 +372,7 @@ void tryHillClimbFinals(ProbeSession& session, int64_t searchMin, int64_t search
   int64_t step = std::max<int64_t>(1, ceilDiv(gaussWidth, cfg.hillClimbInitialDivisor));
   int64_t x = session.bestVal;
 
-  while (step >= 1 && !session.solved) {
+  while (step >= 1 && !session.solved && !session.exhausted) {
     const int64_t left = std::max(searchMin, x - step);
     const int64_t right = std::min(searchMax, x + step);
     const double yL = session.probe(left).alt;
@@ -377,7 +398,7 @@ void tryHillClimbFinals(ProbeSession& session, int64_t searchMin, int64_t search
 void tryZoomFinals(ProbeSession& session, int64_t searchMin, int64_t searchMax, int64_t fullMin, int64_t fullMax,
                    const ImprovedConfig& cfg) {
   int64_t step = std::max<int64_t>(1, ceilDiv(searchMax - searchMin, cfg.zoomInitialDivisor));
-  for (int pass = 0; pass < cfg.zoomMaxPasses && !session.solved; ++pass) {
+  for (int pass = 0; pass < cfg.zoomMaxPasses && !session.solved && !session.exhausted; ++pass) {
     const int64_t lo = std::max(searchMin, session.bestVal - step);
     const int64_t hi = std::min(searchMax, session.bestVal + step);
     session.sweep(lo, hi, std::max<int64_t>(1, ceilDiv(step, cfg.zoomStepDivisor)), 0.0, false);

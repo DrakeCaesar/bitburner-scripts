@@ -5,19 +5,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 EXE="$SCRIPT_DIR/build/Release/koth_tune.exe"
 
-# --- edit flags here ---
-COUNT=100
+# --- edit flags here (counts are multiples of CORES) ---
+CORES=12
+THREADS=$CORES
+POPULATION=$((CORES * 6))   # 72: 6 eval tasks per core per generation
+COUNT=$((CORES * 20))       # 240 assignments per individual
 SEED=1265595496
 DIFFICULTY=60
-POPULATION=20
 # Leave empty to run until Ctrl+C; set e.g. GENERATIONS=500 for a fixed run.
 GENERATIONS=
-THREADS=0
 MUTATION_RATE=0.35
 MACRO_MUTATION=0.08
 STAGNATION=12
+RADICAL_STAGNATION=$((CORES * 12))   # 144 gens without improvement -> full random reseed
+RADICAL_PERIOD=$((CORES * 4))        # repeat radical reseed every 48 stagnant gens
 TOURNAMENT=3
-ELITE=2
+ELITE=4
 LOAD="$REPO_ROOT/tests/kingOfTheHillTune.best.json"
 OUT="$REPO_ROOT/tests/kingOfTheHillTune.best.json"
 # --- end flags ---
@@ -33,9 +36,12 @@ args=(
   --seed "$SEED"
   --difficulty "$DIFFICULTY"
   --population "$POPULATION"
+  --threads "$THREADS"
   --mutation-rate "$MUTATION_RATE"
   --macro-mutation "$MACRO_MUTATION"
   --stagnation "$STAGNATION"
+  --radical-stagnation "$RADICAL_STAGNATION"
+  --radical-period "$RADICAL_PERIOD"
   --tournament "$TOURNAMENT"
   --elite "$ELITE"
   --load "$LOAD"
@@ -44,10 +50,6 @@ args=(
 
 if [[ -n "${GENERATIONS:-}" ]]; then
   args+=(--generations "$GENERATIONS")
-fi
-
-if [[ "$THREADS" -gt 0 ]]; then
-  args+=(--threads "$THREADS")
 fi
 
 exec "$EXE" "${args[@]}" "$@"
