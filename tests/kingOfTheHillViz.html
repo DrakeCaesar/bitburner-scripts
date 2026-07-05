@@ -84,6 +84,11 @@
       padding: 0;
     }
 
+    input[type="number"]:disabled,
+    select:disabled {
+      opacity: 0.55;
+    }
+
     button {
       font: inherit;
       color: #000;
@@ -184,11 +189,17 @@
 <body>
   <h1>KingOfTheHill altitude profiles</h1>
   <p class="subtitle">
-    Deterministic assignments from seed. Summary uses all tests; charts show the first N after sorting.
+    Assignments from seed (sequential) or from tuned JSON benchmark. Summary uses all tests; charts show the first N after sorting.
     Orange dots are solver probes. Y = altitude; X = valid guess range.
   </p>
 
   <div class="controls">
+    <label>Assignments
+      <select id="assignmentSource">
+        <option value="sequential" selected>sequential (seed + count)</option>
+        <option value="json-max">JSON benchmark (max)</option>
+      </select>
+    </label>
     <label>Seed<input id="seed" type="number" value="1265595496" /></label>
     <label>Difficulty<input id="difficulty" type="number" value="60" min="1" max="60" /></label>
     <label>Tests<input id="count" type="number" value="1000" min="1" max="10000" step="1" /></label>
@@ -229,13 +240,16 @@
       DEFAULT_SEED,
       DEFAULT_DIFFICULTY,
       KING_MAIN_PEAK_ALTITUDE,
+      generateAssignmentByPoolIndex,
       generateAssignments,
+      getTunedBenchmark,
       runSolver,
       sampleAltitudeProfile,
     } from "./kingOfTheHillCore.mjs"
 
     const grid = document.getElementById("grid")
     const summaryEl = document.getElementById("summary")
+    const assignmentSourceInput = document.getElementById("assignmentSource")
     const seedInput = document.getElementById("seed")
     const difficultyInput = document.getElementById("difficulty")
     const countInput = document.getElementById("count")
@@ -244,8 +258,129 @@
     const pointsInput = document.getElementById("points")
     const renderBtn = document.getElementById("render")
 
-    seedInput.value = String(DEFAULT_SEED)
-    difficultyInput.value = String(DEFAULT_DIFFICULTY)
+    const STORAGE_KEY = "kingOfTheHillViz.settings"
+
+    function loadSettings() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY)
+        if (!raw) return null
+        return JSON.parse(raw)
+      } catch {
+        return null
+      }
+    }
+
+    function saveSettings() {
+      try {
+        const prev = loadSettings() ?? {}
+        const settings = {
+          ...prev,
+          assignmentSource: assignmentSourceInput.value,
+          sort: sortInput.value,
+          chartLimit: chartLimitInput.value,
+          points: pointsInput.value,
+        }
+        if (!isJsonBenchmarkSource()) {
+          settings.seed = seedInput.value
+          settings.difficulty = difficultyInput.value
+          settings.count = countInput.value
+        }
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
+      } catch {
+        // ignore quota / private mode
+      }
+    }
+
+    function applySettings(settings) {
+      if (!settings) return
+      if (settings.assignmentSource) assignmentSourceInput.value = settings.assignmentSource
+      if (settings.seed != null && settings.seed !== "") seedInput.value = String(settings.seed)
+      if (settings.difficulty != null && settings.difficulty !== "") difficultyInput.value = String(settings.difficulty)
+      if (settings.count != null && settings.count !== "") countInput.value = String(settings.count)
+      if (settings.sort) sortInput.value = settings.sort
+      if (settings.chartLimit != null && settings.chartLimit !== "") chartLimitInput.value = String(settings.chartLimit)
+      if (settings.points != null && settings.points !== "") pointsInput.value = String(settings.points)
+    }
+
+    const savedSettings = loadSettings()
+    if (savedSettings) applySettings(savedSettings)
+    else {
+      seedInput.value = String(DEFAULT_SEED)
+      difficultyInput.value = String(DEFAULT_DIFFICULTY)
+    }
+
+    for (const el of [
+      assignmentSourceInput,
+      seedInput,
+      difficultyInput,
+      countInput,
+      sortInput,
+      chartLimitInput,
+      pointsInput,
+    ]) {
+      el.addEventListener("change", saveSettings)
+    }
+
+    function isJsonBenchmarkSource() {
+      return assignmentSourceInput.value === "json-max"
+    }
+
+    function syncAssignmentSourceControls() {
+      const jsonMode = isJsonBenchmarkSource()
+      seedInput.disabled = jsonMode
+      difficultyInput.disabled = jsonMode
+      countInput.disabled = jsonMode
+      if (jsonMode) {
+        const benchmark = getTunedBenchmark("max")
+        if (benchmark) {
+          seedInput.value = String(benchmark.seed)
+          difficultyInput.value = String(benchmark.difficulty)
+          countInput.value = String(benchmark.assignments.length)
+        }
+      } else {
+        const saved = loadSettings()
+        if (saved?.seed != null && saved.seed !== "") seedInput.value = String(saved.seed)
+        if (saved?.difficulty != null && saved.difficulty !== "") difficultyInput.value = String(saved.difficulty)
+        if (saved?.count != null && saved.count !== "") countInput.value = String(saved.count)
+      }
+    }
+
+    assignmentSourceInput.addEventListener("change", () => {
+      syncAssignmentSourceControls()
+      saveSettings()
+      renderAll()
+    })
+
+    sortInput.addEventListener("change", () => {
+      saveSettings()
+      renderAll()
+    })
+
+    function buildRowsFromBenchmark() {
+      const benchmark = getTunedBenchmark("max")
+      if (!benchmark) return { error: "No benchmark in kingOfTheHillTune.max.json (run C++ tuner with --write-benchmark)." }
+      return {
+        benchmark,
+        rows: benchmark.assignments.map((row) => {
+          const assignment = generateAssignmentByPoolIndex(benchmark.seed, row.index, benchmark.difficulty)
+          return {
+            index: row.index,
+            assignment,
+            expected: row,
+            result: runSolver(assignment, { returnSamples: true }),
+          }
+        }),
+      }
+    }
+
+    function buildRowsSequential(seed, difficulty, testCount) {
+      return generateAssignments(seed, testCount, difficulty).map(({ index, assignment }) => ({
+        index,
+        assignment,
+        expected: null,
+        result: runSolver(assignment, { returnSamples: true }),
+      }))
+    }
 
     function sortRows(rows, mode) {
       const sorted = [...rows]
@@ -406,17 +541,24 @@
       return { label, solved, total, min, max, avg }
     }
 
-    function renderSummary(rows, chartCount, sortMode) {
+    function renderSummary(rows, chartCount, sortMode, sourceLabel) {
       const summary = summarizeSolver("solver", rows.map((r) => r.result))
       const failed = rows.filter((r) => !r.result.solved).length
       const sortLabel = sortInput.options[sortInput.selectedIndex].text
+      const jsonMismatches = rows.filter(
+        (r) => r.expected && (r.expected.guesses !== r.result.guesses || r.expected.solved !== r.result.solved),
+      ).length
       summaryEl.innerHTML = [
         `<div><strong>${summary.label}</strong> ${summary.solved}/${rows.length} solved${failed ? `, <span class="bad">${failed} failed</span>` : ""}, avg ${summary.avg.toFixed(1)} (${summary.min}-${summary.max}), total ${summary.total}</div>`,
+        `<div><strong>source</strong> ${sourceLabel}${jsonMismatches ? `, <span class="bad">${jsonMismatches} JSON mismatch(es)</span>` : ""}</div>`,
         `<div><strong>charts</strong> showing ${chartCount}/${rows.length} (${sortLabel})</div>`,
       ].join("")
     }
 
     function renderAll() {
+      syncAssignmentSourceControls()
+      saveSettings()
+      const jsonMode = isJsonBenchmarkSource()
       const seed = Number(seedInput.value) || DEFAULT_SEED
       const difficulty = Number(difficultyInput.value) || DEFAULT_DIFFICULTY
       const testCount = Math.max(1, Math.min(10000, Math.floor(Number(countInput.value) || 1000)))
@@ -424,28 +566,41 @@
       const sortMode = sortInput.value
       const chartLimit = Math.max(0, Math.min(500, Math.floor(Number(chartLimitInput.value) || 0)))
 
-      countInput.value = String(testCount)
+      if (!jsonMode) {
+        countInput.value = String(testCount)
+      }
       chartLimitInput.value = String(chartLimit)
 
       renderBtn.disabled = true
       renderBtn.textContent = "Running..."
-      summaryEl.textContent = `Running ${testCount} tests...`
+      summaryEl.textContent = jsonMode ? "Loading JSON benchmark..." : `Running ${testCount} tests...`
       grid.replaceChildren()
 
       setTimeout(() => {
-        const assignments = generateAssignments(seed, testCount, difficulty)
-        const rows = assignments.map(({ index, assignment }) => ({
-          index,
-          assignment,
-          result: runSolver(assignment, { returnSamples: true }),
-        }))
+        let rows
+        let sourceLabel
+        if (jsonMode) {
+          const built = buildRowsFromBenchmark()
+          if (built.error) {
+            summaryEl.innerHTML = `<span class="bad">${built.error}</span>`
+            renderBtn.disabled = false
+            renderBtn.textContent = "Redraw"
+            return
+          }
+          rows = built.rows
+          const b = built.benchmark
+          sourceLabel = `JSON benchmark (max): seed ${b.seed}, pool ${b.poolSize}, ${b.count} ${b.selection}, json max ${Math.max(...b.assignments.map((a) => a.guesses))} guesses`
+        } else {
+          rows = buildRowsSequential(seed, difficulty, testCount)
+          sourceLabel = `sequential #1-${testCount}, seed ${seed}, difficulty ${difficulty}`
+        }
 
         const sorted = sortRows(rows, sortMode)
         const chartRows = chartLimit > 0 ? sorted.slice(0, chartLimit) : []
 
-        renderSummary(rows, chartRows.length, sortMode)
+        renderSummary(rows, chartRows.length, sortMode, sourceLabel)
 
-        for (const { index, assignment, result } of chartRows) {
+        for (const { index, assignment, expected, result } of chartRows) {
           const profile = sampleAltitudeProfile(assignment, { pointCount })
 
           const card = document.createElement("article")
@@ -468,6 +623,20 @@
           rangeRow.className = "meta-row"
           rangeRow.innerHTML = `<span class="label">range</span><span>${formatNum(profile.min)} .. ${formatNum(profile.max)}</span>`
           meta.appendChild(rangeRow)
+
+          if (expected) {
+            const peakRow = document.createElement("div")
+            peakRow.className = "meta-row"
+            peakRow.innerHTML = `<span class="label">mainPeak</span><span>${formatNum(expected.mainPeak)}</span>`
+            meta.appendChild(peakRow)
+
+            const jsonRow = document.createElement("div")
+            jsonRow.className = "meta-row"
+            const match = expected.guesses === result.guesses && expected.solved === result.solved
+            const jsonClass = match ? "good" : "bad"
+            jsonRow.innerHTML = `<span class="label">json</span><span class="${jsonClass}">${expected.guesses} guesses, ${expected.solved ? "solved" : "FAILED"}</span>`
+            meta.appendChild(jsonRow)
+          }
 
           card.appendChild(meta)
 

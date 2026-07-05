@@ -98,13 +98,33 @@ struct EvalScore {
   int64_t fitness = 0;
 };
 
+struct AssignmentBenchmarkRow {
+  int index = 0;
+  std::string password;
+  int64_t mainPeak = 0;
+  int guesses = 0;
+  bool solved = false;
+};
+
+struct TuneBenchmarkMeta {
+  uint32_t seed = DEFAULT_SEED;
+  int difficulty = DEFAULT_DIFFICULTY;
+  int poolSize = 0;
+  int count = 0;
+  const char* selection = "sequential";
+};
+
 enum class FitnessObjective { Max, Avg };
 
 const char* fitnessObjectiveLabel(FitnessObjective objective);
 std::string tunedConfigJsonPath(FitnessObjective objective);
 int64_t computeImprovedFitness(FitnessObjective objective, int unsolved, int64_t totalGuesses, int maxGuesses);
 bool loadConfigFromJsonFile(const std::string& path, ImprovedConfig* out);
-void saveBestJson(const std::string& path, const ImprovedConfig& cfg, const EvalScore& best, FitnessObjective objective);
+std::vector<AssignmentBenchmarkRow> evaluateAssignmentBenchmark(const std::vector<Assignment>& assignments,
+                                                                const ImprovedConfig& cfg);
+
+void saveBestJson(const std::string& path, const ImprovedConfig& cfg, const EvalScore& best, FitnessObjective objective,
+                  const TuneBenchmarkMeta& benchmark, const std::vector<Assignment>& assignments);
 
 EvalScore evaluateImprovedConfig(const std::vector<Assignment>& assignments, const ImprovedConfig& cfg,
                                  FitnessObjective objective = FitnessObjective::Avg);

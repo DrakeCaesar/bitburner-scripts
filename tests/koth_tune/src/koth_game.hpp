@@ -13,6 +13,8 @@ struct Assignment {
   int difficulty = DEFAULT_DIFFICULTY;
   std::string password;
   int passwordLength = 0;
+  /** 1-based index in generateAssignments(seed, poolSize, difficulty). */
+  int poolIndex = 0;
 };
 
 struct NumericRange {

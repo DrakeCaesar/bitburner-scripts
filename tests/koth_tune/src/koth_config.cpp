@@ -540,7 +540,40 @@ EvalScore evaluateImprovedConfig(const std::vector<Assignment>& assignments, con
   return score;
 }
 
-void saveBestJson(const std::string& path, const ImprovedConfig& cfg, const EvalScore& best, FitnessObjective objective) {
+std::vector<AssignmentBenchmarkRow> evaluateAssignmentBenchmark(const std::vector<Assignment>& assignments,
+                                                                const ImprovedConfig& cfgIn) {
+  const ImprovedConfig cfg = normalizeImprovedConfig(cfgIn);
+  std::vector<AssignmentBenchmarkRow> rows;
+  rows.reserve(assignments.size());
+  for (const Assignment& assignment : assignments) {
+    const SolverResult r = runSolverImproved(assignment, cfg);
+    AssignmentBenchmarkRow row;
+    row.index = assignment.poolIndex > 0 ? assignment.poolIndex : static_cast<int>(rows.size()) + 1;
+    row.password = assignment.password;
+    row.mainPeak = parsePasswordInt(assignment.password);
+    row.guesses = r.guesses;
+    row.solved = r.solved;
+    rows.push_back(std::move(row));
+  }
+  return rows;
+}
+
+namespace {
+
+void writeJsonString(std::ostream& out, const std::string& s) {
+  out << '"';
+  for (const char c : s) {
+    if (c == '"' || c == '\\') out << '\\' << c;
+    else out << c;
+  }
+  out << '"';
+}
+
+}  // namespace
+
+void saveBestJson(const std::string& path, const ImprovedConfig& cfg, const EvalScore& best, FitnessObjective objective,
+                  const TuneBenchmarkMeta& benchmark, const std::vector<Assignment>& assignments) {
+  const std::vector<AssignmentBenchmarkRow> benchRows = evaluateAssignmentBenchmark(assignments, cfg);
   std::ofstream out(path);
   out << std::setprecision(12);
   out << "{\n";
@@ -549,6 +582,23 @@ void saveBestJson(const std::string& path, const ImprovedConfig& cfg, const Eval
   out << "  \"maxGuesses\": " << best.maxGuesses << ",\n";
   out << "  \"totalGuesses\": " << best.totalGuesses << ",\n";
   out << "  \"fitness\": " << best.fitness << ",\n";
+  out << "  \"benchmark\": {\n";
+  out << "    \"seed\": " << benchmark.seed << ",\n";
+  out << "    \"difficulty\": " << benchmark.difficulty << ",\n";
+  out << "    \"poolSize\": " << benchmark.poolSize << ",\n";
+  out << "    \"count\": " << benchmark.count << ",\n";
+  out << "    \"selection\": \"" << benchmark.selection << "\",\n";
+  out << "    \"assignments\": [\n";
+  for (size_t i = 0; i < benchRows.size(); ++i) {
+    const AssignmentBenchmarkRow& row = benchRows[i];
+    out << "      { \"index\": " << row.index << ", \"password\": ";
+    writeJsonString(out, row.password);
+    out << ", \"mainPeak\": " << row.mainPeak << ", \"guesses\": " << row.guesses << ", \"solved\": "
+        << (row.solved ? "true" : "false") << " }";
+    out << (i + 1 < benchRows.size() ? ",\n" : "\n");
+  }
+  out << "    ]\n";
+  out << "  },\n";
   out << "  \"config\": {\n";
   for (size_t i = 0; i < sizeof(kSpecs) / sizeof(kSpecs[0]); ++i) {
     const auto& spec = kSpecs[i];

@@ -12,11 +12,14 @@
 import {
   computeImprovedFitness,
   finalizeImprovedConfig,
+  getTunedBenchmark,
   getTunedImprovedConfig,
   TUNED_AVG_CONFIG,
   TUNED_MAX_CONFIG,
   type FitnessObjective,
   type ImprovedConfig,
+  type TunedAssignmentBenchmarkRow,
+  type TunedBenchmarkMeta,
 } from "../src/dnet/solvers/kingOfTheHill/config.js"
 import {
   KOTH_GAUSS_WIDTH_LENGTH_OFFSET,
@@ -33,12 +36,15 @@ import {
 export {
   computeImprovedFitness,
   finalizeImprovedConfig,
+  getTunedBenchmark,
   getTunedImprovedConfig,
   kingOfTheHillGaussianWidth,
   kingOfTheHillHillCount,
   TUNED_AVG_CONFIG,
   TUNED_MAX_CONFIG,
 }
+
+export type { TunedAssignmentBenchmarkRow, TunedBenchmarkMeta }
 
 export type ImprovedSolverConfig = ImprovedConfig
 
@@ -242,6 +248,16 @@ export function sampleAltitudeProfile(
   return { points, password, min, max, start, end }
 }
 
+export function generateAssignmentByPoolIndex(
+  seed: number,
+  poolIndex: number,
+  difficulty: number,
+): KingOfTheHillAssignment {
+  const i = poolIndex - 1
+  const rng = mulberry32((seed + i * ASSIGNMENT_SEED_STRIDE) >>> 0)
+  return buildAssignment(difficulty, rng)
+}
+
 export function generateAssignments(seed: number, count: number, difficulty: number) {
   const rows: { index: number; assignment: KingOfTheHillAssignment }[] = []
   for (let i = 0; i < count; i++) {
@@ -347,4 +363,81 @@ export function evaluateImprovedConfig(
     minGuesses: unsolved > 0 ? null : minGuesses,
     fitness: improvedConfigFitness({ objective, unsolved, totalGuesses, maxGuesses }),
   }
+}
+
+export interface TunedBenchmarkVerifyMismatch {
+  index: number
+  field: "password" | "mainPeak" | "guesses" | "solved"
+  expected: string | number | boolean
+  actual: string | number | boolean
+}
+
+export interface TunedBenchmarkVerifyResult {
+  ok: boolean
+  objective: FitnessObjective
+  benchmark: TunedBenchmarkMeta | null
+  checked: number
+  mismatches: TunedBenchmarkVerifyMismatch[]
+  jsMaxGuesses: number | null
+  jsAvgGuesses: number | null
+  jsonMaxGuesses: number | null
+  jsonAvgGuesses: number | null
+}
+
+export function verifyTunedConfigBenchmark(objective: FitnessObjective = "max"): TunedBenchmarkVerifyResult {
+  const benchmark = getTunedBenchmark(objective)
+  const cfg = getTunedImprovedConfig(objective)
+  const result: TunedBenchmarkVerifyResult = {
+    ok: false,
+    objective,
+    benchmark,
+    checked: 0,
+    mismatches: [],
+    jsMaxGuesses: null,
+    jsAvgGuesses: null,
+    jsonMaxGuesses: null,
+    jsonAvgGuesses: null,
+  }
+  if (benchmark == null) return result
+
+  let totalGuesses = 0
+  let maxGuesses = 0
+  let solved = 0
+
+  for (const row of benchmark.assignments) {
+    result.checked++
+    const assignment = generateAssignmentByPoolIndex(benchmark.seed, row.index, benchmark.difficulty)
+    const password = assignment.password
+    const mainPeak = Number(password)
+    if (password !== row.password) {
+      result.mismatches.push({ index: row.index, field: "password", expected: row.password, actual: password })
+    }
+    if (mainPeak !== row.mainPeak) {
+      result.mismatches.push({ index: row.index, field: "mainPeak", expected: row.mainPeak, actual: mainPeak })
+    }
+    const run = runSolverImproved(assignment, { improvedConfig: cfg, objective })
+    if (run.guesses !== row.guesses) {
+      result.mismatches.push({ index: row.index, field: "guesses", expected: row.guesses, actual: run.guesses })
+    }
+    if (run.solved !== row.solved) {
+      result.mismatches.push({ index: row.index, field: "solved", expected: row.solved, actual: run.solved })
+    }
+    if (run.solved) {
+      solved++
+      totalGuesses += run.guesses
+      maxGuesses = Math.max(maxGuesses, run.guesses)
+    }
+  }
+
+  result.jsMaxGuesses = solved === benchmark.assignments.length ? maxGuesses : null
+  result.jsAvgGuesses = solved === benchmark.assignments.length ? totalGuesses / solved : null
+  result.jsonMaxGuesses = benchmark.assignments.reduce(
+    (m, row) => (row.solved ? Math.max(m, row.guesses) : m),
+    0,
+  )
+  const solvedRows = benchmark.assignments.filter((row) => row.solved)
+  result.jsonAvgGuesses =
+    solvedRows.length > 0 ? solvedRows.reduce((sum, row) => sum + row.guesses, 0) / solvedRows.length : null
+  result.ok = result.mismatches.length === 0
+  return result
 }

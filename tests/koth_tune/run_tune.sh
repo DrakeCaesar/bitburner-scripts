@@ -8,8 +8,9 @@ EXE="$SCRIPT_DIR/build/Release/koth_tune.exe"
 CORES=12
 THREADS=$CORES
 POPULATION=$((CORES * 6))   # 72: 6 eval tasks per core per generation
-COUNT=$((CORES * 20))       # 240 assignments per individual
-SEED=1265595491
+COUNT=$((CORES * 20))       # 240 assignments per GA individual
+POOL_SIZE=$((CORES * 20000)) # 240000: scan pool, keep worst COUNT for GA
+SEED=1265595496
 DIFFICULTY=60
 # Fitness target: max or avg (JSON path is derived automatically)
 OBJECTIVE=max
@@ -37,6 +38,7 @@ fi
 
 args=(
   --count "$COUNT"
+  --pool-size "$POOL_SIZE"
   --seed "$SEED"
   --difficulty "$DIFFICULTY"
   --population "$POPULATION"

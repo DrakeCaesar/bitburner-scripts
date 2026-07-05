@@ -1,5 +1,6 @@
 #include "koth_config.hpp"
 #include "koth_game.hpp"
+#include "koth_solver.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -19,6 +20,7 @@ namespace {
 struct Args {
   uint32_t seed = koth::DEFAULT_SEED;
   int count = koth::DEFAULT_COUNT;
+  int poolSize = 0;  // 0 = same as count (no pre-scan)
   int difficulty = koth::DEFAULT_DIFFICULTY;
   int population = 20;
   int generations = -1;  // infinite
@@ -34,6 +36,7 @@ struct Args {
   double eliteMutationRate = 0.12;
   int threads = 0;  // 0 = hardware_concurrency
   koth::FitnessObjective objective = koth::FitnessObjective::Max;
+  bool writeBenchmark = false;
 };
 
 std::atomic<bool> g_stop{false};
@@ -45,7 +48,8 @@ void printHelp() {
       << "Usage: koth_tune [options]\n\n"
       << "Options:\n"
       << "  --seed N            Assignment seed (default " << koth::DEFAULT_SEED << ")\n"
-      << "  --count N           Assignments per evaluation (default 100)\n"
+      << "  --count N           Assignments per GA evaluation (default 100)\n"
+      << "  --pool-size N       Scan N assignments first; keep worst --count for GA (default: count only)\n"
       << "  --difficulty N      Game difficulty (default " << koth::DEFAULT_DIFFICULTY << ")\n"
       << "  --population N      Population size (default 20)\n"
       << "  --generations N     Max generations; omit for infinite\n"
@@ -58,6 +62,7 @@ void printHelp() {
       << "  --radical-period N  Repeat radical reseed every N stagnant gens (default 48)\n"
       << "  --tournament N      Tournament selection size (default 3)\n"
       << "  --elite N           Elite individuals per generation (default 2)\n"
+      << "  --write-benchmark   Evaluate loaded config on GA assignments; write JSON + benchmark (no GA)\n"
       << "  --help              Show this help\n\n"
       << "Config JSON is tests/kingOfTheHillTune.<objective>.json (load + save).\n"
       << "Ctrl+C exits; JSON is updated only on improvement.\n";
@@ -87,6 +92,7 @@ bool parseArgs(int argc, char** argv, Args* args) {
     };
     if (arg == "--seed") args->seed = static_cast<uint32_t>(std::stoul(need("--seed")));
     else if (arg == "--count") args->count = std::stoi(need("--count"));
+    else if (arg == "--pool-size") args->poolSize = std::stoi(need("--pool-size"));
     else if (arg == "--difficulty") args->difficulty = std::stoi(need("--difficulty"));
     else if (arg == "--population") args->population = std::stoi(need("--population"));
     else if (arg == "--generations") args->generations = std::stoi(need("--generations"));
@@ -104,6 +110,7 @@ bool parseArgs(int argc, char** argv, Args* args) {
     else if (arg == "--radical-period") args->radicalReseedPeriod = std::stoi(need("--radical-period"));
     else if (arg == "--tournament") args->tournamentSize = std::stoi(need("--tournament"));
     else if (arg == "--elite") args->eliteCount = std::stoi(need("--elite"));
+    else if (arg == "--write-benchmark") args->writeBenchmark = true;
     else if (arg == "--help" || arg == "-h") {
       printHelp();
       return false;
@@ -150,6 +157,8 @@ struct ScoredIndividual {
 struct SaveContext {
   std::string jsonPath;
   koth::FitnessObjective objective = koth::FitnessObjective::Max;
+  koth::TuneBenchmarkMeta benchmark{};
+  const std::vector<koth::Assignment>* assignments = nullptr;
   int64_t runStartFitness = 0;
   int64_t savedFitness = std::numeric_limits<int64_t>::max();
   std::mutex mu;
@@ -201,7 +210,8 @@ void trySaveBest(SaveContext& saveCtx, const koth::EvalScore& best) {
   if (best.fitness >= saveCtx.runStartFitness) return;
   std::lock_guard<std::mutex> lock(saveCtx.mu);
   if (best.fitness >= saveCtx.savedFitness) return;
-  koth::saveBestJson(saveCtx.jsonPath, best.config, best, saveCtx.objective);
+  if (saveCtx.assignments == nullptr) return;
+  koth::saveBestJson(saveCtx.jsonPath, best.config, best, saveCtx.objective, saveCtx.benchmark, *saveCtx.assignments);
   saveCtx.savedFitness = best.fitness;
 }
 
@@ -384,6 +394,84 @@ std::vector<koth::ImprovedConfig> buildRadicalPopulation(int population, std::mt
   return pop;
 }
 
+struct RankedAssignment {
+  size_t poolIndex = 0;
+  int guesses = 0;
+  bool solved = false;
+};
+
+bool assignmentHarder(const RankedAssignment& a, const RankedAssignment& b) {
+  if (a.solved != b.solved) return !a.solved;
+  if (a.guesses != b.guesses) return a.guesses > b.guesses;
+  return a.poolIndex < b.poolIndex;
+}
+
+std::vector<koth::Assignment> selectWorstAssignments(const std::vector<koth::Assignment>& pool,
+                                                     const koth::ImprovedConfig& cfg, int selectCount, int threads,
+                                                     RateLimitedPrinter& progress) {
+  const size_t poolSize = pool.size();
+  const int workerCount = std::max(1, threads);
+  const koth::ImprovedConfig normalized = koth::normalizeImprovedConfig(cfg);
+  std::vector<RankedAssignment> ranked(poolSize);
+  std::atomic<size_t> next{0};
+  std::atomic<size_t> completed{0};
+
+  progress.printNow("Scanning " + std::to_string(poolSize) + " assignments with current config (" +
+                    std::to_string(workerCount) + " threads)...");
+
+  std::vector<std::thread> workers;
+  workers.reserve(static_cast<size_t>(workerCount));
+  for (int t = 0; t < workerCount; ++t) {
+    workers.emplace_back([&]() {
+      while (!g_stop.load()) {
+        const size_t i = next.fetch_add(1);
+        if (i >= poolSize) break;
+        const koth::SolverResult result = koth::runSolverImproved(pool[i], normalized);
+        ranked[i] = {i, result.guesses, result.solved};
+        const size_t done = completed.fetch_add(1) + 1;
+        if (done % 500 == 0 || done == poolSize) {
+          progress.println("scan " + std::to_string(done) + "/" + std::to_string(poolSize));
+        }
+      }
+    });
+  }
+  for (auto& w : workers) w.join();
+  progress.flush();
+
+  std::sort(ranked.begin(), ranked.end(), assignmentHarder);
+
+  const int take = std::max(1, std::min(selectCount, static_cast<int>(poolSize)));
+  std::vector<koth::Assignment> selected;
+  selected.reserve(static_cast<size_t>(take));
+
+  int unsolved = 0;
+  int minGuesses = std::numeric_limits<int>::max();
+  int maxGuesses = 0;
+  for (int i = 0; i < take; ++i) {
+    const RankedAssignment& row = ranked[static_cast<size_t>(i)];
+    selected.push_back(pool[row.poolIndex]);
+    if (!row.solved) ++unsolved;
+    else {
+      minGuesses = std::min(minGuesses, row.guesses);
+      maxGuesses = std::max(maxGuesses, row.guesses);
+    }
+  }
+
+  std::cout << "Selected worst " << take << " / " << poolSize << " assignments";
+  if (unsolved > 0) {
+    std::cout << " (" << unsolved << " unsolved in selection)";
+  } else {
+    std::cout << " (guesses " << minGuesses << "-" << maxGuesses << ")";
+  }
+  std::cout << ". Cutoff assignment #" << (ranked[static_cast<size_t>(take - 1)].poolIndex + 1) << " had "
+            << (ranked[static_cast<size_t>(take - 1)].solved
+                    ? std::to_string(ranked[static_cast<size_t>(take - 1)].guesses) + " guesses"
+                    : "FAILED")
+            << ".\n";
+
+  return selected;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -394,6 +482,15 @@ int main(int argc, char** argv) {
     const unsigned hw = std::thread::hardware_concurrency();
     args.threads = hw == 0 ? 4 : static_cast<int>(hw);
   }
+  if (args.count < 1) {
+    std::cerr << "--count must be >= 1\n";
+    return 1;
+  }
+  const int poolSize = args.poolSize > 0 ? args.poolSize : args.count;
+  if (poolSize < args.count) {
+    std::cerr << "--pool-size must be >= --count\n";
+    return 1;
+  }
 
   const std::string jsonPath = koth::tunedConfigJsonPath(args.objective);
 
@@ -402,7 +499,7 @@ int main(int argc, char** argv) {
   std::signal(SIGTERM, onSignal);
 #endif
 
-  const auto assignments = koth::generateAssignments(args.seed, args.count, args.difficulty);
+  const auto pool = koth::generateAssignments(args.seed, poolSize, args.difficulty);
 
   koth::ImprovedConfig loadedCfg;
   const koth::ImprovedConfig* loadedPtr = nullptr;
@@ -413,11 +510,21 @@ int main(int argc, char** argv) {
     std::cerr << "Warning: could not load " << jsonPath << "\n";
   }
 
+  const koth::ImprovedConfig scanCfg = loadedPtr ? *loadedPtr : koth::defaultImprovedConfig();
+  RateLimitedPrinter progress;
+
+  std::vector<koth::Assignment> assignments;
+  if (poolSize > args.count) {
+    assignments = selectWorstAssignments(pool, scanCfg, args.count, args.threads, progress);
+  } else {
+    assignments = pool;
+  }
+
   std::mt19937 rng(static_cast<uint32_t>(args.seed ^ 0x9e3779b9u));
 
   std::cout << "=== KingOfTheHill improved solver tuner (C++) ===\n";
-  std::cout << "assignments=" << args.count << " seed=" << args.seed << " difficulty=" << args.difficulty
-            << " population=" << args.population << " threads=" << args.threads
+  std::cout << "ga-assignments=" << assignments.size() << " pool=" << poolSize << " seed=" << args.seed
+            << " difficulty=" << args.difficulty << " population=" << args.population << " threads=" << args.threads
             << " objective=" << koth::fitnessObjectiveLabel(args.objective) << "\n";
   std::cout << "json=" << jsonPath << " (written only on improvement)\nCtrl+C exits.\n\n";
 
@@ -436,6 +543,25 @@ int main(int argc, char** argv) {
     if (loadedScore.fitness < globalBest.fitness) globalBest = loadedScore;
     updateHallOfFame(hallOfFame, loadedScore, 8);
   }
+
+  if (args.writeBenchmark) {
+    if (!loadedPtr) {
+      std::cerr << "--write-benchmark requires an existing config in " << jsonPath << "\n";
+      return 1;
+    }
+    koth::TuneBenchmarkMeta benchmark{};
+    benchmark.seed = args.seed;
+    benchmark.difficulty = args.difficulty;
+    benchmark.poolSize = poolSize;
+    benchmark.count = args.count;
+    benchmark.selection = poolSize > args.count ? "worst" : "sequential";
+    const koth::EvalScore score = koth::evaluateImprovedConfig(assignments, *loadedPtr, args.objective);
+    koth::saveBestJson(jsonPath, *loadedPtr, score, args.objective, benchmark, assignments);
+    std::cout << "\nWrote " << jsonPath << " with benchmark (" << assignments.size() << " assignments)\n";
+    std::cout << formatScore(score, args.objective) << "\n";
+    return 0;
+  }
+
   std::cout << "\n";
   std::cout << "Starting genetic search...\n" << std::flush;
 
@@ -448,7 +574,12 @@ int main(int argc, char** argv) {
   saveCtx.jsonPath = jsonPath;
   saveCtx.objective = args.objective;
   saveCtx.runStartFitness = globalBest.fitness;
-  RateLimitedPrinter progress;
+  saveCtx.benchmark.seed = args.seed;
+  saveCtx.benchmark.difficulty = args.difficulty;
+  saveCtx.benchmark.poolSize = poolSize;
+  saveCtx.benchmark.count = args.count;
+  saveCtx.benchmark.selection = poolSize > args.count ? "worst" : "sequential";
+  saveCtx.assignments = &assignments;
 
   while (!g_stop.load() && (args.generations < 0 || generation < args.generations)) {
     ++generation;

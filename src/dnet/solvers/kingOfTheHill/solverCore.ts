@@ -108,7 +108,11 @@ function improvedSearchWindow(
 ) {
   if (session.bestAlt >= cfg.mainPeakDetectAlt) {
     const half = gaussWidth * cfg.mainPeakWindowWidths
-    return { min: Math.max(fullMin, session.bestVal - half), max: Math.min(fullMax, session.bestVal + half) }
+    let winMin = Math.max(fullMin, session.bestVal - half)
+    let winMax = Math.min(fullMax, session.bestVal + half)
+    if (session.bestVal - fullMin <= half * 2) winMin = fullMin
+    if (fullMax - session.bestVal <= half * 2) winMax = fullMax
+    return { min: winMin, max: winMax }
   }
   if (session.bestAlt > cfg.clusterDetectAlt) {
     return clusterSearchWindow(fullMin, fullMax, session.bestVal, hillCount, passwordLength, cfg)
@@ -155,7 +159,9 @@ function refinePeak(
 ): number {
   let c = center
   let r = Math.max(1, initialRadius)
-  for (let p = 0; p < passes; p++) {
+  const onMainHill = session.bestAlt >= cfg.mainPeakDetectAlt
+  const maxPasses = onMainHill ? Math.min(passes, 2) : passes
+  for (let p = 0; p < maxPasses; p++) {
     const x0 = Math.max(mn, c - r)
     const x2 = Math.min(mx, c + r)
     const x1 = c
@@ -170,6 +176,43 @@ function refinePeak(
     r = Math.max(1, ceilDiv(r, cfg.refineStepShrink))
   }
   return c
+}
+
+function tryParabolicPinpointMain(
+  session: ProbeSession,
+  mn: number,
+  mx: number,
+  gaussWidth: number,
+  cfg: ImprovedConfig,
+): void {
+  if (session.bestAlt < cfg.mainPeakDetectAlt) return
+  const r = Math.max(1, Math.ceil(gaussWidth / 4))
+  const c = session.bestVal
+  const x0 = Math.max(mn, c - r)
+  const x2 = Math.min(mx, c + r)
+  if (x0 >= x2) return
+  const y0 = session.probe(x0)
+  if (session.solved) return
+  const y1 = session.samples.get(c) ?? session.probe(c)
+  if (session.solved) return
+  const y2 = session.probe(x2)
+  if (session.solved) return
+  const peak = parabolicPeak(x0, y0, c, y1, x2, y2, cfg)
+  const px = Math.round(Math.max(mn, Math.min(mx, peak)))
+  if (px !== c) session.probe(px)
+}
+
+function probeRangeAnchors(session: ProbeSession, lo: number, hi: number): void {
+  session.probe(Math.round(lo))
+  if (session.solved || session.exhausted) return
+  session.probe(Math.round(hi))
+  if (session.solved || session.exhausted) return
+  const span = hi - lo
+  if (span < 4) return
+  for (const frac of [0.25, 0.5, 0.75]) {
+    session.probe(Math.round(lo + span * frac))
+    if (session.solved || session.exhausted) return
+  }
 }
 
 function weightedCentroid(session: ProbeSession, minAlt: number): number | null {
@@ -263,12 +306,32 @@ function tryGaussianPeakEstimate(session: ProbeSession, mn: number, mx: number, 
   }
 }
 
-function sweep(session: ProbeSession, start: number, end: number, step: number, stopAlt: number | null): void {
+function sweep(
+  session: ProbeSession,
+  start: number,
+  end: number,
+  step: number,
+  stopAlt: number | null,
+  cfg?: ImprovedConfig,
+): void {
   if (step <= 0) step = 1
+  let peakX = session.bestVal
+  let peakAlt = session.bestAlt
   for (let x = start; x <= end; x += step) {
     session.probe(x)
     if (session.solved || session.exhausted) return
     if (stopAlt != null && session.bestAlt >= stopAlt) return
+    if (cfg != null && peakAlt >= cfg.mainPeakDetectAlt) {
+      const xi = Math.round(x)
+      if (xi > peakX) {
+        const alt = session.samples.get(xi)
+        if (alt != null && alt < peakAlt * 0.7 && alt < cfg.clusterDetectAlt) return
+      }
+    }
+    if (session.bestAlt > peakAlt) {
+      peakX = session.bestVal
+      peakAlt = session.bestAlt
+    }
   }
   if (end >= start && end <= session.max && !session.samples.has(end)) {
     session.probe(end)
@@ -376,7 +439,45 @@ function findHillBySubdivision(
 function findHillLinearFallback(session: ProbeSession, lo: number, hi: number, hillCount: number, cfg: ImprovedConfig): void {
   const span = hi - lo
   const step = Math.max(1, ceilDiv(span, Math.max(cfg.coarseMinDivisor, hillCount * cfg.coarseHillFactor)))
-  sweep(session, lo, hi, step, cfg.mainPeakModeAlt)
+  if (session.bestAlt >= cfg.clusterDetectAlt) {
+    sweepOutwardFromBest(session, lo, hi, hillCount, cfg.mainPeakModeAlt, cfg)
+  } else {
+    sweep(session, lo, hi, step, cfg.mainPeakModeAlt, cfg)
+  }
+}
+
+function sweepOutwardFromBest(
+  session: ProbeSession,
+  lo: number,
+  hi: number,
+  hillCount: number,
+  stopAlt: number,
+  cfg: ImprovedConfig,
+): void {
+  const span = hi - lo
+  const step = Math.max(1, ceilDiv(span, Math.max(cfg.coarseMinDivisor, hillCount * cfg.coarseHillFactor)))
+  const center = session.bestVal
+  if (!session.samples.has(center)) session.probe(center)
+  if (session.solved || session.exhausted) return
+  if (session.bestAlt >= stopAlt) return
+
+  for (let dist = step; dist <= span; dist += step) {
+    let probed = 0
+    let flatEdges = 0
+    const beforeBest = session.bestAlt
+    for (const sign of [-1, 1] as const) {
+      const x = center + sign * dist
+      if (x < lo || x > hi) continue
+      probed++
+      session.probe(x)
+      if (session.solved || session.exhausted) return
+      if (session.bestAlt >= stopAlt) return
+      const alt = session.samples.get(Math.round(x))
+      if (alt != null && alt < cfg.clusterDetectAlt) flatEdges++
+    }
+    if (probed === 0) break
+    if (flatEdges >= probed && beforeBest >= cfg.clusterDetectAlt) return
+  }
 }
 
 function tryHillClimbFinals(
@@ -476,6 +577,11 @@ export function runSolverImprovedCore(
   const returnSamples = options.returnSamples === true
   const { min, max, hillCount, passwordLength, gaussWidth } = ctx
 
+  probeRangeAnchors(session, min, max)
+  if (session.solved) {
+    return { guesses: session.guesses, solved: true, bestVal: session.bestVal, bestAlt: session.bestAlt }
+  }
+
   findHillBySubdivision(session, min, max, cfg.findHillQuickRounds, min, max, hillCount, passwordLength, gaussWidth, cfg)
   if (!session.solved && session.bestAlt >= cfg.clusterDetectAlt) {
     tryGaussianPeakEstimate(session, min, max, gaussWidth, cfg)
@@ -503,7 +609,7 @@ export function runSolverImprovedCore(
     if (session.bestAlt >= cfg.mainPeakModeAlt) break
     search = improvedSearchWindow(min, max, session, hillCount, passwordLength, gaussWidth, cfg)
     searchSpan = search.max - search.min
-    sweep(session, search.min, search.max, Math.max(1, ceilDiv(searchSpan, divisor)), cfg.mainPeakModeAlt)
+    sweep(session, search.min, search.max, Math.max(1, ceilDiv(searchSpan, divisor)), cfg.mainPeakModeAlt, cfg)
     if (session.solved) return finish()
   }
 
@@ -544,7 +650,9 @@ export function runSolverImprovedCore(
 
   if (!session.solved) tryFinalCandidates(session, min, max, cfg)
   if (!session.solved && session.bestAlt >= cfg.mainPeakDetectAlt) {
-    const climbWindow = clusterSearchWindow(min, max, session.bestVal, hillCount, passwordLength, cfg)
+    const climbWindow = improvedSearchWindow(min, max, session, hillCount, passwordLength, gaussWidth, cfg)
+    tryParabolicPinpointMain(session, climbWindow.min, climbWindow.max, gaussWidth, cfg)
+    if (!session.solved) tryFinalCandidates(session, min, max, cfg)
     if (cfg.enableTernarySearch) {
       const ternaryIters = Math.min(
         cfg.ternaryMaxItersCap,
@@ -556,7 +664,9 @@ export function runSolverImprovedCore(
     if (!session.solved) tryGaussianPeakEstimate(session, climbWindow.min, climbWindow.max, gaussWidth, cfg)
     if (!session.solved) tryFinalCandidates(session, min, max, cfg)
     if (!session.solved) tryHillClimbFinals(session, climbWindow.min, climbWindow.max, gaussWidth, min, max, cfg)
-    if (!session.solved) tryZoomFinals(session, climbWindow.min, climbWindow.max, min, max, cfg)
+    if (!session.solved && session.bestAlt < cfg.mainPeakModeAlt) {
+      tryZoomFinals(session, climbWindow.min, climbWindow.max, min, max, cfg)
+    }
     if (!session.solved) tryFinalCandidates(session, min, max, cfg)
   }
 

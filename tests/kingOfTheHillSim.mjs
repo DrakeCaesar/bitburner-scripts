@@ -3,6 +3,7 @@
  *
  * Run: pnpm run test:koth
  *      pnpm run test:koth -- --seed 42 --count 10 --difficulty 60
+ *      pnpm run test:koth -- --verify-benchmark --objective max
  */
 
 import {
@@ -14,21 +15,56 @@ import {
   generateAssignments,
   kingOfTheHillHillCount,
   runSolver,
+  verifyTunedConfigBenchmark,
 } from "./kingOfTheHillCore.mjs"
 
 function parseArgs(argv) {
   let seed = DEFAULT_SEED
   let count = DEFAULT_COUNT
   let difficulty = DEFAULT_DIFFICULTY
+  let verifyBenchmark = false
+  let objective = "max"
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === "--seed" && argv[i + 1]) seed = Number(argv[++i])
     else if (argv[i] === "--count" && argv[i + 1]) count = Number(argv[++i])
     else if (argv[i] === "--difficulty" && argv[i + 1]) difficulty = Number(argv[++i])
+    else if (argv[i] === "--verify-benchmark") verifyBenchmark = true
+    else if (argv[i] === "--objective" && argv[i + 1]) objective = argv[++i]
   }
-  return { seed, count, difficulty }
+  return { seed, count, difficulty, verifyBenchmark, objective }
 }
 
-const { seed, count, difficulty } = parseArgs(process.argv)
+const { seed, count, difficulty, verifyBenchmark, objective } = parseArgs(process.argv)
+
+if (verifyBenchmark) {
+  console.log("=== KingOfTheHill tuned JSON benchmark verify ===")
+  console.log(`objective=${objective}\n`)
+  const result = verifyTunedConfigBenchmark(objective)
+  if (result.benchmark == null) {
+    console.error("No benchmark section in JSON. Re-run the C++ tuner to embed assignment scores.")
+    process.exit(1)
+  }
+  const b = result.benchmark
+  console.log(
+    `benchmark: seed=${b.seed} difficulty=${b.difficulty} poolSize=${b.poolSize} count=${b.count} selection=${b.selection}`,
+  )
+  console.log(`assignments in JSON: ${b.assignments.length}`)
+  console.log(`JSON scores: avg=${result.jsonAvgGuesses?.toFixed(1) ?? "n/a"} max=${result.jsonMaxGuesses ?? "n/a"}`)
+  console.log(`JS replay:   avg=${result.jsAvgGuesses?.toFixed(1) ?? "n/a"} max=${result.jsMaxGuesses ?? "n/a"}`)
+  if (result.mismatches.length > 0) {
+    console.error(`\nFAIL: ${result.mismatches.length} mismatch(es):`)
+    for (const row of result.mismatches.slice(0, 20)) {
+      console.error(`  #${row.index} ${row.field}: json=${row.expected} js=${row.actual}`)
+    }
+    if (result.mismatches.length > 20) {
+      console.error(`  ... and ${result.mismatches.length - 20} more`)
+    }
+    process.exit(1)
+  }
+  console.log(`\nOK: ${result.checked} assignments match (generator + solver agree with JSON)`)
+  process.exit(0)
+}
+
 const passwordLength = Math.min(1 + difficulty / ASSIGNMENT_PASSWORD_LENGTH_DIVISOR, ASSIGNMENT_PASSWORD_LENGTH_CAP)
 const hillCount = kingOfTheHillHillCount(difficulty)
 
