@@ -64,307 +64,64 @@ var kingOfTheHillTune_avg_default = {
 // tests/kingOfTheHillTune.max.json
 var kingOfTheHillTune_max_default = {
   objective: "max",
-  avgGuesses: 32.7291666667,
-  maxGuesses: 68,
-  totalGuesses: 7855,
-  fitness: 68007855,
+  avgGuesses: 33.8028333333,
+  maxGuesses: 103,
+  totalGuesses: 202817,
+  fitness: 103202817,
   benchmark: {
     seed: 1265595496,
     difficulty: 60,
-    poolSize: 24e4,
-    count: 240,
-    selection: "worst",
-    assignments: [
-      { index: 79795, password: "9711082680", mainPeak: 9711082680, guesses: 28, solved: true },
-      { index: 205999, password: "9712774403", mainPeak: 9712774403, guesses: 28, solved: true },
-      { index: 29800, password: "9709156474", mainPeak: 9709156474, guesses: 28, solved: true },
-      { index: 120738, password: "9710771016", mainPeak: 9710771016, guesses: 54, solved: true },
-      { index: 145408, password: "9710964675", mainPeak: 9710964675, guesses: 28, solved: true },
-      { index: 7897, password: "9710668806", mainPeak: 9710668806, guesses: 54, solved: true },
-      { index: 73824, password: "9709932286", mainPeak: 9709932286, guesses: 52, solved: true },
-      { index: 101657, password: "9712372337", mainPeak: 9712372337, guesses: 52, solved: true },
-      { index: 108976, password: "9713074716", mainPeak: 9713074716, guesses: 64, solved: true },
-      { index: 183060, password: "9711364644", mainPeak: 9711364644, guesses: 52, solved: true },
-      { index: 116625, password: "9573457873", mainPeak: 9573457873, guesses: 17, solved: true },
-      { index: 121877, password: "9573817625", mainPeak: 9573817625, guesses: 17, solved: true },
-      { index: 151849, password: "9830315523", mainPeak: 9830315523, guesses: 12, solved: true },
-      { index: 46131, password: "9728768395", mainPeak: 9728768395, guesses: 27, solved: true },
-      { index: 144061, password: "9708884038", mainPeak: 9708884038, guesses: 54, solved: true },
-      { index: 87172, password: "9711131409", mainPeak: 9711131409, guesses: 28, solved: true },
-      { index: 155542, password: "9712593629", mainPeak: 9712593629, guesses: 52, solved: true },
-      { index: 174609, password: "9711128040", mainPeak: 9711128040, guesses: 54, solved: true },
-      { index: 213962, password: "7532349387", mainPeak: 7532349387, guesses: 21, solved: true },
-      { index: 221200, password: "9708893666", mainPeak: 9708893666, guesses: 28, solved: true },
-      { index: 49571, password: "9711407186", mainPeak: 9711407186, guesses: 28, solved: true },
-      { index: 91268, password: "7529820403", mainPeak: 7529820403, guesses: 39, solved: true },
-      { index: 101058, password: "9712108539", mainPeak: 9712108539, guesses: 28, solved: true },
-      { index: 205696, password: "9576283929", mainPeak: 9576283929, guesses: 17, solved: true },
-      { index: 54214, password: "9838113506", mainPeak: 9838113506, guesses: 12, solved: true },
-      { index: 82318, password: "9711547165", mainPeak: 9711547165, guesses: 16, solved: true },
-      { index: 117718, password: "9589284940", mainPeak: 9589284940, guesses: 17, solved: true },
-      { index: 192771, password: "9843339718", mainPeak: 9843339718, guesses: 17, solved: true },
-      { index: 218631, password: "9709761636", mainPeak: 9709761636, guesses: 51, solved: true },
-      { index: 24396, password: "9573642903", mainPeak: 9573642903, guesses: 17, solved: true },
-      { index: 227457, password: "8687713080", mainPeak: 8687713080, guesses: 53, solved: true },
-      { index: 142497, password: "9834321367", mainPeak: 9834321367, guesses: 12, solved: true },
-      { index: 143116, password: "9822333179", mainPeak: 9822333179, guesses: 12, solved: true },
-      { index: 155106, password: "9608006648", mainPeak: 9608006648, guesses: 17, solved: true },
-      { index: 163775, password: "8176693298", mainPeak: 8176693298, guesses: 27, solved: true },
-      { index: 165318, password: "7607836259", mainPeak: 7607836259, guesses: 25, solved: true },
-      { index: 168581, password: "9565083609", mainPeak: 9565083609, guesses: 17, solved: true },
-      { index: 171088, password: "9843775871", mainPeak: 9843775871, guesses: 17, solved: true },
-      { index: 219283, password: "9711958359", mainPeak: 9711958359, guesses: 60, solved: true },
-      { index: 10712, password: "8696740238", mainPeak: 8696740238, guesses: 21, solved: true },
-      { index: 26535, password: "9713726564", mainPeak: 9713726564, guesses: 54, solved: true },
-      { index: 45478, password: "8699885417", mainPeak: 8699885417, guesses: 53, solved: true },
-      { index: 113333, password: "9715262535", mainPeak: 9715262535, guesses: 54, solved: true },
-      { index: 181554, password: "7887582366", mainPeak: 7887582366, guesses: 27, solved: true },
-      { index: 183570, password: "9828623036", mainPeak: 9828623036, guesses: 12, solved: true },
-      { index: 216565, password: "9709926135", mainPeak: 9709926135, guesses: 28, solved: true },
-      { index: 21143, password: "7528881060", mainPeak: 7528881060, guesses: 39, solved: true },
-      { index: 21634, password: "8694564368", mainPeak: 8694564368, guesses: 51, solved: true },
-      { index: 45569, password: "9708922468", mainPeak: 9708922468, guesses: 54, solved: true },
-      { index: 51843, password: "9573563963", mainPeak: 9573563963, guesses: 17, solved: true },
-      { index: 102718, password: "9709928447", mainPeak: 9709928447, guesses: 58, solved: true },
-      { index: 127665, password: "8173339501", mainPeak: 8173339501, guesses: 27, solved: true },
-      { index: 130717, password: "8188044227", mainPeak: 8188044227, guesses: 27, solved: true },
-      { index: 131541, password: "9827046207", mainPeak: 9827046207, guesses: 12, solved: true },
-      { index: 141841, password: "7530176236", mainPeak: 7530176236, guesses: 39, solved: true },
-      { index: 148043, password: "8157402501", mainPeak: 8157402501, guesses: 28, solved: true },
-      { index: 149562, password: "9843333240", mainPeak: 9843333240, guesses: 17, solved: true },
-      { index: 166047, password: "9718398357", mainPeak: 9718398357, guesses: 52, solved: true },
-      { index: 175083, password: "9718919936", mainPeak: 9718919936, guesses: 27, solved: true },
-      { index: 190124, password: "9823847832", mainPeak: 9823847832, guesses: 12, solved: true },
-      { index: 203591, password: "8707202594", mainPeak: 8707202594, guesses: 53, solved: true },
-      { index: 8541, password: "9573271752", mainPeak: 9573271752, guesses: 17, solved: true },
-      { index: 22498, password: "9580700405", mainPeak: 9580700405, guesses: 17, solved: true },
-      { index: 61489, password: "9709659082", mainPeak: 9709659082, guesses: 60, solved: true },
-      { index: 74495, password: "8381869192", mainPeak: 8381869192, guesses: 58, solved: true },
-      { index: 79990, password: "8371591739", mainPeak: 8371591739, guesses: 49, solved: true },
-      { index: 81662, password: "8697928243", mainPeak: 8697928243, guesses: 65, solved: true },
-      { index: 87125, password: "9717723502", mainPeak: 9717723502, guesses: 60, solved: true },
-      { index: 128568, password: "9828739226", mainPeak: 9828739226, guesses: 12, solved: true },
-      { index: 134405, password: "9831615726", mainPeak: 9831615726, guesses: 12, solved: true },
-      { index: 143448, password: "7830584093", mainPeak: 7830584093, guesses: 47, solved: true },
-      { index: 150524, password: "9844300109", mainPeak: 9844300109, guesses: 17, solved: true },
-      { index: 159145, password: "8688591579", mainPeak: 8688591579, guesses: 43, solved: true },
-      { index: 164648, password: "9840944042", mainPeak: 9840944042, guesses: 12, solved: true },
-      { index: 169606, password: "8702649885", mainPeak: 8702649885, guesses: 54, solved: true },
-      { index: 180463, password: "8180072621", mainPeak: 8180072621, guesses: 27, solved: true },
-      { index: 201506, password: "9721289730", mainPeak: 9721289730, guesses: 49, solved: true },
-      { index: 207027, password: "9712477002", mainPeak: 9712477002, guesses: 28, solved: true },
-      { index: 213343, password: "8715116775", mainPeak: 8715116775, guesses: 27, solved: true },
-      { index: 10983, password: "9827239991", mainPeak: 9827239991, guesses: 12, solved: true },
-      { index: 39015, password: "8692203003", mainPeak: 8692203003, guesses: 27, solved: true },
-      { index: 39614, password: "9714303076", mainPeak: 9714303076, guesses: 52, solved: true },
-      { index: 91024, password: "9715740277", mainPeak: 9715740277, guesses: 52, solved: true },
-      { index: 94045, password: "9837482916", mainPeak: 9837482916, guesses: 12, solved: true },
-      { index: 139320, password: "9307524509", mainPeak: 9307524509, guesses: 17, solved: true },
-      { index: 145610, password: "9825472884", mainPeak: 9825472884, guesses: 12, solved: true },
-      { index: 171236, password: "9828062840", mainPeak: 9828062840, guesses: 12, solved: true },
-      { index: 202448, password: "8680686512", mainPeak: 8680686512, guesses: 56, solved: true },
-      { index: 214992, password: "9710021122", mainPeak: 9710021122, guesses: 54, solved: true },
-      { index: 227858, password: "9835809804", mainPeak: 9835809804, guesses: 12, solved: true },
-      { index: 24347, password: "8169500738", mainPeak: 8169500738, guesses: 28, solved: true },
-      { index: 39677, password: "8744050759", mainPeak: 8744050759, guesses: 61, solved: true },
-      { index: 61824, password: "9828663642", mainPeak: 9828663642, guesses: 12, solved: true },
-      { index: 91498, password: "7834191428", mainPeak: 7834191428, guesses: 47, solved: true },
-      { index: 93345, password: "9829927140", mainPeak: 9829927140, guesses: 12, solved: true },
-      { index: 159717, password: "9718669134", mainPeak: 9718669134, guesses: 52, solved: true },
-      { index: 171589, password: "8360661887", mainPeak: 8360661887, guesses: 52, solved: true },
-      { index: 180778, password: "9305503773", mainPeak: 9305503773, guesses: 17, solved: true },
-      { index: 184332, password: "9572324721", mainPeak: 9572324721, guesses: 17, solved: true },
-      { index: 212451, password: "8757635554", mainPeak: 8757635554, guesses: 54, solved: true },
-      { index: 218704, password: "8175651697", mainPeak: 8175651697, guesses: 27, solved: true },
-      { index: 223029, password: "9837868291", mainPeak: 9837868291, guesses: 12, solved: true },
-      { index: 225092, password: "9561880179", mainPeak: 9561880179, guesses: 17, solved: true },
-      { index: 238587, password: "9711470489", mainPeak: 9711470489, guesses: 54, solved: true },
-      { index: 9520, password: "9835175601", mainPeak: 9835175601, guesses: 12, solved: true },
-      { index: 40788, password: "8359661802", mainPeak: 8359661802, guesses: 50, solved: true },
-      { index: 61641, password: "8186636002", mainPeak: 8186636002, guesses: 27, solved: true },
-      { index: 66192, password: "8381221835", mainPeak: 8381221835, guesses: 57, solved: true },
-      { index: 79956, password: "9715573003", mainPeak: 9715573003, guesses: 28, solved: true },
-      { index: 84732, password: "8681098092", mainPeak: 8681098092, guesses: 50, solved: true },
-      { index: 88790, password: "7822025369", mainPeak: 7822025369, guesses: 44, solved: true },
-      { index: 91524, password: "9830285779", mainPeak: 9830285779, guesses: 12, solved: true },
-      { index: 98458, password: "8685120159", mainPeak: 8685120159, guesses: 51, solved: true },
-      { index: 117344, password: "7531641782", mainPeak: 7531641782, guesses: 39, solved: true },
-      { index: 167910, password: "8703778406", mainPeak: 8703778406, guesses: 27, solved: true },
-      { index: 187996, password: "9833580202", mainPeak: 9833580202, guesses: 12, solved: true },
-      { index: 229518, password: "8170168916", mainPeak: 8170168916, guesses: 28, solved: true },
-      { index: 1670, password: "9273390925", mainPeak: 9273390925, guesses: 8, solved: true },
-      { index: 13723, password: "9820747041", mainPeak: 9820747041, guesses: 12, solved: true },
-      { index: 15795, password: "8705724200", mainPeak: 8705724200, guesses: 27, solved: true },
-      { index: 24225, password: "9575703446", mainPeak: 9575703446, guesses: 17, solved: true },
-      { index: 31746, password: "8715054178", mainPeak: 8715054178, guesses: 27, solved: true },
-      { index: 58411, password: "9821707715", mainPeak: 9821707715, guesses: 12, solved: true },
-      { index: 90491, password: "8682100497", mainPeak: 8682100497, guesses: 56, solved: true },
-      { index: 117636, password: "8693443620", mainPeak: 8693443620, guesses: 54, solved: true },
-      { index: 136779, password: "9832695310", mainPeak: 9832695310, guesses: 12, solved: true },
-      { index: 163913, password: "9729208015", mainPeak: 9729208015, guesses: 27, solved: true },
-      { index: 165354, password: "9821603130", mainPeak: 9821603130, guesses: 12, solved: true },
-      { index: 168307, password: "8681802292", mainPeak: 8681802292, guesses: 68, solved: true },
-      { index: 183064, password: "8367215156", mainPeak: 8367215156, guesses: 49, solved: true },
-      { index: 191320, password: "9833793354", mainPeak: 9833793354, guesses: 12, solved: true },
-      { index: 222545, password: "9303320952", mainPeak: 9303320952, guesses: 17, solved: true },
-      { index: 50332, password: "9829449243", mainPeak: 9829449243, guesses: 12, solved: true },
-      { index: 86490, password: "8370117903", mainPeak: 8370117903, guesses: 49, solved: true },
-      { index: 101833, password: "6501018773", mainPeak: 6501018773, guesses: 64, solved: true },
-      { index: 103356, password: "8682220460", mainPeak: 8682220460, guesses: 53, solved: true },
-      { index: 107675, password: "9723937686", mainPeak: 9723937686, guesses: 49, solved: true },
-      { index: 120617, password: "9824201691", mainPeak: 9824201691, guesses: 12, solved: true },
-      { index: 130715, password: "8688896161", mainPeak: 8688896161, guesses: 56, solved: true },
-      { index: 133224, password: "9270578194", mainPeak: 9270578194, guesses: 8, solved: true },
-      { index: 142837, password: "9834994967", mainPeak: 9834994967, guesses: 12, solved: true },
-      { index: 145834, password: "9534859909", mainPeak: 9534859909, guesses: 24, solved: true },
-      { index: 171113, password: "8694975072", mainPeak: 8694975072, guesses: 68, solved: true },
-      { index: 30422, password: "9832706140", mainPeak: 9832706140, guesses: 12, solved: true },
-      { index: 50489, password: "8693975308", mainPeak: 8693975308, guesses: 64, solved: true },
-      { index: 77543, password: "9709984356", mainPeak: 9709984356, guesses: 28, solved: true },
-      { index: 101299, password: "8941443219", mainPeak: 8941443219, guesses: 16, solved: true },
-      { index: 109060, password: "8699884107", mainPeak: 8699884107, guesses: 51, solved: true },
-      { index: 143404, password: "8721908127", mainPeak: 8721908127, guesses: 52, solved: true },
-      { index: 154447, password: "8713699983", mainPeak: 8713699983, guesses: 54, solved: true },
-      { index: 174260, password: "9265727106", mainPeak: 9265727106, guesses: 8, solved: true },
-      { index: 194721, password: "9713649869", mainPeak: 9713649869, guesses: 52, solved: true },
-      { index: 7033, password: "9832423037", mainPeak: 9832423037, guesses: 12, solved: true },
-      { index: 26355, password: "8371880244", mainPeak: 8371880244, guesses: 49, solved: true },
-      { index: 42987, password: "8364857635", mainPeak: 8364857635, guesses: 49, solved: true },
-      { index: 54998, password: "8749839397", mainPeak: 8749839397, guesses: 54, solved: true },
-      { index: 66105, password: "8995273761", mainPeak: 8995273761, guesses: 24, solved: true },
-      { index: 69043, password: "8179154535", mainPeak: 8179154535, guesses: 27, solved: true },
-      { index: 77825, password: "7532241708", mainPeak: 7532241708, guesses: 39, solved: true },
-      { index: 79168, password: "9825428966", mainPeak: 9825428966, guesses: 12, solved: true },
-      { index: 130221, password: "8972047726", mainPeak: 8972047726, guesses: 53, solved: true },
-      { index: 143947, password: "9712406071", mainPeak: 9712406071, guesses: 52, solved: true },
-      { index: 152504, password: "9836653839", mainPeak: 9836653839, guesses: 12, solved: true },
-      { index: 156982, password: "8714114832", mainPeak: 8714114832, guesses: 56, solved: true },
-      { index: 158399, password: "8728172122", mainPeak: 8728172122, guesses: 56, solved: true },
-      { index: 162067, password: "9717914293", mainPeak: 9717914293, guesses: 52, solved: true },
-      { index: 181869, password: "8692620036", mainPeak: 8692620036, guesses: 27, solved: true },
-      { index: 185433, password: "9822368304", mainPeak: 9822368304, guesses: 12, solved: true },
-      { index: 239288, password: "8715281278", mainPeak: 8715281278, guesses: 43, solved: true },
-      { index: 13043, password: "9823600507", mainPeak: 9823600507, guesses: 12, solved: true },
-      { index: 13587, password: "9713021375", mainPeak: 9713021375, guesses: 54, solved: true },
-      { index: 42975, password: "8733530659", mainPeak: 8733530659, guesses: 21, solved: true },
-      { index: 57558, password: "9723093689", mainPeak: 9723093689, guesses: 52, solved: true },
-      { index: 70051, password: "8690137388", mainPeak: 8690137388, guesses: 54, solved: true },
-      { index: 73068, password: "9174503245", mainPeak: 9174503245, guesses: 46, solved: true },
-      { index: 94428, password: "9839616521", mainPeak: 9839616521, guesses: 12, solved: true },
-      { index: 97631, password: "9452809619", mainPeak: 9452809619, guesses: 40, solved: true },
-      { index: 101473, password: "8721603080", mainPeak: 8721603080, guesses: 21, solved: true },
-      { index: 109028, password: "9716307227", mainPeak: 9716307227, guesses: 52, solved: true },
-      { index: 146189, password: "8687185637", mainPeak: 8687185637, guesses: 56, solved: true },
-      { index: 156319, password: "7853657154", mainPeak: 7853657154, guesses: 57, solved: true },
-      { index: 166198, password: "9568318515", mainPeak: 9568318515, guesses: 17, solved: true },
-      { index: 183306, password: "7823739743", mainPeak: 7823739743, guesses: 44, solved: true },
-      { index: 184513, password: "8167492255", mainPeak: 8167492255, guesses: 28, solved: true },
-      { index: 194517, password: "9472134097", mainPeak: 9472134097, guesses: 16, solved: true },
-      { index: 217192, password: "9211684263", mainPeak: 9211684263, guesses: 29, solved: true },
-      { index: 217674, password: "9838420273", mainPeak: 9838420273, guesses: 12, solved: true },
-      { index: 231390, password: "8371412897", mainPeak: 8371412897, guesses: 49, solved: true },
-      { index: 6580, password: "8914411666", mainPeak: 8914411666, guesses: 16, solved: true },
-      { index: 21763, password: "9831415019", mainPeak: 9831415019, guesses: 12, solved: true },
-      { index: 24334, password: "8163455272", mainPeak: 8163455272, guesses: 28, solved: true },
-      { index: 25687, password: "8989415212", mainPeak: 8989415212, guesses: 24, solved: true },
-      { index: 28248, password: "8723977841", mainPeak: 8723977841, guesses: 53, solved: true },
-      { index: 48900, password: "9839601135", mainPeak: 9839601135, guesses: 12, solved: true },
-      { index: 93189, password: "8991026379", mainPeak: 8991026379, guesses: 24, solved: true },
-      { index: 97033, password: "8946302685", mainPeak: 8946302685, guesses: 16, solved: true },
-      { index: 99817, password: "9263882566", mainPeak: 9263882566, guesses: 8, solved: true },
-      { index: 101526, password: "8988306376", mainPeak: 8988306376, guesses: 25, solved: true },
-      { index: 126373, password: "8677731375", mainPeak: 8677731375, guesses: 56, solved: true },
-      { index: 165404, password: "8373188916", mainPeak: 8373188916, guesses: 52, solved: true },
-      { index: 171270, password: "9326717201", mainPeak: 9326717201, guesses: 17, solved: true },
-      { index: 183404, password: "8681395054", mainPeak: 8681395054, guesses: 56, solved: true },
-      { index: 218881, password: "9261125126", mainPeak: 9261125126, guesses: 8, solved: true },
-      { index: 1363, password: "7852486594", mainPeak: 7852486594, guesses: 55, solved: true },
-      { index: 12093, password: "9533089632", mainPeak: 9533089632, guesses: 24, solved: true },
-      { index: 16624, password: "8696920110", mainPeak: 8696920110, guesses: 21, solved: true },
-      { index: 28656, password: "7884304296", mainPeak: 7884304296, guesses: 27, solved: true },
-      { index: 36488, password: "8922323579", mainPeak: 8922323579, guesses: 16, solved: true },
-      { index: 36501, password: "9826100236", mainPeak: 9826100236, guesses: 12, solved: true },
-      { index: 36793, password: "8706844019", mainPeak: 8706844019, guesses: 59, solved: true },
-      { index: 54151, password: "9576988305", mainPeak: 9576988305, guesses: 17, solved: true },
-      { index: 64093, password: "9208878014", mainPeak: 9208878014, guesses: 29, solved: true },
-      { index: 71365, password: "8706555735", mainPeak: 8706555735, guesses: 54, solved: true },
-      { index: 74421, password: "8171115109", mainPeak: 8171115109, guesses: 28, solved: true },
-      { index: 85675, password: "9842151321", mainPeak: 9842151321, guesses: 12, solved: true },
-      { index: 90890, password: "9837131126", mainPeak: 9837131126, guesses: 12, solved: true },
-      { index: 100513, password: "7525334523", mainPeak: 7525334523, guesses: 39, solved: true },
-      { index: 113424, password: "8747888440", mainPeak: 8747888440, guesses: 54, solved: true },
-      { index: 121765, password: "9171020783", mainPeak: 9171020783, guesses: 46, solved: true },
-      { index: 139163, password: "9499994096", mainPeak: 9499994096, guesses: 16, solved: true },
-      { index: 140002, password: "8381456872", mainPeak: 8381456872, guesses: 58, solved: true },
-      { index: 143700, password: "9468052030", mainPeak: 9468052030, guesses: 16, solved: true },
-      { index: 198744, password: "7611846169", mainPeak: 7611846169, guesses: 25, solved: true },
-      { index: 221708, password: "8720313922", mainPeak: 8720313922, guesses: 52, solved: true },
-      { index: 229909, password: "8377022033", mainPeak: 8377022033, guesses: 48, solved: true },
-      { index: 233869, password: "8374944799", mainPeak: 8374944799, guesses: 52, solved: true },
-      { index: 10392, password: "9263652510", mainPeak: 9263652510, guesses: 8, solved: true },
-      { index: 39888, password: "7527276921", mainPeak: 7527276921, guesses: 39, solved: true },
-      { index: 55857, password: "9500109026", mainPeak: 9500109026, guesses: 16, solved: true },
-      { index: 87773, password: "9212349632", mainPeak: 9212349632, guesses: 29, solved: true },
-      { index: 93822, password: "7039560821", mainPeak: 7039560821, guesses: 25, solved: true },
-      { index: 101317, password: "7834603258", mainPeak: 7834603258, guesses: 47, solved: true },
-      { index: 115228, password: "9267690272", mainPeak: 9267690272, guesses: 8, solved: true },
-      { index: 119398, password: "9214234101", mainPeak: 9214234101, guesses: 29, solved: true },
-      { index: 127663, password: "9506086975", mainPeak: 9506086975, guesses: 16, solved: true },
-      { index: 131917, password: "8759882098", mainPeak: 8759882098, guesses: 54, solved: true },
-      { index: 175612, password: "9726654072", mainPeak: 9726654072, guesses: 27, solved: true },
-      { index: 176223, password: "9891722034", mainPeak: 9891722034, guesses: 17, solved: true },
-      { index: 179663, password: "9470538646", mainPeak: 9470538646, guesses: 16, solved: true },
-      { index: 184487, password: "7614168140", mainPeak: 7614168140, guesses: 25, solved: true }
-    ]
+    count: 6e3,
+    selection: "sequential"
   },
   config: {
-    clusterMargin: 1.25,
+    clusterMargin: 1,
     clusterDetectAlt: 350,
-    mainPeakModeAlt: 9130,
+    mainPeakModeAlt: 9e3,
     refinePeakCountMain: 1,
-    findHillQuickRounds: 5,
-    coarseMinDivisor: 48,
-    coarseHillFactor: 9,
-    rescanDivisor1: 99,
-    rescanDivisor2: 218,
-    rescanDivisor3: 31,
+    findHillQuickRounds: 4,
+    coarseMinDivisor: 40,
+    coarseHillFactor: 7,
+    rescanDivisor1: 70,
+    rescanDivisor2: 228,
+    rescanDivisor3: 64,
     refineSpanHillDivisor: 6,
     refineCoarsePasses: 7,
-    refineFinePasses: 6,
-    refineRadiusShrink: 8,
+    refineFinePasses: 4,
+    refineRadiusShrink: 10,
     refineStepShrink: 5,
-    sideHillSweepWidthDivisor: 2,
-    centroidMinAlt: 9469,
-    centroidAltFraction: 0.81,
-    centroidRefineRadius: 6,
-    centroidRefinePasses: 6,
-    hillClimbInitialDivisor: 61,
-    hillClimbShrink: 4,
-    hillClimbFlatAltDelta: 0.046,
-    zoomInitialDivisor: 25,
-    zoomMaxPasses: 11,
-    zoomStepDivisor: 11,
-    parabolicFlatNegLog10: 9,
-    mainPeakDetectAlt: 7925,
+    sideHillSweepWidthDivisor: 1,
+    centroidMinAlt: 8321,
+    centroidAltFraction: 0.83,
+    centroidRefineRadius: 10,
+    centroidRefinePasses: 2,
+    hillClimbInitialDivisor: 72,
+    hillClimbShrink: 3,
+    hillClimbFlatAltDelta: 0.041,
+    zoomInitialDivisor: 48,
+    zoomMaxPasses: 12,
+    zoomStepDivisor: 4,
+    parabolicFlatNegLog10: 13,
+    mainPeakDetectAlt: 8400,
     mainPeakWindowWidths: 2,
-    gaussEstimateMinAlt: 263,
-    gaussHeightFraction: 1,
-    enableGaussianEstimate: 1,
-    ternaryMaxItersCap: 80,
-    ternaryWidthStop: 6,
-    ternarySpanDivisor: 8,
-    enableTernarySearch: 1,
-    expandMaxStepDivisor: 2,
+    gaussEstimateMinAlt: 378,
+    gaussHeightFraction: 0.85,
+    enableGaussianEstimate: 0,
+    ternaryMaxItersCap: 61,
+    ternaryWidthStop: 2,
+    ternarySpanDivisor: 5,
+    enableTernarySearch: 0,
+    expandMaxStepDivisor: 4,
     expandStepMultiplier: 4,
     enableExpandFromBest: 1,
-    subdivNarrowStepFactor: 2,
+    subdivNarrowStepFactor: 1,
     enableSubdivNarrow: 1,
-    centroidLogWeight: 0.2,
-    finalMainRadius: 5,
-    finalSideMinRadius: 45,
-    finalSideMaxRadius: 78,
-    finalSideSpanDivisor: 59,
-    finalTinySpan: 24
+    centroidLogWeight: 1,
+    finalMainRadius: 3,
+    finalSideMinRadius: 35,
+    finalSideMaxRadius: 132,
+    finalSideSpanDivisor: 64,
+    finalTinySpan: 21
   }
 };
 
@@ -374,6 +131,14 @@ var TUNED_AVG_CONFIG = kingOfTheHillTune_avg_default.config;
 function getTunedBenchmark(objective = "max") {
   const raw = objective === "avg" ? kingOfTheHillTune_avg_default : kingOfTheHillTune_max_default;
   return raw.benchmark ?? null;
+}
+function getTunedJsonScores(objective = "max") {
+  const raw = objective === "avg" ? kingOfTheHillTune_avg_default : kingOfTheHillTune_max_default;
+  return {
+    avgGuesses: raw.avgGuesses ?? null,
+    maxGuesses: raw.maxGuesses ?? null,
+    totalGuesses: raw.totalGuesses ?? null
+  };
 }
 function finalizeImprovedConfig(raw) {
   const cfg = { ...raw };
@@ -1096,11 +861,6 @@ function sampleAltitudeProfile(assignment, options = {}) {
   }
   return { points, password, min, max, start, end };
 }
-function generateAssignmentByPoolIndex(seed, poolIndex, difficulty) {
-  const i = poolIndex - 1;
-  const rng = mulberry32(seed + i * ASSIGNMENT_SEED_STRIDE >>> 0);
-  return buildAssignment(difficulty, rng);
-}
 function generateAssignments(seed, count, difficulty) {
   const rows = [];
   for (let i = 0; i < count; i++) {
@@ -1177,57 +937,50 @@ function evaluateImprovedConfig(assignments, configOverrides = {}, objective = "
     fitness: improvedConfigFitness({ objective, unsolved, totalGuesses, maxGuesses })
   };
 }
+function runTunedBenchmarkAssignments(objective = "max") {
+  const benchmark = getTunedBenchmark(objective);
+  if (benchmark == null) return null;
+  return generateAssignments(benchmark.seed, benchmark.count, benchmark.difficulty);
+}
 function verifyTunedConfigBenchmark(objective = "max") {
   const benchmark = getTunedBenchmark(objective);
+  const jsonScores = getTunedJsonScores(objective);
   const cfg = getTunedImprovedConfig(objective);
   const result = {
     ok: false,
     objective,
     benchmark,
     checked: 0,
-    mismatches: [],
-    jsMaxGuesses: null,
+    unsolved: 0,
     jsAvgGuesses: null,
-    jsonMaxGuesses: null,
-    jsonAvgGuesses: null
+    jsMaxGuesses: null,
+    jsTotalGuesses: null,
+    jsonAvgGuesses: jsonScores.avgGuesses,
+    jsonMaxGuesses: jsonScores.maxGuesses,
+    jsonTotalGuesses: jsonScores.totalGuesses
   };
   if (benchmark == null) return result;
+  const rows = generateAssignments(benchmark.seed, benchmark.count, benchmark.difficulty);
   let totalGuesses = 0;
   let maxGuesses = 0;
   let solved = 0;
-  for (const row of benchmark.assignments) {
+  for (const { assignment } of rows) {
     result.checked++;
-    const assignment = generateAssignmentByPoolIndex(benchmark.seed, row.index, benchmark.difficulty);
-    const password = assignment.password;
-    const mainPeak = Number(password);
-    if (password !== row.password) {
-      result.mismatches.push({ index: row.index, field: "password", expected: row.password, actual: password });
-    }
-    if (mainPeak !== row.mainPeak) {
-      result.mismatches.push({ index: row.index, field: "mainPeak", expected: row.mainPeak, actual: mainPeak });
-    }
     const run = runSolverImproved2(assignment, { improvedConfig: cfg, objective });
-    if (run.guesses !== row.guesses) {
-      result.mismatches.push({ index: row.index, field: "guesses", expected: row.guesses, actual: run.guesses });
-    }
-    if (run.solved !== row.solved) {
-      result.mismatches.push({ index: row.index, field: "solved", expected: row.solved, actual: run.solved });
-    }
     if (run.solved) {
       solved++;
       totalGuesses += run.guesses;
       maxGuesses = Math.max(maxGuesses, run.guesses);
     }
   }
-  result.jsMaxGuesses = solved === benchmark.assignments.length ? maxGuesses : null;
-  result.jsAvgGuesses = solved === benchmark.assignments.length ? totalGuesses / solved : null;
-  result.jsonMaxGuesses = benchmark.assignments.reduce(
-    (m, row) => row.solved ? Math.max(m, row.guesses) : m,
-    0
-  );
-  const solvedRows = benchmark.assignments.filter((row) => row.solved);
-  result.jsonAvgGuesses = solvedRows.length > 0 ? solvedRows.reduce((sum, row) => sum + row.guesses, 0) / solvedRows.length : null;
-  result.ok = result.mismatches.length === 0;
+  result.unsolved = result.checked - solved;
+  if (solved === result.checked) {
+    result.jsAvgGuesses = totalGuesses / solved;
+    result.jsMaxGuesses = maxGuesses;
+    result.jsTotalGuesses = totalGuesses;
+  }
+  const sameNumber = (a, b) => a != null && b != null && Math.abs(a - b) < 1e-6;
+  result.ok = result.unsolved === 0 && sameNumber(result.jsAvgGuesses, result.jsonAvgGuesses) && result.jsMaxGuesses === result.jsonMaxGuesses && result.jsTotalGuesses === result.jsonTotalGuesses;
   return result;
 }
 export {
@@ -1258,13 +1011,13 @@ export {
   computeImprovedFitness,
   evaluateImprovedConfig,
   finalizeImprovedConfig,
-  generateAssignmentByPoolIndex,
   generateAssignments,
   getDefaultImprovedConfig,
   getKingOfTheHillAltitude,
   getPasswordSeeded,
   getTunedBenchmark,
   getTunedImprovedConfig,
+  getTunedJsonScores,
   improvedConfigFitness,
   kingOfTheHillClusterHalfWidth,
   kingOfTheHillGaussianWidth,
@@ -1272,6 +1025,7 @@ export {
   mulberry32,
   runSolver,
   runSolverImproved2 as runSolverImproved,
+  runTunedBenchmarkAssignments,
   sampleAltitudeProfile,
   toServer,
   verifyTunedConfigBenchmark

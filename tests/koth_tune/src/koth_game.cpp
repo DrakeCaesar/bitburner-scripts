@@ -143,9 +143,7 @@ std::vector<Assignment> generateAssignments(uint32_t seed, int count, int diffic
   rows.reserve(static_cast<size_t>(count));
   for (int i = 0; i < count; ++i) {
     const uint32_t rngSeed = seed + static_cast<uint32_t>(i * ASSIGNMENT_SEED_STRIDE);
-    Assignment row = buildAssignment(difficulty, mulberry32(rngSeed));
-    row.poolIndex = i + 1;
-    rows.push_back(std::move(row));
+    rows.push_back(buildAssignment(difficulty, mulberry32(rngSeed)));
   }
   return rows;
 }

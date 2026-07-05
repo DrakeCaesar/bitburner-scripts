@@ -55,25 +55,19 @@ export interface ImprovedConfig {
 
 export type FitnessObjective = "max" | "avg"
 
-export interface TunedAssignmentBenchmarkRow {
-  index: number
-  password: string
-  mainPeak: number
-  guesses: number
-  solved: boolean
-}
-
 export interface TunedBenchmarkMeta {
   seed: number
   difficulty: number
-  poolSize: number
   count: number
-  selection: "worst" | "sequential"
-  assignments: TunedAssignmentBenchmarkRow[]
+  selection: "sequential"
 }
 
 interface TunedConfigFile {
   objective?: FitnessObjective
+  avgGuesses?: number
+  maxGuesses?: number
+  totalGuesses?: number
+  fitness?: number
   benchmark?: TunedBenchmarkMeta
   config: Omit<ImprovedConfig, "parabolicFlatEpsilon" | "rescanDivisors">
 }
@@ -87,6 +81,15 @@ export const TUNED_AVG_CONFIG = (tunedAvgJson as TunedConfigFile).config
 export function getTunedBenchmark(objective: FitnessObjective = "max"): TunedBenchmarkMeta | null {
   const raw = (objective === "avg" ? tunedAvgJson : tunedMaxJson) as TunedConfigFile
   return raw.benchmark ?? null
+}
+
+export function getTunedJsonScores(objective: FitnessObjective = "max") {
+  const raw = (objective === "avg" ? tunedAvgJson : tunedMaxJson) as TunedConfigFile
+  return {
+    avgGuesses: raw.avgGuesses ?? null,
+    maxGuesses: raw.maxGuesses ?? null,
+    totalGuesses: raw.totalGuesses ?? null,
+  }
 }
 
 /** Add derived fields the solver reads; gene values are used as-is from the tuner JSON. */

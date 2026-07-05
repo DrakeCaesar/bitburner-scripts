@@ -41,27 +41,24 @@ if (verifyBenchmark) {
   console.log(`objective=${objective}\n`)
   const result = verifyTunedConfigBenchmark(objective)
   if (result.benchmark == null) {
-    console.error("No benchmark section in JSON. Re-run the C++ tuner to embed assignment scores.")
+    console.error("No benchmark section in JSON.")
     process.exit(1)
   }
   const b = result.benchmark
   console.log(
-    `benchmark: seed=${b.seed} difficulty=${b.difficulty} poolSize=${b.poolSize} count=${b.count} selection=${b.selection}`,
+    `benchmark: seed=${b.seed} difficulty=${b.difficulty} count=${b.count} selection=${b.selection}`,
   )
-  console.log(`assignments in JSON: ${b.assignments.length}`)
-  console.log(`JSON scores: avg=${result.jsonAvgGuesses?.toFixed(1) ?? "n/a"} max=${result.jsonMaxGuesses ?? "n/a"}`)
-  console.log(`JS replay:   avg=${result.jsAvgGuesses?.toFixed(1) ?? "n/a"} max=${result.jsMaxGuesses ?? "n/a"}`)
-  if (result.mismatches.length > 0) {
-    console.error(`\nFAIL: ${result.mismatches.length} mismatch(es):`)
-    for (const row of result.mismatches.slice(0, 20)) {
-      console.error(`  #${row.index} ${row.field}: json=${row.expected} js=${row.actual}`)
-    }
-    if (result.mismatches.length > 20) {
-      console.error(`  ... and ${result.mismatches.length - 20} more`)
-    }
+  console.log(`JSON scores: avg=${result.jsonAvgGuesses} max=${result.jsonMaxGuesses} total=${result.jsonTotalGuesses}`)
+  console.log(`JS replay:   avg=${result.jsAvgGuesses?.toFixed(4) ?? "n/a"} max=${result.jsMaxGuesses ?? "n/a"} total=${result.jsTotalGuesses ?? "n/a"}`)
+  if (result.unsolved > 0) {
+    console.error(`\nFAIL: ${result.unsolved}/${result.checked} unsolved on benchmark set`)
     process.exit(1)
   }
-  console.log(`\nOK: ${result.checked} assignments match (generator + solver agree with JSON)`)
+  if (!result.ok) {
+    console.error("\nFAIL: JS aggregate scores differ from JSON (C++ vs JS divergence?)")
+    process.exit(1)
+  }
+  console.log(`\nOK: ${result.checked} assignments match JSON scores`)
   process.exit(0)
 }
 

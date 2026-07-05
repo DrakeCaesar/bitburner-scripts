@@ -197,12 +197,12 @@
     <label>Assignments
       <select id="assignmentSource">
         <option value="sequential" selected>sequential (seed + count)</option>
-        <option value="json-max">JSON benchmark (max)</option>
+        <option value="json-max">JSON benchmark set</option>
       </select>
     </label>
     <label>Seed<input id="seed" type="number" value="1265595496" /></label>
     <label>Difficulty<input id="difficulty" type="number" value="60" min="1" max="60" /></label>
-    <label>Tests<input id="count" type="number" value="1000" min="1" max="10000" step="1" /></label>
+    <label>Tests<input id="count" type="number" value="1000" min="1" max="1000000" step="1" /></label>
     <label>Sort
       <select id="sort">
         <option value="index">assignment #</option>
@@ -240,7 +240,6 @@
       DEFAULT_SEED,
       DEFAULT_DIFFICULTY,
       KING_MAIN_PEAK_ALTITUDE,
-      generateAssignmentByPoolIndex,
       generateAssignments,
       getTunedBenchmark,
       runSolver,
@@ -335,7 +334,7 @@
         if (benchmark) {
           seedInput.value = String(benchmark.seed)
           difficultyInput.value = String(benchmark.difficulty)
-          countInput.value = String(benchmark.assignments.length)
+          countInput.value = String(benchmark.count)
         }
       } else {
         const saved = loadSettings()
@@ -358,18 +357,16 @@
 
     function buildRowsFromBenchmark() {
       const benchmark = getTunedBenchmark("max")
-      if (!benchmark) return { error: "No benchmark in kingOfTheHillTune.max.json (run C++ tuner with --write-benchmark)." }
+      if (!benchmark) return { error: "No benchmark in kingOfTheHillTune.max.json." }
       return {
         benchmark,
-        rows: benchmark.assignments.map((row) => {
-          const assignment = generateAssignmentByPoolIndex(benchmark.seed, row.index, benchmark.difficulty)
-          return {
-            index: row.index,
+        rows: generateAssignments(benchmark.seed, benchmark.count, benchmark.difficulty).map(
+          ({ index, assignment }) => ({
+            index,
             assignment,
-            expected: row,
             result: runSolver(assignment, { returnSamples: true }),
-          }
-        }),
+          }),
+        ),
       }
     }
 
@@ -377,7 +374,6 @@
       return generateAssignments(seed, testCount, difficulty).map(({ index, assignment }) => ({
         index,
         assignment,
-        expected: null,
         result: runSolver(assignment, { returnSamples: true }),
       }))
     }
@@ -545,12 +541,9 @@
       const summary = summarizeSolver("solver", rows.map((r) => r.result))
       const failed = rows.filter((r) => !r.result.solved).length
       const sortLabel = sortInput.options[sortInput.selectedIndex].text
-      const jsonMismatches = rows.filter(
-        (r) => r.expected && (r.expected.guesses !== r.result.guesses || r.expected.solved !== r.result.solved),
-      ).length
       summaryEl.innerHTML = [
         `<div><strong>${summary.label}</strong> ${summary.solved}/${rows.length} solved${failed ? `, <span class="bad">${failed} failed</span>` : ""}, avg ${summary.avg.toFixed(1)} (${summary.min}-${summary.max}), total ${summary.total}</div>`,
-        `<div><strong>source</strong> ${sourceLabel}${jsonMismatches ? `, <span class="bad">${jsonMismatches} JSON mismatch(es)</span>` : ""}</div>`,
+        `<div><strong>source</strong> ${sourceLabel}</div>`,
         `<div><strong>charts</strong> showing ${chartCount}/${rows.length} (${sortLabel})</div>`,
       ].join("")
     }
@@ -561,7 +554,7 @@
       const jsonMode = isJsonBenchmarkSource()
       const seed = Number(seedInput.value) || DEFAULT_SEED
       const difficulty = Number(difficultyInput.value) || DEFAULT_DIFFICULTY
-      const testCount = Math.max(1, Math.min(10000, Math.floor(Number(countInput.value) || 1000)))
+      const testCount = Math.max(1, Math.min(100000, Math.floor(Number(countInput.value) || 1000)))
       const pointCount = Number(pointsInput.value) || 1200
       const sortMode = sortInput.value
       const chartLimit = Math.max(0, Math.min(500, Math.floor(Number(chartLimitInput.value) || 0)))
@@ -589,7 +582,7 @@
           }
           rows = built.rows
           const b = built.benchmark
-          sourceLabel = `JSON benchmark (max): seed ${b.seed}, pool ${b.poolSize}, ${b.count} ${b.selection}, json max ${Math.max(...b.assignments.map((a) => a.guesses))} guesses`
+          sourceLabel = `JSON benchmark: first ${b.count} assignments, seed ${b.seed}, difficulty ${b.difficulty}`
         } else {
           rows = buildRowsSequential(seed, difficulty, testCount)
           sourceLabel = `sequential #1-${testCount}, seed ${seed}, difficulty ${difficulty}`
@@ -600,7 +593,7 @@
 
         renderSummary(rows, chartRows.length, sortMode, sourceLabel)
 
-        for (const { index, assignment, expected, result } of chartRows) {
+        for (const { index, assignment, result } of chartRows) {
           const profile = sampleAltitudeProfile(assignment, { pointCount })
 
           const card = document.createElement("article")
@@ -623,20 +616,6 @@
           rangeRow.className = "meta-row"
           rangeRow.innerHTML = `<span class="label">range</span><span>${formatNum(profile.min)} .. ${formatNum(profile.max)}</span>`
           meta.appendChild(rangeRow)
-
-          if (expected) {
-            const peakRow = document.createElement("div")
-            peakRow.className = "meta-row"
-            peakRow.innerHTML = `<span class="label">mainPeak</span><span>${formatNum(expected.mainPeak)}</span>`
-            meta.appendChild(peakRow)
-
-            const jsonRow = document.createElement("div")
-            jsonRow.className = "meta-row"
-            const match = expected.guesses === result.guesses && expected.solved === result.solved
-            const jsonClass = match ? "good" : "bad"
-            jsonRow.innerHTML = `<span class="label">json</span><span class="${jsonClass}">${expected.guesses} guesses, ${expected.solved ? "solved" : "FAILED"}</span>`
-            meta.appendChild(jsonRow)
-          }
 
           card.appendChild(meta)
 
