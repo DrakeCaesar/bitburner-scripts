@@ -34,8 +34,6 @@ struct Args {
   double eliteMutationRate = 0.12;
   int threads = 0;  // 0 = hardware_concurrency
   koth::FitnessObjective objective = koth::FitnessObjective::Max;
-  std::string loadPath;
-  std::string outPath = "tests/kingOfTheHillTune.best.json";
 };
 
 std::atomic<bool> g_stop{false};
@@ -60,10 +58,9 @@ void printHelp() {
       << "  --radical-period N  Repeat radical reseed every N stagnant gens (default 48)\n"
       << "  --tournament N      Tournament selection size (default 3)\n"
       << "  --elite N           Elite individuals per generation (default 2)\n"
-      << "  --load PATH         Load seed config JSON\n"
-      << "  --out PATH          Output JSON path (written only on improvement)\n"
       << "  --help              Show this help\n\n"
-      << "Ctrl+C exits; --out is updated when a better config is found.\n";
+      << "Config JSON is tests/kingOfTheHillTune.<objective>.json (load + save).\n"
+      << "Ctrl+C exits; JSON is updated only on improvement.\n";
 }
 
 bool parseObjective(const std::string& text, koth::FitnessObjective* out) {
@@ -107,8 +104,6 @@ bool parseArgs(int argc, char** argv, Args* args) {
     else if (arg == "--radical-period") args->radicalReseedPeriod = std::stoi(need("--radical-period"));
     else if (arg == "--tournament") args->tournamentSize = std::stoi(need("--tournament"));
     else if (arg == "--elite") args->eliteCount = std::stoi(need("--elite"));
-    else if (arg == "--load") args->loadPath = need("--load");
-    else if (arg == "--out") args->outPath = need("--out");
     else if (arg == "--help" || arg == "-h") {
       printHelp();
       return false;
@@ -153,7 +148,7 @@ struct ScoredIndividual {
 };
 
 struct SaveContext {
-  std::string outPath;
+  std::string jsonPath;
   koth::FitnessObjective objective = koth::FitnessObjective::Max;
   int64_t runStartFitness = 0;
   int64_t savedFitness = std::numeric_limits<int64_t>::max();
@@ -206,7 +201,7 @@ void trySaveBest(SaveContext& saveCtx, const koth::EvalScore& best) {
   if (best.fitness >= saveCtx.runStartFitness) return;
   std::lock_guard<std::mutex> lock(saveCtx.mu);
   if (best.fitness >= saveCtx.savedFitness) return;
-  koth::saveBestJson(saveCtx.outPath, best.config, best, saveCtx.objective);
+  koth::saveBestJson(saveCtx.jsonPath, best.config, best, saveCtx.objective);
   saveCtx.savedFitness = best.fitness;
 }
 
@@ -400,6 +395,8 @@ int main(int argc, char** argv) {
     args.threads = hw == 0 ? 4 : static_cast<int>(hw);
   }
 
+  const std::string jsonPath = koth::tunedConfigJsonPath(args.objective);
+
   std::signal(SIGINT, onSignal);
 #ifdef SIGTERM
   std::signal(SIGTERM, onSignal);
@@ -409,13 +406,11 @@ int main(int argc, char** argv) {
 
   koth::ImprovedConfig loadedCfg;
   const koth::ImprovedConfig* loadedPtr = nullptr;
-  if (!args.loadPath.empty()) {
-    if (koth::loadConfigFromJsonFile(args.loadPath, &loadedCfg)) {
-      loadedPtr = &loadedCfg;
-      std::cout << "Loaded seed config from " << args.loadPath << "\n";
-    } else {
-      std::cerr << "Warning: could not load " << args.loadPath << "\n";
-    }
+  if (koth::loadConfigFromJsonFile(jsonPath, &loadedCfg)) {
+    loadedPtr = &loadedCfg;
+    std::cout << "Loaded seed config from " << jsonPath << "\n";
+  } else {
+    std::cerr << "Warning: could not load " << jsonPath << "\n";
   }
 
   std::mt19937 rng(static_cast<uint32_t>(args.seed ^ 0x9e3779b9u));
@@ -424,7 +419,7 @@ int main(int argc, char** argv) {
   std::cout << "assignments=" << args.count << " seed=" << args.seed << " difficulty=" << args.difficulty
             << " population=" << args.population << " threads=" << args.threads
             << " objective=" << koth::fitnessObjectiveLabel(args.objective) << "\n";
-  std::cout << "out=" << args.outPath << " (written only on improvement)\nCtrl+C exits.\n\n";
+  std::cout << "json=" << jsonPath << " (written only on improvement)\nCtrl+C exits.\n\n";
 
   const auto started = std::chrono::steady_clock::now();
   std::atomic<int64_t> evaluations{0};
@@ -450,7 +445,7 @@ int main(int argc, char** argv) {
   int stagnationCount = 0;
   int64_t lastGlobalBestFitness = globalBest.fitness;
   SaveContext saveCtx;
-  saveCtx.outPath = args.outPath;
+  saveCtx.jsonPath = jsonPath;
   saveCtx.objective = args.objective;
   saveCtx.runStartFitness = globalBest.fitness;
   RateLimitedPrinter progress;
@@ -559,9 +554,9 @@ int main(int argc, char** argv) {
 
   std::cout << "\n";
   if (saveCtx.savedFitness < saveCtx.runStartFitness) {
-    std::cout << "Saved best config to " << args.outPath << "\n";
+    std::cout << "Saved best config to " << saveCtx.jsonPath << "\n";
   } else {
-    std::cout << "No improvement; " << args.outPath << " unchanged\n";
+    std::cout << "No improvement; " << saveCtx.jsonPath << " unchanged\n";
   }
   std::cout << formatScore(globalBest, args.objective) << "\n";
   return 0;

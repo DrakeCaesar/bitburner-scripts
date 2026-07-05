@@ -101,6 +101,7 @@ struct EvalScore {
 enum class FitnessObjective { Max, Avg };
 
 const char* fitnessObjectiveLabel(FitnessObjective objective);
+std::string tunedConfigJsonPath(FitnessObjective objective);
 int64_t computeImprovedFitness(FitnessObjective objective, int unsolved, int64_t totalGuesses, int maxGuesses);
 bool loadConfigFromJsonFile(const std::string& path, ImprovedConfig* out);
 void saveBestJson(const std::string& path, const ImprovedConfig& cfg, const EvalScore& best, FitnessObjective objective);

@@ -2,7 +2,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 EXE="$SCRIPT_DIR/build/Release/koth_tune.exe"
 
 # --- edit flags here (counts are multiples of CORES) ---
@@ -12,7 +11,7 @@ POPULATION=$((CORES * 6))   # 72: 6 eval tasks per core per generation
 COUNT=$((CORES * 20))       # 240 assignments per individual
 SEED=1265595496
 DIFFICULTY=60
-# Fitness target: max (lowest worst-case guesses) or avg (lowest average/total)
+# Fitness target: max or avg (JSON path is derived automatically)
 OBJECTIVE=max
 # Leave empty to run until Ctrl+C; set e.g. GENERATIONS=500 for a fixed run.
 GENERATIONS=
@@ -23,13 +22,16 @@ RADICAL_STAGNATION=$((CORES * 12))   # 144 gens without improvement -> full rand
 RADICAL_PERIOD=$((CORES * 4))        # repeat radical reseed every 48 stagnant gens
 TOURNAMENT=3
 ELITE=4
-LOAD="$REPO_ROOT/tests/kingOfTheHillTune.best.json"
-OUT="$REPO_ROOT/tests/kingOfTheHillTune.best.json"
 # --- end flags ---
 
 if [[ ! -f "$EXE" ]]; then
   echo "Missing $EXE"
   echo "Build: cd tests/koth_tune && cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release"
+  exit 1
+fi
+
+if [[ "$OBJECTIVE" != "max" && "$OBJECTIVE" != "avg" ]]; then
+  echo "Unknown OBJECTIVE: $OBJECTIVE (use max or avg)"
   exit 1
 fi
 
@@ -47,12 +49,11 @@ args=(
   --radical-period "$RADICAL_PERIOD"
   --tournament "$TOURNAMENT"
   --elite "$ELITE"
-  --load "$LOAD"
-  --out "$OUT"
 )
 
 if [[ -n "${GENERATIONS:-}" ]]; then
   args+=(--generations "$GENERATIONS")
 fi
 
+cd "$(cd "$SCRIPT_DIR/../.." && pwd)"
 exec "$EXE" "${args[@]}" "$@"

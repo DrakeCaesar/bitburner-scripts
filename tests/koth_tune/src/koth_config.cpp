@@ -481,6 +481,10 @@ const char* fitnessObjectiveLabel(FitnessObjective objective) {
   return "avg";
 }
 
+std::string tunedConfigJsonPath(FitnessObjective objective) {
+  return std::string("tests/kingOfTheHillTune.") + fitnessObjectiveLabel(objective) + ".json";
+}
+
 bool loadConfigFromJsonFile(const std::string& path, ImprovedConfig* out) {
   std::ifstream in(path);
   if (!in) return false;
