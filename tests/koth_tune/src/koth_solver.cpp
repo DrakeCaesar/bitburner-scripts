@@ -171,6 +171,74 @@ bool weightedCentroid(const ProbeSession& session, double minAlt, int64_t* out) 
   return true;
 }
 
+bool logWeightedCentroid(const ProbeSession& session, double minAlt, int64_t* out) {
+  double sumW = 0.0;
+  double sumX = 0.0;
+  for (const auto& kv : session.samples) {
+    if (kv.second <= minAlt) continue;
+    const double w = std::log1p(kv.second - minAlt);
+    sumW += w;
+    sumX += static_cast<double>(kv.first) * w;
+  }
+  if (sumW <= 0.0) return false;
+  *out = static_cast<int64_t>(std::llround(sumX / sumW));
+  return true;
+}
+
+void tryGaussianPeakEstimate(ProbeSession& session, int64_t mn, int64_t mx, int64_t gaussWidth) {
+  if (session.bestAlt < 50.0) return;
+  const double ratio = std::min(session.bestAlt / static_cast<double>(KOTH_PEAK_HEIGHT), 0.999999);
+  if (ratio <= 1e-12) return;
+  const double offset = static_cast<double>(gaussWidth) * std::sqrt(-std::log(ratio));
+  const int64_t o = std::max<int64_t>(1, static_cast<int64_t>(std::llround(offset)));
+  for (const int64_t candidate : {session.bestVal - o, session.bestVal + o}) {
+    if (candidate >= mn && candidate <= mx) {
+      session.probe(candidate);
+      if (session.solved) return;
+    }
+  }
+}
+
+void tryTernaryPeakSearch(ProbeSession& session, int64_t lo, int64_t hi, int maxIters) {
+  if (lo >= hi) return;
+  int iters = 0;
+  while (hi - lo > 4 && iters < maxIters && !session.solved) {
+    const int64_t m1 = lo + (hi - lo) / 3;
+    const int64_t m2 = hi - (hi - lo) / 3;
+    const double a1 = session.probe(m1).alt;
+    if (session.solved) return;
+    const double a2 = session.probe(m2).alt;
+    if (session.solved) return;
+    if (a1 < a2) {
+      lo = m1;
+    } else {
+      hi = m2;
+    }
+    ++iters;
+  }
+  for (int64_t x = lo; x <= hi && !session.solved; ++x) {
+    session.probe(x);
+  }
+}
+
+void tryExpandFromBest(ProbeSession& session, int64_t mn, int64_t mx, int64_t gaussWidth, double stopAlt) {
+  int64_t step = 1;
+  const int64_t maxStep = std::max<int64_t>(1, gaussWidth);
+  while (step <= maxStep && !session.solved) {
+    bool improved = false;
+    for (const int sign : {-1, 1}) {
+      const int64_t x = session.bestVal + static_cast<int64_t>(sign) * step;
+      if (x < mn || x > mx) continue;
+      const double alt = session.probe(x).alt;
+      if (session.solved) return;
+      if (alt > session.bestAlt) improved = true;
+      if (session.bestAlt >= stopAlt) return;
+    }
+    if (!improved && step > 1) break;
+    step = std::max<int64_t>(1, step * 2);
+  }
+}
+
 std::vector<int64_t> buildFinals(int64_t mn, int64_t mx, int64_t bestVal, double bestAlt) {
   const int64_t span = mx - mn;
   std::vector<int64_t> out;
@@ -217,17 +285,30 @@ int refinePeakCount(const ProbeSession& session, int hillCount, const ImprovedCo
   return hillCount;
 }
 
-void findHillBySubdivision(ProbeSession& session, int64_t lo, int64_t hi, int quickRounds, const ImprovedConfig& cfg) {
+void findHillBySubdivision(ProbeSession& session, int64_t lo, int64_t hi, int quickRounds, int64_t fullMin,
+                           int64_t fullMax, int hillCount, int passwordLength, int64_t gaussWidth,
+                           const ImprovedConfig& cfg) {
   int64_t step = hi - lo;
   for (int round = 0; round < quickRounds && !session.solved; ++round) {
     const int64_t nextStep = std::max<int64_t>(1, ceilDiv(step, 2));
     if (nextStep >= step) break;
     step = nextStep;
     for (int64_t x = lo + step; x < hi; x += step) {
-      session.probe(static_cast<int64_t>(std::llround(static_cast<double>(x))));
+      session.probe(x);
       if (session.solved) return;
     }
     if (session.bestAlt >= cfg.mainPeakModeAlt) return;
+
+    if (session.bestAlt >= cfg.clusterDetectAlt) {
+      const Bounds win =
+          clusterSearchWindow(fullMin, fullMax, session.bestVal, hillCount, passwordLength, cfg);
+      lo = std::max(lo, win.min);
+      hi = std::min(hi, win.max);
+    } else if (session.bestAlt > 0.0) {
+      const int64_t half = std::max(step * 2, gaussWidth);
+      lo = std::max(lo, session.bestVal - half);
+      hi = std::min(hi, session.bestVal + half);
+    }
   }
 }
 
@@ -307,7 +388,11 @@ SolverResult runSolverImproved(const Assignment& assignment, const ImprovedConfi
   const int64_t gaussWidth = kingOfTheHillGaussianWidth(assignment.passwordLength);
   ProbeSession session(server, range.min, range.max);
 
-  findHillBySubdivision(session, range.min, range.max, cfg.findHillQuickRounds, cfg);
+  findHillBySubdivision(session, range.min, range.max, cfg.findHillQuickRounds, range.min, range.max, hillCount,
+                        assignment.passwordLength, gaussWidth, cfg);
+  if (!session.solved && session.bestAlt >= cfg.clusterDetectAlt) {
+    tryGaussianPeakEstimate(session, range.min, range.max, gaussWidth);
+  }
   if (!session.solved && session.bestAlt < KING_MAIN_PEAK_ALTITUDE) {
     int64_t fallbackLo = range.min;
     int64_t fallbackHi = range.max;
@@ -355,6 +440,8 @@ SolverResult runSolverImproved(const Assignment& assignment, const ImprovedConfi
 
   if (session.bestAlt < KING_MAIN_PEAK_ALTITUDE) {
     search = improvedSearchWindow(range.min, range.max, session, hillCount, assignment.passwordLength, gaussWidth, cfg);
+    tryExpandFromBest(session, search.min, search.max, gaussWidth, static_cast<double>(KING_MAIN_PEAK_ALTITUDE));
+    if (session.solved) goto done;
     session.sweep(search.min, search.max, std::max<int64_t>(1, ceilDiv(gaussWidth, cfg.sideHillSweepWidthDivisor)),
                   static_cast<double>(KING_MAIN_PEAK_ALTITUDE), true);
     if (session.solved) goto done;
@@ -368,7 +455,10 @@ SolverResult runSolverImproved(const Assignment& assignment, const ImprovedConfi
   if (session.bestAlt >= cfg.centroidMinAlt) {
     search = improvedSearchWindow(range.min, range.max, session, hillCount, assignment.passwordLength, gaussWidth, cfg);
     int64_t centroid = 0;
-    if (weightedCentroid(session, session.bestAlt * cfg.centroidAltFraction, &centroid)) {
+    const double centroidMin = session.bestAlt * cfg.centroidAltFraction;
+    const bool haveCentroid =
+        logWeightedCentroid(session, centroidMin, &centroid) || weightedCentroid(session, centroidMin, &centroid);
+    if (haveCentroid) {
       session.probe(centroid);
       if (!session.solved) {
         refinePeak(session, search.min, search.max, centroid, cfg.centroidRefineRadius, cfg.centroidRefinePasses, cfg);
@@ -380,7 +470,14 @@ SolverResult runSolverImproved(const Assignment& assignment, const ImprovedConfi
   if (!session.solved && session.bestAlt >= KING_MAIN_PEAK_ALTITUDE) {
     const Bounds climbWindow =
         clusterSearchWindow(range.min, range.max, session.bestVal, hillCount, assignment.passwordLength, cfg);
-    tryHillClimbFinals(session, climbWindow.min, climbWindow.max, gaussWidth, range.min, range.max, cfg);
+    const int ternaryIters = static_cast<int>(std::min<int64_t>(64, ceilDiv(climbWindow.max - climbWindow.min, 3)));
+    tryTernaryPeakSearch(session, climbWindow.min, climbWindow.max, ternaryIters);
+    if (!session.solved) tryFinalCandidates(session, range.min, range.max);
+    if (!session.solved) tryGaussianPeakEstimate(session, climbWindow.min, climbWindow.max, gaussWidth);
+    if (!session.solved) tryFinalCandidates(session, range.min, range.max);
+    if (!session.solved) {
+      tryHillClimbFinals(session, climbWindow.min, climbWindow.max, gaussWidth, range.min, range.max, cfg);
+    }
     if (!session.solved) tryZoomFinals(session, climbWindow.min, climbWindow.max, range.min, range.max, cfg);
     if (!session.solved) tryFinalCandidates(session, range.min, range.max);
   }
