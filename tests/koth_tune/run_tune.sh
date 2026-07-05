@@ -12,6 +12,8 @@ POPULATION=$((CORES * 6))   # 72: 6 eval tasks per core per generation
 COUNT=$((CORES * 20))       # 240 assignments per individual
 SEED=1265595496
 DIFFICULTY=60
+# Fitness target: max (lowest worst-case guesses) or avg (lowest average/total)
+OBJECTIVE=max
 # Leave empty to run until Ctrl+C; set e.g. GENERATIONS=500 for a fixed run.
 GENERATIONS=
 MUTATION_RATE=0.35
@@ -37,6 +39,7 @@ args=(
   --difficulty "$DIFFICULTY"
   --population "$POPULATION"
   --threads "$THREADS"
+  --objective "$OBJECTIVE"
   --mutation-rate "$MUTATION_RATE"
   --macro-mutation "$MACRO_MUTATION"
   --stagnation "$STAGNATION"

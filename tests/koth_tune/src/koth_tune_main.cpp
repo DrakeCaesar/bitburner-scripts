@@ -33,6 +33,7 @@ struct Args {
   double stagnationImmigrantFraction = 0.35;
   double eliteMutationRate = 0.12;
   int threads = 0;  // 0 = hardware_concurrency
+  koth::FitnessObjective objective = koth::FitnessObjective::Max;
   std::string loadPath;
   std::string outPath = "tests/kingOfTheHillTune.best.json";
 };
@@ -51,6 +52,7 @@ void printHelp() {
       << "  --population N      Population size (default 20)\n"
       << "  --generations N     Max generations; omit for infinite\n"
       << "  --threads N         Worker threads (default: CPU cores)\n"
+      << "  --objective MODE    Fitness target: max or avg (default max)\n"
       << "  --mutation-rate F   Per-gene mutation chance (default 0.35)\n"
       << "  --macro-mutation F  Jump-to-random gene chance when mutating (default 0.08)\n"
       << "  --stagnation N      Gens without global best before diversity boost (default 12)\n"
@@ -62,6 +64,18 @@ void printHelp() {
       << "  --out PATH          Output JSON path (written only on improvement)\n"
       << "  --help              Show this help\n\n"
       << "Ctrl+C exits; --out is updated when a better config is found.\n";
+}
+
+bool parseObjective(const std::string& text, koth::FitnessObjective* out) {
+  if (text == "max") {
+    *out = koth::FitnessObjective::Max;
+    return true;
+  }
+  if (text == "avg" || text == "average") {
+    *out = koth::FitnessObjective::Avg;
+    return true;
+  }
+  return false;
 }
 
 bool parseArgs(int argc, char** argv, Args* args) {
@@ -80,6 +94,12 @@ bool parseArgs(int argc, char** argv, Args* args) {
     else if (arg == "--population") args->population = std::stoi(need("--population"));
     else if (arg == "--generations") args->generations = std::stoi(need("--generations"));
     else if (arg == "--threads") args->threads = std::stoi(need("--threads"));
+    else if (arg == "--objective") {
+      if (!parseObjective(need("--objective"), &args->objective)) {
+        std::cerr << "Unknown objective (use max or avg)\n";
+        return false;
+      }
+    }
     else if (arg == "--mutation-rate") args->mutationRate = std::stod(need("--mutation-rate"));
     else if (arg == "--macro-mutation") args->macroMutationRate = std::stod(need("--macro-mutation"));
     else if (arg == "--stagnation") args->stagnationGens = std::stoi(need("--stagnation"));
@@ -114,11 +134,16 @@ std::string formatDuration(int64_t ms) {
   return buf;
 }
 
-std::string formatScore(const koth::EvalScore& score) {
+std::string formatScore(const koth::EvalScore& score, koth::FitnessObjective objective) {
   if (score.unsolved > 0) return "FAIL " + std::to_string(score.unsolved) + " unsolved";
   char buf[128];
-  std::snprintf(buf, sizeof(buf), "avg %.2f total %lld min %d max %d", score.avgGuesses,
-                static_cast<long long>(score.totalGuesses), score.minGuesses, score.maxGuesses);
+  if (objective == koth::FitnessObjective::Max) {
+    std::snprintf(buf, sizeof(buf), "max %d avg %.2f total %lld min %d", score.maxGuesses, score.avgGuesses,
+                  static_cast<long long>(score.totalGuesses), score.minGuesses);
+  } else {
+    std::snprintf(buf, sizeof(buf), "avg %.2f max %d total %lld min %d", score.avgGuesses, score.maxGuesses,
+                  static_cast<long long>(score.totalGuesses), score.minGuesses);
+  }
   return buf;
 }
 
@@ -129,6 +154,7 @@ struct ScoredIndividual {
 
 struct SaveContext {
   std::string outPath;
+  koth::FitnessObjective objective = koth::FitnessObjective::Max;
   int64_t runStartFitness = 0;
   int64_t savedFitness = std::numeric_limits<int64_t>::max();
   std::mutex mu;
@@ -180,14 +206,15 @@ void trySaveBest(SaveContext& saveCtx, const koth::EvalScore& best) {
   if (best.fitness >= saveCtx.runStartFitness) return;
   std::lock_guard<std::mutex> lock(saveCtx.mu);
   if (best.fitness >= saveCtx.savedFitness) return;
-  koth::saveBestJson(saveCtx.outPath, best.config, best);
+  koth::saveBestJson(saveCtx.outPath, best.config, best, saveCtx.objective);
   saveCtx.savedFitness = best.fitness;
 }
 
 void evaluatePopulationParallel(const std::vector<koth::Assignment>& assignments,
                                 const std::vector<koth::ImprovedConfig>& population, std::vector<koth::EvalScore>& scores,
                                 int threads, std::atomic<int64_t>& evaluations, koth::EvalScore& globalBest,
-                                std::mutex& bestMu, SaveContext& saveCtx, RateLimitedPrinter& progress, int generation) {
+                                std::mutex& bestMu, SaveContext& saveCtx, RateLimitedPrinter& progress, int generation,
+                                koth::FitnessObjective objective) {
   const int workerCount = std::max(1, threads);
   const size_t popSize = population.size();
   std::atomic<size_t> next{0};
@@ -203,7 +230,7 @@ void evaluatePopulationParallel(const std::vector<koth::Assignment>& assignments
       while (!g_stop.load()) {
         const size_t i = next.fetch_add(1);
         if (i >= popSize) break;
-        koth::EvalScore score = koth::evaluateImprovedConfig(assignments, population[i]);
+        koth::EvalScore score = koth::evaluateImprovedConfig(assignments, population[i], objective);
         scores[i] = score;
         evaluations.fetch_add(1);
         const size_t done = completed.fetch_add(1) + 1;
@@ -216,7 +243,7 @@ void evaluatePopulationParallel(const std::vector<koth::Assignment>& assignments
           globalBest = score;
           trySaveBest(saveCtx, globalBest);
           progress.printNow("  [gen " + std::to_string(generation) + " " + std::to_string(i + 1) + "/" +
-                            std::to_string(popSize) + "] NEW BEST: " + formatScore(score));
+                            std::to_string(popSize) + "] NEW BEST: " + formatScore(score, objective));
         }
       }
     });
@@ -395,21 +422,22 @@ int main(int argc, char** argv) {
 
   std::cout << "=== KingOfTheHill improved solver tuner (C++) ===\n";
   std::cout << "assignments=" << args.count << " seed=" << args.seed << " difficulty=" << args.difficulty
-            << " population=" << args.population << " threads=" << args.threads << "\n";
+            << " population=" << args.population << " threads=" << args.threads
+            << " objective=" << koth::fitnessObjectiveLabel(args.objective) << "\n";
   std::cout << "out=" << args.outPath << " (written only on improvement)\nCtrl+C exits.\n\n";
 
   const auto started = std::chrono::steady_clock::now();
   std::atomic<int64_t> evaluations{0};
   std::vector<HofEntry> hallOfFame;
-  koth::EvalScore globalBest = koth::evaluateImprovedConfig(assignments, koth::defaultImprovedConfig());
+  koth::EvalScore globalBest = koth::evaluateImprovedConfig(assignments, koth::defaultImprovedConfig(), args.objective);
   evaluations.store(1);
   updateHallOfFame(hallOfFame, globalBest, 8);
-  std::cout << "baseline (defaults): " << formatScore(globalBest) << "\n";
+  std::cout << "baseline (defaults): " << formatScore(globalBest, args.objective) << "\n";
 
   if (loadedPtr) {
-    const koth::EvalScore loadedScore = koth::evaluateImprovedConfig(assignments, *loadedPtr);
+    const koth::EvalScore loadedScore = koth::evaluateImprovedConfig(assignments, *loadedPtr, args.objective);
     evaluations.fetch_add(1);
-    std::cout << "loaded config: " << formatScore(loadedScore) << "\n";
+    std::cout << "loaded config: " << formatScore(loadedScore, args.objective) << "\n";
     if (loadedScore.fitness < globalBest.fitness) globalBest = loadedScore;
     updateHallOfFame(hallOfFame, loadedScore, 8);
   }
@@ -423,6 +451,7 @@ int main(int argc, char** argv) {
   int64_t lastGlobalBestFitness = globalBest.fitness;
   SaveContext saveCtx;
   saveCtx.outPath = args.outPath;
+  saveCtx.objective = args.objective;
   saveCtx.runStartFitness = globalBest.fitness;
   RateLimitedPrinter progress;
 
@@ -430,7 +459,7 @@ int main(int argc, char** argv) {
     ++generation;
     std::vector<koth::EvalScore> scores(population.size());
     evaluatePopulationParallel(assignments, population, scores, args.threads, evaluations, globalBest, bestMu, saveCtx,
-                               progress, generation);
+                               progress, generation, args.objective);
 
     if (g_stop.load()) break;
 
@@ -453,8 +482,9 @@ int main(int argc, char** argv) {
     const ExplorationParams explore = computeExploration(stagnationCount, args);
 
     const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
-    std::string line = "gen " + std::to_string(generation) + " | pop best " + formatScore(scored.front().score) +
-                       " | global best " + formatScore(globalBest) + " | evals " + std::to_string(evaluations.load()) +
+    std::string line = "gen " + std::to_string(generation) + " | pop best " +
+                       formatScore(scored.front().score, args.objective) + " | global best " +
+                       formatScore(globalBest, args.objective) + " | evals " + std::to_string(evaluations.load()) +
                        " | " + formatDuration(elapsedMs);
     if (stagnationCount > 0) {
       line += " | stagnation " + std::to_string(stagnationCount) + formatExploration(explore);
@@ -533,6 +563,6 @@ int main(int argc, char** argv) {
   } else {
     std::cout << "No improvement; " << args.outPath << " unchanged\n";
   }
-  std::cout << formatScore(globalBest) << "\n";
+  std::cout << formatScore(globalBest, args.objective) << "\n";
   return 0;
 }

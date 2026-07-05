@@ -458,11 +458,27 @@ ImprovedConfig scatterMutateConfig(const ImprovedConfig& parent, double geneFrac
   return normalizeImprovedConfig(cfg);
 }
 
-int64_t computeImprovedFitness(int unsolved, int64_t totalGuesses, int maxGuesses) {
+int64_t computeImprovedFitness(FitnessObjective objective, int unsolved, int64_t totalGuesses, int maxGuesses) {
   if (unsolved > 0) {
     return std::numeric_limits<int64_t>::max() - static_cast<int64_t>(unsolved) * 1000000000LL + totalGuesses;
   }
+  switch (objective) {
+    case FitnessObjective::Max:
+      return static_cast<int64_t>(maxGuesses) * 1000000LL + totalGuesses;
+    case FitnessObjective::Avg:
+      return totalGuesses * 1000LL + maxGuesses;
+  }
   return totalGuesses * 1000LL + maxGuesses;
+}
+
+const char* fitnessObjectiveLabel(FitnessObjective objective) {
+  switch (objective) {
+    case FitnessObjective::Max:
+      return "max";
+    case FitnessObjective::Avg:
+      return "avg";
+  }
+  return "avg";
 }
 
 bool loadConfigFromJsonFile(const std::string& path, ImprovedConfig* out) {
@@ -486,7 +502,8 @@ bool loadConfigFromJsonFile(const std::string& path, ImprovedConfig* out) {
   return true;
 }
 
-EvalScore evaluateImprovedConfig(const std::vector<Assignment>& assignments, const ImprovedConfig& cfgIn) {
+EvalScore evaluateImprovedConfig(const std::vector<Assignment>& assignments, const ImprovedConfig& cfgIn,
+                                 FitnessObjective objective) {
   const ImprovedConfig cfg = normalizeImprovedConfig(cfgIn);
   EvalScore score;
   score.config = cfg;
@@ -502,7 +519,7 @@ EvalScore evaluateImprovedConfig(const std::vector<Assignment>& assignments, con
       score.minGuesses = std::min(score.minGuesses, r.guesses);
     } else if (r.guesses >= SOLVER_MAX_PROBES) {
       score.unsolved = score.total - score.solved;
-      score.fitness = computeImprovedFitness(score.unsolved, score.totalGuesses, score.maxGuesses);
+      score.fitness = computeImprovedFitness(objective, score.unsolved, score.totalGuesses, score.maxGuesses);
       score.avgGuesses = 0.0;
       return score;
     }
@@ -510,20 +527,22 @@ EvalScore evaluateImprovedConfig(const std::vector<Assignment>& assignments, con
 
   score.unsolved = score.total - score.solved;
   if (score.unsolved > 0) {
-    score.fitness = computeImprovedFitness(score.unsolved, score.totalGuesses, score.maxGuesses);
+    score.fitness = computeImprovedFitness(objective, score.unsolved, score.totalGuesses, score.maxGuesses);
     score.avgGuesses = 0.0;
   } else {
-    score.fitness = computeImprovedFitness(0, score.totalGuesses, score.maxGuesses);
+    score.fitness = computeImprovedFitness(objective, 0, score.totalGuesses, score.maxGuesses);
     score.avgGuesses = static_cast<double>(score.totalGuesses) / static_cast<double>(score.total);
   }
   return score;
 }
 
-void saveBestJson(const std::string& path, const ImprovedConfig& cfg, const EvalScore& best) {
+void saveBestJson(const std::string& path, const ImprovedConfig& cfg, const EvalScore& best, FitnessObjective objective) {
   std::ofstream out(path);
   out << std::setprecision(12);
   out << "{\n";
+  out << "  \"objective\": \"" << fitnessObjectiveLabel(objective) << "\",\n";
   out << "  \"avgGuesses\": " << best.avgGuesses << ",\n";
+  out << "  \"maxGuesses\": " << best.maxGuesses << ",\n";
   out << "  \"totalGuesses\": " << best.totalGuesses << ",\n";
   out << "  \"fitness\": " << best.fitness << ",\n";
   out << "  \"config\": {\n";

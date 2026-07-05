@@ -98,10 +98,14 @@ struct EvalScore {
   int64_t fitness = 0;
 };
 
-int64_t computeImprovedFitness(int unsolved, int64_t totalGuesses, int maxGuesses);
-bool loadConfigFromJsonFile(const std::string& path, ImprovedConfig* out);
-void saveBestJson(const std::string& path, const ImprovedConfig& cfg, const EvalScore& best);
+enum class FitnessObjective { Max, Avg };
 
-EvalScore evaluateImprovedConfig(const std::vector<Assignment>& assignments, const ImprovedConfig& cfg);
+const char* fitnessObjectiveLabel(FitnessObjective objective);
+int64_t computeImprovedFitness(FitnessObjective objective, int unsolved, int64_t totalGuesses, int maxGuesses);
+bool loadConfigFromJsonFile(const std::string& path, ImprovedConfig* out);
+void saveBestJson(const std::string& path, const ImprovedConfig& cfg, const EvalScore& best, FitnessObjective objective);
+
+EvalScore evaluateImprovedConfig(const std::vector<Assignment>& assignments, const ImprovedConfig& cfg,
+                                 FitnessObjective objective = FitnessObjective::Avg);
 
 }  // namespace koth
