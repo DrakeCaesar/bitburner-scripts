@@ -339,6 +339,20 @@ export function kingOfTheHillGaussianWidth(passwordLength) {
   return 10 ** Math.max(passwordLength - 2, 0) + 1
 }
 
+/** Max distance from any hill center to the farthest hill in the cluster. */
+export function kingOfTheHillClusterHalfWidth(hillCount, passwordLength) {
+  const width = kingOfTheHillGaussianWidth(passwordLength)
+  return Math.ceil((hillCount - 1) * width * 3 * 1.1)
+}
+
+function clusterSearchWindow(fullMin, fullMax, center, hillCount, passwordLength) {
+  const half = kingOfTheHillClusterHalfWidth(hillCount, passwordLength)
+  return {
+    min: Math.max(fullMin, center - half),
+    max: Math.min(fullMax, center + half),
+  }
+}
+
 function createProbeSession(server, min, max) {
   const samples = new Map()
   const session = {
@@ -447,59 +461,75 @@ function tryFinalCandidates(session, min, max, bestVal, bestAlt) {
   }
 }
 
-function runLegacyPhasesWithSession(session, assignment) {
-  const { min, max } = assignmentNumericRange(assignment)
-  let state = initKingOfTheHillState({ passwordLength: assignment.passwordLength })
-  state.bestVal = session.bestVal
-  state.bestAlt = session.bestAlt >= 0 ? session.bestAlt : null
-
-  while (true) {
-    const next = kingOfTheHillNextGuess(state)
-    if (!next) break
-    const x = Number(next.guess)
-    if (!session.samples.has(x)) {
-      session.probe(x)
-      if (session.solved) return
-    }
-    const alt = session.samples.get(x)
-    state = kingOfTheHillApplyResult(state, next.guess, {
-      success: false,
-      feedback: alt != null ? String(alt) : "",
-      message: alt != null ? `current altitude: ${alt.toFixed(5)} m; highest peak: 10,000 m` : "",
-    })
+/** Local zoom + integer finals when on the main peak plateau but not yet authed. */
+function tryZoomFinals(session, searchMin, searchMax) {
+  let step = Math.max(1, Math.ceil((searchMax - searchMin) / 40))
+  for (let pass = 0; pass < 8 && !session.solved; pass++) {
+    const lo = Math.max(searchMin, session.bestVal - step)
+    const hi = Math.min(searchMax, session.bestVal + step)
+    session.sweep(lo, hi, Math.max(1, Math.ceil(step / 8)))
+    if (session.solved) return
+    tryFinalCandidates(session, searchMin, searchMax, session.bestVal, session.bestAlt)
+    if (session.solved) return
+    const nextStep = Math.max(1, Math.ceil(step / 8))
+    if (nextStep >= step) break
+    step = nextStep
   }
+}
+
+function refinePeakCandidates(session, searchMin, searchMax, peaks, refineRadius, count) {
+  for (let i = 0; i < Math.min(count, peaks.length); i++) {
+    const peak = peaks[i]
+    const refined = refinePeak(session, searchMin, searchMax, peak.x, refineRadius, 5)
+    if (session.solved) return true
+    refinePeak(session, searchMin, searchMax, refined, Math.max(1, Math.ceil(refineRadius / 6)), 4)
+    if (session.solved) return true
+  }
+  return session.solved
 }
 
 /**
  * Peak-picking + parabolic refinement using known hill count and Gaussian width.
- * Falls back to legacy zoom/finals if not solved (side-hill traps).
+ * Standalone — does not call the legacy state machine.
  */
 export function runSolverImproved(assignment, options = {}) {
   const server = toServer(assignment)
   const { min, max } = assignmentNumericRange(assignment)
   const span = max - min
   const hillCount = kingOfTheHillHillCount(assignment.difficulty)
+  const gaussWidth = kingOfTheHillGaussianWidth(assignment.passwordLength)
   const session = createProbeSession(server, min, max)
 
   const coarseStep = Math.max(1, Math.ceil(span / Math.max(56, hillCount * 8)))
   session.sweep(min, max, coarseStep)
   if (session.solved) return finishSession(session, options)
 
+  let searchMin = min
+  let searchMax = max
+  if (session.bestAlt > 500) {
+    const win = clusterSearchWindow(min, max, session.bestVal, hillCount, assignment.passwordLength)
+    searchMin = win.min
+    searchMax = win.max
+  }
+  const searchSpan = searchMax - searchMin
+
   for (const divisor of [100, 280, 750]) {
     if (session.bestAlt >= KING_MAIN_PEAK_ALTITUDE) break
-    session.sweep(min, max, Math.max(1, Math.ceil(span / divisor)))
+    session.sweep(searchMin, searchMax, Math.max(1, Math.ceil(searchSpan / divisor)))
     if (session.solved) return finishSession(session, options)
   }
 
-  const peaks = findLocalPeaks(session.sortedSamples())
-  const refineRadius = Math.max(coarseStep, Math.ceil(span / (hillCount * 3)))
-  const candidateCount = Math.min(3, Math.max(1, hillCount))
+  let peaks = findLocalPeaks(session.sortedSamples())
+  let refineRadius = Math.max(coarseStep, Math.ceil(searchSpan / (hillCount * 3)))
+  refinePeakCandidates(session, searchMin, searchMax, peaks, refineRadius, hillCount)
+  if (session.solved) return finishSession(session, options)
 
-  for (let i = 0; i < Math.min(candidateCount, peaks.length); i++) {
-    const peak = peaks[i]
-    const refined = refinePeak(session, min, max, peak.x, refineRadius, 5)
+  if (session.bestAlt < KING_MAIN_PEAK_ALTITUDE) {
+    session.sweep(searchMin, searchMax, Math.max(1, Math.ceil(gaussWidth / 2)))
     if (session.solved) return finishSession(session, options)
-    refinePeak(session, min, max, refined, Math.max(1, Math.ceil(refineRadius / 6)), 4)
+    peaks = findLocalPeaks(session.sortedSamples())
+    refineRadius = Math.max(1, Math.ceil(gaussWidth))
+    refinePeakCandidates(session, searchMin, searchMax, peaks, refineRadius, hillCount)
     if (session.solved) return finishSession(session, options)
   }
 
@@ -507,12 +537,14 @@ export function runSolverImproved(assignment, options = {}) {
     const centroid = weightedCentroid(session, session.bestAlt * 0.88)
     if (centroid != null) {
       session.probe(centroid)
-      if (!session.solved) refinePeak(session, min, max, centroid, 12, 4)
+      if (!session.solved) refinePeak(session, searchMin, searchMax, centroid, 12, 4)
     }
   }
 
   if (!session.solved) tryFinalCandidates(session, min, max, session.bestVal, session.bestAlt)
-  if (!session.solved) runLegacyPhasesWithSession(session, assignment)
+  if (!session.solved && session.bestAlt >= KING_MAIN_PEAK_ALTITUDE) {
+    tryZoomFinals(session, searchMin, searchMax)
+  }
   return finishSession(session, options)
 }
 
