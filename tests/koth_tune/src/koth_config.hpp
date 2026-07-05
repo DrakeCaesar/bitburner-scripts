@@ -39,6 +39,28 @@ struct ImprovedConfig {
   int zoomStepDivisor = 8;
   double parabolicFlatEpsilon = 1e-12;
 
+  int mainPeakDetectAlt = 7500;
+  int mainPeakWindowWidths = 3;
+  int gaussEstimateMinAlt = 50;
+  double gaussHeightFraction = 1.0;
+  int enableGaussianEstimate = 1;
+  int ternaryMaxItersCap = 64;
+  int ternaryWidthStop = 4;
+  int ternarySpanDivisor = 3;
+  int enableTernarySearch = 1;
+  int expandMaxStepDivisor = 1;
+  int expandStepMultiplier = 2;
+  int enableExpandFromBest = 1;
+  int subdivNarrowStepFactor = 2;
+  int enableSubdivNarrow = 1;
+  double centroidLogWeight = 1.0;
+  int finalMainRadius = 9;
+  int finalSideMinRadius = 25;
+  int finalSideMaxRadius = 99;
+  int finalSideSpanDivisor = 40;
+  int finalTinySpan = 12;
+  int parabolicFlatNegLog10 = 12;
+
   std::array<int, 3> rescanDivisorsSorted{};  // filled by normalize
   int rescanDivisorCount = 0;
 };

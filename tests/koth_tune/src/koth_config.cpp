@@ -43,6 +43,27 @@ enum class GeneId {
   ZoomInitialDivisor,
   ZoomMaxPasses,
   ZoomStepDivisor,
+  ParabolicFlatNegLog10,
+  MainPeakDetectAlt,
+  MainPeakWindowWidths,
+  GaussEstimateMinAlt,
+  GaussHeightFraction,
+  EnableGaussianEstimate,
+  TernaryMaxItersCap,
+  TernaryWidthStop,
+  TernarySpanDivisor,
+  EnableTernarySearch,
+  ExpandMaxStepDivisor,
+  ExpandStepMultiplier,
+  EnableExpandFromBest,
+  SubdivNarrowStepFactor,
+  EnableSubdivNarrow,
+  CentroidLogWeight,
+  FinalMainRadius,
+  FinalSideMinRadius,
+  FinalSideMaxRadius,
+  FinalSideSpanDivisor,
+  FinalTinySpan,
 };
 
 struct SpecDef {
@@ -80,6 +101,27 @@ constexpr SpecDef kSpecs[] = {
     {GeneId::ZoomInitialDivisor, GeneType::Int, 20, 80, 5},
     {GeneId::ZoomMaxPasses, GeneType::Int, 4, 12, 1},
     {GeneId::ZoomStepDivisor, GeneType::Int, 4, 16, 1},
+    {GeneId::ParabolicFlatNegLog10, GeneType::Int, 6, 15, 1},
+    {GeneId::MainPeakDetectAlt, GeneType::Int, 6500, 8500, 100},
+    {GeneId::MainPeakWindowWidths, GeneType::Int, 2, 6, 1},
+    {GeneId::GaussEstimateMinAlt, GeneType::Int, 0, 500, 25},
+    {GeneId::GaussHeightFraction, GeneType::Float, 0.85, 1.0, 0.01},
+    {GeneId::EnableGaussianEstimate, GeneType::Int, 0, 1, 1},
+    {GeneId::TernaryMaxItersCap, GeneType::Int, 8, 128, 4},
+    {GeneId::TernaryWidthStop, GeneType::Int, 1, 12, 1},
+    {GeneId::TernarySpanDivisor, GeneType::Int, 2, 8, 1},
+    {GeneId::EnableTernarySearch, GeneType::Int, 0, 1, 1},
+    {GeneId::ExpandMaxStepDivisor, GeneType::Int, 1, 8, 1},
+    {GeneId::ExpandStepMultiplier, GeneType::Int, 2, 4, 1},
+    {GeneId::EnableExpandFromBest, GeneType::Int, 0, 1, 1},
+    {GeneId::SubdivNarrowStepFactor, GeneType::Int, 1, 6, 1},
+    {GeneId::EnableSubdivNarrow, GeneType::Int, 0, 1, 1},
+    {GeneId::CentroidLogWeight, GeneType::Float, 0.0, 1.0, 0.1},
+    {GeneId::FinalMainRadius, GeneType::Int, 3, 20, 1},
+    {GeneId::FinalSideMinRadius, GeneType::Int, 10, 50, 5},
+    {GeneId::FinalSideMaxRadius, GeneType::Int, 50, 150, 5},
+    {GeneId::FinalSideSpanDivisor, GeneType::Int, 20, 80, 5},
+    {GeneId::FinalTinySpan, GeneType::Int, 6, 24, 2},
 };
 
 double getGeneDouble(const ImprovedConfig& cfg, GeneId id) {
@@ -110,6 +152,27 @@ double getGeneDouble(const ImprovedConfig& cfg, GeneId id) {
     case GeneId::ZoomInitialDivisor: return cfg.zoomInitialDivisor;
     case GeneId::ZoomMaxPasses: return cfg.zoomMaxPasses;
     case GeneId::ZoomStepDivisor: return cfg.zoomStepDivisor;
+    case GeneId::ParabolicFlatNegLog10: return cfg.parabolicFlatNegLog10;
+    case GeneId::MainPeakDetectAlt: return cfg.mainPeakDetectAlt;
+    case GeneId::MainPeakWindowWidths: return cfg.mainPeakWindowWidths;
+    case GeneId::GaussEstimateMinAlt: return cfg.gaussEstimateMinAlt;
+    case GeneId::GaussHeightFraction: return cfg.gaussHeightFraction;
+    case GeneId::EnableGaussianEstimate: return cfg.enableGaussianEstimate;
+    case GeneId::TernaryMaxItersCap: return cfg.ternaryMaxItersCap;
+    case GeneId::TernaryWidthStop: return cfg.ternaryWidthStop;
+    case GeneId::TernarySpanDivisor: return cfg.ternarySpanDivisor;
+    case GeneId::EnableTernarySearch: return cfg.enableTernarySearch;
+    case GeneId::ExpandMaxStepDivisor: return cfg.expandMaxStepDivisor;
+    case GeneId::ExpandStepMultiplier: return cfg.expandStepMultiplier;
+    case GeneId::EnableExpandFromBest: return cfg.enableExpandFromBest;
+    case GeneId::SubdivNarrowStepFactor: return cfg.subdivNarrowStepFactor;
+    case GeneId::EnableSubdivNarrow: return cfg.enableSubdivNarrow;
+    case GeneId::CentroidLogWeight: return cfg.centroidLogWeight;
+    case GeneId::FinalMainRadius: return cfg.finalMainRadius;
+    case GeneId::FinalSideMinRadius: return cfg.finalSideMinRadius;
+    case GeneId::FinalSideMaxRadius: return cfg.finalSideMaxRadius;
+    case GeneId::FinalSideSpanDivisor: return cfg.finalSideSpanDivisor;
+    case GeneId::FinalTinySpan: return cfg.finalTinySpan;
   }
   return 0.0;
 }
@@ -142,6 +205,27 @@ void setGeneDouble(ImprovedConfig& cfg, GeneId id, double v) {
     case GeneId::ZoomInitialDivisor: cfg.zoomInitialDivisor = static_cast<int>(std::llround(v)); break;
     case GeneId::ZoomMaxPasses: cfg.zoomMaxPasses = static_cast<int>(std::llround(v)); break;
     case GeneId::ZoomStepDivisor: cfg.zoomStepDivisor = static_cast<int>(std::llround(v)); break;
+    case GeneId::ParabolicFlatNegLog10: cfg.parabolicFlatNegLog10 = static_cast<int>(std::llround(v)); break;
+    case GeneId::MainPeakDetectAlt: cfg.mainPeakDetectAlt = static_cast<int>(std::llround(v)); break;
+    case GeneId::MainPeakWindowWidths: cfg.mainPeakWindowWidths = static_cast<int>(std::llround(v)); break;
+    case GeneId::GaussEstimateMinAlt: cfg.gaussEstimateMinAlt = static_cast<int>(std::llround(v)); break;
+    case GeneId::GaussHeightFraction: cfg.gaussHeightFraction = v; break;
+    case GeneId::EnableGaussianEstimate: cfg.enableGaussianEstimate = static_cast<int>(std::llround(v)); break;
+    case GeneId::TernaryMaxItersCap: cfg.ternaryMaxItersCap = static_cast<int>(std::llround(v)); break;
+    case GeneId::TernaryWidthStop: cfg.ternaryWidthStop = static_cast<int>(std::llround(v)); break;
+    case GeneId::TernarySpanDivisor: cfg.ternarySpanDivisor = static_cast<int>(std::llround(v)); break;
+    case GeneId::EnableTernarySearch: cfg.enableTernarySearch = static_cast<int>(std::llround(v)); break;
+    case GeneId::ExpandMaxStepDivisor: cfg.expandMaxStepDivisor = static_cast<int>(std::llround(v)); break;
+    case GeneId::ExpandStepMultiplier: cfg.expandStepMultiplier = static_cast<int>(std::llround(v)); break;
+    case GeneId::EnableExpandFromBest: cfg.enableExpandFromBest = static_cast<int>(std::llround(v)); break;
+    case GeneId::SubdivNarrowStepFactor: cfg.subdivNarrowStepFactor = static_cast<int>(std::llround(v)); break;
+    case GeneId::EnableSubdivNarrow: cfg.enableSubdivNarrow = static_cast<int>(std::llround(v)); break;
+    case GeneId::CentroidLogWeight: cfg.centroidLogWeight = v; break;
+    case GeneId::FinalMainRadius: cfg.finalMainRadius = static_cast<int>(std::llround(v)); break;
+    case GeneId::FinalSideMinRadius: cfg.finalSideMinRadius = static_cast<int>(std::llround(v)); break;
+    case GeneId::FinalSideMaxRadius: cfg.finalSideMaxRadius = static_cast<int>(std::llround(v)); break;
+    case GeneId::FinalSideSpanDivisor: cfg.finalSideSpanDivisor = static_cast<int>(std::llround(v)); break;
+    case GeneId::FinalTinySpan: cfg.finalTinySpan = static_cast<int>(std::llround(v)); break;
   }
 }
 
@@ -256,6 +340,27 @@ const char* geneKey(GeneId id) {
     case GeneId::ZoomInitialDivisor: return "zoomInitialDivisor";
     case GeneId::ZoomMaxPasses: return "zoomMaxPasses";
     case GeneId::ZoomStepDivisor: return "zoomStepDivisor";
+    case GeneId::ParabolicFlatNegLog10: return "parabolicFlatNegLog10";
+    case GeneId::MainPeakDetectAlt: return "mainPeakDetectAlt";
+    case GeneId::MainPeakWindowWidths: return "mainPeakWindowWidths";
+    case GeneId::GaussEstimateMinAlt: return "gaussEstimateMinAlt";
+    case GeneId::GaussHeightFraction: return "gaussHeightFraction";
+    case GeneId::EnableGaussianEstimate: return "enableGaussianEstimate";
+    case GeneId::TernaryMaxItersCap: return "ternaryMaxItersCap";
+    case GeneId::TernaryWidthStop: return "ternaryWidthStop";
+    case GeneId::TernarySpanDivisor: return "ternarySpanDivisor";
+    case GeneId::EnableTernarySearch: return "enableTernarySearch";
+    case GeneId::ExpandMaxStepDivisor: return "expandMaxStepDivisor";
+    case GeneId::ExpandStepMultiplier: return "expandStepMultiplier";
+    case GeneId::EnableExpandFromBest: return "enableExpandFromBest";
+    case GeneId::SubdivNarrowStepFactor: return "subdivNarrowStepFactor";
+    case GeneId::EnableSubdivNarrow: return "enableSubdivNarrow";
+    case GeneId::CentroidLogWeight: return "centroidLogWeight";
+    case GeneId::FinalMainRadius: return "finalMainRadius";
+    case GeneId::FinalSideMinRadius: return "finalSideMinRadius";
+    case GeneId::FinalSideMaxRadius: return "finalSideMaxRadius";
+    case GeneId::FinalSideSpanDivisor: return "finalSideSpanDivisor";
+    case GeneId::FinalTinySpan: return "finalTinySpan";
   }
   return "";
 }
@@ -269,6 +374,11 @@ ImprovedConfig normalizeImprovedConfig(const ImprovedConfig& raw) {
   for (const auto& spec : kSpecs) {
     setGeneDouble(cfg, spec.id, clampGene(spec, getGeneDouble(cfg, spec.id)));
   }
+  cfg.enableGaussianEstimate = cfg.enableGaussianEstimate != 0 ? 1 : 0;
+  cfg.enableTernarySearch = cfg.enableTernarySearch != 0 ? 1 : 0;
+  cfg.enableExpandFromBest = cfg.enableExpandFromBest != 0 ? 1 : 0;
+  cfg.enableSubdivNarrow = cfg.enableSubdivNarrow != 0 ? 1 : 0;
+  cfg.parabolicFlatEpsilon = std::pow(10.0, -static_cast<double>(cfg.parabolicFlatNegLog10));
   fillRescanDivisors(cfg);
   return cfg;
 }
@@ -367,9 +477,10 @@ bool loadConfigFromJsonFile(const std::string& path, ImprovedConfig* out) {
 
   ImprovedConfig cfg = defaultImprovedConfig();
   for (const auto& spec : kSpecs) {
-    double v = 0.0;
-    if (!parseJsonNumberAfterKey(configJson, geneKey(spec.id), &v)) return false;
-    setGeneDouble(cfg, spec.id, v);
+    double v = getGeneDouble(cfg, spec.id);
+    if (parseJsonNumberAfterKey(configJson, geneKey(spec.id), &v)) {
+      setGeneDouble(cfg, spec.id, v);
+    }
   }
   *out = normalizeImprovedConfig(cfg);
   return true;
