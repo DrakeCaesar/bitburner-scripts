@@ -63,7 +63,7 @@
     }
 
     input[type="number"],
-    input[type="range"] {
+    select {
       font: inherit;
       color: var(--text);
       background: #111;
@@ -71,7 +71,15 @@
       padding: 4px 6px;
     }
 
+    select {
+      min-width: 160px;
+    }
+
     input[type="range"] {
+      font: inherit;
+      color: var(--text);
+      background: #111;
+      border: 1px solid var(--border);
       width: 160px;
       padding: 0;
     }
@@ -176,13 +184,23 @@
 <body>
   <h1>KingOfTheHill altitude profiles</h1>
   <p class="subtitle">
-    Ten deterministic assignments. Orange dots are solver probes.
-    Y = altitude returned by auth; X = full valid guess range for password length.
+    Deterministic assignments from seed. Summary uses all tests; charts show the first N after sorting.
+    Orange dots are solver probes. Y = altitude; X = valid guess range.
   </p>
 
   <div class="controls">
     <label>Seed<input id="seed" type="number" value="1265595496" /></label>
     <label>Difficulty<input id="difficulty" type="number" value="60" min="1" max="60" /></label>
+    <label>Tests<input id="count" type="number" value="1000" min="1" max="10000" step="1" /></label>
+    <label>Sort
+      <select id="sort">
+        <option value="index">assignment #</option>
+        <option value="guesses-desc" selected>guesses worst first</option>
+        <option value="guesses-asc">guesses best first</option>
+        <option value="failed-first">failed first</option>
+      </select>
+    </label>
+    <label>Charts shown<input id="chartLimit" type="number" value="24" min="0" max="500" step="1" /></label>
     <label>Sample points<input id="points" type="number" value="1200" min="200" max="4000" step="100" /></label>
     <button id="render" type="button">Redraw</button>
   </div>
@@ -209,7 +227,6 @@
   <script type="module">
     import {
       DEFAULT_SEED,
-      DEFAULT_COUNT,
       DEFAULT_DIFFICULTY,
       KING_MAIN_PEAK_ALTITUDE,
       generateAssignments,
@@ -221,11 +238,31 @@
     const summaryEl = document.getElementById("summary")
     const seedInput = document.getElementById("seed")
     const difficultyInput = document.getElementById("difficulty")
+    const countInput = document.getElementById("count")
+    const sortInput = document.getElementById("sort")
+    const chartLimitInput = document.getElementById("chartLimit")
     const pointsInput = document.getElementById("points")
     const renderBtn = document.getElementById("render")
 
     seedInput.value = String(DEFAULT_SEED)
     difficultyInput.value = String(DEFAULT_DIFFICULTY)
+
+    function sortRows(rows, mode) {
+      const sorted = [...rows]
+      if (mode === "guesses-desc") {
+        sorted.sort((a, b) => b.result.guesses - a.result.guesses || a.index - b.index)
+      } else if (mode === "guesses-asc") {
+        sorted.sort((a, b) => a.result.guesses - b.result.guesses || a.index - b.index)
+      } else if (mode === "failed-first") {
+        sorted.sort((a, b) => {
+          if (a.result.solved !== b.result.solved) return a.result.solved ? 1 : -1
+          return b.result.guesses - a.result.guesses || a.index - b.index
+        })
+      } else {
+        sorted.sort((a, b) => a.index - b.index)
+      }
+      return sorted
+    }
 
     function formatNum(n) {
       if (n >= 1e9) return `${(n / 1e9).toFixed(3)}e9`
@@ -369,57 +406,81 @@
       return { label, solved, total, min, max, avg }
     }
 
-    function renderSummary(rows) {
-      const summary = summarizeSolver("solver", rows)
+    function renderSummary(rows, chartCount, sortMode) {
+      const summary = summarizeSolver("solver", rows.map((r) => r.result))
+      const failed = rows.filter((r) => !r.result.solved).length
+      const sortLabel = sortInput.options[sortInput.selectedIndex].text
       summaryEl.innerHTML = [
-        `<div><strong>${summary.label}</strong> ${summary.solved}/${rows.length} solved, avg ${summary.avg.toFixed(1)} (${summary.min}-${summary.max}), total ${summary.total}</div>`,
+        `<div><strong>${summary.label}</strong> ${summary.solved}/${rows.length} solved${failed ? `, <span class="bad">${failed} failed</span>` : ""}, avg ${summary.avg.toFixed(1)} (${summary.min}-${summary.max}), total ${summary.total}</div>`,
+        `<div><strong>charts</strong> showing ${chartCount}/${rows.length} (${sortLabel})</div>`,
       ].join("")
     }
 
     function renderAll() {
       const seed = Number(seedInput.value) || DEFAULT_SEED
       const difficulty = Number(difficultyInput.value) || DEFAULT_DIFFICULTY
+      const testCount = Math.max(1, Math.min(10000, Math.floor(Number(countInput.value) || 1000)))
       const pointCount = Number(pointsInput.value) || 1200
+      const sortMode = sortInput.value
+      const chartLimit = Math.max(0, Math.min(500, Math.floor(Number(chartLimitInput.value) || 0)))
 
+      countInput.value = String(testCount)
+      chartLimitInput.value = String(chartLimit)
+
+      renderBtn.disabled = true
+      renderBtn.textContent = "Running..."
+      summaryEl.textContent = `Running ${testCount} tests...`
       grid.replaceChildren()
-      const assignments = generateAssignments(seed, DEFAULT_COUNT, difficulty)
-      const rows = []
 
-      for (const { index, assignment } of assignments) {
-        const result = runSolver(assignment, { returnSamples: true })
-        rows.push(result)
-        const profile = sampleAltitudeProfile(assignment, { pointCount })
+      setTimeout(() => {
+        const assignments = generateAssignments(seed, testCount, difficulty)
+        const rows = assignments.map(({ index, assignment }) => ({
+          index,
+          assignment,
+          result: runSolver(assignment, { returnSamples: true }),
+        }))
 
-        const card = document.createElement("article")
-        card.className = "card"
+        const sorted = sortRows(rows, sortMode)
+        const chartRows = chartLimit > 0 ? sorted.slice(0, chartLimit) : []
 
-        const h2 = document.createElement("h2")
-        h2.textContent = `#${index}  password ${assignment.password}`
-        card.appendChild(h2)
+        renderSummary(rows, chartRows.length, sortMode)
 
-        const meta = document.createElement("div")
-        meta.className = "meta"
+        for (const { index, assignment, result } of chartRows) {
+          const profile = sampleAltitudeProfile(assignment, { pointCount })
 
-        const solverRow = document.createElement("div")
-        solverRow.className = "meta-row"
-        solverRow.innerHTML = `<span class="label">solver</span><span>${solverLine("", result).slice(2)}</span>`
-        meta.appendChild(solverRow)
+          const card = document.createElement("article")
+          card.className = "card"
 
-        const rangeRow = document.createElement("div")
-        rangeRow.className = "meta-row"
-        rangeRow.innerHTML = `<span class="label">range</span><span>${formatNum(profile.min)} .. ${formatNum(profile.max)}</span>`
-        meta.appendChild(rangeRow)
+          const h2 = document.createElement("h2")
+          h2.textContent = `#${index}  password ${assignment.password}`
+          card.appendChild(h2)
 
-        card.appendChild(meta)
+          const meta = document.createElement("div")
+          meta.className = "meta"
 
-        const canvas = document.createElement("canvas")
-        card.appendChild(canvas)
-        grid.appendChild(card)
+          const solverRow = document.createElement("div")
+          solverRow.className = "meta-row"
+          const guessClass = result.solved ? "" : " bad"
+          solverRow.innerHTML = `<span class="label">solver</span><span class="${guessClass.trim()}">${solverLine("", result).slice(2)}</span>`
+          meta.appendChild(solverRow)
 
-        drawChart(canvas, profile, result)
-      }
+          const rangeRow = document.createElement("div")
+          rangeRow.className = "meta-row"
+          rangeRow.innerHTML = `<span class="label">range</span><span>${formatNum(profile.min)} .. ${formatNum(profile.max)}</span>`
+          meta.appendChild(rangeRow)
 
-      renderSummary(rows)
+          card.appendChild(meta)
+
+          const canvas = document.createElement("canvas")
+          card.appendChild(canvas)
+          grid.appendChild(card)
+
+          drawChart(canvas, profile, result)
+        }
+
+        renderBtn.disabled = false
+        renderBtn.textContent = "Redraw"
+      }, 0)
     }
 
     renderBtn.addEventListener("click", renderAll)
