@@ -22,6 +22,7 @@
   "include": [
     "src/**/*.ts",
     "src/**/*.js",
+    "tests/kingOfTheHillCore.ts",
     "NetscriptDefinitions.d.ts",
     "stockApi.d.ts",
     "global.d.ts",

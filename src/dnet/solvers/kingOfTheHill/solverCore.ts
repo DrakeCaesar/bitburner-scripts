@@ -1,5 +1,5 @@
 import type { ImprovedConfig } from "./config.js"
-import { normalizeImprovedConfig } from "./config.js"
+import { finalizeImprovedConfig, TUNED_MAX_CONFIG } from "./config.js"
 
 export const KOTH_PEAK_HEIGHT = 10000
 export const KOTH_HILL_SPACING_WIDTHS = 3
@@ -472,7 +472,7 @@ export function runSolverImprovedCore(
   cfgIn: ImprovedConfig,
   options: SolverCoreOptions = {},
 ): SolverRunResult {
-  const cfg = normalizeImprovedConfig(cfgIn)
+  const cfg = finalizeImprovedConfig(cfgIn)
   const returnSamples = options.returnSamples === true
   const { min, max, hillCount, passwordLength, gaussWidth } = ctx
 
@@ -679,4 +679,38 @@ export function runUntilNextProbe(
   }
   if (needProbe != null) return { type: "probe", x: needProbe }
   return { type: "done", solved: session.solved }
+}
+
+export interface KingOfTheHillAssignment {
+  difficulty: number
+  passwordLength: number
+}
+
+export interface SolverAuthResult {
+  success: boolean
+  feedback?: unknown
+  message?: string
+}
+
+/** Run the improved solver synchronously with a caller-supplied auth callback. */
+export function runSolverImproved(
+  assignment: KingOfTheHillAssignment,
+  options: {
+    improvedConfig?: ImprovedConfig
+    auth: (guess: string) => SolverAuthResult
+    returnSamples?: boolean
+  },
+): SolverRunResult {
+  const cfg = finalizeImprovedConfig(options.improvedConfig ?? TUNED_MAX_CONFIG)
+  const min = 10 ** (assignment.passwordLength - 1)
+  const max = 10 ** assignment.passwordLength - 1
+  const ctx: SolverContext = {
+    min,
+    max,
+    hillCount: kingOfTheHillHillCount(assignment.difficulty),
+    passwordLength: assignment.passwordLength,
+    gaussWidth: kingOfTheHillGaussianWidth(assignment.passwordLength),
+  }
+  const session = createAuthProbeSession(min, max, options.auth)
+  return runSolverImprovedCore(session, ctx, cfg, { returnSamples: options.returnSamples === true })
 }

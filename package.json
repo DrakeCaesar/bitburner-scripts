@@ -19,6 +19,8 @@
   "scripts": {
     "dev": "node build/bundleSolverWorker.cjs && node build/dev.cjs",
     "bundle:solver-worker": "node build/bundleSolverWorker.cjs",
+    "test:koth": "node build/bundleKingOfTheHillCore.cjs && node tests/kingOfTheHillSim.mjs",
+    "test:koth:bundle": "node build/bundleKingOfTheHillCore.cjs",
     "lint": "prettier --write . && eslint . --fix && sort-package-json",
     "up": "pnpm upgrade && sort-package-json",
     "watch": "pnpm run watch:init && pnpm run watch:all",

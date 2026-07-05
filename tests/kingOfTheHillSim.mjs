@@ -1,8 +1,8 @@
 /**
  * KingOfTheHill (globalMaxima) solver simulation — matches bitburner-src game logic.
  *
- * Run: node tests/kingOfTheHillSim.mjs
- *      node tests/kingOfTheHillSim.mjs --seed 42 --count 10 --difficulty 60
+ * Run: pnpm run test:koth
+ *      pnpm run test:koth -- --seed 42 --count 10 --difficulty 60
  */
 
 import {
