@@ -2,13 +2,13 @@
   "version": 6,
   "cmakeMinimumRequired": {
     "major": 3,
-    "minor": 10,
+    "minor": 16,
     "patch": 0
   },
   "configurePresets": [
     {
-      "name": "ipvgo-release",
-      "displayName": "IpvGO Engine (Release)",
+      "name": "koth-tune-release",
+      "displayName": "Koth Tune (Release)",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
@@ -17,8 +17,8 @@
   ],
   "buildPresets": [
     {
-      "name": "ipvgo-release",
-      "configurePreset": "ipvgo-release",
+      "name": "koth-tune-release",
+      "configurePreset": "koth-tune-release",
       "configuration": "Release"
     }
   ]

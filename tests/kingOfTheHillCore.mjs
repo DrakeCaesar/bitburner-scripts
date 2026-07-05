@@ -53,25 +53,91 @@ export const LEGACY_FINAL_SIDE_SPAN_DIVISOR = 40
 
 // --- Improved solver (peak-picking + cluster window) ---
 
-export const IMPROVED_CLUSTER_MARGIN = 1.1
-export const IMPROVED_CLUSTER_DETECT_ALT = 500
-export const IMPROVED_COARSE_MIN_DIVISOR = 56
-export const IMPROVED_COARSE_HILL_FACTOR = 8
-export const IMPROVED_RESCAN_DIVISORS = [100, 280, 750]
-export const IMPROVED_REFINE_SPAN_HILL_DIVISOR = 3
-export const IMPROVED_REFINE_COARSE_PASSES = 5
-export const IMPROVED_REFINE_FINE_PASSES = 4
-export const IMPROVED_REFINE_RADIUS_SHRINK = 6
-export const IMPROVED_REFINE_STEP_SHRINK = 3
-export const IMPROVED_SIDE_HILL_SWEEP_WIDTH_DIVISOR = 2
-export const IMPROVED_CENTROID_MIN_ALT = 9000
-export const IMPROVED_CENTROID_ALT_FRACTION = 0.88
-export const IMPROVED_CENTROID_REFINE_RADIUS = 12
-export const IMPROVED_CENTROID_REFINE_PASSES = 4
-export const IMPROVED_ZOOM_INITIAL_DIVISOR = 40
-export const IMPROVED_ZOOM_MAX_PASSES = 8
-export const IMPROVED_ZOOM_STEP_DIVISOR = 8
-export const IMPROVED_PARABOLIC_FLAT_EPSILON = 1e-12
+/** @typedef {ReturnType<typeof getDefaultImprovedConfig>} ImprovedSolverConfig */
+
+export function getDefaultImprovedConfig() {
+  return {
+    clusterMargin: 1.1,
+    clusterDetectAlt: 500,
+    mainPeakModeAlt: 9600,
+    refinePeakCountMain: 1,
+    findHillQuickRounds: 3,
+    coarseMinDivisor: 56,
+    coarseHillFactor: 8,
+    rescanDivisor1: 100,
+    rescanDivisor2: 280,
+    rescanDivisor3: 750,
+    refineSpanHillDivisor: 3,
+    refineCoarsePasses: 5,
+    refineFinePasses: 4,
+    refineRadiusShrink: 6,
+    refineStepShrink: 3,
+    sideHillSweepWidthDivisor: 2,
+    centroidMinAlt: 9000,
+    centroidAltFraction: 0.88,
+    centroidRefineRadius: 12,
+    centroidRefinePasses: 4,
+    hillClimbInitialDivisor: 64,
+    hillClimbShrink: 4,
+    hillClimbFlatAltDelta: 0.01,
+    zoomInitialDivisor: 40,
+    zoomMaxPasses: 8,
+    zoomStepDivisor: 8,
+    parabolicFlatEpsilon: 1e-12,
+  }
+}
+
+/** Search bounds for the constant tuner (genetic / random search). */
+export const IMPROVED_TUNABLE_SPECS = [
+  { key: "clusterMargin", min: 1.0, max: 1.3, step: 0.05, type: "float" },
+  { key: "clusterDetectAlt", min: 300, max: 800, step: 50, type: "int" },
+  { key: "mainPeakModeAlt", min: 9000, max: 9900, step: 100, type: "int" },
+  { key: "refinePeakCountMain", min: 1, max: 3, step: 1, type: "int" },
+  { key: "findHillQuickRounds", min: 1, max: 5, step: 1, type: "int" },
+  { key: "coarseMinDivisor", min: 40, max: 80, step: 4, type: "int" },
+  { key: "coarseHillFactor", min: 4, max: 12, step: 1, type: "int" },
+  { key: "rescanDivisor1", min: 0, max: 200, step: 10, type: "int" },
+  { key: "rescanDivisor2", min: 0, max: 400, step: 20, type: "int" },
+  { key: "rescanDivisor3", min: 0, max: 900, step: 50, type: "int" },
+  { key: "refineSpanHillDivisor", min: 2, max: 6, step: 1, type: "int" },
+  { key: "refineCoarsePasses", min: 3, max: 7, step: 1, type: "int" },
+  { key: "refineFinePasses", min: 2, max: 6, step: 1, type: "int" },
+  { key: "refineRadiusShrink", min: 3, max: 10, step: 1, type: "int" },
+  { key: "refineStepShrink", min: 2, max: 5, step: 1, type: "int" },
+  { key: "sideHillSweepWidthDivisor", min: 1, max: 4, step: 1, type: "int" },
+  { key: "centroidMinAlt", min: 8000, max: 9600, step: 100, type: "int" },
+  { key: "centroidAltFraction", min: 0.8, max: 0.95, step: 0.01, type: "float" },
+  { key: "centroidRefineRadius", min: 6, max: 20, step: 2, type: "int" },
+  { key: "centroidRefinePasses", min: 2, max: 6, step: 1, type: "int" },
+  { key: "hillClimbInitialDivisor", min: 32, max: 128, step: 8, type: "int" },
+  { key: "hillClimbShrink", min: 2, max: 8, step: 1, type: "int" },
+  { key: "hillClimbFlatAltDelta", min: 0.001, max: 0.1, step: 0.005, type: "float" },
+  { key: "zoomInitialDivisor", min: 20, max: 80, step: 5, type: "int" },
+  { key: "zoomMaxPasses", min: 4, max: 12, step: 1, type: "int" },
+  { key: "zoomStepDivisor", min: 4, max: 16, step: 1, type: "int" },
+]
+
+export function normalizeImprovedConfig(overrides = {}) {
+  const cfg = { ...getDefaultImprovedConfig(), ...overrides }
+  for (const spec of IMPROVED_TUNABLE_SPECS) {
+    const v = cfg[spec.key]
+    if (spec.type === "int") {
+      cfg[spec.key] = Math.round(Math.max(spec.min, Math.min(spec.max, v)))
+    } else {
+      const clamped = Math.max(spec.min, Math.min(spec.max, v))
+      const steps = Math.round((clamped - spec.min) / spec.step)
+      cfg[spec.key] = spec.min + steps * spec.step
+    }
+  }
+  cfg.rescanDivisors = [cfg.rescanDivisor1, cfg.rescanDivisor2, cfg.rescanDivisor3]
+    .filter((d) => d > 0)
+    .sort((a, b) => a - b)
+  return cfg
+}
+
+function improvedRescanDivisors(cfg) {
+  return cfg.rescanDivisors ?? [cfg.rescanDivisor1, cfg.rescanDivisor2, cfg.rescanDivisor3].filter((d) => d > 0).sort((a, b) => a - b)
+}
 
 // --- Game: bitburner-src/src/Casino/RNG.ts (WHRNG) ---
 
@@ -406,17 +472,32 @@ export function kingOfTheHillGaussianWidth(passwordLength) {
 }
 
 /** Max distance from any hill center to the farthest hill in the cluster. */
-export function kingOfTheHillClusterHalfWidth(hillCount, passwordLength) {
+export function kingOfTheHillClusterHalfWidth(hillCount, passwordLength, clusterMargin = getDefaultImprovedConfig().clusterMargin) {
   const width = kingOfTheHillGaussianWidth(passwordLength)
-  return Math.ceil((hillCount - 1) * width * KOTH_HILL_SPACING_WIDTHS * IMPROVED_CLUSTER_MARGIN)
+  return Math.ceil((hillCount - 1) * width * KOTH_HILL_SPACING_WIDTHS * clusterMargin)
 }
 
-function clusterSearchWindow(fullMin, fullMax, center, hillCount, passwordLength) {
-  const half = kingOfTheHillClusterHalfWidth(hillCount, passwordLength)
+function clusterSearchWindow(fullMin, fullMax, center, hillCount, passwordLength, cfg) {
+  const half = kingOfTheHillClusterHalfWidth(hillCount, passwordLength, cfg.clusterMargin)
   return {
     min: Math.max(fullMin, center - half),
     max: Math.min(fullMax, center + half),
   }
+}
+
+/** Cluster window while hunting side hills; local Gaussian span once on the main peak. */
+function improvedSearchWindow(fullMin, fullMax, session, hillCount, passwordLength, gaussWidth, cfg) {
+  if (session.bestAlt >= KING_MAIN_PEAK_ALTITUDE) {
+    const half = gaussWidth * KOTH_HILL_SPACING_WIDTHS
+    return {
+      min: Math.max(fullMin, session.bestVal - half),
+      max: Math.min(fullMax, session.bestVal + half),
+    }
+  }
+  if (session.bestAlt > cfg.clusterDetectAlt) {
+    return clusterSearchWindow(fullMin, fullMax, session.bestVal, hillCount, passwordLength, cfg)
+  }
+  return { min: fullMin, max: fullMax }
 }
 
 function createProbeSession(server, min, max) {
@@ -445,13 +526,18 @@ function createProbeSession(server, min, max) {
       }
       return { alt, cached: false }
     },
-    sweep(start, end, step) {
+    sweep(start, end, step, stopAlt) {
       if (step <= 0) step = 1
       for (let x = start; x <= end; x += step) {
         session.probe(x)
         if (session.solved) return
+        if (stopAlt != null && session.bestAlt >= stopAlt) return
       }
-      if (end >= start && end <= max && !samples.has(end)) session.probe(end)
+      if (end >= start && end <= max && !samples.has(end)) {
+        session.probe(end)
+        if (session.solved) return
+        if (stopAlt != null && session.bestAlt >= stopAlt) return
+      }
     },
     sortedSamples() {
       return [...samples.entries()].sort((a, b) => a[0] - b[0])
@@ -460,9 +546,9 @@ function createProbeSession(server, min, max) {
   return session
 }
 
-function parabolicPeak(x0, y0, x1, y1, x2, y2) {
+function parabolicPeak(x0, y0, x1, y1, x2, y2, cfg) {
   const denom = y0 - 2 * y1 + y2
-  if (!Number.isFinite(denom) || Math.abs(denom) < IMPROVED_PARABOLIC_FLAT_EPSILON) return x1
+  if (!Number.isFinite(denom) || Math.abs(denom) < cfg.parabolicFlatEpsilon) return x1
   return x1 + ((x1 - x0) * (y0 - y2)) / (2 * denom)
 }
 
@@ -487,7 +573,7 @@ function findLocalPeaks(sorted) {
   })
 }
 
-function refinePeak(session, min, max, center, initialRadius, passes) {
+function refinePeak(session, min, max, center, initialRadius, passes, cfg) {
   let c = center
   let r = Math.max(1, initialRadius)
   for (let p = 0; p < passes; p++) {
@@ -500,9 +586,9 @@ function refinePeak(session, min, max, center, initialRadius, passes) {
     if (session.solved) return c
     const y2 = session.probe(x2)?.alt ?? -1
     if (session.solved) return c
-    const peak = parabolicPeak(x0, y0, x1, y1, x2, y2)
+    const peak = parabolicPeak(x0, y0, x1, y1, x2, y2, cfg)
     c = Math.round(Math.max(min, Math.min(max, peak)))
-    r = Math.max(1, Math.ceil(r / IMPROVED_REFINE_STEP_SHRINK))
+    r = Math.max(1, Math.ceil(r / cfg.refineStepShrink))
   }
   return c
 }
@@ -527,34 +613,92 @@ function tryFinalCandidates(session, min, max, bestVal, bestAlt) {
   }
 }
 
-/** Local zoom + integer finals when on the main peak plateau but not yet authed. */
-function tryZoomFinals(session, searchMin, searchMax) {
-  let step = Math.max(1, Math.ceil((searchMax - searchMin) / IMPROVED_ZOOM_INITIAL_DIVISOR))
-  for (let pass = 0; pass < IMPROVED_ZOOM_MAX_PASSES && !session.solved; pass++) {
+function refinePeakCount(session, hillCount, cfg) {
+  if (session.bestAlt >= cfg.mainPeakModeAlt) return cfg.refinePeakCountMain
+  return hillCount
+}
+
+/** Dyadic subdivision: midpoint, quarters, eighths, ... (quickRounds max). */
+function findHillBySubdivision(session, lo, hi, quickRounds, cfg) {
+  let step = hi - lo
+  for (let round = 0; round < quickRounds && !session.solved; round++) {
+    const nextStep = Math.max(1, Math.ceil(step / 2))
+    if (nextStep >= step) break
+    step = nextStep
+    for (let x = lo + step; x < hi; x += step) {
+      session.probe(Math.round(x))
+      if (session.solved) return
+    }
+    if (session.bestAlt >= cfg.mainPeakModeAlt) return
+  }
+}
+
+function findHillLinearFallback(session, lo, hi, hillCount, cfg) {
+  const span = hi - lo
+  const step = Math.max(1, Math.ceil(span / Math.max(cfg.coarseMinDivisor, hillCount * cfg.coarseHillFactor)))
+  session.sweep(lo, hi, step, cfg.mainPeakModeAlt)
+}
+
+/** Hill-climb on the main peak with shrinking step. */
+function tryHillClimbFinals(session, searchMin, searchMax, gaussWidth, fullMin, fullMax, cfg) {
+  let step = Math.max(1, Math.ceil(gaussWidth / cfg.hillClimbInitialDivisor))
+  let x = session.bestVal
+
+  while (step >= 1 && !session.solved) {
+    const left = Math.max(searchMin, x - step)
+    const right = Math.min(searchMax, x + step)
+    const yL = session.probe(left)?.alt ?? -1
+    if (session.solved) return
+    const yC = left === right ? yL : session.probe(x)?.alt ?? -1
+    if (session.solved) return
+    const yR = session.probe(right)?.alt ?? -1
+    if (session.solved) return
+
+    if (yL > yC) x = left
+    else if (yR > yC) x = right
+
+    const flat =
+      Math.abs(yL - yC) <= cfg.hillClimbFlatAltDelta &&
+      Math.abs(yR - yC) <= cfg.hillClimbFlatAltDelta
+    if (flat || (yC >= yL && yC >= yR)) {
+      const nextStep = Math.max(1, Math.ceil(step / cfg.hillClimbShrink))
+      if (nextStep >= step) break
+      step = nextStep
+    }
+  }
+
+  tryFinalCandidates(session, fullMin, fullMax, session.bestVal, session.bestAlt)
+}
+
+/** Grid zoom fallback when hill-climb stalls on a flat 10k plateau. */
+function tryZoomFinals(session, searchMin, searchMax, fullMin, fullMax, cfg) {
+  let step = Math.max(1, Math.ceil((searchMax - searchMin) / cfg.zoomInitialDivisor))
+  for (let pass = 0; pass < cfg.zoomMaxPasses && !session.solved; pass++) {
     const lo = Math.max(searchMin, session.bestVal - step)
     const hi = Math.min(searchMax, session.bestVal + step)
-    session.sweep(lo, hi, Math.max(1, Math.ceil(step / IMPROVED_ZOOM_STEP_DIVISOR)))
+    session.sweep(lo, hi, Math.max(1, Math.ceil(step / cfg.zoomStepDivisor)))
     if (session.solved) return
-    tryFinalCandidates(session, searchMin, searchMax, session.bestVal, session.bestAlt)
+    tryFinalCandidates(session, fullMin, fullMax, session.bestVal, session.bestAlt)
     if (session.solved) return
-    const nextStep = Math.max(1, Math.ceil(step / IMPROVED_ZOOM_STEP_DIVISOR))
+    const nextStep = Math.max(1, Math.ceil(step / cfg.zoomStepDivisor))
     if (nextStep >= step) break
     step = nextStep
   }
 }
 
-function refinePeakCandidates(session, searchMin, searchMax, peaks, refineRadius, count) {
+function refinePeakCandidates(session, searchMin, searchMax, peaks, refineRadius, count, cfg) {
   for (let i = 0; i < Math.min(count, peaks.length); i++) {
     const peak = peaks[i]
-    const refined = refinePeak(session, searchMin, searchMax, peak.x, refineRadius, IMPROVED_REFINE_COARSE_PASSES)
+    const refined = refinePeak(session, searchMin, searchMax, peak.x, refineRadius, cfg.refineCoarsePasses, cfg)
     if (session.solved) return true
     refinePeak(
       session,
       searchMin,
       searchMax,
       refined,
-      Math.max(1, Math.ceil(refineRadius / IMPROVED_REFINE_RADIUS_SHRINK)),
-      IMPROVED_REFINE_FINE_PASSES,
+      Math.max(1, Math.ceil(refineRadius / cfg.refineRadiusShrink)),
+      cfg.refineFinePasses,
+      cfg,
     )
     if (session.solved) return true
   }
@@ -566,61 +710,172 @@ function refinePeakCandidates(session, searchMin, searchMax, peaks, refineRadius
  * Standalone — does not call the legacy state machine.
  */
 export function runSolverImproved(assignment, options = {}) {
+  const cfg = normalizeImprovedConfig(options.improvedConfig)
   const server = toServer(assignment)
   const { min, max } = assignmentNumericRange(assignment)
-  const span = max - min
   const hillCount = kingOfTheHillHillCount(assignment.difficulty)
   const gaussWidth = kingOfTheHillGaussianWidth(assignment.passwordLength)
   const session = createProbeSession(server, min, max)
 
-  const coarseStep = Math.max(1, Math.ceil(span / Math.max(IMPROVED_COARSE_MIN_DIVISOR, hillCount * IMPROVED_COARSE_HILL_FACTOR)))
-  session.sweep(min, max, coarseStep)
+  findHillBySubdivision(session, min, max, cfg.findHillQuickRounds, cfg)
+  if (!session.solved && session.bestAlt < KING_MAIN_PEAK_ALTITUDE) {
+    let fallbackLo = min
+    let fallbackHi = max
+    if (session.bestAlt >= cfg.clusterDetectAlt) {
+      const win = clusterSearchWindow(min, max, session.bestVal, hillCount, assignment.passwordLength, cfg)
+      fallbackLo = win.min
+      fallbackHi = win.max
+    }
+    findHillLinearFallback(session, fallbackLo, fallbackHi, hillCount, cfg)
+  }
   if (session.solved) return finishSession(session, options)
 
-  let searchMin = min
-  let searchMax = max
-  if (session.bestAlt > IMPROVED_CLUSTER_DETECT_ALT) {
-    const win = clusterSearchWindow(min, max, session.bestVal, hillCount, assignment.passwordLength)
-    searchMin = win.min
-    searchMax = win.max
-  }
-  const searchSpan = searchMax - searchMin
+  let { min: searchMin, max: searchMax } = improvedSearchWindow(
+    min,
+    max,
+    session,
+    hillCount,
+    assignment.passwordLength,
+    gaussWidth,
+    cfg,
+  )
+  let searchSpan = searchMax - searchMin
+  let coarseStep = Math.max(
+    1,
+    Math.ceil(searchSpan / Math.max(cfg.coarseMinDivisor, hillCount * cfg.coarseHillFactor)),
+  )
 
-  for (const divisor of IMPROVED_RESCAN_DIVISORS) {
-    if (session.bestAlt >= KING_MAIN_PEAK_ALTITUDE) break
-    session.sweep(searchMin, searchMax, Math.max(1, Math.ceil(searchSpan / divisor)))
+  for (const divisor of improvedRescanDivisors(cfg)) {
+    if (session.bestAlt >= cfg.centroidMinAlt) break
+    if (session.bestAlt >= cfg.mainPeakModeAlt) break
+    ;({ min: searchMin, max: searchMax } = improvedSearchWindow(
+      min,
+      max,
+      session,
+      hillCount,
+      assignment.passwordLength,
+      gaussWidth,
+      cfg,
+    ))
+    searchSpan = searchMax - searchMin
+    session.sweep(
+      searchMin,
+      searchMax,
+      Math.max(1, Math.ceil(searchSpan / divisor)),
+      cfg.mainPeakModeAlt,
+    )
     if (session.solved) return finishSession(session, options)
   }
 
+  ;({ min: searchMin, max: searchMax } = improvedSearchWindow(
+    min,
+    max,
+    session,
+    hillCount,
+    assignment.passwordLength,
+    gaussWidth,
+    cfg,
+  ))
+  searchSpan = searchMax - searchMin
+  coarseStep = Math.max(
+    1,
+    Math.ceil(searchSpan / Math.max(cfg.coarseMinDivisor, hillCount * cfg.coarseHillFactor)),
+  )
+
   let peaks = findLocalPeaks(session.sortedSamples())
-  let refineRadius = Math.max(coarseStep, Math.ceil(searchSpan / (hillCount * IMPROVED_REFINE_SPAN_HILL_DIVISOR)))
-  refinePeakCandidates(session, searchMin, searchMax, peaks, refineRadius, hillCount)
+  let refineRadius = Math.max(coarseStep, Math.ceil(searchSpan / (hillCount * cfg.refineSpanHillDivisor)))
+  refinePeakCandidates(session, searchMin, searchMax, peaks, refineRadius, refinePeakCount(session, hillCount, cfg), cfg)
   if (session.solved) return finishSession(session, options)
 
   if (session.bestAlt < KING_MAIN_PEAK_ALTITUDE) {
-    session.sweep(searchMin, searchMax, Math.max(1, Math.ceil(gaussWidth / IMPROVED_SIDE_HILL_SWEEP_WIDTH_DIVISOR)))
+    ;({ min: searchMin, max: searchMax } = improvedSearchWindow(
+      min,
+      max,
+      session,
+      hillCount,
+      assignment.passwordLength,
+      gaussWidth,
+      cfg,
+    ))
+    session.sweep(
+      searchMin,
+      searchMax,
+      Math.max(1, Math.ceil(gaussWidth / cfg.sideHillSweepWidthDivisor)),
+      KING_MAIN_PEAK_ALTITUDE,
+    )
     if (session.solved) return finishSession(session, options)
     peaks = findLocalPeaks(session.sortedSamples())
     refineRadius = Math.max(1, Math.ceil(gaussWidth))
-    refinePeakCandidates(session, searchMin, searchMax, peaks, refineRadius, hillCount)
+    refinePeakCandidates(session, searchMin, searchMax, peaks, refineRadius, refinePeakCount(session, hillCount, cfg), cfg)
     if (session.solved) return finishSession(session, options)
   }
 
-  if (session.bestAlt >= IMPROVED_CENTROID_MIN_ALT) {
-    const centroid = weightedCentroid(session, session.bestAlt * IMPROVED_CENTROID_ALT_FRACTION)
+  if (session.bestAlt >= cfg.centroidMinAlt) {
+    ;({ min: searchMin, max: searchMax } = improvedSearchWindow(
+      min,
+      max,
+      session,
+      hillCount,
+      assignment.passwordLength,
+      gaussWidth,
+      cfg,
+    ))
+    const centroid = weightedCentroid(session, session.bestAlt * cfg.centroidAltFraction)
     if (centroid != null) {
       session.probe(centroid)
       if (!session.solved) {
-        refinePeak(session, searchMin, searchMax, centroid, IMPROVED_CENTROID_REFINE_RADIUS, IMPROVED_CENTROID_REFINE_PASSES)
+        refinePeak(session, searchMin, searchMax, centroid, cfg.centroidRefineRadius, cfg.centroidRefinePasses, cfg)
       }
     }
   }
 
   if (!session.solved) tryFinalCandidates(session, min, max, session.bestVal, session.bestAlt)
   if (!session.solved && session.bestAlt >= KING_MAIN_PEAK_ALTITUDE) {
-    tryZoomFinals(session, searchMin, searchMax)
+    const climbWindow = clusterSearchWindow(min, max, session.bestVal, hillCount, assignment.passwordLength, cfg)
+    tryHillClimbFinals(session, climbWindow.min, climbWindow.max, gaussWidth, min, max, cfg)
+    if (!session.solved) {
+      tryZoomFinals(session, climbWindow.min, climbWindow.max, min, max, cfg)
+    }
+    if (!session.solved) tryFinalCandidates(session, min, max, session.bestVal, session.bestAlt)
   }
   return finishSession(session, options)
+}
+
+/** Score a config on a batch of assignments (lower totalGuesses is better). */
+export function evaluateImprovedConfig(assignments, configOverrides = {}) {
+  const cfg = normalizeImprovedConfig(configOverrides)
+  let totalGuesses = 0
+  let solved = 0
+  let maxGuesses = 0
+  let minGuesses = Infinity
+  const failed = []
+
+  for (let i = 0; i < assignments.length; i++) {
+    const result = runSolverImproved(assignments[i], { improvedConfig: cfg })
+    if (result.solved) {
+      solved++
+      totalGuesses += result.guesses
+      maxGuesses = Math.max(maxGuesses, result.guesses)
+      minGuesses = Math.min(minGuesses, result.guesses)
+    } else {
+      failed.push(i + 1)
+    }
+  }
+
+  const count = assignments.length
+  const unsolved = count - solved
+  return {
+    config: cfg,
+    solved,
+    total: count,
+    unsolved,
+    failed,
+    totalGuesses: unsolved > 0 ? null : totalGuesses,
+    avgGuesses: unsolved > 0 ? null : totalGuesses / count,
+    maxGuesses: unsolved > 0 ? null : maxGuesses,
+    minGuesses: unsolved > 0 ? null : minGuesses,
+    fitness: unsolved > 0 ? Number.MAX_SAFE_INTEGER - unsolved * 1e6 + totalGuesses : totalGuesses,
+  }
 }
 
 function finishSession(session, options = {}) {

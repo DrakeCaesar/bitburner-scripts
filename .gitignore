@@ -16,6 +16,12 @@ ipvgo-engine/cpp/*.wasm
 ipvgo-engine/cpp/ipvgo.wasm.js
 ipvgo-engine/katago/
 
+# KingOfTheHill C++ tuner (tests/koth_tune/) build artifacts
+tests/koth_tune/build/
+
+# KingOfTheHill genetic tuner output (JS or C++ --out)
+tests/kingOfTheHillTune.best.json
+
 # CMake artifacts if misconfigured into repo-root build/ (legacy watch scripts live there)
 build/.cmake/
 build/_deps/
