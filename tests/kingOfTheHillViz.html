@@ -176,7 +176,7 @@
 <body>
   <h1>KingOfTheHill altitude profiles</h1>
   <p class="subtitle">
-    Ten deterministic assignments. Legacy grid search vs standalone peak-picking solver (no shared fallback).
+    Ten deterministic assignments. Orange dots are solver probes.
     Y = altitude returned by auth; X = full valid guess range for password length.
   </p>
 
@@ -193,7 +193,7 @@
     <span><i class="swatch" style="background: var(--curve)"></i> full graph (side hills)</span>
     <span><i class="swatch" style="background: var(--curve-near)"></i> within 3% of password (main hill only)</span>
     <span><i class="swatch" style="background: var(--password); height: 12px; width: 2px"></i> true password</span>
-    <span><i class="swatch" style="background: var(--probe); height: 8px; width: 8px; border-radius: 50%"></i> improved solver probes</span>
+    <span><i class="swatch" style="background: var(--probe); height: 8px; width: 8px; border-radius: 50%"></i> solver probes</span>
     <span><i class="swatch" style="background: var(--side-hill)"></i> 7500 m side-hill ceiling</span>
     <span><i class="swatch" style="background: var(--main-peak)"></i> 10000 m main peak</span>
   </div>
@@ -213,8 +213,7 @@
       DEFAULT_DIFFICULTY,
       KING_MAIN_PEAK_ALTITUDE,
       generateAssignments,
-      runSolverLegacy,
-      runSolverImproved,
+      runSolver,
       sampleAltitudeProfile,
     } from "./kingOfTheHillCore.mjs"
 
@@ -234,7 +233,7 @@
       return String(n)
     }
 
-    function drawChart(canvas, profile, improved) {
+    function drawChart(canvas, profile, solverResult) {
       const dpr = window.devicePixelRatio || 1
       const rect = canvas.getBoundingClientRect()
       const w = Math.max(320, Math.floor(rect.width * dpr))
@@ -326,10 +325,10 @@
       }
       if (seg.length) strokeSegment(seg, segNear ? "#81c784" : "#4fc3f7")
 
-      // improved solver probe points
-      if (improved?.probes?.length) {
+      // solver probe points
+      if (solverResult?.probes?.length) {
         ctx.fillStyle = "rgba(255, 183, 77, 0.65)"
-        for (const probe of improved.probes) {
+        for (const probe of solverResult.probes) {
           const px = xScale(probe.x)
           const py = yScale(probe.alt)
           ctx.beginPath()
@@ -370,17 +369,10 @@
       return { label, solved, total, min, max, avg }
     }
 
-    function renderSummary(legacyRows, improvedRows) {
-      const legacy = summarizeSolver("legacy", legacyRows)
-      const improved = summarizeSolver("improved", improvedRows)
-      const saved = legacy.total - improved.total
-      const deltaClass = saved > 0 ? "good" : saved < 0 ? "bad" : ""
-      const deltaText = saved === 0 ? "same total" : saved > 0 ? `${saved} fewer guesses` : `${-saved} more guesses`
-
+    function renderSummary(rows) {
+      const summary = summarizeSolver("solver", rows)
       summaryEl.innerHTML = [
-        `<div><strong>${legacy.label}</strong> ${legacy.solved}/${legacyRows.length} solved, avg ${legacy.avg.toFixed(1)} (${legacy.min}-${legacy.max}), total ${legacy.total}</div>`,
-        `<div><strong>${improved.label}</strong> ${improved.solved}/${improvedRows.length} solved, avg ${improved.avg.toFixed(1)} (${improved.min}-${improved.max}), total ${improved.total}</div>`,
-        `<div class="${deltaClass}"><strong>delta</strong> ${deltaText} (${((saved / legacy.total) * 100).toFixed(0)}%)</div>`,
+        `<div><strong>${summary.label}</strong> ${summary.solved}/${rows.length} solved, avg ${summary.avg.toFixed(1)} (${summary.min}-${summary.max}), total ${summary.total}</div>`,
       ].join("")
     }
 
@@ -391,14 +383,11 @@
 
       grid.replaceChildren()
       const assignments = generateAssignments(seed, DEFAULT_COUNT, difficulty)
-      const legacyRows = []
-      const improvedRows = []
+      const rows = []
 
       for (const { index, assignment } of assignments) {
-        const legacy = runSolverLegacy(assignment)
-        const improved = runSolverImproved(assignment, { returnSamples: true })
-        legacyRows.push(legacy)
-        improvedRows.push(improved)
+        const result = runSolver(assignment, { returnSamples: true })
+        rows.push(result)
         const profile = sampleAltitudeProfile(assignment, { pointCount })
 
         const card = document.createElement("article")
@@ -411,18 +400,10 @@
         const meta = document.createElement("div")
         meta.className = "meta"
 
-        const legacyRow = document.createElement("div")
-        legacyRow.className = "meta-row"
-        legacyRow.innerHTML = `<span class="label">legacy</span><span>${solverLine("", legacy).slice(2)}</span>`
-        meta.appendChild(legacyRow)
-
-        const improvedRow = document.createElement("div")
-        improvedRow.className = "meta-row"
-        const delta = improved.guesses - legacy.guesses
-        const deltaText = delta === 0 ? "same" : delta > 0 ? `+${delta}` : String(delta)
-        const deltaClass = delta < 0 ? "good" : delta > 0 ? "bad" : ""
-        improvedRow.innerHTML = `<span class="label">improved</span><span>${solverLine("", improved).slice(2)}</span><span class="${deltaClass}">(${deltaText})</span>`
-        meta.appendChild(improvedRow)
+        const solverRow = document.createElement("div")
+        solverRow.className = "meta-row"
+        solverRow.innerHTML = `<span class="label">solver</span><span>${solverLine("", result).slice(2)}</span>`
+        meta.appendChild(solverRow)
 
         const rangeRow = document.createElement("div")
         rangeRow.className = "meta-row"
@@ -435,10 +416,10 @@
         card.appendChild(canvas)
         grid.appendChild(card)
 
-        drawChart(canvas, profile, improved)
+        drawChart(canvas, profile, result)
       }
 
-      renderSummary(legacyRows, improvedRows)
+      renderSummary(rows)
     }
 
     renderBtn.addEventListener("click", renderAll)
