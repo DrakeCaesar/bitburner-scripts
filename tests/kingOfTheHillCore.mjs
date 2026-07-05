@@ -326,6 +326,210 @@ function kingOfTheHillApplyResult(state, guess, result) {
 }
 
 export function runSolver(assignment) {
+  return runSolverLegacy(assignment)
+}
+
+/** Game hill count from server difficulty (authentication.ts). */
+export function kingOfTheHillHillCount(difficulty) {
+  return Math.min(Math.floor(difficulty / 8), 4) * 2 + 1
+}
+
+/** Gaussian width from password string length (authentication.ts). */
+export function kingOfTheHillGaussianWidth(passwordLength) {
+  return 10 ** Math.max(passwordLength - 2, 0) + 1
+}
+
+function createProbeSession(server, min, max) {
+  const samples = new Map()
+  const session = {
+    guesses: 0,
+    solved: false,
+    bestVal: min,
+    bestAlt: -1,
+    samples,
+    probe(x) {
+      const xi = Math.round(x)
+      if (xi < min || xi > max) return null
+      if (samples.has(xi)) return { alt: samples.get(xi), cached: true }
+      session.guesses++
+      const result = authKingOfTheHill(server, String(xi))
+      if (result.success) {
+        session.solved = true
+        return { alt: Infinity, cached: false }
+      }
+      const alt = parseKingOfTheHillAltitude(result.feedback, result.message) ?? -1
+      samples.set(xi, alt)
+      if (alt > session.bestAlt) {
+        session.bestAlt = alt
+        session.bestVal = xi
+      }
+      return { alt, cached: false }
+    },
+    sweep(start, end, step) {
+      if (step <= 0) step = 1
+      for (let x = start; x <= end; x += step) {
+        session.probe(x)
+        if (session.solved) return
+      }
+      if (end >= start && end <= max && !samples.has(end)) session.probe(end)
+    },
+    sortedSamples() {
+      return [...samples.entries()].sort((a, b) => a[0] - b[0])
+    },
+  }
+  return session
+}
+
+function parabolicPeak(x0, y0, x1, y1, x2, y2) {
+  const denom = y0 - 2 * y1 + y2
+  if (!Number.isFinite(denom) || Math.abs(denom) < 1e-12) return x1
+  return x1 + ((x1 - x0) * (y0 - y2)) / (2 * denom)
+}
+
+function findLocalPeaks(sorted) {
+  if (sorted.length === 0) return []
+  const peaks = []
+  for (let i = 1; i < sorted.length - 1; i++) {
+    const [x, alt] = sorted[i]
+    if (alt >= sorted[i - 1][1] && alt > sorted[i + 1][1]) peaks.push({ x, alt })
+  }
+  let best = sorted[0]
+  for (const row of sorted) {
+    if (row[1] > best[1]) best = row
+  }
+  peaks.push({ x: best[0], alt: best[1] })
+  peaks.sort((a, b) => b.alt - a.alt)
+  const seen = new Set()
+  return peaks.filter((p) => {
+    if (seen.has(p.x)) return false
+    seen.add(p.x)
+    return true
+  })
+}
+
+function refinePeak(session, min, max, center, initialRadius, passes) {
+  let c = center
+  let r = Math.max(1, initialRadius)
+  for (let p = 0; p < passes; p++) {
+    const x0 = Math.max(min, c - r)
+    const x2 = Math.min(max, c + r)
+    const x1 = c
+    const y0 = session.probe(x0)?.alt ?? -1
+    if (session.solved) return c
+    const y1 = session.probe(x1)?.alt ?? -1
+    if (session.solved) return c
+    const y2 = session.probe(x2)?.alt ?? -1
+    if (session.solved) return c
+    const peak = parabolicPeak(x0, y0, x1, y1, x2, y2)
+    c = Math.round(Math.max(min, Math.min(max, peak)))
+    r = Math.max(1, Math.ceil(r / 3))
+  }
+  return c
+}
+
+function weightedCentroid(session, minAlt) {
+  let sumW = 0
+  let sumX = 0
+  for (const [x, alt] of session.samples) {
+    if (alt < minAlt) continue
+    sumW += alt
+    sumX += x * alt
+  }
+  if (sumW <= 0) return null
+  return Math.round(sumX / sumW)
+}
+
+function tryFinalCandidates(session, min, max, bestVal, bestAlt) {
+  const finals = kingOfTheHillBuildFinals({ min, max, bestVal, bestAlt })
+  for (const c of finals) {
+    session.probe(c)
+    if (session.solved) return
+  }
+}
+
+function runLegacyPhasesWithSession(session, assignment) {
+  const { min, max } = assignmentNumericRange(assignment)
+  let state = initKingOfTheHillState({ passwordLength: assignment.passwordLength })
+  state.bestVal = session.bestVal
+  state.bestAlt = session.bestAlt >= 0 ? session.bestAlt : null
+
+  while (true) {
+    const next = kingOfTheHillNextGuess(state)
+    if (!next) break
+    const x = Number(next.guess)
+    if (!session.samples.has(x)) {
+      session.probe(x)
+      if (session.solved) return
+    }
+    const alt = session.samples.get(x)
+    state = kingOfTheHillApplyResult(state, next.guess, {
+      success: false,
+      feedback: alt != null ? String(alt) : "",
+      message: alt != null ? `current altitude: ${alt.toFixed(5)} m; highest peak: 10,000 m` : "",
+    })
+  }
+}
+
+/**
+ * Peak-picking + parabolic refinement using known hill count and Gaussian width.
+ * Falls back to legacy zoom/finals if not solved (side-hill traps).
+ */
+export function runSolverImproved(assignment, options = {}) {
+  const server = toServer(assignment)
+  const { min, max } = assignmentNumericRange(assignment)
+  const span = max - min
+  const hillCount = kingOfTheHillHillCount(assignment.difficulty)
+  const session = createProbeSession(server, min, max)
+
+  const coarseStep = Math.max(1, Math.ceil(span / Math.max(56, hillCount * 8)))
+  session.sweep(min, max, coarseStep)
+  if (session.solved) return finishSession(session, options)
+
+  for (const divisor of [100, 280, 750]) {
+    if (session.bestAlt >= KING_MAIN_PEAK_ALTITUDE) break
+    session.sweep(min, max, Math.max(1, Math.ceil(span / divisor)))
+    if (session.solved) return finishSession(session, options)
+  }
+
+  const peaks = findLocalPeaks(session.sortedSamples())
+  const refineRadius = Math.max(coarseStep, Math.ceil(span / (hillCount * 3)))
+  const candidateCount = Math.min(3, Math.max(1, hillCount))
+
+  for (let i = 0; i < Math.min(candidateCount, peaks.length); i++) {
+    const peak = peaks[i]
+    const refined = refinePeak(session, min, max, peak.x, refineRadius, 5)
+    if (session.solved) return finishSession(session, options)
+    refinePeak(session, min, max, refined, Math.max(1, Math.ceil(refineRadius / 6)), 4)
+    if (session.solved) return finishSession(session, options)
+  }
+
+  if (session.bestAlt >= 9000) {
+    const centroid = weightedCentroid(session, session.bestAlt * 0.88)
+    if (centroid != null) {
+      session.probe(centroid)
+      if (!session.solved) refinePeak(session, min, max, centroid, 12, 4)
+    }
+  }
+
+  if (!session.solved) tryFinalCandidates(session, min, max, session.bestVal, session.bestAlt)
+  if (!session.solved) runLegacyPhasesWithSession(session, assignment)
+  return finishSession(session, options)
+}
+
+function finishSession(session, options = {}) {
+  const result = {
+    guesses: session.guesses,
+    solved: session.solved,
+    bestVal: session.bestVal,
+    bestAlt: session.bestAlt >= 0 ? session.bestAlt : null,
+  }
+  if (options.returnSamples) {
+    result.probes = [...session.samples.entries()].map(([x, alt]) => ({ x, alt }))
+  }
+  return result
+}
+
+export function runSolverLegacy(assignment) {
   const server = toServer(assignment)
   let state = initKingOfTheHillState({ passwordLength: assignment.passwordLength })
   let guesses = 0
