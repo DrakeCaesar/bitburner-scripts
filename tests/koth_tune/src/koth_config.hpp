@@ -64,12 +64,6 @@ ImprovedConfig crossover(const ImprovedConfig& a, const ImprovedConfig& b, std::
 ImprovedConfig mutateConfig(const ImprovedConfig& parent, double mutationRate, double macroMutationRate, std::mt19937& rng);
 ImprovedConfig scatterMutateConfig(const ImprovedConfig& parent, double geneFraction, std::mt19937& rng);
 
-int64_t computeImprovedFitness(int unsolved, int64_t totalGuesses, int maxGuesses);
-bool loadConfigFromJsonFile(const std::string& path, ImprovedConfig* out);
-void saveBestJson(const std::string& path, const ImprovedConfig& cfg, const struct EvalScore& best,
-                  int generation, uint32_t seed, int count, int difficulty, int64_t evaluations,
-                  int64_t elapsedMs, const char* reason);
-
 struct EvalScore {
   ImprovedConfig config{};
   int solved = 0;
@@ -81,6 +75,10 @@ struct EvalScore {
   int minGuesses = 0;
   int64_t fitness = 0;
 };
+
+int64_t computeImprovedFitness(int unsolved, int64_t totalGuesses, int maxGuesses);
+bool loadConfigFromJsonFile(const std::string& path, ImprovedConfig* out);
+void saveBestJson(const std::string& path, const ImprovedConfig& cfg, const EvalScore& best);
 
 EvalScore evaluateImprovedConfig(const std::vector<Assignment>& assignments, const ImprovedConfig& cfg);
 

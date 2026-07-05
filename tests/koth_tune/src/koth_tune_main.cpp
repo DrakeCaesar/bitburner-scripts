@@ -7,6 +7,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <mutex>
 #include <random>
 #include <string>
@@ -30,7 +31,6 @@ struct Args {
   double stagnationImmigrantFraction = 0.35;
   double eliteMutationRate = 0.12;
   int threads = 0;  // 0 = hardware_concurrency
-  int saveEvery = 1;
   std::string loadPath;
   std::string outPath = "tests/kingOfTheHillTune.best.json";
 };
@@ -55,10 +55,9 @@ void printHelp() {
       << "  --tournament N      Tournament selection size (default 3)\n"
       << "  --elite N           Elite individuals per generation (default 2)\n"
       << "  --load PATH         Load seed config JSON\n"
-      << "  --out PATH          Output JSON path\n"
-      << "  --save-every N      Save checkpoint every N generations (default 1)\n"
+      << "  --out PATH          Output JSON path (written only on improvement)\n"
       << "  --help              Show this help\n\n"
-      << "Ctrl+C saves best config and exits.\n";
+      << "Ctrl+C exits; --out is updated when a better config is found.\n";
 }
 
 bool parseArgs(int argc, char** argv, Args* args) {
@@ -84,7 +83,6 @@ bool parseArgs(int argc, char** argv, Args* args) {
     else if (arg == "--elite") args->eliteCount = std::stoi(need("--elite"));
     else if (arg == "--load") args->loadPath = need("--load");
     else if (arg == "--out") args->outPath = need("--out");
-    else if (arg == "--save-every") args->saveEvery = std::stoi(need("--save-every"));
     else if (arg == "--help" || arg == "-h") {
       printHelp();
       return false;
@@ -123,10 +121,25 @@ struct ScoredIndividual {
   koth::EvalScore score;
 };
 
+struct SaveContext {
+  std::string outPath;
+  int64_t runStartFitness = 0;
+  int64_t savedFitness = std::numeric_limits<int64_t>::max();
+  std::mutex mu;
+};
+
+void trySaveBest(SaveContext& saveCtx, const koth::EvalScore& best) {
+  if (best.fitness >= saveCtx.runStartFitness) return;
+  std::lock_guard<std::mutex> lock(saveCtx.mu);
+  if (best.fitness >= saveCtx.savedFitness) return;
+  koth::saveBestJson(saveCtx.outPath, best.config, best);
+  saveCtx.savedFitness = best.fitness;
+}
+
 void evaluatePopulationParallel(const std::vector<koth::Assignment>& assignments,
                                 const std::vector<koth::ImprovedConfig>& population, std::vector<koth::EvalScore>& scores,
                                 int threads, std::atomic<int64_t>& evaluations, koth::EvalScore& globalBest,
-                                std::mutex& bestMu, int generation) {
+                                std::mutex& bestMu, SaveContext& saveCtx, int generation) {
   const int workerCount = std::max(1, threads);
   std::atomic<size_t> next{0};
   std::vector<std::thread> workers;
@@ -144,6 +157,7 @@ void evaluatePopulationParallel(const std::vector<koth::Assignment>& assignments
         std::lock_guard<std::mutex> lock(bestMu);
         if (score.fitness < globalBest.fitness) {
           globalBest = score;
+          trySaveBest(saveCtx, globalBest);
           std::cout << "  [gen " << generation << " " << (i + 1) << "/" << population.size()
                     << "] NEW BEST: " << formatScore(score) << "\n";
         }
@@ -298,7 +312,7 @@ int main(int argc, char** argv) {
   std::cout << "=== KingOfTheHill improved solver tuner (C++) ===\n";
   std::cout << "assignments=" << args.count << " seed=" << args.seed << " difficulty=" << args.difficulty
             << " population=" << args.population << " threads=" << args.threads << "\n";
-  std::cout << "out=" << args.outPath << "\nCtrl+C saves best config and exits.\n\n";
+  std::cout << "out=" << args.outPath << " (written only on improvement)\nCtrl+C exits.\n\n";
 
   const auto started = std::chrono::steady_clock::now();
   std::atomic<int64_t> evaluations{0};
@@ -322,11 +336,15 @@ int main(int argc, char** argv) {
   int generation = 0;
   int stagnationCount = 0;
   int64_t lastGlobalBestFitness = globalBest.fitness;
+  SaveContext saveCtx;
+  saveCtx.outPath = args.outPath;
+  saveCtx.runStartFitness = globalBest.fitness;
 
   while (!g_stop.load() && (args.generations < 0 || generation < args.generations)) {
     ++generation;
     std::vector<koth::EvalScore> scores(population.size());
-    evaluatePopulationParallel(assignments, population, scores, args.threads, evaluations, globalBest, bestMu, generation);
+    evaluatePopulationParallel(assignments, population, scores, args.threads, evaluations, globalBest, bestMu, saveCtx,
+                               generation);
 
     if (g_stop.load()) break;
 
@@ -356,11 +374,6 @@ int main(int argc, char** argv) {
       std::cout << " | stagnation " << stagnationCount << formatExploration(explore);
     }
     std::cout << "\n";
-
-    if (args.saveEvery > 0 && generation % args.saveEvery == 0) {
-      koth::saveBestJson(args.outPath, globalBest.config, globalBest, generation, args.seed, args.count, args.difficulty,
-                         evaluations.load(), elapsedMs, "checkpoint");
-    }
 
     std::vector<koth::ImprovedConfig> next;
     next.reserve(population.size());
@@ -421,11 +434,12 @@ int main(int argc, char** argv) {
     population = std::move(next);
   }
 
-  const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
-  koth::saveBestJson(args.outPath, globalBest.config, globalBest, generation, args.seed, args.count, args.difficulty,
-                     evaluations.load(), elapsedMs, g_stop.load() ? "interrupt" : "complete");
-
-  std::cout << "\nSaved best config to " << args.outPath << "\n";
+  std::cout << "\n";
+  if (saveCtx.savedFitness < saveCtx.runStartFitness) {
+    std::cout << "Saved best config to " << args.outPath << "\n";
+  } else {
+    std::cout << "No improvement; " << args.outPath << " unchanged\n";
+  }
   std::cout << formatScore(globalBest) << "\n";
   return 0;
 }

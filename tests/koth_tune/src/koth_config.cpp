@@ -206,6 +206,28 @@ bool parseJsonNumberAfterKey(const std::string& text, const std::string& key, do
   }
 }
 
+bool extractJsonObjectAfterKey(const std::string& text, const std::string& key, std::string* out) {
+  const std::string needle = "\"" + key + "\"";
+  const size_t keyPos = text.find(needle);
+  if (keyPos == std::string::npos) return false;
+  const size_t bracePos = text.find('{', text.find(':', keyPos));
+  if (bracePos == std::string::npos) return false;
+
+  int depth = 0;
+  for (size_t i = bracePos; i < text.size(); ++i) {
+    if (text[i] == '{') {
+      ++depth;
+    } else if (text[i] == '}') {
+      --depth;
+      if (depth == 0) {
+        *out = text.substr(bracePos, i - bracePos + 1);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 const char* geneKey(GeneId id) {
   switch (id) {
     case GeneId::ClusterMargin: return "clusterMargin";
@@ -339,16 +361,16 @@ bool loadConfigFromJsonFile(const std::string& path, ImprovedConfig* out) {
   std::ostringstream ss;
   ss << in.rdbuf();
   const std::string text = ss.str();
+
+  std::string configJson;
+  if (!extractJsonObjectAfterKey(text, "config", &configJson)) return false;
+
   ImprovedConfig cfg = defaultImprovedConfig();
-  bool any = false;
   for (const auto& spec : kSpecs) {
     double v = 0.0;
-    if (parseJsonNumberAfterKey(text, geneKey(spec.id), &v)) {
-      setGeneDouble(cfg, spec.id, v);
-      any = true;
-    }
+    if (!parseJsonNumberAfterKey(configJson, geneKey(spec.id), &v)) return false;
+    setGeneDouble(cfg, spec.id, v);
   }
-  if (!any) return false;
   *out = normalizeImprovedConfig(cfg);
   return true;
 }
@@ -381,38 +403,22 @@ EvalScore evaluateImprovedConfig(const std::vector<Assignment>& assignments, con
   return score;
 }
 
-void saveBestJson(const std::string& path, const ImprovedConfig& cfg, const EvalScore& best, int generation, uint32_t seed,
-                  int count, int difficulty, int64_t evaluations, int64_t elapsedMs, const char* reason) {
+void saveBestJson(const std::string& path, const ImprovedConfig& cfg, const EvalScore& best) {
   std::ofstream out(path);
   out << std::setprecision(12);
   out << "{\n";
-  out << "  \"savedAt\": \"cpp\",\n";
-  out << "  \"reason\": \"" << reason << "\",\n";
-  out << "  \"generation\": " << generation << ",\n";
-  out << "  \"seed\": " << seed << ",\n";
-  out << "  \"count\": " << count << ",\n";
-  out << "  \"difficulty\": " << difficulty << ",\n";
-  out << "  \"evaluations\": " << evaluations << ",\n";
-  out << "  \"elapsedMs\": " << elapsedMs << ",\n";
-  out << "  \"best\": {\n";
-  out << "    \"solved\": " << best.solved << ",\n";
-  out << "    \"total\": " << best.total << ",\n";
-  out << "    \"unsolved\": " << best.unsolved << ",\n";
-  out << "    \"totalGuesses\": " << best.totalGuesses << ",\n";
-  out << "    \"avgGuesses\": " << best.avgGuesses << ",\n";
-  out << "    \"minGuesses\": " << best.minGuesses << ",\n";
-  out << "    \"maxGuesses\": " << best.maxGuesses << ",\n";
-  out << "    \"fitness\": " << best.fitness << ",\n";
-  out << "    \"config\": {\n";
+  out << "  \"avgGuesses\": " << best.avgGuesses << ",\n";
+  out << "  \"totalGuesses\": " << best.totalGuesses << ",\n";
+  out << "  \"fitness\": " << best.fitness << ",\n";
+  out << "  \"config\": {\n";
   for (size_t i = 0; i < sizeof(kSpecs) / sizeof(kSpecs[0]); ++i) {
     const auto& spec = kSpecs[i];
-    out << "      \"" << geneKey(spec.id) << "\": ";
+    out << "    \"" << geneKey(spec.id) << "\": ";
     const double v = getGeneDouble(cfg, spec.id);
     if (spec.type == GeneType::Int) out << static_cast<int>(std::llround(v));
     else out << v;
     out << (i + 1 < sizeof(kSpecs) / sizeof(kSpecs[0]) ? ",\n" : "\n");
   }
-  out << "    }\n";
   out << "  }\n";
   out << "}\n";
 }

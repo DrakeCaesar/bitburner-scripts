@@ -1,0 +1,33 @@
+{
+  "avgGuesses": 45.2,
+  "totalGuesses": 4520,
+  "fitness": 4520087,
+  "config": {
+    "clusterMargin": 1,
+    "clusterDetectAlt": 300,
+    "mainPeakModeAlt": 9000,
+    "refinePeakCountMain": 3,
+    "findHillQuickRounds": 3,
+    "coarseMinDivisor": 48,
+    "coarseHillFactor": 4,
+    "rescanDivisor1": 25,
+    "rescanDivisor2": 100,
+    "rescanDivisor3": 100,
+    "refineSpanHillDivisor": 6,
+    "refineCoarsePasses": 4,
+    "refineFinePasses": 2,
+    "refineRadiusShrink": 8,
+    "refineStepShrink": 5,
+    "sideHillSweepWidthDivisor": 1,
+    "centroidMinAlt": 8070,
+    "centroidAltFraction": 0.88,
+    "centroidRefineRadius": 6,
+    "centroidRefinePasses": 4,
+    "hillClimbInitialDivisor": 104,
+    "hillClimbShrink": 2,
+    "hillClimbFlatAltDelta": 0.041,
+    "zoomInitialDivisor": 50,
+    "zoomMaxPasses": 7,
+    "zoomStepDivisor": 4
+  }
+}
