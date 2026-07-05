@@ -6,10 +6,13 @@
  */
 
 import {
+  ASSIGNMENT_PASSWORD_LENGTH_CAP,
+  ASSIGNMENT_PASSWORD_LENGTH_DIVISOR,
   DEFAULT_COUNT,
   DEFAULT_DIFFICULTY,
   DEFAULT_SEED,
   generateAssignments,
+  kingOfTheHillHillCount,
   runSolver,
 } from "./kingOfTheHillCore.mjs"
 
@@ -26,8 +29,8 @@ function parseArgs(argv) {
 }
 
 const { seed, count, difficulty } = parseArgs(process.argv)
-const passwordLength = Math.min(1 + difficulty / 6, 10)
-const hillCount = Math.min(Math.floor(difficulty / 8), 4) * 2 + 1
+const passwordLength = Math.min(1 + difficulty / ASSIGNMENT_PASSWORD_LENGTH_DIVISOR, ASSIGNMENT_PASSWORD_LENGTH_CAP)
+const hillCount = kingOfTheHillHillCount(difficulty)
 
 console.log("=== KingOfTheHill solver simulation ===")
 console.log(`model=KingOfTheHill format=numeric difficulty=${difficulty}`)

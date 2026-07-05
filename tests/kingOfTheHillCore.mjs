@@ -11,6 +11,68 @@ export const DEFAULT_COUNT = 10
 export const DEFAULT_SEED = 0x4b6f7468 // "Koth"
 export const KING_MAIN_PEAK_ALTITUDE = 7500
 
+// --- Game model (bitburner-src authentication.ts; change only for experiments) ---
+
+export const KOTH_PEAK_HEIGHT = 10000
+export const KOTH_NEAR_ZONE_FRACTION = 0.03
+export const KOTH_HILL_DIFFICULTY_DIVISOR = 8
+export const KOTH_HILL_DIFFICULTY_CAP = 4
+export const KOTH_HILL_SPACING_WIDTHS = 3
+export const KOTH_LOCATION_JITTER_SCALE = 0.2
+export const KOTH_LOCATION_JITTER_BASE = 0.9
+export const KOTH_HEIGHT_OFFSET_BASE = 2600
+export const KOTH_HEIGHT_JITTER_SCALE = 0.1
+export const KOTH_HEIGHT_JITTER_BASE = 0.95
+export const KOTH_GAUSS_WIDTH_LENGTH_OFFSET = 2
+export const KOTH_GAUSS_WIDTH_PLUS = 1
+
+// --- Assignment generation ---
+
+export const ASSIGNMENT_PASSWORD_LENGTH_DIVISOR = 6
+export const ASSIGNMENT_PASSWORD_LENGTH_CAP = 10
+export const ASSIGNMENT_SEED_STRIDE = 9973
+export const ASSIGNMENT_MAX_SAFE_PASSWORD_DIGITS = 15
+
+// --- Altitude profile sampling (viz) ---
+
+export const PROFILE_DEFAULT_POINT_COUNT = 800
+
+// --- Legacy solver (grid search + zoom; mirrors src/dnet/solvers/impl/all.ts) ---
+
+export const LEGACY_INITIAL_SWEEP_DIVISOR = 25
+export const LEGACY_RESCAN_PHASES = 3
+export const LEGACY_RESCAN_DIVISORS = [80, 250, 800]
+export const LEGACY_ZOOM_STEP_DIVISOR = 8
+export const LEGACY_BRUTE_FORCE_PASS = 999
+export const LEGACY_RESCAN_PASS_BASE = 900
+export const LEGACY_FINALS_TINY_SPAN = 12
+export const LEGACY_FINAL_MAIN_RADIUS = 9
+export const LEGACY_FINAL_SIDE_MIN_RADIUS = 25
+export const LEGACY_FINAL_SIDE_MAX_RADIUS = 99
+export const LEGACY_FINAL_SIDE_SPAN_DIVISOR = 40
+
+// --- Improved solver (peak-picking + cluster window) ---
+
+export const IMPROVED_CLUSTER_MARGIN = 1.1
+export const IMPROVED_CLUSTER_DETECT_ALT = 500
+export const IMPROVED_COARSE_MIN_DIVISOR = 56
+export const IMPROVED_COARSE_HILL_FACTOR = 8
+export const IMPROVED_RESCAN_DIVISORS = [100, 280, 750]
+export const IMPROVED_REFINE_SPAN_HILL_DIVISOR = 3
+export const IMPROVED_REFINE_COARSE_PASSES = 5
+export const IMPROVED_REFINE_FINE_PASSES = 4
+export const IMPROVED_REFINE_RADIUS_SHRINK = 6
+export const IMPROVED_REFINE_STEP_SHRINK = 3
+export const IMPROVED_SIDE_HILL_SWEEP_WIDTH_DIVISOR = 2
+export const IMPROVED_CENTROID_MIN_ALT = 9000
+export const IMPROVED_CENTROID_ALT_FRACTION = 0.88
+export const IMPROVED_CENTROID_REFINE_RADIUS = 12
+export const IMPROVED_CENTROID_REFINE_PASSES = 4
+export const IMPROVED_ZOOM_INITIAL_DIVISOR = 40
+export const IMPROVED_ZOOM_MAX_PASSES = 8
+export const IMPROVED_ZOOM_STEP_DIVISOR = 8
+export const IMPROVED_PARABOLIC_FLAT_EPSILON = 1e-12
+
 // --- Game: bitburner-src/src/Casino/RNG.ts (WHRNG) ---
 
 class WHRNG {
@@ -42,19 +104,21 @@ export function getKingOfTheHillAltitude(server, attemptedPassword) {
   const password = Number(server.password)
   const x = Number(attemptedPassword)
   const rng = new WHRNG(password)
-  const hillCount = Math.min(Math.floor(server.difficulty / 8), 4) * 2 + 1
+  const hillCount = Math.min(Math.floor(server.difficulty / KOTH_HILL_DIFFICULTY_DIVISOR), KOTH_HILL_DIFFICULTY_CAP) * 2 + 1
   const passwordHillIndex = Math.floor(rng.random() * (hillCount - 2)) + 1
-  const width = 10 ** Math.max(server.password.length - 2, 0) + 1
+  const width = 10 ** Math.max(server.password.length - KOTH_GAUSS_WIDTH_LENGTH_OFFSET, 0) + KOTH_GAUSS_WIDTH_PLUS
 
-  if (Math.abs((x - password) / password) < 0.03) {
-    return getAltitudeGivenHillSpecs(x, password, 10000, width)
+  if (Math.abs((x - password) / password) < KOTH_NEAR_ZONE_FRACTION) {
+    return getAltitudeGivenHillSpecs(x, password, KOTH_PEAK_HEIGHT, width)
   }
 
   let altitude = 0
   for (let i = 0; i < hillCount; i++) {
-    const locationOffset = (i - passwordHillIndex) * width * 3 * (rng.random() * 0.2 + 0.9)
-    const heightOffset = Math.abs((i - passwordHillIndex) * 2600) * (rng.random() * 0.1 + 0.95)
-    altitude += getAltitudeGivenHillSpecs(x, password + locationOffset, 10000 - heightOffset, width)
+    const locationOffset =
+      (i - passwordHillIndex) * width * KOTH_HILL_SPACING_WIDTHS * (rng.random() * KOTH_LOCATION_JITTER_SCALE + KOTH_LOCATION_JITTER_BASE)
+    const heightOffset =
+      Math.abs((i - passwordHillIndex) * KOTH_HEIGHT_OFFSET_BASE) * (rng.random() * KOTH_HEIGHT_JITTER_SCALE + KOTH_HEIGHT_JITTER_BASE)
+    altitude += getAltitudeGivenHillSpecs(x, password + locationOffset, KOTH_PEAK_HEIGHT - heightOffset, width)
   }
 
   return altitude
@@ -65,7 +129,7 @@ export function authKingOfTheHill(server, attemptedPassword) {
     return { success: true }
   }
   const altitude = getKingOfTheHillAltitude(server, attemptedPassword)
-  const message = `current altitude: ${altitude.toFixed(5)} m; highest peak: 10,000 m`
+  const message = `current altitude: ${altitude.toFixed(5)} m; highest peak: ${KOTH_PEAK_HEIGHT.toLocaleString()} m`
   return { success: false, feedback: `${altitude}`, message }
 }
 
@@ -81,7 +145,7 @@ export function getPasswordSeeded(length, rng, allowLetters = false) {
     password += characters[Math.floor(rng() * characters.length)]
   }
   if (!allowLetters && Number(password) > Number.MAX_SAFE_INTEGER) {
-    password = password.slice(0, 15)
+    password = password.slice(0, ASSIGNMENT_MAX_SAFE_PASSWORD_DIGITS)
   }
   if (!allowLetters) {
     return Number(password).toString()
@@ -90,7 +154,7 @@ export function getPasswordSeeded(length, rng, allowLetters = false) {
 }
 
 export function buildAssignment(difficulty, rng) {
-  const passwordLength = Math.min(1 + difficulty / 6, 10)
+  const passwordLength = Math.min(1 + difficulty / ASSIGNMENT_PASSWORD_LENGTH_DIVISOR, ASSIGNMENT_PASSWORD_LENGTH_CAP)
   const password = getPasswordSeeded(passwordLength, rng, false)
   return {
     difficulty,
@@ -126,7 +190,7 @@ export function toServer(assignment) {
  * Sample altitude along guess values for one assignment (full valid numeric range).
  */
 export function sampleAltitudeProfile(assignment, options = {}) {
-  const pointCount = options.pointCount ?? 800
+  const pointCount = options.pointCount ?? PROFILE_DEFAULT_POINT_COUNT
   const password = Number(assignment.password)
   const { min, max } = assignmentNumericRange(assignment)
   const server = toServer(assignment)
@@ -139,7 +203,7 @@ export function sampleAltitudeProfile(assignment, options = {}) {
     points.push({
       x,
       altitude: getKingOfTheHillAltitude(server, String(x)),
-      nearZone: Math.abs((x - password) / password) < 0.03,
+      nearZone: Math.abs((x - password) / password) < KOTH_NEAR_ZONE_FRACTION,
     })
   }
   const last = points[points.length - 1]
@@ -147,7 +211,7 @@ export function sampleAltitudeProfile(assignment, options = {}) {
     points.push({
       x: end,
       altitude: getKingOfTheHillAltitude(server, String(end)),
-      nearZone: Math.abs((end - password) / password) < 0.03,
+      nearZone: Math.abs((end - password) / password) < KOTH_NEAR_ZONE_FRACTION,
     })
   }
 
@@ -157,7 +221,7 @@ export function sampleAltitudeProfile(assignment, options = {}) {
 export function generateAssignments(seed, count, difficulty) {
   const rows = []
   for (let i = 0; i < count; i++) {
-    const rng = mulberry32((seed + i * 9973) >>> 0)
+    const rng = mulberry32((seed + i * ASSIGNMENT_SEED_STRIDE) >>> 0)
     rows.push({ index: i + 1, assignment: buildAssignment(difficulty, rng) })
   }
   return rows
@@ -173,13 +237,13 @@ function kingOfTheHillStartRescan(state, phase) {
   state.finalIdx = 0
   state.sweepIdx = state.min
   state.sweepEnd = state.max
-  state.passNum = 900 + phase
+  state.passNum = LEGACY_RESCAN_PASS_BASE + phase
   if (phase === 1) {
-    state.step = Math.max(1, Math.ceil(span / 80))
+    state.step = Math.max(1, Math.ceil(span / LEGACY_RESCAN_DIVISORS[0]))
   } else if (phase === 2) {
-    state.step = Math.max(1, Math.ceil(span / 250))
+    state.step = Math.max(1, Math.ceil(span / LEGACY_RESCAN_DIVISORS[1]))
   } else {
-    state.step = Math.max(1, Math.ceil(span / 800))
+    state.step = Math.max(1, Math.ceil(span / LEGACY_RESCAN_DIVISORS[2]))
   }
 }
 
@@ -189,7 +253,7 @@ function kingOfTheHillNeedsRescan(state) {
 
 function kingOfTheHillMaybeRescan(state) {
   if (!kingOfTheHillNeedsRescan(state)) return false
-  if (state.rescanPhase >= 3) return false
+  if (state.rescanPhase >= LEGACY_RESCAN_PHASES) return false
   kingOfTheHillStartRescan(state, state.rescanPhase + 1)
   return true
 }
@@ -216,7 +280,7 @@ function parseKingOfTheHillAltitude(feedback, message) {
 function kingOfTheHillBuildFinals(state) {
   const span = state.max - state.min
   const out = []
-  if (span <= 12) {
+  if (span <= LEGACY_FINALS_TINY_SPAN) {
     for (let d = 0; d <= span; d++) {
       if (d === 0) {
         if (state.bestVal >= state.min && state.bestVal <= state.max) out.push(state.bestVal)
@@ -231,7 +295,9 @@ function kingOfTheHillBuildFinals(state) {
   }
 
   const nearMainPeak = state.bestAlt != null && state.bestAlt >= KING_MAIN_PEAK_ALTITUDE
-  const maxRadius = nearMainPeak ? 9 : Math.min(99, Math.max(25, Math.ceil(span / 40)))
+  const maxRadius = nearMainPeak
+    ? LEGACY_FINAL_MAIN_RADIUS
+    : Math.min(LEGACY_FINAL_SIDE_MAX_RADIUS, Math.max(LEGACY_FINAL_SIDE_MIN_RADIUS, Math.ceil(span / LEGACY_FINAL_SIDE_SPAN_DIVISOR)))
   for (let d = 0; d <= maxRadius; d++) {
     if (d === 0) {
       if (state.bestVal >= state.min && state.bestVal <= state.max) out.push(state.bestVal)
@@ -248,7 +314,7 @@ function kingOfTheHillBuildFinals(state) {
 function initKingOfTheHillState(details) {
   const min = 10 ** (details.passwordLength - 1)
   const max = 10 ** details.passwordLength - 1
-  const step = Math.max(1, Math.ceil((max - min) / 25))
+  const step = Math.max(1, Math.ceil((max - min) / LEGACY_INITIAL_SWEEP_DIVISOR))
   return {
     type: "kingOfTheHill",
     min,
@@ -275,14 +341,14 @@ function kingOfTheHillNextGuess(state) {
       state.sweepIdx = state.min
       state.sweepEnd = state.max
       state.step = 1
-      state.passNum = 999
+      state.passNum = LEGACY_BRUTE_FORCE_PASS
       continue
     }
 
     if (kingOfTheHillMaybeRescan(state)) continue
 
     const prevStep = state.step
-    state.step = Math.max(1, Math.ceil(prevStep / 8))
+    state.step = Math.max(1, Math.ceil(prevStep / LEGACY_ZOOM_STEP_DIVISOR))
     if (state.step >= prevStep) {
       if (kingOfTheHillMaybeRescan(state)) continue
       state.finished = true
@@ -331,18 +397,18 @@ export function runSolver(assignment) {
 
 /** Game hill count from server difficulty (authentication.ts). */
 export function kingOfTheHillHillCount(difficulty) {
-  return Math.min(Math.floor(difficulty / 8), 4) * 2 + 1
+  return Math.min(Math.floor(difficulty / KOTH_HILL_DIFFICULTY_DIVISOR), KOTH_HILL_DIFFICULTY_CAP) * 2 + 1
 }
 
 /** Gaussian width from password string length (authentication.ts). */
 export function kingOfTheHillGaussianWidth(passwordLength) {
-  return 10 ** Math.max(passwordLength - 2, 0) + 1
+  return 10 ** Math.max(passwordLength - KOTH_GAUSS_WIDTH_LENGTH_OFFSET, 0) + KOTH_GAUSS_WIDTH_PLUS
 }
 
 /** Max distance from any hill center to the farthest hill in the cluster. */
 export function kingOfTheHillClusterHalfWidth(hillCount, passwordLength) {
   const width = kingOfTheHillGaussianWidth(passwordLength)
-  return Math.ceil((hillCount - 1) * width * 3 * 1.1)
+  return Math.ceil((hillCount - 1) * width * KOTH_HILL_SPACING_WIDTHS * IMPROVED_CLUSTER_MARGIN)
 }
 
 function clusterSearchWindow(fullMin, fullMax, center, hillCount, passwordLength) {
@@ -396,7 +462,7 @@ function createProbeSession(server, min, max) {
 
 function parabolicPeak(x0, y0, x1, y1, x2, y2) {
   const denom = y0 - 2 * y1 + y2
-  if (!Number.isFinite(denom) || Math.abs(denom) < 1e-12) return x1
+  if (!Number.isFinite(denom) || Math.abs(denom) < IMPROVED_PARABOLIC_FLAT_EPSILON) return x1
   return x1 + ((x1 - x0) * (y0 - y2)) / (2 * denom)
 }
 
@@ -436,7 +502,7 @@ function refinePeak(session, min, max, center, initialRadius, passes) {
     if (session.solved) return c
     const peak = parabolicPeak(x0, y0, x1, y1, x2, y2)
     c = Math.round(Math.max(min, Math.min(max, peak)))
-    r = Math.max(1, Math.ceil(r / 3))
+    r = Math.max(1, Math.ceil(r / IMPROVED_REFINE_STEP_SHRINK))
   }
   return c
 }
@@ -463,15 +529,15 @@ function tryFinalCandidates(session, min, max, bestVal, bestAlt) {
 
 /** Local zoom + integer finals when on the main peak plateau but not yet authed. */
 function tryZoomFinals(session, searchMin, searchMax) {
-  let step = Math.max(1, Math.ceil((searchMax - searchMin) / 40))
-  for (let pass = 0; pass < 8 && !session.solved; pass++) {
+  let step = Math.max(1, Math.ceil((searchMax - searchMin) / IMPROVED_ZOOM_INITIAL_DIVISOR))
+  for (let pass = 0; pass < IMPROVED_ZOOM_MAX_PASSES && !session.solved; pass++) {
     const lo = Math.max(searchMin, session.bestVal - step)
     const hi = Math.min(searchMax, session.bestVal + step)
-    session.sweep(lo, hi, Math.max(1, Math.ceil(step / 8)))
+    session.sweep(lo, hi, Math.max(1, Math.ceil(step / IMPROVED_ZOOM_STEP_DIVISOR)))
     if (session.solved) return
     tryFinalCandidates(session, searchMin, searchMax, session.bestVal, session.bestAlt)
     if (session.solved) return
-    const nextStep = Math.max(1, Math.ceil(step / 8))
+    const nextStep = Math.max(1, Math.ceil(step / IMPROVED_ZOOM_STEP_DIVISOR))
     if (nextStep >= step) break
     step = nextStep
   }
@@ -480,9 +546,16 @@ function tryZoomFinals(session, searchMin, searchMax) {
 function refinePeakCandidates(session, searchMin, searchMax, peaks, refineRadius, count) {
   for (let i = 0; i < Math.min(count, peaks.length); i++) {
     const peak = peaks[i]
-    const refined = refinePeak(session, searchMin, searchMax, peak.x, refineRadius, 5)
+    const refined = refinePeak(session, searchMin, searchMax, peak.x, refineRadius, IMPROVED_REFINE_COARSE_PASSES)
     if (session.solved) return true
-    refinePeak(session, searchMin, searchMax, refined, Math.max(1, Math.ceil(refineRadius / 6)), 4)
+    refinePeak(
+      session,
+      searchMin,
+      searchMax,
+      refined,
+      Math.max(1, Math.ceil(refineRadius / IMPROVED_REFINE_RADIUS_SHRINK)),
+      IMPROVED_REFINE_FINE_PASSES,
+    )
     if (session.solved) return true
   }
   return session.solved
@@ -500,32 +573,32 @@ export function runSolverImproved(assignment, options = {}) {
   const gaussWidth = kingOfTheHillGaussianWidth(assignment.passwordLength)
   const session = createProbeSession(server, min, max)
 
-  const coarseStep = Math.max(1, Math.ceil(span / Math.max(56, hillCount * 8)))
+  const coarseStep = Math.max(1, Math.ceil(span / Math.max(IMPROVED_COARSE_MIN_DIVISOR, hillCount * IMPROVED_COARSE_HILL_FACTOR)))
   session.sweep(min, max, coarseStep)
   if (session.solved) return finishSession(session, options)
 
   let searchMin = min
   let searchMax = max
-  if (session.bestAlt > 500) {
+  if (session.bestAlt > IMPROVED_CLUSTER_DETECT_ALT) {
     const win = clusterSearchWindow(min, max, session.bestVal, hillCount, assignment.passwordLength)
     searchMin = win.min
     searchMax = win.max
   }
   const searchSpan = searchMax - searchMin
 
-  for (const divisor of [100, 280, 750]) {
+  for (const divisor of IMPROVED_RESCAN_DIVISORS) {
     if (session.bestAlt >= KING_MAIN_PEAK_ALTITUDE) break
     session.sweep(searchMin, searchMax, Math.max(1, Math.ceil(searchSpan / divisor)))
     if (session.solved) return finishSession(session, options)
   }
 
   let peaks = findLocalPeaks(session.sortedSamples())
-  let refineRadius = Math.max(coarseStep, Math.ceil(searchSpan / (hillCount * 3)))
+  let refineRadius = Math.max(coarseStep, Math.ceil(searchSpan / (hillCount * IMPROVED_REFINE_SPAN_HILL_DIVISOR)))
   refinePeakCandidates(session, searchMin, searchMax, peaks, refineRadius, hillCount)
   if (session.solved) return finishSession(session, options)
 
   if (session.bestAlt < KING_MAIN_PEAK_ALTITUDE) {
-    session.sweep(searchMin, searchMax, Math.max(1, Math.ceil(gaussWidth / 2)))
+    session.sweep(searchMin, searchMax, Math.max(1, Math.ceil(gaussWidth / IMPROVED_SIDE_HILL_SWEEP_WIDTH_DIVISOR)))
     if (session.solved) return finishSession(session, options)
     peaks = findLocalPeaks(session.sortedSamples())
     refineRadius = Math.max(1, Math.ceil(gaussWidth))
@@ -533,11 +606,13 @@ export function runSolverImproved(assignment, options = {}) {
     if (session.solved) return finishSession(session, options)
   }
 
-  if (session.bestAlt >= 9000) {
-    const centroid = weightedCentroid(session, session.bestAlt * 0.88)
+  if (session.bestAlt >= IMPROVED_CENTROID_MIN_ALT) {
+    const centroid = weightedCentroid(session, session.bestAlt * IMPROVED_CENTROID_ALT_FRACTION)
     if (centroid != null) {
       session.probe(centroid)
-      if (!session.solved) refinePeak(session, searchMin, searchMax, centroid, 12, 4)
+      if (!session.solved) {
+        refinePeak(session, searchMin, searchMax, centroid, IMPROVED_CENTROID_REFINE_RADIUS, IMPROVED_CENTROID_REFINE_PASSES)
+      }
     }
   }
 
