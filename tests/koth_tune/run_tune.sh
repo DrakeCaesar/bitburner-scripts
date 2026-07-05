@@ -9,7 +9,7 @@ CORES=12
 THREADS=$CORES
 POPULATION=$((CORES * 6))   # 72: 6 eval tasks per core per generation
 COUNT=$((CORES * 20))       # 240 assignments per individual
-SEED=1265595496
+SEED=1265595491
 DIFFICULTY=60
 # Fitness target: max or avg (JSON path is derived automatically)
 OBJECTIVE=max

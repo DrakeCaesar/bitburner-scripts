@@ -1,5 +1,7 @@
 {
+  "objective": "avg",
   "avgGuesses": 21.75,
+  "maxGuesses": 72,
   "totalGuesses": 5220,
   "fitness": 5220071,
   "config": {
