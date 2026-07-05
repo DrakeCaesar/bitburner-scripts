@@ -128,6 +128,41 @@ struct SaveContext {
   std::mutex mu;
 };
 
+class RateLimitedPrinter {
+ public:
+  explicit RateLimitedPrinter(std::chrono::milliseconds interval = std::chrono::milliseconds(1000))
+      : interval_(interval) {}
+
+  void println(const std::string& line) {
+    std::lock_guard<std::mutex> lock(mu_);
+    pending_ = line;
+    maybeFlushLocked(std::chrono::steady_clock::now());
+  }
+
+  void flush() {
+    std::lock_guard<std::mutex> lock(mu_);
+    if (!pending_.empty()) {
+      std::cout << pending_ << '\n';
+      pending_.clear();
+      lastPrint_ = std::chrono::steady_clock::now();
+    }
+  }
+
+ private:
+  void maybeFlushLocked(std::chrono::steady_clock::time_point now) {
+    if (pending_.empty()) return;
+    if (lastPrint_.time_since_epoch().count() != 0 && now - lastPrint_ < interval_) return;
+    std::cout << pending_ << '\n';
+    pending_.clear();
+    lastPrint_ = now;
+  }
+
+  std::mutex mu_;
+  std::chrono::milliseconds interval_;
+  std::chrono::steady_clock::time_point lastPrint_{};
+  std::string pending_;
+};
+
 void trySaveBest(SaveContext& saveCtx, const koth::EvalScore& best) {
   if (best.fitness >= saveCtx.runStartFitness) return;
   std::lock_guard<std::mutex> lock(saveCtx.mu);
@@ -139,7 +174,7 @@ void trySaveBest(SaveContext& saveCtx, const koth::EvalScore& best) {
 void evaluatePopulationParallel(const std::vector<koth::Assignment>& assignments,
                                 const std::vector<koth::ImprovedConfig>& population, std::vector<koth::EvalScore>& scores,
                                 int threads, std::atomic<int64_t>& evaluations, koth::EvalScore& globalBest,
-                                std::mutex& bestMu, SaveContext& saveCtx, int generation) {
+                                std::mutex& bestMu, SaveContext& saveCtx, RateLimitedPrinter& progress, int generation) {
   const int workerCount = std::max(1, threads);
   std::atomic<size_t> next{0};
   std::vector<std::thread> workers;
@@ -158,8 +193,8 @@ void evaluatePopulationParallel(const std::vector<koth::Assignment>& assignments
         if (score.fitness < globalBest.fitness) {
           globalBest = score;
           trySaveBest(saveCtx, globalBest);
-          std::cout << "  [gen " << generation << " " << (i + 1) << "/" << population.size()
-                    << "] NEW BEST: " << formatScore(score) << "\n";
+          progress.println("  [gen " + std::to_string(generation) + " " + std::to_string(i + 1) + "/" +
+                           std::to_string(population.size()) + "] NEW BEST: " + formatScore(score));
         }
       }
     });
@@ -339,12 +374,13 @@ int main(int argc, char** argv) {
   SaveContext saveCtx;
   saveCtx.outPath = args.outPath;
   saveCtx.runStartFitness = globalBest.fitness;
+  RateLimitedPrinter progress;
 
   while (!g_stop.load() && (args.generations < 0 || generation < args.generations)) {
     ++generation;
     std::vector<koth::EvalScore> scores(population.size());
     evaluatePopulationParallel(assignments, population, scores, args.threads, evaluations, globalBest, bestMu, saveCtx,
-                               generation);
+                               progress, generation);
 
     if (g_stop.load()) break;
 
@@ -367,13 +403,13 @@ int main(int argc, char** argv) {
     const ExplorationParams explore = computeExploration(stagnationCount, args);
 
     const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
-    std::cout << "gen " << generation << " | pop best " << formatScore(scored.front().score) << " | global best "
-              << formatScore(globalBest) << " | evals " << evaluations.load() << " | "
-              << formatDuration(elapsedMs);
+    std::string line = "gen " + std::to_string(generation) + " | pop best " + formatScore(scored.front().score) +
+                       " | global best " + formatScore(globalBest) + " | evals " + std::to_string(evaluations.load()) +
+                       " | " + formatDuration(elapsedMs);
     if (stagnationCount > 0) {
-      std::cout << " | stagnation " << stagnationCount << formatExploration(explore);
+      line += " | stagnation " + std::to_string(stagnationCount) + formatExploration(explore);
     }
-    std::cout << "\n";
+    progress.println(line);
 
     std::vector<koth::ImprovedConfig> next;
     next.reserve(population.size());
@@ -433,6 +469,8 @@ int main(int argc, char** argv) {
     }
     population = std::move(next);
   }
+
+  progress.flush();
 
   std::cout << "\n";
   if (saveCtx.savedFitness < saveCtx.runStartFitness) {
