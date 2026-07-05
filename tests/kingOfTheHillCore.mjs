@@ -841,7 +841,13 @@ export function runSolverImproved(assignment, options = {}) {
   return finishSession(session, options)
 }
 
-/** Score a config on a batch of assignments (lower totalGuesses is better). */
+/** Lower is better. Total guesses primary; max guesses breaks ties between similar configs. */
+export function improvedConfigFitness({ unsolved, totalGuesses = 0, maxGuesses = 0 }) {
+  if (unsolved > 0) return Number.MAX_SAFE_INTEGER - unsolved * 1e9 + totalGuesses
+  return totalGuesses * 1000 + maxGuesses
+}
+
+/** Score a config on a batch of assignments (lower fitness is better). */
 export function evaluateImprovedConfig(assignments, configOverrides = {}) {
   const cfg = normalizeImprovedConfig(configOverrides)
   let totalGuesses = 0
@@ -874,7 +880,7 @@ export function evaluateImprovedConfig(assignments, configOverrides = {}) {
     avgGuesses: unsolved > 0 ? null : totalGuesses / count,
     maxGuesses: unsolved > 0 ? null : maxGuesses,
     minGuesses: unsolved > 0 ? null : minGuesses,
-    fitness: unsolved > 0 ? Number.MAX_SAFE_INTEGER - unsolved * 1e6 + totalGuesses : totalGuesses,
+    fitness: improvedConfigFitness({ unsolved, totalGuesses, maxGuesses }),
   }
 }
 

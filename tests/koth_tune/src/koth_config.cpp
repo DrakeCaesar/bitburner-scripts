@@ -268,17 +268,39 @@ ImprovedConfig crossover(const ImprovedConfig& a, const ImprovedConfig& b, std::
   ImprovedConfig cfg;
   std::uniform_real_distribution<double> coin(0.0, 1.0);
   for (const auto& spec : kSpecs) {
-    const double v = coin(rng) < 0.5 ? getGeneDouble(a, spec.id) : getGeneDouble(b, spec.id);
+    const double va = getGeneDouble(a, spec.id);
+    const double vb = getGeneDouble(b, spec.id);
+    double v;
+    if (coin(rng) < 0.35) {
+      if (spec.type == GeneType::Int) {
+        const int lo = static_cast<int>(std::min(va, vb));
+        const int hi = static_cast<int>(std::max(va, vb));
+        if (lo == hi) {
+          v = lo;
+        } else {
+          std::uniform_int_distribution<int> between(lo, hi);
+          v = between(rng);
+        }
+      } else {
+        v = (va + vb) * 0.5;
+      }
+    } else {
+      v = coin(rng) < 0.5 ? va : vb;
+    }
     setGeneDouble(cfg, spec.id, v);
   }
   return normalizeImprovedConfig(cfg);
 }
 
-ImprovedConfig mutateConfig(const ImprovedConfig& parent, double mutationRate, std::mt19937& rng) {
+ImprovedConfig mutateConfig(const ImprovedConfig& parent, double mutationRate, double macroMutationRate, std::mt19937& rng) {
   ImprovedConfig cfg = parent;
   std::uniform_real_distribution<double> dist(0.0, 1.0);
   for (const auto& spec : kSpecs) {
     if (dist(rng) > mutationRate) continue;
+    if (dist(rng) < macroMutationRate) {
+      setGeneDouble(cfg, spec.id, randomInSpec(spec, rng));
+      continue;
+    }
     double v = getGeneDouble(cfg, spec.id);
     if (spec.type == GeneType::Int) {
       const int deltaSteps = 1 + (rng() % 3);
@@ -291,6 +313,44 @@ ImprovedConfig mutateConfig(const ImprovedConfig& parent, double mutationRate, s
     setGeneDouble(cfg, spec.id, v);
   }
   return normalizeImprovedConfig(cfg);
+}
+
+ImprovedConfig scatterMutateConfig(const ImprovedConfig& parent, double geneFraction, std::mt19937& rng) {
+  ImprovedConfig cfg = parent;
+  std::uniform_real_distribution<double> dist(0.0, 1.0);
+  for (const auto& spec : kSpecs) {
+    if (dist(rng) < geneFraction) {
+      setGeneDouble(cfg, spec.id, randomInSpec(spec, rng));
+    }
+  }
+  return normalizeImprovedConfig(cfg);
+}
+
+int64_t computeImprovedFitness(int unsolved, int64_t totalGuesses, int maxGuesses) {
+  if (unsolved > 0) {
+    return std::numeric_limits<int64_t>::max() - static_cast<int64_t>(unsolved) * 1000000000LL + totalGuesses;
+  }
+  return totalGuesses * 1000LL + maxGuesses;
+}
+
+bool loadConfigFromJsonFile(const std::string& path, ImprovedConfig* out) {
+  std::ifstream in(path);
+  if (!in) return false;
+  std::ostringstream ss;
+  ss << in.rdbuf();
+  const std::string text = ss.str();
+  ImprovedConfig cfg = defaultImprovedConfig();
+  bool any = false;
+  for (const auto& spec : kSpecs) {
+    double v = 0.0;
+    if (parseJsonNumberAfterKey(text, geneKey(spec.id), &v)) {
+      setGeneDouble(cfg, spec.id, v);
+      any = true;
+    }
+  }
+  if (!any) return false;
+  *out = normalizeImprovedConfig(cfg);
+  return true;
 }
 
 EvalScore evaluateImprovedConfig(const std::vector<Assignment>& assignments, const ImprovedConfig& cfgIn) {
@@ -312,33 +372,13 @@ EvalScore evaluateImprovedConfig(const std::vector<Assignment>& assignments, con
 
   score.unsolved = score.total - score.solved;
   if (score.unsolved > 0) {
-    score.fitness = std::numeric_limits<int64_t>::max() - static_cast<int64_t>(score.unsolved) * 1000000LL;
+    score.fitness = computeImprovedFitness(score.unsolved, score.totalGuesses, score.maxGuesses);
     score.avgGuesses = 0.0;
   } else {
-    score.fitness = score.totalGuesses;
+    score.fitness = computeImprovedFitness(0, score.totalGuesses, score.maxGuesses);
     score.avgGuesses = static_cast<double>(score.totalGuesses) / static_cast<double>(score.total);
   }
   return score;
-}
-
-bool loadConfigFromJsonFile(const std::string& path, ImprovedConfig* out) {
-  std::ifstream in(path);
-  if (!in) return false;
-  std::ostringstream ss;
-  ss << in.rdbuf();
-  const std::string text = ss.str();
-  ImprovedConfig cfg = defaultImprovedConfig();
-  bool any = false;
-  for (const auto& spec : kSpecs) {
-    double v = 0.0;
-    if (parseJsonNumberAfterKey(text, geneKey(spec.id), &v)) {
-      setGeneDouble(cfg, spec.id, v);
-      any = true;
-    }
-  }
-  if (!any) return false;
-  *out = normalizeImprovedConfig(cfg);
-  return true;
 }
 
 void saveBestJson(const std::string& path, const ImprovedConfig& cfg, const EvalScore& best, int generation, uint32_t seed,

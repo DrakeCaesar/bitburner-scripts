@@ -61,8 +61,10 @@ const std::vector<TunableSpec>& tunableSpecs();
 
 ImprovedConfig randomIndividual(std::mt19937& rng);
 ImprovedConfig crossover(const ImprovedConfig& a, const ImprovedConfig& b, std::mt19937& rng);
-ImprovedConfig mutateConfig(const ImprovedConfig& parent, double mutationRate, std::mt19937& rng);
+ImprovedConfig mutateConfig(const ImprovedConfig& parent, double mutationRate, double macroMutationRate, std::mt19937& rng);
+ImprovedConfig scatterMutateConfig(const ImprovedConfig& parent, double geneFraction, std::mt19937& rng);
 
+int64_t computeImprovedFitness(int unsolved, int64_t totalGuesses, int maxGuesses);
 bool loadConfigFromJsonFile(const std::string& path, ImprovedConfig* out);
 void saveBestJson(const std::string& path, const ImprovedConfig& cfg, const struct EvalScore& best,
                   int generation, uint32_t seed, int count, int difficulty, int64_t evaluations,
