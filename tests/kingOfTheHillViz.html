@@ -13,7 +13,7 @@
       --text: #d4d4d4;
       --muted: #888;
       --curve: #4fc3f7;
-      --curve-near: #81c784;
+      --curve-near: #e57373;
       --password: #f9a825;
       --probe: rgba(255, 183, 77, 0.65);
       --side-hill: rgba(229, 115, 115, 0.55);
@@ -243,7 +243,7 @@
 
   <div class="legend">
     <span><i class="swatch" style="background: var(--curve)"></i> full graph (side hills)</span>
-    <span><i class="swatch" style="background: var(--curve-near)"></i> within 3% of password (main hill only)</span>
+    <span><i class="swatch" style="background: var(--curve-near)"></i> within 3% of password (single main hill; shaded band)</span>
     <span><i class="swatch" style="background: var(--password); height: 12px; width: 2px"></i> true password</span>
     <span><i class="swatch" style="background: var(--probe); height: 8px; width: 8px; border-radius: 50%"></i> solver probes</span>
     <span><i class="swatch" style="background: var(--side-hill)"></i> 7500 m side-hill ceiling</span>
@@ -263,8 +263,8 @@
       DEFAULT_SEED,
       DEFAULT_DIFFICULTY,
       KING_MAIN_PEAK_ALTITUDE,
-      generateAssignments,
       getTunedBenchmark,
+      generateAssignmentAt,
       runSolver,
       sampleAltitudeProfile,
     } from "./kingOfTheHillCore.mjs"
@@ -281,6 +281,11 @@
     const renderBtn = document.getElementById("render")
 
     const STORAGE_KEY = "kingOfTheHillViz.settings"
+    const MAX_TEST_COUNT = 1_000_000
+
+    function parseTestCount(raw = countInput.value) {
+      return Math.max(1, Math.min(MAX_TEST_COUNT, Math.floor(Number(raw) || 1000)))
+    }
 
     function loadSettings() {
       try {
@@ -391,14 +396,11 @@
     function buildRowsFromBenchmark() {
       const benchmark = getTunedBenchmark("max")
       if (!benchmark) return { error: "No benchmark in kingOfTheHillTune.max.json." }
-      return {
-        benchmark,
-        assignments: generateAssignments(benchmark.seed, benchmark.count, benchmark.difficulty),
-      }
+      return { benchmark }
     }
 
     let renderRunId = 0
-    /** @type {{ rows: { index: number, assignment: object, result: object }[], sourceLabel: string, cacheKey: string } | null} */
+    /** @type {{ rows: { index: number, result: object }[], sourceLabel: string, cacheKey: string, seed: number, difficulty: number } | null} */
     let cachedResults = null
 
     function resultsCacheKey() {
@@ -411,15 +413,143 @@
       }
       const seed = Number(seedInput.value) || DEFAULT_SEED
       const difficulty = Number(difficultyInput.value) || DEFAULT_DIFFICULTY
-      const testCount = Math.max(1, Math.min(100000, Math.floor(Number(countInput.value) || 1000)))
+      const testCount = parseTestCount()
       return `seq:${seed}:${difficulty}:${testCount}`
     }
 
-    function progressBatchSize(total) {
-      if (total >= 50000) return 500
-      if (total >= 10000) return 200
-      if (total >= 1000) return 50
-      return 10
+    const SOLVER_WORKERS = Math.min(4, navigator.hardwareConcurrency || 4)
+    const solverPool = {
+      slots: null,
+      ready: null,
+
+      ensure() {
+        if (this.slots) return this.ready
+        this.slots = []
+        this.ready = new Promise((resolve, reject) => {
+          let warmed = 0
+          for (let i = 0; i < SOLVER_WORKERS; i++) {
+            const worker = new Worker(new URL("./kingOfTheHillVizWorker.mjs", import.meta.url), { type: "module" })
+            const slot = { worker, onDone: null }
+            worker.onerror = reject
+            worker.onmessage = (e) => {
+              if (e.data.type === "ready") {
+                warmed++
+                if (warmed === SOLVER_WORKERS) resolve()
+                return
+              }
+              if (e.data.type === "done") slot.onDone?.(e.data)
+            }
+            this.slots.push(slot)
+          }
+        })
+        return this.ready
+      },
+
+      indexRangeChunks(total, chunkCount) {
+        const count = Math.min(chunkCount, total)
+        const chunkSize = Math.max(1, Math.ceil(total / count))
+        const ranges = []
+        for (let start = 1; start <= total; start += chunkSize) {
+          ranges.push({ startIndex: start, endIndex: Math.min(total, start + chunkSize - 1) })
+        }
+        return ranges
+      },
+
+      chunkCount(total) {
+        if (total <= SOLVER_WORKERS) return total
+        let targetSize = 50
+        if (total >= 500000) targetSize = 20000
+        else if (total >= 100000) targetSize = 10000
+        else if (total >= 50000) targetSize = 5000
+        else if (total >= 10000) targetSize = 2000
+        else if (total >= 1000) targetSize = 500
+        return Math.min(total, Math.ceil(total / targetSize))
+      },
+
+      decodeChunkRows(rows, data) {
+        const { indices, guesses, solved, bestVal, bestAlt } = data
+        for (let i = 0; i < indices.length; i++) {
+          const index = indices[i]
+          rows[index - 1] = {
+            index,
+            result: {
+              guesses: guesses[i],
+              solved: solved[i] === 1,
+              bestVal: bestVal[i],
+              bestAlt: bestAlt[i] >= 0 ? bestAlt[i] : null,
+            },
+          }
+        }
+      },
+
+      async runBulk({ seed, difficulty, count }, runId, onProgress) {
+        await this.ensure()
+        const ranges = this.indexRangeChunks(count, this.chunkCount(count))
+        const workerCount = Math.min(SOLVER_WORKERS, ranges.length)
+        let nextRange = 0
+        let done = 0
+        let lastPaint = 0
+        const started = performance.now()
+        const rows = new Array(count)
+
+        function paintProgress(extra, force = false) {
+          const now = performance.now()
+          if (!force && now - lastPaint < 100) return
+          lastPaint = now
+          const elapsed = (now - started) / 1000
+          const rate = elapsed > 0 ? done / elapsed : 0
+          const eta = rate > 0 ? (count - done) / rate : 0
+          const rateText =
+            rate >= 1
+              ? `${rate.toFixed(0)} tests/s (${workerCount} workers)` +
+                (done < count ? `, ~${Math.ceil(eta)}s left` : "")
+              : done === 0
+                ? "workers ready"
+                : ""
+          onProgress(done, count, "tests", extra || rateText)
+        }
+
+        paintProgress("workers ready", true)
+
+        return new Promise((resolve) => {
+          let active = 0
+
+          const assign = (slot) => {
+            if (runId !== renderRunId) {
+              slot.onDone = null
+              active--
+              if (active === 0) resolve(rows)
+              return
+            }
+            if (nextRange >= ranges.length) {
+              slot.onDone = null
+              active--
+              if (active === 0) resolve(rows)
+              return
+            }
+            const range = ranges[nextRange++]
+            slot.onDone = (data) => {
+              this.decodeChunkRows(rows, data)
+              done += data.indices.length
+              paintProgress()
+              assign(slot)
+            }
+            slot.worker.postMessage({ type: "run", seed, difficulty, ...range })
+          }
+
+          for (let i = 0; i < workerCount; i++) {
+            active++
+            assign(this.slots[i])
+          }
+        })
+      },
+    }
+
+    async function buildRowsAsync(job, runId, onProgress) {
+      const rows = await solverPool.runBulk(job, runId, onProgress)
+      if (runId !== renderRunId) return null
+      onProgress(job.count, job.count, "tests")
+      return rows
     }
 
     function setProgress(done, total, phase, extra = "") {
@@ -432,34 +562,6 @@
         extra ? `<div class="progress-meta">${extra}</div>` : "",
         `</div>`,
       ].join("")
-    }
-
-    async function buildRowsAsync(assignments, runId, onProgress) {
-      const rows = []
-      const batchSize = progressBatchSize(assignments.length)
-      const started = performance.now()
-      for (let i = 0; i < assignments.length; i++) {
-        if (runId !== renderRunId) return null
-        const { index, assignment } = assignments[i]
-        rows.push({
-          index,
-          assignment,
-          result: runSolver(assignment, { returnSamples: true }),
-        })
-        const done = i + 1
-        if (done % batchSize === 0 || done === assignments.length) {
-          const elapsed = (performance.now() - started) / 1000
-          const rate = elapsed > 0 ? done / elapsed : 0
-          const eta = rate > 0 ? (assignments.length - done) / rate : 0
-          const extra =
-            rate >= 1
-              ? `${rate.toFixed(0)} tests/s` + (done < assignments.length ? `, ~${Math.ceil(eta)}s left` : "")
-              : ""
-          onProgress(done, assignments.length, "tests", extra)
-          await new Promise((resolve) => setTimeout(resolve, 0))
-        }
-      }
-      return rows
     }
 
     function sortRows(rows, mode) {
@@ -498,7 +600,7 @@
       const plotW = w - pad.l - pad.r
       const plotH = h - pad.t - pad.b
 
-      const { points, password, min, max } = profile
+      const { points, password, min, max, nearLo, nearHi } = profile
       const maxAlt = 10500
       const xMin = min
       const xMax = max
@@ -536,6 +638,11 @@
 
       // password marker
       const pwX = xScale(password)
+      const bandLo = nearLo ?? Math.max(min, Math.ceil(password * (1 - 0.03)))
+      const bandHi = nearHi ?? Math.min(max, Math.floor(password * (1 + 0.03)))
+      ctx.fillStyle = "rgba(229, 115, 115, 0.1)"
+      ctx.fillRect(xScale(bandLo), pad.t, Math.max(1, xScale(bandHi) - xScale(bandLo)), plotH)
+
       ctx.strokeStyle = "#f9a825"
       ctx.lineWidth = 2 * dpr
       ctx.beginPath()
@@ -545,11 +652,19 @@
 
       // altitude curve (split color at near zone boundary)
       function strokeSegment(segment, color) {
-        if (segment.length < 2) return
+        if (segment.length === 0) return
         ctx.strokeStyle = color
         ctx.lineWidth = 2 * dpr
         ctx.lineJoin = "round"
         ctx.lineCap = "round"
+        if (segment.length === 1) {
+          const px = xScale(segment[0].x)
+          const py = yScale(segment[0].altitude)
+          ctx.beginPath()
+          ctx.arc(px, py, 2 * dpr, 0, Math.PI * 2)
+          ctx.stroke()
+          return
+        }
         ctx.beginPath()
         ctx.moveTo(xScale(segment[0].x), yScale(segment[0].altitude))
         for (let i = 1; i < segment.length; i++) {
@@ -568,14 +683,14 @@
           continue
         }
         if (isNear !== segNear) {
-          strokeSegment(seg, segNear ? "#81c784" : "#4fc3f7")
+          strokeSegment(seg, segNear ? "#e57373" : "#4fc3f7")
           seg = [seg[seg.length - 1], pt]
           segNear = isNear
         } else {
           seg.push(pt)
         }
       }
-      if (seg.length) strokeSegment(seg, segNear ? "#81c784" : "#4fc3f7")
+      if (seg.length) strokeSegment(seg, segNear ? "#e57373" : "#4fc3f7")
 
       // solver probe points
       if (solverResult?.probes?.length) {
@@ -632,14 +747,20 @@
       ].join("")
     }
 
-    async function renderChartGrid(chartRows, runId, pointCount) {
+    async function renderChartGrid(chartRows, runId, pointCount, seed, difficulty) {
       grid.replaceChildren()
       if (chartRows.length === 0) return
 
-      setProgress(0, chartRows.length, "charts")
+      setProgress(0, chartRows.length, "charts", "loading probe traces...")
       for (let i = 0; i < chartRows.length; i++) {
         if (runId !== renderRunId) return
-        const { index, assignment, result } = chartRows[i]
+        const row = chartRows[i]
+        const { index, result } = row
+        const assignment = generateAssignmentAt(seed, index, difficulty).assignment
+        if (!result.probes?.length) {
+          const traced = runSolver(assignment, { returnSamples: true })
+          result.probes = traced.probes
+        }
         const profile = sampleAltitudeProfile(assignment, { pointCount })
 
         const card = document.createElement("article")
@@ -684,7 +805,7 @@
       const jsonMode = isJsonBenchmarkSource()
       const seed = Number(seedInput.value) || DEFAULT_SEED
       const difficulty = Number(difficultyInput.value) || DEFAULT_DIFFICULTY
-      const testCount = Math.max(1, Math.min(100000, Math.floor(Number(countInput.value) || 1000)))
+      const testCount = parseTestCount()
       const pointCount = Number(pointsInput.value) || 1200
       const sortMode = sortInput.value
       const chartLimit = Math.max(0, Math.min(500, Math.floor(Number(chartLimitInput.value) || 0)))
@@ -703,6 +824,8 @@
 
       let rows
       let sourceLabel
+      let jobSeed = seed
+      let jobDifficulty = difficulty
       if (needTests) {
         setProgress(0, testCount, "tests")
         grid.replaceChildren()
@@ -717,24 +840,32 @@
             return
           }
           const b = built.benchmark
+          jobSeed = b.seed
+          jobDifficulty = b.difficulty
           sourceLabel = `JSON benchmark: first ${b.count} assignments, seed ${b.seed}, difficulty ${b.difficulty}`
-          rows = await buildRowsAsync(built.assignments, runId, setProgress)
+          rows = await buildRowsAsync(
+            { seed: jobSeed, difficulty: jobDifficulty, count: b.count },
+            runId,
+            setProgress,
+          )
         } else {
           sourceLabel = `sequential #1-${testCount}, seed ${seed}, difficulty ${difficulty}`
-          rows = await buildRowsAsync(generateAssignments(seed, testCount, difficulty), runId, setProgress)
+          rows = await buildRowsAsync({ seed, difficulty, count: testCount }, runId, setProgress)
         }
 
         if (runId !== renderRunId || rows == null) return
-        cachedResults = { rows, sourceLabel, cacheKey }
+        cachedResults = { rows, sourceLabel, cacheKey, seed: jobSeed, difficulty: jobDifficulty }
       } else {
         rows = cachedResults.rows
         sourceLabel = cachedResults.sourceLabel
+        jobSeed = cachedResults.seed
+        jobDifficulty = cachedResults.difficulty
       }
 
       const sorted = sortRows(rows, sortMode)
       const chartRows = chartLimit > 0 ? sorted.slice(0, chartLimit) : []
 
-      await renderChartGrid(chartRows, runId, pointCount)
+      await renderChartGrid(chartRows, runId, pointCount, jobSeed, jobDifficulty)
 
       if (runId !== renderRunId) return
       renderSummary(rows, chartRows.length, sortMode, sourceLabel)
@@ -751,6 +882,7 @@
     })
 
     renderAll({ rerunTests: true })
+    solverPool.ensure().catch(() => {})
   </script>
 </body>
 </html>

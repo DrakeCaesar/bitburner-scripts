@@ -92,21 +92,28 @@ export function getTunedJsonScores(objective: FitnessObjective = "max") {
 
 /** Add derived fields the solver reads; gene values are used as-is from the tuner JSON. */
 export function finalizeImprovedConfig(
-  raw: Omit<ImprovedConfig, "parabolicFlatEpsilon" | "rescanDivisors">,
+  raw: Omit<ImprovedConfig, "parabolicFlatEpsilon" | "rescanDivisors"> | ImprovedConfig,
 ): ImprovedConfig {
-  const cfg = { ...raw } as ImprovedConfig
-  cfg.enableGaussianEstimate = cfg.enableGaussianEstimate ? 1 : 0
-  cfg.enableTernarySearch = cfg.enableTernarySearch ? 1 : 0
-  cfg.enableExpandFromBest = cfg.enableExpandFromBest ? 1 : 0
-  cfg.parabolicFlatEpsilon = 10 ** -cfg.parabolicFlatNegLog10
-  cfg.rescanDivisors = [cfg.rescanDivisor1, cfg.rescanDivisor2, cfg.rescanDivisor3]
+  const cfg = raw as ImprovedConfig
+  if (cfg.rescanDivisors && cfg.parabolicFlatEpsilon !== undefined) {
+    return cfg
+  }
+  const out = { ...raw } as ImprovedConfig
+  out.enableGaussianEstimate = out.enableGaussianEstimate ? 1 : 0
+  out.enableTernarySearch = out.enableTernarySearch ? 1 : 0
+  out.enableExpandFromBest = out.enableExpandFromBest ? 1 : 0
+  out.parabolicFlatEpsilon = 10 ** -out.parabolicFlatNegLog10
+  out.rescanDivisors = [out.rescanDivisor1, out.rescanDivisor2, out.rescanDivisor3]
     .filter((d) => d > 0)
     .sort((a, b) => a - b)
-  return cfg
+  return out
 }
 
+const TUNED_MAX_FINALIZED = finalizeImprovedConfig(TUNED_MAX_CONFIG)
+const TUNED_AVG_FINALIZED = finalizeImprovedConfig(TUNED_AVG_CONFIG)
+
 export function getTunedImprovedConfig(objective: FitnessObjective = "max"): ImprovedConfig {
-  return finalizeImprovedConfig(objective === "avg" ? TUNED_AVG_CONFIG : TUNED_MAX_CONFIG)
+  return objective === "avg" ? TUNED_AVG_FINALIZED : TUNED_MAX_FINALIZED
 }
 
 export function computeImprovedFitness(

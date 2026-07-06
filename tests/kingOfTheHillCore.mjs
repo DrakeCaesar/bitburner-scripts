@@ -143,16 +143,22 @@ function getTunedJsonScores(objective = "max") {
   };
 }
 function finalizeImprovedConfig(raw) {
-  const cfg = { ...raw };
-  cfg.enableGaussianEstimate = cfg.enableGaussianEstimate ? 1 : 0;
-  cfg.enableTernarySearch = cfg.enableTernarySearch ? 1 : 0;
-  cfg.enableExpandFromBest = cfg.enableExpandFromBest ? 1 : 0;
-  cfg.parabolicFlatEpsilon = 10 ** -cfg.parabolicFlatNegLog10;
-  cfg.rescanDivisors = [cfg.rescanDivisor1, cfg.rescanDivisor2, cfg.rescanDivisor3].filter((d) => d > 0).sort((a, b) => a - b);
-  return cfg;
+  const cfg = raw;
+  if (cfg.rescanDivisors && cfg.parabolicFlatEpsilon !== void 0) {
+    return cfg;
+  }
+  const out = { ...raw };
+  out.enableGaussianEstimate = out.enableGaussianEstimate ? 1 : 0;
+  out.enableTernarySearch = out.enableTernarySearch ? 1 : 0;
+  out.enableExpandFromBest = out.enableExpandFromBest ? 1 : 0;
+  out.parabolicFlatEpsilon = 10 ** -out.parabolicFlatNegLog10;
+  out.rescanDivisors = [out.rescanDivisor1, out.rescanDivisor2, out.rescanDivisor3].filter((d) => d > 0).sort((a, b) => a - b);
+  return out;
 }
+var TUNED_MAX_FINALIZED = finalizeImprovedConfig(TUNED_MAX_CONFIG);
+var TUNED_AVG_FINALIZED = finalizeImprovedConfig(TUNED_AVG_CONFIG);
 function getTunedImprovedConfig(objective = "max") {
-  return finalizeImprovedConfig(objective === "avg" ? TUNED_AVG_CONFIG : TUNED_MAX_CONFIG);
+  return objective === "avg" ? TUNED_AVG_FINALIZED : TUNED_MAX_FINALIZED;
 }
 function computeImprovedFitness(objective, unsolved, totalGuesses, maxGuesses) {
   if (unsolved > 0) return Number.MAX_SAFE_INTEGER - unsolved * 1e9 + totalGuesses;
@@ -869,30 +875,36 @@ function sampleAltitudeProfile(assignment, options = {}) {
   const server = toServer(assignment);
   const start = min;
   const end = max;
+  const nearLo = Math.max(min, Math.ceil(password * (1 - KOTH_NEAR_ZONE_FRACTION)));
+  const nearHi = Math.min(max, Math.floor(password * (1 + KOTH_NEAR_ZONE_FRACTION)));
   const step = Math.max(1, Math.ceil((end - start) / pointCount));
-  const points = [];
-  for (let x = start; x <= end; x += step) {
-    points.push({
-      x,
-      altitude: getKingOfTheHillAltitude(server, String(x)),
-      nearZone: Math.abs((x - password) / password) < KOTH_NEAR_ZONE_FRACTION
+  const nearStep = Math.max(1, Math.ceil(kingOfTheHillGaussianWidth(assignment.passwordLength) / 12));
+  const pointByX = /* @__PURE__ */ new Map();
+  function addPoint(x) {
+    const xi = Math.round(x);
+    if (xi < min || xi > max) return;
+    pointByX.set(xi, {
+      x: xi,
+      altitude: getKingOfTheHillAltitude(server, String(xi)),
+      nearZone: Math.abs((xi - password) / password) < KOTH_NEAR_ZONE_FRACTION
     });
   }
-  const last = points[points.length - 1];
-  if (!last || last.x !== end) {
-    points.push({
-      x: end,
-      altitude: getKingOfTheHillAltitude(server, String(end)),
-      nearZone: Math.abs((end - password) / password) < KOTH_NEAR_ZONE_FRACTION
-    });
-  }
-  return { points, password, min, max, start, end };
+  for (let x = start; x <= end; x += step) addPoint(x);
+  addPoint(end);
+  for (let x = nearLo; x <= nearHi; x += nearStep) addPoint(x);
+  for (const x of [nearLo, nearHi, password]) addPoint(x);
+  const points = [...pointByX.values()].sort((a, b) => a.x - b.x);
+  return { points, password, min, max, start, end, nearLo, nearHi };
+}
+function generateAssignmentAt(seed, index, difficulty) {
+  const i = index - 1;
+  const rng = mulberry32(seed + i * ASSIGNMENT_SEED_STRIDE >>> 0);
+  return { index, assignment: buildAssignment(difficulty, rng) };
 }
 function generateAssignments(seed, count, difficulty) {
   const rows = [];
   for (let i = 0; i < count; i++) {
-    const rng = mulberry32(seed + i * ASSIGNMENT_SEED_STRIDE >>> 0);
-    rows.push({ index: i + 1, assignment: buildAssignment(difficulty, rng) });
+    rows.push(generateAssignmentAt(seed, i + 1, difficulty));
   }
   return rows;
 }
@@ -1038,6 +1050,7 @@ export {
   computeImprovedFitness,
   evaluateImprovedConfig,
   finalizeImprovedConfig,
+  generateAssignmentAt,
   generateAssignments,
   getDefaultImprovedConfig,
   getKingOfTheHillAltitude,
