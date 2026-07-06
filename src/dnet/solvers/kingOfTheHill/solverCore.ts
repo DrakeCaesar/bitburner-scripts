@@ -620,9 +620,7 @@ export function runSolverImprovedCore(
   const { min, max, hillCount, passwordLength, gaussWidth } = ctx
 
   probeRangeAnchors(session, min, max)
-  if (session.solved) {
-    return { guesses: session.guesses, solved: true, bestVal: session.bestVal, bestAlt: session.bestAlt }
-  }
+  if (session.solved) return finish()
 
   locateHill(session, min, max, hillCount, passwordLength, gaussWidth, cfg)
   if (!session.solved && session.bestAlt >= cfg.clusterDetectAlt) {
@@ -636,9 +634,7 @@ export function runSolverImprovedCore(
     )
     tryTernaryPeakSearch(session, win.min, win.max, ternaryIters, cfg.ternaryWidthStop)
   }
-  if (session.solved) {
-    return { guesses: session.guesses, solved: true, bestVal: session.bestVal, bestAlt: session.bestAlt }
-  }
+  if (session.solved) return finish()
 
   let search = improvedSearchWindow(min, max, session, hillCount, passwordLength, gaussWidth, cfg)
   let searchSpan = search.max - search.min

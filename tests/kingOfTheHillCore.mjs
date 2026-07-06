@@ -600,9 +600,7 @@ function runSolverImprovedCore(session, ctx, cfgIn, options = {}) {
   const returnSamples = options.returnSamples === true;
   const { min, max, hillCount, passwordLength, gaussWidth } = ctx;
   probeRangeAnchors(session, min, max);
-  if (session.solved) {
-    return { guesses: session.guesses, solved: true, bestVal: session.bestVal, bestAlt: session.bestAlt };
-  }
+  if (session.solved) return finish();
   locateHill(session, min, max, hillCount, passwordLength, gaussWidth, cfg);
   if (!session.solved && session.bestAlt >= cfg.clusterDetectAlt) {
     tryGaussianPeakEstimate(session, min, max, gaussWidth, cfg);
@@ -615,9 +613,7 @@ function runSolverImprovedCore(session, ctx, cfgIn, options = {}) {
     );
     tryTernaryPeakSearch(session, win.min, win.max, ternaryIters, cfg.ternaryWidthStop);
   }
-  if (session.solved) {
-    return { guesses: session.guesses, solved: true, bestVal: session.bestVal, bestAlt: session.bestAlt };
-  }
+  if (session.solved) return finish();
   let search = improvedSearchWindow(min, max, session, hillCount, passwordLength, gaussWidth, cfg);
   let searchSpan = search.max - search.min;
   let coarseStep = Math.max(1, ceilDiv(searchSpan, Math.max(cfg.coarseMinDivisor, hillCount * cfg.coarseHillFactor)));
