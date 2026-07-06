@@ -41,8 +41,6 @@ export interface ImprovedConfig {
   expandMaxStepDivisor: number
   expandStepMultiplier: number
   enableExpandFromBest: number
-  subdivNarrowStepFactor: number
-  enableSubdivNarrow: number
   centroidLogWeight: number
   finalMainRadius: number
   finalSideMinRadius: number
@@ -100,7 +98,6 @@ export function finalizeImprovedConfig(
   cfg.enableGaussianEstimate = cfg.enableGaussianEstimate ? 1 : 0
   cfg.enableTernarySearch = cfg.enableTernarySearch ? 1 : 0
   cfg.enableExpandFromBest = cfg.enableExpandFromBest ? 1 : 0
-  cfg.enableSubdivNarrow = cfg.enableSubdivNarrow ? 1 : 0
   cfg.parabolicFlatEpsilon = 10 ** -cfg.parabolicFlatNegLog10
   cfg.rescanDivisors = [cfg.rescanDivisor1, cfg.rescanDivisor2, cfg.rescanDivisor3]
     .filter((d) => d > 0)

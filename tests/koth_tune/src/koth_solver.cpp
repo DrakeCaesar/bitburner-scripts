@@ -115,7 +115,7 @@ Bounds clusterSearchWindow(int64_t fullMin, int64_t fullMax, int64_t center, int
 
 Bounds improvedSearchWindow(int64_t fullMin, int64_t fullMax, const ProbeSession& session, int hillCount,
                             int passwordLength, int64_t gaussWidth, const ImprovedConfig& cfg) {
-  if (session.bestAlt >= cfg.mainPeakDetectAlt) {
+  if (session.bestAlt >= cfg.mainPeakModeAlt) {
     const int64_t half = gaussWidth * cfg.mainPeakWindowWidths;
     int64_t winMin = std::max(fullMin, session.bestVal - half);
     int64_t winMax = std::min(fullMax, session.bestVal + half);
@@ -166,7 +166,7 @@ int64_t refinePeak(ProbeSession& session, int64_t mn, int64_t mx, int64_t center
                    const ImprovedConfig& cfg) {
   int64_t c = center;
   int64_t r = std::max<int64_t>(1, initialRadius);
-  const bool onMainHill = session.bestAlt >= cfg.mainPeakDetectAlt;
+  const bool onMainHill = session.bestAlt >= cfg.mainPeakModeAlt;
   const int maxPasses = onMainHill ? std::min(passes, 2) : passes;
   for (int p = 0; p < maxPasses; ++p) {
     const int64_t x0 = std::max(mn, c - r);
@@ -187,7 +187,7 @@ int64_t refinePeak(ProbeSession& session, int64_t mn, int64_t mx, int64_t center
 
 void tryParabolicPinpointMain(ProbeSession& session, int64_t mn, int64_t mx, int64_t gaussWidth,
                               const ImprovedConfig& cfg) {
-  if (session.bestAlt < cfg.mainPeakDetectAlt) return;
+  if (session.bestAlt < cfg.mainPeakModeAlt) return;
   const int64_t r = std::max<int64_t>(1, static_cast<int64_t>(std::ceil(static_cast<double>(gaussWidth) / 4.0)));
   const int64_t c = session.bestVal;
   const int64_t x0 = std::max(mn, c - r);
@@ -388,7 +388,7 @@ std::vector<int64_t> buildFinals(int64_t mn, int64_t mx, int64_t bestVal, double
     }
     return out;
   }
-  const bool nearMainPeak = bestAlt >= cfg.mainPeakDetectAlt;
+  const bool nearMainPeak = bestAlt >= cfg.mainPeakModeAlt;
   const int64_t maxRadius = nearMainPeak ? cfg.finalMainRadius
                                          : std::min<int64_t>(cfg.finalSideMaxRadius,
                                                              std::max<int64_t>(cfg.finalSideMinRadius,
@@ -436,13 +436,13 @@ void locateHill(ProbeSession& session, int64_t fullMin, int64_t fullMax, int hil
 
   const int sparseCount = std::max(4, cfg.findHillQuickRounds * 4);
   probeSparseFractions(session, lo, hi, sparseCount);
-  if (session.solved || session.exhausted || session.bestAlt >= cfg.mainPeakDetectAlt) return;
+  if (session.solved || session.exhausted || session.bestAlt >= cfg.mainPeakModeAlt) return;
 
   const int64_t coarseStep =
       std::max<int64_t>(1, ceilDiv(span, std::max(cfg.coarseMinDivisor, hillCount * cfg.coarseHillFactor)));
   const int64_t gallopStep = std::max(coarseStep, gaussWidth);
   const int mult = std::max(2, cfg.expandStepMultiplier);
-  const double stopAlt = static_cast<double>(cfg.mainPeakDetectAlt);
+  const double stopAlt = static_cast<double>(cfg.mainPeakModeAlt);
 
   for (int pass = 0; pass < std::max(1, cfg.findHillQuickRounds) && !session.solved && !session.exhausted; ++pass) {
     if (session.bestAlt >= stopAlt) return;
@@ -466,9 +466,31 @@ void locateHill(ProbeSession& session, int64_t fullMin, int64_t fullMax, int hil
     }
   }
 
-  if (!session.solved && !session.exhausted && session.bestAlt < cfg.mainPeakDetectAlt) {
+  if (!session.solved && !session.exhausted && session.bestAlt < cfg.mainPeakModeAlt) {
     session.sweep(lo, hi, coarseStep, stopAlt, true, &cfg);
   }
+}
+
+void seekHigherPeakInCluster(ProbeSession& session, int64_t fullMin, int64_t fullMax, int hillCount,
+                             int passwordLength, int64_t gaussWidth, const ImprovedConfig& cfg) {
+  if (session.solved || session.exhausted) return;
+  if (session.bestAlt >= cfg.mainPeakModeAlt) return;
+  if (session.bestAlt < cfg.clusterDetectAlt) return;
+
+  const Bounds win = clusterSearchWindow(fullMin, fullMax, session.bestVal, hillCount, passwordLength, cfg);
+  const int64_t span = win.max - win.min;
+  const int64_t step =
+      std::max<int64_t>(1, ceilDiv(span, std::max(cfg.coarseMinDivisor, hillCount * cfg.coarseHillFactor)));
+  session.sweep(win.min, win.max, step, static_cast<double>(cfg.mainPeakModeAlt), true, &cfg);
+  if (session.solved || session.exhausted) return;
+
+  applyGaussianJump(session, win.min, win.max, gaussWidth, cfg);
+  if (session.solved) return;
+
+  const std::vector<Sample> sorted = session.sortedSamples();
+  std::vector<Peak> peaks = findLocalPeaks(sorted);
+  const int64_t refineRadius = std::max(step, gaussWidth);
+  refinePeakCandidates(session, win.min, win.max, peaks, refineRadius, hillCount, cfg);
 }
 
 void tryHillClimbFinals(ProbeSession& session, int64_t searchMin, int64_t searchMax, int64_t gaussWidth, int64_t fullMin,
@@ -553,7 +575,7 @@ SolverResult runSolverImproved(const Assignment& assignment, const ImprovedConfi
   if (!session.solved && session.bestAlt >= cfg.clusterDetectAlt) {
     tryGaussianPeakEstimate(session, range.min, range.max, gaussWidth, cfg);
   }
-  if (!session.solved && session.bestAlt < cfg.mainPeakDetectAlt && cfg.enableTernarySearch) {
+  if (!session.solved && session.bestAlt < cfg.mainPeakModeAlt && cfg.enableTernarySearch) {
     const Bounds win =
         improvedSearchWindow(range.min, range.max, session, hillCount, assignment.passwordLength, gaussWidth, cfg);
     const int ternaryIters = static_cast<int>(std::min<int64_t>(
@@ -575,7 +597,6 @@ SolverResult runSolverImproved(const Assignment& assignment, const ImprovedConfi
   for (int ri = 0; ri < cfg.rescanDivisorCount; ++ri) {
     if (session.bestAlt >= cfg.centroidMinAlt) break;
     if (session.bestAlt >= cfg.mainPeakModeAlt) break;
-    if (session.bestAlt >= cfg.mainPeakDetectAlt) break;
     search = improvedSearchWindow(range.min, range.max, session, hillCount, assignment.passwordLength, gaussWidth, cfg);
     searchSpan = search.max - search.min;
     const int divisor = cfg.rescanDivisorsSorted[static_cast<size_t>(ri)];
@@ -596,19 +617,24 @@ SolverResult runSolverImproved(const Assignment& assignment, const ImprovedConfi
     if (session.solved) goto done;
   }
 
-  if (session.bestAlt < cfg.mainPeakDetectAlt) {
+  if (session.bestAlt < cfg.mainPeakModeAlt) {
     search = improvedSearchWindow(range.min, range.max, session, hillCount, assignment.passwordLength, gaussWidth, cfg);
-    tryExpandFromBest(session, search.min, search.max, gaussWidth, static_cast<double>(cfg.mainPeakDetectAlt), cfg);
+    tryExpandFromBest(session, search.min, search.max, gaussWidth, static_cast<double>(cfg.mainPeakModeAlt), cfg);
     if (session.solved) goto done;
     applyGaussianJump(session, search.min, search.max, gaussWidth, cfg);
     if (session.solved) goto done;
     session.sweep(search.min, search.max, std::max<int64_t>(1, ceilDiv(gaussWidth, cfg.sideHillSweepWidthDivisor)),
-                  static_cast<double>(cfg.mainPeakDetectAlt), true);
+                  static_cast<double>(cfg.mainPeakModeAlt), true);
     if (session.solved) goto done;
     const std::vector<Sample> sorted = session.sortedSamples();
     std::vector<Peak> peaks = findLocalPeaks(sorted);
     const int64_t refineRadius = std::max<int64_t>(1, gaussWidth);
     refinePeakCandidates(session, search.min, search.max, peaks, refineRadius, refinePeakCount(session, hillCount, cfg), cfg);
+    if (session.solved) goto done;
+  }
+
+  if (!session.solved && session.bestAlt >= cfg.clusterDetectAlt && session.bestAlt < cfg.mainPeakModeAlt) {
+    seekHigherPeakInCluster(session, range.min, range.max, hillCount, assignment.passwordLength, gaussWidth, cfg);
     if (session.solved) goto done;
   }
 
@@ -626,7 +652,7 @@ SolverResult runSolverImproved(const Assignment& assignment, const ImprovedConfi
   }
 
   if (!session.solved) tryFinalCandidates(session, range.min, range.max, cfg);
-  if (!session.solved && session.bestAlt >= cfg.mainPeakDetectAlt) {
+  if (!session.solved && session.bestAlt >= cfg.mainPeakModeAlt) {
     const Bounds climbWindow =
         improvedSearchWindow(range.min, range.max, session, hillCount, assignment.passwordLength, gaussWidth, cfg);
     tryParabolicPinpointMain(session, climbWindow.min, climbWindow.max, gaussWidth, cfg);

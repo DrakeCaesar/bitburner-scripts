@@ -6,57 +6,61 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
 // tests/kingOfTheHillTune.avg.json
 var kingOfTheHillTune_avg_default = {
   objective: "avg",
-  avgGuesses: 19.7291666667,
-  maxGuesses: 44,
-  totalGuesses: 4735,
-  fitness: 4735044,
+  avgGuesses: 18.78,
+  maxGuesses: 57,
+  totalGuesses: 11268,
+  fitness: 11268057,
+  benchmark: {
+    seed: 1265595496,
+    difficulty: 60,
+    count: 600,
+    selection: "sequential"
+  },
   config: {
-    clusterMargin: 1.05,
-    clusterDetectAlt: 348,
-    mainPeakModeAlt: 9063,
+    clusterMargin: 1,
+    clusterDetectAlt: 659,
+    mainPeakModeAlt: 9900,
     refinePeakCountMain: 1,
-    findHillQuickRounds: 4,
-    coarseMinDivisor: 61,
-    coarseHillFactor: 9,
-    rescanDivisor1: 101,
-    rescanDivisor2: 247,
-    rescanDivisor3: 674,
+    findHillQuickRounds: 2,
+    coarseMinDivisor: 45,
+    coarseHillFactor: 10,
+    rescanDivisor1: 80,
+    rescanDivisor2: 249,
+    rescanDivisor3: 563,
     refineSpanHillDivisor: 6,
-    refineCoarsePasses: 4,
-    refineFinePasses: 2,
-    refineRadiusShrink: 10,
-    refineStepShrink: 5,
-    sideHillSweepWidthDivisor: 3,
-    centroidMinAlt: 8310,
-    centroidAltFraction: 0.9,
-    centroidRefineRadius: 11,
-    centroidRefinePasses: 4,
-    hillClimbInitialDivisor: 76,
-    hillClimbShrink: 4,
-    hillClimbFlatAltDelta: 0.056,
-    zoomInitialDivisor: 44,
-    zoomMaxPasses: 6,
-    zoomStepDivisor: 4,
+    refineCoarsePasses: 6,
+    refineFinePasses: 6,
+    refineRadiusShrink: 8,
+    refineStepShrink: 4,
+    sideHillSweepWidthDivisor: 1,
+    centroidMinAlt: 9600,
+    centroidAltFraction: 0.87,
+    centroidRefineRadius: 13,
+    centroidRefinePasses: 2,
+    hillClimbInitialDivisor: 59,
+    hillClimbShrink: 8,
+    hillClimbFlatAltDelta: 0.046,
+    zoomInitialDivisor: 30,
+    zoomMaxPasses: 4,
+    zoomStepDivisor: 9,
     parabolicFlatNegLog10: 6,
-    mainPeakDetectAlt: 7868,
+    mainPeakDetectAlt: 7566,
     mainPeakWindowWidths: 2,
-    gaussEstimateMinAlt: 179,
+    gaussEstimateMinAlt: 378,
     gaussHeightFraction: 1,
     enableGaussianEstimate: 1,
-    ternaryMaxItersCap: 120,
-    ternaryWidthStop: 4,
+    ternaryMaxItersCap: 62,
+    ternaryWidthStop: 7,
     ternarySpanDivisor: 2,
-    enableTernarySearch: 1,
-    expandMaxStepDivisor: 1,
-    expandStepMultiplier: 4,
-    enableExpandFromBest: 0,
-    subdivNarrowStepFactor: 2,
-    enableSubdivNarrow: 1,
+    enableTernarySearch: 0,
+    expandMaxStepDivisor: 2,
+    expandStepMultiplier: 3,
+    enableExpandFromBest: 1,
     centroidLogWeight: 0.4,
-    finalMainRadius: 8,
-    finalSideMinRadius: 40,
-    finalSideMaxRadius: 110,
-    finalSideSpanDivisor: 61,
+    finalMainRadius: 16,
+    finalSideMinRadius: 30,
+    finalSideMaxRadius: 112,
+    finalSideSpanDivisor: 54,
     finalTinySpan: 18
   }
 };
@@ -64,64 +68,62 @@ var kingOfTheHillTune_avg_default = {
 // tests/kingOfTheHillTune.max.json
 var kingOfTheHillTune_max_default = {
   objective: "max",
-  avgGuesses: 33.8028333333,
-  maxGuesses: 103,
-  totalGuesses: 202817,
-  fitness: 103202817,
+  avgGuesses: 22.6633333333,
+  maxGuesses: 42,
+  totalGuesses: 13598,
+  fitness: 42013598,
   benchmark: {
     seed: 1265595496,
     difficulty: 60,
-    count: 6e3,
+    count: 600,
     selection: "sequential"
   },
   config: {
-    clusterMargin: 1,
-    clusterDetectAlt: 350,
-    mainPeakModeAlt: 9e3,
-    refinePeakCountMain: 1,
-    findHillQuickRounds: 4,
-    coarseMinDivisor: 40,
-    coarseHillFactor: 7,
-    rescanDivisor1: 70,
-    rescanDivisor2: 228,
-    rescanDivisor3: 64,
-    refineSpanHillDivisor: 6,
-    refineCoarsePasses: 7,
-    refineFinePasses: 4,
-    refineRadiusShrink: 10,
+    clusterMargin: 1.1,
+    clusterDetectAlt: 800,
+    mainPeakModeAlt: 9900,
+    refinePeakCountMain: 3,
+    findHillQuickRounds: 3,
+    coarseMinDivisor: 60,
+    coarseHillFactor: 6,
+    rescanDivisor1: 40,
+    rescanDivisor2: 0,
+    rescanDivisor3: 150,
+    refineSpanHillDivisor: 5,
+    refineCoarsePasses: 5,
+    refineFinePasses: 6,
+    refineRadiusShrink: 3,
     refineStepShrink: 5,
-    sideHillSweepWidthDivisor: 1,
-    centroidMinAlt: 8321,
-    centroidAltFraction: 0.83,
-    centroidRefineRadius: 10,
+    sideHillSweepWidthDivisor: 4,
+    centroidMinAlt: 8632,
+    centroidAltFraction: 0.84,
+    centroidRefineRadius: 16,
     centroidRefinePasses: 2,
-    hillClimbInitialDivisor: 72,
-    hillClimbShrink: 3,
-    hillClimbFlatAltDelta: 0.041,
-    zoomInitialDivisor: 48,
-    zoomMaxPasses: 12,
-    zoomStepDivisor: 4,
-    parabolicFlatNegLog10: 13,
-    mainPeakDetectAlt: 8400,
+    hillClimbInitialDivisor: 88,
+    hillClimbShrink: 2,
+    hillClimbFlatAltDelta: 0.081,
+    zoomInitialDivisor: 34,
+    zoomMaxPasses: 9,
+    zoomStepDivisor: 16,
+    parabolicFlatNegLog10: 8,
+    mainPeakDetectAlt: 7549,
     mainPeakWindowWidths: 2,
-    gaussEstimateMinAlt: 378,
-    gaussHeightFraction: 0.85,
-    enableGaussianEstimate: 0,
-    ternaryMaxItersCap: 61,
-    ternaryWidthStop: 2,
-    ternarySpanDivisor: 5,
+    gaussEstimateMinAlt: 255,
+    gaussHeightFraction: 1,
+    enableGaussianEstimate: 1,
+    ternaryMaxItersCap: 18,
+    ternaryWidthStop: 5,
+    ternarySpanDivisor: 8,
     enableTernarySearch: 0,
-    expandMaxStepDivisor: 4,
-    expandStepMultiplier: 4,
+    expandMaxStepDivisor: 8,
+    expandStepMultiplier: 2,
     enableExpandFromBest: 1,
-    subdivNarrowStepFactor: 1,
-    enableSubdivNarrow: 1,
-    centroidLogWeight: 1,
-    finalMainRadius: 3,
-    finalSideMinRadius: 35,
-    finalSideMaxRadius: 132,
-    finalSideSpanDivisor: 64,
-    finalTinySpan: 21
+    centroidLogWeight: 0.7,
+    finalMainRadius: 17,
+    finalSideMinRadius: 10,
+    finalSideMaxRadius: 130,
+    finalSideSpanDivisor: 52,
+    finalTinySpan: 24
   }
 };
 
@@ -145,7 +147,6 @@ function finalizeImprovedConfig(raw) {
   cfg.enableGaussianEstimate = cfg.enableGaussianEstimate ? 1 : 0;
   cfg.enableTernarySearch = cfg.enableTernarySearch ? 1 : 0;
   cfg.enableExpandFromBest = cfg.enableExpandFromBest ? 1 : 0;
-  cfg.enableSubdivNarrow = cfg.enableSubdivNarrow ? 1 : 0;
   cfg.parabolicFlatEpsilon = 10 ** -cfg.parabolicFlatNegLog10;
   cfg.rescanDivisors = [cfg.rescanDivisor1, cfg.rescanDivisor2, cfg.rescanDivisor3].filter((d) => d > 0).sort((a, b) => a - b);
   return cfg;
@@ -204,7 +205,7 @@ function clusterSearchWindow(fullMin, fullMax, center, hillCount, passwordLength
   return { min: Math.max(fullMin, center - half), max: Math.min(fullMax, center + half) };
 }
 function improvedSearchWindow(fullMin, fullMax, session, hillCount, passwordLength, gaussWidth, cfg) {
-  if (session.bestAlt >= cfg.mainPeakDetectAlt) {
+  if (session.bestAlt >= cfg.mainPeakModeAlt) {
     const half = gaussWidth * cfg.mainPeakWindowWidths;
     let winMin = Math.max(fullMin, session.bestVal - half);
     let winMax = Math.min(fullMax, session.bestVal + half);
@@ -246,7 +247,7 @@ function findLocalPeaks(sorted) {
 function refinePeak(session, mn, mx, center, initialRadius, passes, cfg) {
   let c = center;
   let r = Math.max(1, initialRadius);
-  const onMainHill = session.bestAlt >= cfg.mainPeakDetectAlt;
+  const onMainHill = session.bestAlt >= cfg.mainPeakModeAlt;
   const maxPasses = onMainHill ? Math.min(passes, 2) : passes;
   for (let p = 0; p < maxPasses; p++) {
     const x0 = Math.max(mn, c - r);
@@ -265,7 +266,7 @@ function refinePeak(session, mn, mx, center, initialRadius, passes, cfg) {
   return c;
 }
 function tryParabolicPinpointMain(session, mn, mx, gaussWidth, cfg) {
-  if (session.bestAlt < cfg.mainPeakDetectAlt) return;
+  if (session.bestAlt < cfg.mainPeakModeAlt) return;
   const r = Math.max(1, Math.ceil(gaussWidth / 4));
   const c = session.bestVal;
   const x0 = Math.max(mn, c - r);
@@ -341,7 +342,7 @@ function buildFinals(mn, mx, bestVal, bestAlt, cfg) {
     }
     return out;
   }
-  const nearMainPeak = bestAlt >= cfg.mainPeakDetectAlt;
+  const nearMainPeak = bestAlt >= cfg.mainPeakModeAlt;
   const maxRadius = nearMainPeak ? cfg.finalMainRadius : Math.min(cfg.finalSideMaxRadius, Math.max(cfg.finalSideMinRadius, ceilDiv(span, cfg.finalSideSpanDivisor)));
   for (let d = 0; d <= maxRadius; d++) {
     if (d === 0) {
@@ -361,8 +362,7 @@ function tryFinalCandidates(session, mn, mx, cfg) {
     if (session.solved) return;
   }
 }
-function tryGaussianPeakEstimate(session, mn, mx, gaussWidth, cfg) {
-  if (!cfg.enableGaussianEstimate) return;
+function applyGaussianJump(session, mn, mx, gaussWidth, cfg) {
   if (session.bestAlt < cfg.gaussEstimateMinAlt) return;
   const height = KOTH_PEAK_HEIGHT * cfg.gaussHeightFraction;
   const ratio = Math.min(session.bestAlt / height, 0.999999);
@@ -375,6 +375,10 @@ function tryGaussianPeakEstimate(session, mn, mx, gaussWidth, cfg) {
       if (session.solved) return;
     }
   }
+}
+function tryGaussianPeakEstimate(session, mn, mx, gaussWidth, cfg) {
+  if (!cfg.enableGaussianEstimate) return;
+  applyGaussianJump(session, mn, mx, gaussWidth, cfg);
 }
 function sweep(session, start, end, step, stopAlt, cfg) {
   if (step <= 0) step = 1;
@@ -429,10 +433,33 @@ function tryTernaryPeakSearch(session, lo, hi, maxIters, widthStop) {
   }
   sweep(session, lo, hi, Math.max(1, ceilDiv(width, safeWidthStop)), null);
 }
+function gallopFromBest(session, lo, hi, initialStep, stopAlt, mult) {
+  if (initialStep <= 0) initialStep = 1;
+  mult = Math.max(2, mult);
+  for (const sign of [-1, 1]) {
+    let dist = initialStep;
+    let lastGoodDist = 0;
+    while (dist <= hi - lo && !session.solved && !session.exhausted) {
+      const x = session.bestVal + sign * dist;
+      if (x < lo || x > hi) break;
+      const before = session.bestAlt;
+      session.probe(x);
+      if (session.solved || session.exhausted) return;
+      if (session.bestAlt >= stopAlt) return;
+      if (session.bestAlt > before) {
+        lastGoodDist = dist;
+        dist *= mult;
+        continue;
+      }
+      if (lastGoodDist > 0) break;
+      dist *= mult;
+    }
+  }
+}
 function tryExpandFromBest(session, mn, mx, gaussWidth, stopAlt, cfg) {
   if (!cfg.enableExpandFromBest) return;
-  let step = 1;
-  const maxStep = Math.max(1, ceilDiv(gaussWidth, cfg.expandMaxStepDivisor));
+  let step = Math.max(1, ceilDiv(gaussWidth, cfg.expandMaxStepDivisor));
+  const maxStep = Math.max(step, ceilDiv(mx - mn, Math.max(cfg.coarseMinDivisor, 8)));
   const mult = Math.max(2, cfg.expandStepMultiplier);
   while (step <= maxStep && !session.solved && !session.exhausted) {
     let improved = false;
@@ -445,7 +472,7 @@ function tryExpandFromBest(session, mn, mx, gaussWidth, stopAlt, cfg) {
       if (session.bestAlt > before) improved = true;
       if (session.bestAlt >= stopAlt) return;
     }
-    if (!improved && step > 1) break;
+    if (!improved && step >= gaussWidth) break;
     step = Math.max(1, step * mult);
   }
 }
@@ -453,62 +480,62 @@ function refinePeakCount(session, hillCount, cfg) {
   if (session.bestAlt >= cfg.mainPeakModeAlt) return cfg.refinePeakCountMain;
   return hillCount;
 }
-function findHillBySubdivision(session, lo, hi, quickRounds, fullMin, fullMax, hillCount, passwordLength, gaussWidth, cfg) {
-  let step = hi - lo;
-  for (let round = 0; round < quickRounds && !session.solved && !session.exhausted; round++) {
-    const nextStep = Math.max(1, ceilDiv(step, 2));
-    if (nextStep >= step) break;
-    step = nextStep;
-    for (let x = lo + step; x < hi; x += step) {
-      session.probe(Math.round(x));
-      if (session.solved) return;
+function probeSparseFractions(session, lo, hi, count) {
+  const span = hi - lo;
+  if (span <= 0 || count <= 1) return;
+  for (let i = 1; i < count; i++) {
+    session.probe(lo + Math.floor(span * i / count));
+    if (session.solved || session.exhausted) return;
+  }
+}
+function locateHill(session, fullMin, fullMax, hillCount, passwordLength, gaussWidth, cfg) {
+  let lo = fullMin;
+  let hi = fullMax;
+  const span = hi - lo;
+  if (span <= 0) return;
+  const sparseCount = Math.max(4, cfg.findHillQuickRounds * 4);
+  probeSparseFractions(session, lo, hi, sparseCount);
+  if (session.solved || session.exhausted || session.bestAlt >= cfg.mainPeakModeAlt) return;
+  const coarseStep = Math.max(1, ceilDiv(span, Math.max(cfg.coarseMinDivisor, hillCount * cfg.coarseHillFactor)));
+  const gallopStep = Math.max(coarseStep, gaussWidth);
+  const mult = Math.max(2, cfg.expandStepMultiplier);
+  const stopAlt = cfg.mainPeakModeAlt;
+  for (let pass = 0; pass < Math.max(1, cfg.findHillQuickRounds) && !session.solved && !session.exhausted; pass++) {
+    if (session.bestAlt >= stopAlt) return;
+    gallopFromBest(session, lo, hi, gallopStep, stopAlt, mult);
+    if (session.solved || session.exhausted || session.bestAlt >= stopAlt) return;
+    if (session.bestAlt >= cfg.clusterDetectAlt) {
+      applyGaussianJump(session, lo, hi, gaussWidth, cfg);
+      if (session.solved || session.exhausted || session.bestAlt >= stopAlt) return;
     }
-    if (session.bestAlt >= cfg.mainPeakModeAlt) return;
-    if (!cfg.enableSubdivNarrow) continue;
     if (session.bestAlt >= cfg.clusterDetectAlt) {
       const win = clusterSearchWindow(fullMin, fullMax, session.bestVal, hillCount, passwordLength, cfg);
-      lo = Math.max(lo, win.min);
-      hi = Math.min(hi, win.max);
+      lo = win.min;
+      hi = win.max;
     } else if (session.bestAlt > 0) {
-      const half = Math.max(step * cfg.subdivNarrowStepFactor, gaussWidth);
-      lo = Math.max(lo, session.bestVal - half);
-      hi = Math.min(hi, session.bestVal + half);
+      const half = Math.max(gaussWidth * 2, coarseStep * 2);
+      lo = Math.max(fullMin, session.bestVal - half);
+      hi = Math.min(fullMax, session.bestVal + half);
     }
   }
-}
-function findHillLinearFallback(session, lo, hi, hillCount, cfg) {
-  const span = hi - lo;
-  const step = Math.max(1, ceilDiv(span, Math.max(cfg.coarseMinDivisor, hillCount * cfg.coarseHillFactor)));
-  if (session.bestAlt >= cfg.clusterDetectAlt) {
-    sweepOutwardFromBest(session, lo, hi, hillCount, cfg.mainPeakModeAlt, cfg);
-  } else {
-    sweep(session, lo, hi, step, cfg.mainPeakModeAlt, cfg);
+  if (!session.solved && !session.exhausted && session.bestAlt < cfg.mainPeakModeAlt) {
+    sweep(session, lo, hi, coarseStep, stopAlt, cfg);
   }
 }
-function sweepOutwardFromBest(session, lo, hi, hillCount, stopAlt, cfg) {
-  const span = hi - lo;
-  const step = Math.max(1, ceilDiv(span, Math.max(cfg.coarseMinDivisor, hillCount * cfg.coarseHillFactor)));
-  const center = session.bestVal;
-  if (!session.samples.has(center)) session.probe(center);
+function seekHigherPeakInCluster(session, fullMin, fullMax, hillCount, passwordLength, gaussWidth, cfg) {
   if (session.solved || session.exhausted) return;
-  if (session.bestAlt >= stopAlt) return;
-  for (let dist = step; dist <= span; dist += step) {
-    let probed = 0;
-    let flatEdges = 0;
-    const beforeBest = session.bestAlt;
-    for (const sign of [-1, 1]) {
-      const x = center + sign * dist;
-      if (x < lo || x > hi) continue;
-      probed++;
-      session.probe(x);
-      if (session.solved || session.exhausted) return;
-      if (session.bestAlt >= stopAlt) return;
-      const alt = session.samples.get(Math.round(x));
-      if (alt != null && alt < cfg.clusterDetectAlt) flatEdges++;
-    }
-    if (probed === 0) break;
-    if (flatEdges >= probed && beforeBest >= cfg.clusterDetectAlt) return;
-  }
+  if (session.bestAlt >= cfg.mainPeakModeAlt) return;
+  if (session.bestAlt < cfg.clusterDetectAlt) return;
+  const win = clusterSearchWindow(fullMin, fullMax, session.bestVal, hillCount, passwordLength, cfg);
+  const span = win.max - win.min;
+  const step = Math.max(1, ceilDiv(span, Math.max(cfg.coarseMinDivisor, hillCount * cfg.coarseHillFactor)));
+  sweep(session, win.min, win.max, step, cfg.mainPeakModeAlt, cfg);
+  if (session.solved || session.exhausted) return;
+  applyGaussianJump(session, win.min, win.max, gaussWidth, cfg);
+  if (session.solved) return;
+  const peaks = findLocalPeaks(sortedSamples(session));
+  const refineRadius = Math.max(step, gaussWidth);
+  refinePeakCandidates(session, win.min, win.max, peaks, refineRadius, hillCount, cfg);
 }
 function tryHillClimbFinals(session, searchMin, searchMax, gaussWidth, fullMin, fullMax, cfg) {
   let step = Math.max(1, ceilDiv(gaussWidth, cfg.hillClimbInitialDivisor));
@@ -576,19 +603,17 @@ function runSolverImprovedCore(session, ctx, cfgIn, options = {}) {
   if (session.solved) {
     return { guesses: session.guesses, solved: true, bestVal: session.bestVal, bestAlt: session.bestAlt };
   }
-  findHillBySubdivision(session, min, max, cfg.findHillQuickRounds, min, max, hillCount, passwordLength, gaussWidth, cfg);
+  locateHill(session, min, max, hillCount, passwordLength, gaussWidth, cfg);
   if (!session.solved && session.bestAlt >= cfg.clusterDetectAlt) {
     tryGaussianPeakEstimate(session, min, max, gaussWidth, cfg);
   }
-  if (!session.solved && session.bestAlt < cfg.mainPeakDetectAlt) {
-    let fallbackLo = min;
-    let fallbackHi = max;
-    if (session.bestAlt >= cfg.clusterDetectAlt) {
-      const win = clusterSearchWindow(min, max, session.bestVal, hillCount, passwordLength, cfg);
-      fallbackLo = win.min;
-      fallbackHi = win.max;
-    }
-    findHillLinearFallback(session, fallbackLo, fallbackHi, hillCount, cfg);
+  if (!session.solved && session.bestAlt < cfg.mainPeakModeAlt && cfg.enableTernarySearch) {
+    const win = improvedSearchWindow(min, max, session, hillCount, passwordLength, gaussWidth, cfg);
+    const ternaryIters = Math.min(
+      cfg.ternaryMaxItersCap,
+      ceilDiv(win.max - win.min, Math.max(1, cfg.ternarySpanDivisor))
+    );
+    tryTernaryPeakSearch(session, win.min, win.max, ternaryIters, cfg.ternaryWidthStop);
   }
   if (session.solved) {
     return { guesses: session.guesses, solved: true, bestVal: session.bestVal, bestAlt: session.bestAlt };
@@ -613,15 +638,21 @@ function runSolverImprovedCore(session, ctx, cfgIn, options = {}) {
     refinePeakCandidates(session, search.min, search.max, peaks, refineRadius, refinePeakCount(session, hillCount, cfg), cfg);
     if (session.solved) return finish();
   }
-  if (session.bestAlt < cfg.mainPeakDetectAlt) {
+  if (session.bestAlt < cfg.mainPeakModeAlt) {
     search = improvedSearchWindow(min, max, session, hillCount, passwordLength, gaussWidth, cfg);
-    tryExpandFromBest(session, search.min, search.max, gaussWidth, cfg.mainPeakDetectAlt, cfg);
+    tryExpandFromBest(session, search.min, search.max, gaussWidth, cfg.mainPeakModeAlt, cfg);
     if (session.solved) return finish();
-    sweep(session, search.min, search.max, Math.max(1, ceilDiv(gaussWidth, cfg.sideHillSweepWidthDivisor)), cfg.mainPeakDetectAlt);
+    applyGaussianJump(session, search.min, search.max, gaussWidth, cfg);
+    if (session.solved) return finish();
+    sweep(session, search.min, search.max, Math.max(1, ceilDiv(gaussWidth, cfg.sideHillSweepWidthDivisor)), cfg.mainPeakModeAlt);
     if (session.solved) return finish();
     const peaks = findLocalPeaks(sortedSamples(session));
     const refineRadius = Math.max(1, gaussWidth);
     refinePeakCandidates(session, search.min, search.max, peaks, refineRadius, refinePeakCount(session, hillCount, cfg), cfg);
+    if (session.solved) return finish();
+  }
+  if (!session.solved && session.bestAlt >= cfg.clusterDetectAlt && session.bestAlt < cfg.mainPeakModeAlt) {
+    seekHigherPeakInCluster(session, min, max, hillCount, passwordLength, gaussWidth, cfg);
     if (session.solved) return finish();
   }
   if (session.bestAlt >= cfg.centroidMinAlt) {
@@ -636,7 +667,7 @@ function runSolverImprovedCore(session, ctx, cfgIn, options = {}) {
     }
   }
   if (!session.solved) tryFinalCandidates(session, min, max, cfg);
-  if (!session.solved && session.bestAlt >= cfg.mainPeakDetectAlt) {
+  if (!session.solved && session.bestAlt >= cfg.mainPeakModeAlt) {
     const climbWindow = improvedSearchWindow(min, max, session, hillCount, passwordLength, gaussWidth, cfg);
     tryParabolicPinpointMain(session, climbWindow.min, climbWindow.max, gaussWidth, cfg);
     if (!session.solved) tryFinalCandidates(session, min, max, cfg);

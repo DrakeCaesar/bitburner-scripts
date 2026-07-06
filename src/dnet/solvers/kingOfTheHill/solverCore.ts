@@ -290,8 +290,7 @@ function tryFinalCandidates(session: ProbeSession, mn: number, mx: number, cfg: 
   }
 }
 
-function tryGaussianPeakEstimate(session: ProbeSession, mn: number, mx: number, gaussWidth: number, cfg: ImprovedConfig): void {
-  if (!cfg.enableGaussianEstimate) return
+function applyGaussianJump(session: ProbeSession, mn: number, mx: number, gaussWidth: number, cfg: ImprovedConfig): void {
   if (session.bestAlt < cfg.gaussEstimateMinAlt) return
   const height = KOTH_PEAK_HEIGHT * cfg.gaussHeightFraction
   const ratio = Math.min(session.bestAlt / height, 0.999999)
@@ -304,6 +303,11 @@ function tryGaussianPeakEstimate(session: ProbeSession, mn: number, mx: number, 
       if (session.solved) return
     }
   }
+}
+
+function tryGaussianPeakEstimate(session: ProbeSession, mn: number, mx: number, gaussWidth: number, cfg: ImprovedConfig): void {
+  if (!cfg.enableGaussianEstimate) return
+  applyGaussianJump(session, mn, mx, gaussWidth, cfg)
 }
 
 function sweep(
@@ -368,6 +372,37 @@ function tryTernaryPeakSearch(session: ProbeSession, lo: number, hi: number, max
   sweep(session, lo, hi, Math.max(1, ceilDiv(width, safeWidthStop)), null)
 }
 
+function gallopFromBest(
+  session: ProbeSession,
+  lo: number,
+  hi: number,
+  initialStep: number,
+  stopAlt: number,
+  mult: number,
+): void {
+  if (initialStep <= 0) initialStep = 1
+  mult = Math.max(2, mult)
+  for (const sign of [-1, 1]) {
+    let dist = initialStep
+    let lastGoodDist = 0
+    while (dist <= hi - lo && !session.solved && !session.exhausted) {
+      const x = session.bestVal + sign * dist
+      if (x < lo || x > hi) break
+      const before = session.bestAlt
+      session.probe(x)
+      if (session.solved || session.exhausted) return
+      if (session.bestAlt >= stopAlt) return
+      if (session.bestAlt > before) {
+        lastGoodDist = dist
+        dist *= mult
+        continue
+      }
+      if (lastGoodDist > 0) break
+      dist *= mult
+    }
+  }
+}
+
 function tryExpandFromBest(
   session: ProbeSession,
   mn: number,
@@ -377,8 +412,8 @@ function tryExpandFromBest(
   cfg: ImprovedConfig,
 ): void {
   if (!cfg.enableExpandFromBest) return
-  let step = 1
-  const maxStep = Math.max(1, ceilDiv(gaussWidth, cfg.expandMaxStepDivisor))
+  let step = Math.max(1, ceilDiv(gaussWidth, cfg.expandMaxStepDivisor))
+  const maxStep = Math.max(step, ceilDiv(mx - mn, Math.max(cfg.coarseMinDivisor, 8)))
   const mult = Math.max(2, cfg.expandStepMultiplier)
   while (step <= maxStep && !session.solved && !session.exhausted) {
     let improved = false
@@ -391,7 +426,7 @@ function tryExpandFromBest(
       if (session.bestAlt > before) improved = true
       if (session.bestAlt >= stopAlt) return
     }
-    if (!improved && step > 1) break
+    if (!improved && step >= gaussWidth) break
     step = Math.max(1, step * mult)
   }
 }
@@ -401,11 +436,17 @@ function refinePeakCount(session: ProbeSession, hillCount: number, cfg: Improved
   return hillCount
 }
 
-function findHillBySubdivision(
+function probeSparseFractions(session: ProbeSession, lo: number, hi: number, count: number): void {
+  const span = hi - lo
+  if (span <= 0 || count <= 1) return
+  for (let i = 1; i < count; i++) {
+    session.probe(lo + Math.floor((span * i) / count))
+    if (session.solved || session.exhausted) return
+  }
+}
+
+function locateHill(
   session: ProbeSession,
-  lo: number,
-  hi: number,
-  quickRounds: number,
   fullMin: number,
   fullMax: number,
   hillCount: number,
@@ -413,70 +454,44 @@ function findHillBySubdivision(
   gaussWidth: number,
   cfg: ImprovedConfig,
 ): void {
-  let step = hi - lo
-  for (let round = 0; round < quickRounds && !session.solved && !session.exhausted; round++) {
-    const nextStep = Math.max(1, ceilDiv(step, 2))
-    if (nextStep >= step) break
-    step = nextStep
-    for (let x = lo + step; x < hi; x += step) {
-      session.probe(Math.round(x))
-      if (session.solved) return
+  let lo = fullMin
+  let hi = fullMax
+  const span = hi - lo
+  if (span <= 0) return
+
+  const sparseCount = Math.max(4, cfg.findHillQuickRounds * 4)
+  probeSparseFractions(session, lo, hi, sparseCount)
+  if (session.solved || session.exhausted || session.bestAlt >= cfg.mainPeakDetectAlt) return
+
+  const coarseStep = Math.max(1, ceilDiv(span, Math.max(cfg.coarseMinDivisor, hillCount * cfg.coarseHillFactor)))
+  const gallopStep = Math.max(coarseStep, gaussWidth)
+  const mult = Math.max(2, cfg.expandStepMultiplier)
+  const stopAlt = cfg.mainPeakDetectAlt
+
+  for (let pass = 0; pass < Math.max(1, cfg.findHillQuickRounds) && !session.solved && !session.exhausted; pass++) {
+    if (session.bestAlt >= stopAlt) return
+
+    gallopFromBest(session, lo, hi, gallopStep, stopAlt, mult)
+    if (session.solved || session.exhausted || session.bestAlt >= stopAlt) return
+
+    if (session.bestAlt >= cfg.clusterDetectAlt) {
+      applyGaussianJump(session, lo, hi, gaussWidth, cfg)
+      if (session.solved || session.exhausted || session.bestAlt >= stopAlt) return
     }
-    if (session.bestAlt >= cfg.mainPeakModeAlt) return
-    if (!cfg.enableSubdivNarrow) continue
+
     if (session.bestAlt >= cfg.clusterDetectAlt) {
       const win = clusterSearchWindow(fullMin, fullMax, session.bestVal, hillCount, passwordLength, cfg)
-      lo = Math.max(lo, win.min)
-      hi = Math.min(hi, win.max)
+      lo = win.min
+      hi = win.max
     } else if (session.bestAlt > 0) {
-      const half = Math.max(step * cfg.subdivNarrowStepFactor, gaussWidth)
-      lo = Math.max(lo, session.bestVal - half)
-      hi = Math.min(hi, session.bestVal + half)
+      const half = Math.max(gaussWidth * 2, coarseStep * 2)
+      lo = Math.max(fullMin, session.bestVal - half)
+      hi = Math.min(fullMax, session.bestVal + half)
     }
   }
-}
 
-function findHillLinearFallback(session: ProbeSession, lo: number, hi: number, hillCount: number, cfg: ImprovedConfig): void {
-  const span = hi - lo
-  const step = Math.max(1, ceilDiv(span, Math.max(cfg.coarseMinDivisor, hillCount * cfg.coarseHillFactor)))
-  if (session.bestAlt >= cfg.clusterDetectAlt) {
-    sweepOutwardFromBest(session, lo, hi, hillCount, cfg.mainPeakModeAlt, cfg)
-  } else {
-    sweep(session, lo, hi, step, cfg.mainPeakModeAlt, cfg)
-  }
-}
-
-function sweepOutwardFromBest(
-  session: ProbeSession,
-  lo: number,
-  hi: number,
-  hillCount: number,
-  stopAlt: number,
-  cfg: ImprovedConfig,
-): void {
-  const span = hi - lo
-  const step = Math.max(1, ceilDiv(span, Math.max(cfg.coarseMinDivisor, hillCount * cfg.coarseHillFactor)))
-  const center = session.bestVal
-  if (!session.samples.has(center)) session.probe(center)
-  if (session.solved || session.exhausted) return
-  if (session.bestAlt >= stopAlt) return
-
-  for (let dist = step; dist <= span; dist += step) {
-    let probed = 0
-    let flatEdges = 0
-    const beforeBest = session.bestAlt
-    for (const sign of [-1, 1] as const) {
-      const x = center + sign * dist
-      if (x < lo || x > hi) continue
-      probed++
-      session.probe(x)
-      if (session.solved || session.exhausted) return
-      if (session.bestAlt >= stopAlt) return
-      const alt = session.samples.get(Math.round(x))
-      if (alt != null && alt < cfg.clusterDetectAlt) flatEdges++
-    }
-    if (probed === 0) break
-    if (flatEdges >= probed && beforeBest >= cfg.clusterDetectAlt) return
+  if (!session.solved && !session.exhausted && session.bestAlt < cfg.mainPeakDetectAlt) {
+    sweep(session, lo, hi, coarseStep, stopAlt, cfg)
   }
 }
 
@@ -582,19 +597,17 @@ export function runSolverImprovedCore(
     return { guesses: session.guesses, solved: true, bestVal: session.bestVal, bestAlt: session.bestAlt }
   }
 
-  findHillBySubdivision(session, min, max, cfg.findHillQuickRounds, min, max, hillCount, passwordLength, gaussWidth, cfg)
+  locateHill(session, min, max, hillCount, passwordLength, gaussWidth, cfg)
   if (!session.solved && session.bestAlt >= cfg.clusterDetectAlt) {
     tryGaussianPeakEstimate(session, min, max, gaussWidth, cfg)
   }
-  if (!session.solved && session.bestAlt < cfg.mainPeakDetectAlt) {
-    let fallbackLo = min
-    let fallbackHi = max
-    if (session.bestAlt >= cfg.clusterDetectAlt) {
-      const win = clusterSearchWindow(min, max, session.bestVal, hillCount, passwordLength, cfg)
-      fallbackLo = win.min
-      fallbackHi = win.max
-    }
-    findHillLinearFallback(session, fallbackLo, fallbackHi, hillCount, cfg)
+  if (!session.solved && session.bestAlt < cfg.mainPeakDetectAlt && cfg.enableTernarySearch) {
+    const win = improvedSearchWindow(min, max, session, hillCount, passwordLength, gaussWidth, cfg)
+    const ternaryIters = Math.min(
+      cfg.ternaryMaxItersCap,
+      ceilDiv(win.max - win.min, Math.max(1, cfg.ternarySpanDivisor)),
+    )
+    tryTernaryPeakSearch(session, win.min, win.max, ternaryIters, cfg.ternaryWidthStop)
   }
   if (session.solved) {
     return { guesses: session.guesses, solved: true, bestVal: session.bestVal, bestAlt: session.bestAlt }
@@ -607,6 +620,7 @@ export function runSolverImprovedCore(
   for (const divisor of cfg.rescanDivisors) {
     if (session.bestAlt >= cfg.centroidMinAlt) break
     if (session.bestAlt >= cfg.mainPeakModeAlt) break
+    if (session.bestAlt >= cfg.mainPeakDetectAlt) break
     search = improvedSearchWindow(min, max, session, hillCount, passwordLength, gaussWidth, cfg)
     searchSpan = search.max - search.min
     sweep(session, search.min, search.max, Math.max(1, ceilDiv(searchSpan, divisor)), cfg.mainPeakModeAlt, cfg)
@@ -627,6 +641,8 @@ export function runSolverImprovedCore(
   if (session.bestAlt < cfg.mainPeakDetectAlt) {
     search = improvedSearchWindow(min, max, session, hillCount, passwordLength, gaussWidth, cfg)
     tryExpandFromBest(session, search.min, search.max, gaussWidth, cfg.mainPeakDetectAlt, cfg)
+    if (session.solved) return finish()
+    applyGaussianJump(session, search.min, search.max, gaussWidth, cfg)
     if (session.solved) return finish()
     sweep(session, search.min, search.max, Math.max(1, ceilDiv(gaussWidth, cfg.sideHillSweepWidthDivisor)), cfg.mainPeakDetectAlt)
     if (session.solved) return finish()
