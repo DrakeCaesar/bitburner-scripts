@@ -170,6 +170,29 @@
     .summary .good { color: #81c784; }
     .summary .bad { color: #e57373; }
 
+    .progress-wrap {
+      flex: 1 1 100%;
+      min-width: 240px;
+    }
+
+    .progress-bar {
+      margin-top: 8px;
+      height: 6px;
+      background: #111;
+      border: 1px solid var(--border);
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: var(--password);
+      transition: width 0.08s linear;
+    }
+
+    .progress-meta {
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
     .meta-row {
       display: flex;
       flex-wrap: wrap;
@@ -352,7 +375,17 @@
 
     sortInput.addEventListener("change", () => {
       saveSettings()
-      renderAll()
+      if (cachedResults) renderAll({ rerunTests: false })
+    })
+
+    chartLimitInput.addEventListener("change", () => {
+      saveSettings()
+      if (cachedResults) renderAll({ rerunTests: false })
+    })
+
+    pointsInput.addEventListener("change", () => {
+      saveSettings()
+      if (cachedResults) renderAll({ rerunTests: false })
     })
 
     function buildRowsFromBenchmark() {
@@ -360,22 +393,73 @@
       if (!benchmark) return { error: "No benchmark in kingOfTheHillTune.max.json." }
       return {
         benchmark,
-        rows: generateAssignments(benchmark.seed, benchmark.count, benchmark.difficulty).map(
-          ({ index, assignment }) => ({
-            index,
-            assignment,
-            result: runSolver(assignment, { returnSamples: true }),
-          }),
-        ),
+        assignments: generateAssignments(benchmark.seed, benchmark.count, benchmark.difficulty),
       }
     }
 
-    function buildRowsSequential(seed, difficulty, testCount) {
-      return generateAssignments(seed, testCount, difficulty).map(({ index, assignment }) => ({
-        index,
-        assignment,
-        result: runSolver(assignment, { returnSamples: true }),
-      }))
+    let renderRunId = 0
+    /** @type {{ rows: { index: number, assignment: object, result: object }[], sourceLabel: string, cacheKey: string } | null} */
+    let cachedResults = null
+
+    function resultsCacheKey() {
+      syncAssignmentSourceControls()
+      const jsonMode = isJsonBenchmarkSource()
+      if (jsonMode) {
+        const benchmark = getTunedBenchmark("max")
+        if (!benchmark) return "json-missing"
+        return `json:${benchmark.seed}:${benchmark.difficulty}:${benchmark.count}`
+      }
+      const seed = Number(seedInput.value) || DEFAULT_SEED
+      const difficulty = Number(difficultyInput.value) || DEFAULT_DIFFICULTY
+      const testCount = Math.max(1, Math.min(100000, Math.floor(Number(countInput.value) || 1000)))
+      return `seq:${seed}:${difficulty}:${testCount}`
+    }
+
+    function progressBatchSize(total) {
+      if (total >= 50000) return 500
+      if (total >= 10000) return 200
+      if (total >= 1000) return 50
+      return 10
+    }
+
+    function setProgress(done, total, phase, extra = "") {
+      const pct = total > 0 ? Math.min(100, (done / total) * 100) : 0
+      const phaseLabel = phase === "charts" ? "Rendering charts" : "Running tests"
+      summaryEl.innerHTML = [
+        `<div class="progress-wrap">`,
+        `<div><strong>${phaseLabel}</strong> ${done.toLocaleString()} / ${total.toLocaleString()} (${pct.toFixed(1)}%)</div>`,
+        `<div class="progress-bar"><div class="progress-fill" style="width:${pct.toFixed(2)}%"></div></div>`,
+        extra ? `<div class="progress-meta">${extra}</div>` : "",
+        `</div>`,
+      ].join("")
+    }
+
+    async function buildRowsAsync(assignments, runId, onProgress) {
+      const rows = []
+      const batchSize = progressBatchSize(assignments.length)
+      const started = performance.now()
+      for (let i = 0; i < assignments.length; i++) {
+        if (runId !== renderRunId) return null
+        const { index, assignment } = assignments[i]
+        rows.push({
+          index,
+          assignment,
+          result: runSolver(assignment, { returnSamples: true }),
+        })
+        const done = i + 1
+        if (done % batchSize === 0 || done === assignments.length) {
+          const elapsed = (performance.now() - started) / 1000
+          const rate = elapsed > 0 ? done / elapsed : 0
+          const eta = rate > 0 ? (assignments.length - done) / rate : 0
+          const extra =
+            rate >= 1
+              ? `${rate.toFixed(0)} tests/s` + (done < assignments.length ? `, ~${Math.ceil(eta)}s left` : "")
+              : ""
+          onProgress(done, assignments.length, "tests", extra)
+          await new Promise((resolve) => setTimeout(resolve, 0))
+        }
+      }
+      return rows
     }
 
     function sortRows(rows, mode) {
@@ -548,7 +632,53 @@
       ].join("")
     }
 
-    function renderAll() {
+    async function renderChartGrid(chartRows, runId, pointCount) {
+      grid.replaceChildren()
+      if (chartRows.length === 0) return
+
+      setProgress(0, chartRows.length, "charts")
+      for (let i = 0; i < chartRows.length; i++) {
+        if (runId !== renderRunId) return
+        const { index, assignment, result } = chartRows[i]
+        const profile = sampleAltitudeProfile(assignment, { pointCount })
+
+        const card = document.createElement("article")
+        card.className = "card"
+
+        const h2 = document.createElement("h2")
+        h2.textContent = `#${index}  password ${assignment.password}`
+        card.appendChild(h2)
+
+        const meta = document.createElement("div")
+        meta.className = "meta"
+
+        const solverRow = document.createElement("div")
+        solverRow.className = "meta-row"
+        const guessClass = result.solved ? "" : " bad"
+        solverRow.innerHTML = `<span class="label">solver</span><span class="${guessClass.trim()}">${solverLine("", result).slice(2)}</span>`
+        meta.appendChild(solverRow)
+
+        const rangeRow = document.createElement("div")
+        rangeRow.className = "meta-row"
+        rangeRow.innerHTML = `<span class="label">range</span><span>${formatNum(profile.min)} .. ${formatNum(profile.max)}</span>`
+        meta.appendChild(rangeRow)
+
+        card.appendChild(meta)
+
+        const canvas = document.createElement("canvas")
+        card.appendChild(canvas)
+        grid.appendChild(card)
+
+        drawChart(canvas, profile, result)
+
+        if ((i + 1) % 4 === 0 || i + 1 === chartRows.length) {
+          setProgress(i + 1, chartRows.length, "charts")
+          await new Promise((resolve) => setTimeout(resolve, 0))
+        }
+      }
+    }
+
+    async function renderAll({ rerunTests = true } = {}) {
       syncAssignmentSourceControls()
       saveSettings()
       const jsonMode = isJsonBenchmarkSource()
@@ -564,80 +694,63 @@
       }
       chartLimitInput.value = String(chartLimit)
 
+      const runId = ++renderRunId
       renderBtn.disabled = true
-      renderBtn.textContent = "Running..."
-      summaryEl.textContent = jsonMode ? "Loading JSON benchmark..." : `Running ${testCount} tests...`
-      grid.replaceChildren()
+      renderBtn.textContent = rerunTests ? "Running..." : "Updating..."
+      const cacheKey = resultsCacheKey()
+      const needTests =
+        rerunTests || cachedResults == null || cachedResults.cacheKey !== cacheKey
 
-      setTimeout(() => {
-        let rows
-        let sourceLabel
+      let rows
+      let sourceLabel
+      if (needTests) {
+        setProgress(0, testCount, "tests")
+        grid.replaceChildren()
+
         if (jsonMode) {
           const built = buildRowsFromBenchmark()
           if (built.error) {
             summaryEl.innerHTML = `<span class="bad">${built.error}</span>`
+            cachedResults = null
             renderBtn.disabled = false
             renderBtn.textContent = "Redraw"
             return
           }
-          rows = built.rows
           const b = built.benchmark
           sourceLabel = `JSON benchmark: first ${b.count} assignments, seed ${b.seed}, difficulty ${b.difficulty}`
+          rows = await buildRowsAsync(built.assignments, runId, setProgress)
         } else {
-          rows = buildRowsSequential(seed, difficulty, testCount)
           sourceLabel = `sequential #1-${testCount}, seed ${seed}, difficulty ${difficulty}`
+          rows = await buildRowsAsync(generateAssignments(seed, testCount, difficulty), runId, setProgress)
         }
 
-        const sorted = sortRows(rows, sortMode)
-        const chartRows = chartLimit > 0 ? sorted.slice(0, chartLimit) : []
+        if (runId !== renderRunId || rows == null) return
+        cachedResults = { rows, sourceLabel, cacheKey }
+      } else {
+        rows = cachedResults.rows
+        sourceLabel = cachedResults.sourceLabel
+      }
 
-        renderSummary(rows, chartRows.length, sortMode, sourceLabel)
+      const sorted = sortRows(rows, sortMode)
+      const chartRows = chartLimit > 0 ? sorted.slice(0, chartLimit) : []
 
-        for (const { index, assignment, result } of chartRows) {
-          const profile = sampleAltitudeProfile(assignment, { pointCount })
+      await renderChartGrid(chartRows, runId, pointCount)
 
-          const card = document.createElement("article")
-          card.className = "card"
-
-          const h2 = document.createElement("h2")
-          h2.textContent = `#${index}  password ${assignment.password}`
-          card.appendChild(h2)
-
-          const meta = document.createElement("div")
-          meta.className = "meta"
-
-          const solverRow = document.createElement("div")
-          solverRow.className = "meta-row"
-          const guessClass = result.solved ? "" : " bad"
-          solverRow.innerHTML = `<span class="label">solver</span><span class="${guessClass.trim()}">${solverLine("", result).slice(2)}</span>`
-          meta.appendChild(solverRow)
-
-          const rangeRow = document.createElement("div")
-          rangeRow.className = "meta-row"
-          rangeRow.innerHTML = `<span class="label">range</span><span>${formatNum(profile.min)} .. ${formatNum(profile.max)}</span>`
-          meta.appendChild(rangeRow)
-
-          card.appendChild(meta)
-
-          const canvas = document.createElement("canvas")
-          card.appendChild(canvas)
-          grid.appendChild(card)
-
-          drawChart(canvas, profile, result)
-        }
-
-        renderBtn.disabled = false
-        renderBtn.textContent = "Redraw"
-      }, 0)
+      if (runId !== renderRunId) return
+      renderSummary(rows, chartRows.length, sortMode, sourceLabel)
+      renderBtn.disabled = false
+      renderBtn.textContent = "Redraw"
     }
 
-    renderBtn.addEventListener("click", renderAll)
+    renderBtn.addEventListener("click", () => renderAll({ rerunTests: true }))
     window.addEventListener("resize", () => {
       clearTimeout(window._kothResize)
-      window._kothResize = setTimeout(renderAll, 150)
+      window._kothResize = setTimeout(() => {
+        if (cachedResults) renderAll({ rerunTests: false })
+      }, 150)
     })
 
-    renderAll()
+    renderAll({ rerunTests: true })
   </script>
 </body>
 </html>
