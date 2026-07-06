@@ -12,7 +12,7 @@ COUNT=$((CORES * 50))       # 600: first N sequential assignments from seed
 SEED=1265595496
 DIFFICULTY=60
 # Fitness target: max or avg (JSON path is derived automatically)
-OBJECTIVE=avg
+OBJECTIVE=max
 # Leave empty to run until Ctrl+C; set e.g. GENERATIONS=500 for a fixed run.
 GENERATIONS=
 MUTATION_RATE=0.35

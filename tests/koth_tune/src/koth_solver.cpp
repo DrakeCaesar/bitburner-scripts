@@ -162,6 +162,9 @@ std::vector<Peak> findLocalPeaks(const std::vector<Sample>& sorted) {
   return unique;
 }
 
+bool refinePeakCandidates(ProbeSession& session, int64_t searchMin, int64_t searchMax, const std::vector<Peak>& peaks,
+                          int64_t refineRadius, int count, const ImprovedConfig& cfg);
+
 int64_t refinePeak(ProbeSession& session, int64_t mn, int64_t mx, int64_t center, int64_t initialRadius, int passes,
                    const ImprovedConfig& cfg) {
   int64_t c = center;
