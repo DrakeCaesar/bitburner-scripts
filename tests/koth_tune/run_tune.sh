@@ -8,7 +8,7 @@ EXE="$SCRIPT_DIR/build/Release/koth_tune.exe"
 CORES=12
 THREADS=$CORES
 POPULATION=$((CORES * 6))   # 72: 6 eval tasks per core per generation
-COUNT=$((CORES * 500))       # 600: first N sequential assignments from seed
+COUNT=$((CORES * 50))       # 600: first N sequential assignments from seed
 SEED=1265595496
 DIFFICULTY=60
 # Fitness target: max or avg (JSON path is derived automatically)

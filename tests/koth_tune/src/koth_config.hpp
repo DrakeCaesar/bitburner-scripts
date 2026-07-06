@@ -51,8 +51,6 @@ struct ImprovedConfig {
   int expandMaxStepDivisor = 1;
   int expandStepMultiplier = 2;
   int enableExpandFromBest = 1;
-  int subdivNarrowStepFactor = 2;
-  int enableSubdivNarrow = 1;
   double centroidLogWeight = 1.0;
   int finalMainRadius = 9;
   int finalSideMinRadius = 25;

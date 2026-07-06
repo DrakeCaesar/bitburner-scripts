@@ -56,8 +56,6 @@ enum class GeneId {
   ExpandMaxStepDivisor,
   ExpandStepMultiplier,
   EnableExpandFromBest,
-  SubdivNarrowStepFactor,
-  EnableSubdivNarrow,
   CentroidLogWeight,
   FinalMainRadius,
   FinalSideMinRadius,
@@ -114,8 +112,6 @@ constexpr SpecDef kSpecs[] = {
     {GeneId::ExpandMaxStepDivisor, GeneType::Int, 1, 8, 1},
     {GeneId::ExpandStepMultiplier, GeneType::Int, 2, 4, 1},
     {GeneId::EnableExpandFromBest, GeneType::Int, 0, 1, 1},
-    {GeneId::SubdivNarrowStepFactor, GeneType::Int, 1, 6, 1},
-    {GeneId::EnableSubdivNarrow, GeneType::Int, 0, 1, 1},
     {GeneId::CentroidLogWeight, GeneType::Float, 0.0, 1.0, 0.1},
     {GeneId::FinalMainRadius, GeneType::Int, 3, 20, 1},
     {GeneId::FinalSideMinRadius, GeneType::Int, 10, 50, 5},
@@ -165,8 +161,6 @@ double getGeneDouble(const ImprovedConfig& cfg, GeneId id) {
     case GeneId::ExpandMaxStepDivisor: return cfg.expandMaxStepDivisor;
     case GeneId::ExpandStepMultiplier: return cfg.expandStepMultiplier;
     case GeneId::EnableExpandFromBest: return cfg.enableExpandFromBest;
-    case GeneId::SubdivNarrowStepFactor: return cfg.subdivNarrowStepFactor;
-    case GeneId::EnableSubdivNarrow: return cfg.enableSubdivNarrow;
     case GeneId::CentroidLogWeight: return cfg.centroidLogWeight;
     case GeneId::FinalMainRadius: return cfg.finalMainRadius;
     case GeneId::FinalSideMinRadius: return cfg.finalSideMinRadius;
@@ -218,8 +212,6 @@ void setGeneDouble(ImprovedConfig& cfg, GeneId id, double v) {
     case GeneId::ExpandMaxStepDivisor: cfg.expandMaxStepDivisor = static_cast<int>(std::llround(v)); break;
     case GeneId::ExpandStepMultiplier: cfg.expandStepMultiplier = static_cast<int>(std::llround(v)); break;
     case GeneId::EnableExpandFromBest: cfg.enableExpandFromBest = static_cast<int>(std::llround(v)); break;
-    case GeneId::SubdivNarrowStepFactor: cfg.subdivNarrowStepFactor = static_cast<int>(std::llround(v)); break;
-    case GeneId::EnableSubdivNarrow: cfg.enableSubdivNarrow = static_cast<int>(std::llround(v)); break;
     case GeneId::CentroidLogWeight: cfg.centroidLogWeight = v; break;
     case GeneId::FinalMainRadius: cfg.finalMainRadius = static_cast<int>(std::llround(v)); break;
     case GeneId::FinalSideMinRadius: cfg.finalSideMinRadius = static_cast<int>(std::llround(v)); break;
@@ -353,8 +345,6 @@ const char* geneKey(GeneId id) {
     case GeneId::ExpandMaxStepDivisor: return "expandMaxStepDivisor";
     case GeneId::ExpandStepMultiplier: return "expandStepMultiplier";
     case GeneId::EnableExpandFromBest: return "enableExpandFromBest";
-    case GeneId::SubdivNarrowStepFactor: return "subdivNarrowStepFactor";
-    case GeneId::EnableSubdivNarrow: return "enableSubdivNarrow";
     case GeneId::CentroidLogWeight: return "centroidLogWeight";
     case GeneId::FinalMainRadius: return "finalMainRadius";
     case GeneId::FinalSideMinRadius: return "finalSideMinRadius";
@@ -377,7 +367,6 @@ ImprovedConfig normalizeImprovedConfig(const ImprovedConfig& raw) {
   cfg.enableGaussianEstimate = cfg.enableGaussianEstimate != 0 ? 1 : 0;
   cfg.enableTernarySearch = cfg.enableTernarySearch != 0 ? 1 : 0;
   cfg.enableExpandFromBest = cfg.enableExpandFromBest != 0 ? 1 : 0;
-  cfg.enableSubdivNarrow = cfg.enableSubdivNarrow != 0 ? 1 : 0;
   cfg.parabolicFlatEpsilon = std::pow(10.0, -static_cast<double>(cfg.parabolicFlatNegLog10));
   fillRescanDivisors(cfg);
   return cfg;
