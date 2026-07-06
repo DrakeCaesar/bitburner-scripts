@@ -38,11 +38,6 @@
       font-weight: 600;
     }
 
-    .subtitle {
-      color: var(--muted);
-      margin-bottom: 16px;
-    }
-
     .controls {
       display: flex;
       flex-wrap: wrap;
@@ -211,10 +206,6 @@
 </head>
 <body>
   <h1>KingOfTheHill altitude profiles</h1>
-  <p class="subtitle">
-    Assignments from seed (sequential) or from tuned JSON benchmark. Summary uses all tests; charts show the first N after sorting.
-    Orange dots are solver probes. Y = altitude; X = valid guess range.
-  </p>
 
   <div class="controls">
     <label>Assignments
@@ -243,7 +234,7 @@
 
   <div class="legend">
     <span><i class="swatch" style="background: var(--curve)"></i> full graph (side hills)</span>
-    <span><i class="swatch" style="background: var(--curve-near)"></i> within 3% of password (single main hill; shaded band)</span>
+    <span><i class="swatch" style="background: var(--curve-near)"></i> main gaussian</span>
     <span><i class="swatch" style="background: var(--password); height: 12px; width: 2px"></i> true password</span>
     <span><i class="swatch" style="background: var(--probe); height: 8px; width: 8px; border-radius: 50%"></i> solver probes</span>
     <span><i class="swatch" style="background: var(--side-hill)"></i> 7500 m side-hill ceiling</span>
