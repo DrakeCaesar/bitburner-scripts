@@ -69,6 +69,11 @@ class ProbeSession {
     return it->second;
   }
 
+  void restoreBest(int64_t x, double a) {
+    bestX_ = x;
+    bestAlt_ = a;
+  }
+
  private:
   const Server& server_;
   int64_t password_;
@@ -655,9 +660,22 @@ void runSolverCore(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, int hc
   runPostCoarsePipeline(sess, lo, hi, w, hc, snipe);
 }
 
-/** Coarse scan that stops on ANY nonzero double reading (signal reaches ~26w in the far tail). */
-std::optional<std::pair<int64_t, double>> ladderCoarseScan(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w,
-                                                           int hc, CoarseScanSample* out) {
+struct LadderCoarseHit {
+  int64_t x = 0;
+  double a = 0.0;
+};
+
+bool isFarTailAnchor(double a) {
+  if (a == 0.0) return false;
+  return std::abs(a) < 200.0;
+}
+
+/**
+ * Coarse scan for ladder: stop on the first far-tail nonzero (any sign, including
+ * denormals), else the first positive. Skip |a| >= 200 negatives (#237479).
+ */
+std::optional<LadderCoarseHit> ladderCoarseScan(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, int hc,
+                                                CoarseScanSample* out) {
   const std::vector<int64_t> xs = scanGrid(lo, hi, w, hc);
   const std::vector<int> order = spreadOrder(static_cast<int>(xs.size()));
   if (out) {
@@ -665,7 +683,6 @@ std::optional<std::pair<int64_t, double>> ladderCoarseScan(ProbeSession& sess, i
     out->probesUsed = 0;
     out->anyNonZero = false;
   }
-  std::optional<std::pair<int64_t, double>> hit;
   for (const int idx : order) {
     const int64_t x = xs[static_cast<size_t>(idx)];
     const std::optional<double> aOpt = sess.probe(x);
@@ -674,12 +691,11 @@ std::optional<std::pair<int64_t, double>> ladderCoarseScan(ProbeSession& sess, i
       if (aOpt && *aOpt != 0.0) out->anyNonZero = true;
     }
     if (sess.solved()) return std::nullopt;
-    if (aOpt && *aOpt != 0.0) {
-      hit = std::make_pair(x, *aOpt);
-      break;
-    }
+    if (!aOpt || *aOpt == 0.0) continue;
+    if (isFarTailAnchor(*aOpt)) return LadderCoarseHit{x, *aOpt};
+    if (*aOpt > 0.0) return LadderCoarseHit{x, *aOpt};
   }
-  return hit;
+  return std::nullopt;
 }
 
 void runSolverCoreBaseline(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, int hc,
@@ -701,25 +717,42 @@ void runSolverCoreSnipe(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, i
 void runSolverCoreLadder(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, int hc, bool snipe,
                          CoarseScanSample* coarseOut = nullptr) {
   if (hc < 5) {
-    // With 1-3 hills the plain walk is already near-optimal; ladder overhead loses.
     runSolverCore(sess, lo, hi, w, hc, CoarseEarlyStopMode::PositiveAny, coarseOut, snipe);
     return;
   }
-  const auto hit = ladderCoarseScan(sess, lo, hi, w, hc, coarseOut);
+  const std::optional<LadderCoarseHit> hit = ladderCoarseScan(sess, lo, hi, w, hc, coarseOut);
   if (sess.solved()) return;
+
+  bool havePositiveRestore = false;
+  int64_t restoreX = lo;
+  double restoreA = -1e18;
+
   if (hit) {
-    if (std::abs(hit->second) < 6000.0) {
-      ladderClimb(sess, hit->first, hit->second, w, hc, lo, hi, snipe);
-      if (sess.solved()) return;
-    } else if (sqrtSnipe(sess, hit->first, hit->second, w, lo, hi)) {
-      return;
+    if (hit->a > 0.0) {
+      restoreX = hit->x;
+      restoreA = hit->a;
+      havePositiveRestore = true;
+    }
+    if (std::abs(hit->a) < 6000.0) {
+      ladderClimb(sess, hit->x, hit->a, w, hc, lo, hi, snipe);
+    } else if (hit->a > 0.0) {
+      sqrtSnipe(sess, hit->x, hit->a, w, lo, hi);
+    }
+    if (sess.solved()) return;
+  }
+
+  // Negative far-tail entry with no positive stop: re-anchor bestX from a positive probe.
+  if (!havePositiveRestore) {
+    runInitialCoarseScan(sess, lo, hi, w, hc, nullptr, CoarseEarlyStopMode::PositiveAny);
+    if (sess.solved()) return;
+    if (sess.bestAlt() > 0.0) {
+      restoreX = sess.bestX();
+      restoreA = sess.bestAlt();
+      havePositiveRestore = true;
     }
   }
-  // Ladder bailed (mixed-hill anchor, inconsistent model, ...). Resume the
-  // spread-order scan until a positive anchor like the baseline coarse phase;
-  // already-probed grid points are cached and cost nothing.
-  runInitialCoarseScan(sess, lo, hi, w, hc, nullptr, CoarseEarlyStopMode::PositiveAny);
-  if (sess.solved()) return;
+
+  if (havePositiveRestore) sess.restoreBest(restoreX, restoreA);
   runPostCoarsePipeline(sess, lo, hi, w, hc, snipe);
 }
 
