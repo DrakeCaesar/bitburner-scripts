@@ -156,6 +156,7 @@ struct BenchRow {
   std::vector<int> guesses;
   int unsolved = 0;
   double seconds = 0.0;
+  int worstIndex = 0;  // 1-based assignment index of the max-guess case
 };
 
 struct DifficultyTask {
@@ -297,7 +298,9 @@ DifficultyBenchResult benchDifficulty(const DifficultyTask& task,
     row.difficulty = task.difficulty;
     row.guesses.reserve(task.assignments.size());
 
-    for (const auto& assignment : task.assignments) {
+    int worstGuesses = -1;
+    for (size_t ai = 0; ai < task.assignments.size(); ++ai) {
+      const auto& assignment = task.assignments[ai];
       koth::CoarseScanSample coarse;
       koth::CoarseScanSample* coarsePtr = (vi == 0) ? &coarse : nullptr;
       const koth::SolveResult res = koth::solve(assignment, 600, variant, coarsePtr);
@@ -308,8 +311,15 @@ DifficultyBenchResult benchDifficulty(const DifficultyTask& task,
         }
         if (coarse.anyNonZero) out.coarse.withNonZero++;
       }
-      if (res.solved) row.guesses.push_back(res.guesses);
-      else ++row.unsolved;
+      if (res.solved) {
+        row.guesses.push_back(res.guesses);
+        if (res.guesses > worstGuesses) {
+          worstGuesses = res.guesses;
+          row.worstIndex = static_cast<int>(ai) + 1;
+        }
+      } else {
+        ++row.unsolved;
+      }
     }
 
     std::sort(row.guesses.begin(), row.guesses.end());
@@ -329,13 +339,14 @@ void printProgress(int done, int total, std::mutex* mu) {
 
 std::string fmtDash() { return "-"; }
 
-std::vector<std::string> statsCells(const BenchStats& stats, double seconds) {
+std::vector<std::string> statsCells(const BenchStats& stats, const BenchRow& row) {
   if (stats.solved <= 0) {
     return {fmtInt(0), fmtInt(stats.unsolved), fmtDash(), fmtDash(), fmtDash(),
-            fmtDash(), fmtDash(), fmtDash(), fmtTime(seconds)};
+            fmtDash(), fmtDash(), fmtDash(), fmtDash(), fmtTime(row.seconds)};
   }
   return {fmtInt(stats.solved), fmtInt(stats.unsolved), fmtAvg(stats.avg), fmtInt(stats.median),
-          fmtInt(stats.min), fmtInt(stats.max), fmtInt(stats.p95), fmtInt(stats.p99), fmtTime(seconds)};
+          fmtInt(stats.min),    fmtInt(stats.max),      fmtInt(stats.p95), fmtInt(stats.p99),
+          fmtInt(row.worstIndex), fmtTime(row.seconds)};
 }
 
 void printStatsTable(const std::vector<std::vector<BenchRow>>& results, bool compare) {
@@ -350,6 +361,7 @@ void printStatsTable(const std::vector<std::vector<BenchRow>>& results, bool com
   table.addColumn("max", 5);
   table.addColumn("p95", 5);
   table.addColumn("p99", 5);
+  table.addColumn("worst_idx", 9);
   table.addColumn("time", 6);
 
   for (const std::vector<BenchRow>& group : results) {
@@ -362,7 +374,7 @@ void printStatsTable(const std::vector<std::vector<BenchRow>>& results, bool com
       std::vector<std::string> cells;
       cells.push_back(fmtInt(difficulty));
       if (compare) cells.push_back(koth::solverVariantName(row.variant));
-      const auto tail = statsCells(stats, row.seconds);
+      const auto tail = statsCells(stats, row);
       cells.insert(cells.end(), tail.begin(), tail.end());
       table.addRow(std::move(cells));
     }
@@ -380,6 +392,7 @@ void printStatsTable(const std::vector<std::vector<BenchRow>>& results, bool com
             fmtCompareInt(stats.max - baseStats.max, true),
             fmtCompareInt(stats.p95 - baseStats.p95, true),
             fmtCompareInt(stats.p99 - baseStats.p99, true),
+            "",
             "",
         };
         table.addRow(std::move(cells));

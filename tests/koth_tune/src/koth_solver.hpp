@@ -34,6 +34,9 @@ struct SolveResult {
 enum class SolverVariant {
   Baseline,
   New,
+  Snipe,
+  Ladder,
+  LadderSnipe,
 };
 
 const char* solverVariantName(SolverVariant variant);

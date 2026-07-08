@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <optional>
 #include <unordered_map>
@@ -83,6 +85,29 @@ class ProbeSession {
 double invertCenter(double x1, double a1, double x2, double a2, int64_t w) {
   const double wd = static_cast<double>(w);
   return (x1 + x2) / 2.0 - (wd * wd) * std::log(a1 / a2) / (2.0 * (x2 - x1));
+}
+
+/**
+ * Near-zone finisher: inside |x-p| < 0.03p the altitude is a PURE Gaussian
+ * 10000*exp(-(x-p)^2/w^2), so a single reading pins |x-p| exactly:
+ * d = w*sqrt(ln(10000/a)). Probe both candidates x+d and x-d; if the reading
+ * was a near-zone reading, one of them is exactly the password.
+ */
+bool sqrtSnipe(ProbeSession& sess, int64_t x, double a, int64_t w, int64_t lo, int64_t hi) {
+  // Side hills top out at ~7530 (10000 - 2600*0.95), so readings above 7600 are
+  // guaranteed to be on the main hill's flank; below that the candidates are
+  // often wasted on side hills.
+  if (!(a > 7600.0) || !(a < kHPeak)) return false;
+  const double d = static_cast<double>(w) * std::sqrt(std::log(kHPeak / a));
+  if (!std::isfinite(d)) return false;
+  // A near-zone reading requires |x-p| < 0.03p; if d exceeds that, the reading
+  // cannot have come from the near zone and the candidates would be wasted.
+  if (d > 0.032 * static_cast<double>(x)) return false;
+  const int64_t dd = std::max<int64_t>(1, std::llround(d));
+  sess.probe(clampInt64(x + dd, lo, hi));
+  if (sess.solved()) return true;
+  sess.probe(clampInt64(x - dd, lo, hi));
+  return sess.solved();
 }
 
 int hopK(double H) {
@@ -184,8 +209,17 @@ std::pair<int64_t, double> gallop(ProbeSession& sess, int64_t xSeed, int64_t w, 
   return {x, a};
 }
 
-void pinpoint(ProbeSession& sess, int64_t seedX, int64_t w, int64_t lo, int64_t hi, int rounds = 5, int finalRadius = 8) {
+void pinpoint(ProbeSession& sess, int64_t seedX, int64_t w, int64_t lo, int64_t hi, int rounds = 5, int finalRadius = 8,
+              bool snipe = false) {
   int64_t pc = clampProbe(static_cast<double>(seedX), lo, hi);
+  if (snipe) {
+    std::optional<double> aSeed = sess.sampleAt(pc);
+    if (!aSeed) {
+      aSeed = sess.probe(pc);
+      if (sess.solved()) return;
+    }
+    if (aSeed && sqrtSnipe(sess, pc, *aSeed, w, lo, hi)) return;
+  }
   int64_t off = std::max<int64_t>(1, std::llround(0.25 * static_cast<double>(w)));
   for (int r = 0; r < rounds; ++r) {
     std::optional<double> a0Opt = sess.sampleAt(pc);
@@ -321,7 +355,7 @@ std::vector<int64_t> scanGrid(int64_t lo, int64_t hi, int64_t w, int hc) {
   return xs;
 }
 
-bool walkAndPinpoint(ProbeSession& sess, int64_t w, int64_t lo, int64_t hi) {
+bool walkAndPinpoint(ProbeSession& sess, int64_t w, int64_t lo, int64_t hi, bool snipe = false) {
   const int64_t step = kStepW * w;
   auto [x, a] = crest(sess, sess.bestX(), w, lo, hi);
   if (sess.solved()) return true;
@@ -367,8 +401,207 @@ bool walkAndPinpoint(ProbeSession& sess, int64_t w, int64_t lo, int64_t hi) {
     lastDir = std::get<2>(*best);
   }
 
-  pinpoint(sess, sess.bestX(), w, lo, hi);
+  pinpoint(sess, sess.bestX(), w, lo, hi, 5, 8, snipe);
   return a >= kMainTh;
+}
+
+/**
+ * Model-based climb exploiting the generator structure:
+ *  - hills sit at p + (i-pwIdx)*3w*u (u in [0.9,1.1]), heights 10000 - k*2600*v (v in [0.95,1.05])
+ *  - two same-sign probes 0.5w apart invert the dominating hill's center exactly (log-space),
+ *    even for denormal-tiny far-tail readings (signal reaches ~26 widths in doubles)
+ *  - probing that center reads its height, whose ladder position gives the rank k
+ *    (number of hills to the main peak), including negative-height fringe hills
+ *  - jump k*3w toward the taller side and repeat; k shrinks each round until pinpoint
+ */
+bool ladderTraceEnabled() {
+  static const bool enabled = std::getenv("KOTH_LADDER_TRACE") != nullptr;
+  return enabled;
+}
+
+void ladderClimb(ProbeSession& sess, int64_t x0, double a0, int64_t w, int hc, int64_t lo, int64_t hi, bool snipe) {
+  const double wd = static_cast<double>(w);
+  int prevK = 1 << 20;
+  int postJumpCapK = 1 << 20;
+  std::vector<int64_t> seenCenters;
+  for (int iter = 0; iter < 8 && !sess.solved(); ++iter) {
+    if (ladderTraceEnabled()) {
+      std::fprintf(stderr, "[ladder] iter=%d x0=%lld a0=%.6g guesses=%d\n", iter, static_cast<long long>(x0), a0,
+                   sess.guesses());
+    }
+    if (a0 == 0.0 || !std::isfinite(a0)) return;
+    // 0.25w keeps both pair samples inside the single-hill-dominated region even
+    // on a flank ~1.5w out; 0.5w pairs get contaminated by the neighbor hill.
+    const int64_t off = std::max<int64_t>(1, std::llround(0.25 * wd));
+    int64_t x1 = (x0 + off <= hi) ? x0 + off : x0 - off;
+    if (x1 == x0) return;
+    std::optional<double> a1Opt = sess.probe(x1);
+    if (sess.solved()) return;
+    // Deep-tail anchors sit a few e-folds above underflow; stepping away from the
+    // hill can flush the pair sample to zero. Retry on the other side once.
+    if (a1Opt && *a1Opt != 0.0 && (a0 > 0.0) != (*a1Opt > 0.0)) {
+      // The pair straddles a sign crossing. Sign flips only happen between the
+      // positive core and negative fringe hills, so the positive sample points
+      // toward the cluster interior: march that way and re-anchor.
+      const bool a1Positive = *a1Opt > 0.0;
+      const int dirIn = (a1Positive == (x1 > x0)) ? 1 : -1;
+      const int64_t base = a1Positive ? x1 : x0;
+      const int64_t xn = clampInt64(base + dirIn * std::max<int64_t>(1, std::llround(1.5 * wd)), lo, hi);
+      const std::optional<double> anOpt = sess.probe(xn);
+      if (sess.solved()) return;
+      if (!anOpt || *anOpt == 0.0) return;
+      x0 = xn;
+      a0 = *anOpt;
+      continue;
+    }
+    if (!a1Opt || *a1Opt == 0.0) {
+      const int64_t x1b = x0 - (x1 - x0);
+      if (x1b < lo || x1b > hi || x1b == x0) return;
+      x1 = x1b;
+      a1Opt = sess.probe(x1);
+      if (sess.solved()) return;
+      if (!a1Opt || *a1Opt == 0.0) return;
+      if ((a0 > 0.0) != (*a1Opt > 0.0)) return;
+    }
+    const double a1 = *a1Opt;
+
+    const double c = invertCenter(static_cast<double>(x0), a0, static_cast<double>(x1), a1, w);
+    if (!std::isfinite(c) || std::abs(c - static_cast<double>(x0)) > 30.0 * wd) return;
+    const int64_t ci = clampProbe(c, lo, hi);
+    for (const int64_t seen : seenCenters) {
+      // Re-inverting to an already-visited center means we are orbiting the same
+      // hill without progress; let the generic pipeline take over.
+      if (std::abs(ci - seen) < w) return;
+    }
+    seenCenters.push_back(ci);
+    const std::optional<double> acOpt = sess.probe(ci);
+    if (sess.solved()) return;
+    if (!acOpt) return;
+    const double ac = *acOpt;
+
+    // Possibly on the main hill flank already; near-zone sqrt candidates are cheap.
+    if (ac > 6000.0 && sqrtSnipe(sess, ci, ac, w, lo, hi)) return;
+    if (ac >= kMainTh) {
+      pinpoint(sess, sess.bestX(), w, lo, hi, 5, 8, snipe);
+      return;
+    }
+
+    // Model consistency. A genuine hill center must (a) not have been clamped to
+    // the range edge, (b) read a height on the generator's ladder
+    // 10000 - k*2600*v with v in [0.95, 1.05] (plus neighbor contamination), and
+    // (c) locally match H*exp(-d^2/w^2) against the anchor pair. Saddle points
+    // between hills fail these and would alias to a bogus rank.
+    const double dxa = static_cast<double>(x0) - static_cast<double>(ci);
+    bool trusted = ac != 0.0 && (a0 > 0.0) == (ac > 0.0) && c >= static_cast<double>(lo) &&
+                   c <= static_cast<double>(hi);
+    int k = static_cast<int>(std::llround((kHPeak - ac) / KOTH_HEIGHT_OFFSET_BASE));
+    if (k < 1) k = 1;
+    if (k > hc - 1) k = hc - 1;
+    if (trusted) {
+      const double kd = static_cast<double>(k);
+      const double bandHi = kHPeak - kd * KOTH_HEIGHT_OFFSET_BASE * 0.95 + 150.0;
+      const double bandLo = kHPeak - kd * KOTH_HEIGHT_OFFSET_BASE * 1.05 - 150.0;
+      if (ac < bandLo || ac > bandHi) trusted = false;
+    }
+    // After a trusted jump of k rungs, cumulative location jitter bounds the
+    // landing error to ~0.3k widths, i.e. at most a rung or two from the main
+    // hill. A larger rank estimate here is flank contamination, not a hill.
+    if (trusted && k > postJumpCapK) trusted = false;
+    if (trusted && std::abs(dxa) <= 3.0 * wd) {
+      // Far anchors (>3w) are tail-dominated by a single hill and skip this: the
+      // residual is hypersensitive to sub-integer center error there anyway.
+      const double logResidual =
+          std::log(std::abs(a0)) - (std::log(std::abs(ac)) - (dxa * dxa) / (wd * wd));
+      if (std::abs(logResidual) > 0.1) trusted = false;
+    }
+    if (ladderTraceEnabled()) {
+      std::fprintf(stderr, "[ladder]   c=%.3f ci=%lld ac=%.6g k=%d trusted=%d\n", c, static_cast<long long>(ci), ac,
+                   k, trusted ? 1 : 0);
+    }
+    if (!trusted && ac > 0.0) {
+      // Positive saddle between hills: a 3w hop would leap over the main hill.
+      // Take a 1.5w half-step uphill instead so the next pair inversion anchors
+      // on a single dominating hill. Try the pair's gradient direction first.
+      const int64_t half = std::max<int64_t>(1, std::llround(1.5 * wd));
+      const int gradDir = ((a1 > a0) == (x1 > x0)) ? 1 : -1;
+      bool stepped = false;
+      for (const int sgn : {gradDir, -gradDir}) {
+        const int64_t xs = clampInt64(ci + sgn * half, lo, hi);
+        const std::optional<double> asOpt = sess.probe(xs);
+        if (sess.solved()) return;
+        if (asOpt && *asOpt > ac) {
+          x0 = xs;
+          a0 = *asOpt;
+          stepped = true;
+          break;
+        }
+      }
+      if (stepped) continue;
+      return;  // local max that fails the ladder bands; hand off to the walk
+    }
+    if (!trusted) {
+      // Negative readings can only exist several rungs out (H < 0 needs k >= 4),
+      // so the rank magnitude stays useful even when the exact band check fails.
+    } else {
+      if (k >= prevK) return;  // not converging; hand off to the generic pipeline
+      prevK = k;
+    }
+
+    int dir;
+    const int64_t step3 = 3 * w;
+    if (std::abs(static_cast<double>(ci) - static_cast<double>(x0)) > 2.0 * wd) {
+      // Anchor was farther from the hill center than any intra-cluster point can
+      // be (max ~1.7w), so we approached from outside: main lies deeper inward.
+      dir = (ci >= x0) ? 1 : -1;
+    } else if (ci + step3 > hi) {
+      dir = -1;
+    } else if (ci - step3 < lo) {
+      dir = 1;
+    } else {
+      const std::optional<double> arOpt = sess.probe(ci + step3);
+      if (sess.solved()) return;
+      if (!arOpt) {
+        dir = -1;
+      } else {
+        // Off the cluster edge the reading collapses to the anchor hill's own tail
+        // (~1e-4 of |ac|), which would read "higher" than a negative center and
+        // fake a toward-main signal; any real neighbor hill reads far larger.
+        const bool bareTail = std::abs(*arOpt) < 0.01 * (std::abs(ac) + KOTH_HEIGHT_OFFSET_BASE);
+        if (bareTail) dir = -1;
+        else dir = (*arOpt > ac) ? 1 : -1;  // heights increase monotonically toward the main hill
+      }
+    }
+
+    int64_t target =
+        clampProbe(static_cast<double>(ci) + static_cast<double>(dir) * static_cast<double>(k) * 3.0 * wd, lo, hi);
+    if (ladderTraceEnabled()) {
+      std::fprintf(stderr, "[ladder]   k=%d dir=%d target=%lld\n", k, dir, static_cast<long long>(target));
+    }
+    std::optional<double> atOpt = sess.probe(target);
+    if (sess.solved()) return;
+    if (!atOpt) return;
+    if (*atOpt <= 0.0) {
+      // A correct jump lands within ~2w of the main peak, which always reads
+      // positive; a non-positive landing means the direction (or rank) was wrong.
+      const int64_t target2 =
+          clampProbe(static_cast<double>(ci) - static_cast<double>(dir) * static_cast<double>(k) * 3.0 * wd, lo, hi);
+      if (ladderTraceEnabled()) {
+        std::fprintf(stderr, "[ladder]   flip -> target=%lld\n", static_cast<long long>(target2));
+      }
+      const std::optional<double> at2Opt = sess.probe(target2);
+      if (sess.solved()) return;
+      // Keep climbing from the higher landing even if both are negative:
+      // less-negative means fewer rungs from the main hill on the height ladder.
+      if (at2Opt && *at2Opt > *atOpt) {
+        target = target2;
+        atOpt = at2Opt;
+      }
+      if (*atOpt == 0.0) return;
+    }
+    postJumpCapK = std::max(1, (3 * k + 9) / 10);
+    x0 = target;
+    a0 = *atOpt;
+  }
 }
 
 void runInitialCoarseScan(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, int hc, CoarseScanSample* out,
@@ -391,11 +624,8 @@ void runInitialCoarseScan(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w,
   }
 }
 
-void runSolverCore(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, int hc, CoarseEarlyStopMode earlyStopMode,
-                   CoarseScanSample* coarseOut = nullptr) {
-  runInitialCoarseScan(sess, lo, hi, w, hc, coarseOut, earlyStopMode);
-
-  walkAndPinpoint(sess, w, lo, hi);
+void runPostCoarsePipeline(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, int hc, bool snipe) {
+  walkAndPinpoint(sess, w, lo, hi, snipe);
   if (sess.solved()) return;
 
   const std::vector<int64_t> xs = scanGrid(lo, hi, w, hc);
@@ -403,19 +633,53 @@ void runSolverCore(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, int hc
     sess.probe(x);
     if (sess.solved()) return;
   }
-  walkAndPinpoint(sess, w, lo, hi);
+  walkAndPinpoint(sess, w, lo, hi, snipe);
   if (sess.solved()) return;
 
   gallop(sess, sess.bestX(), w, lo, hi);
   if (sess.solved()) return;
-  pinpoint(sess, sess.bestX(), w, lo, hi);
+  pinpoint(sess, sess.bestX(), w, lo, hi, 5, 8, snipe);
   if (sess.solved()) return;
   clusterSweep(sess, w, lo, hi);
   if (sess.solved()) return;
-  pinpoint(sess, sess.bestX(), w, lo, hi, 5, 20);
+  pinpoint(sess, sess.bestX(), w, lo, hi, 5, 20, snipe);
   if (sess.solved()) return;
 
   backstop(sess, w, lo, hi);
+}
+
+void runSolverCore(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, int hc, CoarseEarlyStopMode earlyStopMode,
+                   CoarseScanSample* coarseOut = nullptr, bool snipe = false) {
+  runInitialCoarseScan(sess, lo, hi, w, hc, coarseOut, earlyStopMode);
+  if (sess.solved()) return;
+  runPostCoarsePipeline(sess, lo, hi, w, hc, snipe);
+}
+
+/** Coarse scan that stops on ANY nonzero double reading (signal reaches ~26w in the far tail). */
+std::optional<std::pair<int64_t, double>> ladderCoarseScan(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w,
+                                                           int hc, CoarseScanSample* out) {
+  const std::vector<int64_t> xs = scanGrid(lo, hi, w, hc);
+  const std::vector<int> order = spreadOrder(static_cast<int>(xs.size()));
+  if (out) {
+    out->gridPoints = static_cast<int>(xs.size());
+    out->probesUsed = 0;
+    out->anyNonZero = false;
+  }
+  std::optional<std::pair<int64_t, double>> hit;
+  for (const int idx : order) {
+    const int64_t x = xs[static_cast<size_t>(idx)];
+    const std::optional<double> aOpt = sess.probe(x);
+    if (out) {
+      out->probesUsed++;
+      if (aOpt && *aOpt != 0.0) out->anyNonZero = true;
+    }
+    if (sess.solved()) return std::nullopt;
+    if (aOpt && *aOpt != 0.0) {
+      hit = std::make_pair(x, *aOpt);
+      break;
+    }
+  }
+  return hit;
 }
 
 void runSolverCoreBaseline(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, int hc,
@@ -427,6 +691,36 @@ void runSolverCoreNew(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, int
                       CoarseScanSample* coarseOut = nullptr) {
   // Experimental branch slot; currently mirrors baseline.
   runSolverCore(sess, lo, hi, w, hc, CoarseEarlyStopMode::PositiveAny, coarseOut);
+}
+
+void runSolverCoreSnipe(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, int hc,
+                        CoarseScanSample* coarseOut = nullptr) {
+  runSolverCore(sess, lo, hi, w, hc, CoarseEarlyStopMode::PositiveAny, coarseOut, true);
+}
+
+void runSolverCoreLadder(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, int hc, bool snipe,
+                         CoarseScanSample* coarseOut = nullptr) {
+  if (hc < 5) {
+    // With 1-3 hills the plain walk is already near-optimal; ladder overhead loses.
+    runSolverCore(sess, lo, hi, w, hc, CoarseEarlyStopMode::PositiveAny, coarseOut, snipe);
+    return;
+  }
+  const auto hit = ladderCoarseScan(sess, lo, hi, w, hc, coarseOut);
+  if (sess.solved()) return;
+  if (hit) {
+    if (std::abs(hit->second) < 6000.0) {
+      ladderClimb(sess, hit->first, hit->second, w, hc, lo, hi, snipe);
+      if (sess.solved()) return;
+    } else if (sqrtSnipe(sess, hit->first, hit->second, w, lo, hi)) {
+      return;
+    }
+  }
+  // Ladder bailed (mixed-hill anchor, inconsistent model, ...). Resume the
+  // spread-order scan until a positive anchor like the baseline coarse phase;
+  // already-probed grid points are cached and cost nothing.
+  runInitialCoarseScan(sess, lo, hi, w, hc, nullptr, CoarseEarlyStopMode::PositiveAny);
+  if (sess.solved()) return;
+  runPostCoarsePipeline(sess, lo, hi, w, hc, snipe);
 }
 
 NumericRange numericRange(int passwordLength) {
@@ -455,6 +749,15 @@ SolveResult solveInternal(const Assignment& assignment, int cap, SolverVariant v
     case SolverVariant::New:
       runSolverCoreNew(sess, range.min, range.max, w, hc, coarseOut);
       break;
+    case SolverVariant::Snipe:
+      runSolverCoreSnipe(sess, range.min, range.max, w, hc, coarseOut);
+      break;
+    case SolverVariant::Ladder:
+      runSolverCoreLadder(sess, range.min, range.max, w, hc, false, coarseOut);
+      break;
+    case SolverVariant::LadderSnipe:
+      runSolverCoreLadder(sess, range.min, range.max, w, hc, true, coarseOut);
+      break;
   }
 
   out.solved = sess.solved();
@@ -476,6 +779,12 @@ const char* solverVariantName(SolverVariant variant) {
       return "baseline";
     case SolverVariant::New:
       return "new";
+    case SolverVariant::Snipe:
+      return "snipe";
+    case SolverVariant::Ladder:
+      return "ladder";
+    case SolverVariant::LadderSnipe:
+      return "ladder_snipe";
   }
   return "unknown";
 }
@@ -486,12 +795,19 @@ const char* solverVariantDescription(SolverVariant variant) {
       return "Phase-1 early stop when alt > 0";
     case SolverVariant::New:
       return "Experimental branch (currently mirrors baseline)";
+    case SolverVariant::Snipe:
+      return "Near-zone sqrt candidate guesses before pinpoint inversion";
+    case SolverVariant::Ladder:
+      return "Pair-inversion + height-rank ladder jumps (nonzero-tail coarse stop)";
+    case SolverVariant::LadderSnipe:
+      return "Ladder combined with sqrt snipe finisher";
   }
   return "";
 }
 
 std::vector<SolverVariant> allSolverVariants() {
-  return {SolverVariant::Baseline, SolverVariant::New};
+  return {SolverVariant::Baseline, SolverVariant::New, SolverVariant::Snipe, SolverVariant::Ladder,
+          SolverVariant::LadderSnipe};
 }
 
 bool parseSolverVariant(const std::string& name, SolverVariant* out) {
