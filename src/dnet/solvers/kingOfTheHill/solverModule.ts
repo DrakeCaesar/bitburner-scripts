@@ -1,6 +1,5 @@
 import type { ServerDetails } from "../../types.js"
 import type { GuessRequest, GuessResult, SolverModule, SolverState } from "../types.js"
-import { getTunedImprovedConfig, type ImprovedConfig } from "./config.js"
 import {
   kingOfTheHillGaussianWidth,
   kingOfTheHillHillCount,
@@ -13,20 +12,18 @@ interface KingOfTheHillState extends SolverState {
   type: "kingOfTheHill"
   min: number
   max: number
-  difficulty: number
-  passwordLength: number
   samples: Map<number, number>
   bestVal: number
   bestAlt: number | null
   solved: boolean
   dispatched: boolean
-  cfg: ImprovedConfig
   ctx: SolverContext
 }
 
 function buildContext(details: ServerDetails): { min: number; max: number; ctx: SolverContext } {
-  const min = 10 ** (details.passwordLength - 1)
+  let min = 10 ** (details.passwordLength - 1)
   const max = 10 ** details.passwordLength - 1
+  if (details.passwordLength === 1) min = 0
   const ctx: SolverContext = {
     min,
     max,
@@ -44,24 +41,21 @@ export const kingOfTheHillImprovedSolver: SolverModule<KingOfTheHillState> = {
       type: "kingOfTheHill",
       min,
       max,
-      difficulty: details.difficulty,
-      passwordLength: details.passwordLength,
       samples: new Map(),
       bestVal: min,
       bestAlt: null,
       solved: false,
       dispatched: false,
-      cfg: getTunedImprovedConfig("max"),
       ctx,
     }
   },
 
   nextGuess(state) {
     if (state.dispatched || state.solved) return null
-    const next = runUntilNextProbe(state.samples, state.ctx, state.cfg)
+    const next = runUntilNextProbe(state.samples, state.ctx)
     if (next.type === "probe") {
       state.dispatched = true
-      return { guess: String(next.x), detail: `improved-${next.x}` }
+      return { guess: String(next.x), detail: `koth-${next.x}` }
     }
     state.solved = next.solved
     return null

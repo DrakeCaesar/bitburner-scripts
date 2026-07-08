@@ -1,6 +1,4 @@
-import { generateAssignmentAt, getTunedImprovedConfig, runSolver } from "./kingOfTheHillCore.mjs"
-
-const solverConfig = getTunedImprovedConfig("max")
+import { generateAssignmentAt, runSolver } from "./kingOfTheHillCore.mjs"
 
 self.postMessage({ type: "ready" })
 
@@ -16,7 +14,7 @@ self.onmessage = ({ data }) => {
   let i = 0
   for (let index = startIndex; index <= endIndex; index++) {
     const { assignment } = generateAssignmentAt(seed, index, difficulty)
-    const result = runSolver(assignment, { improvedConfig: solverConfig })
+    const result = runSolver(assignment)
     indices[i] = index
     guesses[i] = result.guesses
     solved[i] = result.solved ? 1 : 0

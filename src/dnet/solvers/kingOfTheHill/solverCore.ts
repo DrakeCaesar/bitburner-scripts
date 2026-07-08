@@ -1,21 +1,18 @@
-import type { ImprovedConfig } from "./config.js"
-import { finalizeImprovedConfig, TUNED_MAX_CONFIG } from "./config.js"
-
 export const KOTH_PEAK_HEIGHT = 10000
 export const KOTH_HILL_SPACING_WIDTHS = 3
 export const KOTH_HILL_DIFFICULTY_DIVISOR = 8
 export const KOTH_HILL_DIFFICULTY_CAP = 4
+export const KOTH_HEIGHT_OFFSET_BASE = 2600
 export const KOTH_GAUSS_WIDTH_LENGTH_OFFSET = 2
 export const KOTH_GAUSS_WIDTH_PLUS = 1
-export const SOLVER_MAX_PROBES = 5000
-export const TERNARY_MAX_LINEAR_SCAN = 64
+export const SOLVER_MAX_PROBES = 600
+
+const H_PEAK = KOTH_PEAK_HEIGHT
+const STEP_W = KOTH_HILL_SPACING_WIDTHS
+const MAIN_TH = H_PEAK - 0.5 * KOTH_HEIGHT_OFFSET_BASE
+const SCAN_EARLY_THRESH = 400
 
 export const STOP_PROBE = Symbol("koth-stop-probe")
-
-export interface ProbeSample {
-  x: number
-  alt: number
-}
 
 export interface ProbeSession {
   min: number
@@ -26,7 +23,7 @@ export interface ProbeSession {
   bestVal: number
   bestAlt: number
   samples: Map<number, number>
-  probe(x: number): number
+  probe(x: number): number | null
 }
 
 export interface SolverContext {
@@ -76,655 +73,309 @@ export function kingOfTheHillGaussianWidth(passwordLength: number): number {
   return 10 ** Math.max(passwordLength - KOTH_GAUSS_WIDTH_LENGTH_OFFSET, 0) + KOTH_GAUSS_WIDTH_PLUS
 }
 
-function ceilDiv(a: number, b: number): number {
-  return Math.floor((a + b - 1) / b)
+function clamp(x: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, Math.round(x)))
 }
 
-function clusterHalfWidth(hillCount: number, passwordLength: number, clusterMargin: number): number {
-  const width = kingOfTheHillGaussianWidth(passwordLength)
-  return Math.ceil((hillCount - 1) * width * KOTH_HILL_SPACING_WIDTHS * clusterMargin)
+function invertCenter(x1: number, a1: number, x2: number, a2: number, w: number): number {
+  return (x1 + x2) / 2 - ((w * w) * Math.log(a1 / a2)) / (2 * (x2 - x1))
 }
 
-function clusterSearchWindow(
-  fullMin: number,
-  fullMax: number,
-  center: number,
-  hillCount: number,
-  passwordLength: number,
-  cfg: ImprovedConfig,
-) {
-  const half = clusterHalfWidth(hillCount, passwordLength, cfg.clusterMargin)
-  return { min: Math.max(fullMin, center - half), max: Math.min(fullMax, center + half) }
+function hopK(H: number): number {
+  return Math.max(1, Math.round((H_PEAK - H) / KOTH_HEIGHT_OFFSET_BASE))
 }
 
-function improvedSearchWindow(
-  fullMin: number,
-  fullMax: number,
-  session: ProbeSession,
-  hillCount: number,
-  passwordLength: number,
-  gaussWidth: number,
-  cfg: ImprovedConfig,
-) {
-  if (session.bestAlt >= cfg.mainPeakModeAlt) {
-    const half = gaussWidth * cfg.mainPeakWindowWidths
-    let winMin = Math.max(fullMin, session.bestVal - half)
-    let winMax = Math.min(fullMax, session.bestVal + half)
-    if (session.bestVal - fullMin <= half * 2) winMin = fullMin
-    if (fullMax - session.bestVal <= half * 2) winMax = fullMax
-    return { min: winMin, max: winMax }
-  }
-  if (session.bestAlt > cfg.clusterDetectAlt) {
-    return clusterSearchWindow(fullMin, fullMax, session.bestVal, hillCount, passwordLength, cfg)
-  }
-  return { min: fullMin, max: fullMax }
-}
-
-function parabolicPeak(x0: number, y0: number, x1: number, y1: number, x2: number, y2: number, cfg: ImprovedConfig): number {
-  const denom = y0 - 2 * y1 + y2
-  if (!Number.isFinite(denom) || Math.abs(denom) < cfg.parabolicFlatEpsilon) return x1
-  return x1 + ((x1 - x0) * (y0 - y2)) / (2 * denom)
-}
-
-function findLocalPeaks(sorted: ProbeSample[]) {
-  if (sorted.length === 0) return [] as { x: number; alt: number }[]
-  const peaks: { x: number; alt: number }[] = []
-  for (let i = 1; i < sorted.length - 1; i++) {
-    if (sorted[i]!.alt >= sorted[i - 1]!.alt && sorted[i]!.alt > sorted[i + 1]!.alt) {
-      peaks.push({ x: sorted[i]!.x, alt: sorted[i]!.alt })
-    }
-  }
-  let best = sorted[0]!
-  for (const row of sorted) {
-    if (row.alt > best.alt) best = row
-  }
-  peaks.push({ x: best.x, alt: best.alt })
-  peaks.sort((a, b) => b.alt - a.alt)
+function spreadOrder(m: number): number[] {
+  if (m <= 1) return [0]
+  const order: number[] = []
   const seen = new Set<number>()
-  return peaks.filter((p) => {
-    if (seen.has(p.x)) return false
-    seen.add(p.x)
-    return true
-  })
-}
-
-function refinePeak(
-  session: ProbeSession,
-  mn: number,
-  mx: number,
-  center: number,
-  initialRadius: number,
-  passes: number,
-  cfg: ImprovedConfig,
-): number {
-  let c = center
-  let r = Math.max(1, initialRadius)
-  const onMainHill = session.bestAlt >= cfg.mainPeakModeAlt
-  const maxPasses = onMainHill ? Math.min(passes, 2) : passes
-  for (let p = 0; p < maxPasses; p++) {
-    const x0 = Math.max(mn, c - r)
-    const x2 = Math.min(mx, c + r)
-    const x1 = c
-    const y0 = session.probe(x0)
-    if (session.solved) return c
-    const y1 = session.probe(x1)
-    if (session.solved) return c
-    const y2 = session.probe(x2)
-    if (session.solved) return c
-    const peak = parabolicPeak(x0, y0, x1, y1, x2, y2, cfg)
-    c = Math.round(Math.max(mn, Math.min(mx, peak)))
-    r = Math.max(1, ceilDiv(r, cfg.refineStepShrink))
+  const add = (i: number) => {
+    if (i >= 0 && i < m && !seen.has(i)) {
+      seen.add(i)
+      order.push(i)
+    }
   }
-  return c
+  add(Math.floor(m / 2))
+  add(0)
+  add(m - 1)
+  let stack: [number, number][] = [[0, m - 1]]
+  while (order.length < m && stack.length > 0) {
+    const nxt: [number, number][] = []
+    for (const [a, b] of stack) {
+      const mid = Math.floor((a + b) / 2)
+      add(mid)
+      if (mid - a > 1) nxt.push([a, mid])
+      if (b - mid > 1) nxt.push([mid, b])
+    }
+    stack = nxt
+  }
+  for (let i = 0; i < m; i++) add(i)
+  return order
 }
 
-function tryParabolicPinpointMain(
-  session: ProbeSession,
-  mn: number,
-  mx: number,
-  gaussWidth: number,
-  cfg: ImprovedConfig,
-): void {
-  if (session.bestAlt < cfg.mainPeakModeAlt) return
-  const r = Math.max(1, Math.ceil(gaussWidth / 4))
-  const c = session.bestVal
-  const x0 = Math.max(mn, c - r)
-  const x2 = Math.min(mx, c + r)
-  if (x0 >= x2) return
-  const y0 = session.probe(x0)
-  if (session.solved) return
-  const y1 = session.samples.get(c) ?? session.probe(c)
-  if (session.solved) return
-  const y2 = session.probe(x2)
-  if (session.solved) return
-  const peak = parabolicPeak(x0, y0, c, y1, x2, y2, cfg)
-  const px = Math.round(Math.max(mn, Math.min(mx, peak)))
-  if (px !== c) session.probe(px)
-}
-
-function probeRangeAnchors(session: ProbeSession, lo: number, hi: number): void {
-  session.probe(Math.round(lo))
-  if (session.solved || session.exhausted) return
-  session.probe(Math.round(hi))
-  if (session.solved || session.exhausted) return
+function scanGrid(lo: number, hi: number, w: number, hc: number): number[] {
   const span = hi - lo
-  if (span < 4) return
-  for (const frac of [0.25, 0.5, 0.75]) {
-    session.probe(Math.round(lo + span * frac))
-    if (session.solved || session.exhausted) return
+  if (span <= 0) return [lo]
+  const spacing =
+    hc > 1 ? Math.max(1, Math.floor((hc - 1) * 3 * w * 0.9 * 0.98)) : Math.max(1, Math.floor(3 * w))
+  const m = Math.max(1, Math.ceil(span / spacing))
+  const xs = new Set<number>()
+  for (let i = 0; i <= m; i++) {
+    xs.add(lo + Math.round((span * i) / m))
   }
+  return [...xs].sort((a, b) => a - b)
 }
 
-function weightedCentroid(session: ProbeSession, minAlt: number): number | null {
-  let sumW = 0
-  let sumX = 0
-  for (const [x, alt] of session.samples) {
-    if (alt < minAlt) continue
-    sumW += alt
-    sumX += x * alt
+function crest(sess: ProbeSession, xSeed: number, w: number, lo: number, hi: number): [number, number] {
+  let x = clamp(xSeed, lo, hi)
+  let a = sess.samples.get(x) ?? null
+  if (a === null) {
+    a = sess.probe(x)
+    if (sess.solved) return [x, a ?? Infinity]
   }
-  if (sumW <= 0) return null
-  return Math.round(sumX / sumW)
-}
-
-function logWeightedCentroid(session: ProbeSession, minAlt: number): number | null {
-  let sumW = 0
-  let sumX = 0
-  for (const [x, alt] of session.samples) {
-    if (alt <= minAlt) continue
-    const w = Math.log1p(alt - minAlt)
-    sumW += w
-    sumX += x * w
+  const off = Math.max(1, Math.round(0.5 * w))
+  let xb = x + off <= hi ? x + off : x - off
+  let ab = sess.probe(xb)
+  if (sess.solved) return [xb, ab ?? Infinity]
+  if (a !== null && ab !== null && a > 0 && ab > 0 && xb !== x) {
+    try {
+      const c = invertCenter(x, a, xb, ab, w)
+      const cx = clamp(c, lo, hi)
+      let ac = sess.samples.get(cx) ?? null
+      if (ac === null) {
+        ac = sess.probe(cx)
+        if (sess.solved) return [cx, ac ?? Infinity]
+      }
+      const cand: [number, number][] = [
+        [a, x],
+        [ab, xb],
+        [ac ?? -1e18, cx],
+      ]
+      let best = cand[0]!
+      for (const pair of cand.slice(1)) {
+        if (pair[0] > best[0]) best = pair
+      }
+      if (best[1] !== x && best[0] > a * 1.02) {
+        const bx = best[1]
+        let xb2 = bx + Math.max(1, Math.floor(off / 2))
+        if (xb2 > hi) xb2 = bx - Math.max(1, Math.floor(off / 2))
+        const ab2 = sess.probe(xb2)
+        if (sess.solved) return [xb2, ab2 ?? Infinity]
+        if (ab2 !== null && ab2 > 0 && xb2 !== bx && best[0] > 0) {
+          try {
+            const c2 = invertCenter(bx, best[0], xb2, ab2, w)
+            const cx2 = clamp(c2, lo, hi)
+            let ac2 = sess.samples.get(cx2) ?? null
+            if (ac2 === null) {
+              ac2 = sess.probe(cx2)
+              if (sess.solved) return [cx2, ac2 ?? Infinity]
+            }
+            const cand2: [number, number][] = [best, [ab2, xb2], [ac2 ?? -1e18, cx2]]
+            let best2 = cand2[0]!
+            for (const pair of cand2.slice(1)) {
+              if (pair[0] > best2[0]) best2 = pair
+            }
+            return [best2[1], best2[0]]
+          } catch {
+            // fall through
+          }
+        }
+      }
+      return [best[1], best[0]]
+    } catch {
+      // fall through
+    }
   }
-  if (sumW <= 0) return null
-  return Math.round(sumX / sumW)
+  const xc = clamp(x - off >= lo ? x - off : x + 2 * off, lo, hi)
+  const ac = sess.probe(xc)
+  if (sess.solved) return [xc, ac ?? Infinity]
+  const cand: [number, number][] = [
+    [a ?? -1e18, x],
+    [ab ?? -1e18, xb],
+    [ac ?? -1e18, xc],
+  ]
+  let best = cand[0]!
+  for (const pair of cand.slice(1)) {
+    if (pair[0] > best[0]) best = pair
+  }
+  return [best[1], best[0]]
 }
 
-function blendedCentroid(session: ProbeSession, minAlt: number, cfg: ImprovedConfig): number | null {
-  const linear = weightedCentroid(session, minAlt)
-  const logc = logWeightedCentroid(session, minAlt)
-  if (linear == null && logc == null) return null
-  const w = cfg.centroidLogWeight
-  if (logc == null || w <= 0) return linear
-  if (linear == null || w >= 1) return logc
-  return Math.round(linear * (1 - w) + logc * w)
+function gallop(sess: ProbeSession, xSeed: number, w: number, lo: number, hi: number): [number, number] {
+  let x = clamp(xSeed, lo, hi)
+  let a: number = sess.samples.get(x) ?? -1e18
+  if (!sess.samples.has(x)) {
+    const probed = sess.probe(x)
+    if (sess.solved) return [x, probed ?? Infinity]
+    if (probed !== null) a = probed
+  }
+  let step = Math.max(1, Math.round(1.5 * w))
+  const stop = Math.max(1, Math.round(0.1 * w))
+  while (step >= stop) {
+    let bd = 0
+    let ba = a
+    let bx = x
+    for (const d of [1, -1]) {
+      const xn = clamp(x + d * step, lo, hi)
+      if (xn === x) continue
+      const an = sess.probe(xn)
+      if (sess.solved) return [xn, an ?? Infinity]
+      if (an !== null && an > ba) {
+        ba = an
+        bx = xn
+        bd = d
+      }
+    }
+    if (bd !== 0) {
+      x = bx
+      a = ba
+    } else {
+      step = Math.floor(step / 2)
+    }
+  }
+  return [x, a]
 }
 
-function buildFinals(mn: number, mx: number, bestVal: number, bestAlt: number, cfg: ImprovedConfig): number[] {
-  const span = mx - mn
-  const out: number[] = []
-  if (span <= cfg.finalTinySpan) {
-    for (let d = 0; d <= span; d++) {
-      if (d === 0) {
-        if (bestVal >= mn && bestVal <= mx) out.push(bestVal)
+function pinpoint(sess: ProbeSession, seedX: number, w: number, lo: number, hi: number, rounds = 5, finalRadius = 8): void {
+  let pc = clamp(seedX, lo, hi)
+  let off = Math.max(1, Math.round(0.25 * w))
+  for (let r = 0; r < rounds; r++) {
+    let a0 = sess.samples.get(pc) ?? null
+    if (a0 === null) {
+      a0 = sess.probe(pc)
+      if (sess.solved) return
+    }
+    if (a0 === null || a0 <= 0) break
+    const x1 = pc + off <= hi ? pc + off : pc - off
+    const a1 = sess.probe(x1)
+    if (sess.solved) return
+    if (a1 === null || a1 <= 0 || x1 === pc) break
+    try {
+      const c = invertCenter(pc, a0, x1, a1, w)
+      const nc = clamp(c, lo, hi)
+      if (nc === pc) {
+        if (off === 1) break
+        off = Math.max(1, Math.floor(off / 4))
         continue
       }
-      for (const sign of [-1, 1]) {
-        const c = bestVal + sign * d
-        if (c >= mn && c <= mx) out.push(c)
+      pc = nc
+      off = Math.max(1, Math.min(off, Math.round(0.25 * w)))
+    } catch {
+      break
+    }
+  }
+  sess.probe(pc)
+  if (sess.solved) return
+  for (let d = 1; d <= finalRadius; d++) {
+    for (const sgn of [-1, 1]) {
+      sess.probe(pc + sgn * d)
+      if (sess.solved) return
+    }
+  }
+}
+
+function clusterSweep(sess: ProbeSession, w: number, lo: number, hi: number): void {
+  const center = sess.bestVal
+  const reach = Math.round(28 * w)
+  const step = Math.max(1, Math.round(1.2 * w))
+  let x = Math.max(lo, center - reach)
+  const b = Math.min(hi, center + reach)
+  while (x <= b && !sess.solved) {
+    sess.probe(x)
+    x += step
+  }
+}
+
+function backstop(sess: ProbeSession, w: number, lo: number, hi: number): void {
+  const step = Math.max(1, Math.round(0.7 * w))
+  let x = lo
+  while (x <= hi && !sess.solved) {
+    sess.probe(x)
+    x += step
+  }
+  if (!sess.solved) pinpoint(sess, sess.bestVal, w, lo, hi, 5, 30)
+}
+
+function walkAndPinpoint(sess: ProbeSession, w: number, lo: number, hi: number): boolean {
+  const step = STEP_W * w
+  let [x, a] = crest(sess, sess.bestVal, w, lo, hi)
+  if (sess.solved) return true
+  let lastDir: number | null = x <= lo ? 1 : x >= hi ? -1 : null
+  for (let hop = 0; hop < 10; hop++) {
+    if (a >= MAIN_TH) break
+    const k = hopK(a)
+    let order: number[]
+    if (lastDir === null) {
+      const xR = clamp(x + k * step, lo, hi)
+      const xL = clamp(x - k * step, lo, hi)
+      const aR = sess.probe(xR)
+      if (sess.solved) return true
+      const aL = sess.probe(xL)
+      if (sess.solved) return true
+      order = (aR ?? -1e18) >= (aL ?? -1e18) ? [1, -1] : [-1, 1]
+    } else {
+      order = [lastDir, -lastDir]
+    }
+    let best: [number, number, number] | null = null
+    for (const d of order) {
+      const ks = lastDir === null ? [k] : [k, k - 1, k + 1, 1]
+      for (const kk of ks) {
+        if (kk < 1) continue
+        const [nx, na] = crest(sess, x + d * kk * step, w, lo, hi)
+        if (sess.solved) return true
+        if (na !== null && na > a + 1) {
+          best = [na, nx, d]
+          break
+        }
       }
+      if (best !== null) break
     }
-    return out
+    if (best === null) break
+    a = best[0]
+    x = best[1]
+    lastDir = best[2]
   }
-  const nearMainPeak = bestAlt >= cfg.mainPeakModeAlt
-  const maxRadius = nearMainPeak
-    ? cfg.finalMainRadius
-    : Math.min(cfg.finalSideMaxRadius, Math.max(cfg.finalSideMinRadius, ceilDiv(span, cfg.finalSideSpanDivisor)))
-  for (let d = 0; d <= maxRadius; d++) {
-    if (d === 0) {
-      if (bestVal >= mn && bestVal <= mx) out.push(bestVal)
-      continue
-    }
-    for (const sign of [-1, 1]) {
-      const c = bestVal + sign * d
-      if (c >= mn && c <= mx) out.push(c)
-    }
-  }
-  return out
+  const reachedMain = a >= MAIN_TH
+  pinpoint(sess, sess.bestVal, w, lo, hi)
+  return reachedMain
 }
 
-function tryFinalCandidates(session: ProbeSession, mn: number, mx: number, cfg: ImprovedConfig): void {
-  for (const c of buildFinals(mn, mx, session.bestVal, session.bestAlt, cfg)) {
-    session.probe(c)
-    if (session.solved) return
+function runSolverCore(sess: ProbeSession, lo: number, hi: number, w: number, hc: number): void {
+  const xs = scanGrid(lo, hi, w, hc)
+  const order = spreadOrder(xs.length)
+  for (const idx of order) {
+    const a = sess.probe(xs[idx]!)
+    if (sess.solved) return
+    if (a !== null && Math.abs(a) > SCAN_EARLY_THRESH) break
   }
+
+  walkAndPinpoint(sess, w, lo, hi)
+  if (sess.solved) return
+
+  for (const x of xs) {
+    sess.probe(x)
+    if (sess.solved) return
+  }
+  walkAndPinpoint(sess, w, lo, hi)
+  if (sess.solved) return
+
+  gallop(sess, sess.bestVal, w, lo, hi)
+  if (sess.solved) return
+  pinpoint(sess, sess.bestVal, w, lo, hi)
+  if (sess.solved) return
+  clusterSweep(sess, w, lo, hi)
+  if (sess.solved) return
+  pinpoint(sess, sess.bestVal, w, lo, hi, 5, 20)
+  if (sess.solved) return
+
+  backstop(sess, w, lo, hi)
 }
 
-function applyGaussianJump(session: ProbeSession, mn: number, mx: number, gaussWidth: number, cfg: ImprovedConfig): void {
-  if (session.bestAlt < cfg.gaussEstimateMinAlt) return
-  const height = KOTH_PEAK_HEIGHT * cfg.gaussHeightFraction
-  const ratio = Math.min(session.bestAlt / height, 0.999999)
-  if (ratio <= 1e-12) return
-  const offset = gaussWidth * Math.sqrt(-Math.log(ratio))
-  const o = Math.max(1, Math.round(offset))
-  for (const candidate of [session.bestVal - o, session.bestVal + o]) {
-    if (candidate >= mn && candidate <= mx) {
-      session.probe(candidate)
-      if (session.solved) return
-    }
-  }
-}
-
-function tryGaussianPeakEstimate(session: ProbeSession, mn: number, mx: number, gaussWidth: number, cfg: ImprovedConfig): void {
-  if (!cfg.enableGaussianEstimate) return
-  applyGaussianJump(session, mn, mx, gaussWidth, cfg)
-}
-
-function sweep(
-  session: ProbeSession,
-  start: number,
-  end: number,
-  step: number,
-  stopAlt: number | null,
-  cfg?: ImprovedConfig,
-): void {
-  if (step <= 0) step = 1
-  let peakX = session.bestVal
-  let peakAlt = session.bestAlt
-  for (let x = start; x <= end; x += step) {
-    session.probe(x)
-    if (session.solved || session.exhausted) return
-    if (stopAlt != null && session.bestAlt >= stopAlt) return
-    if (cfg != null && peakAlt >= cfg.mainPeakDetectAlt) {
-      const xi = Math.round(x)
-      if (xi > peakX) {
-        const alt = session.samples.get(xi)
-        if (alt != null && alt < peakAlt * 0.7 && alt < cfg.clusterDetectAlt) return
-      }
-    }
-    if (session.bestAlt > peakAlt) {
-      peakX = session.bestVal
-      peakAlt = session.bestAlt
-    }
-  }
-  if (end >= start && end <= session.max && !session.samples.has(end)) {
-    session.probe(end)
-    if (session.solved || session.exhausted) return
-    if (stopAlt != null && session.bestAlt >= stopAlt) return
-  }
-}
-
-function tryTernaryPeakSearch(session: ProbeSession, lo: number, hi: number, maxIters: number, widthStop: number): void {
-  if (lo >= hi || session.solved || session.exhausted) return
-  const initialWidth = hi - lo
-  const safeWidthStop = Math.max(1, widthStop)
-  const minIters = Math.ceil(Math.log(initialWidth / safeWidthStop) / Math.log(1.5))
-  const itersBudget = Math.min(64, Math.max(maxIters, minIters))
-  let iters = 0
-  while (hi - lo > safeWidthStop && iters < itersBudget && !session.solved && !session.exhausted) {
-    const m1 = lo + Math.floor((hi - lo) / 3)
-    const m2 = hi - Math.floor((hi - lo) / 3)
-    const a1 = session.probe(m1)
-    if (session.solved || session.exhausted) return
-    const a2 = session.probe(m2)
-    if (session.solved || session.exhausted) return
-    if (a1 < a2) lo = m1
-    else hi = m2
-    iters++
-  }
-  const width = hi - lo
-  if (width <= TERNARY_MAX_LINEAR_SCAN) {
-    for (let x = lo; x <= hi && !session.solved && !session.exhausted; x++) {
-      session.probe(x)
-    }
-    return
-  }
-  sweep(session, lo, hi, Math.max(1, ceilDiv(width, safeWidthStop)), null)
-}
-
-function gallopFromBest(
-  session: ProbeSession,
-  lo: number,
-  hi: number,
-  initialStep: number,
-  stopAlt: number,
-  mult: number,
-): void {
-  if (initialStep <= 0) initialStep = 1
-  mult = Math.max(2, mult)
-  for (const sign of [-1, 1]) {
-    let dist = initialStep
-    let lastGoodDist = 0
-    while (dist <= hi - lo && !session.solved && !session.exhausted) {
-      const x = session.bestVal + sign * dist
-      if (x < lo || x > hi) break
-      const before = session.bestAlt
-      session.probe(x)
-      if (session.solved || session.exhausted) return
-      if (session.bestAlt >= stopAlt) return
-      if (session.bestAlt > before) {
-        lastGoodDist = dist
-        dist *= mult
-        continue
-      }
-      if (lastGoodDist > 0) break
-      dist *= mult
-    }
-  }
-}
-
-function tryExpandFromBest(
-  session: ProbeSession,
-  mn: number,
-  mx: number,
-  gaussWidth: number,
-  stopAlt: number,
-  cfg: ImprovedConfig,
-): void {
-  if (!cfg.enableExpandFromBest) return
-  let step = Math.max(1, ceilDiv(gaussWidth, cfg.expandMaxStepDivisor))
-  const maxStep = Math.max(step, ceilDiv(mx - mn, Math.max(cfg.coarseMinDivisor, 8)))
-  const mult = Math.max(2, cfg.expandStepMultiplier)
-  while (step <= maxStep && !session.solved && !session.exhausted) {
-    let improved = false
-    for (const sign of [-1, 1]) {
-      const x = session.bestVal + sign * step
-      if (x < mn || x > mx) continue
-      const before = session.bestAlt
-      session.probe(x)
-      if (session.solved) return
-      if (session.bestAlt > before) improved = true
-      if (session.bestAlt >= stopAlt) return
-    }
-    if (!improved && step >= gaussWidth) break
-    step = Math.max(1, step * mult)
-  }
-}
-
-function refinePeakCount(session: ProbeSession, hillCount: number, cfg: ImprovedConfig): number {
-  if (session.bestAlt >= cfg.mainPeakModeAlt) return cfg.refinePeakCountMain
-  return hillCount
-}
-
-function probeSparseFractions(session: ProbeSession, lo: number, hi: number, count: number): void {
-  const span = hi - lo
-  if (span <= 0 || count <= 1) return
-  for (let i = 1; i < count; i++) {
-    session.probe(lo + Math.floor((span * i) / count))
-    if (session.solved || session.exhausted) return
-  }
-}
-
-function locateHill(
-  session: ProbeSession,
-  fullMin: number,
-  fullMax: number,
-  hillCount: number,
-  passwordLength: number,
-  gaussWidth: number,
-  cfg: ImprovedConfig,
-): void {
-  let lo = fullMin
-  let hi = fullMax
-  const span = hi - lo
-  if (span <= 0) return
-
-  const sparseCount = Math.max(4, cfg.findHillQuickRounds * 4)
-  probeSparseFractions(session, lo, hi, sparseCount)
-  if (session.solved || session.exhausted || session.bestAlt >= cfg.mainPeakModeAlt) return
-
-  const coarseStep = Math.max(1, ceilDiv(span, Math.max(cfg.coarseMinDivisor, hillCount * cfg.coarseHillFactor)))
-  const gallopStep = Math.max(coarseStep, gaussWidth)
-  const mult = Math.max(2, cfg.expandStepMultiplier)
-  const stopAlt = cfg.mainPeakModeAlt
-
-  for (let pass = 0; pass < Math.max(1, cfg.findHillQuickRounds) && !session.solved && !session.exhausted; pass++) {
-    if (session.bestAlt >= stopAlt) return
-
-    gallopFromBest(session, lo, hi, gallopStep, stopAlt, mult)
-    if (session.solved || session.exhausted || session.bestAlt >= stopAlt) return
-
-    if (session.bestAlt >= cfg.clusterDetectAlt) {
-      applyGaussianJump(session, lo, hi, gaussWidth, cfg)
-      if (session.solved || session.exhausted || session.bestAlt >= stopAlt) return
-    }
-
-    if (session.bestAlt >= cfg.clusterDetectAlt) {
-      const win = clusterSearchWindow(fullMin, fullMax, session.bestVal, hillCount, passwordLength, cfg)
-      lo = win.min
-      hi = win.max
-    } else if (session.bestAlt > 0) {
-      const half = Math.max(gaussWidth * 2, coarseStep * 2)
-      lo = Math.max(fullMin, session.bestVal - half)
-      hi = Math.min(fullMax, session.bestVal + half)
-    }
-  }
-
-  if (!session.solved && !session.exhausted && session.bestAlt < cfg.mainPeakModeAlt) {
-    sweep(session, lo, hi, coarseStep, stopAlt, cfg)
-  }
-}
-
-function seekHigherPeakInCluster(
-  session: ProbeSession,
-  fullMin: number,
-  fullMax: number,
-  hillCount: number,
-  passwordLength: number,
-  gaussWidth: number,
-  cfg: ImprovedConfig,
-): void {
-  if (session.solved || session.exhausted) return
-  if (session.bestAlt >= cfg.mainPeakModeAlt) return
-  if (session.bestAlt < cfg.clusterDetectAlt) return
-
-  const win = clusterSearchWindow(fullMin, fullMax, session.bestVal, hillCount, passwordLength, cfg)
-  const span = win.max - win.min
-  const step = Math.max(1, ceilDiv(span, Math.max(cfg.coarseMinDivisor, hillCount * cfg.coarseHillFactor)))
-  sweep(session, win.min, win.max, step, cfg.mainPeakModeAlt, cfg)
-  if (session.solved || session.exhausted) return
-
-  applyGaussianJump(session, win.min, win.max, gaussWidth, cfg)
-  if (session.solved) return
-
-  const peaks = findLocalPeaks(sortedSamples(session))
-  const refineRadius = Math.max(step, gaussWidth)
-  refinePeakCandidates(session, win.min, win.max, peaks, refineRadius, hillCount, cfg)
-}
-
-function tryHillClimbFinals(
-  session: ProbeSession,
-  searchMin: number,
-  searchMax: number,
-  gaussWidth: number,
-  fullMin: number,
-  fullMax: number,
-  cfg: ImprovedConfig,
-): void {
-  let step = Math.max(1, ceilDiv(gaussWidth, cfg.hillClimbInitialDivisor))
-  let x = session.bestVal
-  while (step >= 1 && !session.solved && !session.exhausted) {
-    const left = Math.max(searchMin, x - step)
-    const right = Math.min(searchMax, x + step)
-    const yL = session.probe(left)
-    if (session.solved) return
-    const yC = left === right ? yL : session.probe(x)
-    if (session.solved) return
-    const yR = session.probe(right)
-    if (session.solved) return
-    if (yL > yC) x = left
-    else if (yR > yC) x = right
-    const flat = Math.abs(yL - yC) <= cfg.hillClimbFlatAltDelta && Math.abs(yR - yC) <= cfg.hillClimbFlatAltDelta
-    if (flat || (yC >= yL && yC >= yR)) {
-      const nextStep = Math.max(1, ceilDiv(step, cfg.hillClimbShrink))
-      if (nextStep >= step) break
-      step = nextStep
-    }
-  }
-  tryFinalCandidates(session, fullMin, fullMax, cfg)
-}
-
-function tryZoomFinals(
-  session: ProbeSession,
-  searchMin: number,
-  searchMax: number,
-  fullMin: number,
-  fullMax: number,
-  cfg: ImprovedConfig,
-): void {
-  let step = Math.max(1, ceilDiv(searchMax - searchMin, cfg.zoomInitialDivisor))
-  for (let pass = 0; pass < cfg.zoomMaxPasses && !session.solved && !session.exhausted; pass++) {
-    const lo = Math.max(searchMin, session.bestVal - step)
-    const hi = Math.min(searchMax, session.bestVal + step)
-    sweep(session, lo, hi, Math.max(1, ceilDiv(step, cfg.zoomStepDivisor)), null)
-    if (session.solved) return
-    tryFinalCandidates(session, fullMin, fullMax, cfg)
-    if (session.solved) return
-    const nextStep = Math.max(1, ceilDiv(step, cfg.zoomStepDivisor))
-    if (nextStep >= step) break
-    step = nextStep
-  }
-}
-
-function refinePeakCandidates(
-  session: ProbeSession,
-  searchMin: number,
-  searchMax: number,
-  peaks: { x: number; alt: number }[],
-  refineRadius: number,
-  count: number,
-  cfg: ImprovedConfig,
-): boolean {
-  for (let i = 0; i < Math.min(count, peaks.length); i++) {
-    const peak = peaks[i]!
-    const refined = refinePeak(session, searchMin, searchMax, peak.x, refineRadius, cfg.refineCoarsePasses, cfg)
-    if (session.solved) return true
-    refinePeak(
-      session,
-      searchMin,
-      searchMax,
-      refined,
-      Math.max(1, ceilDiv(refineRadius, cfg.refineRadiusShrink)),
-      cfg.refineFinePasses,
-      cfg,
-    )
-    if (session.solved) return true
-  }
-  return session.solved
-}
-
-function sortedSamples(session: ProbeSession): ProbeSample[] {
-  return [...session.samples.entries()]
-    .map(([x, alt]) => ({ x, alt }))
-    .sort((a, b) => a.x - b.x)
-}
-
-export function runSolverImprovedCore(
-  session: ProbeSession,
-  ctx: SolverContext,
-  cfgIn: ImprovedConfig,
-  options: SolverCoreOptions = {},
-): SolverRunResult {
-  const cfg = finalizeImprovedConfig(cfgIn)
-  const returnSamples = options.returnSamples === true
-  const { min, max, hillCount, passwordLength, gaussWidth } = ctx
-
-  probeRangeAnchors(session, min, max)
-  if (session.solved) return finish()
-
-  locateHill(session, min, max, hillCount, passwordLength, gaussWidth, cfg)
-  if (!session.solved && session.bestAlt >= cfg.clusterDetectAlt) {
-    tryGaussianPeakEstimate(session, min, max, gaussWidth, cfg)
-  }
-  if (!session.solved && session.bestAlt < cfg.mainPeakModeAlt && cfg.enableTernarySearch) {
-    const win = improvedSearchWindow(min, max, session, hillCount, passwordLength, gaussWidth, cfg)
-    const ternaryIters = Math.min(
-      cfg.ternaryMaxItersCap,
-      ceilDiv(win.max - win.min, Math.max(1, cfg.ternarySpanDivisor)),
-    )
-    tryTernaryPeakSearch(session, win.min, win.max, ternaryIters, cfg.ternaryWidthStop)
-  }
-  if (session.solved) return finish()
-
-  let search = improvedSearchWindow(min, max, session, hillCount, passwordLength, gaussWidth, cfg)
-  let searchSpan = search.max - search.min
-  let coarseStep = Math.max(1, ceilDiv(searchSpan, Math.max(cfg.coarseMinDivisor, hillCount * cfg.coarseHillFactor)))
-
-  for (const divisor of cfg.rescanDivisors) {
-    if (session.bestAlt >= cfg.centroidMinAlt) break
-    if (session.bestAlt >= cfg.mainPeakModeAlt) break
-    search = improvedSearchWindow(min, max, session, hillCount, passwordLength, gaussWidth, cfg)
-    searchSpan = search.max - search.min
-    sweep(session, search.min, search.max, Math.max(1, ceilDiv(searchSpan, divisor)), cfg.mainPeakModeAlt, cfg)
-    if (session.solved) return finish()
-  }
-
-  search = improvedSearchWindow(min, max, session, hillCount, passwordLength, gaussWidth, cfg)
-  searchSpan = search.max - search.min
-  coarseStep = Math.max(1, ceilDiv(searchSpan, Math.max(cfg.coarseMinDivisor, hillCount * cfg.coarseHillFactor)))
-
-  {
-    const peaks = findLocalPeaks(sortedSamples(session))
-    const refineRadius = Math.max(coarseStep, ceilDiv(searchSpan, hillCount * cfg.refineSpanHillDivisor))
-    refinePeakCandidates(session, search.min, search.max, peaks, refineRadius, refinePeakCount(session, hillCount, cfg), cfg)
-    if (session.solved) return finish()
-  }
-
-  if (session.bestAlt < cfg.mainPeakModeAlt) {
-    search = improvedSearchWindow(min, max, session, hillCount, passwordLength, gaussWidth, cfg)
-    tryExpandFromBest(session, search.min, search.max, gaussWidth, cfg.mainPeakModeAlt, cfg)
-    if (session.solved) return finish()
-    applyGaussianJump(session, search.min, search.max, gaussWidth, cfg)
-    if (session.solved) return finish()
-    sweep(session, search.min, search.max, Math.max(1, ceilDiv(gaussWidth, cfg.sideHillSweepWidthDivisor)), cfg.mainPeakModeAlt)
-    if (session.solved) return finish()
-    const peaks = findLocalPeaks(sortedSamples(session))
-    const refineRadius = Math.max(1, gaussWidth)
-    refinePeakCandidates(session, search.min, search.max, peaks, refineRadius, refinePeakCount(session, hillCount, cfg), cfg)
-    if (session.solved) return finish()
-  }
-
-  if (!session.solved && session.bestAlt >= cfg.clusterDetectAlt && session.bestAlt < cfg.mainPeakModeAlt) {
-    seekHigherPeakInCluster(session, min, max, hillCount, passwordLength, gaussWidth, cfg)
-    if (session.solved) return finish()
-  }
-
-  if (session.bestAlt >= cfg.centroidMinAlt) {
-    search = improvedSearchWindow(min, max, session, hillCount, passwordLength, gaussWidth, cfg)
-    const centroidMin = session.bestAlt * cfg.centroidAltFraction
-    const centroid = blendedCentroid(session, centroidMin, cfg)
-    if (centroid != null) {
-      session.probe(centroid)
-      if (!session.solved) {
-        refinePeak(session, search.min, search.max, centroid, cfg.centroidRefineRadius, cfg.centroidRefinePasses, cfg)
-      }
-    }
-  }
-
-  if (!session.solved) tryFinalCandidates(session, min, max, cfg)
-  if (!session.solved && session.bestAlt >= cfg.mainPeakModeAlt) {
-    const climbWindow = improvedSearchWindow(min, max, session, hillCount, passwordLength, gaussWidth, cfg)
-    tryParabolicPinpointMain(session, climbWindow.min, climbWindow.max, gaussWidth, cfg)
-    if (!session.solved) tryFinalCandidates(session, min, max, cfg)
-    if (cfg.enableTernarySearch) {
-      const ternaryIters = Math.min(
-        cfg.ternaryMaxItersCap,
-        ceilDiv(climbWindow.max - climbWindow.min, Math.max(1, cfg.ternarySpanDivisor)),
-      )
-      tryTernaryPeakSearch(session, climbWindow.min, climbWindow.max, ternaryIters, cfg.ternaryWidthStop)
-    }
-    if (!session.solved) tryFinalCandidates(session, min, max, cfg)
-    if (!session.solved) tryGaussianPeakEstimate(session, climbWindow.min, climbWindow.max, gaussWidth, cfg)
-    if (!session.solved) tryFinalCandidates(session, min, max, cfg)
-    if (!session.solved) tryHillClimbFinals(session, climbWindow.min, climbWindow.max, gaussWidth, min, max, cfg)
-    if (!session.solved && session.bestAlt < cfg.mainPeakModeAlt) {
-      tryZoomFinals(session, climbWindow.min, climbWindow.max, min, max, cfg)
-    }
-    if (!session.solved) tryFinalCandidates(session, min, max, cfg)
-  }
-
-  return finish()
-
-  function finish(): SolverRunResult {
-    const result: SolverRunResult = {
-      guesses: session.guesses,
-      solved: session.solved,
-      bestVal: session.bestVal,
-      bestAlt: session.bestAlt,
-    }
-    if (returnSamples) result.samples = session.samples
-    return result
-  }
+function numericRange(passwordLength: number): { min: number; max: number } {
+  let min = 10 ** (passwordLength - 1)
+  const max = 10 ** passwordLength - 1
+  if (passwordLength === 1) min = 0
+  return { min, max }
 }
 
 export function createAuthProbeSession(
@@ -740,24 +391,28 @@ export function createAuthProbeSession(
     solved: false,
     exhausted: false,
     bestVal: min,
-    bestAlt: -1,
+    bestAlt: -Infinity,
     samples,
-    probe(x: number): number {
-      if (session.exhausted || session.solved) return 0
+    probe(x: number): number | null {
+      if (session.exhausted || session.solved) return null
       const xi = Math.round(x)
-      if (xi < min || xi > max) return 0
+      if (xi < min || xi > max) return null
       if (samples.has(xi)) return samples.get(xi)!
       if (session.guesses >= SOLVER_MAX_PROBES) {
         session.exhausted = true
-        return 0
+        return null
       }
       session.guesses++
       const result = auth(String(xi))
       if (result.success) {
         session.solved = true
+        samples.set(xi, Infinity)
+        session.bestVal = xi
+        session.bestAlt = Infinity
         return Infinity
       }
-      const alt = parseKingOfTheHillAltitude(result.feedback, result.message) ?? -1
+      const alt = parseKingOfTheHillAltitude(result.feedback, result.message)
+      if (alt === null) return null
       samples.set(xi, alt)
       if (alt > session.bestAlt) {
         session.bestAlt = alt
@@ -776,7 +431,7 @@ export function createReplayProbeSession(
   onNeedProbe: (x: number) => void,
 ): ProbeSession {
   let bestVal = min
-  let bestAlt = -1
+  let bestAlt = -Infinity
   for (const [x, alt] of samples) {
     if (alt > bestAlt) {
       bestAlt = alt
@@ -792,10 +447,10 @@ export function createReplayProbeSession(
     bestVal,
     bestAlt,
     samples,
-    probe(x: number): number {
-      if (session.exhausted || session.solved) return 0
+    probe(x: number): number | null {
+      if (session.exhausted || session.solved) return null
       const xi = Math.round(x)
-      if (xi < min || xi > max) return 0
+      if (xi < min || xi > max) return null
       if (samples.has(xi)) {
         const alt = samples.get(xi)!
         if (alt > session.bestAlt) {
@@ -806,7 +461,7 @@ export function createReplayProbeSession(
       }
       if (session.guesses >= SOLVER_MAX_PROBES) {
         session.exhausted = true
-        return 0
+        return null
       }
       onNeedProbe(xi)
       throw STOP_PROBE
@@ -818,14 +473,13 @@ export function createReplayProbeSession(
 export function runUntilNextProbe(
   samples: Map<number, number>,
   ctx: SolverContext,
-  cfg: ImprovedConfig,
 ): { type: "probe"; x: number } | { type: "done"; solved: boolean } {
   let needProbe: number | null = null
   const session = createReplayProbeSession(ctx.min, ctx.max, samples, (x) => {
     needProbe = x
   })
   try {
-    runSolverImprovedCore(session, ctx, cfg)
+    runSolverCore(session, ctx.min, ctx.max, ctx.gaussWidth, ctx.hillCount)
     return { type: "done", solved: session.solved }
   } catch (e) {
     if (e !== STOP_PROBE) throw e
@@ -845,18 +499,15 @@ export interface SolverAuthResult {
   message?: string
 }
 
-/** Run the improved solver synchronously with a caller-supplied auth callback. */
+/** Run the solver synchronously with a caller-supplied auth callback. */
 export function runSolverImproved(
   assignment: KingOfTheHillAssignment,
   options: {
-    improvedConfig?: ImprovedConfig
     auth: (guess: string) => SolverAuthResult
     returnSamples?: boolean
   },
 ): SolverRunResult {
-  const cfg = finalizeImprovedConfig(options.improvedConfig ?? TUNED_MAX_CONFIG)
-  const min = 10 ** (assignment.passwordLength - 1)
-  const max = 10 ** assignment.passwordLength - 1
+  const { min, max } = numericRange(assignment.passwordLength)
   const ctx: SolverContext = {
     min,
     max,
@@ -865,5 +516,13 @@ export function runSolverImproved(
     gaussWidth: kingOfTheHillGaussianWidth(assignment.passwordLength),
   }
   const session = createAuthProbeSession(min, max, options.auth)
-  return runSolverImprovedCore(session, ctx, cfg, { returnSamples: options.returnSamples === true })
+  runSolverCore(session, min, max, ctx.gaussWidth, ctx.hillCount)
+  const result: SolverRunResult = {
+    guesses: session.guesses,
+    solved: session.solved,
+    bestVal: session.bestVal,
+    bestAlt: session.bestAlt,
+  }
+  if (options.returnSamples === true) result.samples = session.samples
+  return result
 }

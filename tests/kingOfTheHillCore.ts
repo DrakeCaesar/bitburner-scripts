@@ -10,18 +10,6 @@
  */
 
 import {
-  computeImprovedFitness,
-  finalizeImprovedConfig,
-  getTunedBenchmark,
-  getTunedImprovedConfig,
-  getTunedJsonScores,
-  TUNED_AVG_CONFIG,
-  TUNED_MAX_CONFIG,
-  type FitnessObjective,
-  type ImprovedConfig,
-  type TunedBenchmarkMeta,
-} from "../src/dnet/solvers/kingOfTheHill/config.js"
-import {
   KOTH_GAUSS_WIDTH_LENGTH_OFFSET,
   KOTH_GAUSS_WIDTH_PLUS,
   KOTH_HILL_DIFFICULTY_CAP,
@@ -33,27 +21,10 @@ import {
   runSolverImproved as runSolverImprovedWithAuth,
 } from "../src/dnet/solvers/kingOfTheHill/solverCore.js"
 
-export {
-  computeImprovedFitness,
-  finalizeImprovedConfig,
-  getTunedBenchmark,
-  getTunedImprovedConfig,
-  getTunedJsonScores,
-  kingOfTheHillGaussianWidth,
-  kingOfTheHillHillCount,
-  TUNED_AVG_CONFIG,
-  TUNED_MAX_CONFIG,
-}
-
-export type { TunedBenchmarkMeta }
-
-export type ImprovedSolverConfig = ImprovedConfig
-
-export const getDefaultImprovedConfig = () => getTunedImprovedConfig("max")
+export { kingOfTheHillGaussianWidth, kingOfTheHillHillCount, KOTH_PEAK_HEIGHT, KOTH_HILL_SPACING_WIDTHS }
 
 export const NUMBERS = "0123456789"
 export const MAX_PASSWORD_LENGTH = 50
-/** Difficulty 54+ -> 10-digit passwords; 32+ -> 9 Gaussian hills (max). */
 export const DEFAULT_DIFFICULTY = 60
 export const DEFAULT_COUNT = 10
 export const DEFAULT_SEED = 0x4b6f7468 // "Koth"
@@ -65,8 +36,6 @@ export const KOTH_LOCATION_JITTER_BASE = 0.9
 export const KOTH_HEIGHT_OFFSET_BASE = 2600
 export const KOTH_HEIGHT_JITTER_SCALE = 0.1
 export const KOTH_HEIGHT_JITTER_BASE = 0.95
-
-export { KOTH_PEAK_HEIGHT, KOTH_HILL_SPACING_WIDTHS }
 
 export const ASSIGNMENT_PASSWORD_LENGTH_DIVISOR = 6
 export const ASSIGNMENT_PASSWORD_LENGTH_CAP = 10
@@ -139,7 +108,7 @@ export function getKingOfTheHillAltitude(server: KingOfTheHillServer, attemptedP
   const passwordHillIndex = Math.floor(rng.random() * (hillCount - 2)) + 1
   const width = 10 ** Math.max(server.password.length - KOTH_GAUSS_WIDTH_LENGTH_OFFSET, 0) + KOTH_GAUSS_WIDTH_PLUS
 
-  if (Math.abs((x - password) / password) < KOTH_NEAR_ZONE_FRACTION) {
+  if (password !== 0 && Math.abs((x - password) / password) < KOTH_NEAR_ZONE_FRACTION) {
     return getAltitudeGivenHillSpecs(x, password, KOTH_PEAK_HEIGHT, width)
   }
 
@@ -185,7 +154,10 @@ export function getPasswordSeeded(length: number, rng: () => number, allowLetter
 }
 
 export function buildAssignment(difficulty: number, rng: () => number): KingOfTheHillAssignment {
-  const passwordLength = Math.min(1 + difficulty / ASSIGNMENT_PASSWORD_LENGTH_DIVISOR, ASSIGNMENT_PASSWORD_LENGTH_CAP)
+  const passwordLength = Math.min(
+    Math.floor(1 + difficulty / ASSIGNMENT_PASSWORD_LENGTH_DIVISOR),
+    ASSIGNMENT_PASSWORD_LENGTH_CAP,
+  )
   const password = getPasswordSeeded(passwordLength, rng, false)
   return {
     difficulty,
@@ -208,8 +180,9 @@ export function mulberry32(seed: number): () => number {
 }
 
 export function assignmentNumericRange(assignment: Pick<KingOfTheHillAssignment, "passwordLength">) {
-  const min = 10 ** (assignment.passwordLength - 1)
+  let min = 10 ** (assignment.passwordLength - 1)
   const max = 10 ** assignment.passwordLength - 1
+  if (assignment.passwordLength === 1) min = 0
   return { min, max }
 }
 
@@ -240,7 +213,7 @@ export function sampleAltitudeProfile(
     pointByX.set(xi, {
       x: xi,
       altitude: getKingOfTheHillAltitude(server, String(xi)),
-      nearZone: Math.abs((xi - password) / password) < KOTH_NEAR_ZONE_FRACTION,
+      nearZone: password !== 0 && Math.abs((xi - password) / password) < KOTH_NEAR_ZONE_FRACTION,
     })
   }
 
@@ -275,32 +248,10 @@ export function generateAssignments(seed: number, count: number, difficulty: num
 
 export function runSolver(
   assignment: KingOfTheHillAssignment,
-  options: { returnSamples?: boolean; improvedConfig?: ImprovedConfig; objective?: FitnessObjective } = {},
-): SolverResult {
-  return runSolverImproved(assignment, options)
-}
-
-export function kingOfTheHillClusterHalfWidth(
-  hillCount: number,
-  passwordLength: number,
-  clusterMargin = getDefaultImprovedConfig().clusterMargin,
-): number {
-  const width = kingOfTheHillGaussianWidth(passwordLength)
-  return Math.ceil((hillCount - 1) * width * KOTH_HILL_SPACING_WIDTHS * clusterMargin)
-}
-
-export function runSolverImproved(
-  assignment: KingOfTheHillAssignment,
-  options: {
-    returnSamples?: boolean
-    improvedConfig?: ImprovedConfig
-    objective?: FitnessObjective
-  } = {},
+  options: { returnSamples?: boolean } = {},
 ): SolverResult {
   const server = toServer(assignment)
-  const improvedConfig = options.improvedConfig ?? getTunedImprovedConfig(options.objective ?? "max")
   const raw = runSolverImprovedWithAuth(assignment, {
-    improvedConfig,
     auth: (guess) => authKingOfTheHill(server, guess),
     returnSamples: options.returnSamples === true,
   })
@@ -308,138 +259,10 @@ export function runSolverImproved(
     guesses: raw.guesses,
     solved: raw.solved,
     bestVal: raw.bestVal,
-    bestAlt: raw.bestAlt >= 0 ? raw.bestAlt : null,
+    bestAlt: Number.isFinite(raw.bestAlt) ? raw.bestAlt : null,
   }
   if (options.returnSamples && raw.samples) {
     result.probes = [...raw.samples.entries()].map(([x, alt]) => ({ x, alt }))
   }
-  return result
-}
-
-export function improvedConfigFitness({
-  objective = "avg",
-  unsolved,
-  totalGuesses = 0,
-  maxGuesses = 0,
-}: {
-  objective?: FitnessObjective
-  unsolved: number
-  totalGuesses?: number
-  maxGuesses?: number
-}): number {
-  return computeImprovedFitness(objective, unsolved, totalGuesses, maxGuesses)
-}
-
-export function evaluateImprovedConfig(
-  assignments: KingOfTheHillAssignment[],
-  configOverrides: Partial<ImprovedConfig> = {},
-  objective: FitnessObjective = "avg",
-) {
-  const base = objective === "avg" ? TUNED_AVG_CONFIG : TUNED_MAX_CONFIG
-  const cfg = finalizeImprovedConfig({ ...base, ...configOverrides })
-  let totalGuesses = 0
-  let solved = 0
-  let maxGuesses = 0
-  let minGuesses = Infinity
-  const failed: number[] = []
-
-  for (let i = 0; i < assignments.length; i++) {
-    const result = runSolverImproved(assignments[i], { improvedConfig: cfg, objective })
-    if (result.solved) {
-      solved++
-      totalGuesses += result.guesses
-      maxGuesses = Math.max(maxGuesses, result.guesses)
-      minGuesses = Math.min(minGuesses, result.guesses)
-    } else {
-      failed.push(i + 1)
-    }
-  }
-
-  const count = assignments.length
-  const unsolved = count - solved
-  return {
-    config: cfg,
-    solved,
-    total: count,
-    unsolved,
-    failed,
-    totalGuesses: unsolved > 0 ? null : totalGuesses,
-    avgGuesses: unsolved > 0 ? null : totalGuesses / count,
-    maxGuesses: unsolved > 0 ? null : maxGuesses,
-    minGuesses: unsolved > 0 ? null : minGuesses,
-    fitness: improvedConfigFitness({ objective, unsolved, totalGuesses, maxGuesses }),
-  }
-}
-
-export interface TunedBenchmarkVerifyResult {
-  ok: boolean
-  objective: FitnessObjective
-  benchmark: TunedBenchmarkMeta | null
-  checked: number
-  unsolved: number
-  jsAvgGuesses: number | null
-  jsMaxGuesses: number | null
-  jsTotalGuesses: number | null
-  jsonAvgGuesses: number | null
-  jsonMaxGuesses: number | null
-  jsonTotalGuesses: number | null
-}
-
-export function runTunedBenchmarkAssignments(objective: FitnessObjective = "max") {
-  const benchmark = getTunedBenchmark(objective)
-  if (benchmark == null) return null
-  return generateAssignments(benchmark.seed, benchmark.count, benchmark.difficulty)
-}
-
-export function verifyTunedConfigBenchmark(objective: FitnessObjective = "max"): TunedBenchmarkVerifyResult {
-  const benchmark = getTunedBenchmark(objective)
-  const jsonScores = getTunedJsonScores(objective)
-  const cfg = getTunedImprovedConfig(objective)
-  const result: TunedBenchmarkVerifyResult = {
-    ok: false,
-    objective,
-    benchmark,
-    checked: 0,
-    unsolved: 0,
-    jsAvgGuesses: null,
-    jsMaxGuesses: null,
-    jsTotalGuesses: null,
-    jsonAvgGuesses: jsonScores.avgGuesses,
-    jsonMaxGuesses: jsonScores.maxGuesses,
-    jsonTotalGuesses: jsonScores.totalGuesses,
-  }
-  if (benchmark == null) return result
-
-  const rows = generateAssignments(benchmark.seed, benchmark.count, benchmark.difficulty)
-  let totalGuesses = 0
-  let maxGuesses = 0
-  let solved = 0
-
-  for (const { assignment } of rows) {
-    result.checked++
-    const run = runSolverImproved(assignment, { improvedConfig: cfg, objective })
-    if (run.solved) {
-      solved++
-      totalGuesses += run.guesses
-      maxGuesses = Math.max(maxGuesses, run.guesses)
-    }
-  }
-
-  result.unsolved = result.checked - solved
-  if (solved === result.checked) {
-    result.jsAvgGuesses = totalGuesses / solved
-    result.jsMaxGuesses = maxGuesses
-    result.jsTotalGuesses = totalGuesses
-  }
-
-  const sameNumber = (a: number | null, b: number | null) =>
-    a != null && b != null && Math.abs(a - b) < 1e-6
-
-  result.ok =
-    result.unsolved === 0 &&
-    sameNumber(result.jsAvgGuesses, result.jsonAvgGuesses) &&
-    result.jsMaxGuesses === result.jsonMaxGuesses &&
-    result.jsTotalGuesses === result.jsonTotalGuesses
-
   return result
 }

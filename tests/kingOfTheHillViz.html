@@ -208,12 +208,6 @@
   <h1>KingOfTheHill altitude profiles</h1>
 
   <div class="controls">
-    <label>Assignments
-      <select id="assignmentSource">
-        <option value="sequential" selected>sequential (seed + count)</option>
-        <option value="json-max">JSON benchmark set</option>
-      </select>
-    </label>
     <label>Seed<input id="seed" type="number" value="1265595496" /></label>
     <label>Difficulty<input id="difficulty" type="number" value="60" min="1" max="60" /></label>
     <label>Tests<input id="count" type="number" value="1000" min="1" max="1000000" step="1" /></label>
@@ -254,7 +248,6 @@
       DEFAULT_SEED,
       DEFAULT_DIFFICULTY,
       KING_MAIN_PEAK_ALTITUDE,
-      getTunedBenchmark,
       generateAssignmentAt,
       runSolver,
       sampleAltitudeProfile,
@@ -262,7 +255,6 @@
 
     const grid = document.getElementById("grid")
     const summaryEl = document.getElementById("summary")
-    const assignmentSourceInput = document.getElementById("assignmentSource")
     const seedInput = document.getElementById("seed")
     const difficultyInput = document.getElementById("difficulty")
     const countInput = document.getElementById("count")
@@ -293,15 +285,12 @@
         const prev = loadSettings() ?? {}
         const settings = {
           ...prev,
-          assignmentSource: assignmentSourceInput.value,
           sort: sortInput.value,
           chartLimit: chartLimitInput.value,
           points: pointsInput.value,
-        }
-        if (!isJsonBenchmarkSource()) {
-          settings.seed = seedInput.value
-          settings.difficulty = difficultyInput.value
-          settings.count = countInput.value
+          seed: seedInput.value,
+          difficulty: difficultyInput.value,
+          count: countInput.value,
         }
         localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
       } catch {
@@ -311,7 +300,6 @@
 
     function applySettings(settings) {
       if (!settings) return
-      if (settings.assignmentSource) assignmentSourceInput.value = settings.assignmentSource
       if (settings.seed != null && settings.seed !== "") seedInput.value = String(settings.seed)
       if (settings.difficulty != null && settings.difficulty !== "") difficultyInput.value = String(settings.difficulty)
       if (settings.count != null && settings.count !== "") countInput.value = String(settings.count)
@@ -327,81 +315,25 @@
       difficultyInput.value = String(DEFAULT_DIFFICULTY)
     }
 
-    for (const el of [
-      assignmentSourceInput,
-      seedInput,
-      difficultyInput,
-      countInput,
-      sortInput,
-      chartLimitInput,
-      pointsInput,
-    ]) {
+    for (const el of [seedInput, difficultyInput, countInput, sortInput, chartLimitInput, pointsInput]) {
       el.addEventListener("change", saveSettings)
     }
 
-    function isJsonBenchmarkSource() {
-      return assignmentSourceInput.value === "json-max"
-    }
-
-    function syncAssignmentSourceControls() {
-      const jsonMode = isJsonBenchmarkSource()
-      seedInput.disabled = jsonMode
-      difficultyInput.disabled = jsonMode
-      countInput.disabled = jsonMode
-      if (jsonMode) {
-        const benchmark = getTunedBenchmark("max")
-        if (benchmark) {
-          seedInput.value = String(benchmark.seed)
-          difficultyInput.value = String(benchmark.difficulty)
-          countInput.value = String(benchmark.count)
-        }
-      } else {
-        const saved = loadSettings()
-        if (saved?.seed != null && saved.seed !== "") seedInput.value = String(saved.seed)
-        if (saved?.difficulty != null && saved.difficulty !== "") difficultyInput.value = String(saved.difficulty)
-        if (saved?.count != null && saved.count !== "") countInput.value = String(saved.count)
-      }
-    }
-
-    assignmentSourceInput.addEventListener("change", () => {
-      syncAssignmentSourceControls()
-      saveSettings()
-      renderAll()
-    })
-
     sortInput.addEventListener("change", () => {
-      saveSettings()
       if (cachedResults) renderAll({ rerunTests: false })
     })
-
     chartLimitInput.addEventListener("change", () => {
-      saveSettings()
       if (cachedResults) renderAll({ rerunTests: false })
     })
-
     pointsInput.addEventListener("change", () => {
-      saveSettings()
       if (cachedResults) renderAll({ rerunTests: false })
     })
-
-    function buildRowsFromBenchmark() {
-      const benchmark = getTunedBenchmark("max")
-      if (!benchmark) return { error: "No benchmark in kingOfTheHillTune.max.json." }
-      return { benchmark }
-    }
 
     let renderRunId = 0
     /** @type {{ rows: { index: number, result: object }[], sourceLabel: string, cacheKey: string, seed: number, difficulty: number } | null} */
     let cachedResults = null
 
     function resultsCacheKey() {
-      syncAssignmentSourceControls()
-      const jsonMode = isJsonBenchmarkSource()
-      if (jsonMode) {
-        const benchmark = getTunedBenchmark("max")
-        if (!benchmark) return "json-missing"
-        return `json:${benchmark.seed}:${benchmark.difficulty}:${benchmark.count}`
-      }
       const seed = Number(seedInput.value) || DEFAULT_SEED
       const difficulty = Number(difficultyInput.value) || DEFAULT_DIFFICULTY
       const testCount = parseTestCount()
@@ -791,9 +723,7 @@
     }
 
     async function renderAll({ rerunTests = true } = {}) {
-      syncAssignmentSourceControls()
       saveSettings()
-      const jsonMode = isJsonBenchmarkSource()
       const seed = Number(seedInput.value) || DEFAULT_SEED
       const difficulty = Number(difficultyInput.value) || DEFAULT_DIFFICULTY
       const testCount = parseTestCount()
@@ -801,9 +731,7 @@
       const sortMode = sortInput.value
       const chartLimit = Math.max(0, Math.min(500, Math.floor(Number(chartLimitInput.value) || 0)))
 
-      if (!jsonMode) {
-        countInput.value = String(testCount)
-      }
+      countInput.value = String(testCount)
       chartLimitInput.value = String(chartLimit)
 
       const runId = ++renderRunId
@@ -814,49 +742,21 @@
         rerunTests || cachedResults == null || cachedResults.cacheKey !== cacheKey
 
       let rows
-      let sourceLabel
-      let jobSeed = seed
-      let jobDifficulty = difficulty
+      const sourceLabel = `sequential #1-${testCount}, seed ${seed}, difficulty ${difficulty}`
       if (needTests) {
         setProgress(0, testCount, "tests")
         grid.replaceChildren()
-
-        if (jsonMode) {
-          const built = buildRowsFromBenchmark()
-          if (built.error) {
-            summaryEl.innerHTML = `<span class="bad">${built.error}</span>`
-            cachedResults = null
-            renderBtn.disabled = false
-            renderBtn.textContent = "Redraw"
-            return
-          }
-          const b = built.benchmark
-          jobSeed = b.seed
-          jobDifficulty = b.difficulty
-          sourceLabel = `JSON benchmark: first ${b.count} assignments, seed ${b.seed}, difficulty ${b.difficulty}`
-          rows = await buildRowsAsync(
-            { seed: jobSeed, difficulty: jobDifficulty, count: b.count },
-            runId,
-            setProgress,
-          )
-        } else {
-          sourceLabel = `sequential #1-${testCount}, seed ${seed}, difficulty ${difficulty}`
-          rows = await buildRowsAsync({ seed, difficulty, count: testCount }, runId, setProgress)
-        }
-
+        rows = await buildRowsAsync({ seed, difficulty, count: testCount }, runId, setProgress)
         if (runId !== renderRunId || rows == null) return
-        cachedResults = { rows, sourceLabel, cacheKey, seed: jobSeed, difficulty: jobDifficulty }
+        cachedResults = { rows, sourceLabel, cacheKey, seed, difficulty }
       } else {
         rows = cachedResults.rows
-        sourceLabel = cachedResults.sourceLabel
-        jobSeed = cachedResults.seed
-        jobDifficulty = cachedResults.difficulty
       }
 
       const sorted = sortRows(rows, sortMode)
       const chartRows = chartLimit > 0 ? sorted.slice(0, chartLimit) : []
 
-      await renderChartGrid(chartRows, runId, pointCount, jobSeed, jobDifficulty)
+      await renderChartGrid(chartRows, runId, pointCount, seed, difficulty)
 
       if (runId !== renderRunId) return
       renderSummary(rows, chartRows.length, sortMode, sourceLabel)

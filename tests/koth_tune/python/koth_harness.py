@@ -6,7 +6,6 @@ bitburner generator + altitude oracle) and solver-agnostic benchmark tools.
 It contains NO solver.  Plug in your own `solve(assignment) -> result` callable.
 
 Ported from (all identical models):
-  tests/koth_tune/src/koth_game.cpp        (C++ genetic-tuner mirror)
   tests/kingOfTheHillCore.ts               (bitburner-src game model)
   src/dnet/solvers/kingOfTheHill/solverCore.ts (constants)
 

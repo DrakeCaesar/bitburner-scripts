@@ -1,19 +1,17 @@
 #pragma once
 
-#include "koth_config.hpp"
 #include "koth_game.hpp"
-
-#include <cstdint>
 
 namespace koth {
 
-struct SolverResult {
-  int guesses = 0;
+struct SolveResult {
   bool solved = false;
-  int64_t bestVal = 0;
-  double bestAlt = -1.0;
+  int guesses = 0;
+  int64_t bestX = 0;
+  double bestAlt = -1e18;
 };
 
-SolverResult runSolverImproved(const Assignment& assignment, const ImprovedConfig& cfg);
+/** Port of tests/koth_tune/python/solver.py (and src/dnet/solvers/kingOfTheHill/solverCore.ts). */
+SolveResult solve(const Assignment& assignment, int cap = 600);
 
 }  // namespace koth

@@ -1,12 +1,10 @@
 """
 Exact Python port of the bitburner King-of-the-Hill problem generator and
 altitude oracle, mirroring:
-  tests/koth_tune/src/koth_game.cpp   (C++ genetic-tuner mirror)
   tests/kingOfTheHillCore.ts          (bitburner-src game model)
-  src/dnet/solvers/kingOfTheHill/solverCore.ts (constants)
+  src/dnet/solvers/kingOfTheHill/     (in-game constants)
 
-Only the *generator* + *oracle* are ported here. The solver is written fresh
-elsewhere. Difficulty is fixed at 60 for this study (9 hills, 10-digit seeds).
+Only the *generator* + *oracle* are ported here. The solver lives in solver.py.
 """
 import math
 
@@ -121,7 +119,11 @@ def gaussian_width(password_length):
 
 
 def numeric_range(password_length):
-    return (10 ** (password_length - 1), 10 ** password_length - 1)
+    lo = 10 ** (password_length - 1)
+    hi = 10 ** password_length - 1
+    if password_length == 1:
+        lo = 0
+    return lo, hi
 
 
 def _alt_given_specs(x, location, height, width):

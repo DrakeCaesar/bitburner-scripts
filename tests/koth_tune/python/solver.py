@@ -34,6 +34,13 @@ STEP_W = KOTH_HILL_SPACING_WIDTHS                # 3 widths between adjacent hil
 MAIN_TH = H_PEAK - 0.5 * KOTH_HEIGHT_OFFSET_BASE  # 8700
 
 
+def _iround(x):
+    """Round half away from zero (matches Math.round / std::llround)."""
+    if x >= 0:
+        return int(math.floor(x + 0.5))
+    return int(math.ceil(x - 0.5))
+
+
 class Session:
     def __init__(self, password, difficulty, lo, hi, cap=400):
         self.p = int(password); self.pw = password
@@ -42,7 +49,7 @@ class Session:
         self.best_x = lo; self.best_alt = -math.inf
 
     def probe(self, x):
-        xi = int(round(x))
+        xi = _iround(x)
         if xi < self.lo or xi > self.hi:
             return None
         if xi in self.samples:
@@ -62,7 +69,7 @@ class Session:
 
 
 def _clamp(x, lo, hi):
-    return max(lo, min(hi, int(round(x))))
+    return max(lo, min(hi, _iround(x)))
 
 
 def _invert_center(x1, a1, x2, a2, w):
@@ -70,7 +77,16 @@ def _invert_center(x1, a1, x2, a2, w):
 
 
 def _hopk(H):
-    return max(1, int(round((H_PEAK - H) / KOTH_HEIGHT_OFFSET_BASE)))
+    return max(1, _iround((H_PEAK - H) / KOTH_HEIGHT_OFFSET_BASE))
+
+
+def _pick_best(*cands):
+    """First candidate with maximum altitude (matches TS/C++ strict > tie-break)."""
+    best = cands[0]
+    for alt, x in cands[1:]:
+        if alt > best[0]:
+            best = (alt, x)
+    return best
 
 
 def _crest(sess, x_seed, w, lo, hi):
@@ -81,7 +97,7 @@ def _crest(sess, x_seed, w, lo, hi):
         a = sess.probe(x)
         if sess.solved:
             return x, a
-    off = max(1, int(round(0.5 * w)))
+    off = max(1, _iround(0.5 * w))
     xb = x + off if (x + off) <= hi else x - off
     ab = sess.probe(xb)
     if sess.solved:
@@ -95,7 +111,7 @@ def _crest(sess, x_seed, w, lo, hi):
                 ac = sess.probe(cx)
                 if sess.solved:
                     return cx, ac
-            best = max((a, x), (ab, xb), (ac if ac is not None else -1e18, cx))
+            best = _pick_best((a, x), (ab, xb), (ac if ac is not None else -1e18, cx))
             if best[1] != x and best[0] > a * 1.02:
                 bx = best[1]
                 xb2 = bx + max(1, off // 2)
@@ -110,8 +126,7 @@ def _crest(sess, x_seed, w, lo, hi):
                         ac2 = sess.probe(cx2)
                         if sess.solved:
                             return cx2, ac2
-                        cand = max(best, (ab2, xb2),
-                                   (ac2 if ac2 is not None else -1e18, cx2))
+                        cand = _pick_best(best, (ab2, xb2), (ac2 if ac2 is not None else -1e18, cx2))
                         return cand[1], cand[0]
                     except (ValueError, ZeroDivisionError):
                         pass
@@ -125,7 +140,7 @@ def _crest(sess, x_seed, w, lo, hi):
     cand = [(a if a is not None else -1e18, x),
             (ab if ab is not None else -1e18, xb),
             (ac if ac is not None else -1e18, xc)]
-    best = max(cand)
+    best = _pick_best(*cand)
     return best[1], best[0]
 
 
@@ -139,8 +154,8 @@ def _gallop(sess, x_seed, w, lo, hi):
             return x, a
     if a is None:
         a = -1e18
-    step = max(1, int(round(1.5 * w)))
-    stop = max(1, int(round(0.1 * w)))
+    step = max(1, _iround(1.5 * w))
+    stop = max(1, _iround(0.1 * w))
     while step >= stop:
         bd, ba, bx = 0, a, x
         for d in (1, -1):
@@ -200,7 +215,7 @@ def _scan_grid(lo, hi, w, hc):
     else:
         spacing = max(1, int(3 * w))
     m = max(1, -(-span // spacing))          # ceil(span/spacing) intervals
-    xs = sorted(set(lo + round(span * i / m) for i in range(m + 1)))
+    xs = sorted(set(lo + _iround(span * i / m) for i in range(m + 1)))
     return xs
 
 
@@ -315,7 +330,7 @@ def solve(assignment, cap=600):
 def _pinpoint(sess, seed_x, w, lo, hi, rounds=5, final_radius=8):
     """Iterated single-Gaussian inversion; exact once inside the near-zone."""
     pc = _clamp(seed_x, lo, hi)
-    off = max(1, int(round(0.25 * w)))
+    off = max(1, _iround(0.25 * w))
     for _ in range(rounds):
         a0 = sess.samples.get(pc)
         if a0 is None:
@@ -341,7 +356,7 @@ def _pinpoint(sess, seed_x, w, lo, hi, rounds=5, final_radius=8):
             off = max(1, off // 4)
             continue
         pc = nc
-        off = max(1, min(off, int(round(0.25 * w))))
+        off = max(1, min(off, _iround(0.25 * w)))
     sess.probe(pc)
     if sess.solved:
         return
@@ -355,8 +370,8 @@ def _pinpoint(sess, seed_x, w, lo, hi, rounds=5, final_radius=8):
 def _cluster_sweep(sess, w, lo, hi):
     """Guaranteed: sample every hill around the best point (step < spacing)."""
     center = sess.best_x
-    reach = int(round(28 * w))
-    step = max(1, int(round(1.2 * w)))
+    reach = _iround(28 * w)
+    step = max(1, _iround(1.2 * w))
     x = max(lo, center - reach); b = min(hi, center + reach)
     while x <= b and not sess.solved:
         sess.probe(x); x += step

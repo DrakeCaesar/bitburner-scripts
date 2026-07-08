@@ -16,8 +16,9 @@ ipvgo-engine/cpp/*.wasm
 ipvgo-engine/cpp/ipvgo.wasm.js
 ipvgo-engine/katago/
 
-# KingOfTheHill C++ tuner (tests/koth_tune/) build artifacts
+# KingOfTheHill Python benchmark (tests/koth_tune/python/)
 tests/koth_tune/build/
+tests/koth_tune/python/__pycache__/
 
 # CMake artifacts if misconfigured into repo-root build/ (legacy watch scripts live there)
 build/.cmake/
@@ -176,3 +177,5 @@ dist
 .pnp.*
 
 Trace-*.json
+*.pyc
+__pycache__/

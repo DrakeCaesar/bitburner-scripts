@@ -1,7 +1,13 @@
-/* Auto-generated — edit tests/kingOfTheHillCore.ts; run pnpm run test:koth:bundle */
+/* Auto-generated — edit tests/kingOfTheHillBench.ts; run pnpm run test:koth:bench */
 var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
+
+// tests/kingOfTheHillBench.ts
+import { cpus } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { Worker } from "node:worker_threads";
 
 // src/dnet/solvers/kingOfTheHill/solverCore.ts
 var KOTH_PEAK_HEIGHT = 1e4;
@@ -390,10 +396,7 @@ function runSolverImproved(assignment, options) {
 // tests/kingOfTheHillCore.ts
 var NUMBERS = "0123456789";
 var MAX_PASSWORD_LENGTH = 50;
-var DEFAULT_DIFFICULTY = 60;
-var DEFAULT_COUNT = 10;
 var DEFAULT_SEED = 1265595496;
-var KING_MAIN_PEAK_ALTITUDE = 7500;
 var KOTH_NEAR_ZONE_FRACTION = 0.03;
 var KOTH_LOCATION_JITTER_SCALE = 0.2;
 var KOTH_LOCATION_JITTER_BASE = 0.9;
@@ -404,7 +407,6 @@ var ASSIGNMENT_PASSWORD_LENGTH_DIVISOR = 6;
 var ASSIGNMENT_PASSWORD_LENGTH_CAP = 10;
 var ASSIGNMENT_SEED_STRIDE = 9973;
 var ASSIGNMENT_MAX_SAFE_PASSWORD_DIGITS = 15;
-var PROFILE_DEFAULT_POINT_COUNT = 800;
 var WHRNG = class {
   constructor(totalPlaytime) {
     __publicField(this, "s1");
@@ -496,42 +498,8 @@ function mulberry32(seed) {
     return ((t ^ t >>> 14) >>> 0) / 4294967296;
   };
 }
-function assignmentNumericRange(assignment) {
-  let min = 10 ** (assignment.passwordLength - 1);
-  const max = 10 ** assignment.passwordLength - 1;
-  if (assignment.passwordLength === 1) min = 0;
-  return { min, max };
-}
 function toServer(assignment) {
   return { password: assignment.password, difficulty: assignment.difficulty };
-}
-function sampleAltitudeProfile(assignment, options = {}) {
-  const pointCount = options.pointCount ?? PROFILE_DEFAULT_POINT_COUNT;
-  const password = Number(assignment.password);
-  const { min, max } = assignmentNumericRange(assignment);
-  const server = toServer(assignment);
-  const start = min;
-  const end = max;
-  const nearLo = Math.max(min, Math.ceil(password * (1 - KOTH_NEAR_ZONE_FRACTION)));
-  const nearHi = Math.min(max, Math.floor(password * (1 + KOTH_NEAR_ZONE_FRACTION)));
-  const step = Math.max(1, Math.ceil((end - start) / pointCount));
-  const nearStep = Math.max(1, Math.ceil(kingOfTheHillGaussianWidth(assignment.passwordLength) / 12));
-  const pointByX = /* @__PURE__ */ new Map();
-  function addPoint(x) {
-    const xi = Math.round(x);
-    if (xi < min || xi > max) return;
-    pointByX.set(xi, {
-      x: xi,
-      altitude: getKingOfTheHillAltitude(server, String(xi)),
-      nearZone: password !== 0 && Math.abs((xi - password) / password) < KOTH_NEAR_ZONE_FRACTION
-    });
-  }
-  for (let x = start; x <= end; x += step) addPoint(x);
-  addPoint(end);
-  for (let x = nearLo; x <= nearHi; x += nearStep) addPoint(x);
-  for (const x of [nearLo, nearHi, password]) addPoint(x);
-  const points = [...pointByX.values()].sort((a, b) => a.x - b.x);
-  return { points, password, min, max, start, end, nearLo, nearHi };
 }
 function generateAssignmentAt(seed, index, difficulty) {
   const i = index - 1;
@@ -562,37 +530,166 @@ function runSolver(assignment, options = {}) {
   }
   return result;
 }
+
+// tests/kingOfTheHillBench.ts
+var __dirname = dirname(fileURLToPath(import.meta.url));
+var WORKER_PATH = join(__dirname, "kingOfTheHillBenchWorker.mjs");
+var DEFAULT_BENCH_COUNT = 1e5;
+var DEFAULT_DIFF_MIN = 1;
+var DEFAULT_DIFF_MAX = 60;
+function summarizeGuesses(guesses) {
+  const gs = [...guesses].sort((a, b) => a - b);
+  const n = gs.length;
+  if (n === 0) {
+    return { solved: 0, unsolved: 0, avg: null, median: null, min: null, max: null, p95: null, p99: null };
+  }
+  const sum = gs.reduce((a, b) => a + b, 0);
+  return {
+    solved: n,
+    unsolved: 0,
+    avg: sum / n,
+    median: gs[Math.floor(n / 2)] ?? null,
+    min: gs[0] ?? null,
+    max: gs[n - 1] ?? null,
+    p95: gs[Math.floor(0.95 * n)] ?? null,
+    p99: gs[Math.floor(0.99 * n)] ?? null
+  };
+}
+function benchDifficulty(seed, count, difficulty) {
+  const rows = generateAssignments(seed, count, difficulty);
+  const t0 = performance.now();
+  const guesses = [];
+  let unsolved = 0;
+  for (const { assignment } of rows) {
+    const res = runSolver(assignment);
+    if (res.solved) guesses.push(res.guesses);
+    else unsolved++;
+  }
+  guesses.sort((a, b) => a - b);
+  return {
+    difficulty,
+    guesses,
+    unsolved,
+    seconds: (performance.now() - t0) / 1e3
+  };
+}
+function formatBenchRow(difficulty, guesses, unsolved, seconds) {
+  const stats = summarizeGuesses(guesses);
+  const dash = "\u2014";
+  if (stats.solved > 0) {
+    return `${String(difficulty).padStart(4)}  ${String(stats.solved).padStart(6)}  ${String(unsolved).padStart(8)}  ${stats.avg.toFixed(2).padStart(7)}  ${String(stats.median).padStart(6)}  ${String(stats.min).padStart(5)}  ${String(stats.max).padStart(5)}  ${String(stats.p95).padStart(5)}  ${String(stats.p99).padStart(5)}  ${seconds.toFixed(1).padStart(5)}s`;
+  }
+  return `${String(difficulty).padStart(4)}  ${String(0).padStart(6)}  ${String(unsolved).padStart(8)}  ${dash.padStart(7)}  ${dash.padStart(6)}  ${dash.padStart(5)}  ${dash.padStart(5)}  ${dash.padStart(5)}  ${dash.padStart(5)}  ${seconds.toFixed(1).padStart(5)}s`;
+}
+var BENCH_HEADER = `${"diff".padStart(4)}  ${"solved".padStart(6)}  ${"unsolved".padStart(8)}  ${"avg".padStart(7)}  ${"median".padStart(6)}  ${"min".padStart(5)}  ${"max".padStart(5)}  ${"p95".padStart(5)}  ${"p99".padStart(5)}  ${"time".padStart(6)}`;
+function runDifficultyInWorker(seed, count, difficulty) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(WORKER_PATH, { workerData: { seed, count, difficulty } });
+    worker.on("message", (msg) => resolve(msg));
+    worker.on("error", reject);
+    worker.on("exit", (code) => {
+      if (code !== 0) reject(new Error(`bench worker for difficulty ${difficulty} exited with code ${code}`));
+    });
+  });
+}
+async function runBenchmark(options = {}) {
+  const seed = options.seed ?? DEFAULT_SEED;
+  const count = options.count ?? DEFAULT_BENCH_COUNT;
+  const diffMin = options.diffMin ?? DEFAULT_DIFF_MIN;
+  const diffMax = options.diffMax ?? DEFAULT_DIFF_MAX;
+  const workers = Math.max(1, options.workers ?? cpus().length);
+  const difficulties = Array.from({ length: diffMax - diffMin + 1 }, (_, i) => diffMin + i);
+  const tTotal = performance.now();
+  const results = [];
+  let done = 0;
+  const total = difficulties.length;
+  const report = () => options.onProgress?.(done, total);
+  if (workers <= 1) {
+    for (const difficulty of difficulties) {
+      results.push(benchDifficulty(seed, count, difficulty));
+      done++;
+      report();
+    }
+  } else {
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(workers, total) }, async () => {
+        for (; ; ) {
+          const i = next++;
+          if (i >= total) break;
+          const difficulty = difficulties[i];
+          const row = await runDifficultyInWorker(seed, count, difficulty);
+          results.push(row);
+          done++;
+          report();
+        }
+      })
+    );
+  }
+  results.sort((a, b) => a.difficulty - b.difficulty);
+  return { results, totalSeconds: (performance.now() - tTotal) / 1e3 };
+}
+function parseArgs(argv) {
+  let seed = DEFAULT_SEED;
+  let count = DEFAULT_BENCH_COUNT;
+  let diffMin = DEFAULT_DIFF_MIN;
+  let diffMax = DEFAULT_DIFF_MAX;
+  let workers = cpus().length;
+  for (let i = 2; i < argv.length; i++) {
+    const arg = argv[i];
+    if ((arg === "--seed" || arg === "-s") && argv[i + 1]) seed = Number(argv[++i]);
+    else if ((arg === "--count" || arg === "-n") && argv[i + 1]) count = Number(argv[++i]);
+    else if (arg === "--diff-min" && argv[i + 1]) diffMin = Number(argv[++i]);
+    else if (arg === "--diff-max" && argv[i + 1]) diffMax = Number(argv[++i]);
+    else if ((arg === "--workers" || arg === "-w") && argv[i + 1]) workers = Number(argv[++i]);
+    else if (arg === "--sequential") workers = 1;
+  }
+  return { seed, count, diffMin, diffMax, workers };
+}
+function printProgress(done, total) {
+  const pct = done / total * 100;
+  const bar = "#".repeat(done) + ".".repeat(total - done);
+  process.stdout.write(`\r  [${bar}] ${done}/${total}  (${pct.toFixed(0)}%)`);
+}
+async function main() {
+  const { seed, count, diffMin, diffMax, workers } = parseArgs(process.argv);
+  const sep = "-".repeat(BENCH_HEADER.length);
+  console.log(`Benchmark  N=${count} per difficulty  workers=${workers}`);
+  console.log(sep);
+  console.log(BENCH_HEADER);
+  console.log(sep);
+  const { results, totalSeconds } = await runBenchmark({
+    seed,
+    count,
+    diffMin,
+    diffMax,
+    workers,
+    onProgress: printProgress
+  });
+  process.stdout.write("\n");
+  let failed = false;
+  for (const row of results) {
+    if (row.unsolved > 0) failed = true;
+    console.log(formatBenchRow(row.difficulty, row.guesses, row.unsolved, row.seconds));
+  }
+  console.log(sep);
+  console.log(`Total wall time: ${totalSeconds.toFixed(1)}s`);
+  if (failed) process.exit(1);
+}
+var isMain = process.argv[1] != null && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
 export {
-  ASSIGNMENT_MAX_SAFE_PASSWORD_DIGITS,
-  ASSIGNMENT_PASSWORD_LENGTH_CAP,
-  ASSIGNMENT_PASSWORD_LENGTH_DIVISOR,
-  ASSIGNMENT_SEED_STRIDE,
-  DEFAULT_COUNT,
-  DEFAULT_DIFFICULTY,
-  DEFAULT_SEED,
-  KING_MAIN_PEAK_ALTITUDE,
-  KOTH_HEIGHT_JITTER_BASE,
-  KOTH_HEIGHT_JITTER_SCALE,
-  KOTH_HEIGHT_OFFSET_BASE2 as KOTH_HEIGHT_OFFSET_BASE,
-  KOTH_HILL_SPACING_WIDTHS,
-  KOTH_LOCATION_JITTER_BASE,
-  KOTH_LOCATION_JITTER_SCALE,
-  KOTH_NEAR_ZONE_FRACTION,
-  KOTH_PEAK_HEIGHT,
-  MAX_PASSWORD_LENGTH,
-  NUMBERS,
-  PROFILE_DEFAULT_POINT_COUNT,
-  assignmentNumericRange,
-  authKingOfTheHill,
-  buildAssignment,
-  generateAssignmentAt,
-  generateAssignments,
-  getKingOfTheHillAltitude,
-  getPasswordSeeded,
-  kingOfTheHillGaussianWidth,
-  kingOfTheHillHillCount,
-  mulberry32,
-  runSolver,
-  sampleAltitudeProfile,
-  toServer
+  BENCH_HEADER,
+  DEFAULT_BENCH_COUNT,
+  DEFAULT_DIFF_MAX,
+  DEFAULT_DIFF_MIN,
+  benchDifficulty,
+  formatBenchRow,
+  runBenchmark,
+  summarizeGuesses
 };
