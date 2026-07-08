@@ -138,6 +138,12 @@ RngFn mulberry32(uint32_t seed) {
   };
 }
 
+Assignment generateAssignmentAt(uint32_t seed, int index, int difficulty) {
+  const int i = index - 1;
+  const uint32_t rngSeed = seed + static_cast<uint32_t>(i * ASSIGNMENT_SEED_STRIDE);
+  return buildAssignment(difficulty, mulberry32(rngSeed));
+}
+
 std::vector<Assignment> generateAssignments(uint32_t seed, int count, int difficulty) {
   std::vector<Assignment> rows;
   rows.reserve(static_cast<size_t>(count));

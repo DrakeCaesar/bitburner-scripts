@@ -2,6 +2,9 @@
 
 #include "koth_game.hpp"
 
+#include <string>
+#include <vector>
+
 namespace koth {
 
 struct SolveResult {
@@ -11,7 +14,18 @@ struct SolveResult {
   double bestAlt = -1e18;
 };
 
-/** Port of tests/koth_tune/python/solver.py (and src/dnet/solvers/kingOfTheHill/solverCore.ts). */
-SolveResult solve(const Assignment& assignment, int cap = 600);
+enum class SolverVariant {
+  Baseline,
+  TailFast,
+};
+
+const char* solverVariantName(SolverVariant variant);
+const char* solverVariantDescription(SolverVariant variant);
+std::vector<SolverVariant> allSolverVariants();
+bool parseSolverVariant(const std::string& name, SolverVariant* out);
+
+/** Port of tests/koth_tune/python/solver.py (and solverCore.ts). */
+SolveResult solve(const Assignment& assignment, int cap = 600,
+                  SolverVariant variant = SolverVariant::Baseline);
 
 }  // namespace koth

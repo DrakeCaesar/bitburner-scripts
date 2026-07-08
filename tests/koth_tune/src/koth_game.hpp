@@ -36,6 +36,7 @@ using RngFn = std::function<double()>;
 std::string getPasswordSeeded(int length, const RngFn& rng);
 Assignment buildAssignment(int difficulty, const RngFn& rng);
 RngFn mulberry32(uint32_t seed);
+Assignment generateAssignmentAt(uint32_t seed, int index, int difficulty);
 std::vector<Assignment> generateAssignments(uint32_t seed, int count, int difficulty);
 
 int kingOfTheHillHillCount(int difficulty);

@@ -226,6 +226,35 @@ void clusterSweep(ProbeSession& sess, int64_t w, int64_t lo, int64_t hi) {
   }
 }
 
+void clusterSweepSmart(ProbeSession& sess, int64_t w, int64_t lo, int64_t hi) {
+  const int64_t center = sess.bestX();
+  const int64_t reach = std::llround(28.0 * static_cast<double>(w));
+  const int64_t step = std::max<int64_t>(1, std::llround(1.2 * static_cast<double>(w)));
+  const int64_t left = std::max(lo, center - reach);
+  const int64_t right = std::min(hi, center + reach);
+
+  auto march = [&](int64_t start, int64_t end, int64_t delta) {
+    int drops = 0;
+    double prev = sess.bestAlt();
+    for (int64_t x = start; (delta > 0 ? x <= end : x >= end) && !sess.solved(); x += delta) {
+      std::optional<double> aOpt = sess.probe(x);
+      if (sess.solved()) return;
+      if (!aOpt) continue;
+      if (*aOpt + 1.0 < prev) {
+        if (++drops >= 2) break;
+      } else {
+        drops = 0;
+        prev = *aOpt;
+      }
+    }
+  };
+
+  if (!sess.sampleAt(center)) sess.probe(center);
+  if (sess.solved()) return;
+  march(center + step, right, step);
+  march(center - step, left, -step);
+}
+
 void backstop(ProbeSession& sess, int64_t w, int64_t lo, int64_t hi) {
   const int64_t step = std::max<int64_t>(1, std::llround(0.7 * static_cast<double>(w)));
   int64_t x = lo;
@@ -334,7 +363,7 @@ bool walkAndPinpoint(ProbeSession& sess, int64_t w, int64_t lo, int64_t hi) {
   return a >= kMainTh;
 }
 
-void runSolverCore(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, int hc) {
+void runSolverCoreBaseline(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, int hc) {
   const std::vector<int64_t> xs = scanGrid(lo, hi, w, hc);
   const std::vector<int> order = spreadOrder(static_cast<int>(xs.size()));
   for (const int idx : order) {
@@ -365,6 +394,12 @@ void runSolverCore(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, int hc
   backstop(sess, w, lo, hi);
 }
 
+void runSolverCoreTailFast(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, int hc) {
+  // Experimental branch slot: start from baseline, then layer optimizations here.
+  // Use `koth_bench --indices ... --variants baseline,tail_fast` to compare cases.
+  runSolverCoreBaseline(sess, lo, hi, w, hc);
+}
+
 NumericRange numericRange(int passwordLength) {
   int64_t lo = ipow10(passwordLength - 1);
   const int64_t hi = ipow10(passwordLength) - 1;
@@ -372,9 +407,7 @@ NumericRange numericRange(int passwordLength) {
   return {lo, hi};
 }
 
-}  // namespace
-
-SolveResult solve(const Assignment& assignment, int cap) {
+SolveResult solveInternal(const Assignment& assignment, int cap, SolverVariant variant) {
   SolveResult out;
   const Server server = toServer(assignment);
   const int64_t password = parsePasswordInt(assignment.password);
@@ -385,13 +418,60 @@ SolveResult solve(const Assignment& assignment, int cap) {
   ProbeSession sess(server, password, range.min, range.max, cap);
   if (password < range.min || password > range.max) return out;
 
-  runSolverCore(sess, range.min, range.max, w, hc);
+  switch (variant) {
+    case SolverVariant::Baseline:
+      runSolverCoreBaseline(sess, range.min, range.max, w, hc);
+      break;
+    case SolverVariant::TailFast:
+      runSolverCoreTailFast(sess, range.min, range.max, w, hc);
+      break;
+  }
 
   out.solved = sess.solved();
   out.guesses = sess.guesses();
   out.bestX = sess.bestX();
   out.bestAlt = sess.bestAlt();
   return out;
+}
+
+}  // namespace
+
+const char* solverVariantName(SolverVariant variant) {
+  switch (variant) {
+    case SolverVariant::Baseline:
+      return "baseline";
+    case SolverVariant::TailFast:
+      return "tail_fast";
+  }
+  return "unknown";
+}
+
+const char* solverVariantDescription(SolverVariant variant) {
+  switch (variant) {
+    case SolverVariant::Baseline:
+      return "Production solver (TS/Python port)";
+    case SolverVariant::TailFast:
+      return "Experimental branch (currently mirrors baseline)";
+  }
+  return "";
+}
+
+std::vector<SolverVariant> allSolverVariants() {
+  return {SolverVariant::Baseline, SolverVariant::TailFast};
+}
+
+bool parseSolverVariant(const std::string& name, SolverVariant* out) {
+  for (const SolverVariant v : allSolverVariants()) {
+    if (name == solverVariantName(v)) {
+      *out = v;
+      return true;
+    }
+  }
+  return false;
+}
+
+SolveResult solve(const Assignment& assignment, int cap, SolverVariant variant) {
+  return solveInternal(assignment, cap, variant);
 }
 
 }  // namespace koth
