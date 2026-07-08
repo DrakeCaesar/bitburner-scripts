@@ -21,7 +21,6 @@ var SOLVER_MAX_PROBES = 600;
 var H_PEAK = KOTH_PEAK_HEIGHT;
 var STEP_W = KOTH_HILL_SPACING_WIDTHS;
 var MAIN_TH = H_PEAK - 0.5 * KOTH_HEIGHT_OFFSET_BASE;
-var SCAN_EARLY_THRESH = 400;
 function parseKingOfTheHillAltitude(feedback, message) {
   if (typeof feedback === "number" && Number.isFinite(feedback)) return feedback;
   if (typeof feedback === "string") {
@@ -305,7 +304,7 @@ function runSolverCore(sess, lo, hi, w, hc) {
   for (const idx of order) {
     const a = sess.probe(xs[idx]);
     if (sess.solved) return;
-    if (a !== null && Math.abs(a) > SCAN_EARLY_THRESH) break;
+    if (a !== null && a > 0) break;
   }
   walkAndPinpoint(sess, w, lo, hi);
   if (sess.solved) return;

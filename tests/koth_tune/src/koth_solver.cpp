@@ -14,7 +14,15 @@ namespace {
 constexpr double kHPeak = KOTH_PEAK_HEIGHT;
 constexpr int kStepW = KOTH_HILL_SPACING_WIDTHS;
 constexpr double kMainTh = kHPeak - 0.5 * KOTH_HEIGHT_OFFSET_BASE;
-constexpr double kScanEarlyThresh = 400.0;
+
+enum class CoarseEarlyStopMode {
+  PositiveAny,
+};
+
+bool coarseScanEarlyStop(double alt, CoarseEarlyStopMode mode) {
+  (void)mode;
+  return alt > 0.0;
+}
 
 int64_t clampProbe(double x, int64_t lo, int64_t hi) {
   return clampInt64(static_cast<int64_t>(std::llround(x)), lo, hi);
@@ -363,18 +371,34 @@ bool walkAndPinpoint(ProbeSession& sess, int64_t w, int64_t lo, int64_t hi) {
   return a >= kMainTh;
 }
 
-void runSolverCoreBaseline(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, int hc) {
+void runInitialCoarseScan(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, int hc, CoarseScanSample* out,
+                           CoarseEarlyStopMode earlyStopMode = CoarseEarlyStopMode::PositiveAny) {
   const std::vector<int64_t> xs = scanGrid(lo, hi, w, hc);
   const std::vector<int> order = spreadOrder(static_cast<int>(xs.size()));
+  if (out) {
+    out->gridPoints = static_cast<int>(xs.size());
+    out->probesUsed = 0;
+    out->anyNonZero = false;
+  }
   for (const int idx : order) {
     std::optional<double> aOpt = sess.probe(xs[static_cast<size_t>(idx)]);
+    if (out) {
+      out->probesUsed++;
+      if (aOpt && *aOpt != 0.0) out->anyNonZero = true;
+    }
     if (sess.solved()) return;
-    if (aOpt && std::abs(*aOpt) > kScanEarlyThresh) break;
+    if (aOpt && coarseScanEarlyStop(*aOpt, earlyStopMode)) break;
   }
+}
+
+void runSolverCore(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, int hc, CoarseEarlyStopMode earlyStopMode,
+                   CoarseScanSample* coarseOut = nullptr) {
+  runInitialCoarseScan(sess, lo, hi, w, hc, coarseOut, earlyStopMode);
 
   walkAndPinpoint(sess, w, lo, hi);
   if (sess.solved()) return;
 
+  const std::vector<int64_t> xs = scanGrid(lo, hi, w, hc);
   for (const int64_t x : xs) {
     sess.probe(x);
     if (sess.solved()) return;
@@ -394,10 +418,15 @@ void runSolverCoreBaseline(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w
   backstop(sess, w, lo, hi);
 }
 
-void runSolverCoreTailFast(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, int hc) {
-  // Experimental branch slot: start from baseline, then layer optimizations here.
-  // Use `koth_bench --indices ... --variants baseline,tail_fast` to compare cases.
-  runSolverCoreBaseline(sess, lo, hi, w, hc);
+void runSolverCoreBaseline(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, int hc,
+                           CoarseScanSample* coarseOut = nullptr) {
+  runSolverCore(sess, lo, hi, w, hc, CoarseEarlyStopMode::PositiveAny, coarseOut);
+}
+
+void runSolverCoreNew(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, int hc,
+                      CoarseScanSample* coarseOut = nullptr) {
+  // Experimental branch slot; currently mirrors baseline.
+  runSolverCore(sess, lo, hi, w, hc, CoarseEarlyStopMode::PositiveAny, coarseOut);
 }
 
 NumericRange numericRange(int passwordLength) {
@@ -407,7 +436,8 @@ NumericRange numericRange(int passwordLength) {
   return {lo, hi};
 }
 
-SolveResult solveInternal(const Assignment& assignment, int cap, SolverVariant variant) {
+SolveResult solveInternal(const Assignment& assignment, int cap, SolverVariant variant,
+                          CoarseScanSample* coarseOut) {
   SolveResult out;
   const Server server = toServer(assignment);
   const int64_t password = parsePasswordInt(assignment.password);
@@ -420,10 +450,10 @@ SolveResult solveInternal(const Assignment& assignment, int cap, SolverVariant v
 
   switch (variant) {
     case SolverVariant::Baseline:
-      runSolverCoreBaseline(sess, range.min, range.max, w, hc);
+      runSolverCoreBaseline(sess, range.min, range.max, w, hc, coarseOut);
       break;
-    case SolverVariant::TailFast:
-      runSolverCoreTailFast(sess, range.min, range.max, w, hc);
+    case SolverVariant::New:
+      runSolverCoreNew(sess, range.min, range.max, w, hc, coarseOut);
       break;
   }
 
@@ -431,6 +461,10 @@ SolveResult solveInternal(const Assignment& assignment, int cap, SolverVariant v
   out.guesses = sess.guesses();
   out.bestX = sess.bestX();
   out.bestAlt = sess.bestAlt();
+  if (coarseOut) {
+    out.hasCoarseScan = true;
+    out.coarseScan = *coarseOut;
+  }
   return out;
 }
 
@@ -440,8 +474,8 @@ const char* solverVariantName(SolverVariant variant) {
   switch (variant) {
     case SolverVariant::Baseline:
       return "baseline";
-    case SolverVariant::TailFast:
-      return "tail_fast";
+    case SolverVariant::New:
+      return "new";
   }
   return "unknown";
 }
@@ -449,15 +483,15 @@ const char* solverVariantName(SolverVariant variant) {
 const char* solverVariantDescription(SolverVariant variant) {
   switch (variant) {
     case SolverVariant::Baseline:
-      return "Production solver (TS/Python port)";
-    case SolverVariant::TailFast:
+      return "Phase-1 early stop when alt > 0";
+    case SolverVariant::New:
       return "Experimental branch (currently mirrors baseline)";
   }
   return "";
 }
 
 std::vector<SolverVariant> allSolverVariants() {
-  return {SolverVariant::Baseline, SolverVariant::TailFast};
+  return {SolverVariant::Baseline, SolverVariant::New};
 }
 
 bool parseSolverVariant(const std::string& name, SolverVariant* out) {
@@ -470,8 +504,44 @@ bool parseSolverVariant(const std::string& name, SolverVariant* out) {
   return false;
 }
 
+SolveResult solve(const Assignment& assignment, int cap, SolverVariant variant,
+                  CoarseScanSample* coarseScanOut) {
+  return solveInternal(assignment, cap, variant, coarseScanOut);
+}
+
 SolveResult solve(const Assignment& assignment, int cap, SolverVariant variant) {
-  return solveInternal(assignment, cap, variant);
+  return solveInternal(assignment, cap, variant, nullptr);
+}
+
+CoarseScanSample coarseScanSample(const Assignment& assignment) {
+  CoarseScanSample out;
+  const Server server = toServer(assignment);
+  const int64_t password = parsePasswordInt(assignment.password);
+  NumericRange range = numericRange(assignment.passwordLength);
+  const int64_t w = kingOfTheHillGaussianWidth(assignment.passwordLength);
+  const int hc = kingOfTheHillHillCount(assignment.difficulty);
+
+  ProbeSession sess(server, password, range.min, range.max, 600);
+  if (password < range.min || password > range.max) return out;
+
+  runInitialCoarseScan(sess, range.min, range.max, w, hc, &out);
+  return out;
+}
+
+CoarseScanDifficultyStats summarizeCoarseScans(int difficulty,
+                                             const std::vector<Assignment>& assignments) {
+  CoarseScanDifficultyStats stats;
+  stats.difficulty = difficulty;
+  stats.assignments = static_cast<int>(assignments.size());
+  for (const Assignment& assignment : assignments) {
+    const CoarseScanSample sample = coarseScanSample(assignment);
+    if (stats.gridPoints == 0) {
+      stats.gridPoints = sample.gridPoints;
+      stats.passwordLength = assignment.passwordLength;
+    }
+    if (sample.anyNonZero) stats.withNonZero++;
+  }
+  return stats;
 }
 
 }  // namespace koth

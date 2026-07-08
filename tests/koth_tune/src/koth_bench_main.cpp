@@ -15,7 +15,61 @@
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace {
+
+bool stdoutIsTty() {
+#ifdef _WIN32
+  return _isatty(_fileno(stdout)) != 0;
+#else
+  return isatty(fileno(stdout)) != 0;
+#endif
+}
+
+constexpr const char* kAnsiReset = "\033[0m";
+constexpr const char* kAnsiBgGreen = "\033[48;5;22;97m";  // dark green bg, bright white text
+constexpr const char* kAnsiBgRed = "\033[48;5;52;97m";    // dark red bg, bright white text
+
+size_t visibleWidth(const std::string& text) {
+  size_t width = 0;
+  for (size_t i = 0; i < text.size();) {
+    if (text[i] == '\033') {
+      ++i;
+      while (i < text.size() && text[i] != 'm') ++i;
+      if (i < text.size()) ++i;
+      continue;
+    }
+    ++width;
+    ++i;
+  }
+  return width;
+}
+
+std::string colorCompareCell(const std::string& text, bool improved) {
+  if (text.empty() || !stdoutIsTty()) return text;
+  return std::string(improved ? kAnsiBgGreen : kAnsiBgRed) + text + kAnsiReset;
+}
+
+std::string fmtCompareInt(int delta, bool lowerIsBetter) {
+  if (delta == 0) return "";
+  std::ostringstream oss;
+  oss << std::showpos << delta << std::noshowpos;
+  const bool improved = lowerIsBetter ? (delta < 0) : (delta > 0);
+  return colorCompareCell(oss.str(), improved);
+}
+
+std::string fmtCompareDouble(double delta, bool lowerIsBetter) {
+  if (std::abs(delta) < 0.005) return "";
+  std::ostringstream oss;
+  oss << std::fixed << std::setprecision(2) << std::showpos << delta << std::noshowpos;
+  const bool improved = lowerIsBetter ? (delta < 0) : (delta > 0);
+  return colorCompareCell(oss.str(), improved);
+}
 
 class AsciiTable {
  public:
@@ -27,7 +81,7 @@ class AsciiTable {
   void addRow(std::vector<std::string> cells) {
     if (cells.size() < headers_.size()) cells.resize(headers_.size());
     for (size_t i = 0; i < headers_.size(); ++i) {
-      widths_[i] = std::max(widths_[i], cells[i].size());
+      widths_[i] = std::max(widths_[i], visibleWidth(cells[i]));
     }
     rows_.push_back(std::move(cells));
   }
@@ -42,7 +96,8 @@ class AsciiTable {
       out << '|';
       for (size_t i = 0; i < widths_.size(); ++i) {
         const std::string& cell = i < cells.size() ? cells[i] : "";
-        out << ' ' << std::setw(static_cast<int>(widths_[i])) << std::right << cell << " |";
+        const size_t pad = widths_[i] > visibleWidth(cell) ? widths_[i] - visibleWidth(cell) : 0;
+        out << ' ' << cell << std::string(pad, ' ') << " |";
       }
       out << '\n';
     };
@@ -67,21 +122,9 @@ std::string fmtAvg(double value) {
   return oss.str();
 }
 
-std::string fmtDelta(double value) {
-  std::ostringstream oss;
-  oss << std::fixed << std::setprecision(2) << std::showpos << value << std::noshowpos;
-  return oss.str();
-}
-
 std::string fmtTime(double seconds) {
   std::ostringstream oss;
   oss << std::fixed << std::setprecision(1) << seconds << "s";
-  return oss.str();
-}
-
-std::string fmtSignedInt(int value) {
-  std::ostringstream oss;
-  oss << std::showpos << value << std::noshowpos;
   return oss.str();
 }
 
@@ -234,25 +277,46 @@ BenchStats summarize(const BenchRow& row) {
   return stats;
 }
 
-std::vector<BenchRow> benchDifficulty(const DifficultyTask& task, const std::vector<koth::SolverVariant>& variants) {
+struct DifficultyBenchResult {
   std::vector<BenchRow> rows;
-  rows.reserve(variants.size());
-  for (const koth::SolverVariant variant : variants) {
+  koth::CoarseScanDifficultyStats coarse;
+};
+
+DifficultyBenchResult benchDifficulty(const DifficultyTask& task,
+                                      const std::vector<koth::SolverVariant>& variants) {
+  DifficultyBenchResult out;
+  out.coarse.difficulty = task.difficulty;
+  out.coarse.assignments = static_cast<int>(task.assignments.size());
+  out.rows.reserve(variants.size());
+
+  for (size_t vi = 0; vi < variants.size(); ++vi) {
+    const koth::SolverVariant variant = variants[vi];
     const auto t0 = std::chrono::steady_clock::now();
     BenchRow row;
     row.variant = variant;
     row.difficulty = task.difficulty;
     row.guesses.reserve(task.assignments.size());
+
     for (const auto& assignment : task.assignments) {
-      const koth::SolveResult res = koth::solve(assignment, 600, variant);
+      koth::CoarseScanSample coarse;
+      koth::CoarseScanSample* coarsePtr = (vi == 0) ? &coarse : nullptr;
+      const koth::SolveResult res = koth::solve(assignment, 600, variant, coarsePtr);
+      if (vi == 0) {
+        if (out.coarse.gridPoints == 0) {
+          out.coarse.gridPoints = coarse.gridPoints;
+          out.coarse.passwordLength = assignment.passwordLength;
+        }
+        if (coarse.anyNonZero) out.coarse.withNonZero++;
+      }
       if (res.solved) row.guesses.push_back(res.guesses);
       else ++row.unsolved;
     }
+
     std::sort(row.guesses.begin(), row.guesses.end());
     row.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-    rows.push_back(std::move(row));
+    out.rows.push_back(std::move(row));
   }
-  return rows;
+  return out;
 }
 
 void printProgress(int done, int total, std::mutex* mu) {
@@ -308,19 +372,43 @@ void printStatsTable(const std::vector<std::vector<BenchRow>>& results, bool com
         std::vector<std::string> cells = {
             "",
             "d " + std::string(koth::solverVariantName(group[vi].variant)),
-            fmtSignedInt(stats.solved - baseStats.solved),
-            fmtSignedInt(stats.unsolved - baseStats.unsolved),
-            fmtDelta(stats.avg - baseStats.avg),
-            fmtSignedInt(stats.median - baseStats.median),
-            fmtSignedInt(stats.min - baseStats.min),
-            fmtSignedInt(stats.max - baseStats.max),
-            fmtSignedInt(stats.p95 - baseStats.p95),
-            fmtSignedInt(stats.p99 - baseStats.p99),
-            "-",
+            fmtCompareInt(stats.solved - baseStats.solved, false),
+            fmtCompareInt(stats.unsolved - baseStats.unsolved, true),
+            fmtCompareDouble(stats.avg - baseStats.avg, true),
+            fmtCompareInt(stats.median - baseStats.median, true),
+            fmtCompareInt(stats.min - baseStats.min, true),
+            fmtCompareInt(stats.max - baseStats.max, true),
+            fmtCompareInt(stats.p95 - baseStats.p95, true),
+            fmtCompareInt(stats.p99 - baseStats.p99, true),
+            "",
         };
         table.addRow(std::move(cells));
       }
     }
+  }
+  table.print(std::cout);
+}
+
+std::string fmtPct(int part, int total) {
+  if (total <= 0) return "-";
+  std::ostringstream oss;
+  oss << std::fixed << std::setprecision(1) << (100.0 * static_cast<double>(part) / static_cast<double>(total)) << "%";
+  return oss.str();
+}
+
+void printCoarseScanTable(const std::vector<koth::CoarseScanDifficultyStats>& coarseRows) {
+  if (coarseRows.empty()) return;
+  std::cout << "\nCoarse scan (phase-1 spread-order probes; non-zero = altitude != 0)\n";
+  AsciiTable table;
+  table.addColumn("diff", 4);
+  table.addColumn("pwd_len", 7);
+  table.addColumn("grid_pts", 8);
+  table.addColumn("nonzero", 7);
+  table.addColumn("total", 7);
+  table.addColumn("pct", 6);
+  for (const koth::CoarseScanDifficultyStats& row : coarseRows) {
+    table.addRow({fmtInt(row.difficulty), fmtInt(row.passwordLength), fmtInt(row.gridPoints),
+                  fmtInt(row.withNonZero), fmtInt(row.assignments), fmtPct(row.withNonZero, row.assignments)});
   }
   table.print(std::cout);
 }
@@ -364,7 +452,7 @@ int runCaseMode(const Args& args) {
     if (args.variants.size() > 1) {
       for (size_t vi = 1; vi < args.variants.size(); ++vi) {
         table.addRow({"", "", "d " + std::string(koth::solverVariantName(args.variants[vi])),
-                      fmtSignedInt(results[vi].guesses - baseGuesses), "", ""});
+                      fmtCompareInt(results[vi].guesses - baseGuesses, true), "", ""});
       }
     }
   }
@@ -397,7 +485,7 @@ int main(int argc, char** argv) {
   std::cout << "\n";
 
   const auto tTotal0 = std::chrono::steady_clock::now();
-  std::vector<std::vector<BenchRow>> results(static_cast<size_t>(total));
+  std::vector<DifficultyBenchResult> results(static_cast<size_t>(total));
   std::atomic<int> done{0};
   std::mutex progressMu;
 
@@ -432,12 +520,19 @@ int main(int argc, char** argv) {
   std::cout << "\n";
 
   bool failed = false;
-  for (const std::vector<BenchRow>& group : results) {
-    for (const BenchRow& row : group) {
+  std::vector<std::vector<BenchRow>> statRows;
+  statRows.reserve(results.size());
+  std::vector<koth::CoarseScanDifficultyStats> coarseRows;
+  coarseRows.reserve(results.size());
+  for (const DifficultyBenchResult& result : results) {
+    statRows.push_back(result.rows);
+    coarseRows.push_back(result.coarse);
+    for (const BenchRow& row : result.rows) {
       if (row.unsolved > 0) failed = true;
     }
   }
-  printStatsTable(results, compare);
+  printStatsTable(statRows, compare);
+  printCoarseScanTable(coarseRows);
 
   const double totalSeconds =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - tTotal0).count();

@@ -10,7 +10,6 @@ export const SOLVER_MAX_PROBES = 600
 const H_PEAK = KOTH_PEAK_HEIGHT
 const STEP_W = KOTH_HILL_SPACING_WIDTHS
 const MAIN_TH = H_PEAK - 0.5 * KOTH_HEIGHT_OFFSET_BASE
-const SCAN_EARLY_THRESH = 400
 
 export const STOP_PROBE = Symbol("koth-stop-probe")
 
@@ -346,7 +345,7 @@ function runSolverCore(sess: ProbeSession, lo: number, hi: number, w: number, hc
   for (const idx of order) {
     const a = sess.probe(xs[idx]!)
     if (sess.solved) return
-    if (a !== null && Math.abs(a) > SCAN_EARLY_THRESH) break
+    if (a !== null && a > 0) break
   }
 
   walkAndPinpoint(sess, w, lo, hi)
