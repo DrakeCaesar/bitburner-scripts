@@ -8,8 +8,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <future>
 #include <limits>
 #include <random>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -446,10 +448,65 @@ int findOrAddChild(McgsNode* node, const McgsMove& move) {
   return static_cast<int>(node->children.size()) - 1;
 }
 
-}  // namespace
+unsigned resolveThreadCount(int requestedThreads, int playouts) {
+  unsigned threads = 0;
+  if (requestedThreads > 0) {
+    threads = static_cast<unsigned>(requestedThreads);
+  } else {
+    threads = std::thread::hardware_concurrency();
+  }
+  if (threads == 0) threads = 4;
+  threads = std::max(1u, std::min(threads, static_cast<unsigned>(std::max(playouts, 1))));
+  return threads;
+}
 
-McgsResult runMcgs(const GameState& rootState, const McgsConfig& cfg, uint64_t seed, double rootSeedMs,
-                   MathRandom* mathRng, int initialWhiteMoves) {
+void splitPlayouts(int playouts, unsigned threads, std::vector<int>& perThread) {
+  perThread.assign(threads, playouts / static_cast<int>(threads));
+  const int remainder = playouts % static_cast<int>(threads);
+  for (int i = 0; i < remainder; ++i) {
+    perThread[static_cast<size_t>(i)]++;
+  }
+}
+
+uint64_t makeThreadSeed(uint64_t baseSeed, unsigned threadIndex) {
+  return baseSeed ^ (static_cast<uint64_t>(threadIndex) * 0x9E3779B9ULL) ^ 0x85EBCA6BULL;
+}
+
+McgsResult mergeMcgsResults(const std::vector<McgsResult>& parts, int N) {
+  McgsResult merged;
+  merged.visitPolicy.assign(static_cast<size_t>(actionCount(N)), 0.0f);
+  double rootValueSum = 0.0;
+  int64_t totalVisits = 0;
+
+  for (const McgsResult& part : parts) {
+    const float scale = static_cast<float>(part.totalRootVisits);
+    for (size_t i = 0; i < merged.visitPolicy.size() && i < part.visitPolicy.size(); ++i) {
+      merged.visitPolicy[i] += part.visitPolicy[i] * scale;
+    }
+    rootValueSum += static_cast<double>(part.rootValue) * static_cast<double>(part.totalRootVisits);
+    totalVisits += part.totalRootVisits;
+  }
+
+  merged.totalRootVisits = totalVisits;
+  if (totalVisits > 0) {
+    for (float& v : merged.visitPolicy) v /= static_cast<float>(totalVisits);
+    merged.rootValue = static_cast<float>(rootValueSum / static_cast<double>(totalVisits));
+  }
+
+  int bestAction = passAction(N);
+  float bestVisits = -1.0f;
+  for (size_t i = 0; i < merged.visitPolicy.size(); ++i) {
+    if (merged.visitPolicy[i] > bestVisits) {
+      bestVisits = merged.visitPolicy[i];
+      bestAction = static_cast<int>(i);
+    }
+  }
+  merged.bestAction = bestAction;
+  return merged;
+}
+
+McgsResult runMcgsSingle(const GameState& rootState, const McgsConfig& cfg, int playouts, uint64_t seed,
+                         double rootSeedMs, uint64_t mathSeed, int initialWhiteMoves) {
   McgsResult result;
   const int N = rootState.size;
   result.visitPolicy.assign(static_cast<size_t>(actionCount(N)), 0.0f);
@@ -462,7 +519,8 @@ McgsResult runMcgs(const GameState& rootState, const McgsConfig& cfg, uint64_t s
 
   SearchContext ctx;
   ctx.rootSeedMs = rootSeedMs;
-  ctx.mathRng = mathRng;
+  MathRandom mathRng(mathSeed ? mathSeed : 1ULL);
+  ctx.mathRng = mathSeed ? &mathRng : nullptr;
 
   std::mt19937_64 rng(seed ? seed : 1);
   std::vector<std::unique_ptr<McgsNode>> storage;
@@ -474,7 +532,7 @@ McgsResult runMcgs(const GameState& rootState, const McgsConfig& cfg, uint64_t s
   root->U = fastPlayout(root->state, rng, cfg, ctx, initialWhiteMoves);
   buildChildren(root, cfg, ctx);
 
-  for (int i = 0; i < cfg.playouts; ++i) {
+  for (int i = 0; i < playouts; ++i) {
     std::vector<std::pair<McgsNode*, size_t>> path;
     McgsNode* node = root;
     double value = 0.0;
@@ -587,6 +645,36 @@ McgsResult runMcgs(const GameState& rootState, const McgsConfig& cfg, uint64_t s
     result.rootValue = static_cast<float>(rootSum / static_cast<double>(rootEdgeVisits));
   }
   return result;
+}
+
+}  // namespace
+
+McgsResult runMcgs(const GameState& rootState, const McgsConfig& cfg, uint64_t seed, double rootSeedMs,
+                   uint64_t mathSeed, int initialWhiteMoves) {
+  const unsigned threadCount = resolveThreadCount(cfg.threads, cfg.playouts);
+  if (threadCount <= 1) {
+    return runMcgsSingle(rootState, cfg, cfg.playouts, seed, rootSeedMs, mathSeed, initialWhiteMoves);
+  }
+
+  std::vector<int> perThread;
+  splitPlayouts(cfg.playouts, threadCount, perThread);
+
+  std::vector<std::future<McgsResult>> futures;
+  futures.reserve(threadCount);
+  for (unsigned t = 0; t < threadCount; ++t) {
+    const int threadPlayouts = perThread[t];
+    const uint64_t threadSeed = makeThreadSeed(seed, t);
+    const uint64_t threadMathSeed = mathSeed ? makeThreadSeed(mathSeed, t) : 0ULL;
+    futures.push_back(std::async(std::launch::async, [=, &rootState]() {
+      return runMcgsSingle(rootState, cfg, threadPlayouts, threadSeed, rootSeedMs, threadMathSeed,
+                           initialWhiteMoves);
+    }));
+  }
+
+  std::vector<McgsResult> parts;
+  parts.reserve(threadCount);
+  for (auto& fut : futures) parts.push_back(fut.get());
+  return mergeMcgsResults(parts, rootState.size);
 }
 
 }  // namespace ipvgo::nn

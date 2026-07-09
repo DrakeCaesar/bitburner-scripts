@@ -16,6 +16,8 @@ export type IpvgoMoveRequest = {
   playAs: IpvgoColor
   /** Authoritative legal moves from ns.go.analysis.getValidMoves() for the root position. */
   validMoves: IpvgoValidMoves
+  /** Search threads; 0 = all CPU cores (default). */
+  threads?: number
   /** Optional client id; server forwards to KataGo for cancel/terminate. */
   requestId?: string
   /** Opponent faction; used by the MCGS engine to run search with the correct White AI. */

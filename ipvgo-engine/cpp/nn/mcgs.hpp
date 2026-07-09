@@ -10,6 +10,7 @@ namespace ipvgo::nn {
 
 struct McgsConfig {
   int playouts = 10000;
+  int threads = 0;  // 0 = all hardware threads
   double exploration = 0.3;
   bool useAiTweaks = false;  // rollouts use real faction AI; tweaks filter tree edges only
   bool pruneBlackMoves = true;  // search only AI-exploit moves for Black
@@ -28,7 +29,6 @@ struct McgsResult {
 // Monte Carlo Graph Search from a Black-to-move position (no cheats).
 // Alternates Black (search) vs modeled White (biased tactical weights).
 McgsResult runMcgs(const ipvgo::game::GameState& root, const McgsConfig& cfg, uint64_t seed,
-                   double whiteSeedMs = 0.0, ipvgo::game::MathRandom* mathRng = nullptr,
-                   int whiteMovesCompleted = 0);
+                   double whiteSeedMs = 0.0, uint64_t mathSeed = 0, int whiteMovesCompleted = 0);
 
 }  // namespace ipvgo::nn

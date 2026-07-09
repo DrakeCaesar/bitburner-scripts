@@ -363,16 +363,16 @@ int runMcgsMove(const std::string& inPath, const std::string& outPath) {
 
   McgsConfig cfg;
   cfg.playouts = req.value("iterations", 10000);
+  cfg.threads = req.value("threads", 0);
   cfg.exploration = req.value("exploration", 0.3);
   cfg.useAiTweaks = req.value("useAiTweaks", true);
   cfg.suppressTransposition = req.value("suppressTransposition", true);
   const uint64_t seed = req.value("seed", static_cast<uint64_t>(0));
   const double seedMs = req.value("seedMs", 0.0);
   const uint64_t mathSeed = req.value("mathSeed", static_cast<uint64_t>(0));
-  MathRandom mr(mathSeed);
 
   const auto t0 = std::chrono::steady_clock::now();
-  const McgsResult result = runMcgs(state, cfg, seed, seedMs, mathSeed ? &mr : nullptr);
+  const McgsResult result = runMcgs(state, cfg, seed, seedMs, mathSeed);
   const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 
   const int action = pickMcgsAction(result, state.size, req);
@@ -422,7 +422,7 @@ int runMcgsPlay(const std::string& opponentName, int size, int games, int playou
       }
 
       const auto t0 = std::chrono::steady_clock::now();
-      const McgsResult search = runMcgs(state, cfg, static_cast<uint64_t>(rng()), clockMs, &mathRng, whiteMoves);
+      const McgsResult search = runMcgs(state, cfg, static_cast<uint64_t>(rng()), clockMs, mathSeed, whiteMoves);
       totalBlackMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 
       const int action = search.bestAction;
@@ -452,10 +452,11 @@ int runMcgsPlay(const std::string& opponentName, int size, int games, int playou
   }
 
   const double avgMs = totalMoves > 0 ? totalBlackMs / static_cast<double>(totalMoves) : 0.0;
+  const double winPct = 100.0 * wins / std::max(games, 1);
   std::cout << "mcgsplay: " << opponentName << " " << size << "x" << size << " "
-            << "wins=" << wins << "/" << games << " (" << (100.0 * wins / std::max(games, 1)) << "%) "
+            << "wins=" << wins << "/" << games << " (" << winPct << "%) "
             << "playouts=" << playouts << " avgBlackThinkMs=" << avgMs << "\n";
-  return 0;
+  return wins == games ? 0 : 1;
 }
 
 }  // namespace

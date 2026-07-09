@@ -12,6 +12,7 @@
     "server": "node server.js",
     "game:build": "cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release --target ipvgo_game",
     "game:selftest": "node scripts/run-game.js selftest",
+    "game:bench": "node scripts/bench-factions.js",
     "parity": "node scripts/run-game.js parity temp/parity_cases.json"
   }
 }
