@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import List, Tuple
 
 import numpy as np
@@ -16,6 +17,7 @@ class Evaluator:
         self.net = net
         self.device = device
         self.settings = settings or CheatSettings()
+        self._lock = threading.Lock()  # shared GPU module; serialise forward passes
 
     @torch.no_grad()
     def evaluate(self, env_state: EnvState) -> Tuple[np.ndarray, float]:
@@ -25,10 +27,11 @@ class Evaluator:
     @torch.no_grad()
     def evaluate_planes_batch(self, planes: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """Batched inference on pre-encoded planes [B, C, N, N] (used by C++ MCTS)."""
-        x = torch.from_numpy(planes).to(self.device)
-        self.net.eval()
-        policy, value = self.net(x)
-        return policy.detach().cpu().numpy(), value.detach().cpu().numpy().reshape(-1)
+        with self._lock:
+            x = torch.from_numpy(planes).to(self.device)
+            self.net.eval()
+            policy, value = self.net(x)
+            return policy.detach().cpu().numpy(), value.detach().cpu().numpy().reshape(-1)
 
     @torch.no_grad()
     def evaluate_batch(self, env_states: List[EnvState]) -> Tuple[List[np.ndarray], List[float]]:

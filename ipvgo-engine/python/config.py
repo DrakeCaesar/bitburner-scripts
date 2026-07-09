@@ -34,24 +34,32 @@ class MctsConfig:
     dirichlet_alpha: float = 0.3
     dirichlet_epsilon: float = 0.25
     add_root_noise: bool = True
-    leaf_batch_size: int = 32  # batched NN evals inside C++ MCTS
+    leaf_batch_size: int = 128  # batched NN evals inside C++ MCTS (raise if VRAM headroom)
 
 
 @dataclass
 class CheatConfig:
     """Cheat availability during training/eval (see env.CheatSettings).
 
-    warmup_iters: number of initial iterations trained with cheats DISABLED so
-    the net first learns real board play and a value head with actual variance;
-    cheats are auto-enabled once ``iteration > warmup_iters``. Without a warmup
-    the untrained policy spams cheats (they are ~80% of the action space) and
-    almost every game ends in ejection, giving an all-loss value signal.
+    When curriculum is enabled, cheats are tied to the final curriculum step
+    instead of warmup_iters. warmup_iters still applies if curriculum is off.
     """
 
     enabled: bool = True
     crime_success_mult: float = 1.0
     source_file_bonus: float = 0.0
     warmup_iters: int = 10
+
+
+@dataclass
+class CurriculumConfig:
+    enabled: bool = True
+    gate_faction: str = "Netburners"
+    gate_size: int = 5
+    advance_win_rate: float = 0.12
+    min_iters_per_step: int = 8
+    gate_eval_games: int = 32
+    cheats_on_final_step_only: bool = True
 
 
 @dataclass
@@ -80,8 +88,10 @@ class TrainConfig:
     eval_simulations: int = 96
     device: str = "cuda"
     seed: int = 0
+    selfplay_workers: int = 0  # 0 = auto (min(8, cpu_count))
 
     net: NetConfig = field(default_factory=NetConfig)
     mcts: MctsConfig = field(default_factory=MctsConfig)
     selfplay: SelfPlayConfig = field(default_factory=SelfPlayConfig)
     cheats: CheatConfig = field(default_factory=CheatConfig)
+    curriculum: CurriculumConfig = field(default_factory=CurriculumConfig)
