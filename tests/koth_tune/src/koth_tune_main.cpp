@@ -17,6 +17,8 @@
 
 namespace {
 
+constexpr int kStatusEveryGenerations = 25;
+
 struct Args {
   uint32_t seed = koth::DEFAULT_SEED;
   int count = koth::DEFAULT_COUNT;
@@ -27,7 +29,6 @@ struct Args {
   int tournamentSize = 3;
   int eliteCount = 2;
   int threads = 0;
-  int saveEvery = 1;
   double maxPenalty = 5.0;
   int cap = 600;
   std::string loadPath;
@@ -55,7 +56,6 @@ void printHelp() {
       << "  --threads N        Worker threads (0 = hardware concurrency)\n"
       << "  --max-penalty F    Fitness += F * maxGuesses (default 5)\n"
       << "  --cap N            Probe cap per assignment (default 600)\n"
-      << "  --save-every N     Write --out every N generations (default 1)\n"
       << "  --load PATH        Seed population from JSON\n"
       << "  --out PATH         Output JSON (default " << koth::defaultTunedJsonPath() << ")\n";
 }
@@ -113,8 +113,6 @@ bool parseArgs(int argc, char** argv, Args* args) {
       parseDouble(need("--max-penalty"), &args->maxPenalty);
     } else if (arg == "--cap") {
       parseInt(need("--cap"), &args->cap);
-    } else if (arg == "--save-every") {
-      parseInt(need("--save-every"), &args->saveEvery);
     } else if (arg == "--load") {
       args->loadPath = need("--load");
     } else if (arg == "--out") {
@@ -139,6 +137,9 @@ void saveBest(const Args& args, const Individual& best) {
     return;
   }
   out << koth::tuningToJson(koth::tuningFromGenome(best.genome), &best.eval);
+  std::cout << "  >> saved " << args.outPath << "  fitness=" << std::fixed << std::setprecision(1)
+            << best.eval.fitness << " avg=" << std::setprecision(2) << best.eval.avgGuesses
+            << " max=" << best.eval.maxGuesses << "\n";
 }
 
 void printProgress(int generation, const Individual& best, const Individual& median,
@@ -221,7 +222,7 @@ int main(int argc, char** argv) {
     population[static_cast<size_t>(i)].genome = koth::randomGenome(rng);
   }
 
-  auto evaluateAll = [&](std::vector<Individual>& pop) {
+  auto evaluateAll = [&](std::vector<Individual>& pop) -> bool {
     std::atomic<int> next{0};
     std::vector<std::thread> workers;
     workers.reserve(static_cast<size_t>(args.threads));
@@ -239,12 +240,15 @@ int main(int argc, char** argv) {
     for (auto& th : workers) th.join();
     std::sort(pop.begin(), pop.end(),
               [](const Individual& a, const Individual& b) { return a.eval.fitness < b.eval.fitness; });
-    if (pop.front().eval.fitness < globalBest.eval.fitness) globalBest = pop.front();
+    if (pop.front().eval.fitness < globalBest.eval.fitness) {
+      globalBest = pop.front();
+      return true;
+    }
+    return false;
   };
 
   const auto t0 = std::chrono::steady_clock::now();
-  evaluateAll(population);
-  saveBest(args, globalBest);
+  if (evaluateAll(population)) saveBest(args, globalBest);
   printProgress(0, population.front(), population[population.size() / 2],
                 std::chrono::steady_clock::now() - t0);
 
@@ -267,15 +271,16 @@ int main(int argc, char** argv) {
     }
 
     population = std::move(nextPop);
-    evaluateAll(population);
-
-    if (generation % args.saveEvery == 0) saveBest(args, globalBest);
-    printProgress(generation, globalBest, population[population.size() / 2],
-                  std::chrono::steady_clock::now() - t0);
+    const bool improved = evaluateAll(population);
+    if (improved) {
+      saveBest(args, globalBest);
+    } else if (generation % kStatusEveryGenerations == 0) {
+      printProgress(generation, globalBest, population[population.size() / 2],
+                    std::chrono::steady_clock::now() - t0);
+    }
   }
 
-  saveBest(args, globalBest);
-  std::cout << "\nSaved best config to " << args.outPath << "\n";
+  std::cout << "\nBest config: " << args.outPath << "\n";
   std::cout << "fitness=" << globalBest.eval.fitness << " avg=" << globalBest.eval.avgGuesses
             << " max=" << globalBest.eval.maxGuesses << "\n";
   return 0;

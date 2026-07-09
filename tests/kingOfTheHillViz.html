@@ -650,13 +650,20 @@
     }
 
     function summarizeSolver(label, results) {
-      const solved = results.filter((r) => r.solved).length
-      const guesses = results.map((r) => r.guesses)
-      const total = guesses.reduce((a, b) => a + b, 0)
-      const min = Math.min(...guesses)
-      const max = Math.max(...guesses)
-      const avg = total / guesses.length
-      return { label, solved, total, min, max, avg }
+      let solved = 0
+      let total = 0
+      let min = Infinity
+      let max = -Infinity
+      for (const r of results) {
+        if (r.solved) solved++
+        const g = r.guesses
+        total += g
+        if (g < min) min = g
+        if (g > max) max = g
+      }
+      const n = results.length
+      const avg = n > 0 ? total / n : 0
+      return { label, solved, total, min: n > 0 ? min : 0, max: n > 0 ? max : 0, avg }
     }
 
     function renderSummary(rows, chartCount, sortMode, sourceLabel) {
