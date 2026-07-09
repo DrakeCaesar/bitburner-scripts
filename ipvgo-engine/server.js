@@ -15,10 +15,6 @@ const port = Number(process.env.IPVGO_PORT ?? 3010)
 const maxBodyBytes = 4 * 1024 * 1024
 const forceNative = process.env.IPVGO_FORCE_NATIVE === "1"
 const forceMcgs = process.env.IPVGO_ENGINE === "mcgs"
-// Trained PyTorch agent served by python/serve.py. Opt in with IPVGO_ENGINE=torch
-// (or IPVGO_FORCE_TORCH=1); it then takes priority over KataGo/native.
-const torchUrl = process.env.IPVGO_TORCH_URL ?? "http://127.0.0.1:3011"
-const forceTorch = process.env.IPVGO_ENGINE === "torch" || process.env.IPVGO_FORCE_TORCH === "1"
 
 /** @type {import("child_process").ChildProcess | null} */
 let activeNativeChild = null
@@ -39,25 +35,10 @@ function mcgsExecutablePath() {
 
 function activeEngine() {
   if (forceMcgs) return "mcgs"
-  if (forceTorch) return "torch"
   if (!forceNative && isKatagoInstalled()) return "katago"
   const exe = nativeExecutablePath()
   if (fs.existsSync(exe)) return "native"
   return "missing"
-}
-
-async function requestTorchMove(body) {
-  const res = await fetch(`${torchUrl}/move`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.error ?? `torch engine HTTP ${res.status}`)
-  }
-  const result = await res.json()
-  return { ...result, engine: "torch" }
 }
 
 function sendJson(res, status, body) {
@@ -102,8 +83,6 @@ function handleHealth(_req, res) {
     status: "ok",
     engine,
     katago: isKatagoInstalled(),
-    torch: forceTorch,
-    torchUrl,
     nativePath: nativeExecutablePath(),
     nativeBuilt: fs.existsSync(nativeExecutablePath()),
     mcgsPath: mcgsExecutablePath(),
@@ -264,17 +243,15 @@ async function handleMove(req, res) {
 
   try {
     const result =
-      engine === "torch"
-        ? await requestTorchMove(body)
-        : engine === "katago"
-          ? await requestKatagoMove(body)
-          : engine === "mcgs"
-            ? await requestMcgsMove(body)
-            : await requestNativeMove(body)
+      engine === "katago"
+        ? await requestKatagoMove(body)
+        : engine === "mcgs"
+          ? await requestMcgsMove(body)
+          : await requestNativeMove(body)
     sendJson(res, 200, result)
   } catch (err) {
     console.error(`${engine} move error:`, err.message)
-    if (engine === "katago" || engine === "torch") {
+    if (engine === "katago") {
       try {
         const fallback = await requestNativeMove(body)
         return sendJson(res, 200, { ...fallback, engine: "native", [`${engine}Error`]: err.message })

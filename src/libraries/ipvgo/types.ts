@@ -18,7 +18,7 @@ export type IpvgoMoveRequest = {
   validMoves: IpvgoValidMoves
   /** Optional client id; server forwards to KataGo for cancel/terminate. */
   requestId?: string
-  /** Opponent faction; used by the native torch engine to run MCTS with the correct White AI. */
+  /** Opponent faction; used by the MCGS engine to run search with the correct White AI. */
   opponent?: GoOpponent
 }
 

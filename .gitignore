@@ -15,12 +15,6 @@ ipvgo-engine/temp/
 ipvgo-engine/cpp/*.wasm
 ipvgo-engine/cpp/ipvgo.wasm.js
 ipvgo-engine/katago/
-# Python trainer: compiled pybind module, build subdir, checkpoints, caches
-ipvgo-engine/python/*.pyd
-ipvgo-engine/python/Release/
-ipvgo-engine/python/checkpoints/
-ipvgo-engine/python/__pycache__/
-
 # KingOfTheHill Python benchmark (tests/koth_tune/python/)
 tests/koth_tune/build/
 tests/koth_tune/python/__pycache__/

@@ -367,9 +367,12 @@ int runMcgsMove(const std::string& inPath, const std::string& outPath) {
   cfg.useAiTweaks = req.value("useAiTweaks", true);
   cfg.suppressTransposition = req.value("suppressTransposition", true);
   const uint64_t seed = req.value("seed", static_cast<uint64_t>(0));
+  const double seedMs = req.value("seedMs", 0.0);
+  const uint64_t mathSeed = req.value("mathSeed", static_cast<uint64_t>(0));
+  MathRandom mr(mathSeed);
 
   const auto t0 = std::chrono::steady_clock::now();
-  const McgsResult result = runMcgs(state, cfg, seed);
+  const McgsResult result = runMcgs(state, cfg, seed, seedMs, mathSeed ? &mr : nullptr);
   const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 
   const int action = pickMcgsAction(result, state.size, req);
@@ -405,9 +408,11 @@ int runMcgsPlay(const std::string& opponentName, int size, int games, int playou
   long totalMoves = 0;
 
   for (int g = 0; g < games; ++g) {
-    const double boardSeed = static_cast<double>(rng() % 30000000u);
-    MathRandom mr(rng());
-    GameState state = newBoardState(size, ai, true, boardSeed, mr);
+    const double clockMs = static_cast<double>(rng() % 30000000u);
+    const uint64_t mathSeed = rng();
+    MathRandom mathRng(mathSeed);
+    GameState state = newBoardState(size, ai, true, clockMs, mathRng);
+    int whiteMoves = 0;
     const int moveCap = size * size * 4;
 
     for (int m = 0; m < moveCap && !state.gameOver; ++m) {
@@ -417,7 +422,7 @@ int runMcgsPlay(const std::string& opponentName, int size, int games, int playou
       }
 
       const auto t0 = std::chrono::steady_clock::now();
-      const McgsResult search = runMcgs(state, cfg, rng());
+      const McgsResult search = runMcgs(state, cfg, static_cast<uint64_t>(rng()), clockMs, &mathRng, whiteMoves);
       totalBlackMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 
       const int action = search.bestAction;
@@ -431,9 +436,9 @@ int runMcgsPlay(const std::string& opponentName, int size, int games, int playou
       ++totalMoves;
       if (state.gameOver) break;
 
-      const double whiteSeed = static_cast<double>(rng() % 30000000u);
-      MathRandom wmr(rng());
-      const Play wp = getMove(state, Color::White, ai, whiteSeed, wmr);
+      const double whiteSeed = clockMs + static_cast<double>(whiteMoves) * cfg.seedStepMs;
+      const Play wp = getMove(state, Color::White, ai, whiteSeed, mathRng);
+      ++whiteMoves;
       if (wp.type == PlayType::Pass) {
         passTurn(state, Color::White);
       } else if (!makeMove(state, wp.x, wp.y, Color::White)) {

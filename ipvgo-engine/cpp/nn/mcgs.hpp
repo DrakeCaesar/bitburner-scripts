@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "go_game.hpp"
+#include "rng.hpp"
 
 namespace ipvgo::nn {
 
@@ -11,6 +12,9 @@ struct McgsConfig {
   int playouts = 10000;
   double exploration = 0.3;
   bool useAiTweaks = false;  // rollouts use real faction AI; tweaks filter tree edges only
+  bool pruneBlackMoves = true;  // search only AI-exploit moves for Black
+  bool playOpponent = true;  // White has one deterministic faction reply, not Go branches
+  double seedStepMs = 1000.0;  // simulated playtime advance per White move (matches in-game clock)
   bool suppressTransposition = true;
 };
 
@@ -23,6 +27,8 @@ struct McgsResult {
 
 // Monte Carlo Graph Search from a Black-to-move position (no cheats).
 // Alternates Black (search) vs modeled White (biased tactical weights).
-McgsResult runMcgs(const ipvgo::game::GameState& root, const McgsConfig& cfg, uint64_t seed);
+McgsResult runMcgs(const ipvgo::game::GameState& root, const McgsConfig& cfg, uint64_t seed,
+                   double whiteSeedMs = 0.0, ipvgo::game::MathRandom* mathRng = nullptr,
+                   int whiteMovesCompleted = 0);
 
 }  // namespace ipvgo::nn

@@ -1,5 +1,9 @@
 #pragma once
 
+#include <utility>
+#include <vector>
+
+#include "analysis.hpp"
 #include "go_game.hpp"
 #include "rng.hpp"
 
@@ -13,5 +17,14 @@ Play getMove(const GameState& state, Color player, Opponent opponent, double see
 // Whether the given faction uses "smart" failsafes for this move (isSmart),
 // given a uniform draw in [0,1).
 bool isSmart(Opponent faction, double rng);
+
+// Empty intersections the faction AI would even consider (disputed territory).
+// Uses the same isSmart draw as getMove (first WHRNG step from seedMs).
+std::vector<Pt> factionConsideredSpaces(const GameState& state, Color player, Opponent opponent,
+                                        double seedMs);
+
+// Black search moves pruned to exploit the scripted opponent (not full Go legality).
+std::vector<std::pair<int, int>> blackExploitMoves(const GameState& state, Opponent opponent,
+                                                   double seedMs);
 
 }  // namespace ipvgo::game

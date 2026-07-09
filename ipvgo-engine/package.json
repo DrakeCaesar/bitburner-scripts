@@ -12,11 +12,6 @@
     "server": "node server.js",
     "game:build": "cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release --target ipvgo_game",
     "game:selftest": "node scripts/run-game.js selftest",
-    "parity": "node scripts/run-game.js parity temp/parity_cases.json",
-    "py:build": "node scripts/build-pyengine.js",
-    "py:install": "pip install -r python/requirements.txt",
-    "py:selftest": "python python/selftest.py",
-    "py:train": "python python/train.py",
-    "py:serve": "python python/serve.py"
+    "parity": "node scripts/run-game.js parity temp/parity_cases.json"
   }
 }

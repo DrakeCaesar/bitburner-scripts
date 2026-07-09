@@ -541,6 +541,58 @@ std::optional<Pt> factionMove(MoveGen& moves, Opponent faction, double rng) {
 
 }  // namespace
 
+std::vector<Pt> factionConsideredSpaces(const GameState& state, Color player, Opponent opponent,
+                                        double seedMs) {
+  WHRNG rng(seedMs);
+  const bool smart = isSmart(opponent, rng.random());
+  return findDisputedTerritory(state, player, smart);
+}
+
+std::vector<std::pair<int, int>> blackExploitMoves(const GameState& state, Opponent opponent,
+                                                   double seedMs) {
+  const int N = state.size;
+  std::unordered_set<int> points;
+
+  auto add = [&](int x, int y) {
+    if (x < 0 || y < 0 || x >= N || y >= N) return;
+    points.insert(flatIndex(N, x, y));
+  };
+
+  for (const auto& [x, y] : factionConsideredSpaces(state, Color::White, opponent, seedMs)) add(x, y);
+  for (const auto& [x, y] : findDisputedTerritory(state, Color::Black, true)) add(x, y);
+
+  // Neighbors of white stones — AI defends/captures here.
+  for (int x = 0; x < N; ++x) {
+    for (int y = 0; y < N; ++y) {
+      if (state.board[x][y] != 'O') continue;
+      for (const int nIdx : onBoardNeighbors(N, x, y)) {
+        const int nx = nIdx / N;
+        const int ny = nIdx % N;
+        if (state.board[nx][ny] == '.') add(nx, ny);
+      }
+    }
+  }
+
+  std::vector<std::pair<int, int>> out;
+  for (const auto& [x, y] : getAllValidMoves(state, Color::Black)) {
+    const int idx = flatIndex(N, x, y);
+    if (points.count(idx)) {
+      out.emplace_back(x, y);
+      continue;
+    }
+    const SimpleBoard after = evaluateMoveResult(state.board, x, y, Color::Black);
+    const ChainSet cs = computeChains(after);
+    bool capture = false;
+    for (int c = 0; c < cs.count; ++c) {
+      if (cs.chainColor[c] == 'O' && cs.liberties[c].empty()) capture = true;
+    }
+  if (capture) out.emplace_back(x, y);
+  }
+
+  if (out.size() < 2) return getAllValidMoves(state, Color::Black);
+  return out;
+}
+
 bool isSmart(Opponent faction, double rng) {
   if (faction == Opponent::Netburners) return false;
   if (faction == Opponent::SlumSnakes) return rng < 0.3;

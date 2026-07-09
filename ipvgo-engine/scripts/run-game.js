@@ -1,10 +1,9 @@
 /**
- * Locate and run the built native `ipvgo_game` (or `ipvgo_train`) executable.
+ * Locate and run the built native `ipvgo_game` executable.
  * Searches the common CMake output directories.
  *
  *   node scripts/run-game.js selftest
  *   node scripts/run-game.js parity temp/parity_cases.json
- *   node scripts/run-game.js train ...        (requires trainer build)
  */
 
 import { spawnSync } from "child_process"
@@ -23,25 +22,21 @@ function findExe(name) {
     path.join(root, "build", exe),
     path.join(root, "build-game", "Release", exe),
     path.join(root, "build-game", exe),
-    path.join(root, "build-trainer", "Release", exe),
-    path.join(root, "build-trainer", exe),
   ]
   return candidates.find((p) => fs.existsSync(p))
 }
 
 const [, , command, ...rest] = process.argv
 if (!command) {
-  console.error("usage: run-game.js <selftest|parity|aimove|gen|train> ...")
+  console.error("usage: run-game.js <selftest|parity|aimove|gen|mcgsplay> ...")
   process.exit(2)
 }
 
-const exeName = command === "train" ? "ipvgo_train" : "ipvgo_game"
-const exe = findExe(exeName)
+const exe = findExe("ipvgo_game")
 if (!exe) {
-  console.error(`Could not find ${exeName}. Build it first (pnpm run game:build).`)
+  console.error("Could not find ipvgo_game. Build it first (pnpm run game:build).")
   process.exit(1)
 }
 
-const args = command === "train" ? rest : [command, ...rest]
-const result = spawnSync(exe, args, { stdio: "inherit", cwd: root })
+const result = spawnSync(exe, [command, ...rest], { stdio: "inherit", cwd: root })
 process.exit(result.status ?? 1)
