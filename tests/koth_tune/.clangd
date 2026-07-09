@@ -1,0 +1,6 @@
+CompileFlags:
+  Add:
+    - -std=c++17
+    - -DNOMINMAX
+    - -DWIN32_LEAN_AND_MEAN
+CompilationDatabase: build
