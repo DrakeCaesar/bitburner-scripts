@@ -23,7 +23,8 @@ DEFAULT_SIZES: List[int] = [5, 7, 9, 13]
 class NetConfig:
     channels: int = 64
     blocks: int = 8
-    in_planes: int = 12  # must match pyipvgo.NUM_PLANES
+    in_planes: int = 16  # env.NUM_INPUT_PLANES (12 base + 4 cheat planes)
+    point_action_types: int = 5  # env.POINT_ACTION_TYPES (board move + 4 cheats)
 
 
 @dataclass
@@ -33,6 +34,15 @@ class MctsConfig:
     dirichlet_alpha: float = 0.3
     dirichlet_epsilon: float = 0.25
     add_root_noise: bool = True
+
+
+@dataclass
+class CheatConfig:
+    """Cheat availability during training/eval (see env.CheatSettings)."""
+
+    enabled: bool = True
+    crime_success_mult: float = 1.0
+    source_file_bonus: float = 0.0
 
 
 @dataclass
@@ -65,3 +75,4 @@ class TrainConfig:
     net: NetConfig = field(default_factory=NetConfig)
     mcts: MctsConfig = field(default_factory=MctsConfig)
     selfplay: SelfPlayConfig = field(default_factory=SelfPlayConfig)
+    cheats: CheatConfig = field(default_factory=CheatConfig)

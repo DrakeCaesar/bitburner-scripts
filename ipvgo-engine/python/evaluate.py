@@ -7,7 +7,9 @@ from dataclasses import dataclass
 import numpy as np
 
 import pyipvgo
+import env as envmod
 from config import MctsConfig
+from env import CheatSettings
 from evaluator import Evaluator
 from mcts import run_mcts
 
@@ -18,6 +20,7 @@ class EvalResult:
     size: int
     games: int
     black_wins: int
+    cheat_attempts: int = 0
 
     @property
     def win_rate(self) -> float:
@@ -25,28 +28,32 @@ class EvalResult:
 
 
 def evaluate_faction(evaluator: Evaluator, faction: str, size: int, games: int, simulations: int,
-                     apply_obstacles: bool, rng: np.random.Generator) -> EvalResult:
-    ai = pyipvgo.parse_opponent(faction)
-    if ai is None:
-        raise ValueError(f"Unknown faction: {faction!r}")
-
+                     apply_obstacles: bool, rng: np.random.Generator,
+                     settings: CheatSettings | None = None) -> EvalResult:
+    settings = settings or evaluator.settings
     mcts_cfg = MctsConfig(simulations=simulations, add_root_noise=False)
     move_cap = size * size * 3 + 20
     wins = 0
+    cheat_attempts = 0
 
     for _ in range(games):
-        seed_ms = float(rng.integers(0, 30_000_000))
-        math_seed = int(rng.integers(0, 2**63 - 1))
-        state = pyipvgo.new_board_state(size, ai, apply_obstacles, seed_ms, math_seed)
+        state, _ai = envmod.new_game(size, faction, apply_obstacles, rng)
 
         move_no = 0
+        final_value = None
         while not state.game_over and move_no < move_cap:
-            result = run_mcts(state, evaluator, mcts_cfg, rng)
-            seed = int(rng.integers(0, 2**63 - 1))
-            state, _terminal, _bv = pyipvgo.step_environment(state, result.best_action, seed)
+            result = run_mcts(state, evaluator, mcts_cfg, rng, settings)
+            if envmod.action_kind(result.best_action, size) not in ("move", "pass"):
+                cheat_attempts += 1
+            state, terminal, black_value = envmod.step(state, result.best_action, rng, settings)
             move_no += 1
+            if terminal:
+                final_value = black_value
+                break
 
-        if pyipvgo.black_terminal_value(state) > 0.0:
+        if final_value is None:
+            final_value = float(pyipvgo.black_terminal_value(state.gs))
+        if final_value > 0.0:
             wins += 1
 
-    return EvalResult(faction=faction, size=size, games=games, black_wins=wins)
+    return EvalResult(faction=faction, size=size, games=games, black_wins=wins, cheat_attempts=cheat_attempts)

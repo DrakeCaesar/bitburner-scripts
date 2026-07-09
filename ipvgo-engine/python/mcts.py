@@ -1,8 +1,9 @@
-"""AlphaZero-style PUCT MCTS for Black against the scripted White environment.
+"""AlphaZero-style PUCT MCTS for Black over the extended IPvGO environment.
 
-White replies are folded into the transition (``pyipvgo.step_environment``),
-which makes each edge a stochastic (chance) transition; we sample once per edge
-expansion, matching the reference C++ design. The search guides Black only.
+The environment (``env.step``) folds White's scripted reply and stochastic cheat
+outcomes into each transition, so edges are chance transitions; we sample once
+per edge expansion. The search guides Black only and uses the extended action
+space (board moves + pass + 4 cheats) defined in ``env``.
 """
 
 from __future__ import annotations
@@ -13,14 +14,15 @@ from typing import List, Optional
 
 import numpy as np
 
-import pyipvgo
+import env as envmod
 from config import MctsConfig
+from env import CheatSettings, EnvState
 from evaluator import Evaluator
 
 
 @dataclass
 class _Node:
-    state: "pyipvgo.GameState"
+    state: EnvState
     terminal: bool = False
     terminal_value: float = 0.0
     expanded: bool = False
@@ -33,7 +35,7 @@ class _Node:
 
 @dataclass
 class MctsResult:
-    visit_policy: np.ndarray  # size N*N+1, normalized visit counts
+    visit_policy: np.ndarray  # size action_count(N), normalized visit counts
     best_action: int
     root_value: float
 
@@ -48,8 +50,8 @@ def _softmax_over_legal(logits: np.ndarray, actions: List[int]) -> np.ndarray:
     return ex.astype(np.float32)
 
 
-def _expand(node: _Node, evaluator: Evaluator) -> float:
-    mask = np.asarray(pyipvgo.legal_action_mask(node.state, pyipvgo.Color.Black))
+def _expand(node: _Node, evaluator: Evaluator, settings: CheatSettings) -> float:
+    mask = envmod.legal_mask(node.state, settings)
     node.actions = [a for a in range(mask.shape[0]) if mask[a]]
     logits, value = evaluator.evaluate(node.state)
     node.prior = _softmax_over_legal(logits, node.actions)
@@ -75,13 +77,14 @@ def _select_action(node: _Node, c_puct: float) -> int:
     return int(np.argmax(q + u))
 
 
-def run_mcts(root_state: "pyipvgo.GameState", evaluator: Evaluator, cfg: MctsConfig,
-             rng: np.random.Generator) -> MctsResult:
+def run_mcts(root_state: EnvState, evaluator: Evaluator, cfg: MctsConfig, rng: np.random.Generator,
+             settings: CheatSettings | None = None) -> MctsResult:
+    settings = settings or evaluator.settings
     n = root_state.size
-    action_count = pyipvgo.action_count(n)
+    action_count = envmod.action_count(n)
 
     root = _Node(state=root_state)
-    root_value = _expand(root, evaluator)
+    root_value = _expand(root, evaluator, settings)
     if cfg.add_root_noise:
         _add_dirichlet_noise(root, cfg.dirichlet_alpha, cfg.dirichlet_epsilon, rng)
 
@@ -95,15 +98,14 @@ def run_mcts(root_state: "pyipvgo.GameState", evaluator: Evaluator, cfg: MctsCon
                 value = node.terminal_value
                 break
             if not node.expanded:
-                value = _expand(node, evaluator)
+                value = _expand(node, evaluator, settings)
                 break
             i = _select_action(node, cfg.c_puct)
             path.append((node, i))
 
             if node.children[i] is None:
-                seed = int(rng.integers(0, 2**63 - 1))
-                nxt, terminal, black_value = pyipvgo.step_environment(node.state, node.actions[i], seed)
-                child = _Node(state=nxt, terminal=terminal, terminal_value=float(black_value))
+                nxt, terminal, black_value = envmod.step(node.state, node.actions[i], rng, settings)
+                child = _Node(state=nxt, terminal=bool(terminal), terminal_value=float(black_value))
                 node.children[i] = child
             node = node.children[i]
 
@@ -113,7 +115,7 @@ def run_mcts(root_state: "pyipvgo.GameState", evaluator: Evaluator, cfg: MctsCon
 
     visit_policy = np.zeros(action_count, dtype=np.float32)
     total_visits = int(root.visits.sum())
-    best_action = pyipvgo.pass_action(n)
+    best_action = 0
     best_visits = -1
     for idx, a in enumerate(root.actions):
         if total_visits > 0:

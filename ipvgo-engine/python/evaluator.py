@@ -1,4 +1,4 @@
-"""Thin inference wrapper around GoNet, operating on pyipvgo.GameState."""
+"""Thin inference wrapper around GoNet, operating on env.EnvState."""
 
 from __future__ import annotations
 
@@ -7,30 +7,27 @@ from typing import List, Tuple
 import numpy as np
 import torch
 
-import pyipvgo
+from env import CheatSettings, EnvState, encode
 from network import GoNet
 
 
 class Evaluator:
-    def __init__(self, net: GoNet, device: torch.device):
+    def __init__(self, net: GoNet, device: torch.device, settings: CheatSettings | None = None):
         self.net = net
         self.device = device
+        self.settings = settings or CheatSettings()
 
     @torch.no_grad()
-    def evaluate(self, state: "pyipvgo.GameState") -> Tuple[np.ndarray, float]:
-        logits, values = self.evaluate_batch([state])
+    def evaluate(self, env_state: EnvState) -> Tuple[np.ndarray, float]:
+        logits, values = self.evaluate_batch([env_state])
         return logits[0], values[0]
 
     @torch.no_grad()
-    def evaluate_batch(self, states: List["pyipvgo.GameState"]) -> Tuple[List[np.ndarray], List[float]]:
-        if not states:
+    def evaluate_batch(self, env_states: List[EnvState]) -> Tuple[List[np.ndarray], List[float]]:
+        if not env_states:
             return [], []
-        # All states in a batch must share board size (fully-conv, but the pass
-        # head reshapes on N). Callers batch by size; assert to catch misuse.
-        n = states[0].size
-        planes = np.stack(
-            [np.asarray(pyipvgo.encode_state(s, pyipvgo.Color.Black), dtype=np.float32) for s in states]
-        )
+        # All states in a batch must share board size (the pass head reshapes on N).
+        planes = np.stack([encode(s, self.settings) for s in env_states])
         x = torch.from_numpy(planes).to(self.device)
         self.net.eval()
         policy, value = self.net(x)

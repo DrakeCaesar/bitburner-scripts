@@ -40,10 +40,15 @@ class GoNet(nn.Module):
         self.stem_bn = nn.BatchNorm2d(c)
         self.blocks = nn.ModuleList([ResBlock(c) for _ in range(self.cfg.blocks)])
 
-        # Policy head: per-point 1x1 logits + a pass logit from pooled features.
+        # Policy head: per-point 1x1 logits with one output channel per point
+        # action type (board move + cheats), plus a pass logit from pooled
+        # features. Channels map to env action blocks in order:
+        #   0 board move, 1 removeRouter, 2 repairOfflineNode, 3 destroyNode,
+        #   4 playTwoMoves-first.
+        self.point_types = self.cfg.point_action_types
         self.pol_conv = nn.Conv2d(c, 32, 1, bias=False)
         self.pol_bn = nn.BatchNorm2d(32)
-        self.pol_out = nn.Conv2d(32, 1, 1)
+        self.pol_out = nn.Conv2d(32, self.point_types, 1)
         self.pass_fc = nn.Linear(32, 1)
 
         # Value head: 1x1 conv -> global average pool -> MLP -> tanh.
@@ -53,19 +58,27 @@ class GoNet(nn.Module):
         self.val_fc2 = nn.Linear(64, 1)
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """x: [B, C, N, N] -> (policy_logits [B, N*N+1], value [B, 1] in (-1,1))."""
+        """x: [B, C, N, N] -> (policy_logits [B, T*N*N+1], value [B, 1] in (-1,1)).
+
+        Policy layout matches env: board block (P), pass (1), then one block of
+        P logits per cheat type, where P = N*N and T = point_action_types.
+        """
         b = x.shape[0]
         n = x.shape[2]
+        pnts = n * n
 
         h = F.relu(self.stem_bn(self.stem(x)))
         for block in self.blocks:
             h = block(h)
 
         p = F.relu(self.pol_bn(self.pol_conv(h)))  # [B,32,N,N]
-        board_logits = self.pol_out(p).reshape(b, n * n)  # [B, N*N]
+        point_logits = self.pol_out(p).reshape(b, self.point_types, pnts)  # [B, T, P]
         pooled = F.adaptive_avg_pool2d(p, 1).reshape(b, 32)
         pass_logit = self.pass_fc(pooled)  # [B,1]
-        policy = torch.cat([board_logits, pass_logit], dim=1)  # [B, N*N+1]
+        # Interleave to env order: board(P), pass(1), cheat_1(P), ..., cheat_{T-1}(P).
+        board_logits = point_logits[:, 0, :]  # [B, P]
+        cheat_logits = point_logits[:, 1:, :].reshape(b, (self.point_types - 1) * pnts)  # [B,(T-1)P]
+        policy = torch.cat([board_logits, pass_logit, cheat_logits], dim=1)  # [B, T*P+1]
 
         v = F.relu(self.val_bn(self.val_conv(h)))
         v = F.adaptive_avg_pool2d(v, 1).reshape(b, 32)
