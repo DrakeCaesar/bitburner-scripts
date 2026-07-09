@@ -55,13 +55,11 @@ struct McgsNode {
 };
 
 struct SearchContext {
-  double rootSeedMs = 0.0;
   MathRandom* mathRng = nullptr;
 };
 
-double whiteSeedMs(const SearchContext& ctx, const McgsNode* node, const McgsConfig& cfg) {
-  return ctx.rootSeedMs + static_cast<double>(node->whiteMovesCompleted) * cfg.seedStepMs;
-}
+// Faction getMove() WHRNG seed; playtime clock is intentionally ignored in search.
+constexpr double kFactionAiSeedMs = 0.0;
 
 uint64_t fnv1a64(uint64_t h, uint64_t v) {
   h ^= v;
@@ -212,7 +210,6 @@ void buildChildren(McgsNode* node, const McgsConfig& cfg, const SearchContext& c
   node->movesBuilt = true;
   const Color player = whoseTurn(node->state);
   if (player == Color::Empty) return;
-  if (player == Color::White && cfg.playOpponent) return;
 
   const bool passOk = !node->state.gameOver && node->state.previousPlayer != player;
   if (passOk) {
@@ -222,9 +219,22 @@ void buildChildren(McgsNode* node, const McgsConfig& cfg, const SearchContext& c
     node->children.push_back(passChild);
   }
 
+  if (player == Color::White && cfg.playOpponent) {
+    MathRandom localMr(1ULL);
+    MathRandom& mr = ctx.mathRng ? *ctx.mathRng : localMr;
+    for (const auto& [x, y] : enumerateFactionMoves(node->state, player, node->state.ai, mr)) {
+      McgsChild child;
+      child.move.x = x;
+      child.move.y = y;
+      child.weight = 1;
+      node->children.push_back(child);
+    }
+    return;
+  }
+
   std::vector<std::pair<int, int>> moves;
   if (player == Color::Black && cfg.pruneBlackMoves) {
-    moves = blackExploitMoves(node->state, node->state.ai, whiteSeedMs(ctx, node, cfg));
+    moves = blackExploitMoves(node->state, node->state.ai, kFactionAiSeedMs);
   } else {
     moves = getAllValidMoves(node->state, player);
   }
@@ -346,10 +356,9 @@ double fastPlayout(GameState state, std::mt19937_64& rng, const McgsConfig& cfg,
     }
 
     if (player == Color::White) {
-      const double seed = ctx.rootSeedMs + static_cast<double>(whiteMovesCompleted) * cfg.seedStepMs;
       MathRandom localMr(ctx.mathRng ? 0 : static_cast<uint64_t>(rng()));
       MathRandom& mr = ctx.mathRng ? *ctx.mathRng : localMr;
-      const Play wp = getMove(state, Color::White, state.ai, seed, mr);
+      const Play wp = getMove(state, Color::White, state.ai, kFactionAiSeedMs, mr);
       if (wp.type == PlayType::Pass) {
         passTurn(state, player);
       } else {
@@ -506,7 +515,7 @@ McgsResult mergeMcgsResults(const std::vector<McgsResult>& parts, int N) {
 }
 
 McgsResult runMcgsSingle(const GameState& rootState, const McgsConfig& cfg, int playouts, uint64_t seed,
-                         double rootSeedMs, uint64_t mathSeed, int initialWhiteMoves) {
+                         uint64_t mathSeed, int initialWhiteMoves) {
   McgsResult result;
   const int N = rootState.size;
   result.visitPolicy.assign(static_cast<size_t>(actionCount(N)), 0.0f);
@@ -518,7 +527,6 @@ McgsResult runMcgsSingle(const GameState& rootState, const McgsConfig& cfg, int 
   }
 
   SearchContext ctx;
-  ctx.rootSeedMs = rootSeedMs;
   MathRandom mathRng(mathSeed ? mathSeed : 1ULL);
   ctx.mathRng = mathSeed ? &mathRng : nullptr;
 
@@ -550,32 +558,6 @@ McgsResult runMcgsSingle(const GameState& rootState, const McgsConfig& cfg, int 
       }
 
       buildChildren(node, cfg, ctx);
-
-      if (player == Color::White && cfg.playOpponent) {
-        const double seedMs = whiteSeedMs(ctx, node, cfg);
-        MathRandom localMr(static_cast<uint64_t>(rng()));
-        MathRandom& mr = ctx.mathRng ? *ctx.mathRng : localMr;
-        const McgsMove wm = playToMove(getMove(node->state, Color::White, node->state.ai, seedMs, mr));
-        const int childIdx = findOrAddChild(node, wm);
-        McgsChild& edge = node->children[static_cast<size_t>(childIdx)];
-
-        if (!edge.node) {
-          expandChild(node, static_cast<size_t>(childIdx), storage, graph, rng, cfg, ctx);
-          value = edge.node ? edge.node->U : 0.0;
-          path.emplace_back(node, static_cast<size_t>(childIdx));
-          break;
-        }
-
-        if (cfg.suppressTransposition && edge.visits > 0 && edge.visits <= edge.node->N) {
-          value = edge.node->U;
-          path.emplace_back(node, static_cast<size_t>(childIdx));
-          break;
-        }
-
-        path.emplace_back(node, static_cast<size_t>(childIdx));
-        node = edge.node;
-        continue;
-      }
 
       if (node->children.empty()) {
         value = fastPlayout(node->state, rng, cfg, ctx, node->whiteMovesCompleted);
@@ -649,11 +631,11 @@ McgsResult runMcgsSingle(const GameState& rootState, const McgsConfig& cfg, int 
 
 }  // namespace
 
-McgsResult runMcgs(const GameState& rootState, const McgsConfig& cfg, uint64_t seed, double rootSeedMs,
-                   uint64_t mathSeed, int initialWhiteMoves) {
+McgsResult runMcgs(const GameState& rootState, const McgsConfig& cfg, uint64_t seed, uint64_t mathSeed,
+                   int initialWhiteMoves) {
   const unsigned threadCount = resolveThreadCount(cfg.threads, cfg.playouts);
   if (threadCount <= 1) {
-    return runMcgsSingle(rootState, cfg, cfg.playouts, seed, rootSeedMs, mathSeed, initialWhiteMoves);
+    return runMcgsSingle(rootState, cfg, cfg.playouts, seed, mathSeed, initialWhiteMoves);
   }
 
   std::vector<int> perThread;
@@ -666,8 +648,7 @@ McgsResult runMcgs(const GameState& rootState, const McgsConfig& cfg, uint64_t s
     const uint64_t threadSeed = makeThreadSeed(seed, t);
     const uint64_t threadMathSeed = mathSeed ? makeThreadSeed(mathSeed, t) : 0ULL;
     futures.push_back(std::async(std::launch::async, [=, &rootState]() {
-      return runMcgsSingle(rootState, cfg, threadPlayouts, threadSeed, rootSeedMs, threadMathSeed,
-                           initialWhiteMoves);
+      return runMcgsSingle(rootState, cfg, threadPlayouts, threadSeed, threadMathSeed, initialWhiteMoves);
     }));
   }
 

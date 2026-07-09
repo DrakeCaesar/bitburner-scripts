@@ -444,9 +444,46 @@ class MoveGen {
   std::array<AiMove, kCount> cache_{};
   std::array<bool, kCount> computed_{};
 
- public:
+  public:
   const std::vector<Pt>& availableSpaces() const { return availableSpaces_; }
 };
+
+std::vector<Pt> enumerateFactionMovesImpl(const GameState& state, Color player, Opponent opponent,
+                                          MathRandom& mathRng) {
+  WHRNG rng(0.0);
+  const bool smart = isSmart(opponent, rng.random());
+  MoveGen gen(state, player, 0.0, smart, mathRng);
+
+  std::unordered_set<int> seen;
+  std::vector<Pt> out;
+  const int N = state.size;
+
+  auto addValid = [&](int x, int y) {
+    if (evaluateIfMoveIsValid(state, x, y, player) != Validity::Valid) return;
+    const int idx = flatIndex(N, x, y);
+    if (seen.count(idx)) return;
+    seen.insert(idx);
+    out.emplace_back(x, y);
+  };
+
+  auto addAi = [&](const AiMove& m) {
+    if (m.valid) addValid(m.x, m.y);
+  };
+
+  addAi(gen.surround());
+  addAi(gen.defend());
+  addAi(gen.eyeMove());
+  addAi(gen.eyeBlock());
+  addAi(gen.pattern());
+  addAi(gen.growth());
+  addAi(gen.expansion());
+  addAi(gen.jump());
+  addAi(gen.corner());
+
+  for (const auto& [x, y] : gen.availableSpaces()) addValid(x, y);
+
+  return out;
+}
 
 // ---- Faction priority tables ----------------------------------------------
 
@@ -591,6 +628,11 @@ std::vector<std::pair<int, int>> blackExploitMoves(const GameState& state, Oppon
 
   if (out.size() < 2) return getAllValidMoves(state, Color::Black);
   return out;
+}
+
+std::vector<Pt> enumerateFactionMoves(const GameState& state, Color player, Opponent opponent,
+                                      MathRandom& mathRng) {
+  return enumerateFactionMovesImpl(state, player, opponent, mathRng);
 }
 
 bool isSmart(Opponent faction, double rng) {

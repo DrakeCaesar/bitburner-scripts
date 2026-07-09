@@ -27,4 +27,8 @@ std::vector<Pt> factionConsideredSpaces(const GameState& state, Color player, Op
 std::vector<std::pair<int, int>> blackExploitMoves(const GameState& state, Opponent opponent,
                                                    double seedMs);
 
+// Board points the faction AI could play (MoveGen categories + availableSpaces), not all legal Go moves.
+std::vector<Pt> enumerateFactionMoves(const GameState& state, Color player, Opponent opponent,
+                                      MathRandom& mathRng);
+
 }  // namespace ipvgo::game

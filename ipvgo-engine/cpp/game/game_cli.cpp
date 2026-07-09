@@ -368,11 +368,10 @@ int runMcgsMove(const std::string& inPath, const std::string& outPath) {
   cfg.useAiTweaks = req.value("useAiTweaks", true);
   cfg.suppressTransposition = req.value("suppressTransposition", true);
   const uint64_t seed = req.value("seed", static_cast<uint64_t>(0));
-  const double seedMs = req.value("seedMs", 0.0);
   const uint64_t mathSeed = req.value("mathSeed", static_cast<uint64_t>(0));
 
   const auto t0 = std::chrono::steady_clock::now();
-  const McgsResult result = runMcgs(state, cfg, seed, seedMs, mathSeed);
+  const McgsResult result = runMcgs(state, cfg, seed, mathSeed);
   const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 
   const int action = pickMcgsAction(result, state.size, req);
@@ -422,7 +421,7 @@ int runMcgsPlay(const std::string& opponentName, int size, int games, int playou
       }
 
       const auto t0 = std::chrono::steady_clock::now();
-      const McgsResult search = runMcgs(state, cfg, static_cast<uint64_t>(rng()), clockMs, mathSeed, whiteMoves);
+      const McgsResult search = runMcgs(state, cfg, static_cast<uint64_t>(rng()), mathSeed, whiteMoves);
       totalBlackMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 
       const int action = search.bestAction;
@@ -436,8 +435,7 @@ int runMcgsPlay(const std::string& opponentName, int size, int games, int playou
       ++totalMoves;
       if (state.gameOver) break;
 
-      const double whiteSeed = clockMs + static_cast<double>(whiteMoves) * cfg.seedStepMs;
-      const Play wp = getMove(state, Color::White, ai, whiteSeed, mathRng);
+      const Play wp = getMove(state, Color::White, ai, 0.0, mathRng);
       ++whiteMoves;
       if (wp.type == PlayType::Pass) {
         passTurn(state, Color::White);
