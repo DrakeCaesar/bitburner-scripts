@@ -9,10 +9,10 @@ No manual babysitting: run train.py with curriculum enabled (default).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import List, Tuple
 
-from config import CurriculumConfig, SelfPlayConfig
+from config import CurriculumConfig, MctsConfig, SelfPlayConfig
 
 # Each step: (sizes, factions). Training randomly picks among these.
 # Order: master Netburners on growing boards, then add factions one by one.
@@ -80,3 +80,20 @@ def unlocked_eval_matrix(step: int, steps: List[Tuple[List[int], List[str]]]
     """Faction/size pairs to report in periodic eval (current step only)."""
     sizes, factions = steps[min(step, len(steps) - 1)]
     return [(f, n) for f in factions for n in sizes]
+
+
+def selfplay_simulations(cfg: CurriculumConfig, step: int, num_steps: int) -> int:
+    """MCTS visit count for self-play at the given curriculum step."""
+    if not cfg.enabled or not cfg.step_simulations_enabled:
+        return cfg.simulations_end
+    if num_steps <= 1:
+        return cfg.simulations_start
+    t = step / (num_steps - 1)
+    return int(round(cfg.simulations_start + t * (cfg.simulations_end - cfg.simulations_start)))
+
+
+def active_mcts_config(base: MctsConfig, cfg: CurriculumConfig, step: int,
+                       num_steps: int) -> MctsConfig:
+    """Return MctsConfig with simulations tuned for the current curriculum step."""
+    sims = selfplay_simulations(cfg, step, num_steps)
+    return replace(base, simulations=sims)

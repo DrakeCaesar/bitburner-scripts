@@ -8,10 +8,11 @@ import numpy as np
 
 import pyipvgo
 import env as envmod
-from config import MctsConfig
+from config import MctsConfig, McgsConfig
 from env import CheatSettings
 from evaluator import Evaluator
 from mcts import run_mcts
+from mcgs import run_mcgs
 
 
 @dataclass
@@ -29,9 +30,12 @@ class EvalResult:
 
 def evaluate_faction(evaluator: Evaluator, faction: str, size: int, games: int, simulations: int,
                      apply_obstacles: bool, rng: np.random.Generator,
-                     settings: CheatSettings | None = None) -> EvalResult:
+                     settings: CheatSettings | None = None, teacher: str = "mcts",
+                     mcgs_cfg: McgsConfig | None = None) -> EvalResult:
     settings = settings or evaluator.settings
     mcts_cfg = MctsConfig(simulations=simulations, add_root_noise=False)
+    mcgs_cfg = mcgs_cfg or McgsConfig()
+    use_mcgs = teacher == "mcgs" and not settings.enabled
     move_cap = size * size * 3 + 20
     wins = 0
     cheat_attempts = 0
@@ -42,10 +46,15 @@ def evaluate_faction(evaluator: Evaluator, faction: str, size: int, games: int, 
         move_no = 0
         final_value = None
         while not state.game_over and move_no < move_cap:
-            result = run_mcts(state, evaluator, mcts_cfg, rng, settings)
-            if envmod.action_kind(result.best_action, size) not in ("move", "pass"):
+            if use_mcgs:
+                result = run_mcgs(state, mcgs_cfg, rng)
+                action = result.best_action
+            else:
+                result = run_mcts(state, evaluator, mcts_cfg, rng, settings)
+                action = result.best_action
+            if envmod.action_kind(action, size) not in ("move", "pass"):
                 cheat_attempts += 1
-            state, terminal, black_value = envmod.step(state, result.best_action, rng, settings)
+            state, terminal, black_value = envmod.step(state, action, rng, settings)
             move_no += 1
             if terminal:
                 final_value = black_value

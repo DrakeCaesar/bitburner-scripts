@@ -30,8 +30,10 @@ from config import TrainConfig
 from curriculum import (
     DEFAULT_STEPS,
     CurriculumState,
+    active_mcts_config,
     active_selfplay_config,
     cheats_enabled_for_step,
+    selfplay_simulations,
     should_advance,
     unlocked_eval_matrix,
 )
@@ -78,13 +80,13 @@ def _resolve_workers(cfg: TrainConfig) -> int:
     return max(1, min(8, os.cpu_count() or 4))
 
 
-def _play_one_game(seed: int, evaluator: Evaluator, sp_cfg, mcts_cfg, buffer: ReplayBuffer,
-                   settings: CheatSettings) -> GameStats:
+def _play_one_game(seed: int, evaluator: Evaluator, sp_cfg, mcts_cfg, mcgs_cfg, teacher: str,
+                   buffer: ReplayBuffer, settings: CheatSettings) -> GameStats:
     rng = np.random.default_rng(seed)
-    return play_self_play_game(evaluator, sp_cfg, mcts_cfg, buffer, rng, settings)
+    return play_self_play_game(evaluator, sp_cfg, mcts_cfg, mcgs_cfg, teacher, buffer, rng, settings)
 
 
-def run_selfplay(evaluator: Evaluator, cfg: TrainConfig, sp_cfg, buffer: ReplayBuffer,
+def run_selfplay(evaluator: Evaluator, cfg: TrainConfig, sp_cfg, mcts_cfg, buffer: ReplayBuffer,
                  rng: np.random.Generator, settings: CheatSettings, it: int):
     wins = 0
     total_moves = 0
@@ -101,7 +103,8 @@ def run_selfplay(evaluator: Evaluator, cfg: TrainConfig, sp_cfg, buffer: ReplayB
     completed = 0
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [
-            pool.submit(_play_one_game, int(game_seeds[i]), evaluator, sp_cfg, cfg.mcts, buffer, settings)
+            pool.submit(_play_one_game, int(game_seeds[i]), evaluator, sp_cfg, mcts_cfg, cfg.mcgs,
+                        cfg.teacher.mode, buffer, settings)
             for i in range(games)
         ]
         for fut in as_completed(futures):
@@ -153,7 +156,15 @@ def main():
     parser.add_argument("--games-per-iter", type=int)
     parser.add_argument("--train-steps-per-iter", type=int)
     parser.add_argument("--batch-size", type=int)
-    parser.add_argument("--simulations", type=int, help="MCTS simulations for self-play")
+    parser.add_argument("--simulations", type=int,
+                        help="MCTS simulations (floor when curriculum tapers; constant if --no-curriculum)")
+    parser.add_argument("--simulations-max", type=int,
+                        help="MCTS simulations on curriculum step 1 (default 512; tapers to --simulations)")
+    parser.add_argument("--teacher", choices=["mcts", "mcgs"],
+                        help="Black move generator: mcts (net+PUCT) or mcgs (graph search teacher)")
+    parser.add_argument("--mcgs-playouts", type=int, help="MCGS playouts per move (default 10000)")
+    parser.add_argument("--no-mcgs-tweaks", action="store_true",
+                        help="disable scripted-White opponent modeling in MCGS")
     parser.add_argument("--leaf-batch-size", type=int, help="NN eval batch size inside C++ MCTS")
     parser.add_argument("--channels", type=int)
     parser.add_argument("--blocks", type=int)
@@ -183,7 +194,19 @@ def main():
     if args.games_per_iter is not None: cfg.games_per_iter = args.games_per_iter
     if args.train_steps_per_iter is not None: cfg.train_steps_per_iter = args.train_steps_per_iter
     if args.batch_size is not None: cfg.batch_size = args.batch_size
-    if args.simulations is not None: cfg.mcts.simulations = args.simulations
+    if args.simulations is not None:
+        cfg.mcts.simulations = args.simulations
+        cfg.curriculum.simulations_end = args.simulations
+    if args.simulations_max is not None:
+        cfg.curriculum.simulations_start = args.simulations_max
+    if args.no_step_sims:
+        cfg.curriculum.step_simulations_enabled = False
+    if args.teacher is not None:
+        cfg.teacher.mode = args.teacher
+    if args.mcgs_playouts is not None:
+        cfg.mcgs.playouts = args.mcgs_playouts
+    if args.no_mcgs_tweaks:
+        cfg.mcgs.use_ai_tweaks = False
     if args.leaf_batch_size is not None: cfg.mcts.leaf_batch_size = args.leaf_batch_size
     if args.channels is not None: cfg.net.channels = args.channels
     if args.blocks is not None: cfg.net.blocks = args.blocks
@@ -251,15 +274,20 @@ def main():
                       f"sf +{full_settings.source_file_bonus:g}, chance@0={opening_chance:.0f}%)")
 
     if cfg.curriculum.enabled:
+        sim_desc = (f"sims={selfplay_simulations(cfg.curriculum, curriculum.step, num_steps)} "
+                    f"(taper {cfg.curriculum.simulations_start}->{cfg.curriculum.simulations_end})"
+                    if cfg.curriculum.step_simulations_enabled
+                    else f"sims={cfg.mcts.simulations}")
         log(f"[curriculum] auto expansion; gate={cfg.curriculum.gate_faction} "
             f"{cfg.curriculum.gate_size}x{cfg.curriculum.gate_size} "
             f"advance>={cfg.curriculum.advance_win_rate:.0%} "
-            f"min_iters={cfg.curriculum.min_iters_per_step}; {curriculum.describe(steps)}")
+            f"min_iters={cfg.curriculum.min_iters_per_step}; {curriculum.describe(steps)}; {sim_desc}")
     else:
         log("[curriculum] disabled (all factions/sizes from start)")
 
     log(f"[start] device={device} net(ch={cfg.net.channels},blocks={cfg.net.blocks},in={cfg.net.in_planes}) "
-        f"sims={cfg.mcts.simulations} leaf_batch={cfg.mcts.leaf_batch_size} games/iter={cfg.games_per_iter} "
+        f"teacher={cfg.teacher.mode} sims={cfg.mcts.simulations} mcgs={cfg.mcgs.playouts} "
+        f"leaf_batch={cfg.mcts.leaf_batch_size} games/iter={cfg.games_per_iter} "
         f"workers={_resolve_workers(cfg)} cheats={cheat_desc}")
 
     def training_settings(iteration: int) -> CheatSettings:
@@ -271,12 +299,14 @@ def main():
     for it in range(1, cfg.iterations + 1):
         sp_cfg = (active_selfplay_config(cfg.selfplay, curriculum.step, steps)
                   if cfg.curriculum.enabled else cfg.selfplay)
+        mcts_cfg = (active_mcts_config(cfg.mcts, cfg.curriculum, curriculum.step, num_steps)
+                    if cfg.curriculum.enabled else cfg.mcts)
         settings = training_settings(it)
         evaluator.settings = settings
 
         t0 = time.time()
         wins, total_moves, per_faction, cheat_attempts, ejections = run_selfplay(
-            evaluator, cfg, sp_cfg, buffer, rng, settings, it)
+            evaluator, cfg, sp_cfg, mcts_cfg, buffer, rng, settings, it)
         sp_time = time.time() - t0
 
         t1 = time.time()
@@ -288,7 +318,9 @@ def main():
         avg_loss = float(np.mean([l[0] for l in losses])) if losses else float("nan")
         avg_pl = float(np.mean([l[1] for l in losses])) if losses else float("nan")
         avg_vl = float(np.mean([l[2] for l in losses])) if losses else float("nan")
-        cur_tag = f" {curriculum.describe(steps)}" if cfg.curriculum.enabled else ""
+        cur_tag = ""
+        if cfg.curriculum.enabled:
+            cur_tag = (f" {curriculum.describe(steps)} sims={mcts_cfg.simulations}")
         log(f"[iter {it:04d}] DONE winrate={wins}/{cfg.games_per_iter} "
             f"cheats={cheat_attempts} eject={ejections} buffer={len(buffer)} "
             f"loss={avg_loss:.4f} (pol={avg_pl:.4f} val={avg_vl:.4f}) "
@@ -309,14 +341,16 @@ def main():
             gate = evaluate_faction(
                 evaluator, cfg.curriculum.gate_faction, cfg.curriculum.gate_size,
                 cfg.curriculum.gate_eval_games, cfg.eval_simulations,
-                cfg.selfplay.apply_obstacles, rng, off_settings)
+                cfg.selfplay.apply_obstacles, rng, off_settings,
+                teacher=cfg.teacher.mode, mcgs_cfg=cfg.mcgs)
             log(f"    GATE {cfg.curriculum.gate_faction} n={cfg.curriculum.gate_size} "
                 f"winrate={gate.win_rate:.2%} ({gate.black_wins}/{gate.games})")
 
             if cfg.curriculum.enabled and should_advance(gate.win_rate, cfg.curriculum, curriculum, num_steps):
                 curriculum.step += 1
                 curriculum.iters_at_step = 0
-                log(f"[curriculum] ADVANCED -> {curriculum.describe(steps)}")
+                next_sims = selfplay_simulations(cfg.curriculum, curriculum.step, num_steps)
+                log(f"[curriculum] ADVANCED -> {curriculum.describe(steps)} sims={next_sims}")
                 if curriculum.step >= num_steps - 1 and cfg.cheats.enabled:
                     log("[curriculum] cheats ENABLED (final step)")
 
@@ -328,7 +362,8 @@ def main():
                     res = gate
                 else:
                     res = evaluate_faction(evaluator, faction, size, cfg.eval_games, cfg.eval_simulations,
-                                           cfg.selfplay.apply_obstacles, rng, off_settings)
+                                           cfg.selfplay.apply_obstacles, rng, off_settings,
+                                           teacher=cfg.teacher.mode, mcgs_cfg=cfg.mcgs)
                 log(f"    {faction:<16} n={size:<2} winrate={res.win_rate:.2%} "
                     f"({res.black_wins}/{res.games})")
 

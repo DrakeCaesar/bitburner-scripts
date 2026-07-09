@@ -22,6 +22,7 @@
 #include "go_game.hpp"
 #include "opponents.hpp"
 #include "puct_mcts.hpp"
+#include "mcgs.hpp"
 #include "rng.hpp"
 #include "setup.hpp"
 
@@ -180,6 +181,21 @@ py::tuple pyRunPuctMcts(const GameState& gs, bool extraMove, bool cheatsEnabled,
   return py::make_tuple(visitPolicy, result.bestAction, result.rootValue);
 }
 
+py::tuple pyRunMcgs(const GameState& gs, int playouts, double exploration, bool useAiTweaks,
+                    bool suppressTransposition, uint64_t seed) {
+  nn::McgsConfig cfg;
+  cfg.playouts = playouts;
+  cfg.exploration = exploration;
+  cfg.useAiTweaks = useAiTweaks;
+  cfg.suppressTransposition = suppressTransposition;
+
+  const nn::McgsResult result = nn::runMcgs(gs, cfg, seed);
+
+  py::array_t<float> visitPolicy(static_cast<py::ssize_t>(result.visitPolicy.size()));
+  std::memcpy(visitPolicy.mutable_data(), result.visitPolicy.data(), result.visitPolicy.size() * sizeof(float));
+  return py::make_tuple(visitPolicy, result.bestAction, result.rootValue);
+}
+
 }  // namespace
 
 PYBIND11_MODULE(pyipvgo, m) {
@@ -297,6 +313,9 @@ PYBIND11_MODULE(pyipvgo, m) {
         py::arg("simulations") = 128, py::arg("c_puct") = 1.5f, py::arg("dirichlet_alpha") = 0.3f,
         py::arg("dirichlet_epsilon") = 0.25f, py::arg("add_root_noise") = true, py::arg("leaf_batch_size") = 32,
         py::arg("seed") = 0, py::arg("eval_fn"));
+
+  m.def("run_mcgs", &pyRunMcgs, py::arg("state"), py::arg("playouts") = 10000, py::arg("exploration") = 0.3,
+        py::arg("use_ai_tweaks") = true, py::arg("suppress_transposition") = true, py::arg("seed") = 0);
 
   m.def("parse_opponent", &pyParseOpponent, py::arg("name"));
   m.def("opponent_name", &opponentName, py::arg("ai"));

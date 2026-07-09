@@ -60,6 +60,25 @@ class CurriculumConfig:
     min_iters_per_step: int = 8
     gate_eval_games: int = 32
     cheats_on_final_step_only: bool = True
+    # Self-play MCTS sims taper from start (step 1) down to end (final step).
+    step_simulations_enabled: bool = True
+    simulations_start: int = 512
+    simulations_end: int = 128  # overridden by --simulations when set
+
+
+@dataclass
+class McgsConfig:
+    playouts: int = 10000
+    exploration: float = 0.3
+    use_ai_tweaks: bool = True
+    suppress_transposition: bool = True
+
+
+@dataclass
+class TeacherConfig:
+    """Black move generator during self-play and eval."""
+
+    mode: str = "mcts"  # "mcts" (net+PUCT) or "mcgs" (graph search, no NN)
 
 
 @dataclass
@@ -92,6 +111,8 @@ class TrainConfig:
 
     net: NetConfig = field(default_factory=NetConfig)
     mcts: MctsConfig = field(default_factory=MctsConfig)
+    mcgs: McgsConfig = field(default_factory=McgsConfig)
+    teacher: TeacherConfig = field(default_factory=TeacherConfig)
     selfplay: SelfPlayConfig = field(default_factory=SelfPlayConfig)
     cheats: CheatConfig = field(default_factory=CheatConfig)
     curriculum: CurriculumConfig = field(default_factory=CurriculumConfig)

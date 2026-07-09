@@ -14,10 +14,11 @@ import numpy as np
 
 import pyipvgo
 import env as envmod
-from config import MctsConfig, SelfPlayConfig
+from config import MctsConfig, McgsConfig, SelfPlayConfig
 from env import CheatSettings, EnvState
 from evaluator import Evaluator
-from mcts import run_mcts, sample_action
+from mcts import run_mcts, sample_action as mcts_sample_action
+from mcgs import run_mcgs, sample_action as mcgs_sample_action
 from replay import ReplayBuffer, Sample
 
 
@@ -32,8 +33,8 @@ class GameStats:
 
 
 def play_self_play_game(evaluator: Evaluator, sp_cfg: SelfPlayConfig, mcts_cfg: MctsConfig,
-                        buffer: ReplayBuffer, rng: np.random.Generator,
-                        settings: CheatSettings) -> GameStats:
+                        mcgs_cfg: McgsConfig, teacher: str, buffer: ReplayBuffer,
+                        rng: np.random.Generator, settings: CheatSettings) -> GameStats:
     size = int(rng.choice(sp_cfg.sizes))
     faction = str(rng.choice(sp_cfg.factions))
     state, _ai = envmod.new_game(size, faction, sp_cfg.apply_obstacles, rng)
@@ -46,16 +47,27 @@ def play_self_play_game(evaluator: Evaluator, sp_cfg: SelfPlayConfig, mcts_cfg: 
     ejected = False
     final_value = None
 
+    use_mcgs = teacher == "mcgs" and not settings.enabled
+
     while not state.game_over and move_no < move_cap:
-        result = run_mcts(state, evaluator, mcts_cfg, rng, settings)
+        if use_mcgs:
+            result = run_mcgs(state, mcgs_cfg, rng)
+            visit_policy = result.visit_policy
+            tau = 1.0 if move_no < sp_cfg.temperature_moves else 0.0
+            action = mcgs_sample_action(visit_policy, tau, rng)
+        else:
+            result = run_mcts(state, evaluator, mcts_cfg, rng, settings)
+            visit_policy = result.visit_policy
+            tau = 1.0 if move_no < sp_cfg.temperature_moves else 0.0
+            action = mcts_sample_action(visit_policy, tau, rng)
 
         planes = envmod.encode(state, settings)
         legal = envmod.legal_mask(state, settings)
-        trajectory.append(Sample(n=size, planes=planes, policy=result.visit_policy.copy(),
-                                  legal=legal, value=0.0))
-
-        tau = 1.0 if move_no < sp_cfg.temperature_moves else 0.0
-        action = sample_action(result.visit_policy, tau, rng)
+        # MCGS policy is board+pass only; pad to full mask width when cheats are off they match.
+        policy = np.zeros_like(legal, dtype=np.float32)
+        n = min(len(visit_policy), len(policy))
+        policy[:n] = visit_policy[:n]
+        trajectory.append(Sample(n=size, planes=planes, policy=policy, legal=legal, value=0.0))
         is_cheat = envmod.action_kind(action, size) not in ("move", "pass")
         if is_cheat:
             cheat_attempts += 1

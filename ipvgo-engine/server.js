@@ -14,6 +14,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const port = Number(process.env.IPVGO_PORT ?? 3010)
 const maxBodyBytes = 4 * 1024 * 1024
 const forceNative = process.env.IPVGO_FORCE_NATIVE === "1"
+const forceMcgs = process.env.IPVGO_ENGINE === "mcgs"
 // Trained PyTorch agent served by python/serve.py. Opt in with IPVGO_ENGINE=torch
 // (or IPVGO_FORCE_TORCH=1); it then takes priority over KataGo/native.
 const torchUrl = process.env.IPVGO_TORCH_URL ?? "http://127.0.0.1:3011"
@@ -29,7 +30,15 @@ function nativeExecutablePath() {
     : path.join(__dirname, "build", "ipvgo_engine")
 }
 
+function mcgsExecutablePath() {
+  const isWindows = process.platform === "win32"
+  return isWindows
+    ? path.join(__dirname, "build", "Release", "ipvgo_game.exe")
+    : path.join(__dirname, "build", "ipvgo_game")
+}
+
 function activeEngine() {
+  if (forceMcgs) return "mcgs"
   if (forceTorch) return "torch"
   if (!forceNative && isKatagoInstalled()) return "katago"
   const exe = nativeExecutablePath()
@@ -97,7 +106,61 @@ function handleHealth(_req, res) {
     torchUrl,
     nativePath: nativeExecutablePath(),
     nativeBuilt: fs.existsSync(nativeExecutablePath()),
+    mcgsPath: mcgsExecutablePath(),
+    mcgsBuilt: fs.existsSync(mcgsExecutablePath()),
     timestamp: new Date().toISOString(),
+  })
+}
+
+async function requestMcgsMove(body) {
+  const exe = mcgsExecutablePath()
+  if (!fs.existsSync(exe)) {
+    throw new Error("MCGS engine not built. Run: pnpm run ipvgo:build")
+  }
+
+  const tempDir = path.join(__dirname, "temp")
+  if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true })
+
+  const inputPath = path.join(tempDir, `mcgs-in-${Date.now()}.json`)
+  const outputPath = path.join(tempDir, `mcgs-out-${Date.now()}.json`)
+  fs.writeFileSync(inputPath, JSON.stringify(body))
+
+  return new Promise((resolve, reject) => {
+    const child = execFile(
+      exe,
+      ["mcgsmove", inputPath, outputPath],
+      { timeout: 300_000, maxBuffer: 10 * 1024 * 1024 },
+      (error, _stdout, stderr) => {
+        if (activeNativeChild === child) activeNativeChild = null
+        try {
+          if (error) {
+            if (error.killed || error.signal) {
+              reject(new Error("MCGS engine cancelled"))
+              return
+            }
+            reject(new Error(`${error.message}${stderr ? `: ${stderr}` : ""}`))
+            return
+          }
+          if (!fs.existsSync(outputPath)) {
+            reject(new Error("MCGS produced no output file"))
+            return
+          }
+          const result = JSON.parse(fs.readFileSync(outputPath, "utf8"))
+          resolve({ ...result, engine: "mcgs" })
+        } catch (err) {
+          reject(err)
+        } finally {
+          for (const file of [inputPath, outputPath]) {
+            try {
+              if (fs.existsSync(file)) fs.unlinkSync(file)
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+      }
+    )
+    activeNativeChild = child
   })
 }
 
@@ -177,7 +240,7 @@ async function handleCancel(req, res) {
   const engine = activeEngine()
   if (engine === "katago") {
     cancelKatagoRequest(requestId)
-  } else if (engine === "native") {
+  } else if (engine === "native" || engine === "mcgs") {
     cancelNativeMove()
   }
 
@@ -205,7 +268,9 @@ async function handleMove(req, res) {
         ? await requestTorchMove(body)
         : engine === "katago"
           ? await requestKatagoMove(body)
-          : await requestNativeMove(body)
+          : engine === "mcgs"
+            ? await requestMcgsMove(body)
+            : await requestNativeMove(body)
     sendJson(res, 200, result)
   } catch (err) {
     console.error(`${engine} move error:`, err.message)

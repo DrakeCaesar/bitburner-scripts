@@ -9,9 +9,12 @@
 //   ipvgo_game gen <opponent> <size> <seedMs> <mathSeed>
 //       Print a freshly generated board (obstacles + handicap).
 
+#include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
+#include <random>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -19,14 +22,19 @@
 #include <nlohmann/json.hpp>
 
 #include "analysis.hpp"
+#include "features.hpp"
 #include "game_engine.hpp"
 #include "go_game.hpp"
+#include "mcgs.hpp"
 #include "obstacles.hpp"
 #include "opponents.hpp"
 #include "rng.hpp"
 #include "setup.hpp"
 
 using namespace ipvgo::game;
+using ipvgo::nn::McgsConfig;
+using ipvgo::nn::McgsResult;
+using ipvgo::nn::runMcgs;
 using json = nlohmann::json;
 
 namespace {
@@ -59,6 +67,9 @@ GameState stateFromRequest(const json& req) {
     for (const auto& snap : req.at("history")) {
       state.previousBoards.push_back(boardString(parseBoard(snap)));
     }
+  }
+  if (req.contains("opponent")) {
+    if (auto ai = parseOpponent(req.at("opponent").get<std::string>())) state.ai = *ai;
   }
   return state;
 }
@@ -302,6 +313,146 @@ int runAiMove(const std::string& inPath, const std::string& outPath) {
   return 0;
 }
 
+// ---- mcgsmove (faithful rules + graph search, Black only) ------------------
+
+bool actionAllowed(const json& req, int N, int action) {
+  if (!req.contains("validMoves") || req.at("validMoves").is_null()) return true;
+  const json& vm = req.at("validMoves");
+  if (action == ipvgo::nn::passAction(N)) return true;
+  const int x = action / N;
+  const int y = action % N;
+  if (x < 0 || y < 0 || x >= N || y >= N) return false;
+  return vm[x][y].get<bool>();
+}
+
+json actionToMoveJson(int N, int action) {
+  if (action == ipvgo::nn::passAction(N)) return json{{"type", "pass"}};
+  return json{{"type", "move"}, {"x", action / N}, {"y", action % N}};
+}
+
+int pickMcgsAction(const McgsResult& result, int N, const json& req) {
+  if (actionAllowed(req, N, result.bestAction)) return result.bestAction;
+
+  std::vector<std::pair<float, int>> ranked;
+  ranked.reserve(result.visitPolicy.size());
+  for (size_t i = 0; i < result.visitPolicy.size(); ++i) {
+  const int action = static_cast<int>(i);
+    if (!actionAllowed(req, N, action)) continue;
+    ranked.emplace_back(result.visitPolicy[i], action);
+  }
+  if (ranked.empty()) return ipvgo::nn::passAction(N);
+  std::sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+  return ranked[0].second;
+}
+
+int runMcgsMove(const std::string& inPath, const std::string& outPath) {
+  std::ifstream in(inPath);
+  if (!in) {
+    std::cerr << "cannot open " << inPath << "\n";
+    return 1;
+  }
+  json req;
+  in >> req;
+
+  GameState state = stateFromRequest(req);
+  const Color mover = whoseTurn(state);
+  if (mover != Color::Black) {
+    std::cerr << "mcgsmove: playAs must be Black (X); it is not Black's turn\n";
+    return 1;
+  }
+
+  McgsConfig cfg;
+  cfg.playouts = req.value("iterations", 10000);
+  cfg.exploration = req.value("exploration", 0.3);
+  cfg.useAiTweaks = req.value("useAiTweaks", true);
+  cfg.suppressTransposition = req.value("suppressTransposition", true);
+  const uint64_t seed = req.value("seed", static_cast<uint64_t>(0));
+
+  const auto t0 = std::chrono::steady_clock::now();
+  const McgsResult result = runMcgs(state, cfg, seed);
+  const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+
+  const int action = pickMcgsAction(result, state.size, req);
+  json out;
+  out["move"] = actionToMoveJson(state.size, action);
+  out["iterations"] = cfg.playouts;
+  out["elapsedMs"] = ms;
+  out["rootValue"] = result.rootValue;
+  out["engine"] = "mcgs";
+
+  const std::string text = out.dump();
+  if (!outPath.empty()) {
+    std::ofstream fout(outPath);
+    fout << text;
+  } else {
+    std::cout << text << "\n";
+  }
+  return 0;
+}
+
+// ---- mcgsplay (MCGS Black vs scripted faction White) -----------------------
+
+int runMcgsPlay(const std::string& opponentName, int size, int games, int playouts, uint64_t seed) {
+  const Opponent ai = parseOpponent(opponentName).value_or(Opponent::Netburners);
+  std::mt19937_64 rng(seed ? seed : 1);
+
+  McgsConfig cfg;
+  cfg.playouts = playouts;
+  cfg.useAiTweaks = false;
+
+  int wins = 0;
+  double totalBlackMs = 0.0;
+  long totalMoves = 0;
+
+  for (int g = 0; g < games; ++g) {
+    const double boardSeed = static_cast<double>(rng() % 30000000u);
+    MathRandom mr(rng());
+    GameState state = newBoardState(size, ai, true, boardSeed, mr);
+    const int moveCap = size * size * 4;
+
+    for (int m = 0; m < moveCap && !state.gameOver; ++m) {
+      if (whoseTurn(state) != Color::Black) {
+        std::cerr << "mcgsplay: expected Black to move\n";
+        return 1;
+      }
+
+      const auto t0 = std::chrono::steady_clock::now();
+      const McgsResult search = runMcgs(state, cfg, rng());
+      totalBlackMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+
+      const int action = search.bestAction;
+      if (action == ipvgo::nn::passAction(size)) {
+        passTurn(state, Color::Black);
+      } else {
+        const int x = action / size;
+        const int y = action % size;
+        if (!makeMove(state, x, y, Color::Black)) passTurn(state, Color::Black);
+      }
+      ++totalMoves;
+      if (state.gameOver) break;
+
+      const double whiteSeed = static_cast<double>(rng() % 30000000u);
+      MathRandom wmr(rng());
+      const Play wp = getMove(state, Color::White, ai, whiteSeed, wmr);
+      if (wp.type == PlayType::Pass) {
+        passTurn(state, Color::White);
+      } else if (!makeMove(state, wp.x, wp.y, Color::White)) {
+        passTurn(state, Color::White);
+      }
+      if (state.gameOver) break;
+    }
+
+    const Score sc = getScore(state);
+    if (blackWins(sc)) ++wins;
+  }
+
+  const double avgMs = totalMoves > 0 ? totalBlackMs / static_cast<double>(totalMoves) : 0.0;
+  std::cout << "mcgsplay: " << opponentName << " " << size << "x" << size << " "
+            << "wins=" << wins << "/" << games << " (" << (100.0 * wins / std::max(games, 1)) << "%) "
+            << "playouts=" << playouts << " avgBlackThinkMs=" << avgMs << "\n";
+  return 0;
+}
+
 }  // namespace
 
 // ---- fuzz: self-consistency over full games -------------------------------
@@ -379,7 +530,7 @@ int runFuzz(int games, uint64_t seed) {
 
 int main(int argc, char** argv) {
   if (argc < 2) {
-    std::cerr << "usage: ipvgo_game <selftest|fuzz|parity|aimove|gen> ...\n";
+    std::cerr << "usage: ipvgo_game <selftest|fuzz|parity|aimove|mcgsmove|mcgsplay|gen> ...\n";
     return 2;
   }
   const std::string cmd = argv[1];
@@ -388,6 +539,14 @@ int main(int argc, char** argv) {
   if (cmd == "fuzz") return runFuzz(argc >= 3 ? std::stoi(argv[2]) : 200, argc >= 4 ? std::stoull(argv[3]) : 1u);
   if (cmd == "parity" && argc >= 3) return runParity(argv[2]);
   if (cmd == "aimove" && argc >= 3) return runAiMove(argv[2], argc >= 4 ? argv[3] : "");
+  if (cmd == "mcgsmove" && argc >= 3) return runMcgsMove(argv[2], argc >= 4 ? argv[3] : "");
+  if (cmd == "mcgsplay" && argc >= 6) {
+    const int size = std::stoi(argv[3]);
+    const int games = std::stoi(argv[4]);
+    const int playouts = std::stoi(argv[5]);
+    const uint64_t seed = argc >= 7 ? std::stoull(argv[6]) : 0u;
+    return runMcgsPlay(argv[2], size, games, playouts, seed);
+  }
   if (cmd == "gen" && argc >= 6) {
     const auto ai = parseOpponent(argv[2]).value_or(Opponent::Netburners);
     const int size = std::stoi(argv[3]);
