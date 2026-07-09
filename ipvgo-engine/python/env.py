@@ -22,6 +22,13 @@ empty target points, while keeping the action space linear.
 Cheat success is stochastic and its probability changes with the number of prior
 cheats this game; the changing chance and cheat count are exposed as feature
 planes so the policy/value net can condition on the risk.
+
+Feature planes (NUM_INPUT_PLANES = 23):
+    0..11  base C++ planes (own/opp/empty/offline, legal, bias, komi, turn, 4x history)
+    12     current cheat success chance   13  normalized prior cheat count
+    14     cheats-available flag           15  free-second-move-pending flag
+    16..22 one-hot faction identity (Netburners, Slum Snakes, The Black Hand,
+           Tetrads, Daedalus, Illuminati, WorldDaemon)
 """
 
 from __future__ import annotations
@@ -35,7 +42,23 @@ import pyipvgo
 
 # Number of extra feature planes appended to the C++ base planes.
 CHEAT_PLANES = 4
-NUM_INPUT_PLANES = pyipvgo.NUM_PLANES + CHEAT_PLANES  # 12 + 4 = 16
+
+# Faction identity is one-hot encoded as constant planes so the net can special-
+# ize its policy/value per opponent (each of the six plays a different strategy,
+# and Illuminati/WorldDaemon start with handicap stones). Unknown/None -> zeros.
+FACTION_ORDER = [
+    pyipvgo.Opponent.Netburners,
+    pyipvgo.Opponent.SlumSnakes,
+    pyipvgo.Opponent.TheBlackHand,
+    pyipvgo.Opponent.Tetrads,
+    pyipvgo.Opponent.Daedalus,
+    pyipvgo.Opponent.Illuminati,
+    pyipvgo.Opponent.WorldDaemon,
+]
+FACTION_PLANES = len(FACTION_ORDER)
+_FACTION_INDEX = {op: i for i, op in enumerate(FACTION_ORDER)}
+
+NUM_INPUT_PLANES = pyipvgo.NUM_PLANES + CHEAT_PLANES + FACTION_PLANES  # 12 + 4 + 7 = 23
 
 # Number of per-point action "types" the policy head emits (board move + 4 cheats).
 POINT_ACTION_TYPES = 5
@@ -98,7 +121,8 @@ def cheat_chance(gs: "pyipvgo.GameState", settings: CheatSettings) -> float:
 
 
 def encode(env: EnvState, settings: CheatSettings) -> np.ndarray:
-    """Return [NUM_INPUT_PLANES, N, N] float32 planes (base C++ planes + cheat planes)."""
+    """Return [NUM_INPUT_PLANES, N, N] float32 planes: base C++ planes (12) +
+    cheat planes (4) + one-hot faction planes (7)."""
     n = env.size
     base = np.asarray(pyipvgo.encode_state(env.gs, pyipvgo.Color.Black), dtype=np.float32)  # [12, N, N]
     extra = np.zeros((CHEAT_PLANES, n, n), dtype=np.float32)
@@ -106,7 +130,11 @@ def encode(env: EnvState, settings: CheatSettings) -> np.ndarray:
     extra[1] = min(env.gs.cheat_count / 10.0, 1.0)            # normalized prior cheat count
     extra[2] = 1.0 if settings.enabled else 0.0              # cheats available
     extra[3] = 1.0 if env.extra_move else 0.0               # free second-move pending
-    return np.concatenate([base, extra], axis=0)
+    faction = np.zeros((FACTION_PLANES, n, n), dtype=np.float32)
+    fidx = _FACTION_INDEX.get(env.gs.ai)
+    if fidx is not None:
+        faction[fidx] = 1.0
+    return np.concatenate([base, extra, faction], axis=0)
 
 
 def legal_mask(env: EnvState, settings: CheatSettings) -> np.ndarray:

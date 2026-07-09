@@ -135,6 +135,8 @@ def main():
     parser.add_argument("--no-cheats", action="store_true", help="disable cheat actions during training")
     parser.add_argument("--crime-mult", type=float, help="crime_success multiplier for cheat odds")
     parser.add_argument("--sf-bonus", type=float, help="Source-File 14.3 additive cheat bonus (0 or 0.25)")
+    parser.add_argument("--cheat-warmup", type=int,
+                        help="iterations trained with cheats OFF before auto-enabling them (0 disables warmup)")
     args = parser.parse_args()
 
     cfg = TrainConfig()
@@ -154,6 +156,7 @@ def main():
     if args.no_cheats: cfg.cheats.enabled = False
     if args.crime_mult is not None: cfg.cheats.crime_success_mult = args.crime_mult
     if args.sf_bonus is not None: cfg.cheats.source_file_bonus = args.sf_bonus
+    if args.cheat_warmup is not None: cfg.cheats.warmup_iters = args.cheat_warmup
 
     if cfg.net.in_planes != envmod.NUM_INPUT_PLANES:
         raise RuntimeError(f"NetConfig.in_planes ({cfg.net.in_planes}) != env.NUM_INPUT_PLANES ({envmod.NUM_INPUT_PLANES})")
@@ -166,8 +169,13 @@ def main():
     torch.manual_seed(cfg.seed)
     rng = np.random.default_rng(cfg.seed)
 
-    settings = CheatSettings(enabled=cfg.cheats.enabled, crime_success_mult=cfg.cheats.crime_success_mult,
-                             source_file_bonus=cfg.cheats.source_file_bonus)
+    full_settings = CheatSettings(enabled=cfg.cheats.enabled, crime_success_mult=cfg.cheats.crime_success_mult,
+                                  source_file_bonus=cfg.cheats.source_file_bonus)
+    off_settings = CheatSettings(enabled=False)
+    warmup = cfg.cheats.warmup_iters if cfg.cheats.enabled else 0
+
+    def settings_for(iteration: int) -> CheatSettings:
+        return full_settings if (cfg.cheats.enabled and iteration > warmup) else off_settings
 
     if args.resume:
         net, _payload = load_checkpoint(args.resume, device)
@@ -176,17 +184,29 @@ def main():
         net = GoNet(cfg.net).to(device)
 
     optimizer = torch.optim.Adam(net.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-    evaluator = Evaluator(net, device, settings)
+    evaluator = Evaluator(net, device, off_settings)
     buffer = ReplayBuffer(capacity_per_size=cfg.replay_capacity_per_size)
 
     os.makedirs(cfg.checkpoint_dir, exist_ok=True)
-    opening_chance = 100 * pyipvgo.cheat_success_chance(0, settings.crime_success_mult, settings.source_file_bonus)
-    cheat_desc = (f"on (crime x{settings.crime_success_mult:g}, sf +{settings.source_file_bonus:g}, "
-                  f"chance@0={opening_chance:.0f}%)" if settings.enabled else "off")
+    opening_chance = 100 * pyipvgo.cheat_success_chance(0, full_settings.crime_success_mult,
+                                                        full_settings.source_file_bonus)
+    if not cfg.cheats.enabled:
+        cheat_desc = "off"
+    elif warmup > 0:
+        cheat_desc = (f"warmup {warmup} iters OFF, then on (crime x{full_settings.crime_success_mult:g}, "
+                      f"sf +{full_settings.source_file_bonus:g}, chance@0={opening_chance:.0f}%)")
+    else:
+        cheat_desc = (f"on (crime x{full_settings.crime_success_mult:g}, "
+                      f"sf +{full_settings.source_file_bonus:g}, chance@0={opening_chance:.0f}%)")
     log(f"[start] device={device} net(ch={cfg.net.channels},blocks={cfg.net.blocks},in={cfg.net.in_planes}) "
         f"sims={cfg.mcts.simulations} games/iter={cfg.games_per_iter} cheats={cheat_desc}")
 
     for it in range(1, cfg.iterations + 1):
+        settings = settings_for(it)
+        evaluator.settings = settings
+        if cfg.cheats.enabled and warmup > 0 and it == warmup + 1:
+            log(f"[iter {it:04d}] cheats ENABLED (warmup complete)")
+
         t0 = time.time()
         wins, total_moves, per_faction, cheat_attempts, ejections = run_selfplay(
             evaluator, cfg, buffer, rng, settings, it)

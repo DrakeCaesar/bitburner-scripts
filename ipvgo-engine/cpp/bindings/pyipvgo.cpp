@@ -14,12 +14,14 @@
 #include <string>
 #include <vector>
 
+#include "agent_env.hpp"
 #include "cheats.hpp"
 #include "environment.hpp"
 #include "features.hpp"
 #include "game_engine.hpp"
 #include "go_game.hpp"
 #include "opponents.hpp"
+#include "puct_mcts.hpp"
 #include "rng.hpp"
 #include "setup.hpp"
 
@@ -137,6 +139,47 @@ py::tuple pyBeginPlayTwoMoves(const GameState& state, Color player, int x, int y
   return py::make_tuple(next, result, next.gameOver);
 }
 
+py::tuple pyRunPuctMcts(const GameState& gs, bool extraMove, bool cheatsEnabled, double crimeSuccessMult,
+                         double sourceFileBonus, int simulations, float cPuct, float dirichletAlpha,
+                         float dirichletEpsilon, bool addRootNoise, int leafBatchSize, uint64_t seed,
+                         py::function evalFn) {
+  nn::EnvState root;
+  root.gs = gs;
+  root.extraMove = extraMove;
+
+  nn::CheatSettings settings;
+  settings.enabled = cheatsEnabled;
+  settings.crimeSuccessMult = crimeSuccessMult;
+  settings.sourceFileBonus = sourceFileBonus;
+
+  nn::PuctMctsConfig cfg;
+  cfg.simulations = simulations;
+  cfg.cPuct = cPuct;
+  cfg.dirichletAlpha = dirichletAlpha;
+  cfg.dirichletEpsilon = dirichletEpsilon;
+  cfg.addRootNoise = addRootNoise;
+  cfg.leafBatchSize = leafBatchSize;
+
+  auto callback = [&](const float* planes, int batch, int n, int actionCount, float* policyOut, float* valueOut) {
+    py::array_t<float> arr({batch, nn::kInputPlanes, n, n});
+    std::memcpy(arr.mutable_data(), planes, static_cast<size_t>(batch) * nn::kInputPlanes * n * n * sizeof(float));
+    py::object out = evalFn(arr);
+    py::tuple tup = out.cast<py::tuple>();
+    py::array_t<float, py::array::c_style | py::array::forcecast> policy = tup[0].cast<py::array_t<float>>();
+    py::array_t<float, py::array::c_style | py::array::forcecast> value = tup[1].cast<py::array_t<float>>();
+    std::memcpy(policyOut, policy.data(), static_cast<size_t>(batch) * actionCount * sizeof(float));
+    const auto vbuf = value.request();
+    const float* vptr = static_cast<const float*>(vbuf.ptr);
+    for (int i = 0; i < batch; ++i) valueOut[i] = vptr[i];
+  };
+
+  const nn::PuctMctsResult result = nn::runPuctMcts(root, settings, cfg, seed, callback);
+
+  py::array_t<float> visitPolicy(static_cast<py::ssize_t>(result.visitPolicy.size()));
+  std::memcpy(visitPolicy.mutable_data(), result.visitPolicy.data(), result.visitPolicy.size() * sizeof(float));
+  return py::make_tuple(visitPolicy, result.bestAction, result.rootValue);
+}
+
 }  // namespace
 
 PYBIND11_MODULE(pyipvgo, m) {
@@ -216,6 +259,8 @@ PYBIND11_MODULE(pyipvgo, m) {
       .def("whose_turn", [](const GameState& s) { return whoseTurn(s); });
 
   m.attr("NUM_PLANES") = nn::kNumPlanes;
+  m.attr("NUM_INPUT_PLANES") = nn::kInputPlanes;
+  m.def("extended_action_count", &nn::extendedActionCount);
   m.def("action_count", &nn::actionCount);
   m.def("pass_action", &nn::passAction);
 
@@ -246,6 +291,12 @@ PYBIND11_MODULE(pyipvgo, m) {
   m.def("begin_play_two_moves", &pyBeginPlayTwoMoves, py::arg("state"), py::arg("player"), py::arg("x"), py::arg("y"),
         py::arg("success_rng"), py::arg("eject_rng"), py::arg("crime_success_mult") = 1.0,
         py::arg("source_file_bonus") = 0.0);
+
+  m.def("run_puct_mcts", &pyRunPuctMcts, py::arg("state"), py::arg("extra_move") = false,
+        py::arg("cheats_enabled") = true, py::arg("crime_success_mult") = 1.0, py::arg("source_file_bonus") = 0.0,
+        py::arg("simulations") = 128, py::arg("c_puct") = 1.5f, py::arg("dirichlet_alpha") = 0.3f,
+        py::arg("dirichlet_epsilon") = 0.25f, py::arg("add_root_noise") = true, py::arg("leaf_batch_size") = 32,
+        py::arg("seed") = 0, py::arg("eval_fn"));
 
   m.def("parse_opponent", &pyParseOpponent, py::arg("name"));
   m.def("opponent_name", &opponentName, py::arg("ai"));

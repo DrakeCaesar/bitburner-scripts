@@ -23,14 +23,17 @@ class Evaluator:
         return logits[0], values[0]
 
     @torch.no_grad()
-    def evaluate_batch(self, env_states: List[EnvState]) -> Tuple[List[np.ndarray], List[float]]:
-        if not env_states:
-            return [], []
-        # All states in a batch must share board size (the pass head reshapes on N).
-        planes = np.stack([encode(s, self.settings) for s in env_states])
+    def evaluate_planes_batch(self, planes: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Batched inference on pre-encoded planes [B, C, N, N] (used by C++ MCTS)."""
         x = torch.from_numpy(planes).to(self.device)
         self.net.eval()
         policy, value = self.net(x)
-        policy = policy.detach().to("cpu").numpy()
-        value = value.detach().to("cpu").numpy().reshape(-1)
+        return policy.detach().cpu().numpy(), value.detach().cpu().numpy().reshape(-1)
+
+    @torch.no_grad()
+    def evaluate_batch(self, env_states: List[EnvState]) -> Tuple[List[np.ndarray], List[float]]:
+        if not env_states:
+            return [], []
+        planes = np.stack([encode(s, self.settings) for s in env_states])
+        policy, value = self.evaluate_planes_batch(planes)
         return [policy[i] for i in range(policy.shape[0])], [float(value[i]) for i in range(value.shape[0])]

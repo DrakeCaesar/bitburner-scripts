@@ -23,7 +23,7 @@ DEFAULT_SIZES: List[int] = [5, 7, 9, 13]
 class NetConfig:
     channels: int = 64
     blocks: int = 8
-    in_planes: int = 16  # env.NUM_INPUT_PLANES (12 base + 4 cheat planes)
+    in_planes: int = 23  # env.NUM_INPUT_PLANES (12 base + 4 cheat + 7 faction planes)
     point_action_types: int = 5  # env.POINT_ACTION_TYPES (board move + 4 cheats)
 
 
@@ -34,15 +34,24 @@ class MctsConfig:
     dirichlet_alpha: float = 0.3
     dirichlet_epsilon: float = 0.25
     add_root_noise: bool = True
+    leaf_batch_size: int = 32  # batched NN evals inside C++ MCTS
 
 
 @dataclass
 class CheatConfig:
-    """Cheat availability during training/eval (see env.CheatSettings)."""
+    """Cheat availability during training/eval (see env.CheatSettings).
+
+    warmup_iters: number of initial iterations trained with cheats DISABLED so
+    the net first learns real board play and a value head with actual variance;
+    cheats are auto-enabled once ``iteration > warmup_iters``. Without a warmup
+    the untrained policy spams cheats (they are ~80% of the action space) and
+    almost every game ends in ejection, giving an all-loss value signal.
+    """
 
     enabled: bool = True
     crime_success_mult: float = 1.0
     source_file_bonus: float = 0.0
+    warmup_iters: int = 10
 
 
 @dataclass

@@ -115,7 +115,9 @@ else()
     pybind11_add_module(pyipvgo
       cpp/bindings/pyipvgo.cpp
       cpp/nn/features.cpp
-      cpp/nn/environment.cpp)
+      cpp/nn/environment.cpp
+      cpp/nn/agent_env.cpp
+      cpp/nn/puct_mcts.cpp)
     target_include_directories(pyipvgo PRIVATE cpp/game cpp/nn)
     target_link_libraries(pyipvgo PRIVATE ipvgo_game_core)
     if(MSVC)
