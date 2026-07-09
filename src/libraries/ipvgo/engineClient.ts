@@ -23,7 +23,7 @@ export async function isIpvgoEngineAvailable(baseUrl = getIpvgoEngineUrl()): Pro
     const res = await fetch(`${baseUrl}/health`, { method: "GET" })
     if (!res.ok) return false
     const body = (await res.json()) as { engine?: string }
-    return body.engine === "katago" || body.engine === "native"
+    return body.engine === "katago" || body.engine === "native" || body.engine === "torch"
   } catch {
     return false
   }

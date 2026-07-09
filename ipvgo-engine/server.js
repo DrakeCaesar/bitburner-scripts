@@ -14,6 +14,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const port = Number(process.env.IPVGO_PORT ?? 3010)
 const maxBodyBytes = 4 * 1024 * 1024
 const forceNative = process.env.IPVGO_FORCE_NATIVE === "1"
+// Trained PyTorch agent served by python/serve.py. Opt in with IPVGO_ENGINE=torch
+// (or IPVGO_FORCE_TORCH=1); it then takes priority over KataGo/native.
+const torchUrl = process.env.IPVGO_TORCH_URL ?? "http://127.0.0.1:3011"
+const forceTorch = process.env.IPVGO_ENGINE === "torch" || process.env.IPVGO_FORCE_TORCH === "1"
 
 /** @type {import("child_process").ChildProcess | null} */
 let activeNativeChild = null
@@ -26,10 +30,25 @@ function nativeExecutablePath() {
 }
 
 function activeEngine() {
+  if (forceTorch) return "torch"
   if (!forceNative && isKatagoInstalled()) return "katago"
   const exe = nativeExecutablePath()
   if (fs.existsSync(exe)) return "native"
   return "missing"
+}
+
+async function requestTorchMove(body) {
+  const res = await fetch(`${torchUrl}/move`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error ?? `torch engine HTTP ${res.status}`)
+  }
+  const result = await res.json()
+  return { ...result, engine: "torch" }
 }
 
 function sendJson(res, status, body) {
@@ -74,6 +93,8 @@ function handleHealth(_req, res) {
     status: "ok",
     engine,
     katago: isKatagoInstalled(),
+    torch: forceTorch,
+    torchUrl,
     nativePath: nativeExecutablePath(),
     nativeBuilt: fs.existsSync(nativeExecutablePath()),
     timestamp: new Date().toISOString(),
@@ -179,20 +200,50 @@ async function handleMove(req, res) {
   }
 
   try {
-    const result = engine === "katago" ? await requestKatagoMove(body) : await requestNativeMove(body)
+    const result =
+      engine === "torch"
+        ? await requestTorchMove(body)
+        : engine === "katago"
+          ? await requestKatagoMove(body)
+          : await requestNativeMove(body)
     sendJson(res, 200, result)
   } catch (err) {
     console.error(`${engine} move error:`, err.message)
-    if (engine === "katago") {
+    if (engine === "katago" || engine === "torch") {
       try {
         const fallback = await requestNativeMove(body)
-        return sendJson(res, 200, { ...fallback, engine: "native", katagoError: err.message })
+        return sendJson(res, 200, { ...fallback, engine: "native", [`${engine}Error`]: err.message })
       } catch (nativeErr) {
         return sendJson(res, 500, { error: err.message, fallbackError: nativeErr.message })
       }
     }
     return sendJson(res, 500, { error: err.message })
   }
+}
+
+/**
+ * Receives parity test cases dumped from the live game (ipvgoParityDump.js) and
+ * writes them to temp/parity_cases.json for the native `ipvgo_game parity` tool.
+ */
+async function handleParityDump(req, res) {
+  let body
+  try {
+    body = await readJsonBody(req)
+  } catch (err) {
+    return sendJson(res, 400, { error: err.message })
+  }
+
+  const cases = Array.isArray(body) ? body : body?.cases
+  if (!Array.isArray(cases)) {
+    return sendJson(res, 400, { error: "Expected an array of parity cases (or { cases: [...] })" })
+  }
+
+  const tempDir = path.join(__dirname, "temp")
+  if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true })
+  const outPath = path.join(tempDir, "parity_cases.json")
+  fs.writeFileSync(outPath, JSON.stringify(cases))
+  console.log(`[parity] wrote ${cases.length} cases to ${outPath}`)
+  sendJson(res, 200, { ok: true, count: cases.length, path: outPath })
 }
 
 const server = http.createServer(async (req, res) => {
@@ -220,6 +271,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/api/ipvgo/move") {
     await handleMove(req, res)
+    return
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/ipvgo/parity") {
+    await handleParityDump(req, res)
     return
   }
 

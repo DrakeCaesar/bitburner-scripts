@@ -1,0 +1,13 @@
+# Python training/inference stack for the native IPvGO agent.
+#
+# Install PyTorch with CUDA that matches your driver first, e.g. for the
+# RTX 2070 (CUDA 12.x):
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+# then:
+#   pip install -r python/requirements.txt
+#
+# The pyipvgo extension module is built separately via `pnpm run py:build`
+# (CMake + pybind11) and emitted into this directory.
+
+torch>=2.2
+numpy>=1.24

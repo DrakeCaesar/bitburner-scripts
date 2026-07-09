@@ -605,6 +605,7 @@ export async function main(ns: NS): Promise<void> {
           iterations: snapshot.iterations,
           playAs: "X" as const,
           validMoves,
+          opponent: snapshot.opponent,
         }
         const analysis = await requestIpvgoEngineMoveInterruptible(
           request,
