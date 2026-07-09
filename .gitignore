@@ -19,6 +19,7 @@ ipvgo-engine/katago/
 # KingOfTheHill Python benchmark (tests/koth_tune/python/)
 tests/koth_tune/build/
 tests/koth_tune/python/__pycache__/
+# tests/koth_tune/ladder_snipe.diff60.best.json
 
 # CMake artifacts if misconfigured into repo-root build/ (legacy watch scripts live there)
 build/.cmake/

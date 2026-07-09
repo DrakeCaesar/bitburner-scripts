@@ -5,6 +5,7 @@ import {
   kingOfTheHillHillCount,
   parseKingOfTheHillAltitude,
   runUntilNextProbe,
+  TUNED_LADDER_SNIPE_DIFF60,
   type SolverContext,
 } from "./solverCore.js"
 
@@ -30,6 +31,7 @@ function buildContext(details: ServerDetails): { min: number; max: number; ctx: 
     hillCount: kingOfTheHillHillCount(details.difficulty),
     passwordLength: details.passwordLength,
     gaussWidth: kingOfTheHillGaussianWidth(details.passwordLength),
+    tuning: TUNED_LADDER_SNIPE_DIFF60,
   }
   return { min, max, ctx }
 }

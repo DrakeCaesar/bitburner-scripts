@@ -1,0 +1,33 @@
+{
+  "variant": "ladder_snipe",
+  "difficulty": 60,
+  "fitness": 7088,
+  "avgGuesses": 6.998,
+  "maxGuesses": 18,
+  "totalGuesses": 6998,
+  "unsolved": 0,
+  "tuning": {
+    "farTailAnchorMaxAbs": 397.16,
+    "ladderEntryMaxAbs": 7418.48,
+    "positiveLadderSkipRangeFraction": 0.737109,
+    "pairProbeOffsetW": 0.154316,
+    "signCrossMarchW": 1.0245,
+    "centerSanityMaxDistW": 38.425,
+    "ladderMaxIters": 8,
+    "orbitDistW": 0.5,
+    "heightBandSlack": 272.627,
+    "logResidualMax": 0.271547,
+    "logResidualMaxDistW": 1,
+    "halfStepW": 1.93344,
+    "outsideClusterDistW": 1,
+    "bareTailFrac": 0.021817,
+    "postJumpCapScale": 0.224271,
+    "postJumpCapBias": 0.911711,
+    "sqrtSnipeMinAlt": 7555.23,
+    "sqrtSnipeNearZoneExtra": 0.00250204,
+    "gallopStepW": 1.93321,
+    "gallopStopW": 0.185353,
+    "clusterReachW": 31.1991,
+    "clusterStepW": 1.79502
+  }
+}
