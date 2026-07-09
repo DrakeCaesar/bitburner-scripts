@@ -37,6 +37,7 @@ enum class SolverVariant {
   Snipe,
   Ladder,
   LadderSnipe,
+  LadderSnipeTuned,
 };
 
 const char* solverVariantName(SolverVariant variant);

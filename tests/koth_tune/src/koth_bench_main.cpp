@@ -5,6 +5,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <fstream>
 #include <future>
 #include <iomanip>
 #include <iostream>
@@ -14,6 +15,9 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#include "koth_config.hpp"
+#include "koth_tuning.hpp"
 
 #ifdef _WIN32
 #include <io.h>
@@ -137,7 +141,28 @@ struct Args {
   int workers = static_cast<int>(std::thread::hardware_concurrency());
   std::vector<koth::SolverVariant> variants = koth::allSolverVariants();
   std::vector<int> indices;
+  std::string tunedConfigPath;
 };
+
+bool argsNeedTunedConfig(const Args& args) {
+  for (const koth::SolverVariant variant : args.variants) {
+    if (variant == koth::SolverVariant::LadderSnipeTuned) return true;
+  }
+  return false;
+}
+
+bool prepareTunedConfig(const Args& args) {
+  if (!argsNeedTunedConfig(args)) return true;
+  const std::string path =
+      args.tunedConfigPath.empty() ? koth::defaultTunedJsonPath() : args.tunedConfigPath;
+  koth::setTunedLadderSnipeConfigPath(path);
+  if (!koth::ensureTunedLadderSnipeConfigLoaded()) {
+    std::cerr << "Failed to load tuned config for ladder_snipe_tuned: " << path << "\n";
+    return false;
+  }
+  std::cout << "ladder_snipe_tuned loads " << path << "\n";
+  return true;
+}
 
 struct BenchStats {
   int solved = 0;
@@ -214,6 +239,10 @@ int parseArgs(int argc, char** argv, Args* out) {
         std::cerr << "--variants requires at least one variant name\n";
         return 1;
       }
+    } else if (arg == "--tuned-config" || arg == "--tuning") {
+      const char* v = need(arg.c_str());
+      if (!v) return 1;
+      out->tunedConfigPath = v;
     } else if (arg == "--indices") {
       const char* v = need(arg.c_str());
       if (!v) return 1;
@@ -247,6 +276,8 @@ int parseArgs(int argc, char** argv, Args* out) {
                 << "  --diff-min N       First difficulty (default 1)\n"
                 << "  --diff-max N       Last difficulty (default 60)\n"
                 << "  --variants LIST    Comma-separated solver variants (default: all)\n"
+                << "  --tuned-config PATH  JSON for ladder_snipe_tuned (default: "
+                << koth::defaultTunedJsonPath() << ")\n"
                 << "  --indices LIST     Comma-separated 1-based assignment indices (case mode)\n"
                 << "  --case-difficulty N  Difficulty for --indices mode (default 60)\n"
                 << "  --list-variants    List registered solver variants\n";
@@ -481,6 +512,8 @@ int main(int argc, char** argv) {
   const int parseCode = parseArgs(argc, argv, &args);
   if (parseCode == 2) return 0;
   if (parseCode != 0) return 1;
+
+  if (!prepareTunedConfig(args)) return 1;
 
   if (!args.indices.empty()) return runCaseMode(args);
 
