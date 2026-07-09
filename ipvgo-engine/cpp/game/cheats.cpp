@@ -100,4 +100,41 @@ CheatResult applyCheat(GameState& state, Color player, CheatType type,
   return result;
 }
 
+CheatResult beginPlayTwoMoves(GameState& state, Color player, int x, int y, double successRng, double ejectRng,
+                              const CheatParams& params) {
+  if (!inBounds(state, x, y) || isOffline(state, x, y)) return CheatResult::InvalidTarget;
+
+  state.passCount = 0;
+  const int priorCheatCount = player == Color::White ? state.cheatCountForWhite : state.cheatCount;
+  const double chance = cheatSuccessChance(state.cheatCount, params);
+
+  if (successRng <= chance) {
+    // Place the first stone only; keep the turn so the caller can place the
+    // second stone (captures resolved then). previousPlayer intentionally
+    // unchanged so whoseTurn() still returns `player`.
+    state.board[x][y] = colorChar(player);
+    if (player == Color::White) {
+      state.cheatCountForWhite++;
+    } else {
+      state.cheatCount++;
+    }
+    return CheatResult::Success;
+  }
+
+  if (priorCheatCount && ejectRng < 0.1 && state.ai != Opponent::None) {
+    state.gameOver = true;
+    return CheatResult::Ejected;
+  }
+
+  passTurn(state, player, false);
+  if (player == Color::White) {
+    state.cheatCountForWhite++;
+  } else {
+    state.cheatCount++;
+  }
+  state.previousPlayer = player;
+  updateCaptures(state.board, player);
+  return CheatResult::TurnSkipped;
+}
+
 }  // namespace ipvgo::game

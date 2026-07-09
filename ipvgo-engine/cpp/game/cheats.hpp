@@ -46,4 +46,14 @@ CheatResult applyCheat(GameState& state, Color player, CheatType type,
                        const std::vector<std::pair<int, int>>& points, double successRng, double ejectRng,
                        const CheatParams& params);
 
+// First half of PlayTwoMoves modeled as an extended action: rolls once, and on
+// success places a single stone at (x,y) WITHOUT resolving captures and WITHOUT
+// yielding the turn, so the same player moves again (the caller places the
+// second stone via the normal environment step, which resolves captures with
+// both stones present -- equivalent to the game's simultaneous two-stone play).
+// Failure (skip / eject) behaves exactly like applyCheat. Returns Success,
+// TurnSkipped, Ejected, or InvalidTarget.
+CheatResult beginPlayTwoMoves(GameState& state, Color player, int x, int y, double successRng, double ejectRng,
+                              const CheatParams& params);
+
 }  // namespace ipvgo::game

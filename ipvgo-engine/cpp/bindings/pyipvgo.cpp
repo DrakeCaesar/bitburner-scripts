@@ -127,6 +127,16 @@ double pyCheatSuccessChance(int cheatCount, double crimeSuccessMult, double sour
   return cheatSuccessChance(cheatCount, params);
 }
 
+py::tuple pyBeginPlayTwoMoves(const GameState& state, Color player, int x, int y, double successRng, double ejectRng,
+                              double crimeSuccessMult, double sourceFileBonus) {
+  GameState next = state;
+  CheatParams params;
+  params.crimeSuccessMult = crimeSuccessMult;
+  params.sourceFileBonus = sourceFileBonus;
+  const CheatResult result = beginPlayTwoMoves(next, player, x, y, successRng, ejectRng, params);
+  return py::make_tuple(next, result, next.gameOver);
+}
+
 }  // namespace
 
 PYBIND11_MODULE(pyipvgo, m) {
@@ -231,6 +241,9 @@ PYBIND11_MODULE(pyipvgo, m) {
   m.def("cheat_success_chance", &pyCheatSuccessChance, py::arg("cheat_count"), py::arg("crime_success_mult") = 1.0,
         py::arg("source_file_bonus") = 0.0);
   m.def("apply_cheat", &pyApplyCheat, py::arg("state"), py::arg("player"), py::arg("type"), py::arg("points"),
+        py::arg("success_rng"), py::arg("eject_rng"), py::arg("crime_success_mult") = 1.0,
+        py::arg("source_file_bonus") = 0.0);
+  m.def("begin_play_two_moves", &pyBeginPlayTwoMoves, py::arg("state"), py::arg("player"), py::arg("x"), py::arg("y"),
         py::arg("success_rng"), py::arg("eject_rng"), py::arg("crime_success_mult") = 1.0,
         py::arg("source_file_bonus") = 0.0);
 
