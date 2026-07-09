@@ -1,10 +1,15 @@
 /* eslint-env node */
 import { defineConfig } from "viteburner"
-import { resolve } from "path"
+import { resolve, dirname } from "path"
+import { fileURLToPath } from "node:url"
 import { createRequire } from "node:module"
+import type { Plugin, ViteDevServer } from "vite"
 
-const require = createRequire(import.meta.url)
-const { bundleSolverWorker } = require("./build/bundleSolverWorker.cjs")
+const repoRoot = dirname(fileURLToPath(import.meta.url))
+const nodeRequire = createRequire(import.meta.url)
+const { bundleSolverWorker } = nodeRequire("./build/bundleSolverWorker.cjs") as {
+  bundleSolverWorker: () => string
+}
 
 /** Game scripts pushed from src/ — do not download back into data/. */
 function isGameScriptFile(file: string): boolean {
@@ -33,11 +38,11 @@ function rewriteGameImportPaths(code: string): string {
  * top-level `import` declarations — not `export from` or dynamic `import()`.
  * Bitburner RAM calc then looks for /src/.../*.ts on home and fails.
  */
-function bitburnerImportPaths() {
+function bitburnerImportPaths(): Plugin {
   return {
     name: "bitburner-import-paths",
-    enforce: "post",
-    apply: "serve",
+    enforce: "post" as const,
+    apply: "serve" as const,
     transform(code: string, id: string) {
       if (!/\.[jt]sx?$/.test(id)) return
       if (!id.replace(/\\/g, "/").includes("/src/")) return
@@ -51,7 +56,7 @@ function bitburnerImportPaths() {
 }
 
 /** Emit import-free IIFE for browser Worker blob (like contractWorker). */
-function solverWorkerBundle() {
+function solverWorkerBundle(): Plugin {
   let bundled = bundleSolverWorker()
 
   return {
@@ -60,8 +65,8 @@ function solverWorkerBundle() {
     buildStart() {
       bundled = bundleSolverWorker()
     },
-    configureServer(server) {
-      server.watcher.on("change", (file) => {
+    configureServer(server: ViteDevServer) {
+      server.watcher.on("change", (file: string) => {
         const norm = file.replace(/\\/g, "/")
         if (!norm.includes("/dnet/solvers/")) return
         if (norm.endsWith("/solverWorker.js")) return
@@ -85,8 +90,8 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@": resolve(__dirname, "src"),
-      "/src": resolve(__dirname, "src"),
+      "@": resolve(repoRoot, "src"),
+      "/src": resolve(repoRoot, "src"),
     },
   },
   build: {

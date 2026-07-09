@@ -426,15 +426,17 @@ bool walkAndPinpoint(ProbeSession& sess, int64_t w, int64_t lo, int64_t hi, bool
  *  - jump k*3w toward the taller side and repeat; k shrinks each round until pinpoint
  */
 bool ladderTraceEnabled() {
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4996)
-#endif
-  static const bool enabled = std::getenv("KOTH_LADDER_TRACE") != nullptr;
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
+#if defined(_MSC_VER)
+  char* buf = nullptr;
+  size_t len = 0;
+  if (_dupenv_s(&buf, &len, "KOTH_LADDER_TRACE") != 0 || buf == nullptr) return false;
+  const bool enabled = buf[0] != '\0';
+  free(buf);
   return enabled;
+#else
+  static const bool enabled = std::getenv("KOTH_LADDER_TRACE") != nullptr;
+  return enabled;
+#endif
 }
 
 void ladderClimb(ProbeSession& sess, int64_t x0, double a0, int64_t w, int hc, int64_t lo, int64_t hi, bool snipe) {

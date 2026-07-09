@@ -1132,15 +1132,16 @@ function deepGreenUnknownCharsetChars(state: DeepGreenState): string[] {
   )
 }
 
-function deepGreenStartUnknownTail(state: DeepGreenState): void {
+function deepGreenStartUnknownTail(state: DeepGreenState): boolean {
   const unknown = deepGreenUnknownCharsetChars(state)
-  if (unknown.length === 0) return
+  if (unknown.length === 0) return false
   state.phase1Mode = "tail"
   state.tailIdx = 0
   const inPool = new Set(state.pool)
   for (const ch of unknown) {
     if (!inPool.has(ch)) state.pool.push(ch)
   }
+  return true
 }
 
 function deepGreenRecordConstraint(
@@ -1268,16 +1269,14 @@ function deepGreenNextCountGuess(state: DeepGreenState): { guess: string; detail
     return deepGreenNextTailGuess(state)
   }
   if (state.totalCount < state.length) {
-    deepGreenStartUnknownTail(state)
-    if (state.phase1Mode === "tail") return deepGreenNextTailGuess(state)
+    if (deepGreenStartUnknownTail(state)) return deepGreenNextTailGuess(state)
   }
   return deepGreenFinishPhase1(state)
 }
 
 function deepGreenFinishPhase1(state: DeepGreenState): { guess: string; detail: string } | null {
   if (state.totalCount < state.length) {
-    deepGreenStartUnknownTail(state)
-    if (state.phase1Mode === "tail") return deepGreenNextTailGuess(state)
+    if (deepGreenStartUnknownTail(state)) return deepGreenNextTailGuess(state)
   }
 
   if (state.totalCount >= state.length) {
@@ -1459,8 +1458,7 @@ const deepGreen: SolverModule<DeepGreenState> = {
         return deepGreenNextTailGuess(state)
       }
       if (state.totalCount < state.length) {
-        deepGreenStartUnknownTail(state)
-        if (state.phase1Mode === "tail") return deepGreenNextTailGuess(state)
+        if (deepGreenStartUnknownTail(state)) return deepGreenNextTailGuess(state)
       }
       state.phase1Mode = "count"
       return deepGreenNextCountGuess(state)

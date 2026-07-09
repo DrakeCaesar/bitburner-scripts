@@ -27,7 +27,6 @@
     "stockApi.d.ts",
     "global.d.ts",
     "viteburner.d.ts",
-    "vite.config.ts",
-    "vite.config.js"
+    "vite.config.mts"
   ]
 }
