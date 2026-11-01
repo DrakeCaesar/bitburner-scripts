@@ -319,6 +319,8 @@ function handleHealth(_req, res) {
     nativeBuilt: fs.existsSync(nativeExecutablePath()),
     mcgsPath: mcgsExecutablePath(),
     mcgsBuilt: fs.existsSync(mcgsExecutablePath()),
+    // The bench never uses the in-game move engine; it always runs the exploiter.
+    benchEngine: "exploit",
     timestamp: new Date().toISOString(),
   })
 }
@@ -594,10 +596,10 @@ const server = http.createServer(async (req, res) => {
 server.listen(port, () => {
   const engine = activeEngine()
   console.log(`IPvGO engine server http://localhost:${port}`)
-  console.log(`Active engine: ${engine}`)
+  console.log(`In-game move engine: ${engine}  (POST /api/ipvgo/move only)`)
+  console.log(`Bench GUI: http://localhost:${port}/bench  (always the C++ exploiter, ipvgo_game)`)
   console.log(`Health: http://localhost:${port}/health`)
   console.log(`Move API: POST http://localhost:${port}/api/ipvgo/move`)
-  console.log(`Bench GUI: http://localhost:${port}/bench`)
 
   if (engine === "katago") {
     warmupKatago().catch((err) => {
