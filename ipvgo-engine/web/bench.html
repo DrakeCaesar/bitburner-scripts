@@ -181,6 +181,11 @@
       const selected = new Set(ALL_FACTIONS)
       let state = null
 
+      // The page is served by the engine server, but it still works when opened
+      // straight from disk as long as the server runs on its default port.
+      const API_BASE =
+        location.protocol === "file:" ? "http://localhost:3010" : ""
+
       const el = (id) => document.getElementById(id)
 
       function renderFactionChips() {
@@ -378,11 +383,15 @@
 
       async function poll() {
         try {
-          const res = await fetch("/api/bench/state")
+          const res = await fetch(`${API_BASE}/api/bench/state`)
           state = await res.json()
           render()
         } catch {
           el("status").textContent = "server offline"
+          el("status").className = "pill failed"
+          el("error").textContent =
+            "Cannot reach the engine server. Run `pnpm run server` at the repo root, " +
+            "then open http://localhost:3010/bench"
         }
       }
 
@@ -397,7 +406,7 @@
         }
         if (body.factions.length === 0) body.factions = null
         el("start").disabled = true
-        await fetch("/api/bench/start", {
+        await fetch(`${API_BASE}/api/bench/start`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
@@ -406,7 +415,7 @@
       })
 
       el("stop").addEventListener("click", async () => {
-        await fetch("/api/bench/stop", { method: "POST" })
+        await fetch(`${API_BASE}/api/bench/stop`, { method: "POST" })
         await poll()
       })
 
