@@ -9,8 +9,9 @@ namespace ipvgo::nn {
 struct BenchOptions {
   int size = 5;
   int gamesPerFaction = 20;
-  int budgetMs = 300;  // wall-clock budget per Black move (iterative deepening)
-  int depth = 2;       // fixed depth, used when budgetMs <= 0
+  int budgetMs = 300;  // per-move wall-clock budget (iterative deepening)
+  long iterations = 0;  // per-move node budget; takes precedence over budgetMs
+  int depth = 2;       // fixed depth, used when there is no budget
   int maxDepth = 10;   // iterative-deepening ceiling
   uint64_t seed = 1;
   std::vector<std::string> factions;  // empty = every faction for this board size

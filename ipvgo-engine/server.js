@@ -189,9 +189,13 @@ async function handleBenchStart(req, res) {
   stopBench()
 
   const size = Number(body?.size ?? 5)
+  const requestedMs = Math.max(0, Number(body?.budgetMs ?? 0))
+  const iterations = Math.max(0, Math.floor(Number(body?.iterations ?? 0)))
   const options = {
     size,
-    budgetMs: Math.max(0, Number(body?.budgetMs ?? 200)),
+    // A node budget and a time budget are alternatives; default to 200 ms.
+    budgetMs: iterations > 0 ? 0 : requestedMs > 0 ? requestedMs : 200,
+    iterations,
     games: Math.max(1, Math.min(500, Number(body?.games ?? 20))),
     seed: Number(body?.seed ?? 1),
     factions: Array.isArray(body?.factions) && body.factions.length > 0 ? body.factions : undefined,

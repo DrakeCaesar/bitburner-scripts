@@ -511,6 +511,10 @@ int runExploitMove(const std::string& inPath, const std::string& outPath) {
   cfg.nodeBudget = req.value("nodeBudget", 200000);
   cfg.threads = req.value("threads", 0);
   cfg.budgetMs = req.value("budgetMs", 0);
+  // `iterations` is what the in-game client sends; treat it as a node budget.
+  cfg.nodeLimit = req.value("nodeLimit", 0L);
+  if (cfg.nodeLimit <= 0) cfg.nodeLimit = req.value("iterations", 0L);
+  if (cfg.nodeLimit > 0) cfg.budgetMs = 0;
 
   const auto t0 = std::chrono::steady_clock::now();
   const ExploitResult result = runExploiter(state, cfg);
@@ -805,7 +809,16 @@ int main(int argc, char** argv) {
   }
   if (cmd == "bench") {
     BenchOptions options;
-    if (argc >= 3) options.budgetMs = std::stoi(argv[2]);
+    if (argc >= 3) {
+      // "20000i" means a node/iteration budget instead of milliseconds.
+      const std::string budget = argv[2];
+      if (!budget.empty() && (budget.back() == 'i' || budget.back() == 'n')) {
+        options.iterations = std::stol(budget.substr(0, budget.size() - 1));
+        options.budgetMs = 0;
+      } else {
+        options.budgetMs = std::stoi(budget);
+      }
+    }
     if (argc >= 4) options.gamesPerFaction = std::stoi(argv[3]);
     if (argc >= 5) options.seed = std::stoull(argv[4]);
     if (argc >= 6) options.size = std::stoi(argv[5]);
@@ -828,6 +841,8 @@ int main(int argc, char** argv) {
       const json config = json::parse(text);
       options.size = config.value("size", 5);
       options.budgetMs = config.value("budgetMs", 200);
+      options.iterations = config.value("iterations", 0L);
+      if (options.iterations > 0) options.budgetMs = 0;
       options.gamesPerFaction = config.value("games", 10);
       options.seed = config.value("seed", static_cast<uint64_t>(1));
       options.depth = config.value("depth", 2);

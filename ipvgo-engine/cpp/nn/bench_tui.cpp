@@ -85,6 +85,7 @@ struct LiveView {
   bool thinking = false;
   std::chrono::steady_clock::time_point thinkStart = std::chrono::steady_clock::now();
   int budgetMs = 0;
+  long iterations = 0;
   int lastDepth = 0;
   long lastNodes = 0;
   double lastMs = 0.0;
@@ -174,8 +175,13 @@ std::vector<std::string> renderFrame(const LiveView& view, double elapsedMs, siz
     current << "   " << kGreen << "finished" << kReset;
   } else if (view.thinking) {
     current << "   " << kYellow << kSpinner[frame % 4] << " thinking " << std::setw(4)
-            << static_cast<int>(elapsedMs) << " ms" << kReset << kGrey << " / budget " << view.budgetMs
-            << " ms" << kReset;
+            << static_cast<int>(elapsedMs) << " ms" << kReset << kGrey << " / budget ";
+    if (view.iterations > 0) {
+      current << view.iterations << " nodes";
+    } else {
+      current << view.budgetMs << " ms";
+    }
+    current << kReset;
   } else {
     current << "   " << kGrey << "applying white reply" << kReset;
   }
@@ -306,6 +312,7 @@ int runBenchGames(const BenchOptions& options, BenchObserver& observer) {
 
   ExploitConfig cfg;
   cfg.budgetMs = options.budgetMs;
+  cfg.nodeLimit = options.iterations;
   cfg.depth = options.depth;
   cfg.maxDepth = options.maxDepth;
 
@@ -380,6 +387,7 @@ class LiveObserver : public BenchObserver {
  public:
   LiveObserver(const BenchOptions& options, size_t factionCount) : live_(resolveLive()) {
     view_.budgetMs = options.budgetMs;
+    view_.iterations = options.iterations;
     view_.gameCount = options.gamesPerFaction;
     view_.factionCount = factionCount;
     if (live_) {

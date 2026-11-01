@@ -158,14 +158,20 @@
             <option>5</option><option>7</option><option>9</option><option>13</option><option>19</option>
           </select>
         </label>
-        <label class="field"><span>Think budget (ms)</span><input id="budget" type="number" min="0" step="50" value="200" /></label>
+        <label class="field"><span>Budget type</span>
+          <select id="budgetMode">
+            <option value="time">Time (ms)</option>
+            <option value="iterations">Iterations (nodes)</option>
+          </select>
+        </label>
+        <label class="field"><span id="budgetLabel">Think budget (ms)</span><input id="budget" type="number" min="1" step="50" value="200" /></label>
         <label class="field"><span>Games per faction</span><input id="games" type="number" min="1" max="500" value="20" /></label>
         <label class="field"><span>Seed</span><input id="seed" type="number" min="1" value="1" /></label>
         <div class="buttons">
           <button id="start" class="primary">Start</button>
           <button id="stop">Stop</button>
         </div>
-        <div class="hint">Budget 0 falls back to fixed depth 2. Board 19 runs WorldDaemon.</div>
+        <div class="hint" id="hint">Settings are remembered across reloads.</div>
       </section>
 
       <section>
@@ -202,7 +208,75 @@
       const API_BASE =
         location.protocol === "file:" ? "http://localhost:3010" : ""
 
+      const STORAGE_KEY = "ipvgo-bench-form-v1"
+      const DEFAULT_FORM = {
+        size: "5",
+        budgetMode: "time",
+        budget: "200",
+        games: "20",
+        seed: "1",
+        factions: ALL_FACTIONS.slice(),
+      }
+
       const el = (id) => document.getElementById(id)
+
+      function readForm() {
+        return {
+          size: el("size").value,
+          budgetMode: el("budgetMode").value,
+          budget: el("budget").value,
+          games: el("games").value,
+          seed: el("seed").value,
+          factions: Array.from(selected),
+        }
+      }
+
+      function saveForm() {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(readForm()))
+        } catch {
+          /* storage disabled */
+        }
+      }
+
+      function loadForm() {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY)
+          if (!raw) return { ...DEFAULT_FORM }
+          const stored = JSON.parse(raw)
+          const budgetMode = stored.budgetMode === "iterations" ? "iterations" : "time"
+          const factions = Array.isArray(stored.factions)
+            ? stored.factions.filter((f) => ALL_FACTIONS.includes(f))
+            : DEFAULT_FORM.factions.slice()
+          return {
+            size: String(stored.size ?? DEFAULT_FORM.size),
+            budgetMode,
+            budget: String(stored.budget ?? (budgetMode === "iterations" ? 50000 : 200)),
+            games: String(stored.games ?? DEFAULT_FORM.games),
+            seed: String(stored.seed ?? DEFAULT_FORM.seed),
+            factions: factions.length > 0 ? factions : DEFAULT_FORM.factions.slice(),
+          }
+        } catch {
+          return { ...DEFAULT_FORM }
+        }
+      }
+
+      function applyForm(form) {
+        el("size").value = form.size
+        el("budgetMode").value = form.budgetMode
+        el("budget").value = form.budget
+        el("games").value = form.games
+        el("seed").value = form.seed
+        selected.clear()
+        for (const faction of form.factions) selected.add(faction)
+        updateBudgetLabel()
+      }
+
+      function updateBudgetLabel() {
+        const iterations = el("budgetMode").value === "iterations"
+        el("budgetLabel").textContent = iterations ? "Node budget" : "Think budget (ms)"
+        el("budget").step = iterations ? "1000" : "50"
+      }
 
       function renderFactionChips() {
         const size = Number(el("size").value)
@@ -219,6 +293,7 @@
             if (selected.has(faction)) selected.delete(faction)
             else selected.add(faction)
             renderFactionChips()
+            saveForm()
           })
           wrap.appendChild(chip)
         }
@@ -450,14 +525,18 @@
 
       el("start").addEventListener("click", async () => {
         const size = Number(el("size").value)
+        const mode = el("budgetMode").value
+        const budget = Math.max(1, Math.floor(Number(el("budget").value) || 1))
         const body = {
           size,
-          budgetMs: Number(el("budget").value),
           games: Number(el("games").value),
           seed: Number(el("seed").value),
+          budgetMs: mode === "time" ? budget : 0,
+          iterations: mode === "iterations" ? budget : 0,
           factions: size === 19 ? ["WorldDaemon"] : Array.from(selected),
         }
         if (body.factions.length === 0) body.factions = null
+        saveForm()
         el("start").disabled = true
         await fetch(`${API_BASE}/api/bench/start`, {
           method: "POST",
@@ -472,8 +551,25 @@
         await poll()
       })
 
+      for (const id of ["size", "games", "seed", "budget"]) {
+        el(id).addEventListener("change", saveForm)
+        el(id).addEventListener("input", saveForm)
+      }
+
       el("size").addEventListener("change", renderFactionChips)
 
+      el("budgetMode").addEventListener("change", () => {
+        const iterations = el("budgetMode").value === "iterations"
+        const current = Number(el("budget").value) || 0
+        // Swap in a comparable default when the stored number is meaningless for
+        // the new unit (200 nodes or 50000 ms would both be nonsense).
+        if (iterations && current < 1000) el("budget").value = "50000"
+        if (!iterations && current > 5000) el("budget").value = "200"
+        updateBudgetLabel()
+        saveForm()
+      })
+
+      applyForm(loadForm())
       renderFactionChips()
       el("stop").disabled = true
       poll()

@@ -132,13 +132,23 @@ pnpm run server            # engine server on http://localhost:3010
 # open http://localhost:3010/bench
 ```
 
-The page picks factions, board size (5/7/9/13/19), think budget in ms, games per
+The page picks factions, board size (5/7/9/13/19), the thinking budget, games per
 faction and seed, then streams `ipvgo_game benchjson` events through the server:
 
-- live board (stones, obstacles, last Black/White move rings, star points),
+- live board (stones, obstacles, last Black/White move markers, star points),
 - per-move search numbers (depth, nodes, think ms, score),
 - per-faction table with W/L, win %, average margin, ms/move and progress bar,
 - recent game results and a PASS/FAIL pill when the run finishes.
+
+The thinking budget comes in two flavours, chosen with **Budget type**:
+
+- **Time (ms)** — wall-clock per move; iterative deepening keeps the last depth
+  that finished in time.
+- **Iterations (nodes)** — a node budget per move (shared across search threads),
+  so runs are reproducible on any machine or CPU load.
+
+Everything on the form (factions, board size, budget type and value, games, seed)
+is stored in `localStorage` and restored on reload, so a refresh keeps your setup.
 
 Endpoints: `GET /bench`, `GET /api/bench/state`, `POST /api/bench/start`,
 `POST /api/bench/stop`. Stopping the server also stops a running bench.
@@ -149,11 +159,16 @@ Endpoints: `GET /bench`, `GET /api/bench/state`, `POST /api/bench/start`,
 # Live terminal UI: board, spinner, per-faction win table
 ./scripts/mcgs.sh bench 200 20 1 5
 
+# Node budget instead of milliseconds ("i" suffix)
+./scripts/mcgs.sh bench 20000i 20 1 5
+
 # One faction only
 ./scripts/mcgs.sh bench 200 20 1 5 Illuminati
 
-# Streaming NDJSON (what the web GUI consumes); accepts a JSON string or a path
+# Streaming NDJSON (what the web GUI consumes); accepts a JSON string or a path.
+# Use either "budgetMs" or "iterations" (nodes), not both.
 ./build/Release/ipvgo_game benchjson '{"size":5,"budgetMs":200,"games":20}'
+./build/Release/ipvgo_game benchjson '{"size":5,"iterations":50000,"games":20}'
 
 # Black vs one faction at a fixed depth, plus the policy-model check
 ./scripts/mcgs.sh exploitplay Netburners 5 20 2 1
@@ -166,5 +181,6 @@ Endpoints: `GET /bench`, `GET /api/bench/state`, `POST /api/bench/start`,
 The HTTP server also exposes the exploiter for real games with
 `IPVGO_ENGINE=exploit` (POST `/api/ipvgo/move`, engine reported as `exploit`,
 native MCTS as fallback). `exploitmove` accepts `depth`, `beam`,
-`whiteChildren`, `whiteMass`, `endgameEmpties`, `nodeBudget`, `threads` and
-`budgetMs` (iterative deepening with a wall-clock budget).
+`whiteChildren`, `whiteMass`, `endgameEmpties`, `nodeBudget`, `threads`,
+`budgetMs` (wall-clock iterative deepening) and `iterations`/`nodeLimit` (node
+budget; the in-game client's `iterations` field is used as the node budget).
