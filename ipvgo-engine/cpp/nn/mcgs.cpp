@@ -222,7 +222,7 @@ void buildChildren(McgsNode* node, const McgsConfig& cfg, const SearchContext& c
   if (player == Color::White && cfg.playOpponent) {
     MathRandom localMr(1ULL);
     MathRandom& mr = ctx.mathRng ? *ctx.mathRng : localMr;
-    for (const auto& [x, y] : enumerateFactionMoves(node->state, player, node->state.ai, mr)) {
+    for (const auto& [x, y] : enumerateOpponentMoves(node->state, player, node->state.ai, mr)) {
       McgsChild child;
       child.move.x = x;
       child.move.y = y;

@@ -31,4 +31,8 @@ std::vector<std::pair<int, int>> blackExploitMoves(const GameState& state, Oppon
 std::vector<Pt> enumerateFactionMoves(const GameState& state, Color player, Opponent opponent,
                                       MathRandom& mathRng);
 
+// Faction-specific move universe for search (Netburners uses a tighter model).
+std::vector<Pt> enumerateOpponentMoves(const GameState& state, Color player, Opponent opponent,
+                                         MathRandom& mathRng);
+
 }  // namespace ipvgo::game

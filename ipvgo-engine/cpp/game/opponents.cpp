@@ -416,6 +416,69 @@ class MoveGen {
     });
   }
 
+  const std::vector<Pt>& availableSpaces() const { return availableSpaces_; }
+  const std::vector<Pt>& expansionMoves() const { return expansionMoves_; }
+
+  std::vector<Pt> growthMaxDeltaPoints() const {
+    if (endGameAvailable_) return {};
+    const std::vector<GrowthCandidate> growthMoves = getLibertyGrowthMoves(board_, player_, availableSet_);
+    if (growthMoves.empty()) return {};
+    int maxDelta = growthMoves[0].newLibertyCount - growthMoves[0].oldLibertyCount;
+    for (const auto& m : growthMoves) maxDelta = std::max(maxDelta, m.newLibertyCount - m.oldLibertyCount);
+    std::vector<Pt> out;
+    for (const auto& m : growthMoves) {
+      if (m.newLibertyCount - m.oldLibertyCount == maxDelta) out.emplace_back(m.x, m.y);
+    }
+    return out;
+  }
+
+  std::vector<Pt> patternPoints() const {
+    if (endGameAvailable_) return {};
+    const int N = static_cast<int>(board_.size());
+    std::vector<Pt> moves;
+    for (int x = 0; x < N; ++x) {
+      for (int y = 0; y < N; ++y) {
+        if (!matchesAnyPattern(board_, x, y, player_)) continue;
+        if (!availableSet_.count(flatIndex(N, x, y))) continue;
+        if (smart_ && findEffectiveLibertiesOfNewMove(board_, x, y, player_).size() <= 1) continue;
+        moves.emplace_back(x, y);
+      }
+    }
+    return moves;
+  }
+
+  std::vector<Pt> jumpOptions() const {
+    const int N = static_cast<int>(board_.size());
+    const char me = colorChar(player_);
+    std::vector<Pt> options;
+    for (const auto& [x, y] : expansionMoves_) {
+      const bool nearFriend =
+          (y + 2 < N && board_[x][y + 2] == me) || (x + 2 < N && board_[x + 2][y] == me) ||
+          (y - 2 >= 0 && board_[x][y - 2] == me) || (x - 2 >= 0 && board_[x - 2][y] == me);
+      if (nearFriend) options.emplace_back(x, y);
+    }
+    return options;
+  }
+
+  void addFallbackCandidates(const GameState& state, Color player, std::unordered_set<int>& seen,
+                             std::vector<Pt>& out) {
+    const int N = state.size;
+    auto consider = [&](const AiMove& m) {
+      if (!m.valid || evaluateIfMoveIsValid(state, m.x, m.y, player) != Validity::Valid) return;
+      const int idx = flatIndex(N, m.x, m.y);
+      if (seen.count(idx)) return;
+      seen.insert(idx);
+      out.emplace_back(m.x, m.y);
+    };
+    consider(growth());
+    consider(surround());
+    consider(defend());
+    consider(expansion());
+    consider(pattern());
+    consider(eyeMove());
+    consider(eyeBlock());
+  }
+
  private:
   enum Kind { kSurround, kDefend, kEyeMove, kEyeBlock, kPattern, kGrowth, kExpansion, kJump, kCorner, kRandom, kCount };
 
@@ -443,10 +506,33 @@ class MoveGen {
 
   std::array<AiMove, kCount> cache_{};
   std::array<bool, kCount> computed_{};
-
-  public:
-  const std::vector<Pt>& availableSpaces() const { return availableSpaces_; }
 };
+
+void addIlluminatiCandidates(MoveGen& gen, const GameState& state, Color player, std::unordered_set<int>& seen,
+                             std::vector<Pt>& out) {
+  const int N = state.size;
+  auto addValid = [&](int x, int y) {
+    if (evaluateIfMoveIsValid(state, x, y, player) != Validity::Valid) return;
+    const int idx = flatIndex(N, x, y);
+    if (seen.count(idx)) return;
+    seen.insert(idx);
+    out.emplace_back(x, y);
+  };
+  auto addAi = [&](const AiMove& m) {
+    if (m.valid) addValid(m.x, m.y);
+  };
+
+  addAi(gen.capture());
+  addAi(gen.defendCapture());
+  addAi(gen.eyeMove());
+  const AiMove surround = gen.surround();
+  if (surround.valid && surround.newLibertyCount <= 1) addValid(surround.x, surround.y);
+  addAi(gen.eyeBlock());
+  addAi(gen.corner());
+  for (const auto& [x, y] : gen.patternPoints()) addValid(x, y);
+  for (const auto& [x, y] : gen.jumpOptions()) addValid(x, y);
+  if (surround.valid && surround.newLibertyCount <= 2) addValid(surround.x, surround.y);
+}
 
 std::vector<Pt> enumerateFactionMovesImpl(const GameState& state, Color player, Opponent opponent,
                                           MathRandom& mathRng) {
@@ -474,13 +560,40 @@ std::vector<Pt> enumerateFactionMovesImpl(const GameState& state, Color player, 
   addAi(gen.defend());
   addAi(gen.eyeMove());
   addAi(gen.eyeBlock());
-  addAi(gen.pattern());
-  addAi(gen.growth());
-  addAi(gen.expansion());
-  addAi(gen.jump());
+  for (const auto& [x, y] : gen.patternPoints()) addValid(x, y);
+  for (const auto& [x, y] : gen.growthMaxDeltaPoints()) addValid(x, y);
+  for (const auto& [x, y] : gen.expansionMoves()) addValid(x, y);
+  for (const auto& [x, y] : gen.jumpOptions()) addValid(x, y);
   addAi(gen.corner());
-
   for (const auto& [x, y] : gen.availableSpaces()) addValid(x, y);
+  gen.addFallbackCandidates(state, player, seen, out);
+
+  return out;
+}
+
+std::vector<Pt> enumerateNetburnersMovesImpl(const GameState& state, Color player, MathRandom& mathRng) {
+  MoveGen gen(state, player, 0.0, false, mathRng);
+
+  std::unordered_set<int> seen;
+  std::vector<Pt> out;
+  const int N = state.size;
+
+  auto addValid = [&](int x, int y) {
+    if (evaluateIfMoveIsValid(state, x, y, player) != Validity::Valid) return;
+    const int idx = flatIndex(N, x, y);
+    if (seen.count(idx)) return;
+    seen.insert(idx);
+    out.emplace_back(x, y);
+  };
+
+  // 20% branch: any move Illuminati priority could return.
+  addIlluminatiCandidates(gen, state, player, seen, out);
+  // 20% expansion, 20% growth, 15% random-from-contested pools.
+  for (const auto& [x, y] : gen.expansionMoves()) addValid(x, y);
+  for (const auto& [x, y] : gen.growthMaxDeltaPoints()) addValid(x, y);
+  for (const auto& [x, y] : gen.availableSpaces()) addValid(x, y);
+  // getMove fallback when netburnersMove returns null.
+  gen.addFallbackCandidates(state, player, seen, out);
 
   return out;
 }
@@ -632,6 +745,12 @@ std::vector<std::pair<int, int>> blackExploitMoves(const GameState& state, Oppon
 
 std::vector<Pt> enumerateFactionMoves(const GameState& state, Color player, Opponent opponent,
                                       MathRandom& mathRng) {
+  return enumerateFactionMovesImpl(state, player, opponent, mathRng);
+}
+
+std::vector<Pt> enumerateOpponentMoves(const GameState& state, Color player, Opponent opponent,
+                                       MathRandom& mathRng) {
+  if (opponent == Opponent::Netburners) return enumerateNetburnersMovesImpl(state, player, mathRng);
   return enumerateFactionMovesImpl(state, player, opponent, mathRng);
 }
 
