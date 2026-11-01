@@ -3,8 +3,8 @@
  * Exits non-zero unless every faction hits 100% wins.
  *
  *   node scripts/bench-factions.js [size] [games] [budget] [seed] [engine]
- *   pnpm run game:bench -- 5 200 10000
- *   pnpm run game:bench -- 5 20 3 1 exploit
+ *   pnpm run ipvgo:bench -- 5 200 10000
+ *   pnpm run ipvgo:bench -- 5 20 3 1 exploit
  *
  * engine: "mcgs" (default, budget = playouts) or "exploit" (budget = search depth).
  */
@@ -29,13 +29,17 @@ const FACTIONS_5_13 = [
 
 function findExe() {
   const exe = isWindows ? "ipvgo_game.exe" : "ipvgo_game"
-  const candidates = [
-    path.join(root, "build", "Release", exe),
-    path.join(root, "build", exe),
-    path.join(root, "build-game", "Release", exe),
-    path.join(root, "build-game", exe),
+  const buildDirs = [
+    path.join(root, "..", "cmake-build", "bin", "Release"),
+    path.join(root, "..", "cmake-build", "bin"),
+    path.join(root, "..", "cmake-build", "Release"),
+    path.join(root, "..", "cmake-build"),
+    path.join(root, "build", "Release"),
+    path.join(root, "build"),
+    path.join(root, "build-game", "Release"),
+    path.join(root, "build-game"),
   ]
-  return candidates.find((p) => fs.existsSync(p))
+  return buildDirs.map((dir) => path.join(dir, exe)).find((p) => fs.existsSync(p))
 }
 
 const size = Number(process.argv[2] ?? 5)
@@ -50,7 +54,7 @@ if (![5, 7, 9, 13, 19].includes(size)) {
 
 const exe = findExe()
 if (!exe) {
-  console.error("ipvgo_game not built. Run: pnpm run game:build")
+  console.error("ipvgo_game not built. Run: pnpm run ipvgo:build")
   process.exit(1)
 }
 

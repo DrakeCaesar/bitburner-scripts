@@ -9,7 +9,11 @@
 /playground/dist/
 /src/dnet/solvers/solverWorker.js
 
-# IPvGO native / WASM engine build artifacts
+# Unified native build (root CMakeLists.txt + CMakePresets.json)
+/cmake-build/
+/cmake-build-debug/
+
+# IPvGO native / WASM engine build artifacts (standalone per-component builds)
 ipvgo-engine/build/
 ipvgo-engine/temp/
 ipvgo-engine/cpp/*.wasm

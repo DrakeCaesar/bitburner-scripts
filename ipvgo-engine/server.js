@@ -22,17 +22,37 @@ const forceExploit = engineOverride === "exploit"
 let activeNativeChild = null
 
 function nativeExecutablePath() {
-  const isWindows = process.platform === "win32"
-  return isWindows
-    ? path.join(__dirname, "build", "Release", "ipvgo_engine.exe")
-    : path.join(__dirname, "build", "ipvgo_engine")
+  return findNativeExecutable("ipvgo_engine")
 }
 
 function mcgsExecutablePath() {
+  return findNativeExecutable("ipvgo_game")
+}
+
+// Native targets are built from the repo root into `cmake-build` (see the root
+// CMakeLists.txt and CMakePresets.json). Older per-component build dirs are
+// still accepted so a stale checkout keeps working.
+function nativeExecutableCandidates(name) {
   const isWindows = process.platform === "win32"
-  return isWindows
-    ? path.join(__dirname, "build", "Release", "ipvgo_game.exe")
-    : path.join(__dirname, "build", "ipvgo_game")
+  const suffixes = isWindows ? [".exe"] : ["", ".exe"]
+  const dirs = [
+    path.join(__dirname, "..", "cmake-build", "bin", "Release"),
+    path.join(__dirname, "..", "cmake-build", "bin"),
+    path.join(__dirname, "..", "cmake-build", "Release"),
+    path.join(__dirname, "..", "cmake-build"),
+    path.join(__dirname, "build", "Release"),
+    path.join(__dirname, "build"),
+  ]
+  const out = []
+  for (const dir of dirs) {
+    for (const suffix of suffixes) out.push(path.join(dir, name + suffix))
+  }
+  return out
+}
+
+function findNativeExecutable(name) {
+  const candidates = nativeExecutableCandidates(name)
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[0]
 }
 
 // ---- Bench (exploiter self-play against the scripted factions) -------------

@@ -2,8 +2,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SRC_DIR="$ROOT/tests/koth_tune"
-BUILD_DIR="$SRC_DIR/build"
-PRESET="koth-tune-release"
+BUILD_DIR="$ROOT/cmake-build"
+PRESET="release"
 
 file_mtime() {
   if stat --version &>/dev/null 2>&1; then
@@ -15,10 +15,14 @@ file_mtime() {
 
 find_exe() {
   local candidates=(
-    "$BUILD_DIR/Release/koth_bench.exe"
-    "$BUILD_DIR/Release/koth_bench"
-    "$BUILD_DIR/koth_bench.exe"
-    "$BUILD_DIR/koth_bench"
+    "$BUILD_DIR/bin/Release/koth_bench.exe"
+    "$BUILD_DIR/bin/Release/koth_bench"
+    "$BUILD_DIR/bin/koth_bench.exe"
+    "$BUILD_DIR/bin/koth_bench"
+    "$SRC_DIR/build/Release/koth_bench.exe"
+    "$SRC_DIR/build/Release/koth_bench"
+    "$SRC_DIR/build/koth_bench.exe"
+    "$SRC_DIR/build/koth_bench"
   )
   for exe in "${candidates[@]}"; do
     if [[ -f "$exe" ]]; then
@@ -38,7 +42,7 @@ newest_source_mtime() {
       newest=$m
     fi
   done < <(
-    find "$SRC_DIR/src" "$SRC_DIR/CMakeLists.txt" "$SRC_DIR/CMakePresets.json" \
+    find "$SRC_DIR/src" "$SRC_DIR/CMakeLists.txt" "$ROOT/CMakeLists.txt" "$ROOT/CMakePresets.json" \
       -type f \( -name '*.cpp' -o -name '*.hpp' -o -name 'CMakeLists.txt' -o -name 'CMakePresets.json' \) \
       -print0 2>/dev/null
   )
@@ -66,7 +70,7 @@ needs_rebuild() {
 
 configure_if_needed() {
   if [[ ! -f "$BUILD_DIR/CMakeCache.txt" ]]; then
-    cmake --preset "$PRESET" -S "$SRC_DIR"
+    cmake --preset "$PRESET" -S "$ROOT"
   fi
 }
 

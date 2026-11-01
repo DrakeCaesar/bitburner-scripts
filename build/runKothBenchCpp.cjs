@@ -4,14 +4,18 @@ const fs = require("node:fs")
 
 const ROOT = path.join(__dirname, "..")
 const SRC_DIR = path.join(ROOT, "tests/koth_tune")
-const BUILD_DIR = path.join(SRC_DIR, "build")
-const PRESET = "koth-tune-release"
+const BUILD_DIR = path.join(ROOT, "cmake-build")
+const PRESET = "release"
 
 const EXE_CANDIDATES = [
-  path.join(BUILD_DIR, "Release", "koth_bench.exe"),
-  path.join(BUILD_DIR, "Release", "koth_bench"),
-  path.join(BUILD_DIR, "koth_bench.exe"),
-  path.join(BUILD_DIR, "koth_bench"),
+  path.join(BUILD_DIR, "bin", "Release", "koth_bench.exe"),
+  path.join(BUILD_DIR, "bin", "Release", "koth_bench"),
+  path.join(BUILD_DIR, "bin", "koth_bench.exe"),
+  path.join(BUILD_DIR, "bin", "koth_bench"),
+  path.join(SRC_DIR, "build", "Release", "koth_bench.exe"),
+  path.join(SRC_DIR, "build", "Release", "koth_bench"),
+  path.join(SRC_DIR, "build", "koth_bench.exe"),
+  path.join(SRC_DIR, "build", "koth_bench"),
 ]
 
 function findExe() {
@@ -49,7 +53,8 @@ function needsRebuild(exe, args) {
   const sources = [
     ...collectSourceFiles(path.join(SRC_DIR, "src")),
     path.join(SRC_DIR, "CMakeLists.txt"),
-    path.join(SRC_DIR, "CMakePresets.json"),
+    path.join(ROOT, "CMakeLists.txt"),
+    path.join(ROOT, "CMakePresets.json"),
   ]
   const srcMtime = newestMtime(sources)
   const exeMtime = fs.statSync(exe).mtimeMs
@@ -58,7 +63,7 @@ function needsRebuild(exe, args) {
 
 function configureIfNeeded() {
   if (!fs.existsSync(path.join(BUILD_DIR, "CMakeCache.txt"))) {
-    execFileSync("cmake", ["--preset", PRESET, "-S", SRC_DIR], {
+    execFileSync("cmake", ["--preset", PRESET], {
       stdio: "inherit",
       cwd: ROOT,
     })

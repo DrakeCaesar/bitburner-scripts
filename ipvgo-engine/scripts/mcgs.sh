@@ -6,14 +6,15 @@
 #   ./scripts/mcgs.sh bench [size] [games] [playouts] [seed]
 #
 # Env:
-#   IPVGO_BUILD_DIR=build       CMake build directory (default: ipvgo-engine/build)
+#   IPVGO_BUILD_DIR=<dir>       CMake build directory (default: repo-root cmake-build)
 #   IPVGO_BUILD_TYPE=Release    CMake configuration
 #   IPVGO_FORCE_BUILD=1         Always rebuild before run
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BUILD_DIR="${IPVGO_BUILD_DIR:-$ROOT/build}"
+REPO_ROOT="$(cd "$ROOT/.." && pwd)"
+BUILD_DIR="${IPVGO_BUILD_DIR:-$REPO_ROOT/cmake-build}"
 BUILD_TYPE="${IPVGO_BUILD_TYPE:-Release}"
 
 FACTIONS_5_13=(Netburners "Slum Snakes" "The Black Hand" Tetrads Daedalus Illuminati)
@@ -37,8 +38,12 @@ find_exe() {
 
 resolve_exe() {
   local candidates=(
+    "$BUILD_DIR/bin/$BUILD_TYPE/ipvgo_game"
+    "$BUILD_DIR/bin/ipvgo_game"
     "$BUILD_DIR/$BUILD_TYPE/ipvgo_game"
     "$BUILD_DIR/ipvgo_game"
+    "$ROOT/build/$BUILD_TYPE/ipvgo_game"
+    "$ROOT/build/ipvgo_game"
     "$ROOT/build-game/$BUILD_TYPE/ipvgo_game"
     "$ROOT/build-game/ipvgo_game"
   )
@@ -67,7 +72,8 @@ needs_build() {
     m="$(file_mtime "$f")"
     if (( m > newest )); then newest=$m; fi
   done < <(
-    find "$ROOT/cpp" "$ROOT/CMakeLists.txt" -type f \( -name '*.cpp' -o -name '*.hpp' -o -name 'CMakeLists.txt' \) -print0 2>/dev/null || true
+    find "$ROOT/cpp" "$ROOT/CMakeLists.txt" "$REPO_ROOT/CMakeLists.txt" -type f \
+      \( -name '*.cpp' -o -name '*.hpp' -o -name 'CMakeLists.txt' \) -print0 2>/dev/null || true
   )
   if (( newest > exe_mtime )); then
     return 0
@@ -77,7 +83,7 @@ needs_build() {
 
 build_game() {
   echo "mcgs.sh: configuring $BUILD_DIR ($BUILD_TYPE)"
-  cmake -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$BUILD_TYPE" "$ROOT"
+  cmake -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$BUILD_TYPE" "$REPO_ROOT"
   echo "mcgs.sh: building ipvgo_game"
   cmake --build "$BUILD_DIR" --config "$BUILD_TYPE" --target ipvgo_game
 }

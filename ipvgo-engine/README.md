@@ -27,7 +27,7 @@ run ipvgo.js
 Optional native C++ fallback:
 
 ```bash
-pnpm run ipvgo:build
+pnpm run ipvgo:build   # cmake --preset release + build ipvgo_engine/ipvgo_game
 ```
 
 ## Engine priority
@@ -39,7 +39,7 @@ Force native only: `IPVGO_FORCE_NATIVE=1 pnpm run server`
 
 ## Prerequisites
 
-- CMake 3.10+ (native fallback only)
+- CMake 3.18+ (native fallback only)
 - C++17 compiler (native fallback only)
 - NVIDIA GPU + drivers for CUDA KataGo build (RTX series); setup falls back to OpenCL
 
@@ -47,7 +47,20 @@ Force native only: `IPVGO_FORCE_NATIVE=1 pnpm run server`
 
 ## Native server
 
-VS Code CMake uses **`ipvgo-engine/build`** only.
+Native targets are built from the **repo root** into one tree, shared with the
+other native components (`tests/koth_tune`):
+
+```bash
+cmake --preset release           # configure (cmake-build/)
+cmake --build --preset release   # build every native target
+# or just the engine:
+pnpm run ipvgo:build
+```
+
+Executables land in **`cmake-build/bin/Release/`** (`ipvgo_engine`,
+`ipvgo_game`, `koth_bench`, `koth_tune`). The helper scripts also accept the
+older per-component `ipvgo-engine/build` layout, which still works for a
+standalone `cmake -S ipvgo-engine -B ipvgo-engine/build`.
 
 Server listens on **http://localhost:3010** (`IPVGO_PORT` to override).
 

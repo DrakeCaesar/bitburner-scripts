@@ -2,11 +2,40 @@
   "version": 6,
   "cmakeMinimumRequired": {
     "major": 3,
-    "minor": 16,
+    "minor": 18,
     "patch": 0
   },
-  "include": [
-    "ipvgo-engine/CMakePresets.json",
-    "tests/koth_tune/CMakePresets.json"
+  "configurePresets": [
+    {
+      "name": "release",
+      "displayName": "All native targets (Release)",
+      "description": "Configures the root project: ipvgo-engine plus tests/koth_tune.",
+      "binaryDir": "${sourceDir}/cmake-build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "debug",
+      "displayName": "All native targets (Debug)",
+      "binaryDir": "${sourceDir}/cmake-build-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "configuration": "Release"
+    },
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "configuration": "Debug"
+    }
   ]
 }

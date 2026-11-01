@@ -33,7 +33,9 @@
     "watch:transpile": "tsc -w --preserveWatchOutput",
     "server": "node ipvgo-engine/server.js",
     "ipvgo:setup": "node ipvgo-engine/scripts/setup-katago.js",
-    "ipvgo:build": "cmake --build ipvgo-engine/build --config Release"
+    "ipvgo:build": "cmake --preset release && cmake --build --preset release --target ipvgo_engine ipvgo_game",
+    "ipvgo:bench": "node ipvgo-engine/scripts/bench-factions.js",
+    "koth:build": "cmake --preset release && cmake --build --preset release --target koth_bench koth_tune"
   },
   "prettier": {
     "printWidth": 120,

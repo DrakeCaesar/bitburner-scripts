@@ -6,11 +6,11 @@
   "type": "module",
   "scripts": {
     "build:wasm": "node build.js",
-    "build:native": "cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release",
+    "build:native": "cmake -B ../cmake-build -DCMAKE_BUILD_TYPE=Release .. && cmake --build ../cmake-build --config Release",
     "setup": "node scripts/setup-katago.js",
     "build": "pnpm run build:wasm",
     "server": "node server.js",
-    "game:build": "cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release --target ipvgo_game",
+    "game:build": "cmake -B ../cmake-build -DCMAKE_BUILD_TYPE=Release .. && cmake --build ../cmake-build --config Release --target ipvgo_game",
     "game:mcgs": "bash scripts/mcgs.sh",
     "game:selftest": "bash scripts/mcgs.sh selftest",
     "game:bench": "bash scripts/mcgs.sh bench",
