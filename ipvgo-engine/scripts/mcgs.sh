@@ -98,6 +98,11 @@ ensure_built() {
 
 run_bench() {
   local size="${1:-5}" games="${2:-100}" playouts="${3:-10000}" seed="${4:-1}"
+  local engine="${IPVGO_BENCH_ENGINE:-mcgs}"
+  local command="mcgsplay"
+  if [[ "$engine" == "exploit" ]]; then
+    command="exploitplay"
+  fi
   case "$size" in
     5 | 7 | 9 | 13 | 19) ;;
     *)
@@ -111,12 +116,12 @@ run_bench() {
     factions=(WorldDaemon)
   fi
 
-  echo "bench: size=$size games=$games playouts=$playouts seed=$seed"
+  echo "bench: engine=$engine size=$size games=$games budget=$playouts seed=$seed"
   local failed=0 faction
   for faction in "${factions[@]}"; do
     echo ""
     echo "--- $faction ---"
-    if ! "$EXE" mcgsplay "$faction" "$size" "$games" "$playouts" "$seed"; then
+    if ! "$EXE" "$command" "$faction" "$size" "$games" "$playouts" "$seed"; then
       failed=$((failed + 1))
     fi
   done
@@ -132,8 +137,9 @@ run_bench() {
 }
 
 usage() {
-  echo "usage: mcgs.sh <selftest|fuzz|mcgsplay|bench|...> [args...]" >&2
+  echo "usage: mcgs.sh <selftest|fuzz|mcgsplay|exploitplay|policycheck|bench|...> [args...]" >&2
   echo "       mcgs.sh bench [size] [games] [playouts] [seed]" >&2
+  echo "       IPVGO_BENCH_ENGINE=exploit mcgs.sh bench [size] [games] [depth] [seed]" >&2
   exit 2
 }
 

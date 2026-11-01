@@ -112,6 +112,8 @@ std::vector<std::pair<int, int>> getAllValidMoves(const GameState& state, Color 
 
 double getKomi(const GameState& state);
 Score getScore(const GameState& state);
+// Same scoring, reusing an already computed chain set (search hot path).
+Score getScore(const GameState& state, const ChainSet& chains);
 inline bool blackWins(const Score& s) { return s.blackSum >= s.whiteSum; }
 
 }  // namespace ipvgo::game

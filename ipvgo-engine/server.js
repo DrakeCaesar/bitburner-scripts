@@ -3,7 +3,7 @@
  * Prefers KataGo (GPU) when installed; falls back to native C++ MCTS.
  */
 
-import { execFile } from "child_process"
+import { execFile, spawn } from "child_process"
 import fs from "fs"
 import http from "http"
 import path from "path"
@@ -14,7 +14,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const port = Number(process.env.IPVGO_PORT ?? 3010)
 const maxBodyBytes = 4 * 1024 * 1024
 const forceNative = process.env.IPVGO_FORCE_NATIVE === "1"
-const forceMcgs = process.env.IPVGO_ENGINE === "mcgs"
+const engineOverride = (process.env.IPVGO_ENGINE ?? "").trim()
+const forceMcgs = engineOverride === "mcgs"
+const forceExploit = engineOverride === "exploit"
 
 /** @type {import("child_process").ChildProcess | null} */
 let activeNativeChild = null
@@ -33,7 +35,213 @@ function mcgsExecutablePath() {
     : path.join(__dirname, "build", "ipvgo_game")
 }
 
+// ---- Bench (exploiter self-play against the scripted factions) -------------
+
+const BENCH_FACTIONS = ["Netburners", "Slum Snakes", "The Black Hand", "Tetrads", "Daedalus", "Illuminati"]
+const BENCH_HISTORY_LIMIT = 40
+
+const bench = {
+  child: null,
+  state: {
+    running: false,
+    finished: false,
+    options: null,
+    current: null,
+    rows: [],
+    history: [],
+    lastResult: null,
+    failures: null,
+    error: null,
+    startedAt: null,
+    endedAt: null,
+  },
+}
+
+function resetBenchState(options) {
+  bench.state = {
+    running: true,
+    finished: false,
+    options,
+    current: null,
+    rows: [],
+    history: [],
+    lastResult: null,
+    failures: null,
+    error: null,
+    startedAt: Date.now(),
+    endedAt: null,
+  }
+}
+
+function applyBenchEvent(event) {
+  const state = bench.state
+  switch (event.type) {
+    case "rows":
+      state.rows = event.rows ?? []
+      break
+    case "gameStart":
+      state.current = {
+        faction: event.faction,
+        factionIndex: event.factionIndex,
+        factionCount: event.factionCount,
+        game: event.game,
+        games: event.games,
+        move: 0,
+        thinking: false,
+        board: null,
+        lastBlack: null,
+        lastWhite: null,
+        blackScore: 0,
+        whiteScore: 0,
+      }
+      break
+    case "thinking":
+      if (!state.current) break
+      state.current.thinking = true
+      state.current.move = event.move
+      state.current.board = event.board
+      state.current.blackScore = event.blackScore
+      state.current.whiteScore = event.whiteScore
+      break
+    case "move":
+      if (!state.current) break
+      state.current.thinking = false
+      state.current.move = event.move
+      state.current.board = event.board
+      state.current.blackScore = event.blackScore
+      state.current.whiteScore = event.whiteScore
+      state.current.lastBlack = event.pass ? "pass" : `${event.black.x},${event.black.y}`
+      state.current.depth = event.depth
+      state.current.nodes = event.nodes
+      state.current.ms = event.ms
+      state.current.value = event.value
+      break
+    case "reply":
+      if (!state.current) break
+      state.current.board = event.board
+      state.current.blackScore = event.blackScore
+      state.current.whiteScore = event.whiteScore
+      state.current.lastWhite = event.pass ? "pass" : `${event.white.x},${event.white.y}`
+      break
+    case "gameEnd":
+      state.lastResult = {
+        faction: event.faction,
+        game: event.game,
+        games: event.games,
+        win: event.win,
+        margin: event.margin,
+        moves: event.moves,
+      }
+      state.history.unshift(state.lastResult)
+      if (state.history.length > BENCH_HISTORY_LIMIT) state.history.length = BENCH_HISTORY_LIMIT
+      break
+    case "done":
+      state.finished = true
+      state.failures = event.failures
+      break
+    default:
+      break
+  }
+}
+
+function stopBench() {
+  const child = bench.child
+  bench.child = null
+  bench.state.running = false
+  if (child && !child.killed) {
+    child.kill()
+  }
+}
+
+async function handleBenchStart(req, res) {
+  let body
+  try {
+    body = await readJsonBody(req)
+  } catch (err) {
+    return sendJson(res, 400, { error: err.message })
+  }
+
+  const exe = mcgsExecutablePath()
+  if (!fs.existsSync(exe)) {
+    return sendJson(res, 503, { error: "Engine not built. Run: pnpm run ipvgo:build" })
+  }
+
+  stopBench()
+
+  const size = Number(body?.size ?? 5)
+  const options = {
+    size,
+    budgetMs: Math.max(0, Number(body?.budgetMs ?? 200)),
+    games: Math.max(1, Math.min(500, Number(body?.games ?? 20))),
+    seed: Number(body?.seed ?? 1),
+    factions: Array.isArray(body?.factions) && body.factions.length > 0 ? body.factions : undefined,
+  }
+  if (![5, 7, 9, 13, 19].includes(options.size)) {
+    return sendJson(res, 400, { error: "size must be 5, 7, 9, 13 or 19" })
+  }
+
+  const resolved = options.factions ?? (options.size === 19 ? ["WorldDaemon"] : BENCH_FACTIONS)
+  resetBenchState({ ...options, factions: resolved })
+
+  const child = spawn(exe, ["benchjson", JSON.stringify(options)], { cwd: __dirname })
+  bench.child = child
+  bench.state.pid = child.pid
+
+  let buffer = ""
+  child.stdout.on("data", (chunk) => {
+    buffer += chunk.toString()
+    let newline = buffer.indexOf("\n")
+    while (newline >= 0) {
+      const line = buffer.slice(0, newline).trim()
+      buffer = buffer.slice(newline + 1)
+      if (line) {
+        try {
+          applyBenchEvent(JSON.parse(line))
+        } catch {
+          /* ignore malformed line */
+        }
+      }
+      newline = buffer.indexOf("\n")
+    }
+  })
+  child.stderr.on("data", (chunk) => {
+    bench.state.error = chunk.toString().trim().slice(0, 2000)
+  })
+  child.on("error", (err) => {
+    bench.state.error = err.message
+    bench.state.running = false
+    if (bench.child === child) bench.child = null
+  })
+  child.on("close", () => {
+    bench.state.running = false
+    bench.state.endedAt = Date.now()
+    if (bench.child === child) bench.child = null
+  })
+
+  sendJson(res, 200, { ok: true, options: bench.state.options })
+}
+
+function handleBenchStop(req, res) {
+  stopBench()
+  bench.state.endedAt = Date.now()
+  sendJson(res, 200, { ok: true })
+}
+
+function handleBenchState(req, res) {
+  sendJson(res, 200, { ...bench.state, pid: undefined })
+}
+
+function handleBenchPage(req, res) {
+  const file = path.join(__dirname, "web", "bench.html")
+  if (!fs.existsSync(file)) {
+    return sendJson(res, 404, { error: "web/bench.html missing" })
+  }
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
+  res.end(fs.readFileSync(file))
+}
+
 function activeEngine() {
+  if (forceExploit) return "exploit"
   if (forceMcgs) return "mcgs"
   if (!forceNative && isKatagoInstalled()) return "katago"
   const exe = nativeExecutablePath()
@@ -91,41 +299,41 @@ function handleHealth(_req, res) {
   })
 }
 
-async function requestMcgsMove(body) {
+async function requestGameMove(body, { command, engine, tempPrefix, timeoutMs }) {
   const exe = mcgsExecutablePath()
   if (!fs.existsSync(exe)) {
-    throw new Error("MCGS engine not built. Run: pnpm run ipvgo:build")
+    throw new Error(`${engine} engine not built. Run: pnpm run ipvgo:build`)
   }
 
   const tempDir = path.join(__dirname, "temp")
   if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true })
 
-  const inputPath = path.join(tempDir, `mcgs-in-${Date.now()}.json`)
-  const outputPath = path.join(tempDir, `mcgs-out-${Date.now()}.json`)
+  const inputPath = path.join(tempDir, `${tempPrefix}-in-${Date.now()}.json`)
+  const outputPath = path.join(tempDir, `${tempPrefix}-out-${Date.now()}.json`)
   fs.writeFileSync(inputPath, JSON.stringify(body))
 
   return new Promise((resolve, reject) => {
     const child = execFile(
       exe,
-      ["mcgsmove", inputPath, outputPath],
-      { timeout: 300_000, maxBuffer: 10 * 1024 * 1024 },
+      [command, inputPath, outputPath],
+      { timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 },
       (error, _stdout, stderr) => {
         if (activeNativeChild === child) activeNativeChild = null
         try {
           if (error) {
             if (error.killed || error.signal) {
-              reject(new Error("MCGS engine cancelled"))
+              reject(new Error(`${engine} engine cancelled`))
               return
             }
             reject(new Error(`${error.message}${stderr ? `: ${stderr}` : ""}`))
             return
           }
           if (!fs.existsSync(outputPath)) {
-            reject(new Error("MCGS produced no output file"))
+            reject(new Error(`${engine} produced no output file`))
             return
           }
           const result = JSON.parse(fs.readFileSync(outputPath, "utf8"))
-          resolve({ ...result, engine: "mcgs" })
+          resolve({ ...result, engine })
         } catch (err) {
           reject(err)
         } finally {
@@ -140,6 +348,19 @@ async function requestMcgsMove(body) {
       }
     )
     activeNativeChild = child
+  })
+}
+
+function requestMcgsMove(body) {
+  return requestGameMove(body, { command: "mcgsmove", engine: "mcgs", tempPrefix: "mcgs", timeoutMs: 300_000 })
+}
+
+function requestExploitMove(body) {
+  return requestGameMove(body, {
+    command: "exploitmove",
+    engine: "exploit",
+    tempPrefix: "exploit",
+    timeoutMs: 300_000,
   })
 }
 
@@ -219,7 +440,7 @@ async function handleCancel(req, res) {
   const engine = activeEngine()
   if (engine === "katago") {
     cancelKatagoRequest(requestId)
-  } else if (engine === "native" || engine === "mcgs") {
+  } else if (engine === "native" || engine === "mcgs" || engine === "exploit") {
     cancelNativeMove()
   }
 
@@ -247,11 +468,13 @@ async function handleMove(req, res) {
         ? await requestKatagoMove(body)
         : engine === "mcgs"
           ? await requestMcgsMove(body)
-          : await requestNativeMove(body)
+          : engine === "exploit"
+            ? await requestExploitMove(body)
+            : await requestNativeMove(body)
     sendJson(res, 200, result)
   } catch (err) {
     console.error(`${engine} move error:`, err.message)
-    if (engine === "katago") {
+    if (engine === "katago" || engine === "exploit") {
       try {
         const fallback = await requestNativeMove(body)
         return sendJson(res, 200, { ...fallback, engine: "native", [`${engine}Error`]: err.message })
@@ -306,6 +529,26 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
+  if (req.method === "GET" && url.pathname === "/bench") {
+    handleBenchPage(req, res)
+    return
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/bench/state") {
+    handleBenchState(req, res)
+    return
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/bench/start") {
+    await handleBenchStart(req, res)
+    return
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/bench/stop") {
+    handleBenchStop(req, res)
+    return
+  }
+
   if (req.method === "POST" && url.pathname === "/api/ipvgo/cancel") {
     await handleCancel(req, res)
     return
@@ -330,6 +573,7 @@ server.listen(port, () => {
   console.log(`Active engine: ${engine}`)
   console.log(`Health: http://localhost:${port}/health`)
   console.log(`Move API: POST http://localhost:${port}/api/ipvgo/move`)
+  console.log(`Bench GUI: http://localhost:${port}/bench`)
 
   if (engine === "katago") {
     warmupKatago().catch((err) => {
@@ -339,11 +583,13 @@ server.listen(port, () => {
 })
 
 process.on("SIGINT", () => {
+  stopBench()
   shutdownKatago()
   process.exit(0)
 })
 
 process.on("SIGTERM", () => {
+  stopBench()
   shutdownKatago()
   process.exit(0)
 })

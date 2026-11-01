@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <optional>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "analysis.hpp"
@@ -460,6 +461,14 @@ class MoveGen {
     return options;
   }
 
+  // Every point getDefendMove() can return for this position.
+  std::vector<Pt> defendPoints() const { return defendPointList(false); }
+
+  // The defendCapture() subset: chains going from one liberty to safety.
+  std::vector<Pt> defendCapturePoints() const { return defendPointList(true); }
+
+  bool hasContested() const { return !contestedPoints_.empty(); }
+
   void addFallbackCandidates(const GameState& state, Color player, std::unordered_set<int>& seen,
                              std::vector<Pt>& out) {
     const int N = state.size;
@@ -481,6 +490,26 @@ class MoveGen {
 
  private:
   enum Kind { kSurround, kDefend, kEyeMove, kEyeBlock, kPattern, kGrowth, kExpansion, kJump, kCorner, kRandom, kCount };
+
+  // Mirrors getDefendMove(): max liberty gain among chains already in atari.
+  std::vector<Pt> defendPointList(bool captureOnly) const {
+    const std::vector<GrowthCandidate> growthMoves = getLibertyGrowthMoves(board_, player_, availableSet_);
+    std::vector<GrowthCandidate> increases;
+    for (const auto& m : growthMoves)
+      if (m.oldLibertyCount <= 1 && m.newLibertyCount > m.oldLibertyCount) increases.push_back(m);
+    if (increases.empty()) return {};
+
+    int maxDelta = increases[0].newLibertyCount - increases[0].oldLibertyCount;
+    for (const auto& m : increases) maxDelta = std::max(maxDelta, m.newLibertyCount - m.oldLibertyCount);
+
+    std::vector<Pt> out;
+    for (const auto& m : increases) {
+      if (m.newLibertyCount - m.oldLibertyCount != maxDelta) continue;
+      if (captureOnly && !(m.oldLibertyCount == 1 && m.newLibertyCount > 1)) continue;
+      out.emplace_back(m.x, m.y);
+    }
+    return out;
+  }
 
   template <typename F>
   AiMove cached(Kind k, F&& compute) {
@@ -689,6 +718,266 @@ std::optional<Pt> factionMove(MoveGen& moves, Opponent faction, double rng) {
   }
 }
 
+// ---- Policy reply distribution ---------------------------------------------
+//
+// The tables above are pure functions of the third WHRNG draw (the faction
+// branch rng) plus per-position move pools. To exploit the opponent we need the
+// mass of every branch instead of a single sample, so each policy is restated
+// here as "draw interval -> action". Pool picks inside a branch are uniform
+// floorIndex() picks over pools whose contents do not depend on the draw, so
+// the resulting distribution is exact.
+
+enum class ActKind {
+  Pin,            // one forced point
+  GrowthPool,     // uniform over max-liberty-gain growth points
+  ExpansionPool,  // uniform over expansionMoves
+  PatternPool,    // uniform over matching pattern points
+  JumpPool,       // uniform over expansion points two stones from a friend
+  RandomPool,     // uniform over availableSpaces (moves.random())
+  DefendPool,     // uniform over the defendCapture() subset
+  Fallback,       // getMove()'s uniform pick over its seven fallback slots
+};
+
+struct Act {
+  ActKind kind = ActKind::Fallback;
+  Pt point{0, 0};
+};
+
+struct ActMass {
+  double share = 0.0;
+  Act act;
+};
+
+// Per-position pools, shared by every branch of one smart/dumb variant.
+struct PolicyModel {
+  std::vector<Pt> growth;
+  std::vector<Pt> expansion;
+  std::vector<Pt> pattern;
+  std::vector<Pt> jump;
+  std::vector<Pt> random;
+  std::vector<Pt> defend;
+  std::vector<Pt> defendCapture;
+  bool hasSurround = false;
+  Pt surround{0, 0};
+  bool hasEye = false;
+  Pt eye{0, 0};
+  bool hasBlock = false;
+  Pt block{0, 0};
+  bool hasCorner = false;
+  Pt corner{0, 0};
+};
+
+// Every branch threshold used by the faction tables. Evaluating the union for
+// all factions is harmless because the decision is constant per interval.
+constexpr double kPolicyThresholds[] = {0.2, 0.25, 0.3, 0.4, 0.6, 0.65, 0.75, 0.8, 0.9};
+
+double smartProbability(Opponent faction) {
+  switch (faction) {
+    case Opponent::Netburners: return 0.0;
+    case Opponent::SlumSnakes: return 0.3;
+    case Opponent::TheBlackHand: return 0.8;
+    default: return 1.0;
+  }
+}
+
+PolicyModel buildPolicyModel(MoveGen& gen) {
+  PolicyModel model;
+  model.growth = gen.growthMaxDeltaPoints();
+  model.expansion = gen.expansionMoves();
+  model.pattern = gen.patternPoints();
+  model.jump = gen.jumpOptions();
+  if (gen.hasContested()) model.random = gen.availableSpaces();
+  model.defend = gen.defendPoints();
+  model.defendCapture = gen.defendCapturePoints();
+
+  const AiMove surround = gen.surround();
+  model.hasSurround = surround.valid;
+  model.surround = {surround.x, surround.y};
+  const AiMove eye = gen.eyeMove();
+  model.hasEye = eye.valid;
+  model.eye = {eye.x, eye.y};
+  const AiMove block = gen.eyeBlock();
+  model.hasBlock = block.valid;
+  model.block = {block.x, block.y};
+  const AiMove corner = gen.corner();
+  model.hasCorner = corner.valid;
+  model.corner = {corner.x, corner.y};
+  return model;
+}
+
+// One branch of a faction table, holding the mass not yet assigned.
+class PolicyWalker {
+ public:
+  PolicyWalker(const PolicyModel& model, MoveGen& gen) : model_(model), gen_(gen) {}
+
+  std::vector<ActMass> resolve(Opponent opponent, double factionRng) {
+    out_.clear();
+    switch (opponent) {
+      case Opponent::Netburners: netburners(1.0, factionRng); break;
+      case Opponent::SlumSnakes: slumSnakes(1.0, factionRng); break;
+      case Opponent::TheBlackHand: blackHand(1.0, factionRng); break;
+      case Opponent::Tetrads: tetrads(1.0, factionRng); break;
+      case Opponent::Daedalus: daedalus(1.0, factionRng); break;
+      default: illuminati(1.0, factionRng); break;
+    }
+    return out_;
+  }
+
+ private:
+  void push(double share, const Act& act) {
+    if (share > 1e-12) out_.push_back({share, act});
+  }
+  void pushPin(double share, const AiMove& m) { push(share, Act{ActKind::Pin, {m.x, m.y}}); }
+  void pushFallback(double share) { push(share, Act{ActKind::Fallback, {0, 0}}); }
+  void pushPoolOrFallback(double share, const std::vector<Pt>& pool, ActKind kind) {
+    if (pool.empty()) return pushFallback(share);
+    push(share, Act{kind, {0, 0}});
+  }
+
+  // defendCapture() fires only when the uniform defend() pick lands on a chain
+  // going from one liberty to safety, so it carries |subset|/|candidates| of the
+  // branch and the rest falls through the priority list.
+  double defendCaptureShare() const {
+    if (model_.defend.empty()) return 0.0;
+    return static_cast<double>(model_.defendCapture.size()) / static_cast<double>(model_.defend.size());
+  }
+
+  int hasMoves() const {
+    return (gen_.eyeMove().valid ? 1 : 0) + (gen_.eyeBlock().valid ? 1 : 0) +
+           (model_.growth.empty() ? 0 : 1) + (model_.defend.empty() ? 0 : 1) +
+           (gen_.surround().valid ? 1 : 0);
+  }
+
+  void illuminati(double share, double rng) {
+    if (share <= 0.0) return;
+    if (gen_.capture().valid) return pushPin(share, gen_.capture());
+
+    const double captureShare = defendCaptureShare();
+    if (captureShare > 0.0) push(share * captureShare, Act{ActKind::DefendPool, {0, 0}});
+    share *= (1.0 - captureShare);
+    if (share <= 1e-12) return;
+
+    if (gen_.eyeMove().valid) return pushPin(share, gen_.eyeMove());
+    const AiMove surround = gen_.surround();
+    if (surround.valid && surround.newLibertyCount <= 1) return pushPin(share, surround);
+    if (gen_.eyeBlock().valid) return pushPin(share, gen_.eyeBlock());
+    if (gen_.corner().valid) return pushPin(share, gen_.corner());
+
+    const bool usePattern = rng > 0.25 || hasMoves() == 0;
+    if (usePattern && !model_.pattern.empty()) return push(share, Act{ActKind::PatternPool, {0, 0}});
+    if (rng > 0.4 && !model_.jump.empty()) return push(share, Act{ActKind::JumpPool, {0, 0}});
+    if (rng < 0.6 && surround.valid && surround.newLibertyCount <= 2) return pushPin(share, surround);
+    pushFallback(share);
+  }
+
+  void netburners(double share, double rng) {
+    if (rng < 0.2) return illuminati(share, rng);
+    if (rng < 0.4) return pushPoolOrFallback(share, model_.expansion, ActKind::ExpansionPool);
+    if (rng < 0.6) return pushPoolOrFallback(share, model_.growth, ActKind::GrowthPool);
+    if (rng < 0.75) return pushPoolOrFallback(share, model_.random, ActKind::RandomPool);
+    pushFallback(share);
+  }
+
+  void slumSnakes(double share, double rng) {
+    const double captureShare = defendCaptureShare();
+    if (captureShare > 0.0) push(share * captureShare, Act{ActKind::DefendPool, {0, 0}});
+    share *= (1.0 - captureShare);
+    if (share <= 1e-12) return;
+
+    if (rng < 0.2) return illuminati(share, rng);
+    if (rng < 0.6) return pushPoolOrFallback(share, model_.growth, ActKind::GrowthPool);
+    if (rng < 0.65) return pushPoolOrFallback(share, model_.random, ActKind::RandomPool);
+    pushFallback(share);
+  }
+
+  void blackHand(double share, double rng) {
+    if (gen_.capture().valid) return pushPin(share, gen_.capture());
+    const AiMove surround = gen_.surround();
+    if (surround.valid && surround.newLibertyCount <= 1) return pushPin(share, surround);
+
+    const double captureShare = defendCaptureShare();
+    if (captureShare > 0.0) push(share * captureShare, Act{ActKind::DefendPool, {0, 0}});
+    share *= (1.0 - captureShare);
+    if (share <= 1e-12) return;
+
+    if (surround.valid && surround.newLibertyCount <= 2) return pushPin(share, surround);
+    if (rng < 0.3) return illuminati(share, rng);
+    if (rng < 0.75 && surround.valid) return pushPin(share, surround);
+    if (rng < 0.8) return pushPoolOrFallback(share, model_.random, ActKind::RandomPool);
+    pushFallback(share);
+  }
+
+  void tetrads(double share, double rng) {
+    if (gen_.capture().valid) return pushPin(share, gen_.capture());
+
+    const double captureShare = defendCaptureShare();
+    if (captureShare > 0.0) push(share * captureShare, Act{ActKind::DefendPool, {0, 0}});
+    share *= (1.0 - captureShare);
+    if (share <= 1e-12) return;
+
+    if (!model_.pattern.empty()) return push(share, Act{ActKind::PatternPool, {0, 0}});
+    const AiMove surround = gen_.surround();
+    if (surround.valid && surround.newLibertyCount <= 1) return pushPin(share, surround);
+    if (rng < 0.4) return illuminati(share, rng);
+    pushFallback(share);
+  }
+
+  void daedalus(double share, double rng) {
+    if (rng < 0.9) return illuminati(share, rng);
+    pushFallback(share);
+  }
+
+  const PolicyModel& model_;
+  MoveGen& gen_;
+  std::vector<ActMass> out_;
+};
+
+void spreadUniform(std::unordered_map<int, double>& mass, int N, const std::vector<Pt>& points, double m) {
+  if (points.empty() || m <= 0.0) return;
+  const double each = m / static_cast<double>(points.size());
+  for (const auto& [x, y] : points) mass[flatIndex(N, x, y)] += each;
+}
+
+// getMove()'s post-priority fallback: one uniform index over the valid slots of
+// [growth, surround, defend, expansion, pattern, eyeMove, eyeBlock], where the
+// pool slots still pick uniformly inside their pool.
+void accumulateFallback(std::unordered_map<int, double>& mass, double& passMass, const PolicyModel& model, int N,
+                        double m) {
+  std::vector<std::vector<Pt>> slots;
+  if (!model.growth.empty()) slots.push_back(model.growth);
+  if (model.hasSurround) slots.push_back({model.surround});
+  if (!model.defend.empty()) slots.push_back(model.defend);
+  if (!model.expansion.empty()) slots.push_back(model.expansion);
+  if (!model.pattern.empty()) slots.push_back(model.pattern);
+  if (model.hasEye) slots.push_back({model.eye});
+  if (model.hasBlock) slots.push_back({model.block});
+
+  if (slots.empty()) {
+    passMass += m;
+    return;
+  }
+  const double perSlot = m / static_cast<double>(slots.size());
+  for (const auto& slot : slots) spreadUniform(mass, N, slot, perSlot);
+}
+
+void accumulateActs(std::unordered_map<int, double>& mass, double& passMass, const std::vector<ActMass>& acts,
+                    const PolicyModel& model, int N, double weight) {
+  for (const ActMass& am : acts) {
+    const double m = am.share * weight;
+    if (m <= 0.0) continue;
+    switch (am.act.kind) {
+      case ActKind::Pin: mass[flatIndex(N, am.act.point.first, am.act.point.second)] += m; break;
+      case ActKind::GrowthPool: spreadUniform(mass, N, model.growth, m); break;
+      case ActKind::ExpansionPool: spreadUniform(mass, N, model.expansion, m); break;
+      case ActKind::PatternPool: spreadUniform(mass, N, model.pattern, m); break;
+      case ActKind::JumpPool: spreadUniform(mass, N, model.jump, m); break;
+      case ActKind::RandomPool: spreadUniform(mass, N, model.random, m); break;
+      case ActKind::DefendPool: spreadUniform(mass, N, model.defendCapture, m); break;
+      case ActKind::Fallback: accumulateFallback(mass, passMass, model, N, m); break;
+    }
+  }
+}
+
 }  // namespace
 
 std::vector<Pt> factionConsideredSpaces(const GameState& state, Color player, Opponent opponent,
@@ -752,6 +1041,74 @@ std::vector<Pt> enumerateOpponentMoves(const GameState& state, Color player, Opp
                                        MathRandom& mathRng) {
   if (opponent == Opponent::Netburners) return enumerateNetburnersMovesImpl(state, player, mathRng);
   return enumerateFactionMovesImpl(state, player, opponent, mathRng);
+}
+
+ReplyDist opponentReplyDistribution(const GameState& state, Color player, Opponent opponent) {
+  ReplyDist dist;
+  if (state.gameOver || whoseTurn(state) == Color::Empty) return dist;
+
+  const int N = state.size;
+  MathRandom mathRng(1ULL);
+  std::unordered_map<int, double> mass;
+  double passMass = 0.0;
+
+  const double smartShare = smartProbability(opponent);
+  for (int variant = 0; variant < 2; ++variant) {
+    const bool smart = variant == 1;
+    // Both variants are mixed by the probability of the leading isSmart draw.
+    const double variantWeight = smart ? smartShare : 1.0 - smartShare;
+    if (variantWeight <= 0.0) continue;
+
+    MoveGen gen(state, player, 0.0, smart, mathRng);
+    const PolicyModel model = buildPolicyModel(gen);
+
+    double lo = 0.0;
+    for (const double hi : kPolicyThresholds) {
+      if (hi <= lo) continue;
+      PolicyWalker walker(model, gen);
+      accumulateActs(mass, passMass, walker.resolve(opponent, 0.5 * (lo + hi)), model, N,
+                     (hi - lo) * variantWeight);
+      lo = hi;
+    }
+    PolicyWalker walker(model, gen);
+    accumulateActs(mass, passMass, walker.resolve(opponent, 0.5 * (lo + 1.0)), model, N,
+                   (1.0 - lo) * variantWeight);
+  }
+
+  double total = passMass;
+  std::vector<WeightedReply> replies;
+  replies.reserve(mass.size() + 1);
+  // Policy candidates are legal by construction (MoveGen draws them from valid
+  // points), and getMove() does not re-validate priority moves either, so no
+  // extra legality pass is needed here.
+  for (const auto& [idx, m] : mass) {
+    if (m <= 0.0) continue;
+    total += m;
+    WeightedReply reply;
+    reply.x = idx / N;
+    reply.y = idx % N;
+    reply.prob = m;
+    replies.push_back(reply);
+  }
+  if (passMass > 0.0) {
+    WeightedReply reply;
+    reply.passMove = true;
+    reply.prob = passMass;
+    replies.push_back(reply);
+  }
+  if (total <= 0.0) {
+    WeightedReply reply;
+    reply.passMove = true;
+    reply.prob = 1.0;
+    dist.replies.push_back(reply);
+    return dist;
+  }
+
+  for (auto& reply : replies) reply.prob /= total;
+  std::sort(replies.begin(), replies.end(),
+            [](const WeightedReply& a, const WeightedReply& b) { return a.prob > b.prob; });
+  dist.replies = std::move(replies);
+  return dist;
 }
 
 bool isSmart(Opponent faction, double rng) {

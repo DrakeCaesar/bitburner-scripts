@@ -1,9 +1,12 @@
 /**
- * Run MCGS self-play vs every faction in C++ (no server, no game).
+ * Run Black vs every faction in C++ (no server, no game).
  * Exits non-zero unless every faction hits 100% wins.
  *
- *   node scripts/bench-factions.js [size] [games] [playouts] [seed]
+ *   node scripts/bench-factions.js [size] [games] [budget] [seed] [engine]
  *   pnpm run game:bench -- 5 200 10000
+ *   pnpm run game:bench -- 5 20 3 1 exploit
+ *
+ * engine: "mcgs" (default, budget = playouts) or "exploit" (budget = search depth).
  */
 
 import { spawnSync } from "child_process"
@@ -51,13 +54,17 @@ if (!exe) {
   process.exit(1)
 }
 
+const engine = process.env.IPVGO_ENGINE?.trim() === "exploit" || process.argv[6] === "exploit" ? "exploit" : "mcgs"
+const command = engine === "exploit" ? "exploitplay" : "mcgsplay"
+const budgetLabel = engine === "exploit" ? "depth" : "playouts"
+
 const factions = size === 19 ? ["WorldDaemon"] : FACTIONS_5_13
 let failed = 0
 
-console.log(`bench: size=${size} games=${games} playouts=${playouts} seed=${seed}`)
+console.log(`bench: engine=${engine} size=${size} games=${games} ${budgetLabel}=${playouts} seed=${seed}`)
 for (const faction of factions) {
   console.log(`\n--- ${faction} ---`)
-  const result = spawnSync(exe, ["mcgsplay", faction, String(size), String(games), String(playouts), seed], {
+  const result = spawnSync(exe, [command, faction, String(size), String(games), String(playouts), seed], {
     stdio: "inherit",
     cwd: root,
   })

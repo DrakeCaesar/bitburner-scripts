@@ -8,20 +8,33 @@
 //       Emit the faithful faction AI move for the given position.
 //   ipvgo_game gen <opponent> <size> <seedMs> <mathSeed>
 //       Print a freshly generated board (obstacles + handicap).
+//   ipvgo_game exploitplay <opponent> <size> <games> <depth> <seed> [fixed]
+//       Black = policy-expectimax exploiter vs the scripted faction.
+//   ipvgo_game exploitmove <in.json> [out.json]
+//       Exploiter move for a game request (engine "exploit").
+//   ipvgo_game policycheck <opponent> <size> [samples] [seed]
+//       Compare the modeled reply distribution against sampled getMove().
+//   ipvgo_game bench [budgetMs] [gamesPerFaction] [seed] [size]
+//       Exploiter vs every faction with a live terminal view (board, win table).
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <random>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <nlohmann/json.hpp>
 
 #include "analysis.hpp"
+#include "bench_tui.hpp"
+#include "exploiter.hpp"
 #include "features.hpp"
 #include "game_engine.hpp"
 #include "go_game.hpp"
@@ -32,8 +45,14 @@
 #include "setup.hpp"
 
 using namespace ipvgo::game;
+using ipvgo::nn::BenchOptions;
+using ipvgo::nn::ExploitConfig;
+using ipvgo::nn::ExploitResult;
 using ipvgo::nn::McgsConfig;
 using ipvgo::nn::McgsResult;
+using ipvgo::nn::runExploitBench;
+using ipvgo::nn::runExploitBenchJson;
+using ipvgo::nn::runExploiter;
 using ipvgo::nn::runMcgs;
 using json = nlohmann::json;
 
@@ -457,6 +476,227 @@ int runMcgsPlay(const std::string& opponentName, int size, int games, int playou
   return wins == games ? 0 : 1;
 }
 
+// ---- exploitmove (policy-expectimax search, Black only) --------------------
+
+int pickExploitAction(const ExploitResult& result, int N, const json& req) {
+  for (const auto& [action, value] : result.rootScores) {
+    (void)value;
+    if (actionAllowed(req, N, action)) return action;
+  }
+  return ipvgo::nn::passAction(N);
+}
+
+int runExploitMove(const std::string& inPath, const std::string& outPath) {
+  std::ifstream in(inPath);
+  if (!in) {
+    std::cerr << "cannot open " << inPath << "\n";
+    return 1;
+  }
+  json req;
+  in >> req;
+
+  GameState state = stateFromRequest(req);
+  if (whoseTurn(state) != Color::Black) {
+    std::cerr << "exploitmove: playAs must be Black (X); it is not Black's turn\n";
+    return 1;
+  }
+
+  ExploitConfig cfg;
+  cfg.depth = req.value("depth", 4);
+  cfg.maxDepth = req.value("maxDepth", 10);
+  cfg.beam = req.value("beam", 12);
+  cfg.whiteChildren = req.value("whiteChildren", 6);
+  cfg.whiteMass = req.value("whiteMass", 0.9);
+  cfg.endgameEmpties = req.value("endgameEmpties", 8);
+  cfg.nodeBudget = req.value("nodeBudget", 200000);
+  cfg.threads = req.value("threads", 0);
+  cfg.budgetMs = req.value("budgetMs", 0);
+
+  const auto t0 = std::chrono::steady_clock::now();
+  const ExploitResult result = runExploiter(state, cfg);
+  const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+
+  const int action = pickExploitAction(result, state.size, req);
+  json out;
+  out["move"] = actionToMoveJson(state.size, action);
+  out["depth"] = result.depth;
+  out["value"] = result.value;
+  out["nodes"] = result.nodes;
+  out["elapsedMs"] = ms;
+  out["engine"] = "exploit";
+
+  const std::string text = out.dump();
+  if (!outPath.empty()) {
+    std::ofstream fout(outPath);
+    fout << text;
+  } else {
+    std::cout << text << "\n";
+  }
+  return 0;
+}
+
+// ---- exploitplay (exploiter Black vs scripted faction White) ---------------
+
+int runExploitPlay(const std::string& opponentName, int size, int games, int depth, uint64_t seed,
+                   bool fixedWhiteSeed, int beam = 0, int whiteChildren = 0) {
+  const Opponent ai = parseOpponent(opponentName).value_or(Opponent::Netburners);
+  std::mt19937_64 rng(seed ? seed : 1);
+
+  ExploitConfig cfg;
+  cfg.depth = depth;
+  if (beam > 0) cfg.beam = beam;
+  if (whiteChildren > 0) cfg.whiteChildren = whiteChildren;
+
+  int wins = 0;
+  double totalBlackMs = 0.0;
+  double totalMargin = 0.0;
+  long totalMoves = 0;
+
+  for (int g = 0; g < games; ++g) {
+    const double clockMs = static_cast<double>(rng() % 30000000u);
+    const uint64_t mathSeed = rng();
+    MathRandom mathRng(mathSeed);
+    GameState state = newBoardState(size, ai, true, clockMs, mathRng);
+    const int moveCap = size * size * 4;
+    int gameMoves = 0;
+
+    for (int m = 0; m < moveCap && !state.gameOver; ++m) {
+      if (whoseTurn(state) != Color::Black) {
+        std::cerr << "exploitplay: expected Black to move\n";
+        return 1;
+      }
+
+      const auto t0 = std::chrono::steady_clock::now();
+      const ExploitResult search = runExploiter(state, cfg);
+      totalBlackMs +=
+          std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+
+      const int action = search.bestAction;
+      if (std::getenv("IPVGO_TRACE")) {
+        const Score probe = getScore(state);
+        std::cout << "  g" << g << " m" << m << " B ";
+        if (action == ipvgo::nn::passAction(size)) std::cout << "pass";
+        else std::cout << (action / size) << "," << (action % size);
+        std::cout << " v=" << search.value << " nodes=" << search.nodes << " score=" << probe.blackSum << ":"
+                  << probe.whiteSum << "\n";
+      }
+      if (action == ipvgo::nn::passAction(size)) {
+        passTurn(state, Color::Black);
+      } else if (!makeMove(state, action / size, action % size, Color::Black)) {
+        passTurn(state, Color::Black);
+      }
+      ++totalMoves;
+      ++gameMoves;
+      if (state.gameOver) break;
+
+      // A real game reseeds the faction AI from Player.totalPlaytime every move.
+      const double whiteSeed = fixedWhiteSeed ? 0.0 : static_cast<double>(rng() % 30000000u);
+      const Play wp = getMove(state, Color::White, ai, whiteSeed, mathRng);
+      if (std::getenv("IPVGO_TRACE")) {
+        std::cout << "      W ";
+        if (wp.type == PlayType::Pass) std::cout << "pass";
+        else std::cout << wp.x << "," << wp.y;
+        std::cout << "\n";
+      }
+      if (wp.type == PlayType::Pass) {
+        passTurn(state, Color::White);
+      } else if (!makeMove(state, wp.x, wp.y, Color::White)) {
+        passTurn(state, Color::White);
+      }
+      if (state.gameOver) break;
+    }
+
+    const Score sc = getScore(state);
+    if (blackWins(sc)) ++wins;
+    totalMargin += sc.blackSum - sc.whiteSum;
+    if (std::getenv("IPVGO_TRACE")) {
+      std::cout << "  game " << g << " black=" << sc.blackSum << " white=" << sc.whiteSum
+                << " margin=" << (sc.blackSum - sc.whiteSum) << " blackMoves=" << gameMoves << "\n";
+      if (!blackWins(sc)) printBoard(state.board);
+    }
+  }
+
+  const double avgMs = totalMoves > 0 ? totalBlackMs / static_cast<double>(totalMoves) : 0.0;
+  const double winPct = 100.0 * wins / std::max(games, 1);
+  const double avgMargin = games > 0 ? totalMargin / static_cast<double>(games) : 0.0;
+  std::cout << "exploitplay: " << opponentName << " " << size << "x" << size << " "
+            << "wins=" << wins << "/" << games << " (" << winPct << "%) "
+            << "depth=" << depth << " beam=" << cfg.beam << " whiteChildren=" << cfg.whiteChildren
+            << " avgBlackThinkMs=" << avgMs << " avgMargin=" << avgMargin << "\n";
+  return wins == games ? 0 : 1;
+}
+
+// ---- policycheck (reply distribution vs sampled getMove) -------------------
+
+int runPolicyCheck(const std::string& opponentName, int size, int samples, uint64_t seed) {
+  const Opponent ai = parseOpponent(opponentName).value_or(Opponent::Netburners);
+  std::mt19937_64 rng(seed ? seed : 1);
+
+  double maxTv = 0.0;
+  double sumTv = 0.0;
+  int positions = 0;
+
+  for (int p = 0; p < 4; ++p) {
+    MathRandom mathRng(rng());
+    GameState state = newBoardState(size, ai, true, static_cast<double>(rng() % 30000000u), mathRng);
+    for (int m = 0; m < 8 && !state.gameOver; ++m) {
+      if (whoseTurn(state) != Color::Black) break;
+      const auto blackMoves = getAllValidMoves(state, Color::Black);
+      if (blackMoves.empty()) break;
+      const auto [bx, by] = blackMoves[rng() % blackMoves.size()];
+      makeMove(state, bx, by, Color::Black);
+      if (state.gameOver) break;
+      // Stop on White to move so the sampled policy is the one being modeled.
+      if (m == 7) break;
+
+      const Play wp = getMove(state, Color::White, ai, static_cast<double>(rng() % 30000000u), mathRng);
+      if (wp.type == PlayType::Pass) {
+        passTurn(state, Color::White);
+      } else if (!makeMove(state, wp.x, wp.y, Color::White)) {
+        passTurn(state, Color::White);
+      }
+    }
+    if (state.gameOver || whoseTurn(state) != Color::White) continue;
+
+    const ReplyDist dist = opponentReplyDistribution(state, Color::White, ai);
+    std::unordered_map<int, double> modeled;
+    for (const auto& reply : dist.replies) {
+      const int action = reply.passMove ? -1 : reply.x * size + reply.y;
+      modeled[action] += reply.prob;
+    }
+
+    std::unordered_map<int, double> empirical;
+    for (int s = 0; s < samples; ++s) {
+      const Play wp = getMove(state, Color::White, ai, static_cast<double>(rng() % 30000000u), mathRng);
+      const int action = wp.type == PlayType::Pass ? -1 : wp.x * size + wp.y;
+      empirical[action] += 1.0;
+    }
+
+    double tv = 0.0;
+    for (const auto& [action, count] : empirical) {
+      const double p = count / static_cast<double>(samples);
+      const auto it = modeled.find(action);
+      tv += std::fabs(p - (it == modeled.end() ? 0.0 : it->second));
+    }
+    for (const auto& [action, prob] : modeled) {
+      if (!empirical.count(action)) tv += prob;
+    }
+    tv /= 2.0;
+
+    maxTv = std::max(maxTv, tv);
+    sumTv += tv;
+    ++positions;
+  }
+
+  if (positions == 0) {
+    std::cerr << "policycheck: no positions sampled\n";
+    return 1;
+  }
+  std::cout << "policycheck: " << opponentName << " size=" << size << " positions=" << positions
+            << " samples=" << samples << " maxTV=" << maxTv << " avgTV=" << (sumTv / positions) << "\n";
+  return maxTv < 0.1 ? 0 : 1;
+}
+
 }  // namespace
 
 // ---- fuzz: self-consistency over full games -------------------------------
@@ -534,7 +774,8 @@ int runFuzz(int games, uint64_t seed) {
 
 int main(int argc, char** argv) {
   if (argc < 2) {
-    std::cerr << "usage: ipvgo_game <selftest|fuzz|parity|aimove|mcgsmove|mcgsplay|gen> ...\n";
+    std::cerr << "usage: ipvgo_game "
+                 "<selftest|fuzz|parity|aimove|mcgsmove|mcgsplay|exploitmove|exploitplay|policycheck|gen> ...\n";
     return 2;
   }
   const std::string cmd = argv[1];
@@ -550,6 +791,61 @@ int main(int argc, char** argv) {
     const int playouts = std::stoi(argv[5]);
     const uint64_t seed = argc >= 7 ? std::stoull(argv[6]) : 0u;
     return runMcgsPlay(argv[2], size, games, playouts, seed);
+  }
+  if (cmd == "exploitmove" && argc >= 3) return runExploitMove(argv[2], argc >= 4 ? argv[3] : "");
+  if (cmd == "exploitplay" && argc >= 6) {
+    const int size = std::stoi(argv[3]);
+    const int games = std::stoi(argv[4]);
+    const int depth = std::stoi(argv[5]);
+    const uint64_t seed = argc >= 7 ? std::stoull(argv[6]) : 0u;
+    const bool fixedWhite = argc >= 8 && std::string(argv[7]) == "fixed";
+    const int beam = argc >= 9 ? std::stoi(argv[8]) : 0;
+    const int whiteChildren = argc >= 10 ? std::stoi(argv[9]) : 0;
+    return runExploitPlay(argv[2], size, games, depth, seed, fixedWhite, beam, whiteChildren);
+  }
+  if (cmd == "bench") {
+    BenchOptions options;
+    if (argc >= 3) options.budgetMs = std::stoi(argv[2]);
+    if (argc >= 4) options.gamesPerFaction = std::stoi(argv[3]);
+    if (argc >= 5) options.seed = std::stoull(argv[4]);
+    if (argc >= 6) options.size = std::stoi(argv[5]);
+    for (int i = 6; i < argc; ++i) options.factions.push_back(argv[i]);
+    return runExploitBench(options) == 0 ? 0 : 1;
+  }
+  if (cmd == "benchjson" && argc >= 3) {
+    BenchOptions options;
+    try {
+      const std::string arg = argv[2];
+      std::string text = arg;
+      if (!arg.empty() && arg.front() != '{') {
+        std::ifstream in(arg);
+        if (!in) {
+          std::cerr << "benchjson: cannot open " << arg << "\n";
+          return 2;
+        }
+        text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+      }
+      const json config = json::parse(text);
+      options.size = config.value("size", 5);
+      options.budgetMs = config.value("budgetMs", 200);
+      options.gamesPerFaction = config.value("games", 10);
+      options.seed = config.value("seed", static_cast<uint64_t>(1));
+      options.depth = config.value("depth", 2);
+      options.maxDepth = config.value("maxDepth", 10);
+      if (config.contains("factions")) {
+        for (const auto& name : config.at("factions")) options.factions.push_back(name.get<std::string>());
+      }
+    } catch (const std::exception& err) {
+      std::cerr << "benchjson: bad config: " << err.what() << "\n";
+      return 2;
+    }
+    return runExploitBenchJson(options) == 0 ? 0 : 1;
+  }
+  if (cmd == "policycheck" && argc >= 4) {
+    const int size = std::stoi(argv[3]);
+    const int samples = argc >= 5 ? std::stoi(argv[4]) : 2000;
+    const uint64_t seed = argc >= 6 ? std::stoull(argv[5]) : 1u;
+    return runPolicyCheck(argv[2], size, samples, seed);
   }
   if (cmd == "gen" && argc >= 6) {
     const auto ai = parseOpponent(argv[2]).value_or(Opponent::Netburners);

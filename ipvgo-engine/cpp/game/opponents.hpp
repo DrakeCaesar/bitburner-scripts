@@ -35,4 +35,23 @@ std::vector<Pt> enumerateFactionMoves(const GameState& state, Color player, Oppo
 std::vector<Pt> enumerateOpponentMoves(const GameState& state, Color player, Opponent opponent,
                                          MathRandom& mathRng);
 
+// One possible faction reply with the probability its policy assigns to it.
+struct WeightedReply {
+  bool passMove = false;
+  int x = -1;
+  int y = -1;
+  double prob = 0.0;
+};
+
+// Distribution of the faction AI's next move, derived from the ported priority
+// tables: the faction branch draw is enumerated exactly (interval masses), pool
+// picks are uniform (floorIndex), and the leading isSmart draw is mixed in with
+// its known probability. This is what makes the scripted opponent predictable
+// rather than adversarial.
+struct ReplyDist {
+  std::vector<WeightedReply> replies;  // sorted by prob desc; probs sum to 1
+};
+
+ReplyDist opponentReplyDistribution(const GameState& state, Color player, Opponent opponent);
+
 }  // namespace ipvgo::game

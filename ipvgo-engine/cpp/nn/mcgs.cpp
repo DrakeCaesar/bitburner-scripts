@@ -61,27 +61,6 @@ struct SearchContext {
 // Faction getMove() WHRNG seed; playtime clock is intentionally ignored in search.
 constexpr double kFactionAiSeedMs = 0.0;
 
-uint64_t fnv1a64(uint64_t h, uint64_t v) {
-  h ^= v;
-  h *= 0x100000001b3ULL;
-  return h;
-}
-
-uint64_t positionKey(const GameState& state) {
-  uint64_t h = 0xcbf29ce484222325ULL;
-  for (const auto& col : state.board) {
-    for (const char c : col) h = fnv1a64(h, static_cast<uint64_t>(c));
-  }
-  h = fnv1a64(h, static_cast<uint64_t>(state.previousPlayer));
-  h = fnv1a64(h, static_cast<uint64_t>(state.passCount));
-  h = fnv1a64(h, state.gameOver ? 1ULL : 0ULL);
-  h = fnv1a64(h, static_cast<uint64_t>(state.previousBoards.size()));
-  for (size_t i = 0; i < state.previousBoards.size() && i < 4; ++i) {
-    for (const char c : state.previousBoards[i]) h = fnv1a64(h, static_cast<uint64_t>(c));
-  }
-  return h;
-}
-
 double blackOutcomeValue(const GameState& state) {
   if (!state.gameOver) {
     const Score sc = getScore(state);

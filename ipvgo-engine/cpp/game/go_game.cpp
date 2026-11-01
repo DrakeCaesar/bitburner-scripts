@@ -208,7 +208,9 @@ double getKomi(const GameState& state) {
   return opponentKomi(state.ai);
 }
 
-Score getScore(const GameState& state) {
+Score getScore(const GameState& state) { return getScore(state, computeChains(state.board)); }
+
+Score getScore(const GameState& state, const ChainSet& cs) {
   const SimpleBoard& board = state.board;
   const int N = state.size;
   Score s;
@@ -221,7 +223,6 @@ Score getScore(const GameState& state) {
     }
   }
 
-  const ChainSet cs = computeChains(board);
   const int hugeThreshold = N * N - 3;
   for (int c = 0; c < cs.count; ++c) {
     if (cs.chainColor[c] != '.') continue;

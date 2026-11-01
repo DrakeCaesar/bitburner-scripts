@@ -87,8 +87,8 @@ else()
   endif()
   install(TARGETS ipvgo_engine DESTINATION bin)
 
-  # Faithful-engine CLI: selftest / parity / aimove / gen / mcgs.
-  add_executable(ipvgo_game cpp/game/game_cli.cpp cpp/nn/mcgs.cpp)
+  # Faithful-engine CLI: selftest / parity / aimove / gen / mcgs / exploit / bench.
+  add_executable(ipvgo_game cpp/game/game_cli.cpp cpp/nn/mcgs.cpp cpp/nn/exploiter.cpp cpp/nn/bench_tui.cpp)
   target_include_directories(ipvgo_game PRIVATE cpp/game cpp/nn)
   target_link_libraries(ipvgo_game PRIVATE ipvgo_game_core nlohmann_json::nlohmann_json Threads::Threads)
   install(TARGETS ipvgo_game DESTINATION bin)
