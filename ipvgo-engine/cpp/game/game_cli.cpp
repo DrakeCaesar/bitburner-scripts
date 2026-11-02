@@ -14,6 +14,11 @@
 //       Exploiter move for a game request (engine "exploit").
 //   ipvgo_game policycheck <opponent> <size> [samples] [seed]
 //       Compare the modeled reply distribution against sampled getMove().
+//   ipvgo_game optbench [--seconds=S] [--positions=N] [--depth=D] [--reps=R]
+//                       [--seed=S] [--only=cfg,...] [--factions=a,b] [--size=N]
+//       A/B time each search optimisation against the baseline on one position
+//       set, verifying every variant returns the same answer. Without
+//       --positions the sweep is sized to run for about --seconds seconds.
 //   ipvgo_game bench [budgetMs] [gamesPerFaction] [seed] [size]
 //       Exploiter vs every faction with a live terminal view (board, win table).
 
@@ -38,6 +43,7 @@
 #include "features.hpp"
 #include "game_engine.hpp"
 #include "go_game.hpp"
+#include "optbench.hpp"
 #include "mcgs.hpp"
 #include "obstacles.hpp"
 #include "opponents.hpp"
@@ -50,10 +56,12 @@ using ipvgo::nn::ExploitConfig;
 using ipvgo::nn::ExploitResult;
 using ipvgo::nn::McgsConfig;
 using ipvgo::nn::McgsResult;
+using ipvgo::nn::OptBenchOptions;
 using ipvgo::nn::runExploitBench;
 using ipvgo::nn::runExploitBenchJson;
 using ipvgo::nn::runExploiter;
 using ipvgo::nn::runMcgs;
+using ipvgo::nn::runOptBench;
 using json = nlohmann::json;
 
 namespace {
@@ -804,7 +812,7 @@ int runFuzz(int games, uint64_t seed) {
 int main(int argc, char** argv) {
   if (argc < 2) {
     std::cerr << "usage: ipvgo_game "
-                 "<selftest|fuzz|parity|aimove|mcgsmove|mcgsplay|exploitmove|exploitplay|policycheck|gen> ...\n";
+                 "<selftest|fuzz|parity|aimove|mcgsmove|mcgsplay|exploitmove|exploitplay|policycheck|optbench|gen> ...\n";
     return 2;
   }
   const std::string cmd = argv[1];
@@ -899,6 +907,50 @@ int main(int argc, char** argv) {
       return 2;
     }
     return runExploitBenchJson(options) == 0 ? 0 : 1;
+  }
+  if (cmd == "optbench") {
+    OptBenchOptions options;
+    for (int i = 2; i < argc; ++i) {
+      const std::string arg = argv[i];
+      if (arg.rfind("--", 0) != 0) {
+        std::cerr << "optbench: unexpected argument " << arg << "\n";
+        return 2;
+      }
+      const size_t eq = arg.find('=');
+      const std::string key = arg.substr(2, eq == std::string::npos ? std::string::npos : eq - 2);
+      const std::string value = eq == std::string::npos ? "" : arg.substr(eq + 1);
+      try {
+        if (key == "positions") options.positions = std::stoi(value);
+        else if (key == "seconds") options.seconds = std::stod(value);
+        else if (key == "depth") options.depth = std::stoi(value);
+        else if (key == "reps") options.reps = std::stoi(value);
+        else if (key == "seed") options.seed = std::stoull(value);
+        else if (key == "size") options.size = std::stoi(value);
+        else if (key == "beam") options.beam = std::stoi(value);
+        else if (key == "white-children" || key == "whiteChildren") options.whiteChildren = std::stoi(value);
+        else if (key == "threads") options.threads = std::stoi(value);
+        else if (key == "only") {
+          std::stringstream ss(value);
+          std::string item;
+          while (std::getline(ss, item, ',')) {
+            if (!item.empty()) options.only.push_back(item);
+          }
+        } else if (key == "factions") {
+          std::stringstream ss(value);
+          std::string item;
+          while (std::getline(ss, item, ',')) {
+            if (!item.empty()) options.factions.push_back(item);
+          }
+        } else {
+          std::cerr << "optbench: unknown option --" << key << "\n";
+          return 2;
+        }
+      } catch (const std::exception&) {
+        std::cerr << "optbench: bad value for --" << key << "\n";
+        return 2;
+      }
+    }
+    return runOptBench(options);
   }
   if (cmd == "policycheck" && argc >= 4) {
     const int size = std::stoi(argv[3]);

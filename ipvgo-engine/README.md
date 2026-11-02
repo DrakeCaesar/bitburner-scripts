@@ -238,6 +238,12 @@ Helper tools:
 # Black vs one faction at a fixed depth, plus the policy-model check
 ./scripts/mcgs.sh exploitplay Netburners 5 20 2 1
 ./scripts/mcgs.sh policycheck "The Black Hand" 5 3000
+
+# A/B the search optimisations (baseline, each flag, all together) on one
+# position set, sized to ~20 s; prints per-search lines live and a summary.
+./scripts/mcgs.sh optbench
+./scripts/mcgs.sh optbench --seconds=40 --positions=6 --depth=3
+./scripts/mcgs.sh optbench --only=baseline,fastQueries,all
 ```
 
 `IPVGO_TUI=1` forces the terminal view, `IPVGO_TUI=0` prints one line per game,

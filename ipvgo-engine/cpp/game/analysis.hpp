@@ -29,6 +29,12 @@ struct WeakestChain {
 };
 WeakestChain findEnemyNeighborChainWithFewestLiberties(const SimpleBoard& board, int x, int y, Color player);
 
+// Chain-free equivalents (see fast_queries.cpp). Same results, without building
+// a board-wide ChainSet.
+std::vector<int> findEffectiveLibertiesOfNewMoveFast(const SimpleBoard& board, int x, int y, Color player);
+WeakestChain findWeakestAdjacentChainFast(const SimpleBoard& board, int x, int y, Color chainColor);
+int findMinLibertyCountOfAdjacentChainsFast(const SimpleBoard& board, int x, int y, Color chainColor);
+
 // Empty-region "eye" candidate: the empty chain plus the stone chains that
 // border it (all one color). Indices refer to the ChainSet returned alongside.
 struct EyeCandidate {
