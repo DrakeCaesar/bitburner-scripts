@@ -571,6 +571,11 @@ int pickExploitAction(const ExploitResult& result, int N, const json& req) {
 // process per move) and `serve` (one process for a whole game or session, which
 // is what lets the search reuse positions from earlier moves).
 json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session) {
+  // A new game restarts the move history, so a history that shrank since the last
+  // request means the cached positions belong to a game that is over.
+  if (session != nullptr && req.contains("history") && req.at("history").is_array()) {
+    session->noteRequest(req.at("history").size());
+  }
   GameState state = stateFromRequest(req);
   if (whoseTurn(state) != Color::Black) {
     return json{{"error", "playAs must be Black (X); it is not Black's turn"}};
@@ -605,6 +610,7 @@ json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session) 
   out["memoHits"] = result.memoHits;
   out["reusedHits"] = result.memoReusedHits;
   out["cachedEntries"] = result.cachedEntries;
+  out["sessionResets"] = result.sessionResets;
   out["engine"] = "exploit";
   return out;
 }
@@ -686,7 +692,12 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
   long totalReplyHits = 0;
   long totalCuts = 0;
   long lastCached = 0;
-  long lastEvictions = 0;
+  long lastResets = 0;
+
+  // One session for the whole run: a position solved for one move is not solved
+  // again, and a new game drops it the same way the server does.
+  ipvgo::nn::SearchSession session;
+  const bool useSession = std::getenv("IPVGO_NO_SESSION") == nullptr;
 
   for (int g = 0; g < games; ++g) {
     const double clockMs = static_cast<double>(rng() % 30000000u);
@@ -695,16 +706,14 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
     GameState state = newBoardState(size, ai, true, clockMs, mathRng);
     const int moveCap = size * size * 4;
     int gameMoves = 0;
-    // One session for the whole game: a position solved for one move is not
-    // solved again for the next. IPVGO_NO_SESSION gives the A/B baseline.
-    ipvgo::nn::SearchSession session;
-    const bool useSession = std::getenv("IPVGO_NO_SESSION") == nullptr;
 
     for (int m = 0; m < moveCap && !state.gameOver; ++m) {
       if (whoseTurn(state) != Color::Black) {
         std::cerr << "exploitplay: expected Black to move\n";
         return 1;
       }
+
+      if (useSession) session.noteRequest(static_cast<size_t>(state.previousBoards.size()));
 
       const auto t0 = std::chrono::steady_clock::now();
       const ExploitResult search = runExploiter(state, cfg, nullptr, useSession ? &session : nullptr);
@@ -716,7 +725,7 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
       totalReplyHits += search.replyHits;
       totalCuts += search.budgetCuts;
       lastCached = search.cachedEntries;
-      lastEvictions = search.cacheEvictions;
+      lastResets = search.sessionResets;
 
       const int action = search.bestAction;
       if (std::getenv("IPVGO_TRACE")) {
@@ -778,7 +787,7 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
               << "%) of which crossMove=" << totalMemoReused << " (" << reusePct << "%)"
               << " replyHits=" << totalReplyHits << " budgetCuts=" << totalCuts
               << " think_ms=" << static_cast<long>(totalBlackMs) << " moves=" << totalMoves
-              << " cached=" << lastCached << " evictions=" << lastEvictions << "\n";
+              << " cached=" << lastCached << " resets=" << lastResets << "\n";
   }
   return wins == games ? 0 : 1;
 }

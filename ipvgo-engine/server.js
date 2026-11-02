@@ -643,8 +643,10 @@ function requestServeMove(body, timeoutMs) {
   })
 }
 
-// The session is per game: a new game must not inherit positions from the last
-// one, so the engine is recycled when the game changes.
+// The engine drops its own cache when a request reports a shorter move history,
+// which is what a new game does, so a session never outlives a game. Recycling on
+// a game change is belt and braces: a different opponent or board size means a
+// different search configuration, and a wedged engine is worth replacing anyway.
 let engineGameKey = null
 
 function stopEngine() {

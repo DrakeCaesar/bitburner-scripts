@@ -245,7 +245,8 @@ Helper tools:
 
 - `IPVGO_NO_SESSION=1` - disable the session cache, giving the A/B baseline.
 - `IPVGO_CACHE_STATS=1` - report nodes, memo hits, how many of those came from an
-  earlier move, reply-cache hits and endgame budget cuts.
+  earlier move, reply-cache hits, endgame budget cuts, session size and how many
+  times the session was dropped because a new game started.
 
 ```bash
 # Same binary, both modes, so the comparison is fair
@@ -416,12 +417,15 @@ Reuse is bounded by an accuracy invariant: a memo entry is only kept across
 requests when no endgame node-budget cut fired anywhere in its subtree, so a
 reused value is always at least as accurate as solving that position again.
 
-The session also has a size ceiling, because it lives as long as the game does:
-`IPVGO_SESSION_MAX_ENTRIES` (default 2 000 000 memo entries across all workers,
-about 34 bytes each, so ~68 MB). When it is exceeded the cache is dropped between
-searches - that costs reuse, never accuracy - and `evictions` in the stats reports
-how often it has happened. Measured accumulation on the largest board: a 13x13
-game leaves ~524 000 entries (19 MB), a 9x9 game ~150 000, a 5x5 game ~5 800.
+The session is one game deep. Every request reports the game's move history
+(`ns.go.getMoveHistory()`, which the client already sends so superko can be
+checked), and a new game starts that history over, so a request whose history is
+shorter than the last one drops the whole cache. That is what keeps memory
+bounded - no size ceiling is needed, because nothing survives the end of a game:
+measured on the largest board a 13x13 game leaves ~524 000 memo entries (~19 MB),
+a 9x9 game ~150 000, a 5x5 game ~12 000. `sessionResets` in the `serve` response
+and `resets=` in the stats line report it. The only thing given up is reuse
+between games, which is worth little: a different game is a different tree.
 
 The session stores only the memo. Reply distributions are recomputed rather than
 cached: on 13x13, keeping them cost 872 MB of `WeightedReply` payload - 98% of
