@@ -359,6 +359,43 @@ regression-tested:
   no endgame cut in their subtree, so reuse cannot lower accuracy, but it does
   change which nodes get evaluated and therefore the play.
 
+### Known limits and open questions
+
+Recorded so they are not rediscovered from scratch. Every number here was
+measured, not estimated.
+
+**The endgame node budget is load-bearing.** `nodeBudget` (30 000) stops the
+exact endgame solve once a search has visited that many nodes. It looks like a
+safety valve that could be replaced by a structural bound; it is not that simple.
+Setting it out of reach took a 4-game Netburners match from 592 880 to
+2 797 516 nodes (4.7x). The reason a "≤ 6 empty points, so it ends in 6 moves"
+argument fails: **captures re-open points**, so the play-out can run far longer
+than the empty count suggests. Any replacement bound has to cope with that.
+
+**Budgets are per search, not per branch.** `nodes_` is cumulative for a whole
+`searchRoot` call, and each worker thread gets its own counter over a partition
+of the root moves. So the effective budget - and occasionally the chosen move -
+depends on the thread count. Budgeting per root branch would make the adaptivity
+measure a branch's own difficulty instead of the order it happened to be visited
+in. Not done; it is a small change but it moves the accepted baseline again.
+
+**Most cross-move reuse is still blocked by the memo key.** Cross-move hits were
+only 1.5-5% of memo lookups, because `positionKey()` hashes
+`previousBoards.size()`, which changes every move - the same board at move N and
+move N+1 can never share a key. Keying on the board plus the single previous
+board (enough for the ko rule) would unlock a lot more, but raises a soundness
+question wherever superko actually binds.
+
+**Reuse has no strength measurement.** The 24-game comparison plays *different*
+games in each mode, so the win counts are not comparable (18/24 vs 19/24 is
+noise, not a regression). Whether reuse helps or hurts win rate needs a fixed
+configuration and roughly 100+ games per faction.
+
+**The dominant remaining cost is pattern matching.** At depth 3, `matchesAnyPattern`
+was ~58% of exclusive samples, reached via `MoveGen::patternPoints` on every
+reply-distribution. The patterns are fixed and the board is at most 13x13, so
+this is the obvious next target; nothing else in the profile comes close.
+
 The HTTP server also exposes the exploiter for real games with
 `IPVGO_ENGINE=exploit` (POST `/api/ipvgo/move`, engine reported as `exploit`,
 native MCTS as fallback). `exploitmove` accepts `depth`, `beam`,
