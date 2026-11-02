@@ -15,6 +15,44 @@ namespace {
 // Cardinal neighbor offsets in the (x, y) coordinate system: N=+y, E=+x, S=-y, W=-x.
 constexpr std::array<std::pair<int, int>, 4> kNeighborOffsets = {{{0, 1}, {1, 0}, {0, -1}, {-1, 0}}};
 
+// Flat neighbor table, one entry per point, in kNeighborOffsets order so that
+// chain member discovery order is unchanged. The flood fills used to divide and
+// modulo by N for every neighbour of every point; N is not a power of two, so
+// that was real division in the hottest loop. Built once per size at static-init
+// time and read-only afterwards, which keeps it thread-safe.
+struct FlatNeighbors {
+  static constexpr int kMaxSize = 25;
+  static constexpr int kMaxPoints = kMaxSize * kMaxSize;
+  int size = 0;
+  std::array<unsigned char, kMaxPoints> count{};
+  std::array<std::array<int, 4>, kMaxPoints> idx{};
+};
+
+const FlatNeighbors& flatNeighbors(int n) {
+  static const std::array<FlatNeighbors, FlatNeighbors::kMaxSize + 1> table = [] {
+    std::array<FlatNeighbors, FlatNeighbors::kMaxSize + 1> all{};
+    for (int size = 1; size <= FlatNeighbors::kMaxSize; ++size) {
+      FlatNeighbors& t = all[static_cast<size_t>(size)];
+      t.size = size;
+      for (int x = 0; x < size; ++x) {
+        for (int y = 0; y < size; ++y) {
+          const int p = flatIndex(size, x, y);
+          unsigned char k = 0;
+          for (const auto& [dx, dy] : kNeighborOffsets) {
+            const int nx = x + dx;
+            const int ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+            t.idx[static_cast<size_t>(p)][k++] = flatIndex(size, nx, ny);
+          }
+          t.count[static_cast<size_t>(p)] = k;
+        }
+      }
+    }
+    return all;
+  }();
+  return table[static_cast<size_t>(n)];
+}
+
 // Compares a board against a flattened board string without building a string
 // (the superko check used to allocate one per legality test).
 bool boardEqualsFlat(const SimpleBoard& board, const std::string& flat) {
@@ -68,6 +106,7 @@ double opponentKomi(Opponent ai) {
 ChainSet computeChains(const SimpleBoard& board) {
   const int N = static_cast<int>(board.size());
   const int points = N * N;
+  const FlatNeighbors& neighbors = flatNeighbors(N);
   ChainSet cs;
   cs.N = N;
   cs.count = 0;
@@ -93,14 +132,11 @@ ChainSet computeChains(const SimpleBoard& board) {
 
       while (stackSize > 0) {
         const int idx = stack[static_cast<size_t>(--stackSize)];
-        const int cx = idx / N;
-        const int cy = idx % N;
-        for (const auto& [dx, dy] : kNeighborOffsets) {
-          const int nx = cx + dx;
-          const int ny = cy + dy;
-          if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
-          if (board[nx][ny] != c) continue;
-          const int nIdx = flatIndex(N, nx, ny);
+        const int nbCount = neighbors.count[static_cast<size_t>(idx)];
+        const auto& nbIdx = neighbors.idx[static_cast<size_t>(idx)];
+        for (int k = 0; k < nbCount; ++k) {
+          const int nIdx = nbIdx[static_cast<size_t>(k)];
+          if (board[nIdx / N][nIdx % N] != c) continue;
           if (cs.id[static_cast<size_t>(nIdx)] != -1) continue;
           cs.id[static_cast<size_t>(nIdx)] = chainId;
           cs.memberData[static_cast<size_t>(memberCount++)] = nIdx;
@@ -118,14 +154,11 @@ ChainSet computeChains(const SimpleBoard& board) {
   int libertyCount = 0;
   for (int c = 0; c < cs.count; ++c) {
     for (const int idx : cs.members(c)) {
-      const int cx = idx / N;
-      const int cy = idx % N;
-      for (const auto& [dx, dy] : kNeighborOffsets) {
-        const int nx = cx + dx;
-        const int ny = cy + dy;
-        if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
-        if (board[nx][ny] != '.') continue;
-        const int nIdx = flatIndex(N, nx, ny);
+      const int nbCount = neighbors.count[static_cast<size_t>(idx)];
+      const auto& nbIdx = neighbors.idx[static_cast<size_t>(idx)];
+      for (int k = 0; k < nbCount; ++k) {
+        const int nIdx = nbIdx[static_cast<size_t>(k)];
+        if (board[nIdx / N][nIdx % N] != '.') continue;
         if (seenTag[static_cast<size_t>(nIdx)] == c) continue;
         seenTag[static_cast<size_t>(nIdx)] = c;
         cs.libertyData[static_cast<size_t>(libertyCount++)] = nIdx;
@@ -317,8 +350,9 @@ void passTurn(GameState& state, Color player, bool allowEndGame) {
 }
 
 std::vector<std::pair<int, int>> getEmptySpaces(const SimpleBoard& board) {
-  std::vector<std::pair<int, int>> out;
   const int N = static_cast<int>(board.size());
+  std::vector<std::pair<int, int>> out;
+  out.reserve(static_cast<size_t>(N) * static_cast<size_t>(N));  // one allocation, no regrowth
   for (int x = 0; x < N; ++x) {
     for (int y = 0; y < N; ++y) {
       if (board[x][y] == '.') out.emplace_back(x, y);
@@ -328,9 +362,16 @@ std::vector<std::pair<int, int>> getEmptySpaces(const SimpleBoard& board) {
 }
 
 std::vector<std::pair<int, int>> getAllValidMoves(const GameState& state, Color player) {
+  const int N = static_cast<int>(state.board.size());
   std::vector<std::pair<int, int>> out;
-  for (const auto& [x, y] : getEmptySpaces(state.board)) {
-    if (evaluateIfMoveIsValid(state, x, y, player) == Validity::Valid) out.emplace_back(x, y);
+  out.reserve(static_cast<size_t>(N) * static_cast<size_t>(N));
+  // Walk the board directly: the intermediate point list was one more allocation
+  // and a copy per call, and this is on the hot path for every White node.
+  for (int x = 0; x < N; ++x) {
+    for (int y = 0; y < N; ++y) {
+      if (state.board[x][y] != '.') continue;
+      if (evaluateIfMoveIsValid(state, x, y, player) == Validity::Valid) out.emplace_back(x, y);
+    }
   }
   return out;
 }
