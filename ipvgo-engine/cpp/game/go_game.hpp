@@ -205,13 +205,21 @@ class BoardHistory {
     if (count_ == 0) return false;
     const int n = board.size();
     if (strideFor(n) != stride_) return false;
-    uint64_t probe[16];
+    uint64_t probe[12];
     packBoard(board, probe, stride_);
     for (int i = 0; i < count_; ++i) {
       const uint64_t* entry = words_.data() + static_cast<size_t>(i) * static_cast<size_t>(stride_);
       if (std::memcmp(entry, probe, sizeof(uint64_t) * static_cast<size_t>(stride_)) == 0) return true;
     }
     return false;
+  }
+
+  // Drops the most recent entry; keeps the buffer so append/undo pairs do not
+  // allocate.
+  void pop() {
+    if (count_ == 0) return;
+    --count_;
+    words_.resize(static_cast<size_t>(count_) * static_cast<size_t>(stride_));
   }
 
   // Word view of entry i, for hashing.
@@ -339,6 +347,22 @@ Validity evaluateIfMoveIsValid(const GameState& state, int x, int y, Color playe
                                SimpleBoard* resultBoard = nullptr);
 bool makeMove(GameState& state, int x, int y, Color player);
 void passTurn(GameState& state, Color player, bool allowEndGame = true);
+
+// Undo record for one applied move or pass, so a search can mutate a single
+// GameState instead of copying it for every candidate move.
+struct MoveUndo {
+  SimpleBoard board;  // cells before the move; only meaningful when `moved`
+  Color previousPlayer = Color::White;
+  int passCount = 0;
+  bool gameOver = false;
+  bool moved = false;
+};
+
+// Applies the move in place. On an illegal move the state is left untouched and
+// false is returned.
+bool applyMove(GameState& state, int x, int y, Color player, MoveUndo& undo);
+void applyPass(GameState& state, Color player, MoveUndo& undo);
+void undoMove(GameState& state, const MoveUndo& undo);
 
 Color whoseTurn(const GameState& state);  // returns Empty if game over
 std::vector<std::pair<int, int>> getEmptySpaces(const SimpleBoard& board);

@@ -255,18 +255,56 @@ Validity evaluateIfMoveIsValid(const GameState& state, int x, int y, Color playe
   return Validity::Valid;
 }
 
-bool makeMove(GameState& state, int x, int y, Color player) {
-  // Reuse the board the legality check already built (stone placed, captures
-  // applied) instead of rebuilding the chain set a second time.
-  SimpleBoard result;
-  const Validity validity = evaluateIfMoveIsValid(state, x, y, player, &result);
-  if (validity != Validity::Valid) return false;
+namespace {
 
+// Commits a move whose legality was already checked and whose resulting board
+// was already computed.
+void commitMove(GameState& state, SimpleBoard&& result, Color player) {
   state.previousBoards.append(state.board);
   state.board = std::move(result);
   state.previousPlayer = player;
   state.passCount = 0;
+}
+
+}  // namespace
+
+bool makeMove(GameState& state, int x, int y, Color player) {
+  // Reuse the board the legality check already built (stone placed, captures
+  // applied) instead of rebuilding the chain set a second time.
+  SimpleBoard result;
+  if (evaluateIfMoveIsValid(state, x, y, player, &result) != Validity::Valid) return false;
+  commitMove(state, std::move(result), player);
   return true;
+}
+
+bool applyMove(GameState& state, int x, int y, Color player, MoveUndo& undo) {
+  SimpleBoard result;
+  if (evaluateIfMoveIsValid(state, x, y, player, &result) != Validity::Valid) return false;
+  undo.board = state.board;
+  undo.previousPlayer = state.previousPlayer;
+  undo.passCount = state.passCount;
+  undo.gameOver = state.gameOver;
+  undo.moved = true;
+  commitMove(state, std::move(result), player);
+  return true;
+}
+
+void applyPass(GameState& state, Color player, MoveUndo& undo) {
+  undo.previousPlayer = state.previousPlayer;
+  undo.passCount = state.passCount;
+  undo.gameOver = state.gameOver;
+  undo.moved = false;
+  passTurn(state, player);
+}
+
+void undoMove(GameState& state, const MoveUndo& undo) {
+  if (undo.moved) {
+    state.previousBoards.pop();
+    state.board = undo.board;
+  }
+  state.previousPlayer = undo.previousPlayer;
+  state.passCount = undo.passCount;
+  state.gameOver = undo.gameOver;
 }
 
 void passTurn(GameState& state, Color player, bool allowEndGame) {

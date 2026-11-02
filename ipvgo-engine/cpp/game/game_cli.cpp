@@ -272,6 +272,42 @@ int runSelftest() {
     check(mismatches == 0, "capture: bitwise sweep matches the flood fill (" + std::to_string(checked) + " cases)");
   }
 
+  // Make/unmake must restore a GameState exactly, or the search that mutates one
+  // state in place would silently drift.
+  {
+    std::mt19937_64 rng(424242);
+    const char alphabet[] = {'.', '.', '.', '.', 'X', 'X', 'O', 'O', '#'};
+    long mismatches = 0;
+    long checked = 0;
+    for (int trial = 0; trial < 120; ++trial) {
+      const int n = 5 + 2 * static_cast<int>(rng() % 3);
+      SimpleBoard board(n);
+      for (int x = 0; x < n; ++x)
+        for (int y = 0; y < n; ++y) board[x][y] = alphabet[rng() % sizeof(alphabet)];
+      GameState state = stateFromSimple(board, Color::White);
+      const GameState before = state;
+      for (int x = 0; x < n; ++x) {
+        for (int y = 0; y < n; ++y) {
+          MoveUndo undo;
+          if (!applyMove(state, x, y, Color::Black, undo)) continue;
+          ++checked;
+          undoMove(state, undo);
+          if (state.board != before.board || state.previousPlayer != before.previousPlayer ||
+              state.passCount != before.passCount || state.gameOver != before.gameOver ||
+              state.previousBoards.size() != before.previousBoards.size()) {
+            ++mismatches;
+          }
+        }
+      }
+      MoveUndo undo;
+      applyPass(state, Color::Black, undo);
+      undoMove(state, undo);
+      ++checked;
+      if (state.previousPlayer != before.previousPlayer || state.passCount != before.passCount) ++mismatches;
+    }
+    check(mismatches == 0, "make/unmake restores the state (" + std::to_string(checked) + " cases)");
+  }
+
   // Every faction returns a legal move (or pass) from a mid-game position.
   {
     SimpleBoard b = {".....", ".XO..", ".XO..", ".XO..", "....."};
