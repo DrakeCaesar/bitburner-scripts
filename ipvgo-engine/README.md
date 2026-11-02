@@ -107,6 +107,17 @@ actual weaknesses.
   the leaf eval carries faction-specific liberty weights (a faction that never
   answers threats makes white groups in atari worth more, and one that captures
   at every opportunity makes black groups in atari worth less).
+- The objective is the **probability that Black wins**, not the score. A finished
+  game is worth exactly 1 or 0 - winning by one point counts as much as winning
+  by fifty - and every leaf is `logistic(lead / (3.4 + 1.45*sqrt(empties)))`, so
+  a lead is worth what it is actually worth: almost nothing with the board open,
+  nearly everything with two points left. The constants are a maximum-likelihood
+  fit on 2,577 positions, and the atari weights above are expressed in points
+  (0.6 points of lead per unit) so a weight means the same thing on every board
+  size. Measured against the old margin objective at the in-game budget on 5x5,
+  180 games per arm on two unseen seeds: 139 wins for margin, 148 for win
+  probability. On one of those seeds the average margin fell (5.74 -> 2.39) while
+  wins rose, which is what trading points for wins looks like.
 - Few empty points left (≤ `endgameEmpties`) switch on an endgame solve that
   plays the rest of the game out, so won games are not thrown away by the
   horizon. Captures stay captures there: invading dead white space is scored as
@@ -303,7 +314,7 @@ Reproduce, from a Release build:
 |---|---|
 | `ipvgo_prof` search (36 290 nodes) | ~290 ms, 940 451 allocations, 20 MB |
 | `optbench` per search (2 positions, depth 3) | ~1.6 s (wall clock is noisy; the node counts are the stable part), 68 678 nodes |
-| `optbench` position 1 / 2 | 40 847 nodes, value 0.2245 / 27 831 nodes, value 0.0309 |
+| `optbench` position 1 / 2 | 40 847 nodes / 27 831 nodes (node counts are eval-independent), values are win probabilities |
 | `exploitplay`, 24 games, depth 2 | 12.7 ms/move with the session, 14.9 ms/move without (1.38M vs 1.78M nodes) |
 
 Largest remaining allocation sites: small `std::vector<int>` growth in the policy
@@ -339,7 +350,19 @@ IPVGO_NO_SESSION=1 IPVGO_TRACE=1 ./cmake-build/bin/Release/ipvgo_game exploitpla
 ```
 
 `optbench` node counts are deterministic at `--threads=1`; at the default thread
-count they vary run to run, so compare values rather than node counts.
+count they vary run to run, so compare node counts only at `--threads=1`. The
+search has no value-based pruning, so node counts do not depend on the eval -
+only the reported `value` and the chosen move do.
+
+`IPVGO_NODE_LIMIT` makes `exploitplay` search the way the server does (the client
+sends `iterations`, which becomes a node budget and switches on iterative
+deepening, so the `depth` argument stops applying):
+
+```bash
+# the configuration the game actually runs, at 5x5 and 9x9
+IPVGO_NODE_LIMIT=4000 ./cmake-build/bin/Release/ipvgo_game exploitplay "Illuminati" 5 25 2 1
+IPVGO_NODE_LIMIT=4000 ./cmake-build/bin/Release/ipvgo_game exploitplay "Illuminati" 9 4 2 1
+```
 
 Two knobs genuinely change which moves are played, and are therefore not
 regression-tested:

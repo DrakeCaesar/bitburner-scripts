@@ -681,6 +681,13 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
   cfg.depth = depth;
   if (beam > 0) cfg.beam = beam;
   if (whiteChildren > 0) cfg.whiteChildren = whiteChildren;
+  // Benchmark the configuration the game actually runs: the client sends
+  // `iterations`, which becomes a node budget, and a node budget switches the
+  // search to iterative deepening and makes the depth argument irrelevant.
+  if (const char* limit = std::getenv("IPVGO_NODE_LIMIT")) {
+    const long parsed = std::atol(limit);
+    if (parsed > 0) cfg.nodeLimit = parsed;
+  }
 
   int wins = 0;
   double totalBlackMs = 0.0;
@@ -730,11 +737,15 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
       const int action = search.bestAction;
       if (std::getenv("IPVGO_TRACE")) {
         const Score probe = getScore(state);
+        int empties = 0;
+        for (int x = 0; x < state.size; ++x) {
+          for (int y = 0; y < state.size; ++y) empties += state.board[x][y] == '.' ? 1 : 0;
+        }
         std::cout << "  g" << g << " m" << m << " B ";
         if (action == ipvgo::nn::passAction(size)) std::cout << "pass";
         else std::cout << (action / size) << "," << (action % size);
         std::cout << " v=" << search.value << " nodes=" << search.nodes << " score=" << probe.blackSum << ":"
-                  << probe.whiteSum << "\n";
+                  << probe.whiteSum << " e=" << empties << "\n";
       }
       if (action == ipvgo::nn::passAction(size)) {
         passTurn(state, Color::Black);
