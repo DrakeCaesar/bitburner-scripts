@@ -12,6 +12,8 @@
 # Unified native build (root CMakeLists.txt + CMakePresets.json)
 /cmake-build/
 /cmake-build-debug/
+/cmake-build-prof/
+/cmake-build-*/
 
 # IPvGO native engine build artifacts (standalone per-component builds)
 ipvgo-engine/build/

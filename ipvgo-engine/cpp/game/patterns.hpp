@@ -10,4 +10,9 @@ namespace ipvgo::game {
 // pattern set (base + 4 rotations + vertical mirror = 104 patterns).
 bool matchesAnyPattern(const SimpleBoard& board, int x, int y, Color player);
 
+// The same predicate written as the original nested loop (pattern at a time, cell
+// at a time). Kept as an oracle: the bitset version must agree with it on every
+// position, which selftest and fuzz both check.
+bool matchesAnyPatternSlow(const SimpleBoard& board, int x, int y, Color player);
+
 }  // namespace ipvgo::game

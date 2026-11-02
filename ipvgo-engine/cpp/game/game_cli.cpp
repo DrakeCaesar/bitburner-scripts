@@ -47,6 +47,7 @@
 #include "game_engine.hpp"
 #include "go_game.hpp"
 #include "safety.hpp"
+#include "patterns.hpp"
 #include "influence.hpp"
 #include "optbench.hpp"
 #include "mcgs.hpp"
@@ -413,6 +414,46 @@ int runSelftest() {
     mixed[1][1] = 'O';
     const ipvgo::game::Influence mi = ipvgo::game::computeInfluence(mixed, 5);
     check(mi.value[static_cast<size_t>(flatIndex(8, 1, 1))] < 0, "influence: a white stone is negative");
+  }
+
+  // ---- Pattern matcher: the bitset version must equal the slow oracle --------
+  {
+    std::mt19937_64 rng(20260101ULL);
+    long checkedCells = 0;
+    long mismatches = 0;
+    long matched = 0;
+    for (int board = 0; board < 240; ++board) {
+      const int n = 5 + static_cast<int>(rng() % 5) * 2;  // 5,7,9,11,13
+      SimpleBoard b(n);
+      for (int x = 0; x < n; ++x) {
+        for (int y = 0; y < n; ++y) {
+          const uint64_t r = rng() % 100;
+          // Skew towards stones so patterns actually fire; keep some obstacles.
+          b[x][y] = r < 38 ? 'X' : r < 72 ? 'O' : r < 76 ? '#' : '.';
+        }
+      }
+      for (int x = 0; x < n; ++x) {
+        for (int y = 0; y < n; ++y) {
+          for (Color c : {Color::Black, Color::White}) {
+            const bool fast = matchesAnyPattern(b, x, y, c);
+            const bool slow = matchesAnyPatternSlow(b, x, y, c);
+            if (fast != slow) ++mismatches;
+            if (fast) ++matched;
+            ++checkedCells;
+          }
+        }
+      }
+    }
+    check(mismatches == 0, "pattern matching: bitset agrees with the oracle (" + std::to_string(checkedCells) +
+                               " cells, " + std::to_string(matched) + " matches)");
+
+    // A pattern that must fire: a hane shape in the corner.
+    const SimpleBoard hane = {
+        "OX......", "........", "........", "........", "........",
+        "........", "........", "........",
+    };
+    check(matchesAnyPattern(hane, 1, 0, Color::White) == matchesAnyPatternSlow(hane, 1, 0, Color::White),
+          "pattern matching: corner hane agrees");
   }
 
   std::cout << (g_failures ? "\nSELFTEST FAILED\n" : "\nSELFTEST PASSED\n");

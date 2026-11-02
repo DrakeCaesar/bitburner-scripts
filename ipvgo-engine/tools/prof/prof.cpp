@@ -234,8 +234,9 @@ DWORD WINAPI samplerLoop(void*) {
 
 int main(int argc, char** argv) {
   const std::string faction = argc > 1 ? argv[1] : "Slum Snakes";
-  const int depth = argc > 2 ? std::atoi(argv[2]) : 3;
-  const int targetPly = argc > 3 ? std::atoi(argv[3]) : 6;
+  const int boardSize = argc > 2 ? std::atoi(argv[2]) : 7;
+  const int games = argc > 3 ? std::atoi(argv[3]) : 10;
+  const long nodeLimit = argc > 4 ? std::atol(argv[4]) : 4000;
 
   SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
   char exePath[MAX_PATH] = {0};
@@ -261,42 +262,56 @@ int main(int argc, char** argv) {
 
   const Opponent ai = parseOpponent(faction).value_or(Opponent::Netburners);
   std::mt19937_64 rng(1);
-  MathRandom mathRng(rng());
-  GameState state = newBoardState(5, ai, true, static_cast<double>(rng() % 30000000u), mathRng);
-  for (int ply = 0; ply < targetPly && !state.gameOver; ++ply) {
-    const Color mover = whoseTurn(state);
-    const Play play = getMove(state, mover, ai, static_cast<double>(rng() % 30000000u), mathRng);
-    if (play.type == PlayType::Pass) {
-      passTurn(state, mover);
-    } else if (!makeMove(state, play.x, play.y, mover)) {
-      passTurn(state, mover);
-    }
-  }
-  if (state.gameOver || whoseTurn(state) != Color::Black) {
-    std::printf("bad starting position\n");
-    return 1;
-  }
 
   ipvgo::nn::ExploitConfig cfg;
-  cfg.depth = depth;
-  cfg.threads = 1;
+  cfg.depth = 2;
+  cfg.threads = 1;          // one thread so the samples are not split across cores
+  cfg.nodeLimit = nodeLimit;  // the budget the game's client actually gives us
 
-  std::printf("workload: %s 5x5 depth=%d ply=%d threads=%d\n", faction.c_str(), depth, targetPly, cfg.threads);
+  std::printf("workload: %s %dx%d, %d games, nodeLimit=%ld, threads=%d (the in-game configuration)\n",
+              faction.c_str(), boardSize, boardSize, games, nodeLimit, cfg.threads);
 
-  // ---- phase 1: allocations -------------------------------------------------
+  // ---- phase 1: allocations, over the same games ------------------------------
   g_countAllocs = true;
   const auto allocStart = std::chrono::steady_clock::now();
-  const ipvgo::nn::ExploitResult r1 = ipvgo::nn::runExploiter(state, cfg);
+  long allocNodes = 0;
+  long totalMoves = 0;
+  int wins = 0;
+  for (int g = 0; g < games; ++g) {
+    const double clockMs = static_cast<double>(rng() % 30000000u);
+    MathRandom mathRng(rng());
+    GameState state = newBoardState(boardSize, ai, true, clockMs, mathRng);
+    // A fresh session per game, exactly like the server.
+    ipvgo::nn::SearchSession session;
+    for (int m = 0; m < boardSize * boardSize * 4 && !state.gameOver; ++m) {
+      if (whoseTurn(state) != Color::Black) break;
+      session.noteRequest(static_cast<size_t>(state.previousBoards.size()));
+      const ipvgo::nn::ExploitResult r = ipvgo::nn::runExploiter(state, cfg, nullptr, &session);
+      allocNodes += r.nodes;
+      ++totalMoves;
+      if (r.bestAction == (boardSize * boardSize)) passTurn(state, Color::Black);
+      else if (!makeMove(state, r.bestAction / boardSize, r.bestAction % boardSize, Color::Black)) {
+        passTurn(state, Color::Black);
+      }
+      if (state.gameOver) break;
+      const Play wp = getMove(state, Color::White, ai, static_cast<double>(rng() % 30000000u), mathRng);
+      if (wp.type == PlayType::Pass) passTurn(state, Color::White);
+      else if (!makeMove(state, wp.x, wp.y, Color::White)) passTurn(state, Color::White);
+    }
+    if (blackWins(getScore(state))) ++wins;
+  }
   const double allocMs =
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - allocStart).count();
   g_countAllocs = false;
 
   const long long allocs = g_allocCount.load();
   const long long bytes = g_allocBytes.load();
-  std::printf("search: nodes=%ld value=%.4f  %.1f ms\n", r1.nodes, r1.value, allocMs);
-  std::printf("allocs=%lld bytes=%lld frees=%lld  -> %.2f alloc/ms, %.0f bytes/alloc\n", allocs, bytes,
-              g_freeCount.load(), static_cast<double>(allocs) / std::max(allocMs, 1e-9),
-              static_cast<double>(bytes) / std::max<double>(1.0, static_cast<double>(allocs)));
+  std::printf("gameplay: %d games, %ld black moves, %d wins, %ld nodes, %.0f ms total, %.2f ms/move\n", games,
+              totalMoves, wins, allocNodes, allocMs, allocMs / std::max<long>(totalMoves, 1));
+  std::printf("allocs=%lld bytes=%lld frees=%lld  -> %.0f alloc/ms, %.0f bytes/alloc, %.0f alloc/move\n", allocs,
+              bytes, g_freeCount.load(), static_cast<double>(allocs) / std::max(allocMs, 1e-9),
+              static_cast<double>(bytes) / std::max<double>(1.0, static_cast<double>(allocs)),
+              static_cast<double>(allocs) / std::max<long>(totalMoves, 1));
 
   struct AllocRow {
     uintptr_t addr = 0;
@@ -319,14 +334,34 @@ int main(int argc, char** argv) {
                 sym.file.c_str(), sym.line);
   }
 
-  // ---- phase 2: cpu sampling ------------------------------------------------
-  const int reps = argc > 4 ? std::atoi(argv[4]) : 4;
+  // ---- phase 2: cpu sampling, over the same kind of games --------------------
   g_samples.clear();
   g_sampling = true;
   HANDLE sampler = CreateThread(nullptr, 0, samplerLoop, nullptr, 0, nullptr);
   const auto cpuStart = std::chrono::steady_clock::now();
-  ipvgo::nn::ExploitResult r2;
-  for (int i = 0; i < reps; ++i) r2 = ipvgo::nn::runExploiter(state, cfg);
+  long sampledNodes = 0;
+  long sampledMoves = 0;
+  for (int g = 0; g < games; ++g) {
+    const double clockMs = static_cast<double>(rng() % 30000000u);
+    MathRandom mathRng(rng());
+    GameState state = newBoardState(boardSize, ai, true, clockMs, mathRng);
+    ipvgo::nn::SearchSession session;
+    for (int m = 0; m < boardSize * boardSize * 4 && !state.gameOver; ++m) {
+      if (whoseTurn(state) != Color::Black) break;
+      session.noteRequest(static_cast<size_t>(state.previousBoards.size()));
+      const ipvgo::nn::ExploitResult r = ipvgo::nn::runExploiter(state, cfg, nullptr, &session);
+      sampledNodes += r.nodes;
+      ++sampledMoves;
+      if (r.bestAction == (boardSize * boardSize)) passTurn(state, Color::Black);
+      else if (!makeMove(state, r.bestAction / boardSize, r.bestAction % boardSize, Color::Black)) {
+        passTurn(state, Color::Black);
+      }
+      if (state.gameOver) break;
+      const Play wp = getMove(state, Color::White, ai, static_cast<double>(rng() % 30000000u), mathRng);
+      if (wp.type == PlayType::Pass) passTurn(state, Color::White);
+      else if (!makeMove(state, wp.x, wp.y, Color::White)) passTurn(state, Color::White);
+    }
+  }
   const double cpuMs =
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuStart).count();
   g_sampling = false;
@@ -334,7 +369,9 @@ int main(int argc, char** argv) {
     WaitForSingleObject(sampler, 5000);
     CloseHandle(sampler);
   }
-  std::printf("\nsampled search: nodes=%ld  %.1f ms x%d  samples=%zu\n", r2.nodes, cpuMs, reps, g_samples.size());
+  std::printf("\nsampled gameplay: %ld moves, %ld nodes, %.0f ms, %zu samples (%.0f us/sample-equivalent)\n",
+              sampledMoves, sampledNodes, cpuMs, g_samples.size(),
+              g_samples.empty() ? 0.0 : 1000.0 * cpuMs / static_cast<double>(g_samples.size()));
   {
     size_t withExe = 0;
     size_t maxFrames = 0;
@@ -369,17 +406,28 @@ int main(int argc, char** argv) {
 
   std::map<std::string, long long> exclusive;
   std::map<std::string, long long> inclusive;
+  std::map<std::string, long long> lineExclusive;  // "file:line  (function)"
   std::map<std::pair<std::string, std::string>, long long> edges;
   long long used = 0;
   for (const auto& stack : g_samples) {
     std::vector<std::string> names;
+    std::vector<DWORD64> addrs;
     for (const DWORD64 addr : stack) {
       if (!inMainModule(addr)) continue;
       names.push_back(resolve(addr).name);
+      addrs.push_back(addr);
     }
     if (names.empty()) continue;
     ++used;
     ++exclusive[names[0]];
+    {
+      const Sym& leaf = resolve(addrs[0]);
+      if (leaf.line > 0) {
+        char key[512];
+        std::snprintf(key, sizeof(key), "%s:%d  (%s)", leaf.file.c_str(), leaf.line, leaf.name.c_str());
+        ++lineExclusive[key];
+      }
+    }
     std::vector<std::string> seen;
     for (const auto& name : names) {
       if (std::find(seen.begin(), seen.end(), name) != seen.end()) continue;
@@ -402,6 +450,7 @@ int main(int argc, char** argv) {
   };
   print("exclusive (leaf) cost", exclusive, 24);
   print("inclusive cost", inclusive, 30);
+  print("hottest source lines (exclusive leaf)", lineExclusive, 34);
 
   std::vector<std::pair<long long, std::pair<std::string, std::string>>> edgeRows;
   for (auto& [key, count] : edges) edgeRows.emplace_back(count, key);
