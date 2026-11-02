@@ -1,4 +1,4 @@
-# IPvGO engine (exploiter + MCGS + WASM)
+# IPvGO engine (exploiter + MCGS)
 
 C++ engine for Bitburner IPvGO. Play is driven by a **policy exploiter** that
 models the scripted faction AI, with Monte Carlo graph search and a legacy
@@ -64,14 +64,6 @@ Server listens on **http://localhost:3010** (`IPVGO_PORT` to override).
 
 - `GET /health` — `{ engine: "exploit" | "mcgs" | "native" | "missing", benchEngine, ... }`
 - `POST /api/ipvgo/move` — JSON body from `ns.go`, returns `{ move, iterations, elapsedMs, engine? }`
-
-## WASM
-
-```bash
-pnpm run build:wasm
-```
-
-Outputs `cpp/ipvgo.wasm.js` and `cpp/ipvgo.wasm.wasm`.
 
 ## Request JSON
 
@@ -423,4 +415,10 @@ and falls back to one-shot `exploitmove` if the engine dies.
 Reuse is bounded by an accuracy invariant: a memo entry is only kept across
 requests when no endgame node-budget cut fired anywhere in its subtree, so a
 reused value is always at least as accurate as solving that position again.
+
+The session also has a size ceiling, because it lives as long as the game does:
+`IPVGO_SESSION_MAX_ENTRIES` (default 2 000 000, memo + reply entries across all
+workers). When it is exceeded the cache is dropped between searches - that costs
+reuse, never accuracy - and `evictions` in the stats reports how often it has
+happened.
 

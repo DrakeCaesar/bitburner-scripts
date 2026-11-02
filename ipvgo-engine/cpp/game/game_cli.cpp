@@ -604,6 +604,7 @@ json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session) 
   out["elapsedMs"] = ms;
   out["memoHits"] = result.memoHits;
   out["reusedHits"] = result.memoReusedHits;
+  out["cachedEntries"] = result.cachedEntries;
   out["engine"] = "exploit";
   return out;
 }
@@ -684,6 +685,8 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
   long totalMemoReused = 0;
   long totalReplyHits = 0;
   long totalCuts = 0;
+  long lastCached = 0;
+  long lastEvictions = 0;
 
   for (int g = 0; g < games; ++g) {
     const double clockMs = static_cast<double>(rng() % 30000000u);
@@ -712,6 +715,8 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
       totalMemoReused += search.memoReusedHits;
       totalReplyHits += search.replyHits;
       totalCuts += search.budgetCuts;
+      lastCached = search.cachedEntries;
+      lastEvictions = search.cacheEvictions;
 
       const int action = search.bestAction;
       if (std::getenv("IPVGO_TRACE")) {
@@ -772,7 +777,8 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
     std::cout << "exploitplay: cache nodes=" << totalNodes << " memoHits=" << totalMemoHits << " (" << hitPct
               << "%) of which crossMove=" << totalMemoReused << " (" << reusePct << "%)"
               << " replyHits=" << totalReplyHits << " budgetCuts=" << totalCuts
-              << " think_ms=" << static_cast<long>(totalBlackMs) << " moves=" << totalMoves << "\n";
+              << " think_ms=" << static_cast<long>(totalBlackMs) << " moves=" << totalMoves
+              << " cached=" << lastCached << " evictions=" << lastEvictions << "\n";
   }
   return wins == games ? 0 : 1;
 }

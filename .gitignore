@@ -13,11 +13,9 @@
 /cmake-build/
 /cmake-build-debug/
 
-# IPvGO native / WASM engine build artifacts (standalone per-component builds)
+# IPvGO native engine build artifacts (standalone per-component builds)
 ipvgo-engine/build/
 ipvgo-engine/temp/
-ipvgo-engine/cpp/*.wasm
-ipvgo-engine/cpp/ipvgo.wasm.js
 # KingOfTheHill Python benchmark (tests/koth_tune/python/)
 tests/koth_tune/build/
 tests/koth_tune/python/__pycache__/
