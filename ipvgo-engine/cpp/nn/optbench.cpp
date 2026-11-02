@@ -54,15 +54,16 @@ struct ConfigStats {
 };
 
 // Every configuration the benchmark knows about. Baseline first so the summary
-// always has a reference row.
+// always has a reference row. The flags default to on, so the baseline has to
+// spell out "all off".
 std::vector<OptConfig> allConfigs() {
   std::vector<OptConfig> configs;
-  configs.push_back({"baseline", OptFlags{}});
+  configs.push_back({"baseline", ipvgo::game::kOptAllOff});
   configs.push_back({"growthCache", OptFlags{true, false, false, false}});
   configs.push_back({"fastQueries", OptFlags{false, true, false, false}});
   configs.push_back({"persistCache", OptFlags{false, false, true, false}});
   configs.push_back({"forcedPath", OptFlags{false, false, false, true}});
-  configs.push_back({"all", OptFlags{true, true, true, true}});
+  configs.push_back({"all", ipvgo::game::kOptAllOn});
   return configs;
 }
 
@@ -93,7 +94,7 @@ double ratio(double base, double value) { return value > 1e-12 ? base / value : 
 // look like the ones the search sees in real games. Positions are generated
 // round-robin over the factions so any prefix still covers every faction.
 std::vector<Position> buildPositions(const OptBenchOptions& options, const std::vector<std::string>& factions) {
-  g_opt = OptFlags{};
+  g_opt = ipvgo::game::kOptAllOff;
   std::vector<Position> positions;
   std::mt19937_64 rng(options.seed ? options.seed : 1u);
 
@@ -137,8 +138,8 @@ std::vector<Position> buildPositions(const OptBenchOptions& options, const std::
 
 // Board after one Black ply, i.e. the White-to-move position the search scores.
 bool blackPlyThenWhiteToMove(const GameState& state, ExploitConfig cfg, GameState& out) {
-  g_opt = OptFlags{};
-  cfg.flags = OptFlags{};
+  g_opt = ipvgo::game::kOptAllOff;
+  cfg.flags = ipvgo::game::kOptAllOff;
   cfg.depth = 1;
   cfg.budgetMs = 0;
   cfg.nodeLimit = 0;
@@ -236,7 +237,7 @@ int runOptBench(const OptBenchOptions& options) {
     wanted = std::min(candidates, static_cast<size_t>(options.positions));
   } else {
     ExploitConfig probeCfg = cfg;
-    probeCfg.flags = OptFlags{};
+    probeCfg.flags = ipvgo::game::kOptAllOff;
     const auto probeStart = Clock::now();
     runExploiter(positions[0].state, probeCfg);
     const double probeMs =
@@ -267,7 +268,7 @@ int runOptBench(const OptBenchOptions& options) {
     }
     const Opponent ai = parseOpponent(positions[p].faction).value_or(Opponent::Netburners);
 
-    g_opt = OptFlags{};
+    g_opt = ipvgo::game::kOptAllOff;
     const ReplyDist reference = opponentReplyDistribution(whiteToMove, Color::White, ai);
 
     std::string line = "  pos " + std::to_string(p) + " " + pad(positions[p].faction, 14) + " ply " +
