@@ -67,8 +67,12 @@ using json = nlohmann::json;
 namespace {
 
 SimpleBoard parseBoard(const json& j) {
-  SimpleBoard board;
-  for (const auto& col : j) board.push_back(col.get<std::string>());
+  SimpleBoard board(static_cast<int>(j.size()));
+  int x = 0;
+  for (const auto& col : j) {
+    board[x] = col.get<std::string>();
+    ++x;
+  }
   return board;
 }
 
@@ -92,7 +96,7 @@ GameState stateFromRequest(const json& req) {
   }
   if (req.contains("history")) {
     for (const auto& snap : req.at("history")) {
-      state.previousBoards.push_back(boardString(parseBoard(snap)));
+      state.previousBoards.append(parseBoard(snap));
     }
   }
   if (req.contains("opponent")) {
@@ -102,7 +106,8 @@ GameState stateFromRequest(const json& req) {
 }
 
 void printBoard(const SimpleBoard& b) {
-  for (const auto& col : b) std::cout << col << "\n";
+  const int n = b.size();
+  for (int x = 0; x < n; ++x) std::cout << std::string(b[x].data(), static_cast<size_t>(n)) << "\n";
 }
 
 // ---- selftest --------------------------------------------------------------
@@ -165,7 +170,7 @@ int runSelftest() {
     SimpleBoard empty(5, std::string(5, '.'));
     GameState s = stateFromSimple(empty, Color::White);  // black to move
     const SimpleBoard afterCorner = evaluateMoveResult(empty, 0, 0, Color::Black);
-    s.previousBoards.push_back(boardString(afterCorner));
+    s.previousBoards.append(afterCorner);
     check(evaluateIfMoveIsValid(s, 0, 0, Color::Black) == Validity::BoardRepeated,
           "superko: repeated board rejected");
     // A different, non-repeating move is still valid.
@@ -182,9 +187,9 @@ int runSelftest() {
     s.komiOverride = 5.5;
     const Score sc = getScore(s);
     int blackStones = 0;
-    for (const auto& col : b)
-      for (char c : col)
-        if (c == 'X') blackStones++;
+    for (int x = 0; x < b.size(); ++x)
+      for (int y = 0; y < b.size(); ++y)
+        if (b[x][y] == 'X') blackStones++;
     check(sc.blackPieces == blackStones, "scoring: black piece count");
     check(sc.blackTerritory == 8, "scoring: black territory = 8 empties");
     check(sc.komi == 5.5 && sc.whiteSum == 5.5, "scoring: komi applied to white only");
@@ -199,9 +204,9 @@ int runSelftest() {
     GameState b = newBoardState(9, Opponent::Netburners, true, 123456.0, mr2);
     check(a.board == b.board, "obstacles: deterministic for fixed seed");
     int live = 0;
-    for (const auto& col : a.board)
-      for (char c : col)
-        if (c != '#') live++;
+    for (int x = 0; x < a.board.size(); ++x)
+      for (int y = 0; y < a.board.size(); ++y)
+        if (a.board[x][y] != '#') live++;
     check(live > 0, "obstacles: some live nodes remain");
     // removeIslands guarantees no empty region of size <= 2 exists in isolation.
     check(a.board.size() == 9 && a.board[0].size() == 9, "obstacles: size preserved");
@@ -212,17 +217,17 @@ int runSelftest() {
     MathRandom mr(7);
     GameState ill = newBoardState(9, Opponent::Illuminati, false, 0.0, mr);
     int white = 0;
-    for (const auto& col : ill.board)
-      for (char c : col)
-        if (c == 'O') white++;
+    for (int x = 0; x < ill.board.size(); ++x)
+      for (int y = 0; y < ill.board.size(); ++y)
+        if (ill.board[x][y] == 'O') white++;
     check(white >= 1, "handicap: Illuminati has white stones");
 
     MathRandom mr2(7);
     GameState net = newBoardState(9, Opponent::Netburners, false, 0.0, mr2);
     int white2 = 0;
-    for (const auto& col : net.board)
-      for (char c : col)
-        if (c == 'O') white2++;
+    for (int x = 0; x < net.board.size(); ++x)
+      for (int y = 0; y < net.board.size(); ++y)
+        if (net.board[x][y] == 'O') white2++;
     check(white2 == 0, "handicap: Netburners has none");
   }
 
@@ -232,9 +237,9 @@ int runSelftest() {
     GameState wd = newBoardState(19, Opponent::WorldDaemon, true, 999.0, mr);
     check(wd.size == 19, "wd: board is 19x19");
     int offline = 0;
-    for (const auto& col : wd.board)
-      for (char c : col)
-        if (c == '#') offline++;
+    for (int x = 0; x < wd.board.size(); ++x)
+      for (int y = 0; y < wd.board.size(); ++y)
+        if (wd.board[x][y] == '#') offline++;
     check(offline > 0, "wd: has fixed offline nodes");
   }
 
@@ -788,13 +793,10 @@ int runFuzz(int games, uint64_t seed) {
       }
 
       // Superko invariant: current board must not appear in prior history.
-      const std::string cur = boardString(state.board);
-      for (size_t i = 0; i < state.previousBoards.size(); ++i) {
-        if (state.previousBoards[i] == cur) {
-          ++anomalies;
-          std::cerr << "fuzz: superko violated (current board seen in history)\n";
-          break;
-        }
+      if (state.previousBoards.contains(state.board)) {
+        ++anomalies;
+        std::cerr << "fuzz: superko violated (current board seen in history)\n";
+        break;
       }
     }
 

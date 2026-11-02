@@ -16,21 +16,26 @@ constexpr std::array<std::pair<int, int>, 4> kNeighborOffsets = {{{0, 1}, {1, 0}
 // Compares a board against a flattened board string without building a string
 // (the superko check used to allocate one per legality test).
 bool boardEqualsFlat(const SimpleBoard& board, const std::string& flat) {
-  size_t k = 0;
-  for (const auto& col : board) {
-    if (k + col.size() > flat.size()) return false;
-    if (std::memcmp(flat.data() + k, col.data(), col.size()) != 0) return false;
-    k += col.size();
+  const int n = board.size();
+  if (flat.size() != static_cast<size_t>(n) * static_cast<size_t>(n)) return false;
+  for (int x = 0; x < n; ++x) {
+    if (std::memcmp(flat.data() + static_cast<size_t>(x) * static_cast<size_t>(n), board.column(x),
+                    static_cast<size_t>(n)) != 0) {
+      return false;
+    }
   }
-  return k == flat.size();
+  return true;
 }
 
 }  // namespace
 
 std::string boardString(const SimpleBoard& board) {
-  std::string out;
-  out.reserve(board.size() * board.size());
-  for (const auto& col : board) out += col;
+  const int n = board.size();
+  std::string out(static_cast<size_t>(n) * static_cast<size_t>(n), '.');
+  for (int x = 0; x < n; ++x) {
+    std::memcpy(out.data() + static_cast<size_t>(x) * static_cast<size_t>(n), board.column(x),
+                static_cast<size_t>(n));
+  }
   return out;
 }
 
@@ -38,7 +43,8 @@ SimpleBoard simpleBoardFromString(const std::string& s) {
   const int size = static_cast<int>(std::lround(std::sqrt(static_cast<double>(s.size()))));
   SimpleBoard board(size);
   for (int x = 0; x < size; ++x) {
-    board[x] = s.substr(static_cast<size_t>(x) * size, size);
+    std::memcpy(board.column(x), s.data() + static_cast<size_t>(x) * static_cast<size_t>(size),
+                static_cast<size_t>(size));
   }
   return board;
 }
@@ -179,11 +185,7 @@ Validity evaluateIfMoveIsValid(const GameState& state, int x, int y, Color playe
   SimpleBoard eval = evaluateMoveResult(state.board, x, y, player);
   if (eval[x][y] != colorChar(player)) return Validity::NoSuicide;
 
-  if (!state.previousBoards.empty()) {
-    for (const auto& prior : state.previousBoards) {
-      if (boardEqualsFlat(eval, prior)) return Validity::BoardRepeated;
-    }
-  }
+  if (state.previousBoards.contains(eval)) return Validity::BoardRepeated;
   if (resultBoard != nullptr) *resultBoard = std::move(eval);
   return Validity::Valid;
 }
@@ -195,7 +197,7 @@ bool makeMove(GameState& state, int x, int y, Color player) {
   const Validity validity = evaluateIfMoveIsValid(state, x, y, player, &result);
   if (validity != Validity::Valid) return false;
 
-  state.previousBoards.insert(state.previousBoards.begin(), boardString(state.board));
+  state.previousBoards.append(state.board);
   state.board = std::move(result);
   state.previousPlayer = player;
   state.passCount = 0;

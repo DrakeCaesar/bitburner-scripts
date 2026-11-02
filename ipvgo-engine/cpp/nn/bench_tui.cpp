@@ -151,7 +151,7 @@ std::vector<std::string> renderBoardLines(const SimpleBoard& board) {
     std::ostringstream row;
     row << kGrey << "  " << std::setw(2) << (y + 1) << kReset << "  ";
     for (int x = 0; x < n; ++x) {
-      const char c = board[static_cast<size_t>(x)][static_cast<size_t>(y)];
+      const char c = board[x][y];
       const char* color = c == 'X' ? kBlackStone : c == 'O' ? kWhiteStone : c == '#' ? kRed : kGrey;
       row << color << ' ' << c << ' ' << kReset;
     }
@@ -615,7 +615,8 @@ class JsonObserver : public BenchObserver {
 
   static json boardJson(const SimpleBoard& board) {
     json list = json::array();
-    for (const std::string& column : board) list.push_back(column);
+    const int n = board.size();
+    for (int x = 0; x < n; ++x) list.push_back(std::string(board[x].data(), static_cast<size_t>(n)));
     return list;
   }
 

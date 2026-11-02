@@ -21,15 +21,21 @@ inline uint64_t fnv1a64(uint64_t h, uint64_t v) {
 // Position identity for transposition tables: board, turn, ko/superko history.
 inline uint64_t positionKey(const ipvgo::game::GameState& state) {
   uint64_t h = 0xcbf29ce484222325ULL;
-  for (const auto& col : state.board) {
-    for (const char c : col) h = fnv1a64(h, static_cast<uint64_t>(c));
+  const int n = state.board.size();
+  for (int x = 0; x < n; ++x) {
+    const char* col = state.board.column(x);
+    for (int y = 0; y < n; ++y) h = fnv1a64(h, static_cast<uint64_t>(col[y]));
   }
   h = fnv1a64(h, static_cast<uint64_t>(state.previousPlayer));
   h = fnv1a64(h, static_cast<uint64_t>(state.passCount));
   h = fnv1a64(h, state.gameOver ? 1ULL : 0ULL);
   h = fnv1a64(h, static_cast<uint64_t>(state.previousBoards.size()));
-  for (size_t i = 0; i < state.previousBoards.size() && i < 4; ++i) {
-    for (const char c : state.previousBoards[i]) h = fnv1a64(h, static_cast<uint64_t>(c));
+  // Most recent first, exactly like the old "front = most recent" string list.
+  const int stride = state.previousBoards.stride();
+  const int count = state.previousBoards.size();
+  for (int back = 0; back < 4 && back < count; ++back) {
+    const uint64_t* words = state.previousBoards.entryWords(count - 1 - back);
+    for (int w = 0; w < stride; ++w) h = fnv1a64(h, words[w]);
   }
   return h;
 }
@@ -38,8 +44,10 @@ inline uint64_t positionKey(const ipvgo::game::GameState& state) {
 // which endgame solves need to stay tractable.
 inline uint64_t boardPositionKey(const ipvgo::game::GameState& state) {
   uint64_t h = 0xcbf29ce484222325ULL;
-  for (const auto& col : state.board) {
-    for (const char c : col) h = fnv1a64(h, static_cast<uint64_t>(c));
+  const int n = state.board.size();
+  for (int x = 0; x < n; ++x) {
+    const char* col = state.board.column(x);
+    for (int y = 0; y < n; ++y) h = fnv1a64(h, static_cast<uint64_t>(col[y]));
   }
   h = fnv1a64(h, static_cast<uint64_t>(state.previousPlayer));
   h = fnv1a64(h, static_cast<uint64_t>(state.passCount));

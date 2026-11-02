@@ -144,9 +144,12 @@ int findMinLibertyCountOfAdjacentChains(const SimpleBoard& board, int x, int y, 
 std::vector<EyeCandidate> getAllPotentialEyes(const SimpleBoard& board, const ChainSet& cs, Color player,
                                               int maxSizeOverride) {
   int nodeCount = 0;
-  for (const auto& col : board)
-    for (const char ch : col)
-      if (ch != '#') nodeCount++;
+  for (int x = 0; x < static_cast<int>(board.size()); ++x) {
+    const char* col = board.column(x);
+    for (int y = 0; y < static_cast<int>(board.size()); ++y) {
+      if (col[y] != '#') nodeCount++;
+    }
+  }
 
   const double maxSize = maxSizeOverride >= 0 ? static_cast<double>(maxSizeOverride)
                                               : std::min(nodeCount * 0.4, 11.0);
