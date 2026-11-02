@@ -97,9 +97,9 @@ function resetBenchState(options) {
 }
 
 function pushFrame(state, side, event, extra) {
-  if (!state.current) return
+  if (!state.current) return null
   state.frameSeq += 1
-  state.frames.push({
+  const frame = {
     seq: state.frameSeq,
     side,
     action: event.pass ? null : extra,
@@ -110,9 +110,41 @@ function pushFrame(state, side, event, extra) {
     faction: state.current.faction,
     game: state.current.game,
     games: state.current.games,
-  })
+  }
+  state.frames.push(frame)
   if (state.frames.length > BENCH_FRAME_LIMIT) {
     state.frames.splice(0, state.frames.length - BENCH_FRAME_LIMIT)
+  }
+  return frame
+}
+
+// ---- Server push (SSE): no polling, no added latency ----------------------
+
+/** @type {Set<import("http").ServerResponse>} */
+const benchClients = new Set()
+
+function benchSnapshot() {
+  const { frames, ...rest } = bench.state
+  return { ...rest, pid: undefined, frameSeq: bench.state.frameSeq }
+}
+
+function sseSend(res, event, data) {
+  try {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+  } catch {
+    benchClients.delete(res)
+  }
+}
+
+function benchBroadcast(event, data) {
+  if (benchClients.size === 0) return
+  const payload = JSON.stringify(data)
+  for (const res of benchClients) {
+    try {
+      res.write(`event: ${event}\ndata: ${payload}\n\n`)
+    } catch {
+      benchClients.delete(res)
+    }
   }
 }
 
@@ -121,6 +153,7 @@ function applyBenchEvent(event) {
   switch (event.type) {
     case "rows":
       state.rows = event.rows ?? []
+      benchBroadcast("rows", { rows: state.rows })
       break
     case "gameStart":
       state.current = {
@@ -137,6 +170,7 @@ function applyBenchEvent(event) {
         blackScore: 0,
         whiteScore: 0,
       }
+      benchBroadcast("game", state.current)
       break
     case "thinking":
       if (!state.current) break
@@ -145,8 +179,16 @@ function applyBenchEvent(event) {
       state.current.board = event.board
       state.current.blackScore = event.blackScore
       state.current.whiteScore = event.whiteScore
+      benchBroadcast("thinking", {
+        move: state.current.move,
+        board: state.current.board,
+        blackScore: state.current.blackScore,
+        whiteScore: state.current.whiteScore,
+        faction: state.current.faction,
+        game: state.current.game,
+      })
       break
-    case "move":
+    case "move": {
       if (!state.current) break
       state.current.thinking = false
       state.current.move = event.move
@@ -158,16 +200,20 @@ function applyBenchEvent(event) {
       state.current.nodes = event.nodes
       state.current.ms = event.ms
       state.current.value = event.value
-      pushFrame(state, "B", event, event.pass ? null : { x: event.black.x, y: event.black.y })
+      const frame = pushFrame(state, "B", event, event.pass ? null : { x: event.black.x, y: event.black.y })
+      if (frame) benchBroadcast("frame", frame)
       break
-    case "reply":
+    }
+    case "reply": {
       if (!state.current) break
       state.current.board = event.board
       state.current.blackScore = event.blackScore
       state.current.whiteScore = event.whiteScore
       state.current.lastWhite = event.pass ? "pass" : `${event.white.x},${event.white.y}`
-      pushFrame(state, "W", event, event.pass ? null : { x: event.white.x, y: event.white.y })
+      const frame = pushFrame(state, "W", event, event.pass ? null : { x: event.white.x, y: event.white.y })
+      if (frame) benchBroadcast("frame", frame)
       break
+    }
     case "gameEnd":
       state.lastResult = {
         faction: event.faction,
@@ -179,10 +225,12 @@ function applyBenchEvent(event) {
       }
       state.history.unshift(state.lastResult)
       if (state.history.length > BENCH_HISTORY_LIMIT) state.history.length = BENCH_HISTORY_LIMIT
+      benchBroadcast("result", state.lastResult)
       break
     case "done":
       state.finished = true
       state.failures = event.failures
+      benchBroadcast("done", { failures: event.failures })
       break
     default:
       break
@@ -196,6 +244,7 @@ function stopBench() {
   if (child && !child.killed) {
     child.kill()
   }
+  benchBroadcast("snapshot", benchSnapshot())
 }
 
 async function handleBenchStart(req, res) {
@@ -277,18 +326,22 @@ async function handleBenchStart(req, res) {
   })
   child.stderr.on("data", (chunk) => {
     bench.state.error = chunk.toString().trim().slice(0, 2000)
+    benchBroadcast("error", { error: bench.state.error })
   })
   child.on("error", (err) => {
     bench.state.error = err.message
     bench.state.running = false
     if (bench.child === child) bench.child = null
+    benchBroadcast("snapshot", benchSnapshot())
   })
   child.on("close", () => {
     bench.state.running = false
     bench.state.endedAt = Date.now()
     if (bench.child === child) bench.child = null
+    benchBroadcast("snapshot", benchSnapshot())
   })
 
+  benchBroadcast("snapshot", benchSnapshot())
   sendJson(res, 200, { ok: true, options: bench.state.options })
 }
 
@@ -296,6 +349,31 @@ function handleBenchStop(req, res) {
   stopBench()
   bench.state.endedAt = Date.now()
   sendJson(res, 200, { ok: true })
+}
+
+function handleBenchEvents(req, res) {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "Access-Control-Allow-Origin": "*",
+    "X-Accel-Buffering": "no",
+  })
+  if (typeof res.flushHeaders === "function") res.flushHeaders()
+  sseSend(res, "snapshot", benchSnapshot())
+  benchClients.add(res)
+  // Keeps proxies and idle connections from dropping the stream.
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(": ping\n\n")
+    } catch {
+      /* removed on close */
+    }
+  }, 15000)
+  req.on("close", () => {
+    clearInterval(heartbeat)
+    benchClients.delete(res)
+  })
 }
 
 function handleBenchState(req, res, url) {
@@ -615,6 +693,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/api/bench/state") {
     handleBenchState(req, res, url)
+    return
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/bench/events") {
+    handleBenchEvents(req, res)
     return
   }
 

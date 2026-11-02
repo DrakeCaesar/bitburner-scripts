@@ -222,15 +222,19 @@
     <script>
       const ALL_FACTIONS = ["Netburners", "Slum Snakes", "The Black Hand", "Tetrads", "Daedalus", "Illuminati"]
       const selected = new Set(ALL_FACTIONS)
-      let state = null
 
-      // Half-move replay: Black and White land milliseconds apart, so the page
-      // queues frames and shows them one at a time at a watchable pace.
-      const FRAME_MS = 110
+      // The server pushes half-moves over SSE; the page queues them and plays
+      // one per FRAME_MS so both sides stay visible without falling behind.
+      const FRAME_MS = 80
       const FRAME_MAX_BACKLOG = 60
       let lastFrameSeq = 0
       let frameQueue = []
       let displayed = null
+      let nextFrameAt = 0
+      let stream = null
+      let pollTimer = null
+      const dirty = { status: true, rows: true, history: true, info: true, board: true }
+      let state = { running: false, finished: false, rows: [], history: [], current: null, options: null }
 
       // The page is served by the engine server, but it still works when opened
       // straight from disk as long as the server runs on its default port.
@@ -550,58 +554,142 @@
         el("error").textContent = s.error || ""
       }
 
-      function render() {
-        if (!state) return
-        renderStatus(state)
-        renderRows(state)
-        renderHistory(state)
-        renderInfo(state)
-        const size = state.options?.size ?? Number(el("size").value)
-        const view = displayed ?? state.current
-        drawBoard(view?.board ?? null, view, size)
-        el("start").disabled = state.running
-        el("stop").disabled = !state.running
+      function markDirty(...parts) {
+        for (const part of parts) dirty[part] = true
       }
 
-      function drainFrame() {
-        if (frameQueue.length === 0) return false
-        // Never fall behind: if the run outpaces the animation, skip ahead.
-        if (frameQueue.length > FRAME_MAX_BACKLOG) {
-          frameQueue = frameQueue.slice(-4)
+      function renderIfDirty() {
+        if (dirty.status) {
+          renderStatus(state)
+          el("start").disabled = state.running
+          el("stop").disabled = !state.running
+          dirty.status = false
         }
-        displayed = frameQueue.shift()
-        return true
+        if (dirty.rows) {
+          renderRows(state)
+          dirty.rows = false
+        }
+        if (dirty.history) {
+          renderHistory(state)
+          dirty.history = false
+        }
+        if (dirty.info) {
+          renderInfo(state)
+          dirty.info = false
+        }
+        if (dirty.board) {
+          const size = state.options?.size ?? Number(el("size").value)
+          const view = displayed ?? state.current
+          drawBoard(view?.board ?? null, view, size)
+          dirty.board = false
+        }
+      }
+
+      // One animation frame loop: advance the half-move queue when its slot is
+      // due, then repaint only the parts that changed. No polling, no timers.
+      function frameLoop(now) {
+        if (frameQueue.length > 0 && now >= nextFrameAt) {
+          if (frameQueue.length > FRAME_MAX_BACKLOG) frameQueue = frameQueue.slice(-4)
+          displayed = frameQueue.shift()
+          if (displayed) markDirty("board", "info")
+          // Backlog costs latency, so shorten the slot to catch up.
+          nextFrameAt = now + (frameQueue.length > 3 ? 25 : FRAME_MS)
+        }
+        renderIfDirty()
+        requestAnimationFrame(frameLoop)
+      }
+
+      function applySnapshot(data) {
+        state = { ...state, ...data }
+        frameQueue = []
+        displayed = null
+        lastFrameSeq = data.frameSeq ?? 0
+        markDirty("status", "rows", "history", "info", "board")
+      }
+
+      function connectStream() {
+        if (typeof EventSource === "undefined") return startPolling()
+        const source = new EventSource(`${API_BASE}/api/bench/events`)
+        stream = source
+        source.addEventListener("snapshot", (e) => {
+          applySnapshot(JSON.parse(e.data))
+        })
+        source.addEventListener("game", (e) => {
+          state.current = JSON.parse(e.data)
+          // Keep the previous board on screen; the first thinking/frame event of
+          // the new game replaces it a moment later (avoids a blank flash).
+          markDirty("status", "info")
+        })
+        source.addEventListener("thinking", (e) => {
+          const data = JSON.parse(e.data)
+          state.current = { ...(state.current ?? {}), ...data, thinking: true }
+          // The live board is authoritative again once a new search starts.
+          frameQueue = []
+          displayed = null
+          markDirty("status", "info", "board")
+        })
+        source.addEventListener("frame", (e) => {
+          const frame = JSON.parse(e.data)
+          if (frame.seq <= lastFrameSeq) return
+          lastFrameSeq = frame.seq
+          if (frameQueue.length > FRAME_MAX_BACKLOG * 2) frameQueue = frameQueue.slice(-4)
+          frameQueue.push(frame)
+        })
+        source.addEventListener("rows", (e) => {
+          state.rows = JSON.parse(e.data).rows
+          markDirty("rows")
+        })
+        source.addEventListener("result", (e) => {
+          const result = JSON.parse(e.data)
+          state.lastResult = result
+          state.history = [result, ...(state.history ?? [])].slice(0, 40)
+          markDirty("history")
+        })
+        source.addEventListener("done", (e) => {
+          state.finished = true
+          state.failures = JSON.parse(e.data).failures
+          markDirty("status")
+        })
+        source.addEventListener("error", (e) => {
+          if (e.data) {
+            state.error = JSON.parse(e.data).error
+            markDirty("status")
+          }
+        })
+        source.onerror = () => {
+          // Dropped connection: fall back to polling so the view keeps working.
+          if (source.readyState === EventSource.CLOSED) {
+            stream = null
+            startPolling()
+          }
+        }
+      }
+
+      function startPolling() {
+        if (pollTimer !== null) return
+        pollTimer = setInterval(poll, 500)
+        poll()
       }
 
       async function poll() {
         try {
           const res = await fetch(`${API_BASE}/api/bench/state?since=${lastFrameSeq}`)
-          state = await res.json()
-          const incoming = state.frames ?? []
-          if (incoming.length > 0) {
-            for (const frame of incoming) {
+          const data = await res.json()
+          const frames = data.frames ?? []
+          delete data.frames
+          const firstLoad = !state.running && !state.current
+          state = { ...state, ...data }
+          if (firstLoad) markDirty("board")
+          if (frames.length > 0) {
+            for (const frame of frames) {
               if (frame.seq > lastFrameSeq) {
                 frameQueue.push(frame)
                 lastFrameSeq = frame.seq
               }
             }
           }
-          if (state.frameSeq === 0) {
-            lastFrameSeq = 0
-            frameQueue = []
-            displayed = null
-          }
-          // A new game (or a fresh run) must not keep showing the old board while
-          // Black is still thinking about its first move.
-          if (
-            displayed &&
-            frameQueue.length === 0 &&
-            state.current &&
-            (state.current.game !== displayed.game || state.current.faction !== displayed.faction)
-          ) {
-            displayed = null
-          }
-          render()
+          markDirty("status", "rows", "history", "info")
+          el("error").textContent = state.error || ""
         } catch {
           el("status").textContent = "server offline"
           el("status").className = "pill failed"
@@ -668,12 +756,8 @@
       applyForm(loadForm())
       renderFactionChips()
       el("stop").disabled = true
-      poll()
-      setInterval(poll, 120)
-      // Play queued half-moves one at a time so both sides are visible.
-      setInterval(() => {
-        if (drainFrame()) render()
-      }, FRAME_MS)
+      requestAnimationFrame(frameLoop)
+      connectStream()
     </script>
   </body>
 </html>

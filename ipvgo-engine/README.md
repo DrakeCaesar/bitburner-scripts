@@ -166,10 +166,24 @@ a running bench.
 
 The state endpoint returns a short log of half-moves (`frames`, each with a
 monotonic `seq`, whose side moved, and the resulting board). Black's move and
-White's reply land milliseconds apart, far faster than the page can poll, so the
-page queues those frames and plays them one at a time (~110 ms per half-move).
-That way both sides are visible; if a run outpaces the animation it skips ahead
-rather than falling behind.
+White's reply land milliseconds apart, far faster than any polling loop, so the
+server **pushes** them instead:
+
+- `GET /api/bench/events` is a Server-Sent Events stream: a `snapshot` on
+  connect, then `game`, `thinking`, `frame`, `rows`, `result`, `done` as they
+  happen. Polling is only a fallback if the stream cannot be opened.
+- the page plays the queued frames one per ~80 ms (25 ms while catching up), so
+  both sides are visible; it repaints only the parts that changed, once per
+  animation frame.
+
+Verify the whole path with the bundled client:
+
+```bash
+node ipvgo-engine/tools/check-bench-stream.mjs 3010 4000
+# connected: 200 text/event-stream
+# events received: snapshot=2 rows=3 game=1 thinking=7 frame=13 result=1 done=1
+# frames=13 ... avgGap=113.2ms alternations=12
+```
 
 ## CLI benchmark
 
