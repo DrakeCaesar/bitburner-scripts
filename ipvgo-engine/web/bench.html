@@ -224,6 +224,14 @@
       const selected = new Set(ALL_FACTIONS)
       let state = null
 
+      // Half-move replay: Black and White land milliseconds apart, so the page
+      // queues frames and shows them one at a time at a watchable pace.
+      const FRAME_MS = 110
+      const FRAME_MAX_BACKLOG = 60
+      let lastFrameSeq = 0
+      let frameQueue = []
+      let displayed = null
+
       // The page is served by the engine server, but it still works when opened
       // straight from disk as long as the server runs on its default port.
       const API_BASE =
@@ -461,7 +469,7 @@
       }
 
       function renderInfo(s) {
-        const cur = s.current
+        const cur = displayed ?? s.current
         if (!cur) {
           el("info").innerHTML = s.running ? "<span>starting…</span>" : "<span>press Start to run a benchmark</span>"
           return
@@ -470,7 +478,7 @@
         bits.push(`<span><b>${cur.faction}</b> (${cur.factionIndex + 1}/${cur.factionCount})</span>`)
         bits.push(`<span>game <b>${cur.game}</b>/${cur.games}</span>`)
         bits.push(`<span>move <b>${cur.move}</b></span>`)
-        if (cur.thinking) bits.push('<span style="color:var(--warn)">thinking…</span>')
+        if (s.current?.thinking) bits.push('<span style="color:var(--warn)">thinking…</span>')
         if (cur.depth != null) bits.push(`<span>depth <b>${cur.depth}</b></span>`)
         if (cur.nodes != null) bits.push(`<span>nodes <b>${cur.nodes}</b></span>`)
         if (cur.ms != null) bits.push(`<span>think <b>${Math.round(cur.ms)}</b> ms</span>`)
@@ -549,15 +557,50 @@
         renderHistory(state)
         renderInfo(state)
         const size = state.options?.size ?? Number(el("size").value)
-        drawBoard(state.current?.board ?? null, state.current, size)
+        const view = displayed ?? state.current
+        drawBoard(view?.board ?? null, view, size)
         el("start").disabled = state.running
         el("stop").disabled = !state.running
       }
 
+      function drainFrame() {
+        if (frameQueue.length === 0) return false
+        // Never fall behind: if the run outpaces the animation, skip ahead.
+        if (frameQueue.length > FRAME_MAX_BACKLOG) {
+          frameQueue = frameQueue.slice(-4)
+        }
+        displayed = frameQueue.shift()
+        return true
+      }
+
       async function poll() {
         try {
-          const res = await fetch(`${API_BASE}/api/bench/state`)
+          const res = await fetch(`${API_BASE}/api/bench/state?since=${lastFrameSeq}`)
           state = await res.json()
+          const incoming = state.frames ?? []
+          if (incoming.length > 0) {
+            for (const frame of incoming) {
+              if (frame.seq > lastFrameSeq) {
+                frameQueue.push(frame)
+                lastFrameSeq = frame.seq
+              }
+            }
+          }
+          if (state.frameSeq === 0) {
+            lastFrameSeq = 0
+            frameQueue = []
+            displayed = null
+          }
+          // A new game (or a fresh run) must not keep showing the old board while
+          // Black is still thinking about its first move.
+          if (
+            displayed &&
+            frameQueue.length === 0 &&
+            state.current &&
+            (state.current.game !== displayed.game || state.current.faction !== displayed.faction)
+          ) {
+            displayed = null
+          }
           render()
         } catch {
           el("status").textContent = "server offline"
@@ -627,6 +670,10 @@
       el("stop").disabled = true
       poll()
       setInterval(poll, 120)
+      // Play queued half-moves one at a time so both sides are visible.
+      setInterval(() => {
+        if (drainFrame()) render()
+      }, FRAME_MS)
     </script>
   </body>
 </html>

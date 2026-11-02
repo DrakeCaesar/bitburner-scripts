@@ -55,6 +55,9 @@ function findNativeExecutable(name) {
 
 const BENCH_FACTIONS = ["Netburners", "Slum Snakes", "The Black Hand", "Tetrads", "Daedalus", "Illuminati"]
 const BENCH_HISTORY_LIMIT = 40
+// Half-moves kept so the page can animate Black and White separately: the two
+// land milliseconds apart, far faster than the browser can poll.
+const BENCH_FRAME_LIMIT = 120
 
 const bench = {
   child: null,
@@ -70,6 +73,8 @@ const bench = {
     error: null,
     startedAt: null,
     endedAt: null,
+    frames: [],
+    frameSeq: 0,
   },
 }
 
@@ -86,6 +91,28 @@ function resetBenchState(options) {
     error: null,
     startedAt: Date.now(),
     endedAt: null,
+    frames: [],
+    frameSeq: 0,
+  }
+}
+
+function pushFrame(state, side, event, extra) {
+  if (!state.current) return
+  state.frameSeq += 1
+  state.frames.push({
+    seq: state.frameSeq,
+    side,
+    action: event.pass ? null : extra,
+    board: event.board,
+    blackScore: event.blackScore,
+    whiteScore: event.whiteScore,
+    move: state.current.move,
+    faction: state.current.faction,
+    game: state.current.game,
+    games: state.current.games,
+  })
+  if (state.frames.length > BENCH_FRAME_LIMIT) {
+    state.frames.splice(0, state.frames.length - BENCH_FRAME_LIMIT)
   }
 }
 
@@ -131,6 +158,7 @@ function applyBenchEvent(event) {
       state.current.nodes = event.nodes
       state.current.ms = event.ms
       state.current.value = event.value
+      pushFrame(state, "B", event, event.pass ? null : { x: event.black.x, y: event.black.y })
       break
     case "reply":
       if (!state.current) break
@@ -138,6 +166,7 @@ function applyBenchEvent(event) {
       state.current.blackScore = event.blackScore
       state.current.whiteScore = event.whiteScore
       state.current.lastWhite = event.pass ? "pass" : `${event.white.x},${event.white.y}`
+      pushFrame(state, "W", event, event.pass ? null : { x: event.white.x, y: event.white.y })
       break
     case "gameEnd":
       state.lastResult = {
@@ -269,8 +298,16 @@ function handleBenchStop(req, res) {
   sendJson(res, 200, { ok: true })
 }
 
-function handleBenchState(req, res) {
-  sendJson(res, 200, { ...bench.state, pid: undefined })
+function handleBenchState(req, res, url) {
+  const sinceRaw = Number(url?.searchParams?.get("since") ?? 0)
+  const since = Number.isFinite(sinceRaw) && sinceRaw > 0 ? Math.floor(sinceRaw) : 0
+  const { frames = [], frameSeq = 0, ...rest } = bench.state
+  sendJson(res, 200, {
+    ...rest,
+    pid: undefined,
+    frameSeq,
+    frames: since > 0 ? frames.filter((frame) => frame.seq > since) : frames,
+  })
 }
 
 function handleBenchPage(req, res) {
@@ -577,7 +614,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && url.pathname === "/api/bench/state") {
-    handleBenchState(req, res)
+    handleBenchState(req, res, url)
     return
   }
 

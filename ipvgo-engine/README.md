@@ -160,8 +160,16 @@ is stored in `localStorage` and restored on reload, so a refresh keeps your setu
 Blank fields keep the engine default. Bigger beam/replies search more of the
 tree and cost roughly linearly in think time.
 
-Endpoints: `GET /bench`, `GET /api/bench/state`, `POST /api/bench/start`,
-`POST /api/bench/stop`. Stopping the server also stops a running bench.
+Endpoints: `GET /bench`, `GET /api/bench/state?since=<seq>`,
+`POST /api/bench/start`, `POST /api/bench/stop`. Stopping the server also stops
+a running bench.
+
+The state endpoint returns a short log of half-moves (`frames`, each with a
+monotonic `seq`, whose side moved, and the resulting board). Black's move and
+White's reply land milliseconds apart, far faster than the page can poll, so the
+page queues those frames and plays them one at a time (~110 ms per half-move).
+That way both sides are visible; if a run outpaces the animation it skips ahead
+rather than falling behind.
 
 ## CLI benchmark
 
