@@ -261,21 +261,39 @@ std::vector<AiMove> getEyeCreationMoves(const SimpleBoard& board, Color player,
   }
 
   std::vector<AiMove> moves;
-  for (const int lib : friendlyLiberties) {
+  // The candidate list keeps duplicates on purpose (a point touching two weak
+  // chains appears twice) and each candidate costs a board copy plus a full eye
+  // analysis. Remembering the verdict per point keeps the output identical - the
+  // same point always evaluates the same way - while halving the analysis when
+  // duplicates occur.
+  std::vector<int8_t> verdict(static_cast<size_t>(N * N), -1);  // -1 unknown, 0 no, 1 life, 2 eyes
+  auto evaluateCandidate = [&](int lib, bool& createsLife) {
     const int px = lib / N;
     const int py = lib % N;
     const SimpleBoard eval = evaluateMoveResult(board, px, py, player);
     int newLiving = 0;
     int newEyeCount = 0;
     eyeCounts(eval, player, newLiving, newEyeCount);
-    if (newLiving > currentLivingGroups || (newEyeCount > currentEyeCount && newLiving == currentLivingGroups)) {
-      AiMove mv;
-      mv.valid = true;
-      mv.x = px;
-      mv.y = py;
-      mv.createsLife = newLiving > currentLivingGroups;
-      moves.push_back(mv);
+    createsLife = newLiving > currentLivingGroups;
+    return createsLife || (newEyeCount > currentEyeCount && newLiving == currentLivingGroups);
+  };
+
+  for (const int lib : friendlyLiberties) {
+    bool createsLife = false;
+    int8_t& cached = verdict[static_cast<size_t>(lib)];
+    if (cached < 0) {
+      const bool qualifies = evaluateCandidate(lib, createsLife);
+      cached = static_cast<int8_t>(qualifies ? (createsLife ? 1 : 2) : 0);
+    } else {
+      createsLife = cached == 1;
     }
+    if (cached == 0) continue;
+    AiMove mv;
+    mv.valid = true;
+    mv.x = lib / N;
+    mv.y = lib % N;
+    mv.createsLife = createsLife;
+    moves.push_back(mv);
   }
 
   std::stable_sort(moves.begin(), moves.end(),
