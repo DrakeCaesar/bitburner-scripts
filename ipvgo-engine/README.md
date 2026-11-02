@@ -258,6 +258,15 @@ analysis:
 IPVGO_TRACE=1 IPVGO_TRACE_BOARD=1 ./cmake-build/bin/Release/ipvgo_game exploitplay "Slum Snakes" 9 1 2 1
 ```
 
+`IPVGO_EXPLAIN=1` answers "why did it play that": for every move it prints the
+win probability of the chosen move, the next few root alternatives with their
+values, the top of the opponent reply distribution White faced, and then what
+White actually played with the probability the model gave it:
+
+```bash
+IPVGO_EXPLAIN=1 IPVGO_NODE_LIMIT=4000 ./cmake-build/bin/Release/ipvgo_game exploitplay "Netburners" 7 1 2 2
+```
+
 `exploitplay` also takes two cache switches:
 
 - `IPVGO_NO_SESSION=1` - disable the session cache, giving the A/B baseline.
@@ -385,6 +394,35 @@ regression-tested:
 
 Recorded so they are not rediscovered from scratch. Every number here was
 measured, not estimated.
+
+**The dominant loss signature on small boards is a total wipe-out, and the eval
+cannot see it coming.** Traced Netburners 7x7 at the in-game budget (`IPVGO_EXPLAIN=1`,
+seed 2): every loss ends with Black at 0 points after 46-59 moves, against 16-26
+moves in the games Black wins. In one such game Black's groups stayed at 1-5
+stones while White's single group grew monotonically 3 -> 23 stones; the eval
+reported a rising win probability throughout, because a stone is worth the same
+wherever it is played. By the time White's group was in atari at 22 stones Black
+had no surrounding stones left to fill the last two liberties, and the eval
+credited that threat 2.1 points when a capture that size is worth about 40.
+
+Three things measured from the same trace:
+
+- **The eval is almost flat across Black's options.** For the first 22 moves the
+  gap between the chosen move and the runner-up was +0.000 to +0.005 in win
+  probability, so selection is effectively decided by action order. A search
+  cannot fix a leaf that will not rank.
+- **Raising the atari weight cap does not fix it.** Crediting a 20-stone group at
+  full size instead of capping at 5 stones: 7x7 Netburners 164/180 vs 161/180,
+  and 5x5 all factions 192/240 vs 196/240 - both inside the noise. The
+  misvaluation is real but it is not the binding constraint.
+- **The reply model is not the problem.** White's actual move had modelled
+  probability 0.87-1.00 in the endgame and 0.92 on the key midgame moves; the
+  worst miss in a whole game was a 0.4% move. We knew what White would do.
+
+What the eval has no term for is the thing that decides these games: a capturing
+race between a big group with few liberties and the scattered groups surrounding
+it. Without it, more depth does not help either - at 7x7 the search already
+reaches depth 2 inside the budget.
 
 **Win rate at 9x9 cannot resolve small changes, so do not screen there.** The
 same binary won 54.2% of one 24-game set and 79.2% of another (different seeds),

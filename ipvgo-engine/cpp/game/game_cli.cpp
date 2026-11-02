@@ -735,6 +735,40 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
       lastResets = search.sessionResets;
 
       const int action = search.bestAction;
+      const bool explain = std::getenv("IPVGO_EXPLAIN") != nullptr;
+      // Reply distribution White faces after Black's chosen move, kept for the
+      // "what did the opponent do" line below.
+      ipvgo::game::ReplyDist afterBlack;
+      if (explain) {
+        std::cout << "  g" << g << " m" << m << " BLACK played ";
+        if (action == ipvgo::nn::passAction(size)) std::cout << "pass";
+        else std::cout << (action / size) << "," << (action % size);
+        const Score probe = getScore(state);
+        std::cout << "  p(win)=" << search.value << "  lead=" << (probe.blackSum - probe.whiteSum)
+                  << "  depth=" << search.depth << " nodes=" << search.nodes << "\n";
+
+        int shown = 0;
+        for (const auto& [alt, value] : search.rootScores) {
+          if (shown++ >= 4) break;
+          std::cout << "      considered ";
+          if (alt == ipvgo::nn::passAction(size)) std::cout << "  pass";
+          else std::cout << (alt / size) << "," << (alt % size);
+          std::cout << "  p(win)=" << value << "\n";
+        }
+
+        GameState after = state;
+        if (action == ipvgo::nn::passAction(size)) passTurn(after, Color::Black);
+        else if (!makeMove(after, action / size, action % size, Color::Black)) passTurn(after, Color::Black);
+        if (!after.gameOver) afterBlack = ipvgo::game::opponentReplyDistribution(after, Color::White, ai);
+        shown = 0;
+        for (const auto& r : afterBlack.replies) {
+          if (shown++ >= 4) break;
+          std::cout << "      White likely  ";
+          if (r.passMove) std::cout << "pass";
+          else std::cout << r.x << "," << r.y;
+          std::cout << "  p=" << r.prob << "\n";
+        }
+      }
       if (std::getenv("IPVGO_TRACE")) {
         const Score probe = getScore(state);
         int empties = 0;
@@ -766,6 +800,18 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
       // A real game reseeds the faction AI from Player.totalPlaytime every move.
       const double whiteSeed = fixedWhiteSeed ? 0.0 : static_cast<double>(rng() % 30000000u);
       const Play wp = getMove(state, Color::White, ai, whiteSeed, mathRng);
+      if (explain) {
+        double actual = 0.0;
+        for (const auto& r : afterBlack.replies) {
+          const bool same = wp.type == PlayType::Pass ? r.passMove
+                                                     : (!r.passMove && r.x == wp.x && r.y == wp.y);
+          if (same) { actual = r.prob; break; }
+        }
+        std::cout << "      WHITE played  ";
+        if (wp.type == PlayType::Pass) std::cout << "pass";
+        else std::cout << wp.x << "," << wp.y;
+        std::cout << "  p=" << actual << "  (model covers " << afterBlack.replies.size() << " points)\n";
+      }
       if (std::getenv("IPVGO_TRACE")) {
         std::cout << "      W ";
         if (wp.type == PlayType::Pass) std::cout << "pass";
