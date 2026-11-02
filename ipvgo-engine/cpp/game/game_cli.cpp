@@ -746,6 +746,13 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
         else std::cout << (action / size) << "," << (action % size);
         std::cout << " v=" << search.value << " nodes=" << search.nodes << " score=" << probe.blackSum << ":"
                   << probe.whiteSum << " e=" << empties << "\n";
+        if (std::getenv("IPVGO_TRACE_BOARD")) {
+          std::cout << "  pos g" << g << " m" << m << " [";
+          for (int x = 0; x < size; ++x) {
+            std::cout << (x ? "," : "") << "\"" << std::string(state.board[x].data(), static_cast<size_t>(size)) << "\"";
+          }
+          std::cout << "]\n";
+        }
       }
       if (action == ipvgo::nn::passAction(size)) {
         passTurn(state, Color::Black);

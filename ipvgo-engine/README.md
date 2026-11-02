@@ -250,7 +250,13 @@ Helper tools:
 ```
 
 `IPVGO_TUI=1` forces the terminal view, `IPVGO_TUI=0` prints one line per game,
-`IPVGO_TRACE=1` prints every move.
+`IPVGO_TRACE=1` prints every move, and `IPVGO_TRACE_BOARD=1` also dumps each
+position as JSON so it can be fed straight back to `exploitmove` for deeper
+analysis:
+
+```bash
+IPVGO_TRACE=1 IPVGO_TRACE_BOARD=1 ./cmake-build/bin/Release/ipvgo_game exploitplay "Slum Snakes" 9 1 2 1
+```
 
 `exploitplay` also takes two cache switches:
 
