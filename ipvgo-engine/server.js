@@ -4,6 +4,7 @@
  */
 
 import { execFile, spawn } from "child_process"
+import crypto from "crypto"
 import fs from "fs"
 import http from "http"
 import path from "path"
@@ -13,6 +14,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const port = Number(process.env.IPVGO_PORT ?? 3010)
 const maxBodyBytes = 4 * 1024 * 1024
 const engineOverride = (process.env.IPVGO_ENGINE ?? "").trim()
+// Set by scripts/dev-server.mjs: enables restart requests and tells the page to
+// reload itself when this id changes.
+const supervised = process.env.IPVGO_SUPERVISED === "1"
+const serverId = crypto.randomUUID()
 
 /** @type {import("child_process").ChildProcess | null} */
 let activeNativeChild = null
@@ -125,7 +130,7 @@ const benchClients = new Set()
 
 function benchSnapshot() {
   const { frames, ...rest } = bench.state
-  return { ...rest, pid: undefined, frameSeq: bench.state.frameSeq }
+  return { ...rest, pid: undefined, frameSeq: bench.state.frameSeq, serverId, supervised }
 }
 
 function sseSend(res, event, data) {
@@ -351,6 +356,19 @@ function handleBenchStop(req, res) {
   sendJson(res, 200, { ok: true })
 }
 
+// Only meaningful under scripts/dev-server.mjs: exiting makes the supervisor
+// spawn a fresh process, which is how the GUI restarts the server.
+function handleServerRestart(req, res) {
+  if (!supervised) {
+    return sendJson(res, 409, {
+      error: "Server is not supervised. Start it with `pnpm run server:dev` to enable restarts.",
+    })
+  }
+  stopBench()
+  sendJson(res, 202, { ok: true, serverId })
+  setTimeout(() => process.exit(0), 50)
+}
+
 function handleBenchEvents(req, res) {
   res.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
@@ -450,6 +468,8 @@ function handleHealth(_req, res) {
   sendJson(res, 200, {
     status: "ok",
     engine,
+    serverId,
+    supervised,
     nativePath: nativeExecutablePath(),
     nativeBuilt: fs.existsSync(nativeExecutablePath()),
     gamePath: mcgsExecutablePath(),
@@ -708,6 +728,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/api/bench/stop") {
     handleBenchStop(req, res)
+    return
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/server/restart") {
+    handleServerRestart(req, res)
     return
   }
 

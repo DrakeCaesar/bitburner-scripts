@@ -123,9 +123,25 @@ actual weaknesses.
 ## Bench GUI (browser)
 
 ```bash
-pnpm run server            # engine server on http://localhost:3010
-# open http://localhost:3010/bench
+pnpm run server:dev    # dev server: auto-restarts on server/web changes
+pnpm run server        # plain server, no restarts
 ```
+
+Open **http://localhost:3010/bench**.
+
+The page **cannot start or restart the server by itself** — a page served over
+http has no process access — so the cycles it can save are handled elsewhere:
+
+- `server:dev` (scripts/dev-server.mjs) watches `server.js`, `web/` and
+  `scripts/`, restarts the server on any change, and revives it if it crashes.
+- The workspace task **Server: dev (auto-restart)** runs on folder open, so the
+  server is already up when you sit down.
+- The GUI's **Restart server** button calls `POST /api/server/restart`, which is
+  enabled only under the supervisor (it exits and the supervisor respawns).
+- The page tracks the server's `serverId`; when it changes (any restart or
+  rebuild) the page reloads itself, picking up new HTML/JS without a manual
+  refresh. The form state and settings survive because they live in
+  `localStorage`.
 
 The page picks factions, board size (5/7/9/13/19), the thinking budget, games per
 faction and seed, then streams `ipvgo_game benchjson` events through the server:

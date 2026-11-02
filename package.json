@@ -32,6 +32,7 @@
     "watch:remote": "bitburner-filesync",
     "watch:transpile": "tsc -w --preserveWatchOutput",
     "server": "node ipvgo-engine/server.js",
+    "server:dev": "node ipvgo-engine/scripts/dev-server.mjs",
     "ipvgo:build": "cmake --preset release && cmake --build --preset release --target ipvgo_engine ipvgo_game",
     "ipvgo:bench": "node ipvgo-engine/scripts/bench-factions.js",
     "koth:build": "cmake --preset release && cmake --build --preset release --target koth_bench koth_tune"
