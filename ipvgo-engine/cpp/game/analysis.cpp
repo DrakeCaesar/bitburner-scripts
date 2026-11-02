@@ -33,11 +33,28 @@ Spread furthestPoints(const ChainSet& cs, int chain) {
 
 // Distinct non-empty neighbor chains of a set of cells, evaluated on the given
 // board/ChainSet (mirrors getAllNeighboringChains over an arbitrary cell set).
-std::vector<int> neighborChainsOfCells(const SimpleBoard& board, const ChainSet& cs, ChainSpan cells) {
+//
+// The result is at most four chains, so it lives in fixed storage and is copied
+// into the caller's vector only once. The intermediate `std::vector<int>` growth
+// was the single largest allocation site in the profile (229M reallocations).
+struct SmallChains {
+  static constexpr int kMax = 8;
+  int count = 0;
+  int idx[kMax] = {};
+
+  std::vector<int> toVector() const {
+    std::vector<int> out;
+    out.reserve(static_cast<size_t>(count));
+    for (int i = 0; i < count; ++i) out.push_back(idx[i]);
+    return out;
+  }
+};
+
+SmallChains neighborChainsSmall(const SimpleBoard& board, const ChainSet& cs, ChainSpan cells) {
   const int N = cs.N;
   PointMask cellSet;
   for (const int idx : cells) cellSet.insert(idx);
-  std::vector<int> result;
+  SmallChains result;
   PointMask seen;
   for (const int idx : cells) {
     const int x = idx / N;
@@ -53,10 +70,16 @@ std::vector<int> neighborChainsOfCells(const SimpleBoard& board, const ChainSet&
       const int nc = cs.id[nIdx];
       if (seen.count(nc)) continue;
       seen.insert(nc);
-      result.push_back(nc);
+      if (result.count < SmallChains::kMax) result.idx[result.count] = nc;
+      ++result.count;
     }
   }
+  if (result.count > SmallChains::kMax) result.count = SmallChains::kMax;
   return result;
+}
+
+std::vector<int> neighborChainsOfCells(const SimpleBoard& board, const ChainSet& cs, ChainSpan cells) {
+  return neighborChainsSmall(board, cs, cells).toVector();
 }
 
 }  // namespace
@@ -256,7 +279,9 @@ std::vector<Pt> getDisputedTerritoryMoves(const SimpleBoard& board, const std::v
 
     bool hasWhite = false;
     bool hasBlack = false;
-    for (const int nc : neighborChainIndices(board, cs, emptyChain)) {
+    const SmallChains neighbours = neighborChainsSmall(board, cs, cs.members(emptyChain));
+    for (int i = 0; i < neighbours.count; ++i) {
+      const int nc = neighbours.idx[i];
       if (static_cast<int>(cs.members(nc).size()) > maxChainSize) continue;
       if (cs.chainColor[nc] == 'O') hasWhite = true;
       else if (cs.chainColor[nc] == 'X') hasBlack = true;
@@ -320,22 +345,22 @@ std::vector<Pt> findDisputedTerritory(const GameState& state, Color player, bool
       const ChainSpan liberties = cs.liberties(neighborChain);
       if (liberties.size() > 4) continue;
 
-      const std::vector<int> borderChains = neighborChainIndices(board, cs, neighborChain);
+      const SmallChains border = neighborChainsSmall(board, cs, cs.members(neighborChain));
       bool touchesPlayer = false;
-      for (const int bc : borderChains) {
-        if (cs.chainColor[bc] == colorChar(player)) {
+      for (int i = 0; i < border.count; ++i) {
+        if (cs.chainColor[border.idx[i]] == colorChar(player)) {
           touchesPlayer = true;
           break;
         }
       }
       if (!touchesPlayer) continue;
 
-      std::vector<int> insideLiberties;
-      for (const int lib : liberties)
-        if (spaceCells.count(lib)) insideLiberties.push_back(lib);
-      if (insideLiberties.size() != liberties.size()) continue;
-
-      for (const int lib : insideLiberties) playableInsideEnemySpace.insert(lib);
+      // All of this chain's liberties must lie inside the eye space; counting is
+      // enough, so no temporary list is built.
+      int inside = 0;
+      for (const int lib : liberties) inside += spaceCells.count(lib) ? 1 : 0;
+      if (inside != static_cast<int>(liberties.size())) continue;
+      for (const int lib : liberties) playableInsideEnemySpace.insert(lib);
     }
   }
 
