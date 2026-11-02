@@ -417,8 +417,15 @@ requests when no endgame node-budget cut fired anywhere in its subtree, so a
 reused value is always at least as accurate as solving that position again.
 
 The session also has a size ceiling, because it lives as long as the game does:
-`IPVGO_SESSION_MAX_ENTRIES` (default 2 000 000, memo + reply entries across all
-workers). When it is exceeded the cache is dropped between searches - that costs
-reuse, never accuracy - and `evictions` in the stats reports how often it has
-happened.
+`IPVGO_SESSION_MAX_ENTRIES` (default 2 000 000 memo entries across all workers,
+about 34 bytes each, so ~68 MB). When it is exceeded the cache is dropped between
+searches - that costs reuse, never accuracy - and `evictions` in the stats reports
+how often it has happened. Measured accumulation on the largest board: a 13x13
+game leaves ~524 000 entries (19 MB), a 9x9 game ~150 000, a 5x5 game ~5 800.
+
+The session stores only the memo. Reply distributions are recomputed rather than
+cached: on 13x13, keeping them cost 872 MB of `WeightedReply` payload - 98% of
+the session - for 89 hits in a whole game. Dropping them took peak RSS from
+1 007 MB to 31 MB with identical node counts (524 086) and no measurable change
+in think time.
 
