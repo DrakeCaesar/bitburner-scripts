@@ -283,6 +283,7 @@ function applyBenchEvent(event) {
           state.archive.splice(0, state.archive.length - BENCH_ARCHIVE_LIMIT)
         }
         state.lastResult.archiveIndex = state.archive.length - 1
+        state.lastResult.moveCount = state.live.moves.length
         state.live = null
       }
       state.history.unshift(state.lastResult)

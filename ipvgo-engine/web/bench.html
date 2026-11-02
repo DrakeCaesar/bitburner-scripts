@@ -249,6 +249,10 @@
     <script>
       const ALL_FACTIONS = ["Netburners", "Slum Snakes", "The Black Hand", "Tetrads", "Daedalus", "Illuminati"]
       const selected = new Set(ALL_FACTIONS)
+      // Built with fromCharCode so the source stays ASCII: the glyphs are only
+      // presentation and a stray backslash in a template literal renders literally.
+      const CARET_OPEN = String.fromCharCode(0x25be)
+      const CARET_CLOSED = String.fromCharCode(0x25b8)
 
       // The server pushes half-moves over SSE; the page queues them and plays
       // one per FRAME_MS so both sides stay visible without falling behind.
@@ -264,6 +268,10 @@
       let restartWatchdog = null
       const dirty = { status: true, rows: true, history: true, info: true, board: true }
       let state = { running: false, finished: false, rows: [], history: [], current: null, options: null }
+      // The budget box means different units per mode, so each mode keeps its own
+      // value and switching back and forth restores what was typed there.
+      let budgetMemory = { time: "200", iterations: "50000" }
+      let previousBudgetMode = null
 
       // The page is served by the engine server, but it still works when opened
       // straight from disk as long as the server runs on its default port.
@@ -284,6 +292,9 @@
         size: "5",
         budgetMode: "time",
         budget: "200",
+        budgetByMode: { time: "200", iterations: "50000" },
+        depth: "2",
+        nodeCap: "0",
         games: "20",
         seed: "1",
         factions: ALL_FACTIONS.slice(),
@@ -300,6 +311,9 @@
           size: el("size").value,
           budgetMode: el("budgetMode").value,
           budget: el("budget").value,
+          budgetByMode: { ...budgetMemory },
+          depth: el("depth").value,
+          nodeCap: el("nodeCap").value,
           games: el("games").value,
           seed: el("seed").value,
           factions: Array.from(selected),
@@ -321,7 +335,8 @@
           const raw = localStorage.getItem(STORAGE_KEY)
           if (!raw) return { ...DEFAULT_FORM }
           const stored = JSON.parse(raw)
-          const budgetMode = stored.budgetMode === "iterations" ? "iterations" : "time"
+          const budgetMode =
+            stored.budgetMode === "iterations" || stored.budgetMode === "depth" ? stored.budgetMode : "time"
           const factions = Array.isArray(stored.factions)
             ? stored.factions.filter((f) => ALL_FACTIONS.includes(f))
             : DEFAULT_FORM.factions.slice()
@@ -334,6 +349,12 @@
             size: String(stored.size ?? DEFAULT_FORM.size),
             budgetMode,
             budget: String(stored.budget ?? (budgetMode === "iterations" ? 50000 : 200)),
+            budgetByMode: {
+              time: String(stored.budgetByMode?.time ?? DEFAULT_FORM.budgetByMode.time),
+              iterations: String(stored.budgetByMode?.iterations ?? DEFAULT_FORM.budgetByMode.iterations),
+            },
+            depth: String(stored.depth ?? DEFAULT_FORM.depth),
+            nodeCap: String(stored.nodeCap ?? DEFAULT_FORM.nodeCap),
             games: String(stored.games ?? DEFAULT_FORM.games),
             seed: String(stored.seed ?? DEFAULT_FORM.seed),
             factions: factions.length > 0 ? factions : DEFAULT_FORM.factions.slice(),
@@ -349,6 +370,10 @@
         el("size").value = form.size
         el("budgetMode").value = form.budgetMode
         el("budget").value = form.budget
+        el("depth").value = form.depth ?? DEFAULT_FORM.depth
+        el("nodeCap").value = form.nodeCap ?? DEFAULT_FORM.nodeCap
+        budgetMemory = { ...DEFAULT_FORM.budgetByMode, ...(form.budgetByMode ?? {}) }
+        previousBudgetMode = form.budgetMode
         el("games").value = form.games
         el("seed").value = form.seed
         for (const id of TUNING_IDS) el(id).value = form.tuning?.[id] ?? ""
@@ -589,10 +614,11 @@
         const head = document.createElement("div")
         head.className = "gameHead"
         head.innerHTML =
-          `<span class="caret">${expanded ? "\\u25be" : "\\u25b8"}</span>` +
+          `<span class="caret"></span>` +
           `<span>${game.faction} #${game.game}</span>` +
           `<span class="dim">${game.moveCount} moves</span>` +
           `<span class="${game.win ? "win" : "loss"}">${game.win ? "WIN" : "LOSS"} ${margin}</span>`
+        head.querySelector(".caret").textContent = expanded ? CARET_OPEN : CARET_CLOSED
         head.addEventListener("click", () => toggleGame(game, li))
         li.appendChild(head)
         if (expanded) {
@@ -609,7 +635,7 @@
         const nowOpen = !li.classList.contains("open")
         li.classList.toggle("open", nowOpen)
         const caret = li.querySelector(".caret")
-        if (caret) caret.textContent = nowOpen ? "\\u25be" : "\\u25b8"
+        if (caret) caret.textContent = nowOpen ? CARET_OPEN : CARET_CLOSED
         const existing = li.querySelector(".gameBody")
         if (!nowOpen) {
           if (existing) existing.remove()
@@ -837,7 +863,7 @@
                 win: result.win,
                 margin: result.margin,
                 movesPlayed: result.moves,
-                moveCount: result.moves,
+                moveCount: result.moveCount ?? result.moves,
               },
             ]
           }
@@ -976,12 +1002,15 @@
       el("size").addEventListener("change", renderFactionChips)
 
       el("budgetMode").addEventListener("change", () => {
-        const iterations = el("budgetMode").value === "iterations"
-        const current = Number(el("budget").value) || 0
-        // Swap in a comparable default when the stored number is meaningless for
-        // the new unit (200 nodes or 50000 ms would both be nonsense).
-        if (iterations && current < 1000) el("budget").value = "50000"
-        if (!iterations && current > 5000) el("budget").value = "200"
+        const mode = el("budgetMode").value
+        // Remember what was typed for the mode being left, and restore what was
+        // typed for the mode being entered: the units are not comparable, so one
+        // shared box would keep swapping a node count for a millisecond count.
+        if (previousBudgetMode && previousBudgetMode !== mode) {
+          budgetMemory[previousBudgetMode] = el("budget").value
+        }
+        if (mode !== "depth") el("budget").value = budgetMemory[mode] ?? el("budget").value
+        previousBudgetMode = mode
         updateBudgetLabel()
         saveForm()
       })
