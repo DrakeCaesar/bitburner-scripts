@@ -278,6 +278,49 @@ xperf -d trace.etl
 xperf -i trace.etl -o trace.csv -a dumper   # then pivot the Stack column
 ```
 
+## Performance baseline
+
+Reference point for optimisation work: **`c2bbf26`** (flat board, packed superko
+history, bitwise captures). Measure against these numbers, not against older
+commits.
+
+Reproduce, from a Release build:
+
+```bash
+# Allocation count + time for one fixed search (deterministic node count)
+./cmake-build/bin/Release/ipvgo_prof "Slum Snakes" 3 6 1
+
+# Fixed-depth search cost; threads=1 keeps it deterministic
+./cmake-build/bin/Release/ipvgo_game optbench --only=all --positions=2 --depth=3 --threads=1 --reps=3
+```
+
+| measurement | baseline @ `c2bbf26` |
+|---|---|
+| `ipvgo_prof` search (36 290 nodes) | ~370-410 ms, 3 313 269 allocations, 166 MB |
+| `optbench` per search (2 positions, depth 3) | ~2.4 s (wall clock is noisy; the node counts are the stable part), 68 678 nodes |
+| `optbench` position 1 / 2 | 40 847 nodes, value 0.2245 / 27 831 nodes, value 0.0309 |
+
+Largest remaining allocation sites: `_Hash_vec::_Assign_grow` (340k / 48 MB,
+`unordered_set` buckets in the policy path), `vector<int>::reserve` (359k,
+`computeChains` per-call reservations), `BoardHistory::append` (39k),
+`GameState` copies (47k).
+
+### Parity checks
+
+Any change to the rules or the board representation must keep these identical,
+not merely similar:
+
+```bash
+./cmake-build/bin/Release/ipvgo_game selftest          # includes bitwise-capture vs flood-fill oracle
+./cmake-build/bin/Release/ipvgo_game fuzz 60 11        # expect 6874 moves, 0 anomalies
+./cmake-build/bin/Release/ipvgo_game policycheck "The Black Hand" 5 800
+# per-move trace, including values and node counts:
+IPVGO_TRACE=1 ./cmake-build/bin/Release/ipvgo_game exploitplay "Slum Snakes" 5 2 2 1
+```
+
+`optbench` node counts are deterministic at `--threads=1`; at the default thread
+count they vary run to run, so compare values rather than node counts.
+
 The HTTP server also exposes the exploiter for real games with
 `IPVGO_ENGINE=exploit` (POST `/api/ipvgo/move`, engine reported as `exploit`,
 native MCTS as fallback). `exploitmove` accepts `depth`, `beam`,
