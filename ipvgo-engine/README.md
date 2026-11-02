@@ -249,6 +249,18 @@ Helper tools:
 `IPVGO_TUI=1` forces the terminal view, `IPVGO_TUI=0` prints one line per game,
 `IPVGO_TRACE=1` prints every move.
 
+`exploitplay` also takes two cache switches:
+
+- `IPVGO_NO_SESSION=1` - disable the session cache, giving the A/B baseline.
+- `IPVGO_CACHE_STATS=1` - report nodes, memo hits, how many of those came from an
+  earlier move, reply-cache hits and endgame budget cuts.
+
+```bash
+# Same binary, both modes, so the comparison is fair
+IPVGO_CACHE_STATS=1 ./cmake-build/bin/Release/ipvgo_game exploitplay "Netburners" 5 4 2 1
+IPVGO_CACHE_STATS=1 IPVGO_NO_SESSION=1 ./cmake-build/bin/Release/ipvgo_game exploitplay "Netburners" 5 4 2 1
+```
+
 ## Profiling
 
 The Visual Studio / ETW CPU profiler needs an elevated session. `ipvgo_prof` is
@@ -280,8 +292,8 @@ xperf -i trace.etl -o trace.csv -a dumper   # then pivot the Stack column
 
 ## Performance baseline
 
-Reference point for optimisation work: **`6da0c4a`** (dense hash maps, point
-masks, fixed-capacity chain data). Measure against these numbers, not against
+Reference point for optimisation work: **`68813bf`** (dense hash maps, point
+masks, make/unmake, session cache). Measure against these numbers, not against
 older commits.
 
 Reproduce, from a Release build:
@@ -294,24 +306,26 @@ Reproduce, from a Release build:
 ./cmake-build/bin/Release/ipvgo_game optbench --only=all --positions=2 --depth=3 --threads=1 --reps=3
 ```
 
-| measurement | baseline @ `6da0c4a` |
+| measurement | baseline @ `68813bf` |
 |---|---|
-| `ipvgo_prof` search (36 290 nodes) | ~290 ms, 1 035 383 allocations, 36 MB |
-| `optbench` per search (2 positions, depth 3) | ~1.76 s (wall clock is noisy; the node counts are the stable part), 68 678 nodes |
+| `ipvgo_prof` search (36 290 nodes) | ~290 ms, 940 451 allocations, 20 MB |
+| `optbench` per search (2 positions, depth 3) | ~1.6 s (wall clock is noisy; the node counts are the stable part), 68 678 nodes |
 | `optbench` position 1 / 2 | 40 847 nodes, value 0.2245 / 27 831 nodes, value 0.0309 |
+| `exploitplay`, 24 games, depth 2 | 12.7 ms/move with the session, 14.9 ms/move without (1.38M vs 1.78M nodes) |
 
-Largest remaining allocation sites: `BoardHistory` copies (47k / 9.6 MB),
-`GameState` copies (47k / 6.5 MB), small `std::vector<int>` growth in the
-policy code (~290k), `EyeCandidate` vectors (35k), and `PolicyWalker::resolve`
-(46k).
+Largest remaining allocation sites: small `std::vector<int>` growth in the policy
+code (~293k / 1.9 MB), `EyeCandidate` vectors (35k), and `PolicyWalker::resolve`
+(46k). Nothing large is left; the remaining time is computation, dominated by
+`matchesAnyPattern` (~58% of exclusive samples in the depth-3 profile).
 
-Progress for reference, all on the same workload:
+Progress for reference, all on the same `ipvgo_prof` workload:
 
 | commit | allocations | bytes | search |
 |---|---|---|---|
 | `890f71e` | 5.14M | 333 MB | 502 ms |
 | `c2bbf26` (board + history + captures) | 3.31M | 166 MB | 383 ms |
 | `6da0c4a` (dense hash + masks) | 1.04M | 36 MB | 291 ms |
+| `68813bf` (make/unmake + session) | 0.94M | 20 MB | 290 ms |
 
 ### Third-party code
 
@@ -320,19 +334,30 @@ v4.8.1 (MIT), vendored as headers so the build needs no network access.
 
 ### Parity checks
 
-Any change to the rules or the board representation must keep these identical,
-not merely similar:
+Changes to the rules, the board representation or the caches must keep these
+identical, not merely similar:
 
 ```bash
-./cmake-build/bin/Release/ipvgo_game selftest          # includes bitwise-capture vs flood-fill oracle
+./cmake-build/bin/Release/ipvgo_game selftest          # bitwise-capture and make/unmake oracles
 ./cmake-build/bin/Release/ipvgo_game fuzz 60 11        # expect 6874 moves, 0 anomalies
 ./cmake-build/bin/Release/ipvgo_game policycheck "The Black Hand" 5 800
 # per-move trace, including values and node counts:
-IPVGO_TRACE=1 ./cmake-build/bin/Release/ipvgo_game exploitplay "Slum Snakes" 5 2 2 1
+IPVGO_NO_SESSION=1 IPVGO_TRACE=1 ./cmake-build/bin/Release/ipvgo_game exploitplay "Slum Snakes" 5 2 2 1
 ```
 
 `optbench` node counts are deterministic at `--threads=1`; at the default thread
 count they vary run to run, so compare values rather than node counts.
+
+Two knobs genuinely change which moves are played, and are therefore not
+regression-tested:
+
+- **`nodeBudget`** caps the endgame solve using a per-search node counter, so a
+  position's value depends on how many nodes the search visited before reaching
+  it. Changing the budget (or the thread count, since each worker gets its own
+  counter and a partition of the root moves) can change the chosen move.
+- **The session cache** reuses positions across moves. It only reuses values with
+  no endgame cut in their subtree, so reuse cannot lower accuracy, but it does
+  change which nodes get evaluated and therefore the play.
 
 The HTTP server also exposes the exploiter for real games with
 `IPVGO_ENGINE=exploit` (POST `/api/ipvgo/move`, engine reported as `exploit`,
