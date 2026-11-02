@@ -151,6 +151,20 @@ http has no process access — so the cycles it can save are handled elsewhere:
   which is how the supervisor tells a planned restart from a crash (crashes back
   off exponentially, planned restarts are immediate).
 
+### Expanding a past game
+
+Every game of the current batch is archived with its full move list, so the
+decision sequence behind a result can be inspected instead of just its win/loss.
+Under **Games**, click a game to open it: one row per Black move with the move it
+played, the win probability it assigned, the search depth and node count, the
+Wall time, White's actual reply, and the score after the half-move. Clicking a row
+shows that position on the board above, which is how "why did it play there" gets
+answered without re-running anything.
+
+The move lists are not shipped over the event stream: the snapshot carries
+summaries only, and `GET /api/bench/game?index=N` returns one game's full record on
+demand. The archive is capped at 2000 games (a batch is at most 500).
+
 The page picks factions, board size (5/7/9/13/19), the thinking budget, games per
 faction and seed, then streams `ipvgo_game benchjson` events through the server:
 

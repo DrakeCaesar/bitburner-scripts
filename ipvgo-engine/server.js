@@ -59,7 +59,10 @@ function findNativeExecutable(name) {
 // ---- Bench (exploiter self-play against the scripted factions) -------------
 
 const BENCH_FACTIONS = ["Netburners", "Slum Snakes", "The Black Hand", "Tetrads", "Daedalus", "Illuminati"]
-const BENCH_HISTORY_LIMIT = 40
+const BENCH_HISTORY_LIMIT = 500
+// Every game of the current batch is archived with its full move list so the page
+// can expand any of them. Bounded so a very long run cannot grow without limit.
+const BENCH_ARCHIVE_LIMIT = 2000
 // Half-moves kept so the page can animate Black and White separately: the two
 // land milliseconds apart, far faster than the browser can poll.
 const BENCH_FRAME_LIMIT = 120
@@ -80,6 +83,10 @@ const bench = {
     endedAt: null,
     frames: [],
     frameSeq: 0,
+    // Archived games of this batch: { faction, game, win, margin, moves: [...] }
+    archive: [],
+    // The game being played, so moves can be attached to it as they arrive.
+    live: null,
   },
 }
 
@@ -98,6 +105,8 @@ function resetBenchState(options) {
     endedAt: null,
     frames: [],
     frameSeq: 0,
+    archive: [],
+    live: null,
   }
 }
 
@@ -129,7 +138,7 @@ function pushFrame(state, side, event, extra) {
 const benchClients = new Set()
 
 function benchSnapshot() {
-  const { frames, ...rest } = bench.state
+  const { frames, archive, live, ...rest } = bench.state
   return { ...rest, pid: undefined, frameSeq: bench.state.frameSeq, serverId, supervised }
 }
 
@@ -175,6 +184,12 @@ function applyBenchEvent(event) {
         blackScore: 0,
         whiteScore: 0,
       }
+      // One record per game of the batch, so the page can expand it afterwards.
+      state.live = {
+        faction: event.faction,
+        game: event.game,
+        moves: [],
+      }
       benchBroadcast("game", state.current)
       break
     case "thinking":
@@ -207,6 +222,22 @@ function applyBenchEvent(event) {
       state.current.value = event.value
       const frame = pushFrame(state, "B", event, event.pass ? null : { x: event.black.x, y: event.black.y })
       if (frame) benchBroadcast("frame", frame)
+      if (state.live) {
+        state.live.moves.push({
+          move: event.move,
+          black: event.pass ? null : { x: event.black.x, y: event.black.y },
+          blackPass: !!event.pass,
+          value: event.value,
+          depth: event.depth,
+          nodes: event.nodes,
+          ms: event.ms,
+          board: event.board,
+          blackScore: event.blackScore,
+          whiteScore: event.whiteScore,
+          white: null,
+          whitePass: false,
+        })
+      }
       break
     }
     case "reply": {
@@ -217,6 +248,14 @@ function applyBenchEvent(event) {
       state.current.lastWhite = event.pass ? "pass" : `${event.white.x},${event.white.y}`
       const frame = pushFrame(state, "W", event, event.pass ? null : { x: event.white.x, y: event.white.y })
       if (frame) benchBroadcast("frame", frame)
+      if (state.live && state.live.moves.length > 0) {
+        const last = state.live.moves[state.live.moves.length - 1]
+        last.white = event.pass ? null : { x: event.white.x, y: event.white.y }
+        last.whitePass = !!event.pass
+        last.boardAfterWhite = event.board
+        last.blackScoreAfterWhite = event.blackScore
+        last.whiteScoreAfterWhite = event.whiteScore
+      }
       break
     }
     case "gameEnd":
@@ -227,6 +266,24 @@ function applyBenchEvent(event) {
         win: event.win,
         margin: event.margin,
         moves: event.moves,
+      }
+      // Archive the finished game with its move list, and hand the page the index
+      // so it can fetch the detail on demand instead of shipping every move to
+      // every client up front.
+      if (state.live) {
+        state.archive.push({
+          faction: state.live.faction,
+          game: state.live.game,
+          win: event.win,
+          margin: event.margin,
+          movesPlayed: event.moves,
+          moves: state.live.moves,
+        })
+        if (state.archive.length > BENCH_ARCHIVE_LIMIT) {
+          state.archive.splice(0, state.archive.length - BENCH_ARCHIVE_LIMIT)
+        }
+        state.lastResult.archiveIndex = state.archive.length - 1
+        state.live = null
       }
       state.history.unshift(state.lastResult)
       if (state.history.length > BENCH_HISTORY_LIMIT) state.history.length = BENCH_HISTORY_LIMIT
@@ -401,13 +458,35 @@ function handleBenchEvents(req, res) {
 function handleBenchState(req, res, url) {
   const sinceRaw = Number(url?.searchParams?.get("since") ?? 0)
   const since = Number.isFinite(sinceRaw) && sinceRaw > 0 ? Math.floor(sinceRaw) : 0
-  const { frames = [], frameSeq = 0, ...rest } = bench.state
+  const { frames = [], frameSeq = 0, archive = [], live, ...rest } = bench.state
   sendJson(res, 200, {
     ...rest,
     pid: undefined,
     frameSeq,
     frames: since > 0 ? frames.filter((frame) => frame.seq > since) : frames,
+    // Summaries only: the page fetches a game's move list when it is expanded.
+    archive: archive.map((game, index) => ({
+      index,
+      faction: game.faction,
+      game: game.game,
+      win: game.win,
+      margin: game.margin,
+      movesPlayed: game.movesPlayed,
+      moveCount: game.moves.length,
+    })),
+    liveMoves: live ? live.moves.length : 0,
   })
+}
+
+// One archived game with its full move list: the decision sequence behind a result.
+function handleBenchGame(req, res, url) {
+  const raw = Number(url?.searchParams?.get("index"))
+  const { archive = [] } = bench.state
+  if (!Number.isFinite(raw) || raw < 0 || raw >= archive.length) {
+    sendJson(res, 404, { error: `no archived game at index ${url?.searchParams?.get("index")}` })
+    return
+  }
+  sendJson(res, 200, archive[Math.floor(raw)])
 }
 
 function handleBenchPage(req, res) {
@@ -866,6 +945,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/api/bench/events") {
     handleBenchEvents(req, res)
+    return
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/bench/game") {
+    handleBenchGame(req, res, url)
     return
   }
 

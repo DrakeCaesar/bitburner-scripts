@@ -147,6 +147,21 @@
       #history { list-style: none; margin: 0; padding: 0; }
       #history li { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; border-bottom: 1px solid #262626; }
       #history li span:first-child { color: var(--dim); }
+      /* Expandable game records: the header is the summary, the body the moves. */
+      #history li.open { display: block; }
+      .gameHead { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 3px 0; }
+      .gameHead:hover { color: var(--fg); }
+      .gameHead .caret { color: var(--dim); width: 10px; }
+      .gameHead .dim { color: var(--dim); }
+      .gameHead span:last-child { margin-left: auto; }
+      .gameBody { padding: 4px 0 8px 18px; }
+      .gameBody .small, .small { font-size: 11px; }
+      .gameBody .dim, .dim { color: var(--dim); }
+      table.moves { width: 100%; font-size: 11px; }
+      table.moves th { text-align: left; font-weight: normal; color: var(--dim); padding: 2px 6px 2px 0; }
+      table.moves td { padding: 2px 6px 2px 0; white-space: nowrap; }
+      table.moves tr.hasBoard { cursor: pointer; }
+      table.moves tr.hasBoard:hover td { background: #262626; }
       .err { color: var(--bad); font-size: 12px; white-space: pre-wrap; margin-top: 8px; }
       .hint { color: var(--dim); font-size: 11px; margin-top: 8px; }
       @media (max-width: 1280px) {
@@ -222,7 +237,7 @@
             <tbody id="rows"></tbody>
           </table>
         </div>
-        <h2 style="margin-top: 14px">Recent games</h2>
+        <h2 style="margin-top: 14px">Games <span class="dim small">- click a game for its full move list</span></h2>
         <ul id="history"></ul>
         <div class="err" id="error"></div>
       </section>
@@ -537,8 +552,17 @@
 
       function renderHistory(s) {
         const list = el("history")
+        // Games already expanded stay open across re-renders.
+        const open = new Set([...list.querySelectorAll("li.open")].map((li) => li.dataset.index))
         list.innerHTML = ""
-        for (const item of s.history.slice(0, 12)) {
+        const games = s.archive && s.archive.length ? s.archive : null
+        if (games) {
+          for (const game of games.slice().reverse()) {
+            list.appendChild(gameRow(game, open.has(String(game.index))))
+          }
+          return
+        }
+        for (const item of (s.history ?? []).slice(0, 12)) {
           const li = document.createElement("li")
           const margin = item.margin >= 0 ? `+${item.margin.toFixed(1)}` : item.margin.toFixed(1)
           li.innerHTML =
@@ -546,6 +570,124 @@
             `<span class="${item.win ? "win" : "loss"}">${item.win ? "WIN" : "LOSS"} ${margin}</span>`
           list.appendChild(li)
         }
+      }
+
+      function gameRow(game, expanded) {
+        const li = document.createElement("li")
+        li.dataset.index = String(game.index)
+        if (expanded) li.classList.add("open")
+        const margin = game.margin >= 0 ? `+${game.margin.toFixed(1)}` : game.margin.toFixed(1)
+        const head = document.createElement("div")
+        head.className = "gameHead"
+        head.innerHTML =
+          `<span class="caret">${expanded ? "\\u25be" : "\\u25b8"}</span>` +
+          `<span>${game.faction} #${game.game}</span>` +
+          `<span class="dim">${game.moveCount} moves</span>` +
+          `<span class="${game.win ? "win" : "loss"}">${game.win ? "WIN" : "LOSS"} ${margin}</span>`
+        head.addEventListener("click", () => toggleGame(game, li))
+        li.appendChild(head)
+        if (expanded) {
+          const body = document.createElement("div")
+          body.className = "gameBody"
+          body.textContent = "loading..."
+          li.appendChild(body)
+          void loadGameDetail(game.index, body)
+        }
+        return li
+      }
+
+      function toggleGame(game, li) {
+        const nowOpen = !li.classList.contains("open")
+        li.classList.toggle("open", nowOpen)
+        const caret = li.querySelector(".caret")
+        if (caret) caret.textContent = nowOpen ? "\\u25be" : "\\u25b8"
+        const existing = li.querySelector(".gameBody")
+        if (!nowOpen) {
+          if (existing) existing.remove()
+          return
+        }
+        if (existing) return
+        const body = document.createElement("div")
+        body.className = "gameBody"
+        body.textContent = "loading..."
+        li.appendChild(body)
+        void loadGameDetail(game.index, body)
+      }
+
+      // Full decision sequence for one archived game: what Black played and what it
+      // was worth, what White answered, and the score after each half-move.
+      async function loadGameDetail(index, target) {
+        try {
+          const res = await fetch(`${API_BASE}/api/bench/game?index=${index}`)
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          const game = await res.json()
+          target.innerHTML = ""
+          target.appendChild(detailTable(game))
+        } catch (err) {
+          target.textContent = `could not load the game: ${err.message}`
+        }
+      }
+
+      function fmtPoint(p, isPass) {
+        if (isPass) return "pass"
+        if (!p) return "-"
+        return `${p.x},${p.y}`
+      }
+
+      function detailTable(game) {
+        const wrap = document.createElement("div")
+        wrap.className = "tableScroll"
+        const table = document.createElement("table")
+        table.className = "moves"
+        table.innerHTML =
+          "<thead><tr><th>#</th><th>Black</th><th>p(win)</th><th>depth</th>" +
+          "<th>nodes</th><th>ms</th><th>White</th><th>score B:W</th></tr></thead>"
+        const body = document.createElement("tbody")
+        for (const mv of game.moves) {
+          const value = typeof mv.value === "number" ? mv.value.toFixed(3) : "-"
+          const tr = document.createElement("tr")
+          const swing = typeof mv.value === "number" && mv.value < 0.35 ? "loss" : ""
+          tr.innerHTML =
+            `<td class="dim">${mv.move}</td>` +
+            `<td>${fmtPoint(mv.black, mv.blackPass)}</td>` +
+            `<td class="${swing}">${value}</td>` +
+            `<td class="dim">${mv.depth ?? "-"}</td>` +
+            `<td class="dim">${mv.nodes ?? "-"}</td>` +
+            `<td class="dim">${mv.ms == null ? "-" : Math.round(mv.ms)}</td>` +
+            `<td>${mv.white === null && !mv.whitePass ? "-" : fmtPoint(mv.white, mv.whitePass)}</td>` +
+            `<td class="dim">${Math.round(mv.blackScore)}:${Math.round(mv.whiteScore)}</td>`
+          if (mv.board && mv.board.length) {
+            tr.title = mv.board.join("\\n")
+            tr.classList.add("hasBoard")
+            tr.addEventListener("click", () => showPosition(mv.board, game, mv))
+          }
+          body.appendChild(tr)
+        }
+        table.appendChild(body)
+        wrap.appendChild(table)
+        const hint = document.createElement("div")
+        hint.className = "dim small"
+        hint.textContent = "click a row to show that position"
+        wrap.appendChild(hint)
+        return wrap
+      }
+
+      function showPosition(board, game, mv) {
+        displayed = {
+          board,
+          faction: game.faction,
+          game: game.game,
+          move: mv.move,
+          blackScore: mv.blackScore,
+          whiteScore: mv.whiteScore,
+          lastBlack: fmtPoint(mv.black, mv.blackPass),
+          lastWhite: mv.white === null && !mv.whitePass ? "-" : fmtPoint(mv.white, mv.whitePass),
+          value: mv.value,
+          depth: mv.depth,
+          nodes: mv.nodes,
+          ms: mv.ms,
+        }
+        markDirty("board", "info")
       }
 
       function renderStatus(s) {
@@ -674,6 +816,22 @@
           const result = JSON.parse(e.data)
           state.lastResult = result
           state.history = [result, ...(state.history ?? [])].slice(0, 40)
+          // The archive is the authoritative list; add the summary here so a new
+          // game is expandable immediately rather than after the next snapshot.
+          if (typeof result.archiveIndex === "number") {
+            state.archive = [
+              ...(state.archive ?? []),
+              {
+                index: result.archiveIndex,
+                faction: result.faction,
+                game: result.game,
+                win: result.win,
+                margin: result.margin,
+                movesPlayed: result.moves,
+                moveCount: result.moves,
+              },
+            ]
+          }
           markDirty("history")
         })
         source.addEventListener("done", (e) => {
