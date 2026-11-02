@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <unordered_map>
+#include <ankerl/unordered_dense.h>
 #include <unordered_set>
 
 namespace ipvgo::game {
@@ -34,9 +35,10 @@ Spread furthestPoints(const ChainSet& cs, int chain) {
 // board/ChainSet (mirrors getAllNeighboringChains over an arbitrary cell set).
 std::vector<int> neighborChainsOfCells(const SimpleBoard& board, const ChainSet& cs, ChainSpan cells) {
   const int N = cs.N;
-  std::unordered_set<int> cellSet(cells.begin(), cells.end());
+  PointMask cellSet;
+  for (const int idx : cells) cellSet.insert(idx);
   std::vector<int> result;
-  std::unordered_set<int> seen;
+  PointMask seen;
   for (const int idx : cells) {
     const int x = idx / N;
     const int y = idx % N;
@@ -49,7 +51,9 @@ std::vector<int> neighborChainsOfCells(const SimpleBoard& board, const ChainSet&
       const char c = board[nx][ny];
       if (c == '#' || c == '.') continue;
       const int nc = cs.id[nIdx];
-      if (seen.insert(nc).second) result.push_back(nc);
+      if (seen.count(nc)) continue;
+      seen.insert(nc);
+      result.push_back(nc);
     }
   }
   return result;
@@ -57,13 +61,13 @@ std::vector<int> neighborChainsOfCells(const SimpleBoard& board, const ChainSet&
 
 }  // namespace
 
-std::vector<int> onBoardNeighbors(int N, int x, int y) {
-  std::vector<int> out;
+Neighbors onBoardNeighbors(int N, int x, int y) {
+  Neighbors out;
   for (const auto& [dx, dy] : kNeighbors) {
     const int nx = x + dx;
     const int ny = y + dy;
     if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
-    out.push_back(flatIndex(N, nx, ny));
+    out.idx[out.count++] = flatIndex(N, nx, ny);
   }
   return out;
 }
@@ -79,10 +83,12 @@ std::vector<int> findEffectiveLibertiesOfNewMove(const SimpleBoard& board, int x
   const int self = flatIndex(N, x, y);
 
   std::vector<int> all;
-  std::unordered_set<int> seen;
+  PointMask seen;
   auto add = [&](int idx) {
     if (idx == self) return;
-    if (seen.insert(idx).second) all.push_back(idx);
+    if (seen.count(idx)) return;
+    seen.insert(idx);
+    all.push_back(idx);
   };
 
   // Direct empty liberties first, then friendly chain liberties.
@@ -214,7 +220,7 @@ EyeMap getAllEyesByChainId(const SimpleBoard& board, Color player) {
   out.cs = computeChains(board);
   const std::vector<EyeCandidate> candidates = getAllPotentialEyes(board, out.cs, player);
 
-  std::unordered_map<int, size_t> keyIndex;
+  ankerl::unordered_dense::map<int, size_t> keyIndex;
   auto addEye = [&](int chainIdx, int emptyChain) {
     auto it = keyIndex.find(chainIdx);
     if (it == keyIndex.end()) {
@@ -285,7 +291,7 @@ std::vector<Pt> findDisputedTerritory(const GameState& state, Color player, bool
 
   if (excludeFriendlyEyes) {
     const EyeMap em = getAllEyesByChainId(board, player);
-    std::unordered_set<int> friendlyEyes;
+    PointMask friendlyEyes;
     for (const auto& [chainIdx, emptyChains] : em.eyes) {
       if (emptyChains.size() < 2) continue;
       for (const int ec : emptyChains)
@@ -302,13 +308,14 @@ std::vector<Pt> findDisputedTerritory(const GameState& state, Color player, bool
   const ChainSet cs = computeChains(board);
   const std::vector<EyeCandidate> enemyEyes = getAllPotentialEyes(board, cs, opponent);
 
-  std::unordered_set<int> nodesInsideEyeSpaces;
+  PointMask nodesInsideEyeSpaces;
   for (const auto& space : enemyEyes)
     for (const int idx : cs.members(space.emptyChain)) nodesInsideEyeSpaces.insert(idx);
 
-  std::unordered_set<int> playableInsideEnemySpace;
+  PointMask playableInsideEnemySpace;
   for (const auto& space : enemyEyes) {
-    std::unordered_set<int> spaceCells(cs.members(space.emptyChain).begin(), cs.members(space.emptyChain).end());
+    PointMask spaceCells;
+    for (const int idx : cs.members(space.emptyChain)) spaceCells.insert(idx);
     for (const int neighborChain : space.neighborChains) {
       const ChainSpan liberties = cs.liberties(neighborChain);
       if (liberties.size() > 4) continue;

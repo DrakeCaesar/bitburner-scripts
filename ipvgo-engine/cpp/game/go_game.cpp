@@ -70,35 +70,29 @@ ChainSet computeChains(const SimpleBoard& board) {
   const int points = N * N;
   ChainSet cs;
   cs.N = N;
-  cs.id.assign(static_cast<size_t>(points), -1);
-  // A board of N*N points has at most N*N chains; reserving up front keeps the
-  // whole call to a handful of allocations.
-  cs.chainColor.reserve(static_cast<size_t>(points));
-  cs.memberOffsets.reserve(static_cast<size_t>(points) + 1);
-  cs.memberData.reserve(static_cast<size_t>(points));
-  cs.libertyOffsets.reserve(static_cast<size_t>(points) + 1);
-  cs.libertyData.reserve(static_cast<size_t>(points));
+  cs.count = 0;
+  for (int i = 0; i < points; ++i) cs.id[static_cast<size_t>(i)] = -1;
 
-  std::vector<int> stack;
-  stack.reserve(static_cast<size_t>(points));
-  cs.memberOffsets.push_back(0);
+  std::array<int, ChainSet::kMaxPoints> stack;
+  int stackSize = 0;
+  int memberCount = 0;
+  cs.memberOffsets[0] = 0;
   for (int x = 0; x < N; ++x) {
     for (int y = 0; y < N; ++y) {
       const char c = board[x][y];
       if (c == '#') continue;
       const int start = flatIndex(N, x, y);
-      if (cs.id[start] != -1) continue;
+      if (cs.id[static_cast<size_t>(start)] != -1) continue;
 
       const int chainId = cs.count++;
-      cs.chainColor.push_back(c);
-      cs.id[start] = chainId;
-      cs.memberData.push_back(start);  // record members in discovery order (matches game)
-      stack.clear();
-      stack.push_back(start);
+      cs.chainColor[static_cast<size_t>(chainId)] = c;
+      cs.id[static_cast<size_t>(start)] = chainId;
+      cs.memberData[static_cast<size_t>(memberCount++)] = start;  // discovery order (matches game)
+      stackSize = 0;
+      stack[static_cast<size_t>(stackSize++)] = start;
 
-      while (!stack.empty()) {
-        const int idx = stack.back();
-        stack.pop_back();
+      while (stackSize > 0) {
+        const int idx = stack[static_cast<size_t>(--stackSize)];
         const int cx = idx / N;
         const int cy = idx % N;
         for (const auto& [dx, dy] : kNeighborOffsets) {
@@ -107,19 +101,21 @@ ChainSet computeChains(const SimpleBoard& board) {
           if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
           if (board[nx][ny] != c) continue;
           const int nIdx = flatIndex(N, nx, ny);
-          if (cs.id[nIdx] != -1) continue;
-          cs.id[nIdx] = chainId;
-          cs.memberData.push_back(nIdx);
-          stack.push_back(nIdx);
+          if (cs.id[static_cast<size_t>(nIdx)] != -1) continue;
+          cs.id[static_cast<size_t>(nIdx)] = chainId;
+          cs.memberData[static_cast<size_t>(memberCount++)] = nIdx;
+          stack[static_cast<size_t>(stackSize++)] = nIdx;
         }
       }
-      cs.memberOffsets.push_back(static_cast<int>(cs.memberData.size()));
+      cs.memberOffsets[static_cast<size_t>(chainId) + 1] = memberCount;
     }
   }
 
   // Liberties: unique empty neighbors of each chain.
-  cs.libertyOffsets.push_back(0);
-  std::vector<int> seenTag(static_cast<size_t>(points), -1);
+  cs.libertyOffsets[0] = 0;
+  std::array<int, ChainSet::kMaxPoints> seenTag;
+  for (int i = 0; i < points; ++i) seenTag[static_cast<size_t>(i)] = -1;
+  int libertyCount = 0;
   for (int c = 0; c < cs.count; ++c) {
     for (const int idx : cs.members(c)) {
       const int cx = idx / N;
@@ -130,12 +126,12 @@ ChainSet computeChains(const SimpleBoard& board) {
         if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
         if (board[nx][ny] != '.') continue;
         const int nIdx = flatIndex(N, nx, ny);
-        if (seenTag[nIdx] == c) continue;
-        seenTag[nIdx] = c;
-        cs.libertyData.push_back(nIdx);
+        if (seenTag[static_cast<size_t>(nIdx)] == c) continue;
+        seenTag[static_cast<size_t>(nIdx)] = c;
+        cs.libertyData[static_cast<size_t>(libertyCount++)] = nIdx;
       }
     }
-    cs.libertyOffsets.push_back(static_cast<int>(cs.libertyData.size()));
+    cs.libertyOffsets[static_cast<size_t>(c) + 1] = libertyCount;
   }
   return cs;
 }

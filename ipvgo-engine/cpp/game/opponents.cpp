@@ -52,7 +52,7 @@ WeakestChain weakestAdjacentChain(const SimpleBoard& board, int x, int y, Color 
 // ---- Liberty growth / defend ----------------------------------------------
 
 std::vector<GrowthCandidate> getLibertyGrowthMoves(const SimpleBoard& board, Color player,
-                                                   const std::unordered_set<int>& availableSet) {
+                                                   const PointMask& availableSet) {
   const ChainSet cs = computeChains(board);
   const int N = cs.N;
   const char me = colorChar(player);
@@ -95,7 +95,7 @@ AiMove getGrowthMove(const std::vector<GrowthCandidate>& growthMoves, double rng
   return mv;
 }
 
-AiMove getDefendMove(const SimpleBoard& board, Color player, const std::unordered_set<int>& availableSet,
+AiMove getDefendMove(const SimpleBoard& board, Color player, const PointMask& availableSet,
                      MathRandom& mathRng) {
   const std::vector<GrowthCandidate> growthMoves = getLibertyGrowthMoves(board, player, availableSet);
   std::vector<GrowthCandidate> increases;
@@ -123,7 +123,7 @@ AiMove getDefendMove(const SimpleBoard& board, Color player, const std::unordere
 
 // ---- Surround / capture ----------------------------------------------------
 
-AiMove getSurroundMove(const SimpleBoard& board, Color player, const std::unordered_set<int>& availableSet, bool smart) {
+AiMove getSurroundMove(const SimpleBoard& board, Color player, const PointMask& availableSet, bool smart) {
   const Color opposing = oppositeColor(player);
   const ChainSet cs = computeChains(board);
   const int N = cs.N;
@@ -155,9 +155,22 @@ AiMove getSurroundMove(const SimpleBoard& board, Color player, const std::unorde
     const int weakestLength = weakest.found ? weakest.length : 99;
     const int enemyChainLibertyCount = weakest.found ? static_cast<int>(weakest.liberties.size()) : 99;
 
-    std::unordered_set<int> libertyGroups;
-    if (weakest.found)
-      for (const int lib : weakest.liberties) libertyGroups.insert(cs.id[lib]);
+    // Distinct chains the weakest chain's liberties belong to; at most four
+    // liberties, so a short scan beats building a set.
+    int libertyGroups = 0;
+    if (weakest.found) {
+      const int libertyCount = static_cast<int>(weakest.liberties.size());
+      for (int i = 0; i < libertyCount; ++i) {
+        bool duplicate = false;
+        for (int j = 0; j < i; ++j) {
+          if (cs.id[weakest.liberties[j]] == cs.id[weakest.liberties[i]]) {
+            duplicate = true;
+            break;
+          }
+        }
+        if (!duplicate) ++libertyGroups;
+      }
+    }
 
     if (newLibertyCount <= 2 && enemyChainLibertyCount > 2) continue;
 
@@ -171,7 +184,7 @@ AiMove getSurroundMove(const SimpleBoard& board, Color player, const std::unorde
     if (enemyChainLibertyCount <= 1) {
       captureMoves.push_back(mv);
     } else if (enemyChainLibertyCount == 2 &&
-               (newLibertyCount >= 2 || (static_cast<int>(libertyGroups.size()) == 1 && weakestLength > 3) || !smart)) {
+               (newLibertyCount >= 2 || (libertyGroups == 1 && weakestLength > 3) || !smart)) {
       atariMoves.push_back(mv);
     } else if (newLibertyCount >= 2) {
       surroundMoves.push_back(mv);
@@ -200,13 +213,13 @@ void eyeCounts(const SimpleBoard& board, Color player, int& livingGroups, int& e
 }
 
 std::vector<AiMove> getEyeCreationMoves(const SimpleBoard& board, Color player,
-                                        const std::unordered_set<int>& availableSet, int maxLiberties) {
+                                        const PointMask& availableSet, int maxLiberties) {
   const EyeMap allEyes = getAllEyesByChainId(board, player);
   const ChainSet& cs = allEyes.cs;
   const int N = cs.N;
   const char me = colorChar(player);
 
-  std::unordered_set<int> livingGroupChains;
+  PointMask livingGroupChains;
   int currentLivingGroups = 0;
   int currentEyeCount = 0;
   for (const auto& [chainIdx, emptyChains] : allEyes.eyes) {
@@ -270,12 +283,12 @@ std::vector<AiMove> getEyeCreationMoves(const SimpleBoard& board, Color player,
   return moves;
 }
 
-AiMove getEyeCreationMove(const SimpleBoard& board, Color player, const std::unordered_set<int>& availableSet) {
+AiMove getEyeCreationMove(const SimpleBoard& board, Color player, const PointMask& availableSet) {
   const std::vector<AiMove> moves = getEyeCreationMoves(board, player, availableSet, 99);
   return moves.empty() ? AiMove{} : moves[0];
 }
 
-AiMove getEyeBlockingMove(const SimpleBoard& board, Color player, const std::unordered_set<int>& availableSet) {
+AiMove getEyeBlockingMove(const SimpleBoard& board, Color player, const PointMask& availableSet) {
   const Color opposing = oppositeColor(player);
   const std::vector<AiMove> opponentEyeMoves = getEyeCreationMoves(board, opposing, availableSet, 5);
   std::vector<AiMove> twoEye;
@@ -355,7 +368,7 @@ AiMove getJumpMove(const SimpleBoard& board, Color player, const std::vector<Pt>
 
 // ---- Pattern ---------------------------------------------------------------
 
-AiMove getPatternMove(const SimpleBoard& board, Color player, const std::unordered_set<int>& availableSet, bool smart,
+AiMove getPatternMove(const SimpleBoard& board, Color player, const PointMask& availableSet, bool smart,
                       double rng) {
   const int N = static_cast<int>(board.size());
   std::vector<Pt> moves;
@@ -503,7 +516,7 @@ class MoveGen {
 
   bool hasContested() const { return !contestedPoints_.empty(); }
 
-  void addFallbackCandidates(const GameState& state, Color player, std::unordered_set<int>& seen,
+  void addFallbackCandidates(const GameState& state, Color player, PointMask& seen,
                              std::vector<Pt>& out) {
     const int N = state.size;
     auto consider = [&](const AiMove& m) {
@@ -562,7 +575,7 @@ class MoveGen {
   MathRandom& mathRng_;
 
   std::vector<Pt> availableSpaces_;
-  std::unordered_set<int> availableSet_;
+  PointMask availableSet_;
   std::vector<Pt> contestedPoints_;
   std::vector<Pt> expansionMoves_;
   bool endGameAvailable_ = false;
@@ -575,7 +588,7 @@ class MoveGen {
   std::array<bool, kCount> computed_{};
 };
 
-void addIlluminatiCandidates(MoveGen& gen, const GameState& state, Color player, std::unordered_set<int>& seen,
+void addIlluminatiCandidates(MoveGen& gen, const GameState& state, Color player, PointMask& seen,
                              std::vector<Pt>& out) {
   const int N = state.size;
   auto addValid = [&](int x, int y) {
@@ -607,7 +620,7 @@ std::vector<Pt> enumerateFactionMovesImpl(const GameState& state, Color player, 
   const bool smart = isSmart(opponent, rng.random());
   MoveGen gen(state, player, 0.0, smart, mathRng);
 
-  std::unordered_set<int> seen;
+  PointMask seen;
   std::vector<Pt> out;
   const int N = state.size;
 
@@ -641,7 +654,7 @@ std::vector<Pt> enumerateFactionMovesImpl(const GameState& state, Color player, 
 std::vector<Pt> enumerateNetburnersMovesImpl(const GameState& state, Color player, MathRandom& mathRng) {
   MoveGen gen(state, player, 0.0, false, mathRng);
 
-  std::unordered_set<int> seen;
+  PointMask seen;
   std::vector<Pt> out;
   const int N = state.size;
 
@@ -1028,7 +1041,7 @@ std::vector<Pt> factionConsideredSpaces(const GameState& state, Color player, Op
 std::vector<std::pair<int, int>> blackExploitMoves(const GameState& state, Opponent opponent,
                                                    double seedMs) {
   const int N = state.size;
-  std::unordered_set<int> points;
+  PointMask points;
 
   auto add = [&](int x, int y) {
     if (x < 0 || y < 0 || x >= N || y >= N) return;

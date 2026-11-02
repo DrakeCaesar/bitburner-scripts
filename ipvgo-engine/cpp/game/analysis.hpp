@@ -10,8 +10,18 @@ namespace ipvgo::game {
 
 using Pt = std::pair<int, int>;  // (x, y)
 
+// Up to four orthogonal neighbours in N, E, S, W order (the order every
+// reference implementation walks them in). Fixed capacity: this used to return a
+// std::vector and was one of the largest allocation sites in the search.
+struct Neighbors {
+  int idx[4] = {0, 0, 0, 0};
+  int count = 0;
+  const int* begin() const { return idx; }
+  const int* end() const { return idx + count; }
+};
+
 // Neighbor flat indices (N, E, S, W order) that are on-board (any content).
-std::vector<int> onBoardNeighbors(int N, int x, int y);
+Neighbors onBoardNeighbors(int N, int x, int y);
 
 // Effective liberties a stone of `player` would have if played at (x,y):
 // direct empty neighbors plus liberties of connected friendly chains, minus

@@ -156,6 +156,24 @@ inline void packBoard(const SimpleBoard& board, uint64_t* out, int stride) {
 // count of entries a search copies is one memcpy instead of one string each.
 class BoardHistory {
  public:
+  BoardHistory() = default;
+  // A copy is made for every candidate move and is then immediately appended to,
+  // so leave a little headroom: otherwise the copy's buffer is always exactly
+  // full and the next append always reallocates.
+  BoardHistory(const BoardHistory& other) : words_(other.words_), stride_(other.stride_), count_(other.count_) {
+    if (count_ > 0) words_.reserve(static_cast<size_t>(count_ + 8) * static_cast<size_t>(stride_));
+  }
+  BoardHistory& operator=(const BoardHistory& other) {
+    if (this == &other) return *this;
+    words_ = other.words_;
+    stride_ = other.stride_;
+    count_ = other.count_;
+    if (count_ > 0) words_.reserve(static_cast<size_t>(count_ + 8) * static_cast<size_t>(stride_));
+    return *this;
+  }
+  BoardHistory(BoardHistory&&) noexcept = default;
+  BoardHistory& operator=(BoardHistory&&) noexcept = default;
+
   static int strideFor(int n) { return (n * n * 2 + 63) / 64; }
 
   void clear() {
@@ -208,6 +226,25 @@ class BoardHistory {
   int count_ = 0;
 };
 
+// Membership mask over board points (x*N+y). Replaces std::unordered_set<int>
+// for "have I seen this point" checks, which were a top allocation site and
+// only ever needed a bit test.
+class PointMask {
+ public:
+  void clear() { words_.fill(0); }
+  void insert(int idx) { words_[static_cast<size_t>(idx) >> 6] |= 1ULL << (idx & 63); }
+  bool count(int idx) const { return ((words_[static_cast<size_t>(idx) >> 6] >> (idx & 63)) & 1ULL) != 0; }
+  bool empty() const {
+    for (const uint64_t word : words_) {
+      if (word != 0) return false;
+    }
+    return true;
+  }
+
+ private:
+  std::array<uint64_t, 6> words_{};  // 6 x 64 covers 19x19 = 361
+};
+
 struct GameState {
   SimpleBoard board;
   int size = 0;
@@ -248,30 +285,31 @@ struct ChainSpan {
 // stone groups (mirrors getAllChains). Liberties are the unique empty neighbors
 // of a chain. Offline cells have id -1.
 //
-// Members and liberties live in flat CSR arrays (offsets + data) instead of a
-// vector<vector<int>>: a board-wide flood fill happens on every legality test,
-// move application and policy query, and the per-chain heap vectors were the
-// single largest source of allocations.
+// Storage is inline and fixed capacity (19x19 = 361 points is the largest
+// subnet), so building one allocates nothing at all: this runs on every
+// legality test, move application and policy query.
 struct ChainSet {
+  static constexpr int kMaxPoints = 361;
+
   int N = 0;
   int count = 0;
-  std::vector<int> id;           // size N*N, -1 for offline
-  std::vector<char> chainColor;  // per chain
-  std::vector<int> memberOffsets;  // count + 1 offsets into memberData
-  std::vector<int> memberData;     // per chain, flat indices
-  std::vector<int> libertyOffsets;  // count + 1 offsets into libertyData
-  std::vector<int> libertyData;     // per chain, flat indices (unique empty neighbors)
+  std::array<int, kMaxPoints> id;           // size N*N, -1 for offline
+  std::array<char, kMaxPoints> chainColor;  // per chain
+  std::array<int, kMaxPoints + 1> memberOffsets;   // count + 1 offsets into memberData
+  std::array<int, kMaxPoints> memberData;          // per chain, flat indices
+  std::array<int, kMaxPoints + 1> libertyOffsets;  // count + 1 offsets into libertyData
+  std::array<int, kMaxPoints> libertyData;         // per chain, flat indices (unique empty neighbors)
 
   ChainSpan members(int c) const {
-    if (c < 0 || static_cast<size_t>(c) + 1 >= memberOffsets.size()) return {};
+    if (c < 0 || c + 1 >= count + 1) return {};
     return {memberData.data() + memberOffsets[c], memberOffsets[c + 1] - memberOffsets[c]};
   }
   ChainSpan liberties(int c) const {
-    if (c < 0 || static_cast<size_t>(c) + 1 >= libertyOffsets.size()) return {};
+    if (c < 0 || c + 1 >= count + 1) return {};
     return {libertyData.data() + libertyOffsets[c], libertyOffsets[c + 1] - libertyOffsets[c]};
   }
   int libertyCount(int c) const {
-    if (c < 0 || static_cast<size_t>(c) + 1 >= libertyOffsets.size()) return 0;
+    if (c < 0 || c + 1 >= count + 1) return 0;
     return libertyOffsets[c + 1] - libertyOffsets[c];
   }
 };
