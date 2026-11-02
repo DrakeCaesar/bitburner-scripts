@@ -386,6 +386,28 @@ regression-tested:
 Recorded so they are not rediscovered from scratch. Every number here was
 measured, not estimated.
 
+**Win rate at 9x9 cannot resolve small changes, so do not screen there.** The
+same binary won 54.2% of one 24-game set and 79.2% of another (different seeds),
+so the standard error on a 9x9 arm of that size is about 10 percentage points.
+Roughly 250 games per arm are needed to detect a 5-point change, which is about
+an hour of search per arm. Screen on 5x5, where 240 games gives +/- 2.6 points,
+and treat 9x9 as confirmation only. `tools/sweep.ps1` runs a set and pools seeds,
+and prints the standard error so an effect can be compared against it.
+
+**Four eval/search ideas were tried and none survived that bar.** With the
+in-game node budget and 5x5 x 240 games per arm (baseline 81.9% +/- 1.4 over 720
+games, stable across seeds: 81.7 / 81.7 / 82.5):
+
+| change | result | verdict |
+|---|---|---|
+| discount open regions by size (invasion risk) | 80.0% at 0.10, 75.4% at 0.20 | 0.20 is a real regression (~2.4 sigma); 0.10 is neutral |
+| prioritise moves that save a 2-4 liberty group | identical to baseline | no effect: on 5x5 the 12-move beam rarely binds, so the ordering is never used |
+| rank all root moves by leaf, search the top N deeply | 8x fewer nodes at 9x9 depth 2 (4 891 -> 611) | no strength change (32/48 vs 32/48 pooled); cannot reach depth 3 in budget |
+| higher beam / more replies | not pursued | cost grows as the branching factor per ply |
+
+A discount fitted on 9x9 alone looked like +20.8 points and reversed sign on the
+next seed, which is the trap the power note above is about.
+
 **Full-width search is not an alternative to the beam - at the affordable depth
 it is already what happens.** At depth 1 the root is every legal move already:
 forcing the interior and the root to full width changed the node count by
