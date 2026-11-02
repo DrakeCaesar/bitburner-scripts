@@ -1,13 +1,15 @@
-# IPvGO engine (native + WASM + KataGo)
+# IPvGO engine (exploiter + MCGS + WASM)
 
-C++ MCTS engine for Bitburner IPvGO. The server prefers **KataGo** (GPU neural net) when installed, with C++ MCTS as fallback.
+C++ engine for Bitburner IPvGO. Play is driven by a **policy exploiter** that
+models the scripted faction AI, with Monte Carlo graph search and a legacy
+heuristic MCTS engine as alternatives.
 
 ## Quick start
 
 From the **repo root**:
 
 ```bash
-pnpm run ipvgo:setup   # download KataGo CUDA binary + neural nets (~200MB)
+pnpm run ipvgo:build   # cmake --preset release + build ipvgo_engine/ipvgo_game
 pnpm run server        # http://localhost:3010
 ```
 
@@ -17,31 +19,27 @@ In Bitburner:
 run ipvgo.js
 ```
 
-`ipvgo:setup` downloads:
-- KataGo v1.16.5 (CUDA Windows/Linux, OpenCL fallback if CUDA zip fails)
-- Main b18 net (5/7/13 boards)
-- 9x9 finetuned net (9x9 only)
-
-**First KataGo launch:** OpenCL/CUDA may GPU-autotune for several minutes (cached under `katago/KataGoData/`). The server pre-warms KataGo on startup so tuning finishes before your first in-game move.
-
-Optional native C++ fallback:
-
-```bash
-pnpm run ipvgo:build   # cmake --preset release + build ipvgo_engine/ipvgo_game
-```
+Then open **http://localhost:3010/bench** for the benchmark GUI.
 
 ## Engine priority
 
-1. **KataGo** (`ipvgo-engine/katago/`) — GPU analysis engine with pretrained nets
-2. **Native** (`ipvgo_engine.exe`) — CPU MCTS if KataGo missing or errors
+The server picks the first available of:
 
-Force native only: `IPVGO_FORCE_NATIVE=1 pnpm run server`
+1. **Exploit** (`ipvgo_game`) — policy expectimax against the faction AI (default)
+2. **Native** (`ipvgo_engine`) — legacy heuristic MCTS, used if the exploiter is missing or errors
+
+Overrides with `IPVGO_ENGINE`:
+
+```bash
+IPVGO_ENGINE=native   # legacy heuristic MCTS
+IPVGO_ENGINE=mcgs     # Monte Carlo graph search
+IPVGO_ENGINE=exploit  # force the exploiter
+```
 
 ## Prerequisites
 
-- CMake 3.18+ (native fallback only)
-- C++17 compiler (native fallback only)
-- NVIDIA GPU + drivers for CUDA KataGo build (RTX series); setup falls back to OpenCL
+- CMake 3.18+
+- C++17 compiler
 
 `nlohmann/json` is fetched automatically via CMake if not installed.
 
@@ -64,7 +62,7 @@ standalone `cmake -S ipvgo-engine -B ipvgo-engine/build`.
 
 Server listens on **http://localhost:3010** (`IPVGO_PORT` to override).
 
-- `GET /health` — `{ engine: "katago" | "native" | "missing", ... }`
+- `GET /health` — `{ engine: "exploit" | "mcgs" | "native" | "missing", benchEngine, ... }`
 - `POST /api/ipvgo/move` — JSON body from `ns.go`, returns `{ move, iterations, elapsedMs, engine? }`
 
 ## WASM
@@ -89,16 +87,13 @@ Outputs `cpp/ipvgo.wasm.js` and `cpp/ipvgo.wasm.wasm`.
 }
 ```
 
-`threads`: `0` = all CPU cores (default), or set an explicit count.
+`threads`: `0` = all CPU cores (default), or set an explicit count. With the
+exploiter engine, `iterations` is used as a node budget (see below).
 
 ## Blocked nodes (`#`)
 
-IPvGO boards can include blocked intersections (`#`). KataGo queries apply move restrictions from `validMoves`:
-
-- **No blocked nodes:** `allowMoves` whitelists legal IPvGO points (+ pass) at the root.
-- **With blocked nodes:** `avoidMoves` bans `#` for both players through the search tree, and bans other illegal points for the current player at the root. When `PHANTOM_ON_BLOCKED` is enabled in `katagoConvert.js`, `#` cells are sent as alternating B/W phantom stones in `initialStones` (per-cell color avoids false liberties and false chain merges through walls).
-
-`pickMoveFromAnalysis` still filters through `validMoves` as a final safety check.
+IPvGO boards can include blocked intersections (`#`). They are never legal
+moves, so every engine simply treats them as non-playable points.
 
 ## Exploiter engine (policy expectimax)
 

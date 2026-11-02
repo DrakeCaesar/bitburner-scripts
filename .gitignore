@@ -18,7 +18,6 @@ ipvgo-engine/build/
 ipvgo-engine/temp/
 ipvgo-engine/cpp/*.wasm
 ipvgo-engine/cpp/ipvgo.wasm.js
-ipvgo-engine/katago/
 # KingOfTheHill Python benchmark (tests/koth_tune/python/)
 tests/koth_tune/build/
 tests/koth_tune/python/__pycache__/

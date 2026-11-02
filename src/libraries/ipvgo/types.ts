@@ -18,7 +18,7 @@ export type IpvgoMoveRequest = {
   validMoves: IpvgoValidMoves
   /** Search threads; 0 = all CPU cores (default). */
   threads?: number
-  /** Optional client id; server forwards to KataGo for cancel/terminate. */
+  /** Optional client id; echoed back for cancel/terminate. */
   requestId?: string
   /** Opponent faction; used by the MCGS engine to run search with the correct White AI. */
   opponent?: GoOpponent
@@ -35,7 +35,7 @@ export type IpvgoBoardSize = (typeof IPVGO_BOARD_SIZES)[number]
 
 export const IPVGO_DEFAULT_ITERATIONS = 4000
 
-/** KataGo maxVisits presets selectable in the tail UI (100-20000). */
+/** Search budget presets selectable in the tail UI (100-20000). */
 export const IPVGO_ITERATION_PRESETS = [
   100, 200, 300, 500, 700, 1000, 1500, 2000, 2500, 3000, 4000,
   5000, 6000, 7000, 8000, 10000, 12000, 14000, 16000, 18000, 20000,

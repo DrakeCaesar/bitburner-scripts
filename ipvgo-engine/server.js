@@ -1,6 +1,6 @@
 /**
  * Local JSON API for IPvGO move search.
- * Prefers KataGo (GPU) when installed; falls back to native C++ MCTS.
+ * Runs the C++ exploiter by default; native MCTS is available as a fallback.
  */
 
 import { execFile, spawn } from "child_process"
@@ -8,15 +8,11 @@ import fs from "fs"
 import http from "http"
 import path from "path"
 import { fileURLToPath } from "url"
-import { isKatagoInstalled, requestKatagoMove, cancelKatagoRequest, shutdownKatago, warmupKatago } from "./katagoBridge.js"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const port = Number(process.env.IPVGO_PORT ?? 3010)
 const maxBodyBytes = 4 * 1024 * 1024
-const forceNative = process.env.IPVGO_FORCE_NATIVE === "1"
 const engineOverride = (process.env.IPVGO_ENGINE ?? "").trim()
-const forceMcgs = engineOverride === "mcgs"
-const forceExploit = engineOverride === "exploit"
 
 /** @type {import("child_process").ChildProcess | null} */
 let activeNativeChild = null
@@ -265,11 +261,14 @@ function handleBenchPage(req, res) {
 }
 
 function activeEngine() {
-  if (forceExploit) return "exploit"
-  if (forceMcgs) return "mcgs"
-  if (!forceNative && isKatagoInstalled()) return "katago"
-  const exe = nativeExecutablePath()
-  if (fs.existsSync(exe)) return "native"
+  const hasGame = fs.existsSync(mcgsExecutablePath())
+  const hasNative = fs.existsSync(nativeExecutablePath())
+  if (engineOverride === "native") return hasNative ? "native" : "missing"
+  if (engineOverride === "mcgs") return hasGame ? "mcgs" : "missing"
+  if (engineOverride === "exploit") return hasGame ? "exploit" : "missing"
+  // Default: the policy exploiter, which is what this engine exists for.
+  if (hasGame) return "exploit"
+  if (hasNative) return "native"
   return "missing"
 }
 
@@ -314,11 +313,10 @@ function handleHealth(_req, res) {
   sendJson(res, 200, {
     status: "ok",
     engine,
-    katago: isKatagoInstalled(),
     nativePath: nativeExecutablePath(),
     nativeBuilt: fs.existsSync(nativeExecutablePath()),
-    mcgsPath: mcgsExecutablePath(),
-    mcgsBuilt: fs.existsSync(mcgsExecutablePath()),
+    gamePath: mcgsExecutablePath(),
+    gameBuilt: fs.existsSync(mcgsExecutablePath()),
     // The bench never uses the in-game move engine; it always runs the exploiter.
     benchEngine: "exploit",
     timestamp: new Date().toISOString(),
@@ -464,9 +462,7 @@ async function handleCancel(req, res) {
   }
 
   const engine = activeEngine()
-  if (engine === "katago") {
-    cancelKatagoRequest(requestId)
-  } else if (engine === "native" || engine === "mcgs" || engine === "exploit") {
+  if (engine === "native" || engine === "mcgs" || engine === "exploit") {
     cancelNativeMove()
   }
 
@@ -477,7 +473,7 @@ async function handleMove(req, res) {
   const engine = activeEngine()
   if (engine === "missing") {
     return sendJson(res, 503, {
-      error: "No engine available. Run: pnpm run ipvgo:setup && pnpm run ipvgo:build",
+      error: "No engine available. Run: pnpm run ipvgo:build",
     })
   }
 
@@ -490,17 +486,15 @@ async function handleMove(req, res) {
 
   try {
     const result =
-      engine === "katago"
-        ? await requestKatagoMove(body)
-        : engine === "mcgs"
-          ? await requestMcgsMove(body)
-          : engine === "exploit"
-            ? await requestExploitMove(body)
-            : await requestNativeMove(body)
+      engine === "mcgs"
+        ? await requestMcgsMove(body)
+        : engine === "exploit"
+          ? await requestExploitMove(body)
+          : await requestNativeMove(body)
     sendJson(res, 200, result)
   } catch (err) {
     console.error(`${engine} move error:`, err.message)
-    if (engine === "katago" || engine === "exploit") {
+    if (engine === "exploit") {
       try {
         const fallback = await requestNativeMove(body)
         return sendJson(res, 200, { ...fallback, engine: "native", [`${engine}Error`]: err.message })
@@ -600,22 +594,14 @@ server.listen(port, () => {
   console.log(`Bench GUI: http://localhost:${port}/bench  (always the C++ exploiter, ipvgo_game)`)
   console.log(`Health: http://localhost:${port}/health`)
   console.log(`Move API: POST http://localhost:${port}/api/ipvgo/move`)
-
-  if (engine === "katago") {
-    warmupKatago().catch((err) => {
-      console.error("[katago] warmup failed:", err.message)
-    })
-  }
 })
 
 process.on("SIGINT", () => {
   stopBench()
-  shutdownKatago()
   process.exit(0)
 })
 
 process.on("SIGTERM", () => {
   stopBench()
-  shutdownKatago()
   process.exit(0)
 })

@@ -37,7 +37,7 @@ import {
   type IpvgoSetupSelection,
 } from "./uiControl.js"
 
-export type IpvgoBackend = "katago" | "native" | "pending"
+export type IpvgoBackend = "exploit" | "mcgs" | "native" | "pending"
 
 export type IpvgoGameMoveRow = {
   number: number
@@ -91,7 +91,7 @@ export type IpvgoDashboardSnapshot = {
   cheatSuccessChance: number
   /** Queued opponent/size after the current game finishes. */
   deferredSetup?: IpvgoSetupSelection | null
-  /** Per-faction KataGo visit count (from ipvgo-settings.json). */
+  /** Per-faction search iteration count (from ipvgo-settings.json). */
   factionSims: Partial<Record<GoOpponent, number>>
   /** Per-faction auto-rotation enable (from ipvgo-settings.json). */
   factionEnabled: Partial<Record<GoOpponent, boolean>>

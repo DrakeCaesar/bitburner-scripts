@@ -16,6 +16,7 @@ import {
   renderIpvgoDashboard,
   syncDeferredSetupSnapshot,
 } from "./libraries/ipvgo/display.js"
+import type { IpvgoBackend } from "./libraries/ipvgo/display.js"
 import {
   estimateNodePowerByFaction,
   getFactionSims,
@@ -317,15 +318,17 @@ export async function main(ns: NS): Promise<void> {
     return
   }
 
-  let engineLabel = "native"
+  let engineLabel: IpvgoBackend = "native"
   try {
     const health = (await fetch("http://localhost:3010/health").then((r) => r.json())) as { engine?: string }
-    if (health.engine === "katago" || health.engine === "native") engineLabel = health.engine
+    if (health.engine === "exploit" || health.engine === "mcgs" || health.engine === "native") {
+      engineLabel = health.engine
+    }
   } catch {
     /* use default */
   }
 
-  snapshot = { ...snapshot, backend: engineLabel as "katago" | "native", phase: "Ready" }
+  snapshot = { ...snapshot, backend: engineLabel, phase: "Ready" }
   await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
 
   let moveNumber = inProgress?.moveNumber ?? 0

@@ -1,7 +1,6 @@
 import type { ReactNode } from "@ns"
 import { getReact } from "@/libraries/scriptLogUi.js"
 import type { IpvgoBoard } from "./types.js"
-import { phantomStoneColor } from "./phantomStones.js"
 
 /** Square cell size in px (stones, coords, and labels all match). */
 export const BOARD_CELL_PX = 48
@@ -189,36 +188,7 @@ function blockedMarkerOnly(): ReactNode[] {
   ]
 }
 
-function blockedLayers(board: IpvgoBoard, x: number, y: number): ReactNode[] {
-  const React = getReact()
-  const phantom = phantomStoneColor(board, x, y, "X")
-  const dotR = 3.2
-  const dotFill = phantom === "B" ? "#1c1c1c" : "#D1D1D1"
-  const layers: ReactNode[] = [
-    ...blockedMarkerOnly(),
-    React.createElement("circle", {
-      cx: CENTER,
-      cy: CENTER,
-      r: dotR,
-      fill: dotFill,
-      stroke: phantom === "W" ? "#555555" : undefined,
-      strokeWidth: phantom === "W" ? 0.8 : 0,
-    }),
-  ]
-  if (phantom === "B") {
-    layers.push(
-      React.createElement("circle", {
-        cx: CENTER - 1.2,
-        cy: CENTER - 1.2,
-        r: 0.9,
-        fill: "rgba(255,255,255,0.12)",
-      })
-    )
-  }
-  return layers
-}
-
-function stoneLayers(kind: BoardStoneKind, board?: IpvgoBoard, x?: number, y?: number): ReactNode[] {
+function stoneLayers(kind: BoardStoneKind): ReactNode[] {
   const React = getReact()
   switch (kind) {
     case "black":
@@ -239,7 +209,7 @@ function stoneLayers(kind: BoardStoneKind, board?: IpvgoBoard, x?: number, y?: n
         whiteStoneSheenDot(),
       ]
     case "blocked":
-      return board != null && x != null && y != null ? blockedLayers(board, x, y) : blockedMarkerOnly()
+      return blockedMarkerOnly()
     case "empty":
       return []
   }
@@ -303,7 +273,7 @@ export function buildBoardCell(
   const kind: BoardStoneKind =
     raw === "X" ? "black" : raw === "O" ? "white" : raw === "#" ? "blocked" : "empty"
   if (kind !== "empty") {
-    layers.push(...stoneLayers(kind, board, x, y))
+    layers.push(...stoneLayers(kind))
     if (highlight) {
       layers.push(highlightCircle(highlight))
     }
