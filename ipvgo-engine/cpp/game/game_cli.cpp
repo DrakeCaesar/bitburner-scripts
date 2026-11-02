@@ -46,6 +46,7 @@
 #include "features.hpp"
 #include "game_engine.hpp"
 #include "go_game.hpp"
+#include "safety.hpp"
 #include "optbench.hpp"
 #include "mcgs.hpp"
 #include "obstacles.hpp"
@@ -324,6 +325,57 @@ int runSelftest() {
                    (p.type == PlayType::Move && evaluateIfMoveIsValid(s, p.x, p.y, Color::White) == Validity::Valid);
       check(legal, "ai move legal for " + opponentName(ai));
     }
+  }
+
+  // ---- Static safety analysis (Benson / vital) ---------------------------
+  {
+    auto countSafe = [&](const SimpleBoard& b, Color c, bool vital) {
+      const ChainSet cs = computeChains(b);
+      const SafetyResult r = analyzeSafety(b, cs, c, vital);
+      int chains = 0;
+      for (int i = 0; i < cs.count; ++i) {
+        if (cs.chainColor[i] == colorChar(c) && r.safe(i)) ++chains;
+      }
+      return chains;
+    };
+
+    // Two separate one-point eyes: pass-alive. Columns are columns, so the
+    // board below is a 5x3 wall with holes at (1,1) and (3,1).
+    const SimpleBoard twoEyes = {
+        "XXX.....", "X.X.....", "XXX.....", "X.X.....", "XXX.....",
+        "........", "........", "........",
+    };
+    check(countSafe(twoEyes, Color::Black, false) == 1, "benson: a group with two real eyes is pass-alive");
+
+    // The same wall with one hole: White can throw in at the second point, so it
+    // is not pass-alive. This is the case the evaluator used to over-credit.
+    const SimpleBoard oneEye = {
+        "XXX.....", "X.X.....", "XXX.....", "........", "........",
+        "........", "........", "........",
+    };
+    check(countSafe(oneEye, Color::Black, false) == 0, "benson: one eye is not pass-alive");
+
+    // A 2x2 eye space is a single region, not two eyes - the opponent can play
+    // inside and make a dead shape, so it must not count as alive.
+    const SimpleBoard falseEye = {
+        ".XX.....", "X..X....", "X..X....", ".XX.....",
+        "........", "........", "........", "........",
+    };
+    check(countSafe(falseEye, Color::Black, false) == 0, "benson: a 2x2 eye space is not two eyes");
+
+    // A scattered group with no eyes at all must not be pass-alive - this is the
+    // exact situation that made the 7x7 Netburners loss look like a win.
+    const SimpleBoard scattered = {
+        "X.X.X...", ".O.O....", "X.X.X...", "........",
+        "........", "........", "........", "........",
+    };
+    check(countSafe(scattered, Color::Black, false) == 0, "benson: scattered stones are not pass-alive");
+    check(countSafe(scattered, Color::White, false) == 0, "benson: the opponent's scattered stones are not either");
+
+    // Benson must never claim life for a dead-looking group even with the vital
+    // extension: the extension only ever adds chains, never removes them.
+    check(countSafe(twoEyes, Color::Black, true) >= countSafe(twoEyes, Color::Black, false),
+          "vital: never weaker than benson");
   }
 
   std::cout << (g_failures ? "\nSELFTEST FAILED\n" : "\nSELFTEST PASSED\n");
@@ -668,6 +720,49 @@ int runEngineServer() {
     std::cout.flush();
   }
   return 0;
+}
+
+// ---- safety (static life analysis on one position) -------------------------
+
+int runSafety(const std::string& inPath) {
+  std::ifstream in(inPath);
+  if (!in) {
+    std::cerr << "cannot open " << inPath << "\n";
+    return 1;
+  }
+  json req;
+  in >> req;
+  const GameState state = stateFromRequest(req);
+  const ChainSet cs = computeChains(state.board);
+  const ipvgo::game::SafetyResult black = ipvgo::game::analyzeSafety(state.board, cs, Color::Black, true);
+  const ipvgo::game::SafetyResult white = ipvgo::game::analyzeSafety(state.board, cs, Color::White, true);
+  const ipvgo::nn::EvalReport report = ipvgo::nn::explainEval(state);
+
+  auto label = [](ipvgo::game::SafetyLevel l) {
+    switch (l) {
+      case ipvgo::game::SafetyLevel::Benson: return "benson";
+      case ipvgo::game::SafetyLevel::Vital: return "vital";
+      default: return "-";
+    }
+  };
+
+  std::cout << "chains:\n";
+  for (int c = 0; c < cs.count; ++c) {
+    const char colour = cs.chainColor[c];
+    if (colour != 'X' && colour != 'O') continue;
+    const auto& s = colour == 'X' ? black : white;
+    std::cout << "  " << colour << " size=" << cs.members(c).size() << " libs=" << cs.libertyCount(c)
+              << " safety=" << label(s.level(c)) << "\n";
+  }
+  std::cout << "benson chains: black=" << black.bensonChains << " white=" << white.bensonChains
+            << "  (vital adds: black=" << black.vitalChains << " white=" << white.vitalChains << ")\n";
+  std::cout << "rules lead (game-over score) = " << report.rulesLead << "\n";
+  std::cout << "eval lead  (safety-discounted) = " << report.lead << "\n";
+  std::cout << "win probability = " << report.winProbability << "  empties=" << report.empties << "\n";
+
+  const bool ok = std::getenv("IPVGO_SAFETY_EXPECT_LEAD") == nullptr ||
+                  std::abs(report.lead - std::atof(std::getenv("IPVGO_SAFETY_EXPECT_LEAD"))) < 0.51;
+  return ok ? 0 : 2;
 }
 
 // ---- exploitplay (exploiter Black vs scripted faction White) ---------------
@@ -1034,6 +1129,7 @@ int main(int argc, char** argv) {
   const std::string cmd = argv[1];
 
   if (cmd == "selftest") return runSelftest();
+  if (cmd == "safety" && argc >= 3) return runSafety(argv[2]);
   if (cmd == "fuzz") return runFuzz(argc >= 3 ? std::stoi(argv[2]) : 200, argc >= 4 ? std::stoull(argv[3]) : 1u);
   if (cmd == "parity" && argc >= 3) return runParity(argv[2]);
   if (cmd == "aimove" && argc >= 3) return runAiMove(argv[2], argc >= 4 ? argv[3] : "");

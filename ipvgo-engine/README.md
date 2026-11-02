@@ -267,6 +267,15 @@ White actually played with the probability the model gave it:
 IPVGO_EXPLAIN=1 IPVGO_NODE_LIMIT=4000 ./cmake-build/bin/Release/ipvgo_game exploitplay "Netburners" 7 1 2 2
 ```
 
+The static life analysis has its own command, and three switches (all off by
+default because none of them measured a win-rate gain - see "Known limits"):
+
+```bash
+./cmake-build/bin/Release/ipvgo_game safety position.json   # per-chain pass-alive verdict
+IPVGO_SETTLE=0.5 IPVGO_VITAL=1 ...  # discount unsettled territory, use the Vital level
+IPVGO_EYE_FILTER=1 ...              # never play inside our own pass-alive eye
+```
+
 `exploitplay` also takes two cache switches:
 
 - `IPVGO_NO_SESSION=1` - disable the session cache, giving the A/B baseline.
@@ -423,6 +432,36 @@ What the eval has no term for is the thing that decides these games: a capturing
 race between a big group with few liberties and the scattered groups surrounding
 it. Without it, more depth does not help either - at 7x7 the search already
 reaches depth 2 inside the budget.
+
+**Static safety analysis is implemented and correct, but none of its uses paid.**
+`cpp/game/safety.{hpp,cpp}` implements Benson's pass-alive algorithm for both
+colours (Benson, Information Sciences 10:17-29, 1976) plus a Vital level - "alive
+if the defender answers in its own region" - computed exactly by letting the
+defender play a point and re-running Benson, rather than with Fuego's static
+predicate, whose exact form could not be verified from a primary source. Six
+selftest cases cover two real eyes (pass-alive), one eye (not), a 2x2 eye space
+(a false eye, correctly not alive) and scattered stones (neither colour).
+`ipvgo_game safety <req.json>` prints the per-chain verdict, the rules score and
+the safety-discounted eval.
+
+Three uses were measured on 7x7 Netburners, 120 games per arm, baseline
+109/120 = 90.8%:
+
+| use | result | cost |
+|---|---|---|
+| credit only secured regions, unsettled space at 0.5 | 106/120 (88.3%) | +35% |
+| same at 0.0, so only proved territory counts | 106/120 (88.3%) | +77% |
+| the Vital level instead of Benson alone | 102/120 (85.0%) | +70% |
+| never play inside our own pass-alive eye | 105/120 (87.5%) | +6% |
+
+All within about 1.5 sigma of each other and all pointing the same way, so all
+three ship off and the evaluator is unchanged by default. The diagnosis behind
+them is still right - the old eval read +9.1 where the game was lost by 46, and on
+the exact failing board the discounted eval moves from +9.14 to +3.64. But knowing
+a point is unsettled does not tell the search which move to play, and it costs a
+gradient the eval was using to tell moves apart. What is still missing is
+influence: Black scatters stones while White builds one group, and no life/death
+term prices that.
 
 **Win rate at 9x9 cannot resolve small changes, so do not screen there.** The
 same binary won 54.2% of one 24-game set and 79.2% of another (different seeds),

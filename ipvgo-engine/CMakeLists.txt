@@ -29,6 +29,7 @@ set(GAME_SOURCES
   cpp/game/obstacles.cpp
   cpp/game/analysis.cpp
   cpp/game/patterns.cpp
+  cpp/game/safety.cpp
   cpp/game/setup.cpp
   cpp/game/opponents.cpp
   cpp/game/fast_queries.cpp
