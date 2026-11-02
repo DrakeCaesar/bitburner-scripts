@@ -722,6 +722,8 @@ json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session) 
   cfg.threads = req.value("threads", 0);
   cfg.budgetMs = req.value("budgetMs", 0);
   // `iterations` is what the in-game client sends; treat it as a node budget.
+  cfg.whiteWorstCase = req.value("whiteWorstCase", false);
+  cfg.endgameExactWhite = !req.value("endgameApprox", false);
   cfg.nodeLimit = req.value("nodeLimit", 0L);
   if (cfg.nodeLimit <= 0) cfg.nodeLimit = req.value("iterations", 0L);
   if (cfg.nodeLimit > 0) cfg.budgetMs = 0;
@@ -862,6 +864,30 @@ int runSafety(const std::string& inPath) {
   return ok ? 0 : 2;
 }
 
+// ---- replies (print the modelled opponent distribution) --------------------
+
+int runReplies(const std::string& inPath) {
+  std::ifstream in(inPath);
+  if (!in) {
+    std::cerr << "cannot open " << inPath << "\n";
+    return 1;
+  }
+  json req;
+  in >> req;
+  const GameState state = stateFromRequest(req);
+  const Color mover = oppositeColor(state.previousPlayer);
+  const ipvgo::game::ReplyDist dist = ipvgo::game::opponentReplyDistribution(state, mover, state.ai);
+  const int N = state.size;
+  std::printf("mover=%c faction=%s replies=%zu\n", colorChar(mover), opponentName(state.ai).c_str(),
+              dist.replies.size());
+  for (const auto& r : dist.replies) {
+    if (r.passMove) std::printf("  pass                p=%.6f\n", r.prob);
+    else std::printf("  %d,%d               p=%.6f\n", r.x, r.y, r.prob);
+  }
+  (void)N;
+  return 0;
+}
+
 // ---- exploitplay (exploiter Black vs scripted faction White) ---------------
 
 int runExploitPlay(const std::string& opponentName, int size, int games, int depth, uint64_t seed,
@@ -876,6 +902,8 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
   // Benchmark the configuration the game actually runs: the client sends
   // `iterations`, which becomes a node budget, and a node budget switches the
   // search to iterative deepening and makes the depth argument irrelevant.
+  if (std::getenv("IPVGO_WHITE_WORST")) cfg.whiteWorstCase = true;
+  if (std::getenv("IPVGO_ENDGAME_APPROX")) cfg.endgameExactWhite = false;
   if (const char* limit = std::getenv("IPVGO_NODE_LIMIT")) {
     const long parsed = std::atol(limit);
     if (parsed > 0) cfg.nodeLimit = parsed;
@@ -1241,6 +1269,7 @@ int main(int argc, char** argv) {
 
   if (cmd == "selftest") return runSelftest();
   if (cmd == "safety" && argc >= 3) return runSafety(argv[2]);
+  if (cmd == "replies" && argc >= 3) return runReplies(argv[2]);
   if (cmd == "fuzz") return runFuzz(argc >= 3 ? std::stoi(argv[2]) : 200, argc >= 4 ? std::stoull(argv[3]) : 1u);
   if (cmd == "parity" && argc >= 3) return runParity(argv[2]);
   if (cmd == "aimove" && argc >= 3) return runAiMove(argv[2], argc >= 4 ? argv[3] : "");

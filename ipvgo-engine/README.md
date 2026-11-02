@@ -352,7 +352,7 @@ Reproduce, from a Release build:
 |---|---|
 | `ipvgo_prof` search (36 290 nodes) | ~290 ms, 940 451 allocations, 20 MB |
 | `optbench` per search (2 positions, depth 3) | ~1.6 s (wall clock is noisy; the node counts are the stable part), 68 678 nodes |
-| `optbench` position 1 / 2 | 40 847 nodes / 27 831 nodes (node counts are eval-independent), values are win probabilities |
+| `optbench` position 1 / 2 | 11 250 nodes / 27 831 nodes (deterministic; position 1 changed when the endgame model started using the real reply distribution), values are win probabilities |
 | `exploitplay`, 24 games, depth 2 | 12.7 ms/move with the session, 14.9 ms/move without (1.38M vs 1.78M nodes) |
 
 Largest remaining allocation sites: small `std::vector<int>` growth in the policy
@@ -506,6 +506,22 @@ That shifts the remaining 9% of losses from the evaluator to the search: at dept
 in game, no eval can see a group being captured two moves later. The measurable
 lever is per-node cost (pattern matching is ~58% of exclusive time), which buys
 depth without a win-rate experiment.
+
+**The endgame used a stand-in for White's policy, and it was wrong.** Positions with
+fewer than endgameEmpties empty points took a different branch that never called
+opponentReplyDistribution: it assumed White captures at the faction's capture rate
+and spreads the rest uniformly over the remaining points. That is an approximation
+of a policy we model exactly, applied in the phase where games are decided.
+
+Measured on one losing position (Netburners 7x7, 4 empty points): the exact
+distribution gave White a 0.9-probability reply whose child was worth 0.01, the
+stand-in returned 0.46 for the same node, and the game went on to lose by 46. With
+the exact model the same node reads 0.10 in 168 nodes instead of 0.46 in 603 -
+more accurate and cheaper, because the endgame has few legal replies.
+
+Over games, 7x7 Netburners at depth 2, 40 games per arm: 31/40 with the stand-in,
+35/40 with the exact model, and 32 ms/move down to 18. 9x9 showed the same
+direction (9/12 vs 10/12). IPVGO_ENDGAME_APPROX=1 restores the old behaviour.
 
 **Bouzy's dilation measures reach, not strength.** `cpp/game/influence.cpp`
 implements the numeric dilation `Dz` (IJPRAI 17(2):257-268, 2003) and is tested,
