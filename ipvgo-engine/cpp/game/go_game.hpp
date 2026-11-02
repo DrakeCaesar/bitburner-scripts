@@ -290,6 +290,9 @@ double opponentKomi(Opponent ai);
 
 ChainSet computeChains(const SimpleBoard& board);
 void updateCaptures(SimpleBoard& board, Color playerWhoMoved);
+// Reference implementation: a full-board ChainSet flood fill. updateCaptures()
+// uses the bitwise sweep; this stays as the oracle the tests compare against.
+void updateCapturesFloodFill(SimpleBoard& board, Color playerWhoMoved);
 SimpleBoard evaluateMoveResult(const SimpleBoard& board, int x, int y, Color player);
 
 // ---- Rules ---------------------------------------------------------------

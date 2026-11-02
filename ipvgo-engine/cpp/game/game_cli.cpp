@@ -243,6 +243,35 @@ int runSelftest() {
     check(offline > 0, "wd: has fixed offline nodes");
   }
 
+  // The bitwise capture sweep must agree with the reference flood fill on
+  // arbitrary positions, including dead chains that predate the move (obstacle
+  // and handicap generation can leave those).
+  {
+    std::mt19937_64 rng(20260101);
+    const char alphabet[] = {'.', '.', '.', '.', 'X', 'X', 'O', 'O', '#'};
+    long mismatches = 0;
+    long checked = 0;
+    for (int trial = 0; trial < 200; ++trial) {
+      const int n = 5 + 2 * static_cast<int>(rng() % 3);  // 5, 7, 9
+      SimpleBoard board(n);
+      for (int x = 0; x < n; ++x)
+        for (int y = 0; y < n; ++y) board[x][y] = alphabet[rng() % sizeof(alphabet)];
+      for (int x = 0; x < n; ++x) {
+        for (int y = 0; y < n; ++y) {
+          if (board[x][y] != '.') continue;
+          for (Color player : {Color::Black, Color::White}) {
+            SimpleBoard reference = board;
+            reference[x][y] = colorChar(player);
+            updateCapturesFloodFill(reference, player);
+            ++checked;
+            if (reference != evaluateMoveResult(board, x, y, player)) ++mismatches;
+          }
+        }
+      }
+    }
+    check(mismatches == 0, "capture: bitwise sweep matches the flood fill (" + std::to_string(checked) + " cases)");
+  }
+
   // Every faction returns a legal move (or pass) from a mid-game position.
   {
     SimpleBoard b = {".....", ".XO..", ".XO..", ".XO..", "....."};

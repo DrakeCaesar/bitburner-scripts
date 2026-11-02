@@ -6,6 +6,8 @@
 #include <cstring>
 #include <utility>
 
+#include "bitboard.hpp"
+
 namespace ipvgo::game {
 
 namespace {
@@ -138,7 +140,7 @@ ChainSet computeChains(const SimpleBoard& board) {
   return cs;
 }
 
-void updateCaptures(SimpleBoard& board, Color playerWhoMoved) {
+void updateCapturesFloodFill(SimpleBoard& board, Color playerWhoMoved) {
   const ChainSet cs = computeChains(board);
   const char me = colorChar(playerWhoMoved);
   const char opp = colorChar(oppositeColor(playerWhoMoved));
@@ -159,6 +161,73 @@ void updateCaptures(SimpleBoard& board, Color playerWhoMoved) {
       board[idx / N][idx % N] = '.';
     }
   }
+}
+
+// Adds every dead chain of the colour in `plane` to `captured`. Order of the
+// sweep does not matter: the result is the union of all liberty-less chains,
+// which is exactly what the reference flood fill removes.
+void collectDeadChains(const BitPlanes& planes, const uint64_t* plane, const BitLayout& layout, int n,
+                       uint64_t* captured) {
+  uint64_t unseen[kBitWords];
+  for (int w = 0; w < kBitWords; ++w) unseen[w] = plane[w];
+
+  while (bits::any(unseen)) {
+    const int idx = bits::lowest(unseen);
+    if (idx < 0) break;
+    uint64_t chain[kBitWords];
+    for (int w = 0; w < kBitWords; ++w) chain[w] = 0;
+    chain[idx >> 6] = 1ULL << (idx & 63);
+    bits::flood(plane, chain, layout, n);
+
+    bool hasLiberty = false;
+    uint64_t adjacent[kBitWords];
+    bits::neighbours(chain, layout, n, adjacent);
+    for (int w = 0; w < kBitWords; ++w) {
+      if ((adjacent[w] & planes.empty[w]) != 0) {
+        hasLiberty = true;
+        break;
+      }
+    }
+    if (!hasLiberty) {
+      for (int w = 0; w < kBitWords; ++w) captured[w] |= chain[w];
+    }
+    for (int w = 0; w < kBitWords; ++w) unseen[w] &= ~chain[w];
+  }
+}
+
+// Bitwise replacement for updateCapturesFloodFill(): same outcome (dead opponent
+// chains are removed first, and only when there are none, the mover's own dead
+// chains), but every step is a word operation instead of a flood fill that
+// allocates a ChainSet.
+bool updateCapturesBitwise(SimpleBoard& board, Color playerWhoMoved) {
+  const int n = board.size();
+  if (!BitPlanes::fits(n)) return false;
+
+  const BitLayout& layout = BitLayout::forSize(n);
+  BitPlanes planes;
+  BitPlanes::load(board, planes);
+
+  const char opp = colorChar(oppositeColor(playerWhoMoved));
+  const char me = colorChar(playerWhoMoved);
+
+  uint64_t captured[kBitWords] = {0, 0, 0, 0, 0, 0};
+  collectDeadChains(planes, opp == 'X' ? planes.black : planes.white, layout, n, captured);
+  if (!bits::any(captured)) {
+    collectDeadChains(planes, me == 'X' ? planes.black : planes.white, layout, n, captured);
+  }
+
+  if (!bits::any(captured)) return true;
+  for (int idx = 0; idx < n * n; ++idx) {
+    if ((captured[idx >> 6] >> (idx & 63)) & 1ULL) board[idx / n][idx % n] = '.';
+  }
+  return true;
+}
+
+// Public entry point: bitwise sweep, falling back to the flood fill only for
+// boards larger than the bit planes cover.
+void updateCaptures(SimpleBoard& board, Color playerWhoMoved) {
+  if (updateCapturesBitwise(board, playerWhoMoved)) return;
+  updateCapturesFloodFill(board, playerWhoMoved);
 }
 
 SimpleBoard evaluateMoveResult(const SimpleBoard& board, int x, int y, Color player) {
