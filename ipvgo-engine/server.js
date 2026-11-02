@@ -327,14 +327,27 @@ async function handleBenchStart(req, res) {
   const size = Number(body?.size ?? 5)
   const requestedMs = Math.max(0, Number(body?.budgetMs ?? 0))
   const iterations = Math.max(0, Math.floor(Number(body?.iterations ?? 0)))
+  // A fixed-depth run is the third way to budget a search: no wall clock and no
+  // node cap, so `depth` alone decides how far it looks. It is what the bench needs
+  // to compare a narrow deep search against the wide shallow one.
+  const fixedDepth = body?.budgetMode === "depth"
   const options = {
     size,
     // A node budget and a time budget are alternatives; default to 200 ms.
-    budgetMs: iterations > 0 ? 0 : requestedMs > 0 ? requestedMs : 200,
-    iterations,
+    budgetMs: fixedDepth ? 0 : iterations > 0 ? 0 : requestedMs > 0 ? requestedMs : 200,
+    iterations: fixedDepth ? 0 : iterations,
     games: Math.max(1, Math.min(500, Number(body?.games ?? 20))),
     seed: Number(body?.seed ?? 1),
     factions: Array.isArray(body?.factions) && body.factions.length > 0 ? body.factions : undefined,
+  }
+  // Every search-shaping knob the form can set. Without this the "Search tuning"
+  // fields were collected by the page and then silently discarded here, so the GUI
+  // could not reproduce any experiment that changed them.
+  for (const key of ["depth", "maxDepth", "beam", "whiteChildren", "whiteMass", "endgameEmpties", "nodeBudget", "threads"]) {
+    const raw = body?.[key]
+    if (raw === null || raw === undefined || raw === "") continue
+    const value = Number(raw)
+    if (Number.isFinite(value)) options[key] = value
   }
 
   // Optional search tuning; anything absent keeps the engine default.

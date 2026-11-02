@@ -897,6 +897,11 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
   // again, and a new game drops it the same way the server does.
   ipvgo::nn::SearchSession session;
   const bool useSession = std::getenv("IPVGO_NO_SESSION") == nullptr;
+  // A long game set is otherwise a silent black box: report each game as it ends,
+  // with a running total and an ETA, so a slow configuration is obvious while it
+  // is running rather than an hour later.
+  const bool progress = std::getenv("IPVGO_PROGRESS") != nullptr;
+  const auto runStart = std::chrono::steady_clock::now();
 
   for (int g = 0; g < games; ++g) {
     const double clockMs = static_cast<double>(rng() % 30000000u);
@@ -1021,6 +1026,15 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
     const Score sc = getScore(state);
     if (blackWins(sc)) ++wins;
     totalMargin += sc.blackSum - sc.whiteSum;
+    if (progress) {
+      const double elapsed =
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - runStart).count();
+      const double perGame = elapsed / static_cast<double>(g + 1);
+      const double eta = perGame * static_cast<double>(games - g - 1);
+      std::fprintf(stderr, "  game %d/%d  %s %+6.1f  wins=%d  moves=%d  %.0fs elapsed, ~%.0fs left\n", g + 1, games,
+                   blackWins(sc) ? "WIN " : "LOSS", sc.blackSum - sc.whiteSum, wins, gameMoves, elapsed, eta);
+      std::fflush(stderr);
+    }
     if (std::getenv("IPVGO_TRACE")) {
       std::cout << "  game " << g << " black=" << sc.blackSum << " white=" << sc.whiteSum
                 << " margin=" << (sc.blackSum - sc.whiteSum) << " blackMoves=" << gameMoves << "\n";
