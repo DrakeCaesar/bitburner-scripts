@@ -280,9 +280,9 @@ xperf -i trace.etl -o trace.csv -a dumper   # then pivot the Stack column
 
 ## Performance baseline
 
-Reference point for optimisation work: **`c2bbf26`** (flat board, packed superko
-history, bitwise captures). Measure against these numbers, not against older
-commits.
+Reference point for optimisation work: **`6da0c4a`** (dense hash maps, point
+masks, fixed-capacity chain data). Measure against these numbers, not against
+older commits.
 
 Reproduce, from a Release build:
 
@@ -294,16 +294,29 @@ Reproduce, from a Release build:
 ./cmake-build/bin/Release/ipvgo_game optbench --only=all --positions=2 --depth=3 --threads=1 --reps=3
 ```
 
-| measurement | baseline @ `c2bbf26` |
+| measurement | baseline @ `6da0c4a` |
 |---|---|
-| `ipvgo_prof` search (36 290 nodes) | ~370-410 ms, 3 313 269 allocations, 166 MB |
-| `optbench` per search (2 positions, depth 3) | ~2.4 s (wall clock is noisy; the node counts are the stable part), 68 678 nodes |
+| `ipvgo_prof` search (36 290 nodes) | ~290 ms, 1 035 383 allocations, 36 MB |
+| `optbench` per search (2 positions, depth 3) | ~1.76 s (wall clock is noisy; the node counts are the stable part), 68 678 nodes |
 | `optbench` position 1 / 2 | 40 847 nodes, value 0.2245 / 27 831 nodes, value 0.0309 |
 
-Largest remaining allocation sites: `_Hash_vec::_Assign_grow` (340k / 48 MB,
-`unordered_set` buckets in the policy path), `vector<int>::reserve` (359k,
-`computeChains` per-call reservations), `BoardHistory::append` (39k),
-`GameState` copies (47k).
+Largest remaining allocation sites: `BoardHistory` copies (47k / 9.6 MB),
+`GameState` copies (47k / 6.5 MB), small `std::vector<int>` growth in the
+policy code (~290k), `EyeCandidate` vectors (35k), and `PolicyWalker::resolve`
+(46k).
+
+Progress for reference, all on the same workload:
+
+| commit | allocations | bytes | search |
+|---|---|---|---|
+| `890f71e` | 5.14M | 333 MB | 502 ms |
+| `c2bbf26` (board + history + captures) | 3.31M | 166 MB | 383 ms |
+| `6da0c4a` (dense hash + masks) | 1.04M | 36 MB | 291 ms |
+
+### Third-party code
+
+`third_party/ankerl/` holds [ankerl::unordered_dense](https://github.com/martinus/unordered_dense)
+v4.8.1 (MIT), vendored as headers so the build needs no network access.
 
 ### Parity checks
 
