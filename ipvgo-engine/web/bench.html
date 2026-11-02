@@ -79,6 +79,16 @@
         width: 110px;
       }
       .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+      details#tuning { margin: 2px 0 12px; }
+      details#tuning > summary {
+        cursor: pointer;
+        color: var(--dim);
+        font-size: 12px;
+        padding: 4px 0;
+        user-select: none;
+      }
+      details#tuning[open] > summary { color: var(--text); margin-bottom: 8px; }
+      details#tuning input { width: 96px; }
       .chip {
         cursor: pointer;
         user-select: none;
@@ -167,6 +177,17 @@
         <label class="field"><span id="budgetLabel">Think budget (ms)</span><input id="budget" type="number" min="1" step="50" value="200" /></label>
         <label class="field"><span>Games per faction</span><input id="games" type="number" min="1" max="500" value="20" /></label>
         <label class="field"><span>Seed</span><input id="seed" type="number" min="1" value="1" /></label>
+        <details id="tuning">
+          <summary>Search tuning</summary>
+          <label class="field"><span title="Our moves considered per node">Beam (our moves)</span><input id="beam" type="number" min="0" max="64" placeholder="12" /></label>
+          <label class="field"><span title="Opponent replies kept per node (0 = all)">Replies kept</span><input id="whiteChildren" type="number" min="0" max="32" placeholder="6" /></label>
+          <label class="field"><span title="Stop expanding replies past this probability mass">Reply mass cap</span><input id="whiteMass" type="number" min="0.05" max="1" step="0.05" placeholder="0.9" /></label>
+          <label class="field"><span title="Empty points at which the endgame is solved exactly">Endgame empties</span><input id="endgameEmpties" type="number" min="0" max="20" placeholder="6" /></label>
+          <label class="field"><span title="Node cap for the endgame solve">Endgame node cap</span><input id="nodeBudget" type="number" min="1000" step="1000" placeholder="30000" /></label>
+          <label class="field"><span title="Iterative deepening ceiling">Max depth</span><input id="maxDepth" type="number" min="1" max="24" placeholder="10" /></label>
+          <label class="field"><span title="Search threads (0 = all cores)">Threads</span><input id="threads" type="number" min="0" max="64" placeholder="0" /></label>
+          <div class="hint">Blank = engine default. Larger beam/replies = stronger but much slower.</div>
+        </details>
         <div class="buttons">
           <button id="start" class="primary">Start</button>
           <button id="stop">Stop</button>
@@ -209,6 +230,15 @@
         location.protocol === "file:" ? "http://localhost:3010" : ""
 
       const STORAGE_KEY = "ipvgo-bench-form-v1"
+      const TUNING_IDS = [
+        "beam",
+        "whiteChildren",
+        "whiteMass",
+        "endgameEmpties",
+        "nodeBudget",
+        "maxDepth",
+        "threads",
+      ]
       const DEFAULT_FORM = {
         size: "5",
         budgetMode: "time",
@@ -216,11 +246,15 @@
         games: "20",
         seed: "1",
         factions: ALL_FACTIONS.slice(),
+        tuning: {},
+        tuningOpen: false,
       }
 
       const el = (id) => document.getElementById(id)
 
       function readForm() {
+        const tuning = {}
+        for (const id of TUNING_IDS) tuning[id] = el(id).value
         return {
           size: el("size").value,
           budgetMode: el("budgetMode").value,
@@ -228,6 +262,8 @@
           games: el("games").value,
           seed: el("seed").value,
           factions: Array.from(selected),
+          tuning,
+          tuningOpen: el("tuning").open,
         }
       }
 
@@ -248,6 +284,11 @@
           const factions = Array.isArray(stored.factions)
             ? stored.factions.filter((f) => ALL_FACTIONS.includes(f))
             : DEFAULT_FORM.factions.slice()
+          const tuning = {}
+          for (const id of TUNING_IDS) {
+            const value = stored.tuning?.[id]
+            tuning[id] = value === undefined || value === null ? "" : String(value)
+          }
           return {
             size: String(stored.size ?? DEFAULT_FORM.size),
             budgetMode,
@@ -255,6 +296,8 @@
             games: String(stored.games ?? DEFAULT_FORM.games),
             seed: String(stored.seed ?? DEFAULT_FORM.seed),
             factions: factions.length > 0 ? factions : DEFAULT_FORM.factions.slice(),
+            tuning,
+            tuningOpen: stored.tuningOpen === true,
           }
         } catch {
           return { ...DEFAULT_FORM }
@@ -267,6 +310,8 @@
         el("budget").value = form.budget
         el("games").value = form.games
         el("seed").value = form.seed
+        for (const id of TUNING_IDS) el(id).value = form.tuning?.[id] ?? ""
+        el("tuning").open = form.tuningOpen === true
         selected.clear()
         for (const faction of form.factions) selected.add(faction)
         updateBudgetLabel()
@@ -535,6 +580,12 @@
           iterations: mode === "iterations" ? budget : 0,
           factions: size === 19 ? ["WorldDaemon"] : Array.from(selected),
         }
+        for (const id of TUNING_IDS) {
+          const raw = el(id).value
+          if (raw === "") continue
+          const value = Number(raw)
+          if (Number.isFinite(value)) body[id] = value
+        }
         if (body.factions.length === 0) body.factions = null
         saveForm()
         el("start").disabled = true
@@ -551,10 +602,12 @@
         await poll()
       })
 
-      for (const id of ["size", "games", "seed", "budget"]) {
+      for (const id of ["size", "games", "seed", "budget", ...TUNING_IDS]) {
         el(id).addEventListener("change", saveForm)
         el(id).addEventListener("input", saveForm)
       }
+
+      el("tuning").addEventListener("toggle", saveForm)
 
       el("size").addEventListener("change", renderFactionChips)
 

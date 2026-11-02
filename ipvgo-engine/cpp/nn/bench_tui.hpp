@@ -15,6 +15,14 @@ struct BenchOptions {
   int maxDepth = 10;   // iterative-deepening ceiling
   uint64_t seed = 1;
   std::vector<std::string> factions;  // empty = every faction for this board size
+
+  // Search tuning, mirrors ExploitConfig. Defaults equal the engine defaults.
+  int beam = 12;
+  int whiteChildren = 6;
+  double whiteMass = 0.9;
+  int endgameEmpties = 6;
+  long nodeBudget = 30000;
+  int threads = 0;
 };
 
 struct FactionBenchRow {

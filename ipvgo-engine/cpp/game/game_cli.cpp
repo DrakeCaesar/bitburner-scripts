@@ -701,6 +701,31 @@ int runPolicyCheck(const std::string& opponentName, int size, int samples, uint6
   return maxTv < 0.1 ? 0 : 1;
 }
 
+// Shared by `bench` (--key=value) and `benchjson` (JSON keys) so both entry
+// points accept the same search knobs.
+bool applyTuningOption(BenchOptions& options, const std::string& key, const std::string& value) {
+  if (key == "beam") options.beam = std::stoi(value);
+  else if (key == "white-children" || key == "whiteChildren") options.whiteChildren = std::stoi(value);
+  else if (key == "white-mass" || key == "whiteMass") options.whiteMass = std::stod(value);
+  else if (key == "endgame-empties" || key == "endgameEmpties") options.endgameEmpties = std::stoi(value);
+  else if (key == "node-budget" || key == "nodeBudget") options.nodeBudget = std::stol(value);
+  else if (key == "max-depth" || key == "maxDepth") options.maxDepth = std::stoi(value);
+  else if (key == "depth") options.depth = std::stoi(value);
+  else if (key == "threads") options.threads = std::stoi(value);
+  else return false;
+  return true;
+}
+
+// "20000i" is a node budget; a plain number is milliseconds.
+void applyBudget(BenchOptions& options, const std::string& budget) {
+  if (!budget.empty() && (budget.back() == 'i' || budget.back() == 'n')) {
+    options.iterations = std::stol(budget.substr(0, budget.size() - 1));
+    options.budgetMs = 0;
+  } else {
+    options.budgetMs = std::stoi(budget);
+  }
+}
+
 }  // namespace
 
 // ---- fuzz: self-consistency over full games -------------------------------
@@ -809,20 +834,31 @@ int main(int argc, char** argv) {
   }
   if (cmd == "bench") {
     BenchOptions options;
-    if (argc >= 3) {
-      // "20000i" means a node/iteration budget instead of milliseconds.
-      const std::string budget = argv[2];
-      if (!budget.empty() && (budget.back() == 'i' || budget.back() == 'n')) {
-        options.iterations = std::stol(budget.substr(0, budget.size() - 1));
-        options.budgetMs = 0;
-      } else {
-        options.budgetMs = std::stoi(budget);
+    std::vector<std::string> pos;
+    for (int i = 2; i < argc; ++i) {
+      const std::string arg = argv[i];
+      if (arg.rfind("--", 0) != 0) {
+        pos.push_back(arg);
+        continue;
+      }
+      const size_t eq = arg.find('=');
+      const std::string key = arg.substr(2, eq == std::string::npos ? std::string::npos : eq - 2);
+      const std::string value = eq == std::string::npos ? "" : arg.substr(eq + 1);
+      try {
+        if (!applyTuningOption(options, key, value)) {
+          std::cerr << "bench: unknown option --" << key << "\n";
+          return 2;
+        }
+      } catch (const std::exception&) {
+        std::cerr << "bench: bad value for --" << key << "\n";
+        return 2;
       }
     }
-    if (argc >= 4) options.gamesPerFaction = std::stoi(argv[3]);
-    if (argc >= 5) options.seed = std::stoull(argv[4]);
-    if (argc >= 6) options.size = std::stoi(argv[5]);
-    for (int i = 6; i < argc; ++i) options.factions.push_back(argv[i]);
+    if (pos.size() >= 1) applyBudget(options, pos[0]);
+    if (pos.size() >= 2) options.gamesPerFaction = std::stoi(pos[1]);
+    if (pos.size() >= 3) options.seed = std::stoull(pos[2]);
+    if (pos.size() >= 4) options.size = std::stoi(pos[3]);
+    for (size_t i = 4; i < pos.size(); ++i) options.factions.push_back(pos[i]);
     return runExploitBench(options) == 0 ? 0 : 1;
   }
   if (cmd == "benchjson" && argc >= 3) {
@@ -847,6 +883,14 @@ int main(int argc, char** argv) {
       options.seed = config.value("seed", static_cast<uint64_t>(1));
       options.depth = config.value("depth", 2);
       options.maxDepth = config.value("maxDepth", 10);
+      for (const char* key : {"beam", "whiteChildren", "endgameEmpties", "nodeBudget", "threads"}) {
+        if (config.contains(key) && !config.at(key).is_null()) {
+          applyTuningOption(options, key, config.at(key).dump());
+        }
+      }
+      if (config.contains("whiteMass") && !config.at("whiteMass").is_null()) {
+        applyTuningOption(options, "whiteMass", config.at("whiteMass").dump());
+      }
       if (config.contains("factions")) {
         for (const auto& name : config.at("factions")) options.factions.push_back(name.get<std::string>());
       }

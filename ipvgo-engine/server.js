@@ -196,6 +196,28 @@ async function handleBenchStart(req, res) {
     seed: Number(body?.seed ?? 1),
     factions: Array.isArray(body?.factions) && body.factions.length > 0 ? body.factions : undefined,
   }
+
+  // Optional search tuning; anything absent keeps the engine default.
+  const integer = (key, min, max) => {
+    const raw = body?.[key]
+    if (raw === undefined || raw === null || raw === "") return undefined
+    const value = Math.floor(Number(raw))
+    if (!Number.isFinite(value) || value < min || value > max) return undefined
+    return value
+  }
+  for (const [key, min, max] of [
+    ["beam", 0, 64],
+    ["whiteChildren", 0, 32],
+    ["endgameEmpties", 0, 20],
+    ["nodeBudget", 1000, 5000000],
+    ["maxDepth", 1, 24],
+    ["threads", 0, 64],
+  ]) {
+    const value = integer(key, min, max)
+    if (value !== undefined) options[key] = value
+  }
+  const whiteMass = Number(body?.whiteMass)
+  if (Number.isFinite(whiteMass) && whiteMass > 0 && whiteMass <= 1) options.whiteMass = whiteMass
   if (![5, 7, 9, 13, 19].includes(options.size)) {
     return sendJson(res, 400, { error: "size must be 5, 7, 9, 13 or 19" })
   }

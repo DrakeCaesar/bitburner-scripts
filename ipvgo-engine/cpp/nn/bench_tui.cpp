@@ -315,6 +315,12 @@ int runBenchGames(const BenchOptions& options, BenchObserver& observer) {
   cfg.nodeLimit = options.iterations;
   cfg.depth = options.depth;
   cfg.maxDepth = options.maxDepth;
+  cfg.beam = options.beam;
+  cfg.whiteChildren = options.whiteChildren;
+  cfg.whiteMass = options.whiteMass;
+  cfg.endgameEmpties = options.endgameEmpties;
+  cfg.nodeBudget = options.nodeBudget;
+  cfg.threads = options.threads;
 
   std::mt19937_64 rng(options.seed ? options.seed : 1);
 

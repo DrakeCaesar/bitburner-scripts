@@ -145,6 +145,21 @@ The thinking budget comes in two flavours, chosen with **Budget type**:
 Everything on the form (factions, board size, budget type and value, games, seed)
 is stored in `localStorage` and restored on reload, so a refresh keeps your setup.
 
+**Search tuning** (collapsible panel, also persisted) exposes the exploiter knobs:
+
+| Dial | Meaning | Default |
+|---|---|---|
+| Beam (our moves) | Black candidates kept per node (0 = all) | 12 |
+| Replies kept | opponent replies kept per node (0 = all) | 6 |
+| Reply mass cap | stop expanding replies past this probability mass | 0.9 |
+| Endgame empties | empty points at which the endgame is solved exactly | 6 |
+| Endgame node cap | node cap for that endgame solve | 30000 |
+| Max depth | iterative-deepening ceiling | 10 |
+| Threads | search threads (0 = all cores) | 0 |
+
+Blank fields keep the engine default. Bigger beam/replies search more of the
+tree and cost roughly linearly in think time.
+
 Endpoints: `GET /bench`, `GET /api/bench/state`, `POST /api/bench/start`,
 `POST /api/bench/stop`. Stopping the server also stops a running bench.
 
@@ -156,6 +171,10 @@ Endpoints: `GET /bench`, `GET /api/bench/state`, `POST /api/bench/start`,
 
 # Node budget instead of milliseconds ("i" suffix)
 ./scripts/mcgs.sh bench 20000i 20 1 5
+
+# Search tuning as --key=value flags (same knobs as the GUI panel)
+./scripts/mcgs.sh bench 20000i 20 1 5 --beam=20 --white-children=4 --white-mass=0.8 \
+  --endgame-empties=10 --node-budget=90000 --max-depth=14 --threads=4 Netburners
 
 # One faction only
 ./scripts/mcgs.sh bench 200 20 1 5 Illuminati
