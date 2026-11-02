@@ -165,7 +165,7 @@
       <h1>IPvGO exploiter bench</h1>
       <span class="sub">Black = policy expectimax &nbsp;|&nbsp; White = scripted faction</span>
       <span id="status" class="pill">idle</span>
-      <button id="restartServer" class="ghost" title="Restart the engine server (requires pnpm run server:dev)">Restart server</button>
+      <button id="restartServer" class="ghost" title="Restart the engine server (needs pnpm run server:dev)">Restart server</button>
     </header>
 
     <main>
@@ -243,6 +243,7 @@
       let stream = null
       let pollTimer = null
       let serverId = null
+      let restartWatchdog = null
       const dirty = { status: true, rows: true, history: true, info: true, board: true }
       let state = { running: false, finished: false, rows: [], history: [], current: null, options: null }
 
@@ -485,14 +486,14 @@
       function renderInfo(s) {
         const cur = displayed ?? s.current
         if (!cur) {
-          el("info").innerHTML = s.running ? "<span>startingĂ˘â‚¬Â¦</span>" : "<span>press Start to run a benchmark</span>"
+          el("info").innerHTML = s.running ? "<span>starting...</span>" : "<span>press Start to run a benchmark</span>"
           return
         }
         const bits = []
         bits.push(`<span><b>${cur.faction}</b> (${cur.factionIndex + 1}/${cur.factionCount})</span>`)
         bits.push(`<span>game <b>${cur.game}</b>/${cur.games}</span>`)
         bits.push(`<span>move <b>${cur.move}</b></span>`)
-        if (s.current?.thinking) bits.push('<span style="color:var(--warn)">thinkingĂ˘â‚¬Â¦</span>')
+        if (s.current?.thinking) bits.push('<span style="color:var(--warn)">thinking...</span>')
         if (cur.depth != null) bits.push(`<span>depth <b>${cur.depth}</b></span>`)
         if (cur.nodes != null) bits.push(`<span>nodes <b>${cur.nodes}</b></span>`)
         if (cur.ms != null) bits.push(`<span>think <b>${Math.round(cur.ms)}</b> ms</span>`)
@@ -553,11 +554,11 @@
         if (s.running) {
           pill.classList.add("running")
           const cur = s.current
-          pill.textContent = cur ? `running Ă‚Â· ${cur.faction} ${cur.game}/${cur.games}` : "running"
+          pill.textContent = cur ? `running - ${cur.faction} ${cur.game}/${cur.games}` : "running"
         } else if (s.finished) {
           const ok = s.failures === 0
           pill.classList.add(ok ? "finished" : "failed")
-          pill.textContent = ok ? "finished Ă‚Â· 100% everywhere" : `finished Ă‚Â· ${s.failures} faction(s) below 100%`
+          pill.textContent = ok ? "finished - 100% everywhere" : `finished - ${s.failures} faction(s) below 100%`
         } else {
           pill.textContent = "idle"
         }
@@ -610,18 +611,25 @@
       }
 
       function applySnapshot(data) {
-        // A different serverId means the server was restarted (e.g. a rebuilt
-        // server.js or a GUI restart): reload so the page picks up new assets.
+        // A different serverId means the server restarted (a rebuilt server.js or
+        // the GUI restart button): reload so the page picks up new assets.
         if (data.serverId) {
-          if (serverId && data.serverId !== serverId) {
+          const isNewServer = serverId !== null && data.serverId !== serverId
+          serverId = data.serverId
+          if (isNewServer) {
             location.reload()
             return
           }
-          serverId = data.serverId
+        }
+        if (restartWatchdog !== null) {
+          clearTimeout(restartWatchdog)
+          restartWatchdog = null
         }
         state = { ...state, ...data }
-        el("restartServer").disabled = !data.supervised
-        el("restartServer").title = data.supervised
+        const restartButton = el("restartServer")
+        restartButton.disabled = !data.supervised
+        restartButton.textContent = "Restart server"
+        restartButton.title = data.supervised
           ? "Restart the engine server (supervised)"
           : "Start the server with `pnpm run server:dev` to enable this"
         frameQueue = []
@@ -759,7 +767,9 @@
       el("restartServer").addEventListener("click", async () => {
         const button = el("restartServer")
         button.disabled = true
-        button.textContent = "restartingĂ˘â‚¬Â¦"
+        button.textContent = "restarting..."
+        el("status").textContent = "restarting server..."
+        el("status").className = "pill running"
         try {
           const res = await fetch(`${API_BASE}/api/server/restart`, { method: "POST" })
           if (!res.ok) {
@@ -770,12 +780,21 @@
             button.textContent = "Restart server"
             return
           }
-          // The stream drops and reconnects; the new serverId triggers a reload.
-          el("status").textContent = "restarting serverĂ˘â‚¬Â¦"
         } catch {
-          // Server already gone: the supervisor is bringing a new one up.
-          el("status").textContent = "restarting serverĂ˘â‚¬Â¦"
+          // Server already exited; the supervisor is bringing a new one up.
         }
+        // If nothing comes back, say so instead of hanging on "restarting".
+        restartWatchdog = setTimeout(() => {
+          restartWatchdog = null
+          if (stream && stream.readyState !== EventSource.CLOSED) return
+          button.disabled = false
+          button.textContent = "Restart server"
+          el("status").textContent = "server down"
+          el("status").className = "pill failed"
+          state.error = "The server did not come back. Start it with `pnpm run server:dev` so it restarts automatically."
+          markDirty("status")
+          startPolling()
+        }, 8000)
       })
 
       for (const id of ["size", "games", "seed", "budget", ...TUNING_IDS]) {

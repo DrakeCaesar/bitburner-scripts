@@ -358,6 +358,8 @@ function handleBenchStop(req, res) {
 
 // Only meaningful under scripts/dev-server.mjs: exiting makes the supervisor
 // spawn a fresh process, which is how the GUI restarts the server.
+const RESTART_EXIT_CODE = 75
+
 function handleServerRestart(req, res) {
   if (!supervised) {
     return sendJson(res, 409, {
@@ -366,7 +368,9 @@ function handleServerRestart(req, res) {
   }
   stopBench()
   sendJson(res, 202, { ok: true, serverId })
-  setTimeout(() => process.exit(0), 50)
+  // A distinct exit code tells the supervisor this exit was requested, so it
+  // restarts immediately instead of treating it as a crash and backing off.
+  setTimeout(() => process.exit(RESTART_EXIT_CODE), 50)
 }
 
 function handleBenchEvents(req, res) {
@@ -754,6 +758,16 @@ const server = http.createServer(async (req, res) => {
   sendJson(res, 404, { error: "Not found" })
 })
 
+server.on("error", (err) => {
+  if (err.code === "EADDRINUSE") {
+    console.error(`[server] port ${port} is already in use - is another server still running?`)
+    console.error('[server] stop it, or set IPVGO_PORT to a free port')
+  } else {
+    console.error(`[server] ${err.message}`)
+  }
+  process.exit(1)
+})
+
 server.listen(port, () => {
   const engine = activeEngine()
   console.log(`IPvGO engine server http://localhost:${port}`)
@@ -761,6 +775,7 @@ server.listen(port, () => {
   console.log(`Bench GUI: http://localhost:${port}/bench  (always the C++ exploiter, ipvgo_game)`)
   console.log(`Health: http://localhost:${port}/health`)
   console.log(`Move API: POST http://localhost:${port}/api/ipvgo/move`)
+  if (supervised) console.log("Restart: enabled (supervised - POST /api/server/restart)")
 })
 
 process.on("SIGINT", () => {

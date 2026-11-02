@@ -19,11 +19,14 @@ const ENTRY = path.join(ROOT, "server.js")
 const WATCH = [ENTRY, path.join(ROOT, "web"), path.join(ROOT, "scripts")]
 const DEBOUNCE_MS = 200
 const RESTART_DELAY_MS = 400
+// server.js exits with this code when it wants to be restarted (GUI button).
+const RESTART_EXIT_CODE = 75
 
 let child = null
 let restarting = false
 let timer = null
 let stopping = false
+let crashDelay = RESTART_DELAY_MS
 
 function log(message) {
   console.log(`[dev-server] ${message}`)
@@ -33,21 +36,37 @@ function start() {
   child = spawn(process.execPath, [ENTRY], {
     cwd: ROOT,
     stdio: "inherit",
-    env: { ...process.env, IPVGO_SUPERVISED: "1" },
+    env: { ...process.env, IPVGO_SUPERVISED: "1", IPVGO_SUPERVISOR_PID: String(process.pid) },
   })
   log(`server started (pid ${child.pid})`)
+  const startedAt = Date.now()
   child.on("exit", (code, signal) => {
     child = null
     if (stopping) return
-    if (restarting) {
+    const alive = Date.now() - startedAt
+    const planned = restarting || code === RESTART_EXIT_CODE
+    if (planned) {
       restarting = false
-      start()
+      crashDelay = RESTART_DELAY_MS
+      log("restarting server")
+      // The old process may still hold the port for a moment; yielding avoids a
+      // bind failure loop that would look like a hang in the browser.
+      setTimeout(() => {
+        if (!stopping && !child) start()
+      }, 120)
       return
     }
-    log(`server exited (code=${code ?? "null"} signal=${signal ?? "none"}); restarting in ${RESTART_DELAY_MS}ms`)
+    if (alive < 3000) {
+      // Crashed right after starting (bad config, port in use): back off.
+      crashDelay = Math.min(crashDelay * 2, 8000)
+      log(`server died after ${alive}ms (code=${code ?? "null"}); retrying in ${crashDelay}ms`)
+    } else {
+      crashDelay = RESTART_DELAY_MS
+      log(`server exited (code=${code ?? "null"} signal=${signal ?? "none"}); restarting in ${crashDelay}ms`)
+    }
     setTimeout(() => {
       if (!stopping && !child) start()
-    }, RESTART_DELAY_MS)
+    }, crashDelay)
   })
 }
 

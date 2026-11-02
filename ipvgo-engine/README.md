@@ -142,6 +142,11 @@ http has no process access — so the cycles it can save are handled elsewhere:
   rebuild) the page reloads itself, picking up new HTML/JS without a manual
   refresh. The form state and settings survive because they live in
   `localStorage`.
+- if a restart never comes back (for example the server was started without the
+  supervisor), the button clears itself after 8 s and says so instead of
+  spinning forever. The server exits with code 75 when a restart is requested,
+  which is how the supervisor tells a planned restart from a crash (crashes back
+  off exponentially, planned restarts are immediate).
 
 The page picks factions, board size (5/7/9/13/19), the thinking budget, games per
 faction and seed, then streams `ipvgo_game benchjson` events through the server:
@@ -200,6 +205,14 @@ node ipvgo-engine/tools/check-bench-stream.mjs 3010 4000
 # events received: snapshot=2 rows=3 game=1 thinking=7 frame=13 result=1 done=1
 # frames=13 ... avgGap=113.2ms alternations=12
 ```
+
+Helper tools:
+
+| Tool | Purpose |
+|---|---|
+| `tools/check-bench-stream.mjs <port> <ms>` | drives the SSE stream like the page and reports event counts, frame gaps, and every distinct `serverId` |
+| `tools/check-encoding.mjs <files...>` | flags non-ASCII (and mojibake) in text files |
+| `tools/fix-encoding.mjs <files...>` | repairs double-encoded text |
 
 ## CLI benchmark
 
