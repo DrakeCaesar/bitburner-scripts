@@ -331,11 +331,18 @@ async function handleBenchStart(req, res) {
   // node cap, so `depth` alone decides how far it looks. It is what the bench needs
   // to compare a narrow deep search against the wide shallow one.
   const fixedDepth = body?.budgetMode === "depth"
+  const depthCap = fixedDepth ? Math.max(1, Math.floor(Number(body?.depth ?? 2))) : undefined
+  // In fixed-depth mode an optional node cap stops the search instead of letting a
+  // deep narrow run balloon: it becomes iterative deepening whose ceiling is the
+  // requested depth, so the result is "at most this deep, within this work".
+  const depthNodeCap = fixedDepth ? Math.max(0, Math.floor(Number(body?.iterations ?? 0))) : 0
   const options = {
     size,
     // A node budget and a time budget are alternatives; default to 200 ms.
     budgetMs: fixedDepth ? 0 : iterations > 0 ? 0 : requestedMs > 0 ? requestedMs : 200,
-    iterations: fixedDepth ? 0 : iterations,
+    iterations: fixedDepth ? depthNodeCap : iterations,
+    depth: depthCap,
+    maxDepth: depthCap,
     games: Math.max(1, Math.min(500, Number(body?.games ?? 20))),
     seed: Number(body?.seed ?? 1),
     factions: Array.isArray(body?.factions) && body.factions.length > 0 ? body.factions : undefined,
