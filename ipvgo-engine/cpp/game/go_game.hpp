@@ -68,18 +68,48 @@ struct Score {
   double blackSum = 0;
 };
 
+// A chain's cells or liberties: a view into the ChainSet's flat storage. Cheap
+// to copy, does not own memory, and keeps the flat arrays cache friendly.
+struct ChainSpan {
+  const int* first = nullptr;
+  int count = 0;
+  const int* begin() const { return first; }
+  const int* end() const { return first + count; }
+  int size() const { return count; }
+  bool empty() const { return count == 0; }
+  int operator[](int i) const { return first[i]; }
+};
+
 // Connected-component data for a board. Chains include empty regions as well as
 // stone groups (mirrors getAllChains). Liberties are the unique empty neighbors
 // of a chain. Offline cells have id -1.
+//
+// Members and liberties live in flat CSR arrays (offsets + data) instead of a
+// vector<vector<int>>: a board-wide flood fill happens on every legality test,
+// move application and policy query, and the per-chain heap vectors were the
+// single largest source of allocations.
 struct ChainSet {
   int N = 0;
   int count = 0;
-  std::vector<int> id;                        // size N*N, -1 for offline
-  std::vector<char> chainColor;               // per chain
-  std::vector<std::vector<int>> members;      // per chain, flat indices
-  std::vector<std::vector<int>> liberties;    // per chain, flat indices (unique empty neighbors)
+  std::vector<int> id;           // size N*N, -1 for offline
+  std::vector<char> chainColor;  // per chain
+  std::vector<int> memberOffsets;  // count + 1 offsets into memberData
+  std::vector<int> memberData;     // per chain, flat indices
+  std::vector<int> libertyOffsets;  // count + 1 offsets into libertyData
+  std::vector<int> libertyData;     // per chain, flat indices (unique empty neighbors)
 
-  int libertyCount(int c) const { return static_cast<int>(liberties[c].size()); }
+  ChainSpan members(int c) const {
+    if (c < 0 || static_cast<size_t>(c) + 1 >= memberOffsets.size()) return {};
+    return {memberData.data() + memberOffsets[c], memberOffsets[c + 1] - memberOffsets[c]};
+  }
+  ChainSpan liberties(int c) const {
+    if (c < 0 || static_cast<size_t>(c) + 1 >= libertyOffsets.size()) return {};
+    return {libertyData.data() + libertyOffsets[c], libertyOffsets[c + 1] - libertyOffsets[c]};
+  }
+  int libertyCount(int c) const {
+    if (c < 0 || static_cast<size_t>(c) + 1 >= libertyOffsets.size()) return 0;
+    return libertyOffsets[c + 1] - libertyOffsets[c];
+  }
 };
 
 // ---- Basic helpers -------------------------------------------------------
@@ -100,7 +130,8 @@ SimpleBoard evaluateMoveResult(const SimpleBoard& board, int x, int y, Color pla
 
 // ---- Rules ---------------------------------------------------------------
 
-Validity evaluateIfMoveIsValid(const GameState& state, int x, int y, Color player);
+Validity evaluateIfMoveIsValid(const GameState& state, int x, int y, Color player,
+                               SimpleBoard* resultBoard = nullptr);
 bool makeMove(GameState& state, int x, int y, Color player);
 void passTurn(GameState& state, Color player, bool allowEndGame = true);
 

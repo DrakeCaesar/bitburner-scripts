@@ -62,7 +62,7 @@ std::vector<GrowthCandidate> getLibertyGrowthMoves(const SimpleBoard& board, Col
   for (int c = 0; c < cs.count; ++c) {
     if (cs.chainColor[c] != me) continue;
     anyFriendly = true;
-    for (const int lib : cs.liberties[c]) {
+    for (const int lib : cs.liberties(c)) {
       if (!availableSet.count(lib)) continue;
       const int lx = lib / N;
       const int ly = lib % N;
@@ -138,7 +138,7 @@ AiMove getSurroundMove(const SimpleBoard& board, Color player, const std::unorde
   std::vector<int> enemyLiberties;
   for (int c = 0; c < cs.count; ++c) {
     if (cs.chainColor[c] != oppChar) continue;
-    for (const int lib : cs.liberties[c])
+    for (const int lib : cs.liberties(c))
       if (availableSet.count(lib)) enemyLiberties.push_back(lib);
   }
 
@@ -221,10 +221,10 @@ std::vector<AiMove> getEyeCreationMoves(const SimpleBoard& board, Color player,
   std::vector<int> friendlyLiberties;  // flat idxs (with duplicates), preserving order
   for (int c = 0; c < cs.count; ++c) {
     if (cs.chainColor[c] != me) continue;
-    if (cs.members[c].size() <= 1) continue;
-    if (static_cast<int>(cs.liberties[c].size()) > maxLiberties) continue;
+    if (cs.members(c).size() <= 1) continue;
+    if (static_cast<int>(cs.liberties(c).size()) > maxLiberties) continue;
     if (livingGroupChains.count(c)) continue;
-    for (const int lib : cs.liberties[c]) {
+    for (const int lib : cs.liberties(c)) {
       if (!availableSet.count(lib)) continue;
       const int px = lib / N;
       const int py = lib % N;
@@ -1061,7 +1061,7 @@ std::vector<std::pair<int, int>> blackExploitMoves(const GameState& state, Oppon
     const ChainSet cs = computeChains(after);
     bool capture = false;
     for (int c = 0; c < cs.count; ++c) {
-      if (cs.chainColor[c] == 'O' && cs.liberties[c].empty()) capture = true;
+      if (cs.chainColor[c] == 'O' && cs.liberties(c).empty()) capture = true;
     }
   if (capture) out.emplace_back(x, y);
   }

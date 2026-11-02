@@ -162,8 +162,8 @@ void removeIslands(SimpleBoard& board) {
   const ChainSet cs = computeChains(board);
   const int N = cs.N;
   for (int c = 0; c < cs.count; ++c) {
-    if (cs.chainColor[c] == '.' && static_cast<int>(cs.members[c].size()) <= 2) {
-      for (const int idx : cs.members[c]) board[idx / N][idx % N] = '#';
+    if (cs.chainColor[c] == '.' && static_cast<int>(cs.members(c).size()) <= 2) {
+      for (const int idx : cs.members(c)) board[idx / N][idx % N] = '#';
     }
   }
 }

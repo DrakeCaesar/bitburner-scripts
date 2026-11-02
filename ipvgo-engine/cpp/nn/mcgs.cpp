@@ -161,7 +161,7 @@ bool blackPlayoutLegal(const GameState& state, int x, int y) {
       const SimpleBoard after = evaluateMoveResult(state.board, x, y, Color::Black);
       const ChainSet afterCs = computeChains(after);
       for (int c = 0; c < afterCs.count; ++c) {
-        if (afterCs.chainColor[c] == 'O' && afterCs.liberties[c].empty()) return false;
+        if (afterCs.chainColor[c] == 'O' && afterCs.liberties(c).empty()) return false;
       }
     }
   }

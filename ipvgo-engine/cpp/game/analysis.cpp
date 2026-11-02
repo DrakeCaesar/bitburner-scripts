@@ -17,9 +17,9 @@ struct Spread {
 
 Spread furthestPoints(const ChainSet& cs, int chain) {
   const int N = cs.N;
-  const int first = cs.members[chain][0];
+  const int first = cs.members(chain)[0];
   Spread s{first % N, first % N, first / N, first / N};
-  for (const int idx : cs.members[chain]) {
+  for (const int idx : cs.members(chain)) {
     const int x = idx / N;
     const int y = idx % N;
     s.north = std::max(s.north, y);
@@ -32,8 +32,7 @@ Spread furthestPoints(const ChainSet& cs, int chain) {
 
 // Distinct non-empty neighbor chains of a set of cells, evaluated on the given
 // board/ChainSet (mirrors getAllNeighboringChains over an arbitrary cell set).
-std::vector<int> neighborChainsOfCells(const SimpleBoard& board, const ChainSet& cs,
-                                       const std::vector<int>& cells) {
+std::vector<int> neighborChainsOfCells(const SimpleBoard& board, const ChainSet& cs, ChainSpan cells) {
   const int N = cs.N;
   std::unordered_set<int> cellSet(cells.begin(), cells.end());
   std::vector<int> result;
@@ -70,7 +69,7 @@ std::vector<int> onBoardNeighbors(int N, int x, int y) {
 }
 
 std::vector<int> neighborChainIndices(const SimpleBoard& board, const ChainSet& cs, int c) {
-  return neighborChainsOfCells(board, cs, cs.members[c]);
+  return neighborChainsOfCells(board, cs, cs.members(c));
 }
 
 std::vector<int> findEffectiveLibertiesOfNewMove(const SimpleBoard& board, int x, int y, Color player) {
@@ -99,7 +98,7 @@ std::vector<int> findEffectiveLibertiesOfNewMove(const SimpleBoard& board, int x
     if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
     if (board[nx][ny] != me) continue;
     const int chain = cs.id[flatIndex(N, nx, ny)];
-    for (const int lib : cs.liberties[chain]) add(lib);
+    for (const int lib : cs.liberties(chain)) add(lib);
   }
   return all;
 }
@@ -131,8 +130,9 @@ WeakestChain findEnemyNeighborChainWithFewestLiberties(const SimpleBoard& board,
 
   WeakestChain wc;
   wc.found = true;
-  wc.length = static_cast<int>(cs.members[chosen].size());
-  wc.liberties = cs.liberties[chosen];
+  wc.length = static_cast<int>(cs.members(chosen).size());
+  const ChainSpan liberties = cs.liberties(chosen);
+  wc.liberties.assign(liberties.begin(), liberties.end());
   return wc;
 }
 
@@ -154,7 +154,7 @@ std::vector<EyeCandidate> getAllPotentialEyes(const SimpleBoard& board, const Ch
   std::vector<EyeCandidate> candidates;
   for (int c = 0; c < cs.count; ++c) {
     if (cs.chainColor[c] != '.') continue;
-    if (static_cast<double>(cs.members[c].size()) > maxSize) continue;
+    if (static_cast<double>(cs.members(c).size()) > maxSize) continue;
 
     const std::vector<int> neighbors = neighborChainIndices(board, cs, c);
     bool hasWhite = false;
@@ -178,7 +178,7 @@ std::vector<int> chainsThatFullyEncircle(const SimpleBoard& board, const ChainSe
   const int N = cs.N;
   const int boardMax = N - 1;
   const Spread candidateSpread = furthestPoints(cs, candidateEmptyChain);
-  const int examplePoint = cs.members[candidateEmptyChain][0];
+  const int examplePoint = cs.members(candidateEmptyChain)[0];
 
   std::vector<int> result;
   for (size_t index = 0; index < neighborChainList.size(); ++index) {
@@ -194,11 +194,11 @@ std::vector<int> chainsThatFullyEncircle(const SimpleBoard& board, const ChainSe
     SimpleBoard eval = board;
     for (size_t j = 0; j < neighborChainList.size(); ++j) {
       if (j == index) continue;
-      for (const int idx : cs.members[neighborChainList[j]]) eval[idx / N][idx % N] = '.';
+      for (const int idx : cs.members(neighborChainList[j])) eval[idx / N][idx % N] = '.';
     }
     const ChainSet evalCs = computeChains(eval);
     const int expandedChain = evalCs.id[examplePoint];
-    const std::vector<int> newNeighbors = neighborChainsOfCells(board, cs, evalCs.members[expandedChain]);
+    const std::vector<int> newNeighbors = neighborChainsOfCells(board, cs, evalCs.members(expandedChain));
     if (newNeighbors.size() == 1) result.push_back(neighborChain);
   }
   return result;
@@ -243,12 +243,12 @@ std::vector<Pt> getDisputedTerritoryMoves(const SimpleBoard& board, const std::v
   std::vector<Pt> out;
   for (const auto& [x, y] : availableSpaces) {
     const int emptyChain = cs.id[flatIndex(N, x, y)];
-    if (emptyChain < 0 || static_cast<int>(cs.members[emptyChain].size()) > maxChainSize) continue;
+    if (emptyChain < 0 || static_cast<int>(cs.members(emptyChain).size()) > maxChainSize) continue;
 
     bool hasWhite = false;
     bool hasBlack = false;
     for (const int nc : neighborChainIndices(board, cs, emptyChain)) {
-      if (static_cast<int>(cs.members[nc].size()) > maxChainSize) continue;
+      if (static_cast<int>(cs.members(nc).size()) > maxChainSize) continue;
       if (cs.chainColor[nc] == 'O') hasWhite = true;
       else if (cs.chainColor[nc] == 'X') hasBlack = true;
     }
@@ -286,7 +286,7 @@ std::vector<Pt> findDisputedTerritory(const GameState& state, Color player, bool
     for (const auto& [chainIdx, emptyChains] : em.eyes) {
       if (emptyChains.size() < 2) continue;
       for (const int ec : emptyChains)
-        for (const int idx : em.cs.members[ec]) friendlyEyes.insert(idx);
+        for (const int idx : em.cs.members(ec)) friendlyEyes.insert(idx);
     }
     std::vector<Pt> filtered;
     for (const auto& [x, y] : validMoves) {
@@ -301,13 +301,13 @@ std::vector<Pt> findDisputedTerritory(const GameState& state, Color player, bool
 
   std::unordered_set<int> nodesInsideEyeSpaces;
   for (const auto& space : enemyEyes)
-    for (const int idx : cs.members[space.emptyChain]) nodesInsideEyeSpaces.insert(idx);
+    for (const int idx : cs.members(space.emptyChain)) nodesInsideEyeSpaces.insert(idx);
 
   std::unordered_set<int> playableInsideEnemySpace;
   for (const auto& space : enemyEyes) {
-    std::unordered_set<int> spaceCells(cs.members[space.emptyChain].begin(), cs.members[space.emptyChain].end());
+    std::unordered_set<int> spaceCells(cs.members(space.emptyChain).begin(), cs.members(space.emptyChain).end());
     for (const int neighborChain : space.neighborChains) {
-      const std::vector<int>& liberties = cs.liberties[neighborChain];
+      const ChainSpan liberties = cs.liberties(neighborChain);
       if (liberties.size() > 4) continue;
 
       const std::vector<int> borderChains = neighborChainIndices(board, cs, neighborChain);

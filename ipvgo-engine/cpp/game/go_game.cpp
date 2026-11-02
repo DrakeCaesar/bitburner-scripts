@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
+#include <utility>
 
 namespace ipvgo::game {
 
@@ -10,6 +12,18 @@ namespace {
 
 // Cardinal neighbor offsets in the (x, y) coordinate system: N=+y, E=+x, S=-y, W=-x.
 constexpr std::array<std::pair<int, int>, 4> kNeighborOffsets = {{{0, 1}, {1, 0}, {0, -1}, {-1, 0}}};
+
+// Compares a board against a flattened board string without building a string
+// (the superko check used to allocate one per legality test).
+bool boardEqualsFlat(const SimpleBoard& board, const std::string& flat) {
+  size_t k = 0;
+  for (const auto& col : board) {
+    if (k + col.size() > flat.size()) return false;
+    if (std::memcmp(flat.data() + k, col.data(), col.size()) != 0) return false;
+    k += col.size();
+  }
+  return k == flat.size();
+}
 
 }  // namespace
 
@@ -45,11 +59,21 @@ double opponentKomi(Opponent ai) {
 
 ChainSet computeChains(const SimpleBoard& board) {
   const int N = static_cast<int>(board.size());
+  const int points = N * N;
   ChainSet cs;
   cs.N = N;
-  cs.id.assign(static_cast<size_t>(N) * N, -1);
+  cs.id.assign(static_cast<size_t>(points), -1);
+  // A board of N*N points has at most N*N chains; reserving up front keeps the
+  // whole call to a handful of allocations.
+  cs.chainColor.reserve(static_cast<size_t>(points));
+  cs.memberOffsets.reserve(static_cast<size_t>(points) + 1);
+  cs.memberData.reserve(static_cast<size_t>(points));
+  cs.libertyOffsets.reserve(static_cast<size_t>(points) + 1);
+  cs.libertyData.reserve(static_cast<size_t>(points));
 
   std::vector<int> stack;
+  stack.reserve(static_cast<size_t>(points));
+  cs.memberOffsets.push_back(0);
   for (int x = 0; x < N; ++x) {
     for (int y = 0; y < N; ++y) {
       const char c = board[x][y];
@@ -59,9 +83,8 @@ ChainSet computeChains(const SimpleBoard& board) {
 
       const int chainId = cs.count++;
       cs.chainColor.push_back(c);
-      cs.members.emplace_back();
       cs.id[start] = chainId;
-      cs.members[chainId].push_back(start);  // record members in discovery order (matches game)
+      cs.memberData.push_back(start);  // record members in discovery order (matches game)
       stack.clear();
       stack.push_back(start);
 
@@ -78,18 +101,19 @@ ChainSet computeChains(const SimpleBoard& board) {
           const int nIdx = flatIndex(N, nx, ny);
           if (cs.id[nIdx] != -1) continue;
           cs.id[nIdx] = chainId;
-          cs.members[chainId].push_back(nIdx);
+          cs.memberData.push_back(nIdx);
           stack.push_back(nIdx);
         }
       }
+      cs.memberOffsets.push_back(static_cast<int>(cs.memberData.size()));
     }
   }
 
   // Liberties: unique empty neighbors of each chain.
-  cs.liberties.assign(cs.count, {});
-  std::vector<int> seenTag(static_cast<size_t>(N) * N, -1);
+  cs.libertyOffsets.push_back(0);
+  std::vector<int> seenTag(static_cast<size_t>(points), -1);
   for (int c = 0; c < cs.count; ++c) {
-    for (const int idx : cs.members[c]) {
+    for (const int idx : cs.members(c)) {
       const int cx = idx / N;
       const int cy = idx % N;
       for (const auto& [dx, dy] : kNeighborOffsets) {
@@ -100,9 +124,10 @@ ChainSet computeChains(const SimpleBoard& board) {
         const int nIdx = flatIndex(N, nx, ny);
         if (seenTag[nIdx] == c) continue;
         seenTag[nIdx] = c;
-        cs.liberties[c].push_back(nIdx);
+        cs.libertyData.push_back(nIdx);
       }
     }
+    cs.libertyOffsets.push_back(static_cast<int>(cs.libertyData.size()));
   }
   return cs;
 }
@@ -115,16 +140,16 @@ void updateCaptures(SimpleBoard& board, Color playerWhoMoved) {
   // Opponent chains with no liberties are captured first; if none, own chains.
   std::vector<int> toCapture;
   for (int c = 0; c < cs.count; ++c) {
-    if (cs.chainColor[c] == opp && cs.liberties[c].empty()) toCapture.push_back(c);
+    if (cs.chainColor[c] == opp && cs.liberties(c).empty()) toCapture.push_back(c);
   }
   if (toCapture.empty()) {
     for (int c = 0; c < cs.count; ++c) {
-      if (cs.chainColor[c] == me && cs.liberties[c].empty()) toCapture.push_back(c);
+      if (cs.chainColor[c] == me && cs.liberties(c).empty()) toCapture.push_back(c);
     }
   }
   const int N = cs.N;
   for (const int c : toCapture) {
-    for (const int idx : cs.members[c]) {
+    for (const int idx : cs.members(c)) {
       board[idx / N][idx % N] = '.';
     }
   }
@@ -143,7 +168,7 @@ Color whoseTurn(const GameState& state) {
   return oppositeColor(state.previousPlayer);
 }
 
-Validity evaluateIfMoveIsValid(const GameState& state, int x, int y, Color player) {
+Validity evaluateIfMoveIsValid(const GameState& state, int x, int y, Color player, SimpleBoard* resultBoard) {
   if (state.gameOver) return Validity::GameOver;
   if (state.previousPlayer == player) return Validity::NotYourTurn;
   if (x < 0 || y < 0 || x >= state.size || y >= state.size) return Validity::PointBroken;
@@ -151,27 +176,29 @@ Validity evaluateIfMoveIsValid(const GameState& state, int x, int y, Color playe
   if (cell == '#') return Validity::PointBroken;
   if (cell != '.') return Validity::PointNotEmpty;
 
-  const SimpleBoard eval = evaluateMoveResult(state.board, x, y, player);
+  SimpleBoard eval = evaluateMoveResult(state.board, x, y, player);
   if (eval[x][y] != colorChar(player)) return Validity::NoSuicide;
 
   if (!state.previousBoards.empty()) {
-    const std::string evalString = boardString(eval);
     for (const auto& prior : state.previousBoards) {
-      if (prior == evalString) return Validity::BoardRepeated;
+      if (boardEqualsFlat(eval, prior)) return Validity::BoardRepeated;
     }
   }
+  if (resultBoard != nullptr) *resultBoard = std::move(eval);
   return Validity::Valid;
 }
 
 bool makeMove(GameState& state, int x, int y, Color player) {
-  const Validity validity = evaluateIfMoveIsValid(state, x, y, player);
-  if (validity != Validity::Valid || state.board[x][y] != '.') return false;
+  // Reuse the board the legality check already built (stone placed, captures
+  // applied) instead of rebuilding the chain set a second time.
+  SimpleBoard result;
+  const Validity validity = evaluateIfMoveIsValid(state, x, y, player, &result);
+  if (validity != Validity::Valid) return false;
 
   state.previousBoards.insert(state.previousBoards.begin(), boardString(state.board));
-  state.board[x][y] = colorChar(player);
+  state.board = std::move(result);
   state.previousPlayer = player;
   state.passCount = 0;
-  updateCaptures(state.board, player);
   return true;
 }
 
@@ -226,11 +253,11 @@ Score getScore(const GameState& state, const ChainSet& cs) {
   const int hugeThreshold = N * N - 3;
   for (int c = 0; c < cs.count; ++c) {
     if (cs.chainColor[c] != '.') continue;
-    if (static_cast<int>(cs.members[c].size()) > hugeThreshold) continue;  // ignore huge open regions
+    if (static_cast<int>(cs.members(c).size()) > hugeThreshold) continue;  // ignore huge open regions
 
     bool hasWhite = false;
     bool hasBlack = false;
-    for (const int idx : cs.members[c]) {
+    for (const int idx : cs.members(c)) {
       const int cx = idx / N;
       const int cy = idx % N;
       for (const auto& [dx, dy] : kNeighborOffsets) {
@@ -242,8 +269,8 @@ Score getScore(const GameState& state, const ChainSet& cs) {
         else if (nc == 'X') hasBlack = true;
       }
     }
-    if (hasWhite && !hasBlack) s.whiteTerritory += static_cast<double>(cs.members[c].size());
-    else if (hasBlack && !hasWhite) s.blackTerritory += static_cast<double>(cs.members[c].size());
+    if (hasWhite && !hasBlack) s.whiteTerritory += static_cast<double>(cs.members(c).size());
+    else if (hasBlack && !hasWhite) s.blackTerritory += static_cast<double>(cs.members(c).size());
   }
 
   s.whiteSum = s.whitePieces + s.whiteTerritory + s.komi;

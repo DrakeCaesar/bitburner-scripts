@@ -249,6 +249,35 @@ Helper tools:
 `IPVGO_TUI=1` forces the terminal view, `IPVGO_TUI=0` prints one line per game,
 `IPVGO_TRACE=1` prints every move.
 
+## Profiling
+
+The Visual Studio / ETW CPU profiler needs an elevated session. `ipvgo_prof` is
+an unprivileged in-process alternative: it counts allocations (attributed to the
+calling function) and samples every thread's stack with `StackWalk64`.
+
+```bash
+# Configure with the profiler enabled (off by default: it rebuilds the engine
+# with /Zi for symbols and runs it in a second executable)
+cmake --preset release -DIPVGO_BUILD_PROFILER=ON
+cmake --build --preset release --target ipvgo_prof
+
+# ipvgo_prof <faction> <depth> <ply> <reps>
+./cmake-build/bin/Release/ipvgo_prof "Slum Snakes" 3 6 3
+```
+
+It prints the allocations/bytes per search with the top allocation sites, then
+exclusive/inclusive sample shares per function and the hottest caller->callee
+edges.
+
+For the real ETW profiler, from an elevated prompt:
+
+```powershell
+xperf -on PROC_THREAD+LOADER+PROFILE -stackwalk PROFILE
+ipvgo_game.exe optbench --only=all --positions=2
+xperf -d trace.etl
+xperf -i trace.etl -o trace.csv -a dumper   # then pivot the Stack column
+```
+
 The HTTP server also exposes the exploiter for real games with
 `IPVGO_ENGINE=exploit` (POST `/api/ipvgo/move`, engine reported as `exploit`,
 native MCTS as fallback). `exploitmove` accepts `depth`, `beam`,

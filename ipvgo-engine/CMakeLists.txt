@@ -93,4 +93,17 @@ else()
   target_include_directories(ipvgo_game PRIVATE cpp/game cpp/nn)
   target_link_libraries(ipvgo_game PRIVATE ipvgo_game_core nlohmann_json::nlohmann_json Threads::Threads)
   install(TARGETS ipvgo_game DESTINATION bin)
+
+# In-process profiler (off by default). The Visual Studio / ETW CPU profiler
+# needs an elevated session; this tool samples the thread stacks and tracks
+# allocations from inside the process, so it runs unprivileged.
+option(IPVGO_BUILD_PROFILER "Build the ipvgo_prof sampling/allocation profiler" OFF)
+if(IPVGO_BUILD_PROFILER)
+  add_executable(ipvgo_prof tools/prof/prof.cpp cpp/nn/exploiter.cpp ${GAME_SOURCES})
+  target_include_directories(ipvgo_prof PRIVATE cpp/game cpp/nn)
+  # Optimised like the real engine, with symbols for StackWalk64/dbghelp.
+  target_compile_options(ipvgo_prof PRIVATE /Zi /O2 /Ob2 /DNDEBUG)
+  target_link_options(ipvgo_prof PRIVATE /DEBUG)
+  target_link_libraries(ipvgo_prof PRIVATE Threads::Threads dbghelp psapi winmm)
+endif()
 endif()
