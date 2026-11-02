@@ -386,6 +386,30 @@ regression-tested:
 Recorded so they are not rediscovered from scratch. Every number here was
 measured, not estimated.
 
+**Full-width search is not an alternative to the beam - at the affordable depth
+it is already what happens.** At depth 1 the root is every legal move already:
+forcing the interior and the root to full width changed the node count by
+exactly zero and picked the same move on 5x5, 9x9 and 13x13 (20 / 68 / 129
+nodes). The search is at depth 1 in game, so "search all moves to a depth" is
+what it already does; what it lacks is a second ply.
+
+Beyond depth 1 full width costs board area squared per ply and is out of reach.
+Measured on one 9x9 position, threads=1:
+
+| | depth 1 | depth 2 | depth 3 |
+|---|---|---|---|
+| beam 12 / 6 replies | 68 nodes, 37 ms | 4 891 nodes, 1.8 s | 179 796 nodes, 70 s |
+| full width | 68 nodes, 38 ms | 262 170 nodes, 144 s | not reachable |
+
+Extra depth costs ~3 855x per ply at full width and ~72x with the beam, so the
+beam is not a heuristic that loses moves: it converts the same node budget into
+two more plies, and two more plies is what flipped the 9x9 loss analysed in
+`IPVGO_TRACE_BOARD` (depth 1 and 2 lost it by -81.5 with identical moves, depth 3
+won it by +8.5). The legitimate worry about the candidate set is *interior*
+moves, which are contact points only, so a distant vital point is never
+evaluated - that argues for widening the beam or always including forcing and
+defensive moves, not for removing the beam.
+
 **The endgame node budget is load-bearing.** `nodeBudget` (30 000) stops the
 exact endgame solve once a search has visited that many nodes. It looks like a
 safety valve that could be replaced by a structural bound; it is not that simple.
