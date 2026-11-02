@@ -30,6 +30,7 @@ set(GAME_SOURCES
   cpp/game/analysis.cpp
   cpp/game/patterns.cpp
   cpp/game/safety.cpp
+  cpp/game/influence.cpp
   cpp/game/setup.cpp
   cpp/game/opponents.cpp
   cpp/game/fast_queries.cpp

@@ -463,6 +463,45 @@ gradient the eval was using to tell moves apart. What is still missing is
 influence: Black scatters stones while White builds one group, and no life/death
 term prices that.
 
+**The evaluator is a local optimum: ten variants, none better.** Measured on 7x7
+Netburners, 120 games per arm, baseline 109/120 = 90.8%. Everything tried either
+matched it within noise or lost:
+
+| change | wins | ms/move |
+|---|---|---|
+| baseline (area score + atari terms) | **109** | 96 |
+| discount unsettled territory to 0.5 | 106 | 130 |
+| discount it to 0.0 | 106 | 170 |
+| Vital level instead of Benson alone | 102 | 165 |
+| skip moves inside our own eye | 105 | 106 |
+| influence moyo points, weight 0.5 | 106 | 98 |
+| influence moyo points, weight 1.0 | 96 | 95 |
+| influence moyo, 9 iterations | 105 | 103 |
+| (earlier) territory discount by region size | 192/240 vs 196/240 on 5x5 | - |
+| (earlier) full size atari weighting | 164/180 vs 161/180 | - |
+
+The reason is worth recording: **the game's own score is area scoring**, so
+`getScore` is literally the win condition, and "what would the score be if the game
+ended now" correlates with the result better than any story we can tell about the
+future. Every attempt to correct it replaces a direct measurement of the objective
+with a judgement about it, and our judgements measured worse. Note this is not an
+argument that the eval is right - it demonstrably reads +9 where the game is lost
+by 46 - only that nothing tried so far beats it.
+
+That shifts the remaining 9% of losses from the evaluator to the search: at depth 1
+in game, no eval can see a group being captured two moves later. The measurable
+lever is per-node cost (pattern matching is ~58% of exclusive time), which buys
+depth without a win-rate experiment.
+
+**Bouzy's dilation measures reach, not strength.** `cpp/game/influence.cpp`
+implements the numeric dilation `Dz` (IJPRAI 17(2):257-268, 2003) and is tested,
+but it does not distinguish a connected group from the same stones scattered: both
+reach about as far and peak at the same value. The hypothesis that influence would
+price "Black scatters while White connects" was wrong, and the weight-1.0 arm above
+(80.0%, 2.6 sigma worse) is what that costs. It is kept because the map is useful
+for inspecting positions (`IPVGO_INFLUENCE_MAP=1` with `ipvgo_game safety`), not
+because it helps the eval.
+
 **Win rate at 9x9 cannot resolve small changes, so do not screen there.** The
 same binary won 54.2% of one 24-game set and 79.2% of another (different seeds),
 so the standard error on a 9x9 arm of that size is about 10 percentage points.

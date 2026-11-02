@@ -47,6 +47,7 @@
 #include "game_engine.hpp"
 #include "go_game.hpp"
 #include "safety.hpp"
+#include "influence.hpp"
 #include "optbench.hpp"
 #include "mcgs.hpp"
 #include "obstacles.hpp"
@@ -376,6 +377,42 @@ int runSelftest() {
     // extension: the extension only ever adds chains, never removes them.
     check(countSafe(twoEyes, Color::Black, true) >= countSafe(twoEyes, Color::Black, false),
           "vital: never weaker than benson");
+  }
+
+  // ---- Influence operator (Bouzy dilation) -------------------------------
+  {
+    // What this operator gives is reach: how far a colour's influence extends. It
+    // does NOT measure strength - a scattered group and a connected one of the
+    // same size reach about as far - which is why using it to price connection did
+    // not work. The tests below pin down what it does promise.
+    const SimpleBoard none = {
+        "........", "........", "........", "........",
+        "........", "........", "........", "........",
+    };
+    check(ipvgo::game::computeInfluence(none, 5).diff() == 0, "influence: an empty board is neutral");
+
+    const SimpleBoard lone = {
+        "........", "........", "........", "........",
+        "....X...", "........", "........", "........",
+    };
+    const ipvgo::game::Influence li = ipvgo::game::computeInfluence(lone, 5);
+    const int stone = flatIndex(8, 4, 4);
+    const int adjacent = flatIndex(8, 4, 5);
+    const int far = flatIndex(8, 0, 0);
+    check(li.value[static_cast<size_t>(stone)] > 0, "influence: a stone seeds its own point");
+    check(li.value[static_cast<size_t>(adjacent)] > li.value[static_cast<size_t>(far)],
+          "influence: influence is stronger next to a stone than far from it");
+    check(li.diff() > 0, "influence: a lone black stone is positive");
+
+    // The opponent's field must have the opposite sign.
+    const SimpleBoard both = {
+        "........", "........", "........", "........",
+        "....X...", "........", "........", "........",
+    };
+    SimpleBoard mixed = both;
+    mixed[1][1] = 'O';
+    const ipvgo::game::Influence mi = ipvgo::game::computeInfluence(mixed, 5);
+    check(mi.value[static_cast<size_t>(flatIndex(8, 1, 1))] < 0, "influence: a white stone is negative");
   }
 
   std::cout << (g_failures ? "\nSELFTEST FAILED\n" : "\nSELFTEST PASSED\n");
@@ -759,6 +796,25 @@ int runSafety(const std::string& inPath) {
   std::cout << "rules lead (game-over score) = " << report.rulesLead << "\n";
   std::cout << "eval lead  (safety-discounted) = " << report.lead << "\n";
   std::cout << "win probability = " << report.winProbability << "  empties=" << report.empties << "\n";
+
+  const ipvgo::game::Influence inf = ipvgo::game::computeInfluence(state.board, 5);
+  std::cout << "influence: black=" << inf.black << " white=" << inf.white << " diff=" << inf.diff()
+            << "  per-point-mean=" << (static_cast<double>(inf.diff()) / (state.size * state.size)) << "\n";
+  if (std::getenv("IPVGO_INFLUENCE_MAP")) {
+    for (int y = state.size - 1; y >= 0; --y) {
+      std::cout << "  ";
+      for (int x = 0; x < state.size; ++x) {
+        const char stone = state.board[x][y];
+        if (stone == '#' || stone == 'X' || stone == 'O') {
+          std::cout << stone;
+          continue;
+        }
+        const int v = inf.value[flatIndex(state.size, x, y)];
+        std::cout << (v > 30 ? 'B' : v > 8 ? 'b' : v < -30 ? 'W' : v < -8 ? 'w' : '.');
+      }
+      std::cout << "\n";
+    }
+  }
 
   const bool ok = std::getenv("IPVGO_SAFETY_EXPECT_LEAD") == nullptr ||
                   std::abs(report.lead - std::atof(std::getenv("IPVGO_SAFETY_EXPECT_LEAD"))) < 0.51;
