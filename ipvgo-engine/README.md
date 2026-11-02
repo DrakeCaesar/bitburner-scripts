@@ -340,3 +340,25 @@ native MCTS as fallback). `exploitmove` accepts `depth`, `beam`,
 `whiteChildren`, `whiteMass`, `endgameEmpties`, `nodeBudget`, `threads`,
 `budgetMs` (wall-clock iterative deepening) and `iterations`/`nodeLimit` (node
 budget; the in-game client's `iterations` field is used as the node budget).
+
+### Persistent engine (`serve`)
+
+`exploitmove` starts a fresh process per move, so the search state - and every
+position already solved - is thrown away each move. `ipvgo_game serve` keeps one
+process alive and speaks newline-delimited JSON: one request per stdin line, one
+response per stdout line. The response echoes an `id` if the request carried one,
+and reports `memoHits` / `reusedHits`.
+
+```bash
+echo '{"id":1,"board":[".....",".XO..",".XO..",".XO..","....."],"playAs":"X","opponent":"Netburners","depth":2}' \
+  | ./cmake-build/bin/Release/ipvgo_game serve
+```
+
+`server.js` uses this for in-game moves: it keeps the engine alive while the same
+game (opponent + board size) is being played, recycles it when the game changes,
+and falls back to one-shot `exploitmove` if the engine dies.
+
+Reuse is bounded by an accuracy invariant: a memo entry is only kept across
+requests when no endgame node-budget cut fired anywhere in its subtree, so a
+reused value is always at least as accurate as solving that position again.
+

@@ -12,6 +12,9 @@
 //       Black = policy-expectimax exploiter vs the scripted faction.
 //   ipvgo_game exploitmove <in.json> [out.json]
 //       Exploiter move for a game request (engine "exploit").
+//   ipvgo_game serve
+//       Long-lived engine: one JSON request per stdin line, one JSON response per
+//       stdout line, with the search session kept alive across requests.
 //   ipvgo_game policycheck <opponent> <size> [samples] [seed]
 //       Compare the modeled reply distribution against sampled getMove().
 //   ipvgo_game optbench [--seconds=S] [--positions=N] [--depth=D] [--reps=R]
@@ -564,19 +567,13 @@ int pickExploitAction(const ExploitResult& result, int N, const json& req) {
   return ipvgo::nn::passAction(N);
 }
 
-int runExploitMove(const std::string& inPath, const std::string& outPath) {
-  std::ifstream in(inPath);
-  if (!in) {
-    std::cerr << "cannot open " << inPath << "\n";
-    return 1;
-  }
-  json req;
-  in >> req;
-
+// Computes one Black move from a game request. Shared by `exploitmove` (one
+// process per move) and `serve` (one process for a whole game or session, which
+// is what lets the search reuse positions from earlier moves).
+json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session) {
   GameState state = stateFromRequest(req);
   if (whoseTurn(state) != Color::Black) {
-    std::cerr << "exploitmove: playAs must be Black (X); it is not Black's turn\n";
-    return 1;
+    return json{{"error", "playAs must be Black (X); it is not Black's turn"}};
   }
 
   ExploitConfig cfg;
@@ -595,7 +592,7 @@ int runExploitMove(const std::string& inPath, const std::string& outPath) {
   if (cfg.nodeLimit > 0) cfg.budgetMs = 0;
 
   const auto t0 = std::chrono::steady_clock::now();
-  const ExploitResult result = runExploiter(state, cfg);
+  const ExploitResult result = runExploiter(state, cfg, nullptr, session);
   const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 
   const int action = pickExploitAction(result, state.size, req);
@@ -605,7 +602,26 @@ int runExploitMove(const std::string& inPath, const std::string& outPath) {
   out["value"] = result.value;
   out["nodes"] = result.nodes;
   out["elapsedMs"] = ms;
+  out["memoHits"] = result.memoHits;
+  out["reusedHits"] = result.memoReusedHits;
   out["engine"] = "exploit";
+  return out;
+}
+
+int runExploitMove(const std::string& inPath, const std::string& outPath) {
+  std::ifstream in(inPath);
+  if (!in) {
+    std::cerr << "cannot open " << inPath << "\n";
+    return 1;
+  }
+  json req;
+  in >> req;
+
+  const json out = computeExploitMoveJson(req, nullptr);
+  if (out.contains("error")) {
+    std::cerr << "exploitmove: " << out["error"].get<std::string>() << "\n";
+    return 1;
+  }
 
   const std::string text = out.dump();
   if (!outPath.empty()) {
@@ -613,6 +629,36 @@ int runExploitMove(const std::string& inPath, const std::string& outPath) {
     fout << text;
   } else {
     std::cout << text << "\n";
+  }
+  return 0;
+}
+
+// One long-lived engine: reads one JSON request per line and answers on one line,
+// keeping the search session alive so positions solved for an earlier move are
+// not solved again. Requests may carry an "id" that is echoed back.
+int runEngineServer() {
+  ipvgo::nn::SearchSession session;
+  std::ios::sync_with_stdio(false);
+  std::string line;
+  while (std::getline(std::cin, line)) {
+    if (line.empty()) continue;
+    json req;
+    try {
+      req = json::parse(line);
+    } catch (const std::exception& err) {
+      std::cout << json{{"error", std::string("bad request: ") + err.what()}}.dump() << "\n";
+      std::cout.flush();
+      continue;
+    }
+    json out;
+    try {
+      out = computeExploitMoveJson(req, &session);
+    } catch (const std::exception& err) {
+      out = json{{"error", std::string("search failed: ") + err.what()}};
+    }
+    if (req.contains("id")) out["id"] = req["id"];
+    std::cout << out.dump() << "\n";
+    std::cout.flush();
   }
   return 0;
 }
@@ -633,6 +679,11 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
   double totalBlackMs = 0.0;
   double totalMargin = 0.0;
   long totalMoves = 0;
+  long totalNodes = 0;
+  long totalMemoHits = 0;
+  long totalMemoReused = 0;
+  long totalReplyHits = 0;
+  long totalCuts = 0;
 
   for (int g = 0; g < games; ++g) {
     const double clockMs = static_cast<double>(rng() % 30000000u);
@@ -641,6 +692,10 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
     GameState state = newBoardState(size, ai, true, clockMs, mathRng);
     const int moveCap = size * size * 4;
     int gameMoves = 0;
+    // One session for the whole game: a position solved for one move is not
+    // solved again for the next. IPVGO_NO_SESSION gives the A/B baseline.
+    ipvgo::nn::SearchSession session;
+    const bool useSession = std::getenv("IPVGO_NO_SESSION") == nullptr;
 
     for (int m = 0; m < moveCap && !state.gameOver; ++m) {
       if (whoseTurn(state) != Color::Black) {
@@ -649,9 +704,14 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
       }
 
       const auto t0 = std::chrono::steady_clock::now();
-      const ExploitResult search = runExploiter(state, cfg);
+      const ExploitResult search = runExploiter(state, cfg, nullptr, useSession ? &session : nullptr);
       totalBlackMs +=
           std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+      totalNodes += search.nodes;
+      totalMemoHits += search.memoHits;
+      totalMemoReused += search.memoReusedHits;
+      totalReplyHits += search.replyHits;
+      totalCuts += search.budgetCuts;
 
       const int action = search.bestAction;
       if (std::getenv("IPVGO_TRACE")) {
@@ -705,6 +765,15 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
             << "wins=" << wins << "/" << games << " (" << winPct << "%) "
             << "depth=" << depth << " beam=" << cfg.beam << " whiteChildren=" << cfg.whiteChildren
             << " avgBlackThinkMs=" << avgMs << " avgMargin=" << avgMargin << "\n";
+  if (std::getenv("IPVGO_CACHE_STATS")) {
+    const double hitPct = totalNodes > 0 ? 100.0 * static_cast<double>(totalMemoHits) / static_cast<double>(totalNodes) : 0.0;
+    const double reusePct =
+        totalMemoHits > 0 ? 100.0 * static_cast<double>(totalMemoReused) / static_cast<double>(totalMemoHits) : 0.0;
+    std::cout << "exploitplay: cache nodes=" << totalNodes << " memoHits=" << totalMemoHits << " (" << hitPct
+              << "%) of which crossMove=" << totalMemoReused << " (" << reusePct << "%)"
+              << " replyHits=" << totalReplyHits << " budgetCuts=" << totalCuts
+              << " think_ms=" << static_cast<long>(totalBlackMs) << " moves=" << totalMoves << "\n";
+  }
   return wins == games ? 0 : 1;
 }
 
@@ -879,7 +948,8 @@ int runFuzz(int games, uint64_t seed) {
 int main(int argc, char** argv) {
   if (argc < 2) {
     std::cerr << "usage: ipvgo_game "
-                 "<selftest|fuzz|parity|aimove|mcgsmove|mcgsplay|exploitmove|exploitplay|policycheck|optbench|gen> ...\n";
+                 "<selftest|fuzz|parity|aimove|mcgsmove|mcgsplay|exploitmove|exploitplay|serve|policycheck|optbench|gen> "
+                 "...\n";
     return 2;
   }
   const std::string cmd = argv[1];
@@ -897,6 +967,7 @@ int main(int argc, char** argv) {
     return runMcgsPlay(argv[2], size, games, playouts, seed);
   }
   if (cmd == "exploitmove" && argc >= 3) return runExploitMove(argv[2], argc >= 4 ? argv[3] : "");
+  if (cmd == "serve") return runEngineServer();
   if (cmd == "exploitplay" && argc >= 6) {
     const int size = std::stoi(argv[3]);
     const int games = std::stoi(argv[4]);

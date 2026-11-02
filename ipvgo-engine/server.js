@@ -540,13 +540,153 @@ function requestMcgsMove(body) {
   return requestGameMove(body, { command: "mcgsmove", engine: "mcgs", tempPrefix: "mcgs", timeoutMs: 300_000 })
 }
 
-function requestExploitMove(body) {
-  return requestGameMove(body, {
-    command: "exploitmove",
-    engine: "exploit",
-    tempPrefix: "exploit",
-    timeoutMs: 300_000,
+// ---------------------------------------------------------------------------
+// Long-lived exploiter engine.
+//
+// The one-process-per-move path below throws the search state away every move,
+// so a position solved for one move is solved again for the next. `ipvgo_game
+// serve` keeps one process (and its memo) alive for the whole session and speaks
+// newline-delimited JSON: one request per line, one response per line.
+// ---------------------------------------------------------------------------
+const engineChild = {
+  proc: null,
+  nextId: 1,
+  pending: new Map(),
+  generation: 0,
+}
+
+function engineAlive() {
+  return engineChild.proc !== null && engineChild.proc.exitCode === null
+}
+
+function rejectAllPending(reason) {
+  for (const { reject, timer } of engineChild.pending.values()) {
+    clearTimeout(timer)
+    reject(new Error(reason))
+  }
+  engineChild.pending.clear()
+}
+
+function spawnEngine() {
+  const exe = mcgsExecutablePath()
+  if (!fs.existsSync(exe)) throw new Error("exploit engine not built. Run: pnpm run ipvgo:build")
+
+  const proc = spawn(exe, ["serve"], { cwd: __dirname, stdio: ["pipe", "pipe", "pipe"] })
+  proc.stdout.setEncoding("utf8")
+  proc.stderr.setEncoding("utf8")
+
+  // A replaced engine may still be shutting down; its output and its exit must
+  // not touch the current one's state.
+  const generation = ++engineChild.generation
+  const current = () => engineChild.generation === generation
+  let buffer = ""
+
+  proc.stdout.on("data", (chunk) => {
+    if (!current()) return
+    buffer += chunk
+    let newline = buffer.indexOf("\n")
+    while (newline >= 0) {
+      const line = buffer.slice(0, newline).trim()
+      buffer = buffer.slice(newline + 1)
+      newline = buffer.indexOf("\n")
+      if (!line) continue
+      let response
+      try {
+        response = JSON.parse(line)
+      } catch {
+        continue
+      }
+      const id = response.id ?? engineChild.nextId - 1
+      const entry = engineChild.pending.get(id)
+      if (!entry) continue
+      clearTimeout(entry.timer)
+      engineChild.pending.delete(id)
+      if (response.error) entry.reject(new Error(`exploit engine: ${response.error}`))
+      else entry.resolve(response)
+    }
   })
+
+  proc.stderr.on("data", (chunk) => {
+    const text = String(chunk).trim()
+    if (text) console.error(`[exploit engine] ${text}`)
+  })
+
+  const onGone = (why) => {
+    if (!current()) return
+    engineChild.proc = null
+    rejectAllPending(`exploit engine ${why}`)
+  }
+  proc.on("exit", (code, signal) => onGone(signal ? `killed by ${signal}` : `exited with ${code}`))
+  proc.on("error", (err) => onGone(`failed: ${err.message}`))
+
+  engineChild.proc = proc
+  return proc
+}
+
+function requestServeMove(body, timeoutMs) {
+  if (!engineAlive()) spawnEngine()
+  const id = engineChild.nextId++
+  const proc = engineChild.proc
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      engineChild.pending.delete(id)
+      reject(new Error("exploit engine timed out"))
+    }, timeoutMs)
+    engineChild.pending.set(id, { resolve, reject, timer })
+    try {
+      proc.stdin.write(`${JSON.stringify({ ...body, id })}\n`)
+    } catch (err) {
+      clearTimeout(timer)
+      engineChild.pending.delete(id)
+      reject(err)
+    }
+  })
+}
+
+// The session is per game: a new game must not inherit positions from the last
+// one, so the engine is recycled when the game changes.
+let engineGameKey = null
+
+function stopEngine() {
+  const proc = engineChild.proc
+  engineChild.proc = null
+  engineGameKey = null
+  if (!proc) return
+  try {
+    proc.stdin.end()
+  } catch {
+    /* ignore */
+  }
+  const killer = setTimeout(() => {
+    try {
+      proc.kill()
+    } catch {
+      /* ignore */
+    }
+  }, 2000)
+  if (killer.unref) killer.unref()
+}
+
+async function requestExploitMove(body) {
+  const gameKey = JSON.stringify({ opponent: body.opponent ?? null, size: body.board?.length ?? null })
+  if (engineGameKey !== gameKey) {
+    stopEngine()
+    engineGameKey = gameKey
+  }
+  try {
+    const result = await requestServeMove(body, 300_000)
+    return { ...result, engine: "exploit" }
+  } catch (err) {
+    // A crashed engine must not wedge the game: fall back to one-shot execution.
+    stopEngine()
+    console.error(`[exploit engine] falling back to one-shot: ${err.message}`)
+    return requestGameMove(body, {
+      command: "exploitmove",
+      engine: "exploit",
+      tempPrefix: "exploit",
+      timeoutMs: 300_000,
+    })
+  }
 }
 
 async function requestNativeMove(body) {
@@ -607,6 +747,8 @@ function cancelNativeMove() {
     activeNativeChild.kill()
     activeNativeChild = null
   }
+  // The long-lived engine is mid-search for whichever request is pending.
+  stopEngine()
 }
 
 async function handleCancel(req, res) {
@@ -780,10 +922,12 @@ server.listen(port, () => {
 
 process.on("SIGINT", () => {
   stopBench()
+  stopEngine()
   process.exit(0)
 })
 
 process.on("SIGTERM", () => {
   stopBench()
+  stopEngine()
   process.exit(0)
 })
