@@ -122,6 +122,30 @@ actual weaknesses.
   plays the rest of the game out, so won games are not thrown away by the
   horizon. Captures stay captures there: invading dead white space is scored as
   the loss it is.
+- Under a node budget the search trades **width for depth** when White's policy
+  allows it. A per-ply branching factor `b` costs about `r * b^depth` nodes, so
+  with `r` root moves it sets `b = (budget / r)^(1/depth)` and splits that between
+  the Black beam and White's reply count, only ever narrowing. The result is that
+  a 100k budget reaches depth 10 in 2.9k nodes instead of depth 4 in 69k.
+
+  Narrowing White's replies is only sound when White is **effectively forced**:
+  then one line is the real continuation. When White picks from a wide pool, a
+  single line is one of many equally likely moves and the deep search chases a
+  fiction. So the trade is enabled only when, in every one of six spread-out
+  positions Black could reach, a single White reply covers 90% of the mass. It has
+  to be measured in the positions White replies *from* - at the root, even
+  Netburners looks concentrated. 7x7, 20k budget, 60 games per faction:
+
+  | | Netburners | SlumSnakes | BlackHand | Tetrads | Daedalus | Illuminati |
+  |---|---|---|---|---|---|---|
+  | fixed width | 53 | 51 | 59 | 46 | 45 | 19 |
+  | adaptive | 55 | 48 | 56 | 49 | 48 | 38 |
+
+  273 -> 294 wins of 360. The gain is not board-specific: 5x5 goes 99 -> 108 of 120
+  and 9x9 84 -> 101 of 120 on the same 20-game-per-faction comparison.
+  `IPVGO_FIXED_WIDTH=1` restores the fixed width, and
+  `IPVGO_CONCENTRATED_REPLIES=3` loosens the test: that reaches +34 on Illuminati
+  and +13 on Daedalus but costs SlumSnakes 13 games, so the strict test ships.
 
 ## Bench GUI (browser)
 
@@ -412,6 +436,10 @@ regression-tested:
 - **The session cache** reuses positions across moves. It only reuses values with
   no endgame cut in their subtree, so reuse cannot lower accuracy, but it does
   change which nodes get evaluated and therefore the play.
+
+A third does too, though deliberately: **`adaptiveWidth`** decides the beam and
+the reply count from the budget and the measured concentration of White's policy,
+so the depth actually reached depends on both.
 
 ### Known limits and open questions
 

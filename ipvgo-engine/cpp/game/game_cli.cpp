@@ -724,6 +724,7 @@ json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session) 
   // `iterations` is what the in-game client sends; treat it as a node budget.
   cfg.whiteWorstCase = req.value("whiteWorstCase", false);
   cfg.endgameExactWhite = !req.value("endgameApprox", false);
+  cfg.adaptiveWidth = req.value("adaptiveWidth", true);
   cfg.nodeLimit = req.value("nodeLimit", 0L);
   if (cfg.nodeLimit <= 0) cfg.nodeLimit = req.value("iterations", 0L);
   if (cfg.nodeLimit > 0) cfg.budgetMs = 0;
@@ -904,6 +905,7 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
   // search to iterative deepening and makes the depth argument irrelevant.
   if (std::getenv("IPVGO_WHITE_WORST")) cfg.whiteWorstCase = true;
   if (std::getenv("IPVGO_ENDGAME_APPROX")) cfg.endgameExactWhite = false;
+  if (std::getenv("IPVGO_FIXED_WIDTH")) cfg.adaptiveWidth = false;
   if (const char* limit = std::getenv("IPVGO_NODE_LIMIT")) {
     const long parsed = std::atol(limit);
     if (parsed > 0) cfg.nodeLimit = parsed;
