@@ -6,15 +6,15 @@
 #   ./scripts/mcgs.sh bench [size] [games] [playouts] [seed]
 #
 # Env:
-#   IPVGO_BUILD_DIR=<dir>       CMake build directory (default: repo-root cmake-build)
-#   IPVGO_BUILD_TYPE=Release    CMake configuration
+#   IPVGO_BUILD_DIR=<dir>       CMake build directory (default: repo-root out/build/x64-Release)
+#   IPVGO_BUILD_TYPE=Release    CMake configuration (Release or RelWithDebInfo)
 #   IPVGO_FORCE_BUILD=1         Always rebuild before run
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPO_ROOT="$(cd "$ROOT/.." && pwd)"
-BUILD_DIR="${IPVGO_BUILD_DIR:-$REPO_ROOT/cmake-build}"
+BUILD_DIR="${IPVGO_BUILD_DIR:-$REPO_ROOT/out/build/x64-Release}"
 BUILD_TYPE="${IPVGO_BUILD_TYPE:-Release}"
 
 FACTIONS_5_13=(Netburners "Slum Snakes" "The Black Hand" Tetrads Daedalus Illuminati)

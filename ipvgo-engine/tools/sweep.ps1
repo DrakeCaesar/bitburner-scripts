@@ -18,7 +18,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-if (-not $Exe) { $Exe = Join-Path $PSScriptRoot "..\..\cmake-build\bin\Release\ipvgo_game.exe" }
+if (-not $Exe) { $Exe = Join-Path $PSScriptRoot "..\..\out\build\x64-Release\bin\ipvgo_game.exe" }
 $Exe = (Resolve-Path $Exe).Path
 
 $factions = @("Netburners", "Slum Snakes", "The Black Hand", "Tetrads", "Daedalus", "Illuminati")

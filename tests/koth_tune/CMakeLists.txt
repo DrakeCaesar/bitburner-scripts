@@ -10,11 +10,9 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-if(MSVC)
-  add_compile_options($<$<CONFIG:Release>:/O2>)
-else()
-  add_compile_options($<$<CONFIG:Release>:-O3>)
-endif()
+# Release (performance) and RelWithDebInfo (profiling) flags, shared with the
+# rest of the repository when built from the root project.
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/BuildTypes.cmake")
 
 set(KOTH_COMMON_SOURCES
   src/koth_game.cpp

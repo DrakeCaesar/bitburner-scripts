@@ -2,7 +2,11 @@
 
 # IDE
 .idea/
+.vs/
 .vscode/
+
+# CMakeSettings.json build roots (x64-Release, x64-Profile, ...)
+/out/
 
 # Distributable
 /dist/

@@ -10,6 +10,8 @@
 //       Print a freshly generated board (obstacles + handicap).
 //   ipvgo_game exploitplay <opponent> <size> <games> <depth> <seed> [fixed]
 //       Black = policy-expectimax exploiter vs the scripted faction.
+//   ipvgo_game profileworkload [games] [seed]
+//       Repeatable, approximately one-minute Release workload for CPU profiling.
 //   ipvgo_game exploitmove <in.json> [out.json]
 //       Exploiter move for a game request (engine "exploit").
 //   ipvgo_game serve
@@ -892,7 +894,8 @@ int runReplies(const std::string& inPath) {
 // ---- exploitplay (exploiter Black vs scripted faction White) ---------------
 
 int runExploitPlay(const std::string& opponentName, int size, int games, int depth, uint64_t seed,
-                   bool fixedWhiteSeed, int beam = 0, int whiteChildren = 0) {
+                   bool fixedWhiteSeed, int beam = 0, int whiteChildren = 0, long nodeLimitOverride = 0,
+                   bool progressOverride = false) {
   const Opponent ai = parseOpponent(opponentName).value_or(Opponent::Netburners);
   std::mt19937_64 rng(seed ? seed : 1);
 
@@ -910,6 +913,7 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
     const long parsed = std::atol(limit);
     if (parsed > 0) cfg.nodeLimit = parsed;
   }
+  if (nodeLimitOverride > 0) cfg.nodeLimit = nodeLimitOverride;
 
   int wins = 0;
   double totalBlackMs = 0.0;
@@ -930,7 +934,7 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
   // A long game set is otherwise a silent black box: report each game as it ends,
   // with a running total and an ETA, so a slow configuration is obvious while it
   // is running rather than an hour later.
-  const bool progress = std::getenv("IPVGO_PROGRESS") != nullptr;
+  const bool progress = progressOverride || std::getenv("IPVGO_PROGRESS") != nullptr;
   const auto runStart = std::chrono::steady_clock::now();
 
   for (int g = 0; g < games; ++g) {
@@ -1263,8 +1267,8 @@ int runFuzz(int games, uint64_t seed) {
 int main(int argc, char** argv) {
   if (argc < 2) {
     std::cerr << "usage: ipvgo_game "
-                 "<selftest|fuzz|parity|aimove|mcgsmove|mcgsplay|exploitmove|exploitplay|serve|policycheck|optbench|gen> "
-                 "...\n";
+                 "<selftest|fuzz|parity|aimove|mcgsmove|mcgsplay|exploitmove|exploitplay|"
+                 "profileworkload|serve|policycheck|optbench|gen> ...\n";
     return 2;
   }
   const std::string cmd = argv[1];
@@ -1285,6 +1289,15 @@ int main(int argc, char** argv) {
   }
   if (cmd == "exploitmove" && argc >= 3) return runExploitMove(argv[2], argc >= 4 ? argv[3] : "");
   if (cmd == "serve") return runEngineServer();
+  if (cmd == "profileworkload") {
+    const int games = argc >= 3 ? std::stoi(argv[2]) : 25;
+    const uint64_t seed = argc >= 4 ? std::stoull(argv[3]) : 1u;
+    if (games < 1) {
+      std::cerr << "profileworkload: games must be positive\n";
+      return 2;
+    }
+    return runExploitPlay("Illuminati", 9, games, 2, seed, false, 0, 0, 5000, true);
+  }
   if (cmd == "exploitplay" && argc >= 6) {
     const int size = std::stoi(argv[3]);
     const int games = std::stoi(argv[4]);

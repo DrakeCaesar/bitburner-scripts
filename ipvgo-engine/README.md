@@ -9,7 +9,7 @@ heuristic MCTS engine as alternatives.
 From the **repo root**:
 
 ```bash
-pnpm run ipvgo:build   # cmake --preset release + build ipvgo_engine/ipvgo_game
+pnpm run ipvgo:build   # Build-Native.ps1: configure + build ipvgo_engine/ipvgo_game
 pnpm run server        # http://localhost:3010
 ```
 
@@ -49,16 +49,28 @@ Native targets are built from the **repo root** into one tree, shared with the
 other native components (`tests/koth_tune`):
 
 ```bash
-cmake --preset release           # configure (cmake-build/)
-cmake --build --preset release   # build every native target
-# or just the engine:
+./cmake/Build-Native.ps1 -Configure              # configure + build everything (Release)
+./cmake/Build-Native.ps1 -Target ipvgo_game      # one target, after configuring
+# or just the engine, through the package script:
 pnpm run ipvgo:build
 ```
 
-Executables land in **`cmake-build/bin/Release/`** (`ipvgo_engine`,
+Ninja invokes `cl.exe` directly, so it needs the variables the Visual Studio
+developer environment sets up (`INCLUDE`, `LIB`, `PATH`); without them a compile
+fails with `C1083: Cannot open include file: 'array'`. `Build-Native.ps1` finds
+Visual Studio with `vswhere`, imports that environment, and then runs CMake, so
+it works from any shell. Running bare `cmake --build ...` only works inside a
+*Developer PowerShell for VS*.
+
+Executables land in **`out/build/x64-Release/bin/`** (`ipvgo_engine`,
 `ipvgo_game`, `koth_bench`, `koth_tune`). The helper scripts also accept the
 older per-component `ipvgo-engine/build` layout, which still works for a
 standalone `cmake -S ipvgo-engine -B ipvgo-engine/build`.
+
+`CMakeSettings.json` defines the same tree for the IDE: `x64-Release` for
+performance work, `x64-Profile` (`RelWithDebInfo`) for profiling, plus
+`x64-Debug`, the two `x64-Clang-*` configurations and `Linux-*`. Each
+configuration builds into `out/build/<name>`.
 
 Server listens on **http://localhost:3010** (`IPVGO_PORT` to override).
 
@@ -293,7 +305,7 @@ position as JSON so it can be fed straight back to `exploitmove` for deeper
 analysis:
 
 ```bash
-IPVGO_TRACE=1 IPVGO_TRACE_BOARD=1 ./cmake-build/bin/Release/ipvgo_game exploitplay "Slum Snakes" 9 1 2 1
+IPVGO_TRACE=1 IPVGO_TRACE_BOARD=1 ./out/build/x64-Release/bin/ipvgo_game exploitplay "Slum Snakes" 9 1 2 1
 ```
 
 `IPVGO_EXPLAIN=1` answers "why did it play that": for every move it prints the
@@ -302,14 +314,14 @@ values, the top of the opponent reply distribution White faced, and then what
 White actually played with the probability the model gave it:
 
 ```bash
-IPVGO_EXPLAIN=1 IPVGO_NODE_LIMIT=4000 ./cmake-build/bin/Release/ipvgo_game exploitplay "Netburners" 7 1 2 2
+IPVGO_EXPLAIN=1 IPVGO_NODE_LIMIT=4000 ./out/build/x64-Release/bin/ipvgo_game exploitplay "Netburners" 7 1 2 2
 ```
 
 The static life analysis has its own command, and three switches (all off by
 default because none of them measured a win-rate gain - see "Known limits"):
 
 ```bash
-./cmake-build/bin/Release/ipvgo_game safety position.json   # per-chain pass-alive verdict
+./out/build/x64-Release/bin/ipvgo_game safety position.json   # per-chain pass-alive verdict
 IPVGO_SETTLE=0.5 IPVGO_VITAL=1 ...  # discount unsettled territory, use the Vital level
 IPVGO_EYE_FILTER=1 ...              # never play inside our own pass-alive eye
 ```
@@ -323,8 +335,8 @@ IPVGO_EYE_FILTER=1 ...              # never play inside our own pass-alive eye
 
 ```bash
 # Same binary, both modes, so the comparison is fair
-IPVGO_CACHE_STATS=1 ./cmake-build/bin/Release/ipvgo_game exploitplay "Netburners" 5 4 2 1
-IPVGO_CACHE_STATS=1 IPVGO_NO_SESSION=1 ./cmake-build/bin/Release/ipvgo_game exploitplay "Netburners" 5 4 2 1
+IPVGO_CACHE_STATS=1 ./out/build/x64-Release/bin/ipvgo_game exploitplay "Netburners" 5 4 2 1
+IPVGO_CACHE_STATS=1 IPVGO_NO_SESSION=1 ./out/build/x64-Release/bin/ipvgo_game exploitplay "Netburners" 5 4 2 1
 ```
 
 ## Profiling
@@ -333,14 +345,42 @@ The Visual Studio / ETW CPU profiler needs an elevated session. `ipvgo_prof` is
 an unprivileged in-process alternative: it counts allocations (attributed to the
 calling function) and samples every thread's stack with `StackWalk64`.
 
+For a repeatable CPU-profile workload, open the repository root in Visual
+Studio, select the **`x64-Profile`** configuration (`RelWithDebInfo`) and the
+`ipvgo_game` target, then launch it with `profileworkload` as its command-line
+argument. `x64-Release` is tuned for throughput (whole program optimization,
+`/GL`+`/LTCG`) and is the wrong build to read a profile from; `x64-Profile`
+keeps the same optimisation level but adds `/Zi` (PDB), `/Zo` (line info for
+optimized code), `/Oy-` (frame pointers) and `/Ob0` (inlining off), plus a
+`/DEBUG:FULL` link, so every sample resolves to the line that did the work.
+Rebuild after changing the CMake configuration:
+
+```powershell
+.\cmake\Build-Native.ps1 -BuildType RelWithDebInfo -Configure -Target ipvgo_game
+.\out\build\x64-Profile\bin\ipvgo_game.exe profileworkload
+```
+
+Both configurations use Ninja, so on Windows they need an MSVC environment.
+Visual Studio supplies it automatically and VS Code passes it through
+`"cmake.useVsDeveloperEnvironment": "always"`; in a plain terminal use
+`Build-Native.ps1`, which sets the environment up itself.
+
+This plays 25 seeded 9x9 games against Illuminati through the same search and
+simulated-opponent path as gameplay, with a 5,000-node cap per Black move and a
+persistent search session for each game. It prints progress after each game and
+took about one minute in a Release run; actual time depends on hardware. Pass a
+smaller game count for a shorter profile, for example `profileworkload 5`. An
+optional second argument changes the seed.
+
 ```bash
 # Configure with the profiler enabled (off by default: it rebuilds the engine
-# with /Zi for symbols and runs it in a second executable)
-cmake --preset release -DIPVGO_BUILD_PROFILER=ON
-cmake --build --preset release --target ipvgo_prof
+# with /Zi for symbols and runs it in a second executable). These raw cmake
+# commands need a Developer PowerShell for VS, since they compile with cl.exe.
+cmake -B out/build/x64-Release -G Ninja -DCMAKE_BUILD_TYPE=Release -DIPVGO_BUILD_PROFILER=ON
+cmake --build out/build/x64-Release --target ipvgo_prof
 
 # ipvgo_prof <faction> <depth> <ply> <reps>
-./cmake-build/bin/Release/ipvgo_prof "Slum Snakes" 3 6 3
+./out/build/x64-Release/bin/ipvgo_prof "Slum Snakes" 3 6 3
 ```
 
 It prints the allocations/bytes per search with the top allocation sites, then
@@ -366,10 +406,10 @@ Reproduce, from a Release build:
 
 ```bash
 # Allocation count + time for one fixed search (deterministic node count)
-./cmake-build/bin/Release/ipvgo_prof "Slum Snakes" 3 6 1
+./out/build/x64-Release/bin/ipvgo_prof "Slum Snakes" 3 6 1
 
 # Fixed-depth search cost; threads=1 keeps it deterministic
-./cmake-build/bin/Release/ipvgo_game optbench --only=all --positions=2 --depth=3 --threads=1 --reps=3
+./out/build/x64-Release/bin/ipvgo_game optbench --only=all --positions=2 --depth=3 --threads=1 --reps=3
 ```
 
 | measurement | baseline @ `68813bf` |
@@ -404,11 +444,11 @@ Changes to the rules, the board representation or the caches must keep these
 identical, not merely similar:
 
 ```bash
-./cmake-build/bin/Release/ipvgo_game selftest          # bitwise-capture and make/unmake oracles
-./cmake-build/bin/Release/ipvgo_game fuzz 60 11        # expect 6874 moves, 0 anomalies
-./cmake-build/bin/Release/ipvgo_game policycheck "The Black Hand" 5 800
+./out/build/x64-Release/bin/ipvgo_game selftest          # bitwise-capture and make/unmake oracles
+./out/build/x64-Release/bin/ipvgo_game fuzz 60 11        # expect 6874 moves, 0 anomalies
+./out/build/x64-Release/bin/ipvgo_game policycheck "The Black Hand" 5 800
 # per-move trace, including values and node counts:
-IPVGO_NO_SESSION=1 IPVGO_TRACE=1 ./cmake-build/bin/Release/ipvgo_game exploitplay "Slum Snakes" 5 2 2 1
+IPVGO_NO_SESSION=1 IPVGO_TRACE=1 ./out/build/x64-Release/bin/ipvgo_game exploitplay "Slum Snakes" 5 2 2 1
 ```
 
 `optbench` node counts are deterministic at `--threads=1`; at the default thread
@@ -422,8 +462,8 @@ deepening, so the `depth` argument stops applying):
 
 ```bash
 # the configuration the game actually runs, at 5x5 and 9x9
-IPVGO_NODE_LIMIT=4000 ./cmake-build/bin/Release/ipvgo_game exploitplay "Illuminati" 5 25 2 1
-IPVGO_NODE_LIMIT=4000 ./cmake-build/bin/Release/ipvgo_game exploitplay "Illuminati" 9 4 2 1
+IPVGO_NODE_LIMIT=4000 ./out/build/x64-Release/bin/ipvgo_game exploitplay "Illuminati" 5 25 2 1
+IPVGO_NODE_LIMIT=4000 ./out/build/x64-Release/bin/ipvgo_game exploitplay "Illuminati" 9 4 2 1
 ```
 
 Two knobs genuinely change which moves are played, and are therefore not
@@ -655,7 +695,7 @@ and reports `memoHits` / `reusedHits`.
 
 ```bash
 echo '{"id":1,"board":[".....",".XO..",".XO..",".XO..","....."],"playAs":"X","opponent":"Netburners","depth":2}' \
-  | ./cmake-build/bin/Release/ipvgo_game serve
+  | ./out/build/x64-Release/bin/ipvgo_game serve
 ```
 
 `server.js` uses this for in-game moves: it keeps the engine alive while the same
@@ -681,4 +721,3 @@ cached: on 13x13, keeping them cost 872 MB of `WeightedReply` payload - 98% of
 the session - for 89 hits in a whole game. Dropping them took peak RSS from
 1 007 MB to 31 MB with identical node counts (524 086) and no measurable change
 in think time.
-

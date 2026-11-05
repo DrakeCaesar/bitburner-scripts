@@ -14,7 +14,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# One output folder for every executable: cmake-build/bin/<Config>/.
+# Release (performance) and RelWithDebInfo (profiling) flags for every component.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildTypes.cmake")
+
+# One output folder for every executable: out/build/<config>/bin/.
 # Skipped for the Emscripten build, which controls its own output paths.
 if(NOT EMSCRIPTEN)
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")

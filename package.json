@@ -33,9 +33,9 @@
     "watch:transpile": "tsc -w --preserveWatchOutput",
     "server": "node ipvgo-engine/server.js",
     "server:dev": "node ipvgo-engine/scripts/dev-server.mjs",
-    "ipvgo:build": "cmake --preset release && cmake --build --preset release --target ipvgo_engine ipvgo_game",
+    "ipvgo:build": "powershell -NoProfile -ExecutionPolicy Bypass -File cmake/Build-Native.ps1 -Configure -Target ipvgo_engine,ipvgo_game",
     "ipvgo:bench": "node ipvgo-engine/scripts/bench-factions.js",
-    "koth:build": "cmake --preset release && cmake --build --preset release --target koth_bench koth_tune"
+    "koth:build": "powershell -NoProfile -ExecutionPolicy Bypass -File cmake/Build-Native.ps1 -Configure -Target koth_bench,koth_tune"
   },
   "prettier": {
     "printWidth": 120,

@@ -2,8 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SRC_DIR="$ROOT/tests/koth_tune"
-BUILD_DIR="$ROOT/cmake-build"
-PRESET="release"
+BUILD_DIR="$ROOT/out/build/x64-Release"
 
 file_mtime() {
   if stat --version &>/dev/null 2>&1; then
@@ -42,8 +41,8 @@ newest_source_mtime() {
       newest=$m
     fi
   done < <(
-    find "$SRC_DIR/src" "$SRC_DIR/CMakeLists.txt" "$ROOT/CMakeLists.txt" "$ROOT/CMakePresets.json" \
-      -type f \( -name '*.cpp' -o -name '*.hpp' -o -name 'CMakeLists.txt' -o -name 'CMakePresets.json' \) \
+    find "$SRC_DIR/src" "$SRC_DIR/CMakeLists.txt" "$ROOT/CMakeLists.txt" "$ROOT/CMakeSettings.json" \
+      -type f \( -name '*.cpp' -o -name '*.hpp' -o -name 'CMakeLists.txt' -o -name 'CMakeSettings.json' \) \
       -print0 2>/dev/null
   )
   echo "$newest"
@@ -66,14 +65,10 @@ needs_rebuild() {
   return 1
 }
 
-configure_if_needed() {
-  if [[ ! -f "$BUILD_DIR/CMakeCache.txt" ]]; then
-    cmake --preset "$PRESET" -S "$ROOT"
-  fi
-}
-
 build_tune() {
-  configure_if_needed
+  if [[ ! -f "$BUILD_DIR/CMakeCache.txt" ]]; then
+    cmake -S "$ROOT" -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=Release
+  fi
   cmake --build "$BUILD_DIR" --config Release --target koth_tune
 }
 

@@ -1,9 +1,10 @@
 # clangd config for ipvgo-engine.
-# `cmake --preset release` at the repo root puts the fetched nlohmann headers in
-# ../../cmake-build/_deps; a standalone `cmake -S . -B build` uses build/_deps.
+# A repo-root configure (see CMakeSettings.json) puts the fetched nlohmann
+# headers in ../../out/build/<config>/_deps; a standalone
+# `cmake -S . -B build` uses build/_deps.
 CompileFlags:
   Add:
     - -std=c++17
     - -Icpp
     - -Ibuild/_deps/nlohmann_json-src/include
-    - -I../cmake-build/_deps/nlohmann_json-src/include
+    - -I../out/build/x64-Release/_deps/nlohmann_json-src/include

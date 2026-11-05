@@ -8,7 +8,7 @@ param(
   [string]$Configs = "old,settle0.5,settle0.5+vital,settle0.25+vital,settle0"
 )
 $ErrorActionPreference = "Stop"
-$exe = Join-Path $PSScriptRoot "..\..\cmake-build\bin\Release\ipvgo_game.exe"
+$exe = Join-Path $PSScriptRoot "..\..\out\build\x64-Release\bin\ipvgo_game.exe"
 $seedList = @($Seeds.Split(",") | ForEach-Object { [int]$_.Trim() })
 
 $map = @{

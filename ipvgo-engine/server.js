@@ -30,17 +30,19 @@ function mcgsExecutablePath() {
   return findNativeExecutable("ipvgo_game")
 }
 
-// Native targets are built from the repo root into `cmake-build` (see the root
-// CMakeLists.txt and CMakePresets.json). Older per-component build dirs are
-// still accepted so a stale checkout keeps working.
+// Native targets are built from the repo root into `out/build/<config>` (see
+// CMakeSettings.json and cmake/BuildTypes.cmake). Older per-component build
+// dirs are still accepted so a stale checkout keeps working, but they are
+// checked last: an old binary can predate the `serve` protocol the server
+// speaks, which shows up as a bench that never leaves "thinking".
 function nativeExecutableCandidates(name) {
   const isWindows = process.platform === "win32"
   const suffixes = isWindows ? [".exe"] : ["", ".exe"]
   const dirs = [
-    path.join(__dirname, "..", "cmake-build", "bin", "Release"),
-    path.join(__dirname, "..", "cmake-build", "bin"),
-    path.join(__dirname, "..", "cmake-build", "Release"),
-    path.join(__dirname, "..", "cmake-build"),
+    path.join(__dirname, "..", "out", "build", "x64-Release", "bin"),
+    path.join(__dirname, "..", "out", "build", "x64-Profile", "bin"),
+    path.join(__dirname, "..", "out", "build", "x64-Clang-Release", "bin"),
+    path.join(__dirname, "..", "out", "build", "x64-Debug", "bin"),
     path.join(__dirname, "build", "Release"),
     path.join(__dirname, "build"),
   ]

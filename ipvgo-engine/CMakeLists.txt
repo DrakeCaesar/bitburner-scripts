@@ -5,6 +5,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Release (performance) and RelWithDebInfo (profiling) flags. The guard inside
+# the module makes the double include harmless when this project is built from
+# the repository root.
+include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/BuildTypes.cmake")
+
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND DEFINED ENV{VCPKG_ROOT})
   set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
     CACHE STRING "Vcpkg toolchain file")
@@ -42,14 +47,10 @@ add_library(ipvgo_game_core STATIC ${GAME_SOURCES})
 # third_party/ holds ankerl::unordered_dense (MIT), a single header, vendored so
 # the build stays offline.
 target_include_directories(ipvgo_game_core PUBLIC cpp/game third_party)
+# AVX2 and the per-configuration optimisation flags come from cmake/BuildTypes.cmake
+# (/arch:AVX2 lets the compiler widen the 64-bit bit-plane loops; the loops are
+# safe under it because this library is only used by the native tools).
 set_property(TARGET ipvgo_game_core PROPERTY POSITION_INDEPENDENT_CODE ON)
-# /arch:AVX2 is safe here: this library is only used by the native tools, and it
-# lets the compiler widen the 64-bit bit-plane loops.
-if(MSVC)
-  target_compile_options(ipvgo_game_core PRIVATE $<$<CONFIG:Release>:/O2 /arch:AVX2>)
-else()
-  target_compile_options(ipvgo_game_core PRIVATE $<$<CONFIG:Release>:-O3 -march=native>)
-endif()
 
 # ---------------------------------------------------------------------------
 # Legacy heuristic MCTS engine (native passthrough target).
@@ -70,22 +71,12 @@ find_package(Threads REQUIRED)
 add_executable(ipvgo_engine cpp/standalone.cpp ${ENGINE_SOURCES})
 target_include_directories(ipvgo_engine PRIVATE cpp)
 target_link_libraries(ipvgo_engine PRIVATE nlohmann_json::nlohmann_json Threads::Threads)
-if(MSVC)
-  target_compile_options(ipvgo_engine PRIVATE $<$<CONFIG:Release>:/O2>)
-else()
-  target_compile_options(ipvgo_engine PRIVATE $<$<CONFIG:Release>:-O3>)
-endif()
 install(TARGETS ipvgo_engine DESTINATION bin)
 
 # Faithful-engine CLI: selftest / parity / aimove / gen / mcgs / exploit / serve / bench.
 add_executable(ipvgo_game cpp/game/game_cli.cpp cpp/nn/mcgs.cpp cpp/nn/exploiter.cpp cpp/nn/bench_tui.cpp cpp/nn/optbench.cpp)
 target_include_directories(ipvgo_game PRIVATE cpp/game cpp/nn)
 target_link_libraries(ipvgo_game PRIVATE ipvgo_game_core nlohmann_json::nlohmann_json Threads::Threads)
-if(MSVC)
-  target_compile_options(ipvgo_game PRIVATE $<$<CONFIG:Release>:/arch:AVX2>)
-else()
-  target_compile_options(ipvgo_game PRIVATE $<$<CONFIG:Release>:-march=native>)
-endif()
 install(TARGETS ipvgo_game DESTINATION bin)
 
 # In-process profiler (off by default). The Visual Studio / ETW CPU profiler
@@ -96,7 +87,7 @@ if(IPVGO_BUILD_PROFILER)
   add_executable(ipvgo_prof tools/prof/prof.cpp cpp/nn/exploiter.cpp ${GAME_SOURCES})
   target_include_directories(ipvgo_prof PRIVATE cpp/game cpp/nn third_party)
   # Optimised like the real engine, with symbols for StackWalk64/dbghelp.
-  target_compile_options(ipvgo_prof PRIVATE /Zi /O2 /Ob2 /arch:AVX2 /DNDEBUG)
-  target_link_options(ipvgo_prof PRIVATE /DEBUG)
+  target_compile_options(ipvgo_prof PRIVATE /Zi /Zo /O2 /Ob2 /arch:AVX2 /Oy- /DNDEBUG)
+  target_link_options(ipvgo_prof PRIVATE /DEBUG:FULL)
   target_link_libraries(ipvgo_prof PRIVATE Threads::Threads dbghelp psapi winmm)
 endif()

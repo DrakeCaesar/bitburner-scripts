@@ -18,6 +18,8 @@ const isWindows = process.platform === "win32"
 function findExe(name) {
   const exe = isWindows ? `${name}.exe` : name
   const candidates = [
+    path.join(root, "..", "out", "build", "x64-Release", "bin", exe),
+    path.join(root, "..", "out", "build", "x64-Profile", "bin", exe),
     path.join(root, "build", "Release", exe),
     path.join(root, "build", exe),
     path.join(root, "build-game", "Release", exe),
