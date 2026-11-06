@@ -135,19 +135,19 @@ class SimpleBoard {
 // '.' = 0, 'X' = 1, 'O' = 2, '#' = 3. Unused high bits of the last word are 0.
 inline void packBoard(const SimpleBoard& board, uint64_t* out, int stride) {
   for (int i = 0; i < stride; ++i) out[i] = 0;
+  static constexpr auto kCode = [] {
+    std::array<uint8_t, 256> t{};
+    t[static_cast<unsigned char>('X')] = 1;
+    t[static_cast<unsigned char>('O')] = 2;
+    t[static_cast<unsigned char>('#')] = 3;
+    return t;
+  }();
   const int n = board.size();
   int bit = 0;
   for (int x = 0; x < n; ++x) {
     const char* col = board.column(x);
     for (int y = 0; y < n; ++y) {
-      uint64_t code = 0;
-      switch (col[y]) {
-        case 'X': code = 1; break;
-        case 'O': code = 2; break;
-        case '#': code = 3; break;
-        default: break;
-      }
-      out[bit >> 6] |= code << (bit & 63);
+      out[bit >> 6] |= static_cast<uint64_t>(kCode[static_cast<unsigned char>(col[y])]) << (bit & 63);
       bit += 2;
     }
   }
@@ -209,9 +209,13 @@ class BoardHistory {
     if (strideFor(n) != stride_) return false;
     uint64_t probe[12];
     packBoard(board, probe, stride_);
-    for (int i = 0; i < count_; ++i) {
-      const uint64_t* entry = words_.data() + static_cast<size_t>(i) * static_cast<size_t>(stride_);
-      if (std::memcmp(entry, probe, sizeof(uint64_t) * static_cast<size_t>(stride_)) == 0) return true;
+    const uint64_t* entry = words_.data();
+    const size_t stride = static_cast<size_t>(stride_);
+    for (int i = 0; i < count_; ++i, entry += stride) {
+      if (entry[0] != probe[0]) continue;
+      size_t w = 1;
+      while (w < stride && entry[w] == probe[w]) ++w;
+      if (w == stride) return true;
     }
     return false;
   }
