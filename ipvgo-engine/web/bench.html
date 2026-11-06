@@ -5,81 +5,159 @@
     <title>IPvGO exploiter bench</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
+      /* Matches the in-game tail UI (src/libraries/scriptLogUi.ts): monospace 12px,
+         #141414 background, 1px translucent-white cell borders, no rounded corners. */
       :root {
         --bg: #141414;
-        --panel: #1c1c1c;
-        --panel-2: #222222;
-        --line: #303030;
-        --text: #d7d7d7;
-        --dim: #8a8a8a;
+        --panel: transparent;
+        --panel-2: rgba(255, 255, 255, 0.06);
+        --line: rgba(255, 255, 255, 0.15);
+        --line-soft: rgba(255, 255, 255, 0.08);
+        --header-bg: rgba(255, 255, 255, 0.04);
+        --selected-bg: rgba(255, 255, 255, 0.06);
+        --active-bg: rgba(0, 255, 0, 0.12);
+        --highlight-bg: rgba(0, 255, 0, 0.18);
+        --text: #cccccc;
+        --dim: #888888;
         --accent: #43bf43;
         --accent-2: #893bc8;
         --warn: #e0b040;
         --bad: #e05555;
       }
       * { box-sizing: border-box; }
+      html { color-scheme: dark; }
+      * { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.25) transparent; }
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 0; }
+      ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.35); }
+      ::-webkit-scrollbar-corner { background: transparent; }
+      input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
+      input[type="number"]::-webkit-inner-spin-button,
+      input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+      select {
+        appearance: none;
+        -webkit-appearance: none;
+        cursor: pointer;
+        padding-right: 2.5ch;
+        background-image: linear-gradient(45deg, transparent 50%, #888 50%), linear-gradient(135deg, #888 50%, transparent 50%);
+        background-position: calc(100% - 9px) 9px, calc(100% - 5px) 9px;
+        background-size: 4px 4px, 4px 4px;
+        background-repeat: no-repeat;
+      }
+      select option { background: #141414; color: #cccccc; }
+      /* Solid equivalent of --active-bg (rgba(0,255,0,0.12)) over #141414; popups cannot use alpha. */
+      select option:checked,
+      select option:hover,
+      select option:focus { background: #113011 linear-gradient(#113011, #113011); color: #cccccc; }
+      .dd { position: relative; width: 110px; }
+      .ddButton {
+        display: block;
+        width: 100%;
+        height: 22px;
+        padding: 0 2.5ch 0 0.5ch;
+        text-align: left;
+        font-weight: normal;
+        background: transparent;
+        border: 1px solid var(--line-soft);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .ddButton::after {
+        content: "";
+        position: absolute;
+        right: 6px;
+        top: 5px;
+        width: 5px;
+        height: 5px;
+        border-right: 1px solid #888;
+        border-bottom: 1px solid #888;
+        transform: rotate(45deg);
+      }
+      .dd.open .ddButton::after { top: 8px; transform: rotate(-135deg); }
+      .dd.open .ddButton { border-color: var(--line); background-color: var(--selected-bg); }
+      .ddList {
+        display: none;
+        position: absolute;
+        z-index: 10;
+        left: 0;
+        min-width: 100%;
+        top: 100%;
+        background: #141414;
+        border: 1px solid var(--line);
+        max-height: 240px;
+        overflow-y: auto;
+      }
+      .dd.open .ddList { display: block; }
+      .ddItem { padding: 0 0.5ch; line-height: 22px; white-space: nowrap; cursor: pointer; }
+      .ddItem:hover { background: var(--selected-bg); }
+      .ddItem.on { background: var(--active-bg); font-weight: bold; }
       body {
         margin: 0;
         background: var(--bg);
         color: var(--text);
-        font-family: "Segoe UI", system-ui, sans-serif;
-        font-size: 13px;
+        font-family: monospace;
+        font-size: 12px;
+        font-variant-emoji: text;
       }
       header {
         display: flex;
         align-items: baseline;
         gap: 14px;
-        padding: 12px 18px;
+        padding: 8px;
         border-bottom: 1px solid var(--line);
       }
-      header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: 0.4px; }
+      header h1 { font-size: 12px; margin: 0; font-weight: bold; }
       header .sub { color: var(--dim); font-size: 12px; }
       .pill {
         margin-left: auto;
-        padding: 3px 10px;
-        border-radius: 999px;
+        padding: 4px 8px;
         border: 1px solid var(--line);
-        background: var(--panel);
+        background: var(--panel-2);
         font-size: 12px;
       }
-      .pill.running { border-color: var(--accent); color: var(--accent); }
-      .pill.finished { border-color: var(--accent); color: var(--accent); }
+      .pill.running { background: var(--active-bg); font-weight: bold; }
+      .pill.finished { background: var(--active-bg); }
       .pill.failed { border-color: var(--bad); color: var(--bad); }
       main {
         display: grid;
         grid-template-columns: minmax(260px, 300px) minmax(0, 1fr) minmax(240px, 320px);
-        gap: 14px;
-        padding: 14px 18px 22px;
+        gap: 8px;
+        padding: 8px;
         align-items: start;
       }
       section {
         background: var(--panel);
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        padding: 12px;
+        padding: 0;
         min-width: 0;
       }
       section h2 {
-        font-size: 11px;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        color: var(--dim);
-        margin: 0 0 10px;
-        font-weight: 600;
+        font-size: 12px;
+        line-height: 16px;
+        margin: 0 0 4px;
+        font-weight: bold;
+        color: var(--text);
       }
-      label.field { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+      section h2::before { content: "=== "; }
+      section h2::after { content: " ==="; }
+      section h2 .dim { font-weight: normal; }
+      label.field { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
       label.field span { color: var(--dim); }
       input, select {
-        background: var(--panel-2);
+        background: transparent;
         color: var(--text);
-        border: 1px solid var(--line);
-        border-radius: 5px;
-        padding: 4px 6px;
+        border: 1px solid var(--line-soft);
+        border-radius: 0;
+        padding: 0 0.5ch;
+        height: 22px;
+        font-family: monospace;
         font-size: 12px;
         width: 110px;
       }
-      .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
-      details#tuning { margin: 2px 0 12px; }
+      input:focus, select:focus { outline: none; border-color: var(--line); background: var(--selected-bg); }
+      .chips { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 8px; }
+      details#tuning { margin: 2px 0 8px; }
       details#tuning > summary {
         cursor: pointer;
         color: var(--dim);
@@ -87,83 +165,91 @@
         padding: 4px 0;
         user-select: none;
       }
-      details#tuning[open] > summary { color: var(--text); margin-bottom: 8px; }
+      details#tuning[open] > summary { color: var(--text); margin-bottom: 4px; }
       details#tuning input { width: 96px; }
       .chip {
         cursor: pointer;
         user-select: none;
-        padding: 4px 9px;
-        border-radius: 999px;
-        border: 1px solid var(--line);
-        background: var(--panel-2);
-        color: var(--dim);
-        font-size: 12px;
-      }
-      .chip.on { border-color: var(--accent); color: var(--accent); background: #1d2a1d; }
-      .buttons { display: flex; gap: 8px; margin-top: 4px; }
-      button {
-        flex: 1;
-        cursor: pointer;
-        border-radius: 6px;
+        padding: 4px 8px;
+        line-height: 16px;
         border: 1px solid var(--line);
         background: var(--panel-2);
         color: var(--text);
-        padding: 7px 10px;
         font-size: 12px;
-        font-weight: 600;
+        opacity: 0.45;
       }
-      button.primary { border-color: var(--accent); color: #d8ffd8; background: #1d2a1d; }
-      button.ghost {
-        margin-left: 10px;
-        padding: 3px 10px;
-        border-radius: 999px;
+      .chip.on { background: var(--active-bg); font-weight: bold; opacity: 1; }
+      .buttons { display: flex; gap: 2px; margin-top: 4px; }
+      button {
+        flex: 1;
+        cursor: pointer;
+        border-radius: 0;
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        color: var(--text);
+        padding: 4px 8px;
+        line-height: 16px;
+        font-family: monospace;
         font-size: 12px;
-        font-weight: 500;
+      }
+      button.primary { background: var(--active-bg); font-weight: bold; }
+      button.ghost {
+        margin-left: 8px;
+        padding: 4px 8px;
+        font-weight: normal;
         flex: 0 0 auto;
       }
       button:disabled { opacity: 0.4; cursor: default; }
-      #boardWrap { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; }
-      #board {
-        display: block;
-        width: 100%;
-        max-width: min(100%, 60vh);
-        aspect-ratio: 1 / 1;
-        height: auto;
-      }
+      #boardWrap { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; width: 100%; }
+      #board { display: inline-block; line-height: 0; overflow-x: auto; max-width: 100%; }
+      .boardRow { display: flex; flex-direction: row; }
+      pre.plain { font-family: monospace; font-size: 12px; line-height: 16px; margin: 0; }
       .tableScroll { overflow-x: auto; }
-      .info { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--dim); font-size: 12px; }
-      .info b { color: var(--text); font-weight: 600; }
+      .info { display: flex; flex-wrap: wrap; gap: 0 16px; line-height: 16px; color: var(--dim); font-size: 12px; }
+      .info b { color: var(--text); font-weight: bold; }
       table { width: 100%; border-collapse: collapse; font-size: 12px; }
-      th, td { padding: 4px 3px; text-align: right; }
-      th { color: var(--dim); font-weight: 500; border-bottom: 1px solid var(--line); }
+      th, td {
+        height: 22px;
+        padding: 0 0.5ch;
+        text-align: right;
+        white-space: nowrap;
+        border: 1px solid var(--line-soft);
+      }
+      th {
+        height: 26px;
+        color: var(--text);
+        font-weight: bold;
+        background: var(--header-bg);
+        border-color: var(--line);
+      }
       th:first-child, td:first-child { text-align: left; }
-      tr.total td { border-top: 1px solid var(--line); color: var(--text); font-weight: 600; }
-      .bar { height: 6px; border-radius: 3px; background: #2b2b2b; overflow: hidden; min-width: 54px; }
+      tr.total td { background: var(--selected-bg); font-weight: bold; }
+      .bar { height: 6px; background: rgba(255, 255, 255, 0.08); overflow: hidden; min-width: 54px; }
       .bar > i { display: block; height: 100%; background: var(--accent); }
       .bar.low > i { background: var(--warn); }
       .bar.bad > i { background: var(--bad); }
       .win { color: var(--accent); }
       .loss { color: var(--bad); }
       #history { list-style: none; margin: 0; padding: 0; }
-      #history li { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; border-bottom: 1px solid #262626; }
+      #history li { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--line-soft); }
       #history li span:first-child { color: var(--dim); }
       /* Expandable game records: the header is the summary, the body the moves. */
       #history li.open { display: block; }
       .gameHead { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 3px 0; }
-      .gameHead:hover { color: var(--fg); }
+      .gameHead:hover { background: var(--selected-bg); }
       .gameHead .caret { color: var(--dim); width: 10px; }
       .gameHead .dim { color: var(--dim); }
       .gameHead span:last-child { margin-left: auto; }
       .gameBody { padding: 4px 0 8px 18px; }
-      .gameBody .small, .small { font-size: 11px; }
+      .gameBody .small, .small { font-size: 12px; }
       .gameBody .dim, .dim { color: var(--dim); }
-      table.moves { width: 100%; font-size: 11px; }
-      table.moves th { text-align: left; font-weight: normal; color: var(--dim); padding: 2px 6px 2px 0; }
-      table.moves td { padding: 2px 6px 2px 0; white-space: nowrap; }
+      table.moves { width: 100%; font-size: 12px; }
+      table.moves th { text-align: left; }
+      table.moves td { white-space: nowrap; }
       table.moves tr.hasBoard { cursor: pointer; }
-      table.moves tr.hasBoard:hover td { background: #262626; }
+      table.moves tr.hasBoard:hover td { background: var(--selected-bg); }
       .err { color: var(--bad); font-size: 12px; white-space: pre-wrap; margin-top: 8px; }
-      .hint { color: var(--dim); font-size: 11px; margin-top: 8px; }
+      .hint { color: var(--dim); font-size: 12px; margin-top: 8px; }
       @media (max-width: 1280px) {
         main { grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); }
         main > section:last-child { grid-column: 1 / -1; }
@@ -171,7 +257,6 @@
       @media (max-width: 860px) {
         main { grid-template-columns: minmax(0, 1fr); }
         main > section:last-child { grid-column: auto; }
-        #board { max-width: 100%; }
       }
     </style>
   </head>
@@ -225,7 +310,7 @@
       <section>
         <h2>Board</h2>
         <div id="boardWrap">
-          <svg id="board" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg"></svg>
+          <div id="board"></div>
           <div class="info" id="info"></div>
         </div>
       </section>
@@ -416,120 +501,100 @@
         }
       }
 
-      // The board must fit the whole stone plus its last-move ring inside the
-      // viewBox, otherwise edge stones are clipped. Padding therefore depends on
-      // the stone size, which depends on the padding: iterate to a fixed point.
-      function boardGeometry(n) {
-        let pad = 6
-        let step = n > 1 ? (100 - pad * 2) / (n - 1) : 100 - pad * 2
-        let stoneR = step * 0.45
-        let ringW = Math.max(step * 0.09, 0.4)
-        let ringR = stoneR + Math.max(step * 0.16, 0.8)
-        for (let i = 0; i < 8; i++) {
-          const needed = ringR + ringW / 2 + 0.6
-          if (pad >= needed) break
-          pad = needed
-          step = n > 1 ? (100 - pad * 2) / (n - 1) : 100 - pad * 2
-          stoneR = step * 0.45
-          ringW = Math.max(step * 0.09, 0.4)
-          ringR = stoneR + Math.max(step * 0.16, 0.8)
+      // The board is drawn the way the in-game tail draws it (src/libraries/ipvgo/
+      // boardSvgs.ts + display.ts): 48px cells, a coordinate row and column,
+      // liberty arms in the owner's colour, and a ring on each side's last move.
+      const CELL_PX = 48
+      const VIEW = 24
+      const CENTER = VIEW / 2
+      const STONE_R = 7
+      const LIBERTY_WHITE = "#893BC8"
+      const LIBERTY_BLACK = "#43BF43"
+      const COLUMN_LETTERS = "ABCDEFGHJKLMNOPQRSTUVWXYZ"
+
+      function cellSvg(children) {
+        return `<svg width="${CELL_PX}" height="${CELL_PX}" viewBox="0 0 ${VIEW} ${VIEW}" style="display:block;flex-shrink:0;overflow:visible">${children.join("")}</svg>`
+      }
+
+      function coordCell(label) {
+        const fontSize = label.length >= 2 ? 9 : 11
+        return cellSvg([
+          `<text x="${CENTER}" y="${CENTER}" text-anchor="middle" dominant-baseline="middle" fill="#888888" font-size="${fontSize}" font-family="monospace">${label}</text>`,
+        ])
+      }
+
+      function boardCellSvg(board, x, y, highlight) {
+        const n = board.length
+        const at = (cx, cy) => (cx >= 0 && cy >= 0 && cx < n && cy < n ? (board[cx][cy] === "X" || board[cx][cy] === "O" || board[cx][cy] === "#" ? board[cx][cy] : ".") : null)
+        // north = y + 1, south = y - 1, as in the game's findNeighbors.
+        const north = at(x, y + 1)
+        const east = at(x + 1, y)
+        const south = at(x, y - 1)
+        const west = at(x - 1, y)
+        const rawCell = board[x]?.[y]
+        const raw = rawCell === "X" || rawCell === "O" || rawCell === "#" ? rawCell : "."
+        const layers = []
+        const line = (x1, y1, x2, y2, color) =>
+          `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="1.2" stroke-linecap="butt" />`
+
+        if (raw === "X" || raw === "O") {
+          const color = raw === "O" ? LIBERTY_WHITE : LIBERTY_BLACK
+          const connects = (cell) => cell === "." || cell === raw
+          const ally = (cell) => cell === raw
+          if (connects(north) && !ally(north)) layers.push(line(CENTER, CENTER, CENTER, 0, color))
+          if (connects(south)) layers.push(line(CENTER, CENTER, CENTER, ally(south) ? CENTER + VIEW : VIEW, color))
+          if (connects(east)) layers.push(line(CENTER, CENTER, ally(east) ? CENTER + VIEW : VIEW, CENTER, color))
+          if (connects(west) && !ally(west)) layers.push(line(CENTER, CENTER, 0, CENTER, color))
+        } else if (raw === ".") {
+          const near = [north, east, south, west]
+          const hasWhite = near.includes("O")
+          const hasBlack = near.includes("X")
+          const color = hasWhite && !hasBlack ? LIBERTY_WHITE : hasBlack && !hasWhite ? LIBERTY_BLACK : "#555555"
+          layers.push(`<circle cx="${CENTER}" cy="${CENTER}" r="1.2" fill="${color}" />`)
         }
-        return {
-          pad,
-          step,
-          span: 100 - pad * 2,
-          stoneR,
-          ringW,
-          ringR,
-          lineW: Math.max(step * 0.05, 0.15),
-          edgeW: Math.max(step * 0.04, 0.12),
-          dotR: Math.max(step * 0.08, 0.25),
-          labelSize: Math.max(step * 0.5, 2),
+
+        if (raw === "X") {
+          layers.push(`<circle cx="${CENTER}" cy="${CENTER}" r="${STONE_R}" fill="#1c1c1c" />`)
+          layers.push(`<circle cx="${CENTER - 2.8}" cy="${CENTER - 2.8}" r="1.5" fill="rgba(255,255,255,0.12)" />`)
+        } else if (raw === "O") {
+          layers.push(`<circle cx="${CENTER}" cy="${CENTER}" r="${STONE_R}" fill="#D1D1D1" stroke="#555555" stroke-width="1.2" />`)
+          layers.push(`<circle cx="${CENTER - 2.8}" cy="${CENTER - 2.8}" r="1.5" fill="#E8E8E8" />`)
+        } else if (raw === "#") {
+          layers.push(`<rect x="5" y="5" width="14" height="14" fill="#2a2a2a" rx="1.5" />`)
+          layers.push(`<line x1="7" y1="7" x2="17" y2="17" stroke="#555" stroke-width="1.2" />`)
+          layers.push(`<line x1="17" y1="7" x2="7" y2="17" stroke="#555" stroke-width="1.2" />`)
         }
+        if (highlight && (raw === "X" || raw === "O")) {
+          const stroke = highlight === "our" ? "#ffffff" : "#bbbbbb"
+          layers.push(`<circle cx="${CENTER}" cy="${CENTER}" r="${STONE_R + 2.5}" fill="none" stroke="${stroke}" stroke-width="1" />`)
+        }
+        return cellSvg(layers)
       }
 
       function drawBoard(board, current, size) {
-        const svg = el("board")
+        const root = el("board")
         if (!board || board.length === 0) {
-          svg.innerHTML = '<text x="50" y="52" fill="#555" font-size="5" text-anchor="middle">no game running</text>'
-          svg.setAttribute("viewBox", "0 0 100 100")
+          root.innerHTML = '<pre class="plain">(no board yet)</pre>'
           return
         }
         const n = board.length
-        const g = boardGeometry(n)
-        const { pad, step, span, stoneR, ringW, ringR, lineW, edgeW, dotR, labelSize } = g
-        const parts = ['<rect x="0" y="0" width="100" height="100" fill="#171717" />']
-        for (let i = 0; i < n; i++) {
-          const p = pad + i * step
-          parts.push(`<line x1="${pad}" y1="${p}" x2="${pad + span}" y2="${p}" stroke="#4a4a4a" stroke-width="${lineW}" />`)
-          parts.push(`<line x1="${p}" y1="${pad}" x2="${p}" y2="${pad + span}" stroke="#4a4a4a" stroke-width="${lineW}" />`)
-        }
-        const starSets = { 19: [3, 9, 15], 13: [3, 6, 9], 9: [2, 4, 6], 7: [3], 5: [] }
-        const stars = starSets[n] || []
-        for (const sx of stars) {
-          for (const sy of stars) {
-            parts.push(
-              `<circle cx="${pad + sx * step}" cy="${pad + (n - 1 - sy) * step}" r="${Math.max(0.4, step * 0.1)}" fill="#4a4a4a" />`
-            )
-          }
-        }
         const parse = (value) => (value && value !== "pass" ? value.split(",").map(Number) : null)
         const lastBlack = current ? parse(current.lastBlack) : null
         const lastWhite = current ? parse(current.lastWhite) : null
-        for (let x = 0; x < n; x++) {
-          for (let y = 0; y < n; y++) {
-            const c = board[x][y]
-            const cx = pad + x * step
-            const cy = pad + (n - 1 - y) * step
-            if (c === "#") {
-              const s = step * 0.8
-              parts.push(`<rect x="${cx - s / 2}" y="${cy - s / 2}" width="${s}" height="${s}" rx="${s * 0.15}" fill="#2a2a2a" />`)
-              parts.push(
-                `<line x1="${cx - s * 0.28}" y1="${cy - s * 0.28}" x2="${cx + s * 0.28}" y2="${cy + s * 0.28}" stroke="#555" stroke-width="${lineW}" />`
-              )
-              parts.push(
-                `<line x1="${cx + s * 0.28}" y1="${cy - s * 0.28}" x2="${cx - s * 0.28}" y2="${cy + s * 0.28}" stroke="#555" stroke-width="${lineW}" />`
-              )
-            } else if (c === "X") {
-              parts.push(
-                `<circle cx="${cx}" cy="${cy}" r="${stoneR}" fill="#0b0b0b" stroke="#6f6f6f" stroke-width="${edgeW}" />`
-              )
-            } else if (c === "O") {
-              parts.push(
-                `<circle cx="${cx}" cy="${cy}" r="${stoneR}" fill="#e8e8e8" stroke="#8f8f8f" stroke-width="${edgeW}" />`
-              )
-            } else {
-              parts.push(`<circle cx="${cx}" cy="${cy}" r="${dotR}" fill="#555" />`)
-            }
-          }
+        const highlightAt = (x, y) =>
+          lastBlack && lastBlack[0] === x && lastBlack[1] === y
+            ? "our"
+            : lastWhite && lastWhite[0] === x && lastWhite[1] === y
+              ? "opp"
+              : null
+        const rows = [`<div class="boardRow">${cellSvg([])}${Array.from({ length: n }, (_, x) => coordCell(COLUMN_LETTERS[x] ?? String(x))).join("")}</div>`]
+        // y = 0 is the bottom row, so the top row is y = n - 1 (A.5 top-left on 5x5).
+        for (let row = 0; row < n; row++) {
+          const y = n - 1 - row
+          const cells = Array.from({ length: n }, (_, x) => boardCellSvg(board, x, y, highlightAt(x, y)))
+          rows.push(`<div class="boardRow">${coordCell(String(y + 1))}${cells.join("")}</div>`)
         }
-        if (lastBlack) {
-          parts.push(
-            `<circle cx="${pad + lastBlack[0] * step}" cy="${pad + (n - 1 - lastBlack[1]) * step}" r="${ringR}" fill="none" stroke="#43bf43" stroke-width="${ringW}" />`
-          )
-        }
-        if (lastWhite) {
-          parts.push(
-            `<circle cx="${pad + lastWhite[0] * step}" cy="${pad + (n - 1 - lastWhite[1]) * step}" r="${ringR}" fill="none" stroke="#893bc8" stroke-width="${ringW}" />`
-          )
-        }
-        if (lastBlack) {
-          const lx = pad + lastBlack[0] * step
-          const ly = pad + (n - 1 - lastBlack[1]) * step
-          parts.push(
-            `<text x="${lx}" y="${ly}" fill="#67e867" font-size="${labelSize}" font-weight="600" text-anchor="middle" dominant-baseline="central">B</text>`
-          )
-        }
-        if (lastWhite) {
-          const lx = pad + lastWhite[0] * step
-          const ly = pad + (n - 1 - lastWhite[1]) * step
-          parts.push(
-            `<text x="${lx}" y="${ly}" fill="#a85cf0" font-size="${labelSize}" font-weight="600" text-anchor="middle" dominant-baseline="central">W</text>`
-          )
-        }
-        svg.setAttribute("viewBox", "0 0 100 100")
-        svg.setAttribute("preserveAspectRatio", "xMidYMid meet")
-        svg.innerHTML = parts.join("")
+        root.innerHTML = rows.join("")
       }
 
       function renderInfo(s) {
@@ -1014,6 +1079,56 @@
         updateBudgetLabel()
         saveForm()
       })
+
+      // Native select popups are drawn by the browser and ignore our colours,
+      // so each select is hidden and mirrored by a styled dropdown.
+      function enhanceSelect(select) {
+        const nativeValue = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")
+        const wrap = document.createElement("div")
+        wrap.className = "dd"
+        const button = document.createElement("button")
+        button.type = "button"
+        button.className = "ddButton"
+        const list = document.createElement("div")
+        list.className = "ddList"
+        wrap.append(button, list)
+        select.style.display = "none"
+        select.after(wrap)
+
+        const refresh = () => {
+          const current = select.options[select.selectedIndex]
+          button.textContent = current ? current.textContent : ""
+          for (const item of list.children) item.classList.toggle("on", item.dataset.value === select.value)
+        }
+        for (const option of select.options) {
+          const item = document.createElement("div")
+          item.className = "ddItem"
+          item.dataset.value = option.value
+          item.textContent = option.textContent
+          item.addEventListener("click", () => {
+            wrap.classList.remove("open")
+            if (select.value === option.value) return
+            select.value = option.value
+            select.dispatchEvent(new Event("change", { bubbles: true }))
+          })
+          list.appendChild(item)
+        }
+        Object.defineProperty(select, "value", {
+          get() {
+            return nativeValue.get.call(this)
+          },
+          set(v) {
+            nativeValue.set.call(this, v)
+            refresh()
+          },
+        })
+        button.addEventListener("click", () => wrap.classList.toggle("open"))
+        document.addEventListener("click", (e) => {
+          if (!wrap.contains(e.target)) wrap.classList.remove("open")
+        })
+        refresh()
+      }
+      for (const select of document.querySelectorAll("select")) enhanceSelect(select)
 
       applyForm(loadForm())
       renderFactionChips()
