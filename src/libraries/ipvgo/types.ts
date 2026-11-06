@@ -26,8 +26,12 @@ export type IpvgoMoveRequest = {
 
 export type IpvgoMoveResponse = {
   move: IpvgoMove
-  iterations: number
+  /** Older engines reported iterations; the exploiter reports nodes. */
+  iterations?: number
+  nodes?: number
   elapsedMs: number
+  /** The answer was computed while the opponent was still replying. */
+  ponderHit?: boolean
 }
 
 export const IPVGO_BOARD_SIZES = [5, 7, 9, 13] as const

@@ -2,6 +2,7 @@ import { NS, type GoOpponent } from "@ns"
 import { killOtherInstances } from "./libraries/batchCalculations.js"
 import {
   isIpvgoEngineAvailable,
+  ponderIpvgoEngine,
   requestIpvgoEngineMoveInterruptible,
 } from "./libraries/ipvgo/engineClient.js"
 import {
@@ -626,7 +627,7 @@ export async function main(ns: NS): Promise<void> {
           continue gameLoop
         }
         thinkMs = performance.now() - started
-        sims = analysis.iterations
+        sims = analysis.nodes ?? analysis.iterations ?? 0
 
         const suggested = analysis.move
         move = pickLegalMove(validMoves, suggested)
@@ -652,6 +653,20 @@ export async function main(ns: NS): Promise<void> {
       if (move.type === "pass") {
         result = await ns.go.passTurn()
       } else {
+        // The game takes a while to answer; let the engine use that time.
+        ponderIpvgoEngine(
+          {
+            board,
+            history,
+            komi,
+            iterations: snapshot.iterations,
+            playAs: "X",
+            validMoves,
+            opponent: snapshot.opponent,
+            threads: 0,
+          },
+          move
+        )
         ns.go.analysis.highlightPoint(move.x, move.y, "hack", "MCTS")
         result = await ns.go.makeMove(move.x, move.y)
         ns.go.analysis.clearAllPointHighlights()

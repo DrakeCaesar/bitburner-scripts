@@ -799,6 +799,16 @@ async function requestExploitMove(body) {
   }
 }
 
+async function requestExploitPonder(body) {
+  const gameKey = JSON.stringify({ opponent: body.opponent ?? null, size: body.board?.length ?? null })
+  if (engineGameKey !== gameKey) {
+    stopEngine()
+    engineGameKey = gameKey
+  }
+  // Speculation only: no one-shot fallback, a failed ponder just means no head start.
+  return requestServeMove(body, 10_000)
+}
+
 async function requestNativeMove(body) {
   const exe = nativeExecutablePath()
   if (!fs.existsSync(exe)) {
@@ -898,6 +908,14 @@ async function handleMove(req, res) {
   }
 
   try {
+    if (body?.ponder) {
+      if (engine !== "exploit") return sendJson(res, 200, { ponder: "unsupported" })
+      try {
+        return sendJson(res, 200, await requestExploitPonder(body))
+      } catch (err) {
+        return sendJson(res, 200, { ponder: "failed", error: err.message })
+      }
+    }
     const result =
       engine === "mcgs"
         ? await requestMcgsMove(body)
