@@ -152,20 +152,28 @@ void computeChainsInto(const SimpleBoard& board, ChainSet& cs) {
     }
   }
 
-  // Liberties: unique empty neighbors of each chain.
+  // Liberties: unique empty neighbors of each chain. A thread-local stamp array
+  // tagged with a per-call base replaces clearing a fresh array on every call.
   cs.libertyOffsets[0] = 0;
-  std::array<int, ChainSet::kMaxPoints> seenTag;
-  for (int i = 0; i < points; ++i) seenTag[static_cast<size_t>(i)] = -1;
+  static thread_local std::array<uint32_t, ChainSet::kMaxPoints> seenTag{};
+  static thread_local uint32_t tagBase = 0;
+  if (tagBase > 0xFFFF0000u) {
+    seenTag.fill(0);
+    tagBase = 0;
+  }
+  const uint32_t base = tagBase + 1;
+  tagBase += static_cast<uint32_t>(cs.count);
   int libertyCount = 0;
   for (int c = 0; c < cs.count; ++c) {
+    const uint32_t tag = base + static_cast<uint32_t>(c);
     for (const int idx : cs.members(c)) {
       const int nbCount = neighbors.count[static_cast<size_t>(idx)];
       const auto& nbIdx = neighbors.idx[static_cast<size_t>(idx)];
       for (int k = 0; k < nbCount; ++k) {
         const int nIdx = nbIdx[static_cast<size_t>(k)];
         if (cells[nIdx] != '.') continue;
-        if (seenTag[static_cast<size_t>(nIdx)] == c) continue;
-        seenTag[static_cast<size_t>(nIdx)] = c;
+        if (seenTag[static_cast<size_t>(nIdx)] == tag) continue;
+        seenTag[static_cast<size_t>(nIdx)] = tag;
         cs.libertyData[static_cast<size_t>(libertyCount++)] = nIdx;
       }
     }

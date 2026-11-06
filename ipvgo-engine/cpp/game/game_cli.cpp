@@ -29,6 +29,7 @@
 //       Exploiter vs every faction with a live terminal view (board, win table).
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -38,6 +39,7 @@
 #include <random>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -704,10 +706,12 @@ int pickExploitAction(const ExploitResult& result, int N, const json& req) {
 // Computes one Black move from a game request. Shared by `exploitmove` (one
 // process per move) and `serve` (one process for a whole game or session, which
 // is what lets the search reuse positions from earlier moves).
-json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session) {
+json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session,
+                            const std::atomic<bool>* cancel = nullptr) {
   // A new game restarts the move history, so a history that shrank since the last
-  // request means the cached positions belong to a game that is over.
-  if (session != nullptr && req.contains("history") && req.at("history").is_array()) {
+  // request means the cached positions belong to a game that is over. Speculative
+  // (cancellable) searches must not move that marker.
+  if (session != nullptr && cancel == nullptr && req.contains("history") && req.at("history").is_array()) {
     session->noteRequest(req.at("history").size());
   }
   GameState state = stateFromRequest(req);
@@ -732,9 +736,11 @@ json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session) 
   cfg.nodeLimit = req.value("nodeLimit", 0L);
   if (cfg.nodeLimit <= 0) cfg.nodeLimit = req.value("iterations", 0L);
   if (cfg.nodeLimit > 0) cfg.budgetMs = 0;
+  cfg.cancel = cancel;
 
   const auto t0 = std::chrono::steady_clock::now();
   const ExploitResult result = runExploiter(state, cfg, nullptr, session);
+  if (result.cancelled) return json{{"cancelled", true}};
   const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 
   const int action = pickExploitAction(result, state.size, req);
@@ -777,11 +783,143 @@ int runExploitMove(const std::string& inPath, const std::string& outPath) {
   return 0;
 }
 
+// ---- pondering ---------------------------------------------------------------
+//
+// The game pads White's reply with a delay, and the opponent policy itself is
+// instant, so the engine is idle for most of that wait. A "ponder" request tells
+// it which move Black just played; it then searches the position after each of
+// White's likeliest replies and keeps the answers. When the real request for the
+// position that actually arose comes in, an identical search is already finished.
+//
+// The speculative request is built the way the game would report the position
+// (newest history entry first, no passCount), so its position key matches the
+// key of the real request exactly.
+
+json boardToJson(const SimpleBoard& board) {
+  json out = json::array();
+  const int n = static_cast<int>(board.size());
+  for (int x = 0; x < n; ++x) out.push_back(std::string(board.column(x), static_cast<size_t>(n)));
+  return out;
+}
+
+// Everything in a request, other than the position, that changes what the search returns.
+std::string searchConfigKey(const json& req) {
+  static const char* const fields[] = {"depth",          "maxDepth",       "beam",         "whiteChildren",
+                                       "whiteMass",      "endgameEmpties", "nodeBudget",   "threads",
+                                       "budgetMs",       "whiteWorstCase", "endgameApprox", "adaptiveWidth",
+                                       "nodeLimit",      "iterations",     "opponent",     "komi",
+                                       "playAs"};
+  json key = json::object();
+  for (const char* field : fields) {
+    if (req.contains(field)) key[field] = req.at(field);
+  }
+  return key.dump();
+}
+
+uint64_t ponderKey(const json& req) {
+  const GameState state = stateFromRequest(req);
+  return ipvgo::nn::fnv1a64(ipvgo::nn::positionKey(state),
+                            static_cast<uint64_t>(std::hash<std::string>{}(searchConfigKey(req))));
+}
+
+bool servedMoveAllowed(const json& req, const json& served) {
+  const json& move = served.at("move");
+  if (move.value("type", "") != "move") return true;
+  const int N = static_cast<int>(req.at("board").size());
+  return actionAllowed(req, N, move.at("x").get<int>() * N + move.at("y").get<int>());
+}
+
+class Ponderer {
+ public:
+  explicit Ponderer(ipvgo::nn::SearchSession* session) : session_(session) {}
+  ~Ponderer() { stop(); }
+
+  // Results are only touched by the worker while it runs, so they are read after stop().
+  std::unordered_map<uint64_t, json> results;
+
+  void start(const json& req) {
+    stop();
+    results.clear();
+    worker_ = std::thread([this, req] {
+      try {
+        run(req);
+      } catch (const std::exception&) {
+        // Speculation is best effort; the real request recomputes anything missing.
+      }
+    });
+  }
+
+  void stop() {
+    if (worker_.joinable()) {
+      cancel_.store(true);
+      worker_.join();
+    }
+    cancel_.store(false);
+  }
+
+ private:
+  void run(const json& req) {
+    const GameState state = stateFromRequest(req);
+    if (whoseTurn(state) != Color::Black) return;
+
+    const json& ourMove = req.at("ourMove");
+    const bool blackMoved = ourMove.value("type", "") == "move";
+    GameState afterBlack = state;
+    if (blackMoved) {
+      if (!makeMove(afterBlack, ourMove.at("x").get<int>(), ourMove.at("y").get<int>(), Color::Black)) return;
+    } else {
+      passTurn(afterBlack, Color::Black);
+    }
+    if (afterBlack.gameOver || whoseTurn(afterBlack) != Color::White) return;
+
+    const ipvgo::game::ReplyDist dist = opponentReplyDistribution(afterBlack, Color::White, afterBlack.ai);
+    const int maxReplies = req.value("ponderReplies", 4);
+    const double massGoal = req.value("ponderMass", 0.95);
+    double mass = 0.0;
+    int considered = 0;
+    for (const auto& reply : dist.replies) {
+      if (cancel_.load() || considered >= maxReplies || mass >= massGoal) return;
+      mass += reply.prob;
+      ++considered;
+      if (reply.passMove) continue;
+      GameState afterWhite = afterBlack;
+      if (!makeMove(afterWhite, reply.x, reply.y, Color::White)) continue;
+
+      // The game stores the board from before each move, newest first.
+      json history = json::array();
+      history.push_back(boardToJson(afterBlack.board));
+      if (blackMoved) history.push_back(boardToJson(state.board));
+      if (req.contains("history")) {
+        for (const auto& entry : req.at("history")) history.push_back(entry);
+      }
+
+      json next = req;
+      for (const char* field : {"ponder", "ourMove", "validMoves", "passCount", "requestId"}) next.erase(field);
+      next["board"] = boardToJson(afterWhite.board);
+      next["history"] = std::move(history);
+
+      json out = computeExploitMoveJson(next, session_, &cancel_);
+      if (out.contains("cancelled")) return;
+      if (out.contains("error")) continue;
+      out["ponder"] = true;
+      out["replyProb"] = reply.prob;
+      results[ponderKey(next)] = std::move(out);
+    }
+  }
+
+  ipvgo::nn::SearchSession* session_;
+  std::atomic<bool> cancel_{false};
+  std::thread worker_;
+};
+
 // One long-lived engine: reads one JSON request per line and answers on one line,
 // keeping the search session alive so positions solved for an earlier move are
-// not solved again. Requests may carry an "id" that is echoed back.
+// not solved again. Requests may carry an "id" that is echoed back. A request
+// with "ponder": true is acknowledged at once and searched in the background
+// until the next request arrives.
 int runEngineServer() {
   ipvgo::nn::SearchSession session;
+  Ponderer ponderer(&session);
   std::ios::sync_with_stdio(false);
   std::string line;
   while (std::getline(std::cin, line)) {
@@ -795,10 +933,31 @@ int runEngineServer() {
       continue;
     }
     json out;
-    try {
-      out = computeExploitMoveJson(req, &session);
-    } catch (const std::exception& err) {
-      out = json{{"error", std::string("search failed: ") + err.what()}};
+    if (req.value("ponder", false)) {
+      ponderer.start(req);
+      out = json{{"ponder", "started"}};
+    } else {
+      ponderer.stop();
+      try {
+        const auto hit = ponderer.results.find(ponderKey(req));
+        if (hit != ponderer.results.end() && servedMoveAllowed(req, hit->second)) {
+          out = hit->second;
+          out["ponderHit"] = true;
+          if (req.contains("history") && req.at("history").is_array()) {
+            session.noteRequest(req.at("history").size());
+          }
+        }
+      } catch (const std::exception&) {
+        out = json();
+      }
+      ponderer.results.clear();
+      if (out.is_null()) {
+        try {
+          out = computeExploitMoveJson(req, &session);
+        } catch (const std::exception& err) {
+          out = json{{"error", std::string("search failed: ") + err.what()}};
+        }
+      }
     }
     if (req.contains("id")) out["id"] = req["id"];
     std::cout << out.dump() << "\n";

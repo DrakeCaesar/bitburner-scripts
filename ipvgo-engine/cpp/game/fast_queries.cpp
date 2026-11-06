@@ -70,27 +70,30 @@ int walkChain(const SimpleBoard& board, int start, char stone, uint32_t visitGen
   const int N = static_cast<int>(board.size());
   const NeighborTable nt = neighborTable(N);
   const char* cells = board.flat();
+  uint32_t* visited = scratch.visited.data();
+  uint32_t* added = scratch.added.data();
   liberties.clear();
-  scratch.stack.clear();
-  scratch.stack.push_back(start);
-  scratch.visited[static_cast<size_t>(start)] = visitGen;
+  // A chain holds at most every point of the board once.
+  int stack[ChainSet::kMaxPoints];
+  int top = 0;
+  stack[top++] = start;
+  visited[start] = visitGen;
   int stones = 0;
-  while (!scratch.stack.empty()) {
-    const int idx = scratch.stack.back();
-    scratch.stack.pop_back();
+  while (top > 0) {
+    const int idx = stack[--top];
     ++stones;
     const int nbCount = nt.count[idx];
-    const auto& nbIdx = nt.idx[idx];
+    const int* nbIdx = nt.idx[idx].data();
     for (int k = 0; k < nbCount; ++k) {
       const int nIdx = nbIdx[k];
       const char c = cells[nIdx];
       if (c == '.') {
-        if (scratch.added[static_cast<size_t>(nIdx)] == addGen) continue;
-        scratch.added[static_cast<size_t>(nIdx)] = addGen;
+        if (added[nIdx] == addGen) continue;
+        added[nIdx] = addGen;
         liberties.push_back(nIdx);
-      } else if (c == stone && scratch.visited[static_cast<size_t>(nIdx)] != visitGen) {
-        scratch.visited[static_cast<size_t>(nIdx)] = visitGen;
-        scratch.stack.push_back(nIdx);
+      } else if (c == stone && visited[nIdx] != visitGen) {
+        visited[nIdx] = visitGen;
+        stack[top++] = nIdx;
       }
     }
   }

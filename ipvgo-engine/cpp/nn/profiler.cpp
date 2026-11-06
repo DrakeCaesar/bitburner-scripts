@@ -1,4 +1,4 @@
-﻿// In-process profiler for the search, built into ipvgo_game for the profiling
+// In-process profiler for the search, built into ipvgo_game for the profiling
 // configuration only (RelWithDebInfo / x64-Profile, which defines IPVGO_PROFILER).
 // The Visual Studio / ETW CPU profiler needs an elevated session; this runs
 // unprivileged by looking at its own process instead.
@@ -520,7 +520,7 @@ int runProfiler(int argc, char** argv) {
   for (auto& [key, count] : edges) edgeRows.emplace_back(count, key);
   std::sort(edgeRows.rbegin(), edgeRows.rend());
   std::printf("\n== hottest caller -> callee edges ==\n  %7s %8s  %s\n", "pct", "count", "edge");
-  for (size_t i = 0; i < edgeRows.size() && i < 22; ++i) {
+  for (size_t i = 0; i < edgeRows.size() && i < 400; ++i) {
     std::printf("  %6.1f%% %8lld  %s -> %s\n", 100.0 * static_cast<double>(edgeRows[i].first) / total,
                 edgeRows[i].first, edgeRows[i].second.first.c_str(), edgeRows[i].second.second.c_str());
   }
