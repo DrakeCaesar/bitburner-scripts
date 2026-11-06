@@ -39,6 +39,7 @@
 #include <vector>
 
 #include "exploiter.hpp"
+#include "fast_alloc.hpp"
 #include "game_engine.hpp"
 #include "go_game.hpp"
 #include "opponents.hpp"
@@ -81,8 +82,7 @@ int siteIndex(void* caller) {
 }
 
 void* hookAlloc(size_t size, void* caller) {
-  void* p = std::malloc(size ? size : 1);
-  if (p == nullptr) throw std::bad_alloc();
+  void* p = ipvgo::fastalloc::allocate(size);
   if (g_countAllocs.load(std::memory_order_relaxed) && !t_inHook) {
     t_inHook = true;
     g_allocCount.fetch_add(1, std::memory_order_relaxed);
@@ -100,7 +100,7 @@ void* hookAlloc(size_t size, void* caller) {
 void hookFree(void* p) {
   if (p == nullptr) return;
   if (g_countAllocs.load(std::memory_order_relaxed)) g_freeCount.fetch_add(1, std::memory_order_relaxed);
-  std::free(p);
+  ipvgo::fastalloc::release(p);
 }
 
 }  // namespace
@@ -169,68 +169,109 @@ bool inMainModule(DWORD64 addr) { return addr >= g_moduleBase && addr < g_module
 std::atomic<bool> g_sampling{false};
 std::vector<std::vector<DWORD64>> g_samples;
 std::mutex g_samplesMutex;
+std::atomic<long long> g_diagRounds{0}, g_diagCalls{0}, g_diagCallNs{0}, g_diagSuspendNs{0}, g_diagThreads{0};
 
-BOOL CALLBACK readProcess(HANDLE, DWORD64 base, PVOID buffer, DWORD size, LPDWORD read) {
-  SIZE_T bytes = 0;
-  const BOOL ok = ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<LPCVOID>(base), buffer, size, &bytes);
-  *read = static_cast<DWORD>(bytes);
-  return ok;
-}
-
-void sampleThread(HANDLE thread) {
-  if (SuspendThread(thread) == static_cast<DWORD>(-1)) return;
+// Takes one sample of `thread`; returns true when the stack contains engine code.
+bool sampleThread(HANDLE thread) {
+  const auto t0 = std::chrono::steady_clock::now();
+  if (SuspendThread(thread) == static_cast<DWORD>(-1)) return false;
+  const auto t1 = std::chrono::steady_clock::now();
+  g_diagSuspendNs += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+  ++g_diagCalls;
+  bool inEngine = false;
   CONTEXT ctx{};
   ctx.ContextFlags = CONTEXT_FULL;
   if (GetThreadContext(thread, &ctx)) {
-    STACKFRAME64 frame{};
-    frame.AddrPC.Offset = ctx.Rip;
-    frame.AddrPC.Mode = AddrModeFlat;
-    frame.AddrStack.Offset = ctx.Rsp;
-    frame.AddrStack.Mode = AddrModeFlat;
-    frame.AddrFrame.Offset = ctx.Rbp;
-    frame.AddrFrame.Mode = AddrModeFlat;
-
+    // Unwind with the table-driven RtlVirtualUnwind instead of StackWalk64: it
+    // needs no symbol lookups, which makes a sample cheap enough to take at ~1 kHz.
     std::vector<DWORD64> stack;
-    stack.reserve(48);
-    for (int depth = 0; depth < 48; ++depth) {
-      if (!StackWalk64(IMAGE_FILE_MACHINE_AMD64, GetCurrentProcess(), thread, &frame, &ctx, readProcess,
-                       SymFunctionTableAccess64, SymGetModuleBase64, nullptr)) {
-        break;
+    stack.reserve(64);
+    for (int depth = 0; depth < 64 && ctx.Rip != 0; ++depth) {
+      stack.push_back(ctx.Rip);
+      if (inMainModule(ctx.Rip)) inEngine = true;
+      DWORD64 imageBase = 0;
+      UNWIND_HISTORY_TABLE history{};
+      PRUNTIME_FUNCTION entry = RtlLookupFunctionEntry(ctx.Rip, &imageBase, &history);
+      if (entry == nullptr) {
+        // Leaf function without unwind data: the return address is at the top of the stack.
+        ctx.Rip = *reinterpret_cast<DWORD64*>(ctx.Rsp);
+        ctx.Rsp += 8;
+      } else {
+        void* handlerData = nullptr;
+        DWORD64 establisher = 0;
+        RtlVirtualUnwind(UNW_FLAG_NHANDLER, imageBase, ctx.Rip, entry, &ctx, &handlerData, &establisher, nullptr);
       }
-      if (frame.AddrPC.Offset == 0) break;
-      stack.push_back(frame.AddrPC.Offset);
     }
-    if (stack.size() > 200) stack.resize(200);
-    if (!stack.empty()) {
+    if (inEngine) {
       std::lock_guard<std::mutex> lock(g_samplesMutex);
       g_samples.push_back(std::move(stack));
     }
   }
   ResumeThread(thread);
+  g_diagCallNs += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
+  return inEngine;
 }
+
+struct SampledThread {
+  DWORD id = 0;
+  HANDLE handle = nullptr;
+  int misses = 0;  // consecutive samples with no engine frame (idle system threads)
+};
 
 DWORD WINAPI samplerLoop(void*) {
   const DWORD pid = GetCurrentProcessId();
   const DWORD self = GetCurrentThreadId();
+  // A process-wide thread snapshot costs milliseconds, far more than walking one
+  // stack, so the thread list is refreshed only occasionally.
+  std::vector<SampledThread> threads;
+  auto lastRefresh = std::chrono::steady_clock::now() - std::chrono::seconds(1);
+  unsigned long long round = 0;
   while (g_sampling.load(std::memory_order_relaxed)) {
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-    if (snapshot != INVALID_HANDLE_VALUE) {
-      THREADENTRY32 entry{};
-      entry.dwSize = sizeof(entry);
-      if (Thread32First(snapshot, &entry)) {
-        do {
-          if (entry.th32OwnerProcessID != pid || entry.th32ThreadID == self) continue;
-          HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE,
-                                     entry.th32ThreadID);
-          if (thread == nullptr) continue;
-          sampleThread(thread);
-          CloseHandle(thread);
-        } while (Thread32Next(snapshot, &entry));
+    const auto now = std::chrono::steady_clock::now();
+    if (now - lastRefresh > std::chrono::milliseconds(500)) {
+      lastRefresh = now;
+      std::vector<SampledThread> fresh;
+      HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+      if (snapshot != INVALID_HANDLE_VALUE) {
+        THREADENTRY32 entry{};
+        entry.dwSize = sizeof(entry);
+        if (Thread32First(snapshot, &entry)) {
+          do {
+            if (entry.th32OwnerProcessID != pid || entry.th32ThreadID == self) continue;
+            // Keep the existing handle (and its miss count) for threads already known.
+            const auto known = std::find_if(threads.begin(), threads.end(), [&](const SampledThread& t) {
+              return t.id == entry.th32ThreadID;
+            });
+            if (known != threads.end()) {
+              fresh.push_back(*known);
+              known->handle = nullptr;
+              continue;
+            }
+            HANDLE handle = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION,
+                                       FALSE, entry.th32ThreadID);
+            if (handle != nullptr) fresh.push_back({entry.th32ThreadID, handle, 0});
+          } while (Thread32Next(snapshot, &entry));
+        }
+        CloseHandle(snapshot);
       }
-      CloseHandle(snapshot);
+      for (SampledThread& t : threads) {
+        if (t.handle != nullptr) CloseHandle(t.handle);
+      }
+      threads = std::move(fresh);
     }
-    Sleep(1);
+    ++round;
+    ++g_diagRounds;
+    g_diagThreads = static_cast<long long>(threads.size());
+    for (SampledThread& t : threads) {
+      // Idle system threads never run engine code; re-check them only now and then.
+      if (t.misses >= 8 && (round & 255) != 0) continue;
+      t.misses = sampleThread(t.handle) ? 0 : t.misses + 1;
+    }
+    // Sleep(1) can round up to ~15 ms for a windowless process, so spin instead.
+    const auto resume = std::chrono::steady_clock::now() + std::chrono::microseconds(200);
+    while (std::chrono::steady_clock::now() < resume) YieldProcessor();
   }
+  for (SampledThread& t : threads) CloseHandle(t.handle);
   return 0;
 }
 
@@ -373,6 +414,10 @@ int runProfiler(int argc, char** argv) {
     WaitForSingleObject(sampler, 5000);
     CloseHandle(sampler);
   }
+  std::printf("sampler diag: %lld rounds, %lld thread samples, %lld threads, suspend %.0f us avg, sample %.0f us avg\n",
+              g_diagRounds.load(), g_diagCalls.load(), g_diagThreads.load(),
+              g_diagCalls ? g_diagSuspendNs / 1000.0 / g_diagCalls : 0.0,
+              g_diagCalls ? g_diagCallNs / 1000.0 / g_diagCalls : 0.0);
   std::printf("\nsampled gameplay: %ld moves, %ld nodes, %.0f ms, %zu samples (%.0f us/sample-equivalent)\n",
               sampledMoves, sampledNodes, cpuMs, g_samples.size(),
               g_samples.empty() ? 0.0 : 1000.0 * cpuMs / static_cast<double>(g_samples.size()));
@@ -412,6 +457,7 @@ int runProfiler(int argc, char** argv) {
   std::map<std::string, long long> inclusive;
   std::map<std::string, long long> lineExclusive;  // "file:line  (function)"
   std::map<std::pair<std::string, std::string>, long long> edges;
+  std::map<std::string, long long> allocSites;  // callers that reach the allocator
   long long used = 0;
   for (const auto& stack : g_samples) {
     std::vector<std::string> names;
@@ -423,6 +469,19 @@ int runProfiler(int argc, char** argv) {
     }
     if (names.empty()) continue;
     ++used;
+    for (size_t i = 0; i < names.size(); ++i) {
+      if (names[i].find("hookAlloc") == std::string::npos) continue;
+      // First caller above the allocator and the std:: container internals.
+      for (size_t j = i + 1; j < names.size(); ++j) {
+        if (names[j].rfind("std::", 0) == 0 || names[j].find("operator new") != std::string::npos) continue;
+        const Sym& site = resolve(addrs[j]);
+        char key[512];
+        std::snprintf(key, sizeof(key), "%s:%d  (%s)", site.file.c_str(), site.line, site.name.c_str());
+        ++allocSites[key];
+        break;
+      }
+      break;
+    }
     ++exclusive[names[0]];
     {
       const Sym& leaf = resolve(addrs[0]);
@@ -455,6 +514,7 @@ int runProfiler(int argc, char** argv) {
   print("exclusive (leaf) cost", exclusive, 24);
   print("inclusive cost", inclusive, 30);
   print("hottest source lines (exclusive leaf)", lineExclusive, 34);
+  print("allocation call sites (time inside the allocator)", allocSites, 25);
 
   std::vector<std::pair<long long, std::pair<std::string, std::string>>> edgeRows;
   for (auto& [key, count] : edges) edgeRows.emplace_back(count, key);

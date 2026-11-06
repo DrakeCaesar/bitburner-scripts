@@ -869,7 +869,7 @@ class PolicyWalker {
  public:
   PolicyWalker(const PolicyModel& model, MoveGen& gen) : model_(model), gen_(gen) {}
 
-  std::vector<ActMass> resolve(Opponent opponent, double factionRng) {
+  const std::vector<ActMass>& resolve(Opponent opponent, double factionRng) {
     out_.clear();
     switch (opponent) {
       case Opponent::Netburners: netburners(1.0, factionRng); break;
@@ -991,41 +991,74 @@ class PolicyWalker {
   std::vector<ActMass> out_;
 };
 
-void spreadUniform(std::unordered_map<int, double>& mass, int N, const std::vector<Pt>& points, double m) {
+// Dense per-board mass accumulator; the backing storage is reused across calls.
+class MassMap {
+ public:
+  explicit MassMap(int cells) : values_(scratchValues()), touched_(scratchTouched()) {
+    if (static_cast<int>(values_.size()) < cells) values_.assign(static_cast<size_t>(cells), 0.0);
+    touched_.clear();
+  }
+  ~MassMap() {
+    for (const int idx : touched_) values_[static_cast<size_t>(idx)] = 0.0;
+  }
+  MassMap(const MassMap&) = delete;
+  MassMap& operator=(const MassMap&) = delete;
+
+  void add(int idx, double m) {
+    double& slot = values_[static_cast<size_t>(idx)];
+    if (slot == 0.0) touched_.push_back(idx);
+    slot += m;
+  }
+  const std::vector<int>& indices() const { return touched_; }
+  double at(int idx) const { return values_[static_cast<size_t>(idx)]; }
+
+ private:
+  static std::vector<double>& scratchValues() {
+    thread_local std::vector<double> v;
+    return v;
+  }
+  static std::vector<int>& scratchTouched() {
+    thread_local std::vector<int> t;
+    return t;
+  }
+  std::vector<double>& values_;
+  std::vector<int>& touched_;
+};
+
+void spreadUniform(MassMap& mass, int N, const std::vector<Pt>& points, double m) {
   if (points.empty() || m <= 0.0) return;
   const double each = m / static_cast<double>(points.size());
-  for (const auto& [x, y] : points) mass[flatIndex(N, x, y)] += each;
+  for (const auto& [x, y] : points) mass.add(flatIndex(N, x, y), each);
 }
 
 // getMove()'s post-priority fallback: one uniform index over the valid slots of
 // [growth, surround, defend, expansion, pattern, eyeMove, eyeBlock], where the
 // pool slots still pick uniformly inside their pool.
-void accumulateFallback(std::unordered_map<int, double>& mass, double& passMass, const PolicyModel& model, int N,
-                        double m) {
-  std::vector<std::vector<Pt>> slots;
-  if (!model.growth.empty()) slots.push_back(model.growth);
-  if (model.hasSurround) slots.push_back({model.surround});
-  if (!model.defend.empty()) slots.push_back(model.defend);
-  if (!model.expansion.empty()) slots.push_back(model.expansion);
-  if (!model.pattern.empty()) slots.push_back(model.pattern);
-  if (model.hasEye) slots.push_back({model.eye});
-  if (model.hasBlock) slots.push_back({model.block});
-
-  if (slots.empty()) {
+void accumulateFallback(MassMap& mass, double& passMass, const PolicyModel& model, int N, double m) {
+  const int slots = (model.growth.empty() ? 0 : 1) + (model.hasSurround ? 1 : 0) + (model.defend.empty() ? 0 : 1) +
+                    (model.expansion.empty() ? 0 : 1) + (model.pattern.empty() ? 0 : 1) + (model.hasEye ? 1 : 0) +
+                    (model.hasBlock ? 1 : 0);
+  if (slots == 0) {
     passMass += m;
     return;
   }
-  const double perSlot = m / static_cast<double>(slots.size());
-  for (const auto& slot : slots) spreadUniform(mass, N, slot, perSlot);
+  const double perSlot = m / static_cast<double>(slots);
+  if (!model.growth.empty()) spreadUniform(mass, N, model.growth, perSlot);
+  if (model.hasSurround) mass.add(flatIndex(N, model.surround.first, model.surround.second), perSlot);
+  if (!model.defend.empty()) spreadUniform(mass, N, model.defend, perSlot);
+  if (!model.expansion.empty()) spreadUniform(mass, N, model.expansion, perSlot);
+  if (!model.pattern.empty()) spreadUniform(mass, N, model.pattern, perSlot);
+  if (model.hasEye) mass.add(flatIndex(N, model.eye.first, model.eye.second), perSlot);
+  if (model.hasBlock) mass.add(flatIndex(N, model.block.first, model.block.second), perSlot);
 }
 
-void accumulateActs(std::unordered_map<int, double>& mass, double& passMass, const std::vector<ActMass>& acts,
+void accumulateActs(MassMap& mass, double& passMass, const std::vector<ActMass>& acts,
                     const PolicyModel& model, int N, double weight) {
   for (const ActMass& am : acts) {
     const double m = am.share * weight;
     if (m <= 0.0) continue;
     switch (am.act.kind) {
-      case ActKind::Pin: mass[flatIndex(N, am.act.point.first, am.act.point.second)] += m; break;
+      case ActKind::Pin: mass.add(flatIndex(N, am.act.point.first, am.act.point.second), m); break;
       case ActKind::GrowthPool: spreadUniform(mass, N, model.growth, m); break;
       case ActKind::ExpansionPool: spreadUniform(mass, N, model.expansion, m); break;
       case ActKind::PatternPool: spreadUniform(mass, N, model.pattern, m); break;
@@ -1156,7 +1189,7 @@ ReplyDist opponentReplyDistribution(const GameState& state, Color player, Oppone
     }
   }
 
-  std::unordered_map<int, double> mass;
+  MassMap mass(N * N);
   double passMass = 0.0;
 
   for (int variant = 0; variant < 2; ++variant) {
@@ -1169,25 +1202,25 @@ ReplyDist opponentReplyDistribution(const GameState& state, Color player, Oppone
     const PolicyModel model = buildPolicyModel(gen);
 
     double lo = 0.0;
+    PolicyWalker walker(model, gen);
     for (const double hi : kPolicyThresholds) {
       if (hi <= lo) continue;
-      PolicyWalker walker(model, gen);
       accumulateActs(mass, passMass, walker.resolve(opponent, 0.5 * (lo + hi)), model, N,
                      (hi - lo) * variantWeight);
       lo = hi;
     }
-    PolicyWalker walker(model, gen);
     accumulateActs(mass, passMass, walker.resolve(opponent, 0.5 * (lo + 1.0)), model, N,
                    (1.0 - lo) * variantWeight);
   }
 
   double total = passMass;
   std::vector<WeightedReply> replies;
-  replies.reserve(mass.size() + 1);
+  replies.reserve(mass.indices().size() + 1);
   // Policy candidates are legal by construction (MoveGen draws them from valid
   // points), and getMove() does not re-validate priority moves either, so no
   // extra legality pass is needed here.
-  for (const auto& [idx, m] : mass) {
+  for (const int idx : mass.indices()) {
+    const double m = mass.at(idx);
     if (m <= 0.0) continue;
     total += m;
     WeightedReply reply;
