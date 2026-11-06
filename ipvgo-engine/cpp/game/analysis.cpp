@@ -197,7 +197,6 @@ std::vector<EyeCandidate> getAllPotentialEyes(const SimpleBoard& board, const Ch
                                               : std::min(nodeCount * 0.4, 11.0);
 
   std::vector<EyeCandidate> candidates;
-  candidates.reserve(8);
   for (int c = 0; c < cs.count; ++c) {
     if (cs.chainColor[c] != '.') continue;
     if (static_cast<double>(cs.members(c).size()) > maxSize) continue;
@@ -288,20 +287,28 @@ std::vector<Pt> getDisputedTerritoryMoves(const SimpleBoard& board, const std::v
 
   std::vector<Pt> out;
   out.reserve(availableSpaces.size());
+  // Every point of an empty chain shares the same answer, so evaluate each
+  // chain once (0 = unknown, 1 = not contested, 2 = contested).
+  thread_local std::vector<signed char> verdict;
+  verdict.assign(static_cast<size_t>(cs.count), 0);
   for (const auto& [x, y] : availableSpaces) {
     const int emptyChain = cs.id[flatIndex(N, x, y)];
     if (emptyChain < 0 || static_cast<int>(cs.members(emptyChain).size()) > maxChainSize) continue;
 
-    bool hasWhite = false;
-    bool hasBlack = false;
-    const SmallChains neighbours = neighborChainsOfChain(cs, emptyChain);
-    for (int i = 0; i < neighbours.count; ++i) {
-      const int nc = neighbours.idx[i];
-      if (static_cast<int>(cs.members(nc).size()) > maxChainSize) continue;
-      if (cs.chainColor[nc] == 'O') hasWhite = true;
-      else if (cs.chainColor[nc] == 'X') hasBlack = true;
+    signed char& v = verdict[static_cast<size_t>(emptyChain)];
+    if (v == 0) {
+      bool hasWhite = false;
+      bool hasBlack = false;
+      const SmallChains neighbours = neighborChainsOfChain(cs, emptyChain);
+      for (int i = 0; i < neighbours.count; ++i) {
+        const int nc = neighbours.idx[i];
+        if (static_cast<int>(cs.members(nc).size()) > maxChainSize) continue;
+        if (cs.chainColor[nc] == 'O') hasWhite = true;
+        else if (cs.chainColor[nc] == 'X') hasBlack = true;
+      }
+      v = (hasWhite && hasBlack) ? 2 : 1;
     }
-    if (hasWhite && hasBlack) out.emplace_back(x, y);
+    if (v == 2) out.emplace_back(x, y);
   }
   return out;
 }
