@@ -40,7 +40,14 @@ if(MSVC)
   set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /arch:AVX2") # Enable AVX2
   set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /Zo")        # Better source-line info
   set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /Oy-")       # Keep frame pointers
-  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /Ob0")       # Inlining OFF for profiling (flip to /Ob2)
+  # -DIPVGO_PROFILE_INLINING=ON keeps inlining on (/Ob2): tiny accessors then stop
+  # showing up as hot spots, and the shares match what the Release build does.
+  option(IPVGO_PROFILE_INLINING "Keep inlining enabled in the RelWithDebInfo (profiling) build" OFF)
+  if(IPVGO_PROFILE_INLINING)
+    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /Ob2")
+  else()
+    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /Ob0")     # Inlining OFF for profiling
+  endif()
 
   set(CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO "${CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO} /DEBUG:FULL") # Full PDB
 else()

@@ -106,51 +106,56 @@ struct BitPlanes {
 
 namespace bits {
 
-// `by` must stay below 64, which holds for the game's board sizes (<= 19).
+// Every kernel is templated on the word count W so a 7x7 board (49 points)
+// loops over one word instead of six. `by` must stay below 64 (boards <= 19).
+template <int W>
 inline void shiftUp(uint64_t* m, int by) {  // toward higher point indices
-  for (int w = kBitWords - 1; w >= 0; --w) {
+  for (int w = W - 1; w >= 0; --w) {
     const uint64_t carry = w > 0 ? m[w - 1] >> (64 - by) : 0;
     m[w] = (m[w] << by) | carry;
   }
 }
 
+template <int W>
 inline void shiftDown(uint64_t* m, int by) {  // toward lower point indices
-  for (int w = 0; w < kBitWords; ++w) {
-    const uint64_t carry = w + 1 < kBitWords ? m[w + 1] << (64 - by) : 0;
+  for (int w = 0; w < W; ++w) {
+    const uint64_t carry = w + 1 < W ? m[w + 1] << (64 - by) : 0;
     m[w] = (m[w] >> by) | carry;
   }
 }
 
 // Points adjacent to the given set (N/E/S/W), clipped to the board.
+template <int W>
 inline void neighbours(const uint64_t* m, const BitLayout& layout, int n, uint64_t* out) {
-  uint64_t up[kBitWords];
-  uint64_t down[kBitWords];
-  uint64_t east[kBitWords];
-  uint64_t west[kBitWords];
-  for (int w = 0; w < kBitWords; ++w) {
+  uint64_t up[W];
+  uint64_t down[W];
+  uint64_t east[W];
+  uint64_t west[W];
+  for (int w = 0; w < W; ++w) {
     up[w] = m[w] & layout.notTop[w];
     down[w] = m[w] & layout.notBottom[w];
     east[w] = m[w];
     west[w] = m[w];
   }
-  shiftUp(up, 1);
-  shiftDown(down, 1);
-  shiftUp(east, n);
-  shiftDown(west, n);
+  shiftUp<W>(up, 1);
+  shiftDown<W>(down, 1);
+  shiftUp<W>(east, n);
+  shiftDown<W>(west, n);
 
-  for (int w = 0; w < kBitWords; ++w) {
+  for (int w = 0; w < W; ++w) {
     out[w] = (up[w] | down[w] | east[w] | west[w]) & layout.board[w];
   }
 }
 
 // Grows `seed` over the points in `through` until it encloses nothing new.
+template <int W>
 inline void flood(const uint64_t* through, uint64_t* seed, const BitLayout& layout, int n) {
-  uint64_t next[kBitWords];
+  uint64_t next[W];
   bool changed = true;
   while (changed) {
     changed = false;
-    neighbours(seed, layout, n, next);
-    for (int w = 0; w < kBitWords; ++w) {
+    neighbours<W>(seed, layout, n, next);
+    for (int w = 0; w < W; ++w) {
       const uint64_t grown = seed[w] | (next[w] & through[w]);
       if (grown != seed[w]) changed = true;
       seed[w] = grown;
@@ -158,16 +163,18 @@ inline void flood(const uint64_t* through, uint64_t* seed, const BitLayout& layo
   }
 }
 
+template <int W>
 inline bool any(const uint64_t* m) {
-  for (int w = 0; w < kBitWords; ++w) {
+  for (int w = 0; w < W; ++w) {
     if (m[w] != 0) return true;
   }
   return false;
 }
 
 // Index of the lowest set point, or -1 when empty.
+template <int W>
 inline int lowest(const uint64_t* m) {
-  for (int w = 0; w < kBitWords; ++w) {
+  for (int w = 0; w < W; ++w) {
     if (m[w] == 0) continue;
     unsigned long bit = 0;
     _BitScanForward64(&bit, m[w]);

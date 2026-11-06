@@ -33,7 +33,10 @@ param(
 
   [string[]]$Target = @(),
 
-  [switch]$Configure
+  [switch]$Configure,
+
+  # RelWithDebInfo only: keep inlining on so profile shares match Release.
+  [switch]$ProfileInlining
 )
 
 $ErrorActionPreference = 'Stop'
@@ -86,7 +89,8 @@ Import-Module (Join-Path $vsPath 'Common7/Tools/Microsoft.VisualStudio.DevShell.
 Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
 
 if ($Configure) {
-  & cmake -B $buildRoot -G Ninja "-DCMAKE_BUILD_TYPE=$BuildType"
+  $inlining = if ($ProfileInlining) { 'ON' } else { 'OFF' }
+  & cmake -B $buildRoot -G Ninja "-DCMAKE_BUILD_TYPE=$BuildType" "-DIPVGO_PROFILE_INLINING=$inlining"
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 

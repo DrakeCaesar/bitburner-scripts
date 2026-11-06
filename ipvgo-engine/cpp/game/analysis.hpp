@@ -42,14 +42,33 @@ WeakestChain findEnemyNeighborChainWithFewestLiberties(const SimpleBoard& board,
 // Chain-free equivalents (see fast_queries.cpp). Same results, without building
 // a board-wide ChainSet.
 std::vector<int> findEffectiveLibertiesOfNewMoveFast(const SimpleBoard& board, int x, int y, Color player);
+// Same count as findEffectiveLibertiesOfNewMoveFast(...).size() without the vector.
+int effectiveLibertyCountFast(const SimpleBoard& board, int x, int y, Color player);
 WeakestChain findWeakestAdjacentChainFast(const SimpleBoard& board, int x, int y, Color chainColor);
 int findMinLibertyCountOfAdjacentChainsFast(const SimpleBoard& board, int x, int y, Color chainColor);
+
+// At most a handful of distinct chains, held inline so a candidate costs no
+// allocation. More than kMax neighbours are dropped (a large empty region can
+// border many chains, and the callers only care about the first few).
+struct ChainList {
+  static constexpr int kMax = 8;
+  int count = 0;
+  int idx[kMax] = {};
+
+  int size() const { return count; }
+  bool empty() const { return count == 0; }
+  int operator[](size_t i) const { return idx[i]; }
+  const int* begin() const { return idx; }
+  const int* end() const { return idx + count; }
+
+  std::vector<int> toVector() const { return std::vector<int>(idx, idx + count); }
+};
 
 // Empty-region "eye" candidate: the empty chain plus the stone chains that
 // border it (all one color). Indices refer to the ChainSet returned alongside.
 struct EyeCandidate {
-  std::vector<int> neighborChains;  // stone chain indices bordering the empty chain
-  int emptyChain = -1;              // empty chain index
+  ChainList neighborChains;  // stone chain indices bordering the empty chain
+  int emptyChain = -1;       // empty chain index
 };
 std::vector<EyeCandidate> getAllPotentialEyes(const SimpleBoard& board, const ChainSet& cs, Color player,
                                               int maxSizeOverride = -1);
@@ -67,7 +86,8 @@ std::vector<int> neighborChainIndices(const SimpleBoard& board, const ChainSet& 
 
 // findDisputedTerritory: valid moves worth considering (excludes dead interior
 // of enemy-surrounded space unless attackable; optionally excludes friendly eyes).
-std::vector<Pt> findDisputedTerritory(const GameState& state, Color player, bool excludeFriendlyEyes);
+std::vector<Pt> findDisputedTerritory(const GameState& state, Color player, bool excludeFriendlyEyes,
+                                      const std::vector<Pt>* knownValidMoves = nullptr);
 
 // Empty available spaces that border BOTH colors (contested).
 std::vector<Pt> getDisputedTerritoryMoves(const SimpleBoard& board, const std::vector<Pt>& availableSpaces,

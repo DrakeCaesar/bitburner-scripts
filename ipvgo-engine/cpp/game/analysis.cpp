@@ -6,6 +6,7 @@
 #include <ankerl/unordered_dense.h>
 #include <unordered_set>
 
+
 namespace ipvgo::game {
 
 namespace {
@@ -37,49 +38,60 @@ Spread furthestPoints(const ChainSet& cs, int chain) {
 // The result is at most four chains, so it lives in fixed storage and is copied
 // into the caller's vector only once. The intermediate `std::vector<int>` growth
 // was the single largest allocation site in the profile (229M reallocations).
-struct SmallChains {
-  static constexpr int kMax = 8;
-  int count = 0;
-  int idx[kMax] = {};
+using SmallChains = ChainList;
 
-  std::vector<int> toVector() const {
-    std::vector<int> out;
-    out.reserve(static_cast<size_t>(count));
-    for (int i = 0; i < count; ++i) out.push_back(idx[i]);
-    return out;
-  }
-};
-
-SmallChains neighborChainsSmall(const SimpleBoard& board, const ChainSet& cs, ChainSpan cells) {
-  const int N = cs.N;
-  PointMask cellSet;
-  for (const int idx : cells) cellSet.insert(idx);
+// Neighbour chains of one whole chain. The chain's own points are recognised by
+// chain id, so no point set has to be built.
+SmallChains neighborChainsOfChain(const ChainSet& cs, int c) {
+  const NeighborTable nt = neighborTable(cs.N);
   SmallChains result;
-  PointMask seen;
-  for (const int idx : cells) {
-    const int x = idx / N;
-    const int y = idx % N;
-    for (const auto& [dx, dy] : kNeighbors) {
-      const int nx = x + dx;
-      const int ny = y + dy;
-      if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
-      const int nIdx = flatIndex(N, nx, ny);
-      if (cellSet.count(nIdx)) continue;
-      const char c = board[nx][ny];
-      if (c == '#' || c == '.') continue;
-      const int nc = cs.id[nIdx];
-      if (seen.count(nc)) continue;
-      seen.insert(nc);
-      if (result.count < SmallChains::kMax) result.idx[result.count] = nc;
-      ++result.count;
+  for (const int idx : cs.members(c)) {
+    const int nbCount = nt.count[idx];
+    const auto& nbIdx = nt.idx[idx];
+    for (int k = 0; k < nbCount; ++k) {
+      const int nc = cs.id[nbIdx[k]];
+      if (nc < 0 || nc == c || cs.chainColor[nc] == '.') continue;
+      bool seen = false;
+      for (int i = 0; i < result.count; ++i) {
+        if (result.idx[i] == nc) {
+          seen = true;
+          break;
+        }
+      }
+      if (seen || result.count >= SmallChains::kMax) continue;
+      result.idx[result.count++] = nc;
     }
   }
-  if (result.count > SmallChains::kMax) result.count = SmallChains::kMax;
   return result;
 }
 
-std::vector<int> neighborChainsOfCells(const SimpleBoard& board, const ChainSet& cs, ChainSpan cells) {
-  return neighborChainsSmall(board, cs, cells).toVector();
+SmallChains neighborChainsSmall(const SimpleBoard& board, const ChainSet& cs, ChainSpan cells) {
+  (void)board;
+  const int N = cs.N;
+  const NeighborTable nt = neighborTable(N);
+  PointMask cellSet;
+  for (const int idx : cells) cellSet.insert(idx);
+  SmallChains result;
+  for (const int idx : cells) {
+    const int nbCount = nt.count[idx];
+    const auto& nbIdx = nt.idx[idx];
+    for (int k = 0; k < nbCount; ++k) {
+      const int nIdx = nbIdx[k];
+      if (cellSet.count(nIdx)) continue;
+      const int nc = cs.id[nIdx];
+      if (nc < 0 || cs.chainColor[nc] == '.') continue;
+      bool seen = false;
+      for (int i = 0; i < result.count; ++i) {
+        if (result.idx[i] == nc) {
+          seen = true;
+          break;
+        }
+      }
+      if (seen || result.count >= SmallChains::kMax) continue;
+      result.idx[result.count++] = nc;
+    }
+  }
+  return result;
 }
 
 }  // namespace
@@ -96,11 +108,12 @@ Neighbors onBoardNeighbors(int N, int x, int y) {
 }
 
 std::vector<int> neighborChainIndices(const SimpleBoard& board, const ChainSet& cs, int c) {
-  return neighborChainsOfCells(board, cs, cs.members(c));
+  (void)board;
+  return neighborChainsOfChain(cs, c).toVector();
 }
 
 std::vector<int> findEffectiveLibertiesOfNewMove(const SimpleBoard& board, int x, int y, Color player) {
-  const ChainSet cs = computeChains(board);
+  const ChainSet& cs = chainsCached(board);
   const int N = cs.N;
   const char me = colorChar(player);
   const int self = flatIndex(N, x, y);
@@ -133,7 +146,7 @@ std::vector<int> findEffectiveLibertiesOfNewMove(const SimpleBoard& board, int x
 }
 
 WeakestChain findEnemyNeighborChainWithFewestLiberties(const SimpleBoard& board, int x, int y, Color player) {
-  const ChainSet cs = computeChains(board);
+  const ChainSet& cs = chainsCached(board);
   const int N = cs.N;
   const char me = colorChar(player);
 
@@ -184,11 +197,12 @@ std::vector<EyeCandidate> getAllPotentialEyes(const SimpleBoard& board, const Ch
                                               : std::min(nodeCount * 0.4, 11.0);
 
   std::vector<EyeCandidate> candidates;
+  candidates.reserve(8);
   for (int c = 0; c < cs.count; ++c) {
     if (cs.chainColor[c] != '.') continue;
     if (static_cast<double>(cs.members(c).size()) > maxSize) continue;
 
-    const std::vector<int> neighbors = neighborChainIndices(board, cs, c);
+    const ChainList neighbors = neighborChainsOfChain(cs, c);
     bool hasWhite = false;
     bool hasBlack = false;
     for (const int nc : neighbors) {
@@ -206,7 +220,7 @@ namespace {
 
 // Mirrors findNeighboringChainsThatFullyEncircleEmptySpace.
 std::vector<int> chainsThatFullyEncircle(const SimpleBoard& board, const ChainSet& cs, int candidateEmptyChain,
-                                         const std::vector<int>& neighborChainList) {
+                                         const ChainList& neighborChainList) {
   const int N = cs.N;
   const int boardMax = N - 1;
   const Spread candidateSpread = furthestPoints(cs, candidateEmptyChain);
@@ -230,7 +244,7 @@ std::vector<int> chainsThatFullyEncircle(const SimpleBoard& board, const ChainSe
     }
     const ChainSet evalCs = computeChains(eval);
     const int expandedChain = evalCs.id[examplePoint];
-    const std::vector<int> newNeighbors = neighborChainsOfCells(board, cs, evalCs.members(expandedChain));
+    const ChainList newNeighbors = neighborChainsSmall(board, cs, evalCs.members(expandedChain));
     if (newNeighbors.size() == 1) result.push_back(neighborChain);
   }
   return result;
@@ -240,7 +254,7 @@ std::vector<int> chainsThatFullyEncircle(const SimpleBoard& board, const ChainSe
 
 EyeMap getAllEyesByChainId(const SimpleBoard& board, Color player) {
   EyeMap out;
-  out.cs = computeChains(board);
+  out.cs = chainsCached(board);
   const std::vector<EyeCandidate> candidates = getAllPotentialEyes(board, out.cs, player);
 
   ankerl::unordered_dense::map<int, size_t> keyIndex;
@@ -269,17 +283,18 @@ EyeMap getAllEyesByChainId(const SimpleBoard& board, Color player) {
 
 std::vector<Pt> getDisputedTerritoryMoves(const SimpleBoard& board, const std::vector<Pt>& availableSpaces,
                                           int maxChainSize) {
-  const ChainSet cs = computeChains(board);
+  const ChainSet& cs = chainsCached(board);
   const int N = cs.N;
 
   std::vector<Pt> out;
+  out.reserve(availableSpaces.size());
   for (const auto& [x, y] : availableSpaces) {
     const int emptyChain = cs.id[flatIndex(N, x, y)];
     if (emptyChain < 0 || static_cast<int>(cs.members(emptyChain).size()) > maxChainSize) continue;
 
     bool hasWhite = false;
     bool hasBlack = false;
-    const SmallChains neighbours = neighborChainsSmall(board, cs, cs.members(emptyChain));
+    const SmallChains neighbours = neighborChainsOfChain(cs, emptyChain);
     for (int i = 0; i < neighbours.count; ++i) {
       const int nc = neighbours.idx[i];
       if (static_cast<int>(cs.members(nc).size()) > maxChainSize) continue;
@@ -309,10 +324,11 @@ std::vector<Pt> getExpansionMoveArray(const SimpleBoard& board, const std::vecto
   return getDisputedTerritoryMoves(board, availableSpaces, 1);
 }
 
-std::vector<Pt> findDisputedTerritory(const GameState& state, Color player, bool excludeFriendlyEyes) {
+std::vector<Pt> findDisputedTerritory(const GameState& state, Color player, bool excludeFriendlyEyes,
+                                      const std::vector<Pt>* knownValidMoves) {
   const SimpleBoard& board = state.board;
   const int N = state.size;
-  std::vector<Pt> validMoves = getAllValidMoves(state, player);
+  std::vector<Pt> validMoves = knownValidMoves != nullptr ? *knownValidMoves : getAllValidMoves(state, player);
 
   if (excludeFriendlyEyes) {
     const EyeMap em = getAllEyesByChainId(board, player);
@@ -323,6 +339,7 @@ std::vector<Pt> findDisputedTerritory(const GameState& state, Color player, bool
         for (const int idx : em.cs.members(ec)) friendlyEyes.insert(idx);
     }
     std::vector<Pt> filtered;
+    filtered.reserve(validMoves.size());
     for (const auto& [x, y] : validMoves) {
       if (!friendlyEyes.count(flatIndex(N, x, y))) filtered.emplace_back(x, y);
     }
@@ -330,7 +347,7 @@ std::vector<Pt> findDisputedTerritory(const GameState& state, Color player, bool
   }
 
   const Color opponent = oppositeColor(player);
-  const ChainSet cs = computeChains(board);
+  const ChainSet& cs = chainsCached(board);
   const std::vector<EyeCandidate> enemyEyes = getAllPotentialEyes(board, cs, opponent);
 
   PointMask nodesInsideEyeSpaces;
@@ -345,7 +362,7 @@ std::vector<Pt> findDisputedTerritory(const GameState& state, Color player, bool
       const ChainSpan liberties = cs.liberties(neighborChain);
       if (liberties.size() > 4) continue;
 
-      const SmallChains border = neighborChainsSmall(board, cs, cs.members(neighborChain));
+      const SmallChains border = neighborChainsOfChain(cs, neighborChain);
       bool touchesPlayer = false;
       for (int i = 0; i < border.count; ++i) {
         if (cs.chainColor[border.idx[i]] == colorChar(player)) {
@@ -365,6 +382,7 @@ std::vector<Pt> findDisputedTerritory(const GameState& state, Color player, bool
   }
 
   std::vector<Pt> result;
+  result.reserve(validMoves.size());
   for (const auto& [x, y] : validMoves) {
     const int idx = flatIndex(N, x, y);
     if (!nodesInsideEyeSpaces.count(idx) || playableInsideEnemySpace.count(idx)) result.emplace_back(x, y);

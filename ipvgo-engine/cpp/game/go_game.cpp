@@ -69,6 +69,11 @@ bool boardEqualsFlat(const SimpleBoard& board, const std::string& flat) {
 
 }  // namespace
 
+NeighborTable neighborTable(int n) {
+  const FlatNeighbors& t = flatNeighbors(n);
+  return {t.count.data(), t.idx.data()};
+}
+
 std::string boardString(const SimpleBoard& board) {
   const int n = board.size();
   std::string out(static_cast<size_t>(n) * static_cast<size_t>(n), '.');
@@ -103,11 +108,10 @@ double opponentKomi(Opponent ai) {
   return 5.5;
 }
 
-ChainSet computeChains(const SimpleBoard& board) {
+void computeChainsInto(const SimpleBoard& board, ChainSet& cs) {
   const int N = static_cast<int>(board.size());
   const int points = N * N;
   const FlatNeighbors& neighbors = flatNeighbors(N);
-  ChainSet cs;
   cs.N = N;
   cs.count = 0;
   for (int i = 0; i < points; ++i) cs.id[static_cast<size_t>(i)] = -1;
@@ -116,11 +120,12 @@ ChainSet computeChains(const SimpleBoard& board) {
   int stackSize = 0;
   int memberCount = 0;
   cs.memberOffsets[0] = 0;
+  const char* cells = board.flat();
   for (int x = 0; x < N; ++x) {
     for (int y = 0; y < N; ++y) {
-      const char c = board[x][y];
+      const int start = x * N + y;
+      const char c = cells[start];
       if (c == '#') continue;
-      const int start = flatIndex(N, x, y);
       if (cs.id[static_cast<size_t>(start)] != -1) continue;
 
       const int chainId = cs.count++;
@@ -136,7 +141,7 @@ ChainSet computeChains(const SimpleBoard& board) {
         const auto& nbIdx = neighbors.idx[static_cast<size_t>(idx)];
         for (int k = 0; k < nbCount; ++k) {
           const int nIdx = nbIdx[static_cast<size_t>(k)];
-          if (board[nIdx / N][nIdx % N] != c) continue;
+          if (cells[nIdx] != c) continue;
           if (cs.id[static_cast<size_t>(nIdx)] != -1) continue;
           cs.id[static_cast<size_t>(nIdx)] = chainId;
           cs.memberData[static_cast<size_t>(memberCount++)] = nIdx;
@@ -158,7 +163,7 @@ ChainSet computeChains(const SimpleBoard& board) {
       const auto& nbIdx = neighbors.idx[static_cast<size_t>(idx)];
       for (int k = 0; k < nbCount; ++k) {
         const int nIdx = nbIdx[static_cast<size_t>(k)];
-        if (board[nIdx / N][nIdx % N] != '.') continue;
+        if (cells[nIdx] != '.') continue;
         if (seenTag[static_cast<size_t>(nIdx)] == c) continue;
         seenTag[static_cast<size_t>(nIdx)] = c;
         cs.libertyData[static_cast<size_t>(libertyCount++)] = nIdx;
@@ -166,7 +171,36 @@ ChainSet computeChains(const SimpleBoard& board) {
     }
     cs.libertyOffsets[static_cast<size_t>(c) + 1] = libertyCount;
   }
+}
+
+ChainSet computeChains(const SimpleBoard& board) {
+  ChainSet cs;
+  computeChainsInto(board, cs);
   return cs;
+}
+
+// Small per-thread memo of recent boards. The move generators ask for the chains
+// of the same position from several helpers; a hit skips the flood fill. The
+// returned reference stays valid until six other boards are analysed.
+const ChainSet& chainsCached(const SimpleBoard& board) {
+  constexpr int kSlots = 6;
+  struct Slot {
+    SimpleBoard board;
+    ChainSet cs;
+    bool valid = false;
+  };
+  thread_local Slot ring[kSlots];
+  thread_local int next = 0;
+
+  for (Slot& slot : ring) {
+    if (slot.valid && slot.board == board) return slot.cs;
+  }
+  Slot& slot = ring[next];
+  next = (next + 1) % kSlots;
+  slot.board = board;
+  computeChainsInto(board, slot.cs);
+  slot.valid = true;
+  return slot.cs;
 }
 
 void updateCapturesFloodFill(SimpleBoard& board, Color playerWhoMoved) {
@@ -195,33 +229,44 @@ void updateCapturesFloodFill(SimpleBoard& board, Color playerWhoMoved) {
 // Adds every dead chain of the colour in `plane` to `captured`. Order of the
 // sweep does not matter: the result is the union of all liberty-less chains,
 // which is exactly what the reference flood fill removes.
+template <int W>
 void collectDeadChains(const BitPlanes& planes, const uint64_t* plane, const BitLayout& layout, int n,
                        uint64_t* captured) {
-  uint64_t unseen[kBitWords];
-  for (int w = 0; w < kBitWords; ++w) unseen[w] = plane[w];
+  uint64_t unseen[W];
+  for (int w = 0; w < W; ++w) unseen[w] = plane[w];
 
-  while (bits::any(unseen)) {
-    const int idx = bits::lowest(unseen);
+  while (bits::any<W>(unseen)) {
+    const int idx = bits::lowest<W>(unseen);
     if (idx < 0) break;
-    uint64_t chain[kBitWords];
-    for (int w = 0; w < kBitWords; ++w) chain[w] = 0;
+    uint64_t chain[W];
+    for (int w = 0; w < W; ++w) chain[w] = 0;
     chain[idx >> 6] = 1ULL << (idx & 63);
-    bits::flood(plane, chain, layout, n);
+    bits::flood<W>(plane, chain, layout, n);
 
     bool hasLiberty = false;
-    uint64_t adjacent[kBitWords];
-    bits::neighbours(chain, layout, n, adjacent);
-    for (int w = 0; w < kBitWords; ++w) {
+    uint64_t adjacent[W];
+    bits::neighbours<W>(chain, layout, n, adjacent);
+    for (int w = 0; w < W; ++w) {
       if ((adjacent[w] & planes.empty[w]) != 0) {
         hasLiberty = true;
         break;
       }
     }
     if (!hasLiberty) {
-      for (int w = 0; w < kBitWords; ++w) captured[w] |= chain[w];
+      for (int w = 0; w < W; ++w) captured[w] |= chain[w];
     }
-    for (int w = 0; w < kBitWords; ++w) unseen[w] &= ~chain[w];
+    for (int w = 0; w < W; ++w) unseen[w] &= ~chain[w];
   }
+}
+
+template <int W>
+bool sweepCaptures(const BitPlanes& planes, const BitLayout& layout, int n, char opp, char me,
+                   uint64_t* captured) {
+  collectDeadChains<W>(planes, opp == 'X' ? planes.black : planes.white, layout, n, captured);
+  if (!bits::any<W>(captured)) {
+    collectDeadChains<W>(planes, me == 'X' ? planes.black : planes.white, layout, n, captured);
+  }
+  return bits::any<W>(captured);
 }
 
 // Bitwise replacement for updateCapturesFloodFill(): same outcome (dead opponent
@@ -240,12 +285,15 @@ bool updateCapturesBitwise(SimpleBoard& board, Color playerWhoMoved) {
   const char me = colorChar(playerWhoMoved);
 
   uint64_t captured[kBitWords] = {0, 0, 0, 0, 0, 0};
-  collectDeadChains(planes, opp == 'X' ? planes.black : planes.white, layout, n, captured);
-  if (!bits::any(captured)) {
-    collectDeadChains(planes, me == 'X' ? planes.black : planes.white, layout, n, captured);
-  }
+  const int points = n * n;
+  bool any;
+  if (points <= 64) any = sweepCaptures<1>(planes, layout, n, opp, me, captured);
+  else if (points <= 128) any = sweepCaptures<2>(planes, layout, n, opp, me, captured);
+  else if (points <= 192) any = sweepCaptures<3>(planes, layout, n, opp, me, captured);
+  else if (points <= 256) any = sweepCaptures<4>(planes, layout, n, opp, me, captured);
+  else any = sweepCaptures<kBitWords>(planes, layout, n, opp, me, captured);
 
-  if (!bits::any(captured)) return true;
+  if (!any) return true;
   for (int idx = 0; idx < n * n; ++idx) {
     if ((captured[idx >> 6] >> (idx & 63)) & 1ULL) board[idx / n][idx % n] = '.';
   }
@@ -272,7 +320,87 @@ Color whoseTurn(const GameState& state) {
   return oppositeColor(state.previousPlayer);
 }
 
-Validity evaluateIfMoveIsValid(const GameState& state, int x, int y, Color player, SimpleBoard* resultBoard) {
+namespace {
+
+// Local capture test for a stone placed at `idx` (a legal empty point): enemy
+// chains touching the point die when the point was their last liberty; when
+// nothing dies, the placed stone's own chain needs a liberty. Replaces the
+// full-board sweep of updateCapturesBitwise, which floods every chain on the
+// board for every candidate move. Returns false for suicide.
+template <int W>
+bool placeStoneBits(const BitPlanes& pl, const BitLayout& layout, int n, int idx, bool blackMoves,
+                    uint64_t* captured) {
+  const uint64_t* mine = blackMoves ? pl.black : pl.white;
+  const uint64_t* enemy = blackMoves ? pl.white : pl.black;
+  const uint64_t bit = 1ULL << (idx & 63);
+
+  uint64_t emptyAfter[W];
+  for (int w = 0; w < W; ++w) emptyAfter[w] = pl.empty[w];
+  emptyAfter[idx >> 6] &= ~bit;
+
+  uint64_t self[W] = {};
+  self[idx >> 6] = bit;
+  uint64_t adjacent[W];
+  bits::neighbours<W>(self, layout, n, adjacent);
+
+  uint64_t checked[W] = {};
+  bool any = false;
+  for (int w = 0; w < W; ++w) {
+    for (;;) {
+      const uint64_t candidates = adjacent[w] & enemy[w] & ~checked[w];
+      if (candidates == 0) break;
+      unsigned long b = 0;
+      _BitScanForward64(&b, candidates);
+      const int seedIdx = w * 64 + static_cast<int>(b);
+      uint64_t chain[W] = {};
+      chain[seedIdx >> 6] = 1ULL << (seedIdx & 63);
+      bits::flood<W>(enemy, chain, layout, n);
+      for (int k = 0; k < W; ++k) checked[k] |= chain[k];
+
+      uint64_t around[W];
+      bits::neighbours<W>(chain, layout, n, around);
+      bool alive = false;
+      for (int k = 0; k < W; ++k) {
+        if ((around[k] & emptyAfter[k]) != 0) {
+          alive = true;
+          break;
+        }
+      }
+      if (!alive) {
+        for (int k = 0; k < W; ++k) captured[k] |= chain[k];
+        any = true;
+      }
+    }
+  }
+  if (any) return true;
+
+  uint64_t through[W];
+  for (int w = 0; w < W; ++w) through[w] = mine[w] | self[w];
+  uint64_t chain[W];
+  for (int w = 0; w < W; ++w) chain[w] = self[w];
+  bits::flood<W>(through, chain, layout, n);
+  uint64_t around[W];
+  bits::neighbours<W>(chain, layout, n, around);
+  for (int w = 0; w < W; ++w) {
+    if ((around[w] & emptyAfter[w]) != 0) return true;
+  }
+  return false;
+}
+
+bool placeStone(const BitPlanes& pl, int n, int idx, bool blackMoves, uint64_t* captured) {
+  const BitLayout& layout = BitLayout::forSize(n);
+  const int points = n * n;
+  if (points <= 64) return placeStoneBits<1>(pl, layout, n, idx, blackMoves, captured);
+  if (points <= 128) return placeStoneBits<2>(pl, layout, n, idx, blackMoves, captured);
+  if (points <= 192) return placeStoneBits<3>(pl, layout, n, idx, blackMoves, captured);
+  if (points <= 256) return placeStoneBits<4>(pl, layout, n, idx, blackMoves, captured);
+  return placeStoneBits<kBitWords>(pl, layout, n, idx, blackMoves, captured);
+}
+
+// Shared body of evaluateIfMoveIsValid. `planes` may carry bit planes of the
+// current board (so a caller scanning every point loads them once).
+Validity validateMove(const GameState& state, int x, int y, Color player, SimpleBoard* resultBoard,
+                      const BitPlanes* planes) {
   if (state.gameOver) return Validity::GameOver;
   if (state.previousPlayer == player) return Validity::NotYourTurn;
   if (x < 0 || y < 0 || x >= state.size || y >= state.size) return Validity::PointBroken;
@@ -280,12 +408,42 @@ Validity evaluateIfMoveIsValid(const GameState& state, int x, int y, Color playe
   if (cell == '#') return Validity::PointBroken;
   if (cell != '.') return Validity::PointNotEmpty;
 
-  SimpleBoard eval = evaluateMoveResult(state.board, x, y, player);
-  if (eval[x][y] != colorChar(player)) return Validity::NoSuicide;
+  SimpleBoard eval;
+  if (BitPlanes::fits(state.size)) {
+    BitPlanes local;
+    if (planes == nullptr) {
+      BitPlanes::load(state.board, local);
+      planes = &local;
+    }
+    const int n = state.size;
+    uint64_t captured[kBitWords] = {0, 0, 0, 0, 0, 0};
+    if (!placeStone(*planes, n, x * n + y, player == Color::Black, captured)) return Validity::NoSuicide;
+    eval = state.board;
+    eval[x][y] = colorChar(player);
+    for (int w = 0; w < kBitWords; ++w) {
+      uint64_t word = captured[w];
+      while (word != 0) {
+        unsigned long b = 0;
+        _BitScanForward64(&b, word);
+        word &= word - 1;
+        const int idx = w * 64 + static_cast<int>(b);
+        eval[idx / n][idx % n] = '.';
+      }
+    }
+  } else {
+    eval = evaluateMoveResult(state.board, x, y, player);
+    if (eval[x][y] != colorChar(player)) return Validity::NoSuicide;
+  }
 
   if (state.previousBoards.contains(eval)) return Validity::BoardRepeated;
   if (resultBoard != nullptr) *resultBoard = std::move(eval);
   return Validity::Valid;
+}
+
+}  // namespace
+
+Validity evaluateIfMoveIsValid(const GameState& state, int x, int y, Color player, SimpleBoard* resultBoard) {
+  return validateMove(state, x, y, player, resultBoard, nullptr);
 }
 
 namespace {
@@ -365,12 +523,18 @@ std::vector<std::pair<int, int>> getAllValidMoves(const GameState& state, Color 
   const int N = static_cast<int>(state.board.size());
   std::vector<std::pair<int, int>> out;
   out.reserve(static_cast<size_t>(N) * static_cast<size_t>(N));
+  BitPlanes planes;
+  const BitPlanes* planesPtr = nullptr;
+  if (BitPlanes::fits(N)) {
+    BitPlanes::load(state.board, planes);
+    planesPtr = &planes;
+  }
   // Walk the board directly: the intermediate point list was one more allocation
   // and a copy per call, and this is on the hot path for every White node.
   for (int x = 0; x < N; ++x) {
     for (int y = 0; y < N; ++y) {
       if (state.board[x][y] != '.') continue;
-      if (evaluateIfMoveIsValid(state, x, y, player) == Validity::Valid) out.emplace_back(x, y);
+      if (validateMove(state, x, y, player, nullptr, planesPtr) == Validity::Valid) out.emplace_back(x, y);
     }
   }
   return out;

@@ -74,20 +74,14 @@ target_link_libraries(ipvgo_engine PRIVATE nlohmann_json::nlohmann_json Threads:
 install(TARGETS ipvgo_engine DESTINATION bin)
 
 # Faithful-engine CLI: selftest / parity / aimove / gen / mcgs / exploit / serve / bench.
-add_executable(ipvgo_game cpp/game/game_cli.cpp cpp/nn/mcgs.cpp cpp/nn/exploiter.cpp cpp/nn/bench_tui.cpp cpp/nn/optbench.cpp)
+add_executable(ipvgo_game cpp/game/game_cli.cpp cpp/nn/mcgs.cpp cpp/nn/exploiter.cpp cpp/nn/bench_tui.cpp cpp/nn/optbench.cpp cpp/nn/profiler.cpp)
 target_include_directories(ipvgo_game PRIVATE cpp/game cpp/nn)
 target_link_libraries(ipvgo_game PRIVATE ipvgo_game_core nlohmann_json::nlohmann_json Threads::Threads)
-install(TARGETS ipvgo_game DESTINATION bin)
-
-# In-process profiler (off by default). The Visual Studio / ETW CPU profiler
-# needs an elevated session; this tool samples the thread stacks and tracks
-# allocations from inside the process, so it runs unprivileged.
-option(IPVGO_BUILD_PROFILER "Build the ipvgo_prof sampling/allocation profiler" OFF)
-if(IPVGO_BUILD_PROFILER)
-  add_executable(ipvgo_prof tools/prof/prof.cpp cpp/nn/exploiter.cpp ${GAME_SOURCES})
-  target_include_directories(ipvgo_prof PRIVATE cpp/game cpp/nn third_party)
-  # Optimised like the real engine, with symbols for StackWalk64/dbghelp.
-  target_compile_options(ipvgo_prof PRIVATE /Zi /Zo /O2 /Ob2 /arch:AVX2 /Oy- /DNDEBUG)
-  target_link_options(ipvgo_prof PRIVATE /DEBUG:FULL)
-  target_link_libraries(ipvgo_prof PRIVATE Threads::Threads dbghelp psapi winmm)
+# The built-in `prof` subcommand (allocation counts + in-process stack sampling)
+# exists only in the profiling configuration: it replaces operator new, which
+# the performance build must not pay for.
+if(WIN32)
+  target_compile_definitions(ipvgo_game PRIVATE $<$<CONFIG:RelWithDebInfo>:IPVGO_PROFILER>)
+  target_link_libraries(ipvgo_game PRIVATE $<$<CONFIG:RelWithDebInfo>:dbghelp> $<$<CONFIG:RelWithDebInfo>:psapi> $<$<CONFIG:RelWithDebInfo>:winmm>)
 endif()
+install(TARGETS ipvgo_game DESTINATION bin)

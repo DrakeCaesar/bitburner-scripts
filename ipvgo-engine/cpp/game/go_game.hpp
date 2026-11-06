@@ -114,6 +114,8 @@ class SimpleBoard {
 
   char* column(int x) { return columnPtr(x); }
   const char* column(int x) const { return cells_.data() + static_cast<ptrdiff_t>(x) * size_; }
+  // Flat view, index = x * size + y.
+  const char* flat() const { return cells_.data(); }
 
   bool operator==(const SimpleBoard& other) const {
     if (size_ != other.size_) return false;
@@ -335,6 +337,16 @@ double opponentKomi(Opponent ai);
 // ---- Chains / captures ---------------------------------------------------
 
 ChainSet computeChains(const SimpleBoard& board);
+
+// Precomputed on-board neighbour flat indices (N, E, S, W order) per point.
+struct NeighborTable {
+  const unsigned char* count;
+  const std::array<int, 4>* idx;
+};
+NeighborTable neighborTable(int n);
+// Memoised computeChains for the analysis helpers; the reference is valid until
+// six other boards are analysed on this thread, so use it locally or copy it.
+const ChainSet& chainsCached(const SimpleBoard& board);
 void updateCaptures(SimpleBoard& board, Color playerWhoMoved);
 // Reference implementation: a full-board ChainSet flood fill. updateCaptures()
 // uses the bitwise sweep; this stays as the oracle the tests compare against.

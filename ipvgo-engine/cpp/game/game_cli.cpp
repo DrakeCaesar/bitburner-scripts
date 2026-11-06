@@ -11,6 +11,7 @@
 //   ipvgo_game exploitplay <opponent> <size> <games> <depth> <seed> [fixed]
 //       Black = policy-expectimax exploiter vs the scripted faction.
 //   ipvgo_game profileworkload [games] [seed]
+//   ipvgo_game prof [faction] [boardSize] [games] [nodeLimit]   (x64-Profile build only)
 //       Repeatable, approximately one-minute Release workload for CPU profiling.
 //   ipvgo_game exploitmove <in.json> [out.json]
 //       Exploiter move for a game request (engine "exploit").
@@ -20,10 +21,10 @@
 //   ipvgo_game policycheck <opponent> <size> [samples] [seed]
 //       Compare the modeled reply distribution against sampled getMove().
 //   ipvgo_game optbench [--seconds=S] [--positions=N] [--depth=D] [--reps=R]
-//                       [--seed=S] [--only=cfg,...] [--factions=a,b] [--size=N]
-//       A/B time each search optimisation against the baseline on one position
-//       set, verifying every variant returns the same answer. Without
-//       --positions the sweep is sized to run for about --seconds seconds.
+//                       [--seed=S] [--factions=a,b] [--size=N]
+//       Time fixed-depth searches on one reproducible position set (the node
+//       count and value are printed so runs can be compared across builds).
+//       Without --positions the sweep is sized to run for about --seconds seconds.
 //   ipvgo_game bench [budgetMs] [gamesPerFaction] [seed] [size]
 //       Exploiter vs every faction with a live terminal view (board, win table).
 
@@ -52,6 +53,7 @@
 #include "patterns.hpp"
 #include "influence.hpp"
 #include "optbench.hpp"
+#include "profiler.hpp"
 #include "mcgs.hpp"
 #include "obstacles.hpp"
 #include "opponents.hpp"
@@ -1268,7 +1270,7 @@ int main(int argc, char** argv) {
   if (argc < 2) {
     std::cerr << "usage: ipvgo_game "
                  "<selftest|fuzz|parity|aimove|mcgsmove|mcgsplay|exploitmove|exploitplay|"
-                 "profileworkload|serve|policycheck|optbench|gen> ...\n";
+                 "profileworkload|prof|serve|policycheck|optbench|gen> ...\n";
     return 2;
   }
   const std::string cmd = argv[1];
@@ -1288,6 +1290,7 @@ int main(int argc, char** argv) {
     return runMcgsPlay(argv[2], size, games, playouts, seed);
   }
   if (cmd == "exploitmove" && argc >= 3) return runExploitMove(argv[2], argc >= 4 ? argv[3] : "");
+  if (cmd == "prof") return runProfiler(argc - 1, argv + 1);
   if (cmd == "serve") return runEngineServer();
   if (cmd == "profileworkload") {
     const int games = argc >= 3 ? std::stoi(argv[2]) : 25;
@@ -1397,13 +1400,7 @@ int main(int argc, char** argv) {
         else if (key == "beam") options.beam = std::stoi(value);
         else if (key == "white-children" || key == "whiteChildren") options.whiteChildren = std::stoi(value);
         else if (key == "threads") options.threads = std::stoi(value);
-        else if (key == "only") {
-          std::stringstream ss(value);
-          std::string item;
-          while (std::getline(ss, item, ',')) {
-            if (!item.empty()) options.only.push_back(item);
-          }
-        } else if (key == "factions") {
+        else if (key == "factions") {
           std::stringstream ss(value);
           std::string item;
           while (std::getline(ss, item, ',')) {

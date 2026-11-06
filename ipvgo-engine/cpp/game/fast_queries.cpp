@@ -10,8 +10,6 @@
 // order as computeChains (same LIFO stack, same N/E/S/W neighbour order) and
 // dedupes liberties by first occurrence, so the returned liberty vectors have
 // the same contents and the same order as the reference implementation.
-#include "opt_flags.hpp"
-
 #include <algorithm>
 #include <cstdint>
 #include <utility>
@@ -21,8 +19,6 @@
 #include "go_game.hpp"
 
 namespace ipvgo::game {
-
-OptFlags g_opt;
 
 namespace {
 
@@ -72,6 +68,8 @@ Scratch& scratchFor(int points) {
 int walkChain(const SimpleBoard& board, int start, char stone, uint32_t visitGen, uint32_t addGen,
               Scratch& scratch, std::vector<int>& liberties) {
   const int N = static_cast<int>(board.size());
+  const NeighborTable nt = neighborTable(N);
+  const char* cells = board.flat();
   liberties.clear();
   scratch.stack.clear();
   scratch.stack.push_back(start);
@@ -81,14 +79,11 @@ int walkChain(const SimpleBoard& board, int start, char stone, uint32_t visitGen
     const int idx = scratch.stack.back();
     scratch.stack.pop_back();
     ++stones;
-    const int cx = idx / N;
-    const int cy = idx % N;
-    for (const auto& [dx, dy] : kNeighbors) {
-      const int nx = cx + dx;
-      const int ny = cy + dy;
-      if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
-      const char c = board[static_cast<size_t>(nx)][static_cast<size_t>(ny)];
-      const int nIdx = nx * N + ny;
+    const int nbCount = nt.count[idx];
+    const auto& nbIdx = nt.idx[idx];
+    for (int k = 0; k < nbCount; ++k) {
+      const int nIdx = nbIdx[k];
+      const char c = cells[nIdx];
       if (c == '.') {
         if (scratch.added[static_cast<size_t>(nIdx)] == addGen) continue;
         scratch.added[static_cast<size_t>(nIdx)] = addGen;
@@ -103,6 +98,41 @@ int walkChain(const SimpleBoard& board, int start, char stone, uint32_t visitGen
 }
 
 }  // namespace
+
+// Allocation-free twin of findEffectiveLibertiesOfNewMoveFast(...).size().
+int effectiveLibertyCountFast(const SimpleBoard& board, int x, int y, Color player) {
+  const int N = static_cast<int>(board.size());
+  const char me = colorChar(player);
+  const int self = x * N + y;
+  Scratch& scratch = scratchFor(N * N);
+  const uint32_t visitGen = scratch.nextVisit();
+  const uint32_t addGen = scratch.nextAdd();
+
+  int count = 0;
+  for (const auto& [dx, dy] : kNeighbors) {
+    const int nx = x + dx;
+    const int ny = y + dy;
+    if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+    if (board[static_cast<size_t>(nx)][static_cast<size_t>(ny)] != '.') continue;
+    const int idx = nx * N + ny;
+    if (scratch.added[static_cast<size_t>(idx)] == addGen) continue;
+    scratch.added[static_cast<size_t>(idx)] = addGen;
+    ++count;
+  }
+  for (const auto& [dx, dy] : kNeighbors) {
+    const int nx = x + dx;
+    const int ny = y + dy;
+    if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+    if (board[static_cast<size_t>(nx)][static_cast<size_t>(ny)] != me) continue;
+    const int start = nx * N + ny;
+    if (scratch.visited[static_cast<size_t>(start)] == visitGen) continue;
+    walkChain(board, start, me, visitGen, addGen, scratch, scratch.libs);
+    for (const int liberty : scratch.libs) {
+      if (liberty != self) ++count;
+    }
+  }
+  return count;
+}
 
 std::vector<int> findEffectiveLibertiesOfNewMoveFast(const SimpleBoard& board, int x, int y, Color player) {
   const int N = static_cast<int>(board.size());
@@ -176,8 +206,22 @@ WeakestChain findWeakestAdjacentChainFast(const SimpleBoard& board, int x, int y
 }
 
 int findMinLibertyCountOfAdjacentChainsFast(const SimpleBoard& board, int x, int y, Color chainColor) {
-  const WeakestChain weakest = findWeakestAdjacentChainFast(board, x, y, chainColor);
-  return weakest.found ? static_cast<int>(weakest.liberties.size()) : 99;
+  const int N = static_cast<int>(board.size());
+  const char me = colorChar(chainColor);
+  Scratch& scratch = scratchFor(N * N);
+  const uint32_t visitGen = scratch.nextVisit();
+  int best = 99;
+  for (const auto& [dx, dy] : kNeighbors) {
+    const int nx = x + dx;
+    const int ny = y + dy;
+    if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+    if (board[static_cast<size_t>(nx)][static_cast<size_t>(ny)] != me) continue;
+    const int start = nx * N + ny;
+    if (scratch.visited[static_cast<size_t>(start)] == visitGen) continue;
+    walkChain(board, start, me, visitGen, scratch.nextAdd(), scratch, scratch.libs);
+    best = std::min(best, static_cast<int>(scratch.libs.size()));
+  }
+  return best;
 }
 
 }  // namespace ipvgo::game

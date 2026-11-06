@@ -1,18 +1,23 @@
-// In-process profiler for the search. The Visual Studio / ETW CPU profiler
-// needs an elevated session; this runs unprivileged by looking at its own
-// process instead.
+﻿// In-process profiler for the search, built into ipvgo_game for the profiling
+// configuration only (RelWithDebInfo / x64-Profile, which defines IPVGO_PROFILER).
+// The Visual Studio / ETW CPU profiler needs an elevated session; this runs
+// unprivileged by looking at its own process instead.
 //
-//   ipvgo_prof [faction] [depth] [ply] [reps]
+//   ipvgo_game prof [faction] [boardSize] [games] [nodeLimit]
 //
 //  phase 1  count allocations/deallocations and attribute them to the calling
 //           function via the return address of operator new
-//  phase 2  sample every thread's call stack with StackWalk64 while the same
-//           search runs `reps` times, then report exclusive/inclusive cost per
-//           function and the heaviest caller->callee edges
+//  phase 2  sample the call stack of every thread with StackWalk64 while the
+//           same games run again, then report exclusive/inclusive cost per
+//           function, per source line and the heaviest caller->callee edges
 //
-// Needs the PDB next to the exe, which the CMake target produces (/Zi /DEBUG).
+// Needs the PDB next to the exe, which the profiling configuration produces.
+#include "profiler.hpp"
+
+#if defined(_WIN32) && defined(IPVGO_PROFILER)
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
+#include <intrin.h>
 #include <windows.h>
 #include <mmsystem.h>
 #include <dbghelp.h>
@@ -36,7 +41,6 @@
 #include "exploiter.hpp"
 #include "game_engine.hpp"
 #include "go_game.hpp"
-#include "opt_flags.hpp"
 #include "opponents.hpp"
 #include "setup.hpp"
 
@@ -76,14 +80,14 @@ int siteIndex(void* caller) {
   return -1;
 }
 
-void* hookAlloc(size_t size) {
+void* hookAlloc(size_t size, void* caller) {
   void* p = std::malloc(size ? size : 1);
   if (p == nullptr) throw std::bad_alloc();
   if (g_countAllocs.load(std::memory_order_relaxed) && !t_inHook) {
     t_inHook = true;
     g_allocCount.fetch_add(1, std::memory_order_relaxed);
     g_allocBytes.fetch_add(static_cast<long long>(size), std::memory_order_relaxed);
-    const int idx = siteIndex(_ReturnAddress());
+    const int idx = siteIndex(caller);
     if (idx >= 0) {
       g_siteCounts[idx].fetch_add(1, std::memory_order_relaxed);
       g_siteBytes[idx].fetch_add(static_cast<long long>(size), std::memory_order_relaxed);
@@ -101,8 +105,8 @@ void hookFree(void* p) {
 
 }  // namespace
 
-void* operator new(size_t size) { return hookAlloc(size); }
-void* operator new[](size_t size) { return hookAlloc(size); }
+void* operator new(size_t size) { return hookAlloc(size, _ReturnAddress()); }
+void* operator new[](size_t size) { return hookAlloc(size, _ReturnAddress()); }
 void operator delete(void* p) noexcept { hookFree(p); }
 void operator delete[](void* p) noexcept { hookFree(p); }
 void operator delete(void* p, size_t) noexcept { hookFree(p); }
@@ -232,7 +236,7 @@ DWORD WINAPI samplerLoop(void*) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
+int runProfiler(int argc, char** argv) {
   const std::string faction = argc > 1 ? argv[1] : "Slum Snakes";
   const int boardSize = argc > 2 ? std::atoi(argv[2]) : 7;
   const int games = argc > 3 ? std::atoi(argv[3]) : 10;
@@ -250,7 +254,7 @@ int main(int argc, char** argv) {
   }
   {
     // sanity: can we name our own main?
-    const Sym& probe = resolve(reinterpret_cast<DWORD64>(&main));
+    const Sym& probe = resolve(reinterpret_cast<DWORD64>(&runProfiler));
     std::printf("symbol check: %s [%s:%d]\n", probe.name.c_str(), probe.file.c_str(), probe.line);
   }
   timeBeginPeriod(1);
@@ -462,3 +466,14 @@ int main(int argc, char** argv) {
   }
   return 0;
 }
+
+#else
+
+#include <cstdio>
+
+int runProfiler(int, char**) {
+  std::fprintf(stderr, "prof: build the x64-Profile (RelWithDebInfo) configuration on Windows to enable the profiler\n");
+  return 2;
+}
+
+#endif

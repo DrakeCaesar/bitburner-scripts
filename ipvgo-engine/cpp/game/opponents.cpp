@@ -8,7 +8,6 @@
 #include <unordered_set>
 
 #include "analysis.hpp"
-#include "opt_flags.hpp"
 #include "patterns.hpp"
 
 namespace ipvgo::game {
@@ -32,28 +31,24 @@ struct GrowthCandidate {
 
 int floorIndex(double rng, size_t size) { return static_cast<int>(std::floor(rng * static_cast<double>(size))); }
 
-// ---- Hot local queries: switchable between the reference implementation and
-// the chain-free fast path, so both can be measured on the same positions.
+// ---- Hot local queries: chain-free fast paths ------------------------------
 int effectiveLibertyCount(const SimpleBoard& board, int x, int y, Color player) {
-  if (g_opt.fastQueries) return static_cast<int>(findEffectiveLibertiesOfNewMoveFast(board, x, y, player).size());
-  return static_cast<int>(findEffectiveLibertiesOfNewMove(board, x, y, player).size());
+  return effectiveLibertyCountFast(board, x, y, player);
 }
 
 int adjacentMinLibertyCount(const SimpleBoard& board, int x, int y, Color chainColor) {
-  if (g_opt.fastQueries) return findMinLibertyCountOfAdjacentChainsFast(board, x, y, chainColor);
-  return findMinLibertyCountOfAdjacentChains(board, x, y, chainColor);
+  return findMinLibertyCountOfAdjacentChainsFast(board, x, y, chainColor);
 }
 
 WeakestChain weakestAdjacentChain(const SimpleBoard& board, int x, int y, Color chainColor) {
-  if (g_opt.fastQueries) return findWeakestAdjacentChainFast(board, x, y, chainColor);
-  return findEnemyNeighborChainWithFewestLiberties(board, x, y, chainColor);
+  return findWeakestAdjacentChainFast(board, x, y, chainColor);
 }
 
 // ---- Liberty growth / defend ----------------------------------------------
 
 std::vector<GrowthCandidate> getLibertyGrowthMoves(const SimpleBoard& board, Color player,
                                                    const PointMask& availableSet) {
-  const ChainSet cs = computeChains(board);
+  const ChainSet& cs = chainsCached(board);
   const int N = cs.N;
   const char me = colorChar(player);
 
@@ -125,7 +120,7 @@ AiMove getDefendMove(const SimpleBoard& board, Color player, const PointMask& av
 
 AiMove getSurroundMove(const SimpleBoard& board, Color player, const PointMask& availableSet, bool smart) {
   const Color opposing = oppositeColor(player);
-  const ChainSet cs = computeChains(board);
+  const ChainSet& cs = chainsCached(board);
   const int N = cs.N;
   const char oppChar = colorChar(opposing);
 
@@ -405,9 +400,10 @@ AiMove getPatternMove(const SimpleBoard& board, Color player, const PointMask& a
 
 class MoveGen {
  public:
-  MoveGen(const GameState& state, Color player, double rng, bool smart, MathRandom& mathRng)
+  MoveGen(const GameState& state, Color player, double rng, bool smart, MathRandom& mathRng,
+          const std::vector<Pt>* knownValidMoves = nullptr)
       : state_(state), board_(state.board), player_(player), rng_(rng), smart_(smart), mathRng_(mathRng) {
-    availableSpaces_ = findDisputedTerritory(state, player, smart);
+    availableSpaces_ = findDisputedTerritory(state, player, smart, knownValidMoves);
     for (const auto& [x, y] : availableSpaces_) availableSet_.insert(flatIndex(state.size, x, y));
     contestedPoints_ = getDisputedTerritoryMoves(board_, availableSpaces_);
     expansionMoves_ = getExpansionMoveArray(board_, availableSpaces_);
@@ -499,18 +495,13 @@ class MoveGen {
 
   // The liberty-growth candidates, computed at most once per position. growth(),
   // growthMaxDeltaPoints(), defendPoints() and defendCapturePoints() all derive
-  // from this same list, which used to be recomputed three times per position.
+  // from this same list.
   const std::vector<GrowthCandidate>& growthList() const {
-    if (g_opt.growthCache) {
-      if (!growthCacheReady_) {
-        growthCache_ = getLibertyGrowthMoves(board_, player_, availableSet_);
-        growthCacheReady_ = true;
-      }
-      return growthCache_;
+    if (!growthCacheReady_) {
+      growthCache_ = getLibertyGrowthMoves(board_, player_, availableSet_);
+      growthCacheReady_ = true;
     }
-    // Flag off: keep the original behaviour of recomputing per caller.
-    scratchGrowth_ = getLibertyGrowthMoves(board_, player_, availableSet_);
-    return scratchGrowth_;
+    return growthCache_;
   }
 
   std::vector<Pt> jumpOptions() const {
@@ -600,7 +591,6 @@ class MoveGen {
 
   mutable std::vector<GrowthCandidate> growthCache_;
   mutable bool growthCacheReady_ = false;
-  mutable std::vector<GrowthCandidate> scratchGrowth_;
 
   std::array<AiMove, kCount> cache_{};
   std::array<bool, kCount> computed_{};
@@ -1124,13 +1114,20 @@ ReplyDist opponentReplyDistribution(const GameState& state, Color player, Oppone
   const double smartShare = smartProbability(opponent);
   std::optional<MoveGen> genDumb;
   std::optional<MoveGen> genSmart;
-  if (smartShare < 1.0) genDumb.emplace(state, player, 0.0, false, mathRng);
-  if (smartShare > 0.0) genSmart.emplace(state, player, 0.0, true, mathRng);
+  // Both variants start from the same legal-move list; compute it once.
+  std::vector<Pt> sharedValid;
+  const std::vector<Pt>* shared = nullptr;
+  if (smartShare > 0.0 && smartShare < 1.0) {
+    sharedValid = getAllValidMoves(state, player);
+    shared = &sharedValid;
+  }
+  if (smartShare < 1.0) genDumb.emplace(state, player, 0.0, false, mathRng, shared);
+  if (smartShare > 0.0) genSmart.emplace(state, player, 0.0, true, mathRng, shared);
 
   // Fast path: factions whose priority table always opens with a capture make
   // that capture the entire distribution when every variant agrees on it. The
   // pools then never need to be built (~400us saved per position).
-  if (g_opt.forcedPath) {
+  {
     const bool captureFirst =
         opponent == Opponent::TheBlackHand || opponent == Opponent::Tetrads ||
         opponent == Opponent::Illuminati || opponent == Opponent::WorldDaemon;

@@ -292,11 +292,10 @@ Helper tools:
 ./scripts/mcgs.sh exploitplay Netburners 5 20 2 1
 ./scripts/mcgs.sh policycheck "The Black Hand" 5 3000
 
-# A/B the search optimisations (baseline, each flag, all together) on one
-# position set, sized to ~20 s; prints per-search lines live and a summary.
+# Fixed-depth search benchmark on one reproducible position set, sized to
+# ~20 s; prints per-search lines live and a summary.
 ./scripts/mcgs.sh optbench
 ./scripts/mcgs.sh optbench --seconds=40 --positions=6 --depth=3
-./scripts/mcgs.sh optbench --only=baseline,fastQueries,all
 ```
 
 `IPVGO_TUI=1` forces the terminal view, `IPVGO_TUI=0` prints one line per game,
@@ -341,10 +340,6 @@ IPVGO_CACHE_STATS=1 IPVGO_NO_SESSION=1 ./out/build/x64-Release/bin/ipvgo_game ex
 
 ## Profiling
 
-The Visual Studio / ETW CPU profiler needs an elevated session. `ipvgo_prof` is
-an unprivileged in-process alternative: it counts allocations (attributed to the
-calling function) and samples every thread's stack with `StackWalk64`.
-
 For a repeatable CPU-profile workload, open the repository root in Visual
 Studio, select the **`x64-Profile`** configuration (`RelWithDebInfo`) and the
 `ipvgo_game` target, then launch it with `profileworkload` as its command-line
@@ -372,66 +367,56 @@ took about one minute in a Release run; actual time depends on hardware. Pass a
 smaller game count for a shorter profile, for example `profileworkload 5`. An
 optional second argument changes the seed.
 
-```bash
-# Configure with the profiler enabled (off by default: it rebuilds the engine
-# with /Zi for symbols and runs it in a second executable). These raw cmake
-# commands need a Developer PowerShell for VS, since they compile with cl.exe.
-cmake -B out/build/x64-Release -G Ninja -DCMAKE_BUILD_TYPE=Release -DIPVGO_BUILD_PROFILER=ON
-cmake --build out/build/x64-Release --target ipvgo_prof
+To see where time and allocations go without an external tool, the profile build
+also has a built-in `prof` subcommand (not present in Release: it replaces
+`operator new`, which the performance build must not pay for). It counts
+allocations per calling function, then samples every thread's stack with
+`StackWalk64` over the same games, and prints the top allocation sites plus
+exclusive/inclusive cost per function, hottest source lines and caller->callee
+edges. It needs the PDB next to the exe and no elevation:
 
-# ipvgo_prof <faction> <depth> <ply> <reps>
-./out/build/x64-Release/bin/ipvgo_prof "Slum Snakes" 3 6 3
+```powershell
+# ipvgo_game prof [faction] [boardSize] [games] [nodeLimit]
+.\out\build\x64-Profile\bin\ipvgo_game.exe prof "Slum Snakes" 7 3 4000
 ```
 
-It prints the allocations/bytes per search with the top allocation sites, then
-exclusive/inclusive sample shares per function and the hottest caller->callee
-edges.
+Inlining is off in this build, so absolute times are several times slower than
+Release; read the shares, and confirm any speedup with `optbench` on Release.
 
-For the real ETW profiler, from an elevated prompt:
+To profile from the command line instead of Visual Studio, use the ETW
+profiler from an elevated prompt:
 
 ```powershell
 xperf -on PROC_THREAD+LOADER+PROFILE -stackwalk PROFILE
-ipvgo_game.exe optbench --only=all --positions=2
+ipvgo_game.exe optbench --positions=2
 xperf -d trace.etl
 xperf -i trace.etl -o trace.csv -a dumper   # then pivot the Stack column
 ```
 
 ## Performance baseline
 
-Reference point for optimisation work: **`68813bf`** (dense hash maps, point
-masks, make/unmake, session cache). Measure against these numbers, not against
-older commits.
+Reference point for optimisation work: the **search-optimisation pass** that
+followed `68813bf` (chain/liberty caches, narrowed bit kernels, local bit-plane
+legality, shared legal-move scan, allocation-free liberty counts, inline
+neighbour lists). The old A/B flags are gone; these paths are the only ones.
+Measure against these numbers, not against older commits.
 
 Reproduce, from a Release build:
 
 ```bash
-# Allocation count + time for one fixed search (deterministic node count)
-./out/build/x64-Release/bin/ipvgo_prof "Slum Snakes" 3 6 1
-
 # Fixed-depth search cost; threads=1 keeps it deterministic
-./out/build/x64-Release/bin/ipvgo_game optbench --only=all --positions=2 --depth=3 --threads=1 --reps=3
+./out/build/x64-Release/bin/ipvgo_game optbench --positions=2 --depth=3 --threads=1 --reps=3
 ```
 
-| measurement | baseline @ `68813bf` |
+| measurement | current baseline |
 |---|---|
-| `ipvgo_prof` search (36 290 nodes) | ~290 ms, 940 451 allocations, 20 MB |
-| `optbench` per search (2 positions, depth 3) | ~1.6 s (wall clock is noisy; the node counts are the stable part), 68 678 nodes |
-| `optbench` position 1 / 2 | 11 250 nodes / 27 831 nodes (deterministic; position 1 changed when the endgame model started using the real reply distribution), values are win probabilities |
-| `exploitplay`, 24 games, depth 2 | 12.7 ms/move with the session, 14.9 ms/move without (1.38M vs 1.78M nodes) |
+| `optbench` per search (2 positions, depth 3) | ~400 ms (was ~1440 ms before the pass; wall clock is noisy, the node counts are the stable part), 39 081 nodes |
+| `optbench` position 1 / 2 | 11 250 nodes / 27 831 nodes (deterministic; values are win probabilities) |
+| `exploitplay Netburners 5 24 2 1` | ~4.8 ms/move (was ~7.3 ms), same results |
+| `profileworkload 5` (Illuminati 9x9) | ~13.9 ms/move (was ~26.3 ms) |
 
-Largest remaining allocation sites: small `std::vector<int>` growth in the policy
-code (~293k / 1.9 MB), `EyeCandidate` vectors (35k), and `PolicyWalker::resolve`
-(46k). Nothing large is left; the remaining time is computation, dominated by
-`matchesAnyPattern` (~58% of exclusive samples in the depth-3 profile).
-
-Progress for reference, all on the same `ipvgo_prof` workload:
-
-| commit | allocations | bytes | search |
-|---|---|---|---|
-| `890f71e` | 5.14M | 333 MB | 502 ms |
-| `c2bbf26` (board + history + captures) | 3.31M | 166 MB | 383 ms |
-| `6da0c4a` (dense hash + masks) | 1.04M | 36 MB | 291 ms |
-| `68813bf` (make/unmake + session) | 0.94M | 20 MB | 290 ms |
+The remaining time is mostly `buildPolicyModel` / `getEyeCreationMoves` inside
+`opponentReplyDistribution` (eye analysis and pattern matching).
 
 ### Third-party code
 
