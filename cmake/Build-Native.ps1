@@ -49,6 +49,22 @@ $folder = switch ($BuildType) {
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $buildRoot = Join-Path $repoRoot "out/build/$folder"
 
+# A CMake build tree is bound to the generator that created it. The IDE (Visual
+# Studio generator, multi-config) and this script (Ninja, single-config) share one
+# folder, and reconfiguring a tree with the other generator aborts with
+# "generator ... does not match the generator used previously". Rebuild in the same
+# folder instead: drop the generated files and let CMake start over. Everything
+# under the build root is generated output, so nothing is lost.
+if ($Configure -and (Test-Path (Join-Path $buildRoot 'CMakeCache.txt'))) {
+  $cache = Join-Path $buildRoot 'CMakeCache.txt'
+  $cachedLine = Select-String -Path $cache -Pattern '^CMAKE_GENERATOR:INTERNAL=' | Select-Object -First 1
+  $cachedGenerator = if ($cachedLine) { ($cachedLine.Line -split '=', 2)[1].Trim() } else { '' }
+  if ($cachedGenerator -and $cachedGenerator -ne 'Ninja') {
+    Write-Host "Build tree in out/build/$folder was configured with '$cachedGenerator'; resetting it for Ninja."
+    Remove-Item -Recurse -Force $buildRoot
+  }
+}
+
 # Locate Visual Studio instead of hardcoding a version, so a VS upgrade does not
 # break the build.
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'

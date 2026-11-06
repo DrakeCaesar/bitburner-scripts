@@ -31,18 +31,24 @@ function mcgsExecutablePath() {
 }
 
 // Native targets are built from the repo root into `out/build/<config>` (see
-// CMakeSettings.json and cmake/BuildTypes.cmake). Older per-component build
-// dirs are still accepted so a stale checkout keeps working, but they are
-// checked last: an old binary can predate the `serve` protocol the server
-// speaks, which shows up as a bench that never leaves "thinking".
+// CMakeSettings.json and cmake/BuildTypes.cmake). Only a Release tree is served: a
+// Debug or RelWithDebInfo binary is several times slower per move, and the bench
+// numbers would silently describe the wrong build. Every release folder is read in
+// both layouts - `bin` for the single-config generators (Ninja, Unix Makefiles) and
+// `bin/<Config>` for a multi-config one (Visual Studio) - so switching generator
+// does not hide the binaries. The legacy per-component directories are checked
+// last: an old binary can predate the `serve` protocol the server speaks, which
+// shows up as a bench that never leaves "thinking".
 function nativeExecutableCandidates(name) {
   const isWindows = process.platform === "win32"
   const suffixes = isWindows ? [".exe"] : ["", ".exe"]
+  const buildRoot = path.join(__dirname, "..", "out", "build")
+  const releaseBinDirs = ["x64-Release", "x64-Clang-Release"].flatMap((config) => {
+    const bin = path.join(buildRoot, config, "bin")
+    return [bin, path.join(bin, "Release")]
+  })
   const dirs = [
-    path.join(__dirname, "..", "out", "build", "x64-Release", "bin"),
-    path.join(__dirname, "..", "out", "build", "x64-Profile", "bin"),
-    path.join(__dirname, "..", "out", "build", "x64-Clang-Release", "bin"),
-    path.join(__dirname, "..", "out", "build", "x64-Debug", "bin"),
+    ...releaseBinDirs,
     path.join(__dirname, "build", "Release"),
     path.join(__dirname, "build"),
   ]

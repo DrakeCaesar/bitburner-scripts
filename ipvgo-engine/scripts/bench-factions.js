@@ -31,9 +31,10 @@ function findExe() {
   const exe = isWindows ? "ipvgo_game.exe" : "ipvgo_game"
   const buildDirs = [
     path.join(root, "..", "out", "build", "x64-Release", "bin"),
+    path.join(root, "..", "out", "build", "x64-Release", "bin", "Release"),
+    path.join(root, "..", "out", "build", "x64-Clang-Release", "bin"),
     path.join(root, "..", "out", "build", "x64-Profile", "bin"),
     path.join(root, "..", "out", "build", "x64-Release"),
-    path.join(root, "..", "out", "build", "x64-Clang-Release", "bin"),
     path.join(root, "build", "Release"),
     path.join(root, "build"),
     path.join(root, "build-game", "Release"),
