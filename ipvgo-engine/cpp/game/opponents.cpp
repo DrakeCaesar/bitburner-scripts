@@ -31,17 +31,16 @@ struct GrowthCandidate {
 
 int floorIndex(double rng, size_t size) { return static_cast<int>(std::floor(rng * static_cast<double>(size))); }
 
-// ---- Hot local queries: chain-free fast paths ------------------------------
-int effectiveLibertyCount(const SimpleBoard& board, int x, int y, Color player) {
-  return effectiveLibertyCountFast(board, x, y, player);
+// ---- Hot local queries -----------------------------------------------------
+//
+// These are asked once per liberty of every chain on the board, so they run off the
+// bit planes loaded once per position (BoardBits) rather than walking chains.
+int effectiveLibertyCount(const BoardBits& bits, int x, int y, Color player) {
+  return bits.effectiveLibertyCount(x, y, player);
 }
 
-int adjacentMinLibertyCount(const SimpleBoard& board, int x, int y, Color chainColor) {
-  return findMinLibertyCountOfAdjacentChainsFast(board, x, y, chainColor);
-}
-
-WeakestChain weakestAdjacentChain(const SimpleBoard& board, int x, int y, Color chainColor) {
-  return findWeakestAdjacentChainFast(board, x, y, chainColor);
+int adjacentMinLibertyCount(const BoardBits& bits, int x, int y, Color chainColor) {
+  return bits.minAdjacentLibertyCount(x, y, chainColor);
 }
 
 // ---- Liberty growth / defend ----------------------------------------------
@@ -51,6 +50,7 @@ std::vector<GrowthCandidate> getLibertyGrowthMoves(const SimpleBoard& board, Col
   const ChainSet& cs = chainsCached(board);
   const int N = cs.N;
   const char me = colorChar(player);
+  const BoardBits bits(board);
 
   std::vector<GrowthCandidate> result;
   bool anyFriendly = false;
@@ -61,8 +61,8 @@ std::vector<GrowthCandidate> getLibertyGrowthMoves(const SimpleBoard& board, Col
       if (!availableSet.count(lib)) continue;
       const int lx = lib / N;
       const int ly = lib % N;
-      const int newLib = effectiveLibertyCount(board, lx, ly, player);
-      const int oldLib = adjacentMinLibertyCount(board, lx, ly, player);
+      const int newLib = effectiveLibertyCount(bits, lx, ly, player);
+      const int oldLib = adjacentMinLibertyCount(bits, lx, ly, player);
       if (newLib > 1 && newLib >= oldLib) result.push_back({lx, ly, oldLib, newLib});
     }
   }
@@ -140,32 +140,17 @@ AiMove getSurroundMove(const SimpleBoard& board, Color player, const PointMask& 
   std::vector<AiMove> captureMoves;
   std::vector<AiMove> atariMoves;
   std::vector<AiMove> surroundMoves;
+  const BoardBits bits(board);
 
   for (const int move : enemyLiberties) {
     const int mx = move / N;
     const int my = move % N;
-    const int newLibertyCount = effectiveLibertyCount(board, mx, my, player);
+    const int newLibertyCount = effectiveLibertyCount(bits, mx, my, player);
 
-    const WeakestChain weakest = weakestAdjacentChain(board, mx, my, opposing);
-    const int weakestLength = weakest.found ? weakest.length : 99;
-    const int enemyChainLibertyCount = weakest.found ? static_cast<int>(weakest.liberties.size()) : 99;
-
-    // Distinct chains the weakest chain's liberties belong to; at most four
-    // liberties, so a short scan beats building a set.
-    int libertyGroups = 0;
-    if (weakest.found) {
-      const int libertyCount = static_cast<int>(weakest.liberties.size());
-      for (int i = 0; i < libertyCount; ++i) {
-        bool duplicate = false;
-        for (int j = 0; j < i; ++j) {
-          if (cs.id[weakest.liberties[j]] == cs.id[weakest.liberties[i]]) {
-            duplicate = true;
-            break;
-          }
-        }
-        if (!duplicate) ++libertyGroups;
-      }
-    }
+    const BoardBits::Weakest weakest = bits.weakestAdjacent(cs, mx, my, opposing);
+    const int weakestLength = weakest.found ? weakest.stones : 99;
+    const int enemyChainLibertyCount = weakest.found ? weakest.liberties : 99;
+    const int libertyGroups = weakest.libertyGroups;
 
     if (newLibertyCount <= 2 && enemyChainLibertyCount > 2) continue;
 
@@ -194,8 +179,18 @@ AiMove getSurroundMove(const SimpleBoard& board, Color player, const PointMask& 
 
 // ---- Eyes ------------------------------------------------------------------
 
-std::vector<AiMove> getEyeCreationMoves(const SimpleBoard& board, Color player,
-                                        const PointMask& availableSet, int maxLiberties) {
+// The eye points a position offers, without materialising the list. Both callers
+// only need "how many, and which was first" for each of the two kinds, which is
+// what the stable sort to the front used to hand them.
+struct EyeMoveSet {
+  int count = 0;      // qualifying points, in scan order
+  int lifeCount = 0;  // ... of which create life
+  AiMove first;       // first qualifying point
+  AiMove firstLife;   // first point that creates life
+};
+
+EyeMoveSet getEyeCreationMoves(const SimpleBoard& board, Color player, const PointMask& availableSet,
+                               int maxLiberties) {
   // A copy: chainsCached() hands out a reference into a small ring that the
   // candidate evaluations below would evict.
   const ChainSet cs = chainsCached(board);
@@ -241,12 +236,12 @@ std::vector<AiMove> getEyeCreationMoves(const SimpleBoard& board, Color player,
     }
   }
 
-  std::vector<AiMove> moves;
   // The candidate list keeps duplicates on purpose (a point touching two weak
   // chains appears twice) and each candidate would otherwise cost a board copy
   // plus a board-wide eye analysis. Remembering the verdict per point keeps the
   // output identical - the same point always evaluates the same way - while
   // halving the analysis when duplicates occur.
+  EyeMoveSet result;
   std::vector<int8_t> verdict(static_cast<size_t>(N * N), -1);  // -1 unknown, 0 no, 1 life, 2 eyes
   auto evaluateCandidate = [&](int lib, bool& createsLife) {
     const int px = lib / N;
@@ -279,30 +274,27 @@ std::vector<AiMove> getEyeCreationMoves(const SimpleBoard& board, Color player,
     mv.x = lib / N;
     mv.y = lib % N;
     mv.createsLife = createsLife;
-    moves.push_back(mv);
+    if (result.count++ == 0) result.first = mv;
+    if (createsLife) {
+      if (result.lifeCount++ == 0) result.firstLife = mv;
+    }
   }
-
-  std::stable_sort(moves.begin(), moves.end(),
-                   [](const AiMove& a, const AiMove& b) { return (b.createsLife ? 1 : 0) - (a.createsLife ? 1 : 0) < 0; });
-  return moves;
+  return result;
 }
 
 AiMove getEyeCreationMove(const SimpleBoard& board, Color player, const PointMask& availableSet) {
-  const std::vector<AiMove> moves = getEyeCreationMoves(board, player, availableSet, 99);
-  return moves.empty() ? AiMove{} : moves[0];
+  const EyeMoveSet moves = getEyeCreationMoves(board, player, availableSet, 99);
+  if (moves.lifeCount > 0) return moves.firstLife;
+  return moves.count > 0 ? moves.first : AiMove{};
 }
 
 AiMove getEyeBlockingMove(const SimpleBoard& board, Color player, const PointMask& availableSet) {
   const Color opposing = oppositeColor(player);
-  const std::vector<AiMove> opponentEyeMoves = getEyeCreationMoves(board, opposing, availableSet, 5);
-  std::vector<AiMove> twoEye;
-  std::vector<AiMove> oneEye;
-  for (const auto& m : opponentEyeMoves) {
-    if (m.createsLife) twoEye.push_back(m);
-    else oneEye.push_back(m);
-  }
-  if (twoEye.size() == 1) return twoEye[0];
-  if (twoEye.empty() && oneEye.size() == 1) return oneEye[0];
+  const EyeMoveSet opponentEyeMoves = getEyeCreationMoves(board, opposing, availableSet, 5);
+  const int twoEye = opponentEyeMoves.lifeCount;
+  const int oneEye = opponentEyeMoves.count - opponentEyeMoves.lifeCount;
+  if (twoEye == 1) return opponentEyeMoves.firstLife;
+  if (twoEye == 0 && oneEye == 1) return opponentEyeMoves.first;
   return {};
 }
 
@@ -376,6 +368,7 @@ AiMove getPatternMove(const SimpleBoard& board, Color player, const PointMask& a
                       double rng) {
   const int N = static_cast<int>(board.size());
   std::vector<Pt> moves;
+  const BoardBits bits(board);
   // Membership first: the available set is a small subset of the board, so this
   // skips the pattern match for most points. Both tests are pure, so the result
   // and its order are unchanged.
@@ -383,7 +376,7 @@ AiMove getPatternMove(const SimpleBoard& board, Color player, const PointMask& a
     for (int y = 0; y < N; ++y) {
       if (!availableSet.count(flatIndex(N, x, y))) continue;
       if (!matchesAnyPattern(board, x, y, player)) continue;
-      if (smart && effectiveLibertyCount(board, x, y, player) <= 1) continue;
+      if (smart && effectiveLibertyCount(bits, x, y, player) <= 1) continue;
       moves.emplace_back(x, y);
     }
   }
@@ -476,13 +469,14 @@ class MoveGen {
     if (endGameAvailable_) return {};
     const int N = static_cast<int>(board_.size());
     std::vector<Pt> moves;
+    const BoardBits bits(board_);
     // Membership first, see getPatternMove(): same points, same order, far fewer
     // pattern matches.
     for (int x = 0; x < N; ++x) {
       for (int y = 0; y < N; ++y) {
         if (!availableSet_.count(flatIndex(N, x, y))) continue;
         if (!matchesAnyPattern(board_, x, y, player_)) continue;
-        if (smart_ && effectiveLibertyCount(board_, x, y, player_) <= 1) continue;
+        if (smart_ && effectiveLibertyCount(bits, x, y, player_) <= 1) continue;
         moves.emplace_back(x, y);
       }
     }

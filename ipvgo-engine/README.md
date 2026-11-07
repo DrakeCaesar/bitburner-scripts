@@ -417,14 +417,14 @@ IPVGO_THREADS=1 IPVGO_NODE_LIMIT=4000 IPVGO_CACHE_STATS=1 \
 
 | measurement | current baseline |
 |---|---|
-| `optbench` per search (2 positions, depth 3) | ~230 ms (was ~248 ms before this pass, ~284 ms before the one before it; wall clock is noisy, the node counts are the stable part), 39 012 nodes |
+| `optbench` per search (2 positions, depth 3) | ~204 ms (was ~226 ms before the bit-plane pass, ~248 ms before the eye pass, ~284 ms before the reply-reuse pass; wall clock is noisy, the node counts are the stable part), 39 012 nodes |
 | `optbench` position 1 / 2 | 11 181 nodes / 27 831 nodes (deterministic; values are win probabilities) |
-| `optbench --size=9 --positions=4 --depth=2 --threads=1 --reps=3` | ~103 ms/search, 11 537 nodes (was ~108 ms) |
-| `exploitplay Netburners 5 8 2 1` @4000, 1 thread | 754 ms think for 8 games (was 888 ms), same results |
-| `exploitplay Netburners 5 24 2 1` (fixed depth) | ~3.5 ms/move, unchanged within noise: no reply reuse and no eye candidates worth the fast path |
-| `exploitplay "Slum Snakes" 7 4 2 1` @4000, 1 thread | 3.35 s think (was 3.45 s), same nodes and moves |
-| `exploitplay Illuminati 9 2 2 1` @4000, 1 thread | 3.68 s think (was 3.88 s), same nodes and moves |
-| `exploitplay Illuminati 13 1 2 1` @4000, 1 thread | 16.4 s think (was 16.9 s), same nodes and moves; peak RSS 61.6 MB (was 57.9 MB) |
+| `optbench --size=9 --positions=4 --depth=2 --threads=1 --reps=3` | ~104 ms/search, 11 537 nodes |
+| `exploitplay Netburners 5 8 2 1` @4000, 1 thread | 726 ms think for 8 games (was 754 ms), same results |
+| `exploitplay Netburners 5 24 2 1` (fixed depth) | ~3.4 ms/move, unchanged within noise: no reply reuse and few liberties to query |
+| `exploitplay "Slum Snakes" 7 4 2 1` @4000, 1 thread | 3.02 s think (was 3.35 s), same nodes and moves |
+| `exploitplay Illuminati 9 2 2 1` @4000, 1 thread | 3.71 s think (was 3.88 s), same nodes and moves |
+| `exploitplay Illuminati 13 1 2 1` @4000, 1 thread | 16.0 s think (was 16.9 s), same nodes and moves; peak RSS 61.6 MB |
 | `profileworkload 5` (Illuminati 9x9) | ~13.9 ms/move before the reply-reuse pass |
 
 Nodes, memo hits, chosen moves and values are identical before and after the
@@ -484,15 +484,15 @@ Two ideas were tried and rejected:
   land cost a `ChainSet` copy. Measured inside the noise (7x7 3.62 s -> 3.67 s,
   9x9 4.06 s -> 3.99 s), so it is not in the tree.
 
-The next targets, from the inlining profile of the current build (shares of
-29 ms/move, one thread, 7x7, `nodeLimit=4000`): `computeChainsInto` 11.7%
-(the flood fill), `walkChain` 8.5% (the chain-free liberty queries in
-`surround`/`growth`), `validateMove` plus the bit capture sweep 10.4% (legality,
-run for every empty point by `getAllValidMoves` on every reply distribution),
-`eyeTotalsAfterMove` 6.1% and `summarizeEyes` 4.2% (the eye passes, now that the
-board-wide rebuild per candidate is gone), `matchesAnyPattern` 4.8% and
-`evaluatedLead` 3.3%. Nothing there is a single dominating cost any more, and the
-eye path is the one that has already been squeezed hardest.
+The next targets, from the inlining profile with the bit-plane queries in place
+(shares of 27 ms/move, one thread, 7x7, `nodeLimit=4000`): `computeChainsInto`
+13.3% (the chain flood fill, which every leaf and every reply distribution needs),
+`validateMove` 7.7% (`getAllValidMoves` validates every empty point on every reply
+distribution), `eyeTotalsAfterMove` 7.3% and `summarizeEyes` 4.5% (the eye passes),
+`matchesAnyPattern` 5.7%, `evaluatedLead` 4.5%, `placeStoneBits` 3.1%,
+`BitPlanes::load` 2.5% and the `BitPlanes` constructor 2.2%. Nothing is a single
+dominating cost, and the two levers with real headroom left are the flood fill and
+the legality scan.
 
 ### The incremental eye pass
 
@@ -545,6 +545,58 @@ mostly small calls (the old eye pass was chains of `ChainSet::members`,
 `SimpleBoard::operator[]` and allocator traffic). Rebuilding the profile
 configuration with `-ProfileInlining` gives 29 ms/move against a Release 26 ms/move,
 and the shares from *that* build are the ones to plan with.
+
+### The bit-plane pass
+
+`fast_queries.cpp` answered "how many liberties would this stone have" and "how
+weak is the chain next to this point" by walking the chain stone by stone with a
+per-thread stamp array. Those questions are asked for every liberty of every
+chain, for both colours, twice per reply distribution, and `walkChain` alone was
+8.5% of the time in the inlining profile - with `computeChainsInto` (13.3%) the
+two were the largest items.
+
+`BoardBits` loads the position's bit planes once and answers the same questions
+with word floods (`bits::flood` / `bits::neighbours` over `uint64_t[6]`, which the
+capture sweep already used):
+
+- `effectiveLibertyCount` - flood the friendly stones the new stone would join,
+  then count `neighbours(chain) & empty` and drop the point itself;
+- `minAdjacentLibertyCount` - the same per adjacent chain, minimum over them;
+- `weakestAdjacent` - first-minimum chain in N/E/S/W order, its stone count, its
+  liberty count, and how many distinct chains its liberties belong to (that last
+  one from the caller's chain set, as before).
+
+`selftest` now checks all three against the chain-based reference implementations
+(`findEffectiveLibertiesOfNewMove`, `findMinLibertyCountOfAdjacentChains`,
+`findEnemyNeighborChainWithFewestLiberties`) over 160 random boards from 5x5 to
+19x19: 11 832 queries, 0 mismatches.
+
+Release, identical node counts and moves throughout: `optbench` fixed depth
+226 -> 204 ms/search (-11%), 7x7 at the in-game budget 3.35 -> 3.02 s (-9%), 9x9
+3.88 -> 3.71 s (-4.5%), 13x13 16.9 -> 16.0 s (-5%). The gain shrinks with board
+size because a flood costs more words per iteration, while the stone walk costs
+the same per stone.
+
+Also in this pass, and measured as **not** worth anything:
+
+- **Fewer allocations.** The eye analysis was the largest allocation site in the
+  engine (`std::vector<EyeCandidate>` per reply distribution, plus the `AiMove` list
+  the eye moves were built into and sorted). Both are gone - the candidate scan now
+  hands each eye to a callback, and `getEyeCreationMoves` fills four fields
+  (first point, first point that creates life, and the two counts) instead of
+  building and sorting a vector. Wall clock did not move, because
+  `ipvgo-engine/cpp/nn/fast_alloc.cpp` already replaces `operator new` with a
+  per-thread free list: small blocks cost about as much as a stack bump. Worth
+  keeping for the memory traffic, but do not expect a timing win from removing
+  allocations in this binary.
+- **A dedicated chain slot for the leaf evaluator**, so those one-shot boards would
+  stop evicting the position the move generators keep asking about. It made things
+  ~3% slower: leaves revisit the same boards across siblings, so the shared ring was
+  serving real transposition hits. Reverted.
+- **Narrowing `ChainSet` to 16-bit offsets.** Not attempted: a flood over a 7x7
+  board touches 49 points, so the arrays are already inside one cache line's worth of
+  traffic per chain, and the change would touch every reader of `memberData` /
+  `libertyData` for an unmeasurable gain.
 
 ### Third-party code
 
@@ -792,11 +844,10 @@ configuration and roughly 100+ games per faction.
 
 **The policy model is the search, and its cost is now spread out.** On a 7x7 game
 at the in-game budget `opponentReplyDistribution` is 75% of the search and
-`buildPolicyModel` 49% of that, but inside it no single item dominates any more:
-`getEyeCreationMoves` is 23% (down from 29% before the incremental pass), the
-legality scan behind `MoveGen` 11%, `getSurroundMove` 9%, `growthMaxDeltaPoints`
-8.6%, the eye-blocking pass 12%. Read those shares from a profile built with
-`-ProfileInlining`; the default profile configuration disables inlining, which
+`buildPolicyModel` 46% of that, but inside it no single item dominates:
+`getEyeCreationMoves` is 26%, the liberty queries behind `surround` and `growth`
+about 10%, and the eye-blocking pass 13%. Read those shares from a profile built
+with `-ProfileInlining`; the default profile configuration disables inlining, which
 inflates exactly this kind of call-heavy code and made the eye pass look twice as
 expensive as it is in Release.
 

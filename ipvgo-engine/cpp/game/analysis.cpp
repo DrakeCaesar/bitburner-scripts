@@ -183,20 +183,16 @@ int findMinLibertyCountOfAdjacentChains(const SimpleBoard& board, int x, int y, 
   return wc.found ? static_cast<int>(wc.liberties.size()) : 99;
 }
 
-std::vector<EyeCandidate> getAllPotentialEyes(const SimpleBoard& board, const ChainSet& cs, Color player,
-                                              int maxSizeOverride) {
-  int nodeCount = 0;
-  for (int x = 0; x < static_cast<int>(board.size()); ++x) {
-    const char* col = board.column(x);
-    for (int y = 0; y < static_cast<int>(board.size()); ++y) {
-      if (col[y] != '#') nodeCount++;
-    }
-  }
+namespace {
 
-  const double maxSize = maxSizeOverride >= 0 ? static_cast<double>(maxSizeOverride)
-                                              : std::min(nodeCount * 0.4, 11.0);
-
-  std::vector<EyeCandidate> candidates;
+// Core of getAllPotentialEyes(): the same scan, with the candidate handed to the
+// caller instead of pushed into a vector. The eye summary runs this on every reply
+// distribution, and the vector was the largest single allocation site in the
+// profile, so the summary takes this path.
+//
+// `visit(neighbors, emptyChain)` is called once per single-colour empty region.
+template <typename Visit>
+void forEachPotentialEye(const ChainSet& cs, Color player, double maxSize, Visit&& visit) {
   for (int c = 0; c < cs.count; ++c) {
     if (cs.chainColor[c] != '.') continue;
     if (static_cast<double>(cs.members(c).size()) > maxSize) continue;
@@ -210,8 +206,21 @@ std::vector<EyeCandidate> getAllPotentialEyes(const SimpleBoard& board, const Ch
     }
     const bool whiteEye = hasWhite && !hasBlack && player == Color::White;
     const bool blackEye = !hasWhite && hasBlack && player == Color::Black;
-    if (whiteEye || blackEye) candidates.push_back({neighbors, c});
+    if (whiteEye || blackEye) visit(neighbors, c);
   }
+}
+
+}  // namespace
+
+std::vector<EyeCandidate> getAllPotentialEyes(const SimpleBoard& board, const ChainSet& cs, Color player,
+                                              int maxSizeOverride) {
+  const double maxSize =
+      maxSizeOverride >= 0 ? static_cast<double>(maxSizeOverride) : eyeCandidateMaxSize(board);
+  std::vector<EyeCandidate> candidates;
+  forEachPotentialEye(cs, player, maxSize,
+                      [&candidates](const ChainList& neighbors, int emptyChain) {
+                        candidates.push_back({neighbors, emptyChain});
+                      });
   return candidates;
 }
 
@@ -290,7 +299,6 @@ double eyeCandidateMaxSize(const SimpleBoard& board) {
 
 EyeBoardSummary summarizeEyes(const SimpleBoard& board, const ChainSet& cs, Color player) {
   EyeBoardSummary out;
-  const std::vector<EyeCandidate> candidates = getAllPotentialEyes(board, cs, player);
 
   auto addEye = [&out](int chain, int region) {
     if (out.perChain[static_cast<size_t>(chain)] < 255) ++out.perChain[static_cast<size_t>(chain)];
@@ -301,24 +309,27 @@ EyeBoardSummary summarizeEyes(const SimpleBoard& board, const ChainSet& cs, Colo
     }
   };
 
-  for (const auto& candidate : candidates) {
-    if (candidate.neighborChains.empty()) continue;
-    if (candidate.neighborChains.size() == 1) {
-      addEye(candidate.neighborChains[0], candidate.emptyChain);
-      continue;
-    }
-    ++out.multiNeighbour;
-    if (out.multiRegionCount < EyeBoardSummary::kMaxMultiRegions) {
-      // Past the cap the incremental path below simply refuses; the totals here
-      // stay exact either way.
-      EyeBoardSummary::MultiRegion& multi = out.multiRegions[static_cast<size_t>(out.multiRegionCount++)];
-      multi.region = candidate.emptyChain;
-      multi.neighbors = candidate.neighborChains;
-    }
-    for (const int nc : chainsThatFullyEncircle(board, cs, candidate.emptyChain, candidate.neighborChains)) {
-      addEye(nc, candidate.emptyChain);
-    }
-  }
+  // No candidate vector: this runs on every reply distribution.
+  forEachPotentialEye(cs, player, eyeCandidateMaxSize(board),
+                      [&](const ChainList& neighbors, int emptyChain) {
+                        if (neighbors.empty()) return;
+                        if (neighbors.size() == 1) {
+                          addEye(neighbors[0], emptyChain);
+                          return;
+                        }
+                        ++out.multiNeighbour;
+                        if (out.multiRegionCount < EyeBoardSummary::kMaxMultiRegions) {
+                          // Past the cap the incremental path simply refuses; the totals
+                          // here stay exact either way.
+                          EyeBoardSummary::MultiRegion& multi =
+                              out.multiRegions[static_cast<size_t>(out.multiRegionCount++)];
+                          multi.region = emptyChain;
+                          multi.neighbors = neighbors;
+                        }
+                        for (const int nc : chainsThatFullyEncircle(board, cs, emptyChain, neighbors)) {
+                          addEye(nc, emptyChain);
+                        }
+                      });
 
   for (int c = 0; c < cs.count; ++c) {
     if (cs.chainColor[c] == '.') continue;

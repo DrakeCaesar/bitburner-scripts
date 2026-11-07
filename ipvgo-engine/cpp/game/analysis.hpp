@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 
+#include "bitboard.hpp"
 #include "go_game.hpp"
 
 namespace ipvgo::game {
@@ -47,6 +48,41 @@ std::vector<int> findEffectiveLibertiesOfNewMoveFast(const SimpleBoard& board, i
 int effectiveLibertyCountFast(const SimpleBoard& board, int x, int y, Color player);
 WeakestChain findWeakestAdjacentChainFast(const SimpleBoard& board, int x, int y, Color chainColor);
 int findMinLibertyCountOfAdjacentChainsFast(const SimpleBoard& board, int x, int y, Color chainColor);
+
+// Bit-plane view of one board: load it once for a position and then answer many
+// point queries from it. The move generators ask for the liberties of every
+// candidate point, and these are the same answers fast_queries.cpp reaches by
+// walking a chain stone by stone - a flood over words instead of over stones.
+class BoardBits {
+ public:
+  explicit BoardBits(const SimpleBoard& board);
+  const ipvgo::game::BitPlanes& planes() const { return planes_; }
+  int size() const { return n_; }
+  bool usable() const { return ipvgo::game::BitPlanes::fits(n_); }
+
+  // Empty neighbours of the chain a stone of `player` at (x,y) would form, not
+  // counting (x,y) itself: what effectiveLibertyCountFast() returns.
+  int effectiveLibertyCount(int x, int y, Color player) const;
+
+  // Fewest liberties among the distinct `player` chains touching (x,y), or 99 when
+  // there are none: what findMinLibertyCountOfAdjacentChainsFast() returns.
+  int minAdjacentLibertyCount(int x, int y, Color player) const;
+
+  struct Weakest {
+    bool found = false;
+    int stones = 0;         // stones in the chain
+    int liberties = 0;      // its distinct empty neighbours
+    int libertyGroups = 0;  // distinct chains those liberties belong to
+  };
+  // The adjacent chain of `stone` colour with the fewest liberties (first in
+  // N/E/S/W order on ties), which is what weakestAdjacentChain() is asked for.
+  Weakest weakestAdjacent(const ChainSet& cs, int x, int y, Color stone) const;
+
+ private:
+  ipvgo::game::BitPlanes planes_;
+  const ipvgo::game::BitLayout* layout_ = nullptr;
+  int n_ = 0;
+};
 
 // At most a handful of distinct chains, held inline so a candidate costs no
 // allocation. More than kMax neighbours are dropped (a large empty region can

@@ -462,6 +462,78 @@ int runSelftest() {
           "pattern matching: corner hane agrees");
   }
 
+  // ---- Liberty queries: the bit-plane answers must equal the chain reference ---
+  {
+    std::mt19937_64 rng(20260202ULL);
+    long checkedPoints = 0;
+    long mismatches = 0;
+    long foundWeakest = 0;
+    for (int board = 0; board < 160; ++board) {
+      const int n = 5 + static_cast<int>(rng() % 8) * 2;  // 5,7,9,11,13,17,19
+      SimpleBoard b(n);
+      for (int x = 0; x < n; ++x) {
+        for (int y = 0; y < n; ++y) {
+          const uint64_t r = rng() % 100;
+          b[x][y] = r < 40 ? 'X' : r < 74 ? 'O' : r < 78 ? '#' : '.';
+        }
+      }
+      const ChainSet cs = computeChains(b);
+      const BoardBits bits(b);
+      for (int x = 0; x < n; ++x) {
+        for (int y = 0; y < n; ++y) {
+          if (b[x][y] != '.') continue;
+          for (const Color side : {Color::Black, Color::White}) {
+            // effectiveLibertyCount against the chain implementation that builds
+            // the whole merged chain.
+            const int fast = bits.effectiveLibertyCount(x, y, side);
+            const int reference = static_cast<int>(findEffectiveLibertiesOfNewMove(b, x, y, side).size());
+            if (fast != reference) {
+              ++mismatches;
+              if (mismatches <= 5) {
+                std::cerr << "selftest: effectiveLibertyCount mismatch at " << n << "x" << n << " (" << x << ","
+                          << y << ") " << (side == Color::Black ? "black" : "white") << ": fast " << fast
+                          << ", reference " << reference << "\n"
+                          << boardString(b) << "\n";
+              }
+            }
+            const int minFast = bits.minAdjacentLibertyCount(x, y, side);
+            const int minReference = findMinLibertyCountOfAdjacentChains(b, x, y, side);
+            if (minFast != minReference) {
+              ++mismatches;
+              if (mismatches <= 5) {
+                std::cerr << "selftest: minAdjacentLibertyCount mismatch at " << n << "x" << n << " (" << x
+                          << "," << y << ") " << (side == Color::Black ? "black" : "white") << ": fast "
+                          << minFast << ", reference " << minReference << "\n"
+                          << boardString(b) << "\n";
+              }
+            }
+            const BoardBits::Weakest weakest = bits.weakestAdjacent(cs, x, y, side);
+            const WeakestChain referenceWeakest = findEnemyNeighborChainWithFewestLiberties(b, x, y, side);
+            const int referenceLength = referenceWeakest.found ? referenceWeakest.length : 0;
+            const int referenceLiberties =
+                referenceWeakest.found ? static_cast<int>(referenceWeakest.liberties.size()) : 0;
+            if (weakest.found != referenceWeakest.found || weakest.stones != referenceLength ||
+                weakest.liberties != referenceLiberties) {
+              ++mismatches;
+              if (mismatches <= 5) {
+                std::cerr << "selftest: weakestAdjacent mismatch at " << n << "x" << n << " (" << x << ","
+                          << y << "): fast " << weakest.found << "/" << weakest.stones << "/"
+                          << weakest.liberties << ", reference " << referenceWeakest.found << "/"
+                          << referenceLength << "/" << referenceLiberties << "\n"
+                          << boardString(b) << "\n";
+              }
+            }
+            if (weakest.found) ++foundWeakest;
+            ++checkedPoints;
+          }
+        }
+      }
+    }
+    check(mismatches == 0, "liberty queries: bit planes agree with the chain reference (" +
+                               std::to_string(checkedPoints) + " queries, " +
+                               std::to_string(foundWeakest) + " with an adjacent chain)");
+  }
+
   std::cout << (g_failures ? "\nSELFTEST FAILED\n" : "\nSELFTEST PASSED\n");
   return g_failures ? 1 : 0;
 }
