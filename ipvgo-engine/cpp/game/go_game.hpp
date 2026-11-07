@@ -293,11 +293,13 @@ struct Score {
 
 // A chain's cells or liberties: a view into the ChainSet's flat storage. Cheap
 // to copy, does not own memory, and keeps the flat arrays cache friendly.
+// Elements are point indices (0..360), so 16 bits holds them; the narrower array
+// halves the bytes the chain pass touches on every node.
 struct ChainSpan {
-  const int* first = nullptr;
+  const uint16_t* first = nullptr;
   int count = 0;
-  const int* begin() const { return first; }
-  const int* end() const { return first + count; }
+  const uint16_t* begin() const { return first; }
+  const uint16_t* end() const { return first + count; }
   int size() const { return count; }
   bool empty() const { return count == 0; }
   int operator[](int i) const { return first[i]; }
@@ -310,17 +312,24 @@ struct ChainSpan {
 // Storage is inline and fixed capacity (19x19 = 361 points is the largest
 // subnet), so building one allocates nothing at all: this runs on every
 // legality test, move application and policy query.
+//
+// Liberty entries are (chain, empty point) pairs. An empty point touches at most
+// four chains, so 4 * points is the true bound; it used to be kMaxPoints, which
+// 19x19 positions overflow (368 pairs seen in a real game).
 struct ChainSet {
   static constexpr int kMaxPoints = 361;
+  // An empty point is adjacent to at most four chains, so 4 * points bounds the
+  // (chain, liberty) pairs. selftest checks a 19x19 checkerboard against this.
+  static constexpr int kMaxLiberties = kMaxPoints * 4;
 
   int N = 0;
   int count = 0;
-  std::array<int, kMaxPoints> id;           // size N*N, -1 for offline
+  std::array<int16_t, kMaxPoints> id;       // size N*N, -1 for offline
   std::array<char, kMaxPoints> chainColor;  // per chain
-  std::array<int, kMaxPoints + 1> memberOffsets;   // count + 1 offsets into memberData
-  std::array<int, kMaxPoints> memberData;          // per chain, flat indices
-  std::array<int, kMaxPoints + 1> libertyOffsets;  // count + 1 offsets into libertyData
-  std::array<int, kMaxPoints> libertyData;         // per chain, flat indices (unique empty neighbors)
+  std::array<uint16_t, kMaxPoints + 1> memberOffsets;   // count + 1 offsets into memberData
+  std::array<uint16_t, kMaxPoints> memberData;          // per chain, flat indices
+  std::array<uint16_t, kMaxPoints + 1> libertyOffsets;  // count + 1 offsets into libertyData
+  std::array<uint16_t, kMaxLiberties> libertyData;  // per chain, flat indices (unique empty neighbors)
 
   ChainSpan members(int c) const {
     if (c < 0 || c + 1 >= count + 1) return {};
@@ -343,7 +352,6 @@ inline Color oppositeColor(Color c) { return c == Color::Black ? Color::White : 
 inline int flatIndex(int size, int x, int y) { return x * size + y; }
 
 std::string boardString(const SimpleBoard& board);
-SimpleBoard simpleBoardFromString(const std::string& s);
 double opponentKomi(Opponent ai);
 
 // ---- Chains / captures ---------------------------------------------------
@@ -389,7 +397,6 @@ void applyPass(GameState& state, Color player, MoveUndo& undo);
 void undoMove(GameState& state, const MoveUndo& undo);
 
 Color whoseTurn(const GameState& state);  // returns Empty if game over
-std::vector<std::pair<int, int>> getEmptySpaces(const SimpleBoard& board);
 std::vector<std::pair<int, int>> getAllValidMoves(const GameState& state, Color player);
 
 // ---- Scoring -------------------------------------------------------------

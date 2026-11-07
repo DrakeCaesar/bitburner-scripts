@@ -107,11 +107,6 @@ Neighbors onBoardNeighbors(int N, int x, int y) {
   return out;
 }
 
-std::vector<int> neighborChainIndices(const SimpleBoard& board, const ChainSet& cs, int c) {
-  (void)board;
-  return neighborChainsOfChain(cs, c).toVector();
-}
-
 std::vector<int> findEffectiveLibertiesOfNewMove(const SimpleBoard& board, int x, int y, Color player) {
   const ChainSet& cs = chainsCached(board);
   const int N = cs.N;

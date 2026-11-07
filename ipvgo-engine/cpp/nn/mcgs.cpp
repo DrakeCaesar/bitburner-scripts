@@ -151,23 +151,6 @@ int blackPlayoutWeight(const GameState& state, int x, int y) {
   return 1;
 }
 
-bool blackPlayoutLegal(const GameState& state, int x, int y) {
-  if (evaluateIfMoveIsValid(state, x, y, Color::Black) != Validity::Valid) return false;
-  if (isEyeMove(state, x, y, Color::Black) && !isCaptureMove(state, x, y, Color::Black)) return false;
-  if (!isCaptureMove(state, x, y, Color::Black)) {
-    const WeakestChain wc = findEnemyNeighborChainWithFewestLiberties(state.board, x, y, Color::White);
-    if (wc.found && wc.liberties.size() > 1) {
-      // Avoid capturing healthy groups during rollout.
-      const SimpleBoard after = evaluateMoveResult(state.board, x, y, Color::Black);
-      const ChainSet afterCs = computeChains(after);
-      for (int c = 0; c < afterCs.count; ++c) {
-        if (afterCs.chainColor[c] == 'O' && afterCs.liberties(c).empty()) return false;
-      }
-    }
-  }
-  return true;
-}
-
 GameState applyPass(GameState state, Color player) {
   passTurn(state, player);
   return state;
@@ -406,34 +389,6 @@ McgsNode* expandChild(McgsNode* parent, size_t childIdx, std::vector<std::unique
     childNode->U = fastPlayout(childNode->state, rng, cfg, ctx, childNode->whiteMovesCompleted);
   }
   return childNode;
-}
-
-int findChildIndex(const McgsNode* node, const McgsMove& move) {
-  for (size_t i = 0; i < node->children.size(); ++i) {
-    const McgsChild& c = node->children[i];
-    if (c.move.passMove == move.passMove && c.move.x == move.x && c.move.y == move.y) return static_cast<int>(i);
-  }
-  return -1;
-}
-
-McgsMove playToMove(const Play& play) {
-  McgsMove move;
-  if (play.type == PlayType::Pass) {
-    move.passMove = true;
-  } else {
-    move.x = play.x;
-    move.y = play.y;
-  }
-  return move;
-}
-
-int findOrAddChild(McgsNode* node, const McgsMove& move) {
-  if (int idx = findChildIndex(node, move); idx >= 0) return idx;
-  McgsChild child;
-  child.move = move;
-  child.weight = 1;
-  node->children.push_back(child);
-  return static_cast<int>(node->children.size()) - 1;
 }
 
 unsigned resolveThreadCount(int requestedThreads, int playouts) {

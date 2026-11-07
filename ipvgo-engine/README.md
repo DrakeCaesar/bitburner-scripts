@@ -328,9 +328,6 @@ IPVGO_EYE_FILTER=1 ...              # never play inside our own pass-alive eye
 `exploitplay` also takes two cache switches:
 
 - `IPVGO_NO_SESSION=1` - disable the session cache, giving the A/B baseline.
-- `IPVGO_NO_MEMO=1` - disable the transposition table outright, which is how the
-  table's cost is compared against what it saves. Results differ (the search
-  re-explores what it would have reused), so this is a measurement switch only.
 - `IPVGO_CACHE_STATS=1` - report nodes, memo hits, how many of those came from an
   earlier move, reply-cache hits, endgame budget cuts, session size and how many
   times the session was dropped because a new game started.
@@ -420,14 +417,15 @@ IPVGO_THREADS=1 IPVGO_NODE_LIMIT=4000 IPVGO_CACHE_STATS=1 \
 
 | measurement | current baseline |
 |---|---|
-| `optbench` per search (2 positions, depth 3) | ~199 ms (was ~230 ms before the legality pass; wall clock is noisy, the node counts are the stable part), 39 012 nodes |
+| `optbench` per search (2 positions, depth 3) | ~185 ms (was ~192 ms before the move-generation pass, ~230 ms before the legality pass; wall clock is noisy, the node counts are the stable part), 39 012 nodes |
 | `optbench` position 1 / 2 | 11 181 nodes / 27 831 nodes (deterministic; values are win probabilities) |
-| `optbench --size=9 --positions=4 --depth=2 --threads=1 --reps=3` | ~79 ms/search (was ~102 ms), 11 537 nodes |
+| `optbench --size=9 --positions=4 --depth=2 --threads=1 --reps=3` | ~77 ms/search (was ~78 ms before the move-generation pass, ~102 ms before the legality pass), 11 537 nodes |
 | `exploitplay Netburners 5 8 2 1` @4000, 1 thread | 668 ms think for 8 games (was 699 ms), same results |
 | `exploitplay Netburners 5 24 2 1` (fixed depth) | ~3.3 ms/move |
 | `exploitplay "Slum Snakes" 7 4 2 1` @4000, 1 thread | 2.79 s think (was 2.98 s), same nodes and moves |
 | `exploitplay Illuminati 9 2 2 1` @4000, 1 thread | 2.91 s think (was 3.66 s), same nodes and moves |
 | `exploitplay Illuminati 13 1 2 1` @4000, 1 thread | 16.0 s think (was 16.9 s), same nodes and moves; peak RSS 61.6 MB |
+| `exploitplay <faction> 19 1 2 1` @4000, 1 thread | works. Before the move-generation pass every 19x19 run died with `0xC0000409` (see that section) |
 | `profileworkload 5` (Illuminati 9x9) | ~13.9 ms/move before the reply-reuse pass |
 
 Nodes, memo hits, chosen moves and values are identical before and after the
@@ -468,9 +466,9 @@ values bit-identical:
   with its own board scan and `leafValue` counted empties with another; both now
   come from the chain set that is already in hand, and the empty-space loop reads
   the neighbour table instead of rebuilding `onBoardNeighbors` per point.
-- **Membership test before the pattern match** in `patternPoints` and
-  `getPatternMove`. The available set is a small subset of the board and both
-  tests are pure, so the points and their order do not change.
+- **Membership test before the pattern match** in `patternPoints`. The available set
+  is a small subset of the board and both tests are pure, so the points and their
+  order do not change.
 
 Two ideas were tried and rejected:
 
@@ -492,21 +490,26 @@ The next targets, from the inlining profile of the current build (shares of
 chain flood fill, which every leaf and every reply distribution needs),
 `eyeTotalsAfterMove` 8.8% and `summarizeEyes` 3.5% (the eye passes),
 `matchesAnyPattern` 6.5%, `evaluatedLead` 5.1%, `getEyeCreationMoves` 4.3%,
-`neighborChainsOfChain` 3.8%, `BitPlanes::load` 2.5%. The legality scan that used to
-head this list is down to 4.3% combined (`getAllValidMoves` 2.2% + `placeStoneBits`
-2.1%).
+`neighborChainsOfChain` 3.8%, `BitPlanes::load` 2.5% (that one is now one load per
+position instead of three or four, see "The move-generation pass"). The legality scan
+that used to head this list is down to 4.3% combined (`getAllValidMoves` 2.2% +
+`placeStoneBits` 2.1%).
 
-Two concrete ideas remain, both worth a few percent and both self-contained:
+Two of the ideas this list used to carry are done: the 16-bit chain arrays (neutral on
+speed, but they found and fixed the 19x19 overflow) and loading the bit planes once.
+What remains:
 
-- **The flood fill writes five int arrays per board** (`id`, `memberOffsets`,
-  `memberData`, `libertyOffsets`, `libertyData`). Narrowing them to 16-bit halves that
-  traffic and halves the `ChainSet` copies the eye pass takes, at the cost of touching
-  every reader; the liberty pass could also be fused into the chain pass, which would
-  halve the neighbour visits, but that changes the order liberties are stored in.
 - **`matchesAnyPattern` is evaluated per point**, nine cell classes at a time, when the
   same question can be asked for the whole board at once: for each of the nine
   pattern offsets and each cell class, one shifted mask, then each pattern is an AND
   of nine masks. That is ~20 patterns x 9 word-ops per board instead of per point.
+- **The eye pass still copies the chain set** (`const ChainSet cs = chainsCached(...)`
+  in `getEyeCreationMoves`) because the ring is evicted by the candidate evaluations it
+  performs. Narrowing the arrays halved what that copy costs; a stable slot, or an
+  index into the ring instead of a copy, would remove it.
+- **Fusing the liberty pass into the chain pass** would halve the neighbour visits, but
+  it changes the order liberties are stored in - the liberty oracle in `selftest`
+  would have to be re-run against every consumer, so it needs its own pass.
 
 ### The incremental eye pass
 
@@ -705,6 +708,118 @@ previous build:
 **-22% at 9x9, -6% at 7x7, -4.5% at 5x5.** The gain scales with how many empty points
 a board has, because that is how many times the old path copied and packed a board.
 
+### The move-generation pass
+
+The next profile (10 games, 30.3 ms/move instrumented) put the policy model's own
+generators on top: `eyeTotalsAfterMove` 7.7%, `matchesAnyPattern` 6.4%,
+`getEyeCreationMoves` 4.4%, `neighborChainsOfChain` 3.9%, `summarizeEyes` 3.6%,
+`BitPlanes::load` 2.9%. Three structurally cheap wins came out of it, each measured
+on its own with interleaved `optbench` runs (same node counts, 39 012 and 11 537).
+
+**Pattern scan, once per position.** The pattern generator used to walk the whole
+board to test `matchesAnyPattern` in two separate functions, one returning the first
+matching point and one returning the list; `patternPoints()` did the same walk again
+for the caller that only wants the point list. The list is now cached
+(`patternCache_`, `patternCacheReady_`) and both entry points read it. -1% on a
+10-game 9x9 workload (7100 vs 7176 ms).
+
+**Bit planes loaded once.** `getSurroundMove`, `getLibertyGrowthMoves`,
+`getDefendMove` and `patternPoints()` each built their own `BoardBits` from the
+board, so the same position was packed three or four times per node. `MoveGen` now
+owns one `bits_` member and passes it down. With the pattern cache above: -2.5% on
+the 2-position depth-3 bench (193.4 -> 188.5 ms) and -2.1% on the 9x9 bench
+(79.0 -> 77.4 ms).
+
+**16-bit chain arrays (and a real buffer overflow).** `ChainSet`'s five index arrays
+held `int` where every element is a point index (0..360) or a small count. Narrowing
+`id`, `memberOffsets`, `memberData`, `libertyOffsets` and `libertyData` to
+`int16_t`/`uint16_t` halves the bytes the chain pass touches on every node, and
+`ChainSpan` yields `int` so readers did not change. Timing: -1.5% on one bench,
++1.4% on the other, i.e. **neutral** - the chain pass is arithmetic-bound, not
+bandwidth-bound.
+
+The narrowing did expose something that matters more than the timing. `libertyData`
+was sized `kMaxPoints` (361) but holds one entry per (chain, empty point) pair, and
+an empty point can touch four chains. A temporary counter showed 19x19 positions
+reaching **368 pairs** - a seven-element write past the end of the last member of
+`ChainSet`. Every 19x19 `exploitplay` on the old binary dies with exit code
+`0xC0000409` (`STATUS_STACK_BUFFER_OVERRUN`); the same run on the new one finishes and
+wins. The array is now `kMaxPoints * 4` (1444), the true bound, and `selftest` builds a
+19x19 checkerboard - the worst case, 684 pairs - to check that every listed liberty is
+really an empty neighbour and that the total fits.
+
+**No temporary vectors in the generators.** `getSurroundMove` flattened the enemy
+liberties into one vector and then filled three more (`captureMoves`, `atariMoves`,
+`surroundMoves`) only to return element `[0]` of one of them; `getGrowthMove` and
+`getDefendMove` built lists of ties only to pick one of them. All five are gone: the
+surround scan iterates chains and liberties directly (the order the flattened list
+had) and remembers the first move of each kind, and the tie-breaks count matches on a
+first pass and index into a second, drawing from the same RNG with the same count.
+`getDefendMove` also reuses the cached growth list instead of rebuilding it. This was
+expected to be allocation hygiene only - `fast_alloc.cpp` gives `operator new` a
+per-thread free list - but the vectors were per node, not per search: **-3.4%** on the
+2-position bench (192.2 -> 185.6 ms) and **-4.1%** on the 9x9 bench (80.7 -> 77.4 ms).
+
+Cumulative, measured directly against the build that started the pass (4 interleaved
+rounds on the 2-position bench, 8 on the 9x9 one): **-3.9%** (192.5 -> 185.0 ms) and
+**-1.6%** (78.3 -> 77.1 ms). The per-step percentages above are larger than these and
+do not add up, because each step's "after" binary became the next step's "before" and
+the wall clock drifts a few percent between sessions; the direct comparison is the one
+to trust. Node counts, memo hits, chosen moves, margins, `policycheck` values and
+`eyetest` counters are identical throughout (`eyetest` still 49 041 candidate points,
+38 652 on the incremental path, 0 mismatches).
+
+### The cleanup pass
+
+Everything the passes above added is now the only path. No switch selects a slower
+implementation, and the code that existed only to reproduce one is gone.
+
+Removed because nothing called them any more (each verified with a repo-wide search
+after the pass that obsoleted it):
+
+- `boardEqualsFlat`, `simpleBoardFromString`, `getEmptySpaces` - leftovers from the
+  board-equality superko check and from test scaffolding.
+- `neighborChainIndices` - a vector-returning view of `neighborChainsOfChain`, whose
+  callers moved to the fixed-storage version.
+- `getPatternMove` - superseded by the cached `patternPoints()`; the generator now
+  has one board walk instead of two.
+- `enumerateFactionMoves` - wrapper over `enumerateFactionMovesImpl`; only
+  `enumerateOpponentMoves` is used.
+- The four chain-walk liberty queries in `fast_queries.cpp`
+  (`effectiveLibertyCountFast`, `findEffectiveLibertiesOfNewMoveFast`,
+  `findWeakestAdjacentChainFast`, `findMinLibertyCountOfAdjacentChainsFast`) plus the
+  `Scratch`/`walkChain` scratch machinery only they used. Every caller reads the bit
+  planes now; the stone-walk implementations that remain are the *reference* ones in
+  `analysis.cpp`, which `mcgs` still uses and `selftest` compares against.
+- `blackPlayoutLegal`, `playToMove`, `findOrAddChild`, `findChildIndex` in `mcgs.cpp`.
+- `EndgameInfo::whiteCaptures` and the per-point work that filled it: only the
+  removed endgame approximation read it, so `analyzeEndgame` now answers just the two
+  questions its remaining caller asks. `ChainList::toVector()` went the same way with
+  `neighborChainIndices`.
+
+Removed because they were legacy behaviour behind a comparison switch:
+
+- `IPVGO_ENDGAME_APPROX` and the approximation body of the endgame White model,
+  together with `endgameCaptureChance()` and `ExploitConfig::endgameExactWhite`. The
+  endgame always uses the real reply distribution; the measurements are kept under
+  "Known limits and open questions".
+- `IPVGO_NO_MEMO`, the transposition-table off switch. Its numbers are kept in
+  "Known limits" so the table's cost does not have to be re-derived.
+- `IPVGO_ADAPTIVE_DEBUG`, a `fprintf` left in the iterative-deepening setup.
+
+Switches that stay are configuration, not alternatives: `IPVGO_NODE_LIMIT`,
+`IPVGO_THREADS`, `IPVGO_CARRY`, `IPVGO_NO_SESSION`, `IPVGO_PONDER_*`, `IPVGO_TRACE*`,
+`IPVGO_EXPLAIN`, `IPVGO_CACHE_STATS`, `IPVGO_FIXED_WIDTH`, `IPVGO_WHITE_WORST` and the
+evaluation knobs (`IPVGO_SETTLE`, `IPVGO_VITAL`, `IPVGO_EYE_FILTER`, `IPVGO_MOYO*`).
+
+Verified after the removal, with the usual suite: `selftest`, `fuzz 60 11` (6874
+moves, 0 anomalies), `policycheck` identical on three factions, `eyetest` unchanged
+(49 041 / 38 652 / 0 mismatches), `optbench` node counts 39 012 and 11 537, and
+identical `exploitplay` results at 5x5, 7x7, 9x9, 13x13 and 19x19 (wins, margin,
+depth, ponder hits). Interleaved against a build of the pre-pass commit, 5 rounds:
+-3.6% on the 2-position bench (199.2 -> 192.0 ms) and -2.2% on the 9x9 bench
+(82.2 -> 80.3 ms), the same place the move-generation pass left off.
+
 ### Third-party code
 
 `third_party/ankerl/` holds [ankerl::unordered_dense](https://github.com/martinus/unordered_dense)
@@ -726,6 +841,10 @@ IPVGO_NO_SESSION=1 IPVGO_TRACE=1 ./out/build/x64-Release/bin/ipvgo_game exploitp
 
 `eyetest` prints how many candidate points the incremental path answered and how
 many it declined, so a change that quietly turns the fast path off is visible.
+
+`selftest` also covers the chain arrays themselves: a 19x19 checkerboard is the worst
+case for the liberty storage, and the check fails if a listed liberty is not an empty
+neighbour or if the totals outgrow the fixed arrays.
 
 `optbench` node counts are deterministic at `--threads=1`; at the default thread
 count they vary run to run, so compare node counts only at `--threads=1`. The
@@ -865,7 +984,8 @@ more accurate and cheaper, because the endgame has few legal replies.
 
 Over games, 7x7 Netburners at depth 2, 40 games per arm: 31/40 with the stand-in,
 35/40 with the exact model, and 32 ms/move down to 18. 9x9 showed the same
-direction (9/12 vs 10/12). IPVGO_ENDGAME_APPROX=1 restores the old behaviour.
+direction (9/12 vs 10/12). The stand-in and the switch that could bring it back
+have since been removed.
 
 **Bouzy's dilation measures reach, not strength.** `cpp/game/influence.cpp`
 implements the numeric dilation `Dz` (IJPRAI 17(2):257-268, 2003) and is tested,
@@ -945,10 +1065,11 @@ board (enough for the ko rule) would unlock a lot more, but raises a soundness
 question wherever superko actually binds.
 
 **The transposition table is a hash map, not a tree, and it is not free.**
-`IPVGO_NO_MEMO=1` turns it off in the same binary, which is how its cost and its
-value can be separated. In-game budget, one thread:
+A temporary switch that turned the table off in the same binary separated its cost
+from its value; it was removed with the rest of the legacy branches (see "The
+cleanup pass"), and these are the numbers it produced. In-game budget, one thread:
 
-| board | with the table | `IPVGO_NO_MEMO=1` |
+| board | with the table | table off |
 |---|---|---|
 | 5x5 Netburners, 8 games | 71 849 nodes, 731 ms | 72 828 nodes, 947 ms |
 | 7x7 Slum Snakes, 4 games | 129 595 nodes, 3 030 ms | 142 133 nodes, 2 983 ms |

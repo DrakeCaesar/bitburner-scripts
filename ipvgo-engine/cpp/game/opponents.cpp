@@ -46,11 +46,10 @@ int adjacentMinLibertyCount(const BoardBits& bits, int x, int y, Color chainColo
 // ---- Liberty growth / defend ----------------------------------------------
 
 std::vector<GrowthCandidate> getLibertyGrowthMoves(const SimpleBoard& board, Color player,
-                                                   const PointMask& availableSet) {
+                                                   const PointMask& availableSet, const BoardBits& bits) {
   const ChainSet& cs = chainsCached(board);
   const int N = cs.N;
   const char me = colorChar(player);
-  const BoardBits bits(board);
 
   std::vector<GrowthCandidate> result;
   bool anyFriendly = false;
@@ -75,50 +74,67 @@ AiMove getGrowthMove(const std::vector<GrowthCandidate>& growthMoves, double rng
   int maxDelta = growthMoves[0].newLibertyCount - growthMoves[0].oldLibertyCount;
   for (const auto& m : growthMoves) maxDelta = std::max(maxDelta, m.newLibertyCount - m.oldLibertyCount);
 
-  std::vector<GrowthCandidate> candidates;
+  int count = 0;
   for (const auto& m : growthMoves)
-    if (m.newLibertyCount - m.oldLibertyCount == maxDelta) candidates.push_back(m);
+    if (m.newLibertyCount - m.oldLibertyCount == maxDelta) ++count;
 
-  const int idx = floorIndex(rng, candidates.size());
-  if (idx < 0 || idx >= static_cast<int>(candidates.size())) return {};
-  AiMove mv;
-  mv.valid = true;
-  mv.x = candidates[idx].x;
-  mv.y = candidates[idx].y;
-  mv.oldLibertyCount = candidates[idx].oldLibertyCount;
-  mv.newLibertyCount = candidates[idx].newLibertyCount;
-  return mv;
+  const int idx = floorIndex(rng, count);
+  if (idx < 0 || idx >= count) return {};
+  int seen = 0;
+  for (const auto& m : growthMoves) {
+    if (m.newLibertyCount - m.oldLibertyCount != maxDelta) continue;
+    if (seen++ != idx) continue;
+    AiMove mv;
+    mv.valid = true;
+    mv.x = m.x;
+    mv.y = m.y;
+    mv.oldLibertyCount = m.oldLibertyCount;
+    mv.newLibertyCount = m.newLibertyCount;
+    return mv;
+  }
+  return {};
 }
 
-AiMove getDefendMove(const SimpleBoard& board, Color player, const PointMask& availableSet,
-                     MathRandom& mathRng) {
-  const std::vector<GrowthCandidate> growthMoves = getLibertyGrowthMoves(board, player, availableSet);
-  std::vector<GrowthCandidate> increases;
-  for (const auto& m : growthMoves)
-    if (m.oldLibertyCount <= 1 && m.newLibertyCount > m.oldLibertyCount) increases.push_back(m);
+AiMove getDefendMove(const std::vector<GrowthCandidate>& growthMoves, MathRandom& mathRng) {
+  bool anyIncrease = false;
+  int maxDelta = 0;
+  for (const auto& m : growthMoves) {
+    if (m.oldLibertyCount > 1) continue;
+    const int delta = m.newLibertyCount - m.oldLibertyCount;
+    if (delta <= 0) continue;
+    anyIncrease = true;
+    maxDelta = std::max(maxDelta, delta);
+  }
+  if (!anyIncrease || maxDelta < 1) return {};
 
-  if (increases.empty()) return {};
-  int maxDelta = increases[0].newLibertyCount - increases[0].oldLibertyCount;
-  for (const auto& m : increases) maxDelta = std::max(maxDelta, m.newLibertyCount - m.oldLibertyCount);
-  if (maxDelta < 1) return {};
+  int count = 0;
+  for (const auto& m : growthMoves) {
+    if (m.oldLibertyCount > 1) continue;
+    if (m.newLibertyCount - m.oldLibertyCount == maxDelta) ++count;
+  }
 
-  std::vector<GrowthCandidate> candidates;
-  for (const auto& m : increases)
-    if (m.newLibertyCount - m.oldLibertyCount == maxDelta) candidates.push_back(m);
-
-  const int idx = floorIndex(mathRng.random(), candidates.size());
-  AiMove mv;
-  mv.valid = true;
-  mv.x = candidates[idx].x;
-  mv.y = candidates[idx].y;
-  mv.oldLibertyCount = candidates[idx].oldLibertyCount;
-  mv.newLibertyCount = candidates[idx].newLibertyCount;
-  return mv;
+  const int idx = floorIndex(mathRng.random(), count);
+  if (idx < 0 || idx >= count) return {};
+  int seen = 0;
+  for (const auto& m : growthMoves) {
+    if (m.oldLibertyCount > 1) continue;
+    if (m.newLibertyCount - m.oldLibertyCount != maxDelta) continue;
+    if (seen++ != idx) continue;
+    AiMove mv;
+    mv.valid = true;
+    mv.x = m.x;
+    mv.y = m.y;
+    mv.oldLibertyCount = m.oldLibertyCount;
+    mv.newLibertyCount = m.newLibertyCount;
+    return mv;
+  }
+  return {};
 }
 
 // ---- Surround / capture ----------------------------------------------------
 
-AiMove getSurroundMove(const SimpleBoard& board, Color player, const PointMask& availableSet, bool smart) {
+AiMove getSurroundMove(const SimpleBoard& board, Color player, const PointMask& availableSet, bool smart,
+                      const BoardBits& bits) {
   const Color opposing = oppositeColor(player);
   const ChainSet& cs = chainsCached(board);
   const int N = cs.N;
@@ -129,51 +145,49 @@ AiMove getSurroundMove(const SimpleBoard& board, Color player, const PointMask& 
     if (cs.chainColor[c] == oppChar) anyEnemy = true;
   if (!anyEnemy || availableSet.empty()) return {};
 
-  // enemyChains[*].liberties flattened (with duplicates), filtered to available.
-  std::vector<int> enemyLiberties;
+  // Only the first move of each kind is ever returned, so track those instead of
+  // collecting three lists. The scan order (chain, then liberty) is the order the
+  // flattened enemyLiberties list used to have, so the choice is unchanged.
+  AiMove firstCapture;
+  AiMove firstAtari;
+  AiMove firstSurround;
+
   for (int c = 0; c < cs.count; ++c) {
     if (cs.chainColor[c] != oppChar) continue;
-    for (const int lib : cs.liberties(c))
-      if (availableSet.count(lib)) enemyLiberties.push_back(lib);
-  }
+    for (const int lib : cs.liberties(c)) {
+      if (!availableSet.count(lib)) continue;
+      const int mx = lib / N;
+      const int my = lib % N;
+      const int newLibertyCount = effectiveLibertyCount(bits, mx, my, player);
 
-  std::vector<AiMove> captureMoves;
-  std::vector<AiMove> atariMoves;
-  std::vector<AiMove> surroundMoves;
-  const BoardBits bits(board);
+      const BoardBits::Weakest weakest = bits.weakestAdjacent(cs, mx, my, opposing);
+      const int weakestLength = weakest.found ? weakest.stones : 99;
+      const int enemyChainLibertyCount = weakest.found ? weakest.liberties : 99;
+      const int libertyGroups = weakest.libertyGroups;
 
-  for (const int move : enemyLiberties) {
-    const int mx = move / N;
-    const int my = move % N;
-    const int newLibertyCount = effectiveLibertyCount(bits, mx, my, player);
+      if (newLibertyCount <= 2 && enemyChainLibertyCount > 2) continue;
 
-    const BoardBits::Weakest weakest = bits.weakestAdjacent(cs, mx, my, opposing);
-    const int weakestLength = weakest.found ? weakest.stones : 99;
-    const int enemyChainLibertyCount = weakest.found ? weakest.liberties : 99;
-    const int libertyGroups = weakest.libertyGroups;
+      AiMove mv;
+      mv.valid = true;
+      mv.x = mx;
+      mv.y = my;
+      mv.oldLibertyCount = enemyChainLibertyCount;
+      mv.newLibertyCount = enemyChainLibertyCount - 1;
 
-    if (newLibertyCount <= 2 && enemyChainLibertyCount > 2) continue;
-
-    AiMove mv;
-    mv.valid = true;
-    mv.x = mx;
-    mv.y = my;
-    mv.oldLibertyCount = enemyChainLibertyCount;
-    mv.newLibertyCount = enemyChainLibertyCount - 1;
-
-    if (enemyChainLibertyCount <= 1) {
-      captureMoves.push_back(mv);
-    } else if (enemyChainLibertyCount == 2 &&
-               (newLibertyCount >= 2 || (libertyGroups == 1 && weakestLength > 3) || !smart)) {
-      atariMoves.push_back(mv);
-    } else if (newLibertyCount >= 2) {
-      surroundMoves.push_back(mv);
+      if (enemyChainLibertyCount <= 1) {
+        if (!firstCapture.valid) firstCapture = mv;
+      } else if (enemyChainLibertyCount == 2 &&
+                 (newLibertyCount >= 2 || (libertyGroups == 1 && weakestLength > 3) || !smart)) {
+        if (!firstAtari.valid) firstAtari = mv;
+      } else if (newLibertyCount >= 2) {
+        if (!firstSurround.valid) firstSurround = mv;
+      }
     }
   }
 
-  if (!captureMoves.empty()) return captureMoves[0];
-  if (!atariMoves.empty()) return atariMoves[0];
-  if (!surroundMoves.empty()) return surroundMoves[0];
+  if (firstCapture.valid) return firstCapture;
+  if (firstAtari.valid) return firstAtari;
+  if (firstSurround.valid) return firstSurround;
   return {};
 }
 
@@ -362,34 +376,19 @@ AiMove getJumpMove(const SimpleBoard& board, Color player, const std::vector<Pt>
   return pickFromPoints(options, rng);
 }
 
-// ---- Pattern ---------------------------------------------------------------
-
-AiMove getPatternMove(const SimpleBoard& board, Color player, const PointMask& availableSet, bool smart,
-                      double rng) {
-  const int N = static_cast<int>(board.size());
-  std::vector<Pt> moves;
-  const BoardBits bits(board);
-  // Membership first: the available set is a small subset of the board, so this
-  // skips the pattern match for most points. Both tests are pure, so the result
-  // and its order are unchanged.
-  for (int x = 0; x < N; ++x) {
-    for (int y = 0; y < N; ++y) {
-      if (!availableSet.count(flatIndex(N, x, y))) continue;
-      if (!matchesAnyPattern(board, x, y, player)) continue;
-      if (smart && effectiveLibertyCount(bits, x, y, player) <= 1) continue;
-      moves.emplace_back(x, y);
-    }
-  }
-  return pickFromPoints(moves, rng);
-}
-
 // ---- Move option provider (with caching) -----------------------------------
 
 class MoveGen {
  public:
   MoveGen(const GameState& state, Color player, double rng, bool smart, MathRandom& mathRng,
           const std::vector<Pt>* knownValidMoves = nullptr)
-      : state_(state), board_(state.board), player_(player), rng_(rng), smart_(smart), mathRng_(mathRng) {
+      : state_(state),
+        board_(state.board),
+        player_(player),
+        rng_(rng),
+        smart_(smart),
+        mathRng_(mathRng),
+        bits_(state.board) {
     availableSpaces_ = findDisputedTerritory(state, player, smart, knownValidMoves);
     for (const auto& [x, y] : availableSpaces_) availableSet_.insert(flatIndex(state.size, x, y));
     contestedPoints_ = getDisputedTerritoryMoves(board_, availableSpaces_);
@@ -397,14 +396,14 @@ class MoveGen {
     endGameAvailable_ = contestedPoints_.empty() && state.passCount > 0;
   }
 
-  AiMove surround() { return cached(kSurround, [&] { return getSurroundMove(board_, player_, availableSet_, smart_); }); }
+  AiMove surround() { return cached(kSurround, [&] { return getSurroundMove(board_, player_, availableSet_, smart_, bits_); }); }
 
   AiMove capture() {
     const AiMove s = surround();
     return (s.valid && s.newLibertyCount == 0) ? s : AiMove{};
   }
 
-  AiMove defend() { return cached(kDefend, [&] { return getDefendMove(board_, player_, availableSet_, mathRng_); }); }
+  AiMove defend() { return cached(kDefend, [&] { return getDefendMove(growthList(), mathRng_); }); }
 
   AiMove defendCapture() {
     const AiMove d = defend();
@@ -425,7 +424,10 @@ class MoveGen {
 
   AiMove pattern() {
     return cached(kPattern, [&] {
-      return endGameAvailable_ ? AiMove{} : getPatternMove(board_, player_, availableSet_, smart_, rng_);
+      if (endGameAvailable_) return AiMove{};
+      // The pool patternPoints() builds is exactly the list this used to rebuild by
+      // scanning every point a second time with the same board, set and smartness.
+      return pickFromPoints(patternPoints(), rng_);
     });
   }
 
@@ -465,22 +467,27 @@ class MoveGen {
     return out;
   }
 
-  std::vector<Pt> patternPoints() const {
-    if (endGameAvailable_) return {};
+  // The pattern pool, computed at most once per position: the policy model wants it,
+  // the faction tables draw from it, and the Illuminati fallback adds its points, so
+  // it used to be rebuilt three or four times per position.
+  const std::vector<Pt>& patternPoints() const {
+    if (patternCacheReady_) return patternCache_;
+    patternCacheReady_ = true;
+    patternCache_.clear();
+    if (endGameAvailable_) return patternCache_;
     const int N = static_cast<int>(board_.size());
-    std::vector<Pt> moves;
-    const BoardBits bits(board_);
-    // Membership first, see getPatternMove(): same points, same order, far fewer
-    // pattern matches.
+    // Membership first: the available set is a small subset of the board, and both
+    // tests are pure, so this keeps the points and their order while skipping the
+    // pattern match for most of them.
     for (int x = 0; x < N; ++x) {
       for (int y = 0; y < N; ++y) {
         if (!availableSet_.count(flatIndex(N, x, y))) continue;
         if (!matchesAnyPattern(board_, x, y, player_)) continue;
-        if (smart_ && effectiveLibertyCount(bits, x, y, player_) <= 1) continue;
-        moves.emplace_back(x, y);
+        if (smart_ && effectiveLibertyCount(bits_, x, y, player_) <= 1) continue;
+        patternCache_.emplace_back(x, y);
       }
     }
-    return moves;
+    return patternCache_;
   }
 
   // The liberty-growth candidates, computed at most once per position. growth(),
@@ -488,7 +495,7 @@ class MoveGen {
   // from this same list.
   const std::vector<GrowthCandidate>& growthList() const {
     if (!growthCacheReady_) {
-      growthCache_ = getLibertyGrowthMoves(board_, player_, availableSet_);
+      growthCache_ = getLibertyGrowthMoves(board_, player_, availableSet_, bits_);
       growthCacheReady_ = true;
     }
     return growthCache_;
@@ -572,6 +579,9 @@ class MoveGen {
   double rng_;
   bool smart_;
   MathRandom& mathRng_;
+  // Bit planes of board_, loaded once per position: the liberty queries in surround,
+  // growth and the pattern filter all read them, and each used to load its own.
+  BoardBits bits_;
 
   std::vector<Pt> availableSpaces_;
   PointMask availableSet_;
@@ -581,6 +591,8 @@ class MoveGen {
 
   mutable std::vector<GrowthCandidate> growthCache_;
   mutable bool growthCacheReady_ = false;
+  mutable std::vector<Pt> patternCache_;
+  mutable bool patternCacheReady_ = false;
 
   std::array<AiMove, kCount> cache_{};
   std::array<bool, kCount> computed_{};
@@ -1112,11 +1124,6 @@ std::vector<std::pair<int, int>> blackExploitMoves(const GameState& state, Oppon
 
   if (out.size() < 2) return getAllValidMoves(state, Color::Black);
   return out;
-}
-
-std::vector<Pt> enumerateFactionMoves(const GameState& state, Color player, Opponent opponent,
-                                      MathRandom& mathRng) {
-  return enumerateFactionMovesImpl(state, player, opponent, mathRng);
 }
 
 std::vector<Pt> enumerateOpponentMoves(const GameState& state, Color player, Opponent opponent,

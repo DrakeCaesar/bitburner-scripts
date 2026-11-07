@@ -53,20 +53,6 @@ const FlatNeighbors& flatNeighbors(int n) {
   return table[static_cast<size_t>(n)];
 }
 
-// Compares a board against a flattened board string without building a string
-// (the superko check used to allocate one per legality test).
-bool boardEqualsFlat(const SimpleBoard& board, const std::string& flat) {
-  const int n = board.size();
-  if (flat.size() != static_cast<size_t>(n) * static_cast<size_t>(n)) return false;
-  for (int x = 0; x < n; ++x) {
-    if (std::memcmp(flat.data() + static_cast<size_t>(x) * static_cast<size_t>(n), board.column(x),
-                    static_cast<size_t>(n)) != 0) {
-      return false;
-    }
-  }
-  return true;
-}
-
 }  // namespace
 
 NeighborTable neighborTable(int n) {
@@ -82,16 +68,6 @@ std::string boardString(const SimpleBoard& board) {
                 static_cast<size_t>(n));
   }
   return out;
-}
-
-SimpleBoard simpleBoardFromString(const std::string& s) {
-  const int size = static_cast<int>(std::lround(std::sqrt(static_cast<double>(s.size()))));
-  SimpleBoard board(size);
-  for (int x = 0; x < size; ++x) {
-    std::memcpy(board.column(x), s.data() + static_cast<size_t>(x) * static_cast<size_t>(size),
-                static_cast<size_t>(size));
-  }
-  return board;
 }
 
 double opponentKomi(Opponent ai) {
@@ -513,18 +489,6 @@ void passTurn(GameState& state, Color player, bool allowEndGame) {
   if (state.passCount >= 2 && allowEndGame) {
     state.gameOver = true;
   }
-}
-
-std::vector<std::pair<int, int>> getEmptySpaces(const SimpleBoard& board) {
-  const int N = static_cast<int>(board.size());
-  std::vector<std::pair<int, int>> out;
-  out.reserve(static_cast<size_t>(N) * static_cast<size_t>(N));  // one allocation, no regrowth
-  for (int x = 0; x < N; ++x) {
-    for (int y = 0; y < N; ++y) {
-      if (board[x][y] == '.') out.emplace_back(x, y);
-    }
-  }
-  return out;
 }
 
 std::vector<std::pair<int, int>> getAllValidMoves(const GameState& state, Color player) {

@@ -534,6 +534,30 @@ int runSelftest() {
                                std::to_string(foundWeakest) + " with an adjacent chain)");
   }
 
+  // ---- Chain arrays: the worst case must fit their capacity ---------------------
+  {
+    // A checkerboard is the worst case for the liberty arrays: every stone is its own
+    // chain, so each empty point contributes four (chain, liberty) pairs. At 19x19
+    // that is 368 pairs - the arrays were sized kMaxPoints (361) and this overflowed.
+    constexpr int kSize = 19;
+    SimpleBoard b(kSize);
+    for (int x = 0; x < kSize; ++x)
+      for (int y = 0; y < kSize; ++y) b[x][y] = ((x + y) % 2 == 0) ? 'X' : '.';
+    const ChainSet cs = computeChains(b);
+    long pairs = 0;
+    bool consistent = true;
+    for (int c = 0; c < cs.count; ++c) {
+      const int liberties = cs.libertyCount(c);
+      if (liberties < 0) consistent = false;
+      pairs += liberties;
+      for (const int lib : cs.liberties(c))
+        if (lib < 0 || lib >= kSize * kSize || b[lib / kSize][lib % kSize] != '.') consistent = false;
+    }
+    check(consistent && pairs > ChainSet::kMaxPoints && pairs <= ChainSet::kMaxLiberties,
+          "chain arrays: worst case 19x19 fits (" + std::to_string(pairs) + " liberty pairs, capacity " +
+              std::to_string(ChainSet::kMaxLiberties) + ")");
+  }
+
   std::cout << (g_failures ? "\nSELFTEST FAILED\n" : "\nSELFTEST PASSED\n");
   return g_failures ? 1 : 0;
 }
@@ -803,7 +827,6 @@ json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session,
   cfg.budgetMs = req.value("budgetMs", 0);
   // `iterations` is what the in-game client sends; treat it as a node budget.
   cfg.whiteWorstCase = req.value("whiteWorstCase", false);
-  cfg.endgameExactWhite = !req.value("endgameApprox", false);
   cfg.adaptiveWidth = req.value("adaptiveWidth", true);
   cfg.nodeLimit = req.value("nodeLimit", 0L);
   if (cfg.nodeLimit <= 0) cfg.nodeLimit = req.value("iterations", 0L);
@@ -879,9 +902,9 @@ json boardToJson(const SimpleBoard& board) {
 std::string searchConfigKey(const json& req) {
   static const char* const fields[] = {"depth",          "maxDepth",       "beam",         "whiteChildren",
                                        "whiteMass",      "endgameEmpties", "nodeBudget",   "threads",
-                                       "budgetMs",       "whiteWorstCase", "endgameApprox", "adaptiveWidth",
-                                       "nodeLimit",      "iterations",     "opponent",     "komi",
-                                       "playAs",         "carry"};
+                                       "budgetMs",       "whiteWorstCase", "adaptiveWidth", "nodeLimit",
+                                       "iterations",     "opponent",       "komi",         "playAs",
+                                       "carry"};
   json key = json::object();
   for (const char* field : fields) {
     if (req.contains(field)) key[field] = req.at(field);
@@ -1198,7 +1221,6 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
   // `iterations`, which becomes a node budget, and a node budget switches the
   // search to iterative deepening and makes the depth argument irrelevant.
   if (std::getenv("IPVGO_WHITE_WORST")) cfg.whiteWorstCase = true;
-  if (std::getenv("IPVGO_ENDGAME_APPROX")) cfg.endgameExactWhite = false;
   if (std::getenv("IPVGO_FIXED_WIDTH")) cfg.adaptiveWidth = false;
   if (const char* limit = std::getenv("IPVGO_NODE_LIMIT")) {
     const long parsed = std::atol(limit);

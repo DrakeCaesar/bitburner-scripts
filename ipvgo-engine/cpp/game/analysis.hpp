@@ -41,18 +41,11 @@ struct WeakestChain {
 };
 WeakestChain findEnemyNeighborChainWithFewestLiberties(const SimpleBoard& board, int x, int y, Color player);
 
-// Chain-free equivalents (see fast_queries.cpp). Same results, without building
-// a board-wide ChainSet.
-std::vector<int> findEffectiveLibertiesOfNewMoveFast(const SimpleBoard& board, int x, int y, Color player);
-// Same count as findEffectiveLibertiesOfNewMoveFast(...).size() without the vector.
-int effectiveLibertyCountFast(const SimpleBoard& board, int x, int y, Color player);
-WeakestChain findWeakestAdjacentChainFast(const SimpleBoard& board, int x, int y, Color chainColor);
-int findMinLibertyCountOfAdjacentChainsFast(const SimpleBoard& board, int x, int y, Color chainColor);
-
 // Bit-plane view of one board: load it once for a position and then answer many
 // point queries from it. The move generators ask for the liberties of every
-// candidate point, and these are the same answers fast_queries.cpp reaches by
-// walking a chain stone by stone - a flood over words instead of over stones.
+// candidate point, and these are the same answers the reference implementations in
+// analysis.cpp reach by walking a chain stone by stone - a flood over words
+// instead of over stones (see fast_queries.cpp).
 class BoardBits {
  public:
   explicit BoardBits(const SimpleBoard& board);
@@ -61,11 +54,12 @@ class BoardBits {
   bool usable() const { return ipvgo::game::BitPlanes::fits(n_); }
 
   // Empty neighbours of the chain a stone of `player` at (x,y) would form, not
-  // counting (x,y) itself: what effectiveLibertyCountFast() returns.
+  // counting (x,y) itself: what findEffectiveLibertiesOfNewMove(...).size()
+  // returns, minus the point itself.
   int effectiveLibertyCount(int x, int y, Color player) const;
 
   // Fewest liberties among the distinct `player` chains touching (x,y), or 99 when
-  // there are none: what findMinLibertyCountOfAdjacentChainsFast() returns.
+  // there are none.
   int minAdjacentLibertyCount(int x, int y, Color player) const;
 
   struct Weakest {
@@ -97,8 +91,6 @@ struct ChainList {
   int operator[](size_t i) const { return idx[i]; }
   const int* begin() const { return idx; }
   const int* end() const { return idx + count; }
-
-  std::vector<int> toVector() const { return std::vector<int>(idx, idx + count); }
 };
 
 // Empty-region "eye" candidate: the empty chain plus the stone chains that
@@ -179,9 +171,6 @@ enum class EyeBail {
 bool eyeTotalsAfterMove(const SimpleBoard& board, const ChainSet& cs, const EyeBoardSummary& before,
                         Color player, int x, int y, double maxSize, EyeTotals& out,
                         EyeBail* bail = nullptr);
-// Non-empty neighbor chains of chain c (distinct, first-encounter order).
-std::vector<int> neighborChainIndices(const SimpleBoard& board, const ChainSet& cs, int c);
-
 // findDisputedTerritory: valid moves worth considering (excludes dead interior
 // of enemy-surrounded space unless attackable; optionally excludes friendly eyes).
 std::vector<Pt> findDisputedTerritory(const GameState& state, Color player, bool excludeFriendlyEyes,
