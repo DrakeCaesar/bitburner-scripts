@@ -507,6 +507,28 @@ int runSelftest() {
                           << boardString(b) << "\n";
               }
             }
+            // The chain queries the move generators use now: same answers, read
+            // out of the chain set instead of a word flood.
+            const int chainFast = chainEffectiveLiberties(cs, x, y, side);
+            if (chainFast != reference) {
+              ++mismatches;
+              if (mismatches <= 5) {
+                std::cerr << "selftest: chainEffectiveLiberties mismatch at " << n << "x" << n << " (" << x
+                          << "," << y << ") " << (side == Color::Black ? "black" : "white") << ": chain "
+                          << chainFast << ", reference " << reference << "\n"
+                          << boardString(b) << "\n";
+              }
+            }
+            const int chainMin = chainMinAdjacentLiberties(cs, x, y, side);
+            if (chainMin != minReference) {
+              ++mismatches;
+              if (mismatches <= 5) {
+                std::cerr << "selftest: chainMinAdjacentLiberties mismatch at " << n << "x" << n << " (" << x
+                          << "," << y << ") " << (side == Color::Black ? "black" : "white") << ": chain "
+                          << chainMin << ", reference " << minReference << "\n"
+                          << boardString(b) << "\n";
+              }
+            }
             const BoardBits::Weakest weakest = bits.weakestAdjacent(cs, x, y, side);
             const WeakestChain referenceWeakest = findEnemyNeighborChainWithFewestLiberties(b, x, y, side);
             const int referenceLength = referenceWeakest.found ? referenceWeakest.length : 0;
@@ -523,13 +545,27 @@ int runSelftest() {
                           << boardString(b) << "\n";
               }
             }
+            const WeakestAdjacent chainWeakest = chainWeakestAdjacent(cs, x, y, side);
+            if (chainWeakest.found != weakest.found || chainWeakest.stones != weakest.stones ||
+                chainWeakest.liberties != weakest.liberties ||
+                chainWeakest.libertyGroups != weakest.libertyGroups) {
+              ++mismatches;
+              if (mismatches <= 5) {
+                std::cerr << "selftest: chainWeakestAdjacent mismatch at " << n << "x" << n << " (" << x << ","
+                          << y << "): chain " << chainWeakest.found << "/" << chainWeakest.stones << "/"
+                          << chainWeakest.liberties << "/" << chainWeakest.libertyGroups << ", bit planes "
+                          << weakest.found << "/" << weakest.stones << "/" << weakest.liberties << "/"
+                          << weakest.libertyGroups << "\n"
+                          << boardString(b) << "\n";
+              }
+            }
             if (weakest.found) ++foundWeakest;
             ++checkedPoints;
           }
         }
       }
     }
-    check(mismatches == 0, "liberty queries: bit planes agree with the chain reference (" +
+    check(mismatches == 0, "liberty queries: chain and bit-plane answers agree with the reference (" +
                                std::to_string(checkedPoints) + " queries, " +
                                std::to_string(foundWeakest) + " with an adjacent chain)");
   }

@@ -41,6 +41,23 @@ struct WeakestChain {
 };
 WeakestChain findEnemyNeighborChainWithFewestLiberties(const SimpleBoard& board, int x, int y, Color player);
 
+// The same three questions, answered from a chain set that is already built - which
+// is what the move generators have in hand. A stone placed on an empty point joins
+// the (at most four) chains of its colour around it, so the liberties of the merged
+// chain are the union of their liberty lists minus the point itself: no flood, and
+// no board scan. Equivalent to the BoardBits queries in fast_queries.cpp, which
+// selftest cross-checks them against.
+int chainEffectiveLiberties(const ChainSet& cs, int x, int y, Color player);
+int chainMinAdjacentLiberties(const ChainSet& cs, int x, int y, Color player);
+
+struct WeakestAdjacent {
+  bool found = false;
+  int stones = 0;         // stones in the chain
+  int liberties = 0;      // its distinct empty neighbours
+  int libertyGroups = 0;  // distinct chains those liberties belong to (capped at 8)
+};
+WeakestAdjacent chainWeakestAdjacent(const ChainSet& cs, int x, int y, Color stone);
+
 // Bit-plane view of one board: load it once for a position and then answer many
 // point queries from it. The move generators ask for the liberties of every
 // candidate point, and these are the same answers the reference implementations in

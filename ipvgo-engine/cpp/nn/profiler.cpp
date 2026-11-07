@@ -167,7 +167,18 @@ bool inMainModule(DWORD64 addr) { return addr >= g_moduleBase && addr < g_module
 // sampling profiler
 // ---------------------------------------------------------------------------
 std::atomic<bool> g_sampling{false};
-std::vector<std::vector<DWORD64>> g_samples;
+
+// A sampled stack in fixed storage. The sampler runs while the other threads are
+// suspended between SuspendThread and ResumeThread, so anything it does that can
+// block - allocating, in particular - can deadlock against a suspended thread that
+// holds the heap lock. `g_samples` is reserved before sampling starts and each
+// sample is written in place, so no allocation happens inside that window.
+struct SampleStack {
+  static constexpr int kMaxFrames = 64;
+  int count = 0;
+  DWORD64 frames[kMaxFrames] = {};
+};
+std::vector<SampleStack> g_samples;
 std::mutex g_samplesMutex;
 std::atomic<long long> g_diagRounds{0}, g_diagCalls{0}, g_diagCallNs{0}, g_diagSuspendNs{0}, g_diagThreads{0};
 
@@ -184,10 +195,9 @@ bool sampleThread(HANDLE thread) {
   if (GetThreadContext(thread, &ctx)) {
     // Unwind with the table-driven RtlVirtualUnwind instead of StackWalk64: it
     // needs no symbol lookups, which makes a sample cheap enough to take at ~1 kHz.
-    std::vector<DWORD64> stack;
-    stack.reserve(64);
-    for (int depth = 0; depth < 64 && ctx.Rip != 0; ++depth) {
-      stack.push_back(ctx.Rip);
+    SampleStack stack;
+    for (int depth = 0; depth < SampleStack::kMaxFrames && ctx.Rip != 0; ++depth) {
+      stack.frames[stack.count++] = ctx.Rip;
       if (inMainModule(ctx.Rip)) inEngine = true;
       DWORD64 imageBase = 0;
       UNWIND_HISTORY_TABLE history{};
@@ -204,7 +214,7 @@ bool sampleThread(HANDLE thread) {
     }
     if (inEngine) {
       std::lock_guard<std::mutex> lock(g_samplesMutex);
-      g_samples.push_back(std::move(stack));
+      if (g_samples.size() < g_samples.capacity()) g_samples.push_back(stack);
     }
   }
   ResumeThread(thread);
@@ -381,6 +391,7 @@ int runProfiler(int argc, char** argv) {
 
   // ---- phase 2: cpu sampling, over the same kind of games --------------------
   g_samples.clear();
+  g_samples.reserve(200000);  // no allocation from here on: see SampleStack
   g_sampling = true;
   HANDLE sampler = CreateThread(nullptr, 0, samplerLoop, nullptr, 0, nullptr);
   const auto cpuStart = std::chrono::steady_clock::now();
@@ -424,30 +435,31 @@ int runProfiler(int argc, char** argv) {
   {
     size_t withExe = 0;
     size_t maxFrames = 0;
-    for (const auto& stack : g_samples) {
+    for (const SampleStack& stack : g_samples) {
       bool found = false;
-      for (const DWORD64 addr : stack) {
-        if (inMainModule(addr)) found = true;
+      for (int i = 0; i < stack.count; ++i) {
+        if (inMainModule(stack.frames[i])) found = true;
       }
       if (found) ++withExe;
-      maxFrames = std::max(maxFrames, stack.size());
+      maxFrames = std::max(maxFrames, static_cast<size_t>(stack.count));
     }
     std::printf("diagnostics: %zu/%zu samples have exe frames, max depth %zu, module [0x%llx,0x%llx)\n", withExe,
                 g_samples.size(), maxFrames, static_cast<unsigned long long>(g_moduleBase),
                 static_cast<unsigned long long>(g_moduleEnd));
     size_t shown = 0;
-    for (const auto& stack : g_samples) {
+    for (const SampleStack& stack : g_samples) {
       if (shown >= 2) break;
       bool found = false;
-      for (const DWORD64 addr : stack) {
-        if (inMainModule(addr)) found = true;
+      for (int i = 0; i < stack.count; ++i) {
+        if (inMainModule(stack.frames[i])) found = true;
       }
       if (!found) continue;
       ++shown;
-      std::printf("  stack of %zu frames:\n", stack.size());
-      for (size_t i = 0; i < stack.size() && i < 14; ++i) {
-        const Sym& sym = resolve(stack[i]);
-        std::printf("    %s%s  %s:%d\n", inMainModule(stack[i]) ? "* " : "  ", sym.name.c_str(), sym.file.c_str(),
+      std::printf("  stack of %d frames:\n", stack.count);
+      for (int i = 0; i < stack.count && i < 14; ++i) {
+        const DWORD64 addr = stack.frames[i];
+        const Sym& sym = resolve(addr);
+        std::printf("    %s%s  %s:%d\n", inMainModule(addr) ? "* " : "  ", sym.name.c_str(), sym.file.c_str(),
                     sym.line);
       }
     }
@@ -459,10 +471,11 @@ int runProfiler(int argc, char** argv) {
   std::map<std::pair<std::string, std::string>, long long> edges;
   std::map<std::string, long long> allocSites;  // callers that reach the allocator
   long long used = 0;
-  for (const auto& stack : g_samples) {
+  for (const SampleStack& stack : g_samples) {
     std::vector<std::string> names;
     std::vector<DWORD64> addrs;
-    for (const DWORD64 addr : stack) {
+    for (int i = 0; i < stack.count; ++i) {
+      const DWORD64 addr = stack.frames[i];
       if (!inMainModule(addr)) continue;
       names.push_back(resolve(addr).name);
       addrs.push_back(addr);

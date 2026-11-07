@@ -380,8 +380,18 @@ edges. It needs the PDB next to the exe and no elevation:
 .\out\build\x64-Profile\bin\ipvgo_game.exe prof "Slum Snakes" 7 3 4000
 ```
 
-Inlining is off in this build, so absolute times are several times slower than
-Release; read the shares, and confirm any speedup with `optbench` on Release.
+The default profile configuration disables inlining (`/Ob0`) so that every sample
+resolves to the line that did the work, which makes absolute times several times
+slower than Release; read the shares, and confirm any speedup with `optbench` on
+Release. Configure once with `-ProfileInlining`
+(`.\cmake\Build-Native.ps1 -BuildType RelWithDebInfo -Configure -ProfileInlining`) to
+keep `/Ob2` instead: the numbers stay closer to Release (about 1.2x) at the cost of
+some leaf frames collapsing into their callers.
+
+The sampler suspends the other threads to read their stacks, so it must not allocate
+inside that window: a suspended thread can hold the heap lock, and the first version of
+this tool deadlocked roughly one run in three. Samples now live in a preallocated
+fixed-size array (`SampleStack`), and nothing on the sampling path touches the heap.
 
 To profile from the command line instead of Visual Studio, use the ETW
 profiler from an elevated prompt:
@@ -485,31 +495,40 @@ Two ideas were tried and rejected:
   land cost a `ChainSet` copy. Measured inside the noise (7x7 3.62 s -> 3.67 s,
   9x9 4.06 s -> 3.99 s), so it is not in the tree.
 
-The next targets, from the inlining profile of the current build (shares of
-24.4 ms/move, one thread, 7x7, `nodeLimit=4000`): `computeChainsInto` 14.2% (the
-chain flood fill, which every leaf and every reply distribution needs),
-`eyeTotalsAfterMove` 8.8% and `summarizeEyes` 3.5% (the eye passes),
-`matchesAnyPattern` 6.5%, `evaluatedLead` 5.1%, `getEyeCreationMoves` 4.3%,
-`neighborChainsOfChain` 3.8%, `BitPlanes::load` 2.5% (that one is now one load per
-position instead of three or four, see "The move-generation pass"). The legality scan
-that used to head this list is down to 4.3% combined (`getAllValidMoves` 2.2% +
-`placeStoneBits` 2.1%).
+The next targets, from the profile taken after the chain-query pass (9x9 Slum Snakes, 2
+games, 4 000-node budget, 36 630 stack samples, 88.6 ms/move instrumented against 23 ms
+in Release - the instrumented build pays the `operator new` hooks and the sampler, so read
+shares, not absolute times): `computeChainsInto` 16.8% (15.8% reached through
+`chainsCached`, most of it from `leafValue`, 17.5% inclusive), `eyeTotalsAfterMove` 13.6%
+(`getEyeCreationMoves` 30.7% inclusive: `eyeMove` 19.7% + `eyeBlock` 11.2%),
+`matchesAnyPattern` 6.3%, `evaluatedLead` 5.3%, `placeStoneBits` 4.7%,
+`neighborChainsOfChain` 3.3%, `getEyeCreationMoves` 2.9% (its own body, besides the eye
+analysis it calls), `chainEffectiveLibertiesWords` 2.7%, `getAllValidMoves` 2.4%,
+`summarizeEyes` 2.1%, `BitPlanes::load` 1.9%, `validateMove` 1.8%, `bits::flood` 1.8%
+(now only `placeStoneBits` and `collectDeadChains`), with `opponentReplyDistribution` at
+71.1% inclusive and `buildPolicyModel` at 48.0%.
 
-Two of the ideas this list used to carry are done: the 16-bit chain arrays (neutral on
-speed, but they found and fixed the 19x19 overflow) and loading the bit planes once.
-What remains:
+What that leaves:
 
+- **`leafValue` builds its own `ChainSet`** - the largest single flow in the profile. A
+  leaf needs stone counts, the empty regions' border colours and the chains at two
+  liberties; all three are reachable from the bit planes with word operations, which would
+  take the leaf evaluation off the chain set entirely. The safety and moyo knobs need the
+  chain set, so the bit-plane path would be the default-knobs path only.
 - **`matchesAnyPattern` is evaluated per point**, nine cell classes at a time, when the
   same question can be asked for the whole board at once: for each of the nine
-  pattern offsets and each cell class, one shifted mask, then each pattern is an AND
-  of nine masks. That is ~20 patterns x 9 word-ops per board instead of per point.
-- **The eye pass still copies the chain set** (`const ChainSet cs = chainsCached(...)`
-  in `getEyeCreationMoves`) because the ring is evicted by the candidate evaluations it
-  performs. Narrowing the arrays halved what that copy costs; a stable slot, or an
-  index into the ring instead of a copy, would remove it.
-- **Fusing the liberty pass into the chain pass** would halve the neighbour visits, but
-  it changes the order liberties are stored in - the liberty oracle in `selftest`
-  would have to be re-run against every consumer, so it needs its own pass.
+  pattern offsets and each cell class, one shifted mask, then each pattern is an AND of
+  nine masks. That is ~20 patterns x 9 word-ops per board instead of per point.
+- **The eye increment is the other half.** `eyeTotalsAfterMove` is still 13.6% on its own
+  on top of `summarizeEyes`, and the eye generators together are 30.7% of the run.
+
+Allocation churn is still large and now measurable per site: 162 673 allocations per
+move (12.5 M over the two profiled games, 1.56 GB of traffic). The biggest sites are
+`getAllValidMoves`' `vector<pair<int,int>>` (1.4 M allocations from `reserve` plus
+copy), `getLibertyGrowthMoves` (1.69 M), `getExpansionMoveArray` (1.61 M),
+`EyeCandidate` vectors (0.89 M) and `ReplyDist` copies (173 k at 828 bytes each). The
+per-thread free list makes these cheap in Release, but they are the reason the
+instrumented build reads 4x slower than Release.
 
 ### The incremental eye pass
 
@@ -768,6 +787,50 @@ the wall clock drifts a few percent between sessions; the direct comparison is t
 to trust. Node counts, memo hits, chosen moves, margins, `policycheck` values and
 `eyetest` counters are identical throughout (`eyetest` still 49 041 candidate points,
 38 652 on the incremental path, 0 mismatches).
+
+### The chain-query pass
+
+The fresh profile above put the bit-plane liberty queries second on the list: 15.7% of all
+samples, with one line (`floodChainInto`, the word-level flood) at 11.3%. That was the
+cost of answering, per candidate point, a question the cached `ChainSet` had already
+answered: a stone placed on an empty point joins the (at most four) chains of its colour
+around it, so the liberties of the merged chain are the known liberty lists of those
+chains - a flood is not needed.
+
+`analysis.cpp` now answers all three questions the move generators ask:
+
+- `chainEffectiveLiberties`: a `uint64_t` mask of the liberties of the adjacent friendly
+  chains, plus the empty neighbours of the point itself, minus the point; the mask width
+  is dispatched on the board size exactly like the bit-plane code, so a 9x9 position
+  touches two words and not six.
+- `chainMinAdjacentLiberties`: `min(libertyCount(chain))` over the adjacent friendly
+  chains, 99 when there are none - O(1) per adjacent chain.
+- `chainWeakestAdjacent`: the adjacent enemy chain with the fewest liberties (first in
+  N/E/S/W order on ties), its size, and the number of distinct empty regions its
+  liberties belong to (capped at 8, as before).
+
+`BoardBits` is no longer used by the search. It is kept because it is the only
+*independent* implementation of these answers - the reference in `analysis.cpp` walks the
+same chain set, so it cannot catch a chain-set error, while the bit planes re-derive
+everything from the board. `selftest` now checks all three side by side over 11 832
+queries, and it caught a real mistake on the first run: the point's own empty neighbours
+are liberties of the stone being placed even when no friendly chain reaches them, so the
+union has to include them (the first version dropped them and read one too low at 19x19).
+
+Measured on Release, interleaved, identical node counts and identical `exploitplay`
+results at 5x5/7x7/9x9/13x13/19x19: **-10.4%** on the 9x9 bench (86.4 -> 77.5 ms per
+search) and **-3.3%** on the 2-position depth-3 bench (203.0 -> 196.4 ms). The profiled
+workload dropped from 102.7 to 88.6 ms/move, and the flood disappeared from the profile:
+`chainEffectiveLibertiesWords` is 2.7%, against 15.7% for the queries it replaced.
+
+Two ideas from the same profile were tried and rejected:
+
+- **Reusing one scratch vector for `growthMaxDeltaPoints()` / `jumpOptions()`** instead of
+  returning a fresh one (they were top allocation sites at 700 k and 743 k allocations).
+  Measured 3.3% *slower* on the 9x9 bench, consistently over eight interleaved rounds, and
+  a shared buffer invites aliasing bugs if a caller ever holds two lists at once. Reverted.
+- **Growing the chain-cache ring from 6 to 12 slots** to cut the flood at leaf nodes:
+  +0.2%, i.e. nothing. The misses are per leaf position, not evictions.
 
 ### The cleanup pass
 

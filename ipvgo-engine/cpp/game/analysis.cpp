@@ -180,6 +180,120 @@ int findMinLibertyCountOfAdjacentChains(const SimpleBoard& board, int x, int y, 
 
 namespace {
 
+constexpr int kChainWords = (ChainSet::kMaxPoints + 63) / 64;
+
+// Distinct chains of `stone` colour touching (x,y), in N/E/S/W order. At most four.
+int adjacentChainsOfColor(const ChainSet& cs, int idx, Color stone, int* out) {
+  const NeighborTable nt = neighborTable(cs.N);
+  const int count = nt.count[idx];
+  const int* neighbours = nt.idx[idx].data();
+  int found = 0;
+  for (int k = 0; k < count; ++k) {
+    const int nIdx = neighbours[k];
+    const int chain = cs.id[static_cast<size_t>(nIdx)];
+    if (chain < 0 || cs.chainColor[static_cast<size_t>(chain)] != colorChar(stone)) continue;
+    bool seen = false;
+    for (int i = 0; i < found; ++i) seen = seen || out[i] == chain;
+    if (!seen) out[found++] = chain;
+  }
+  return found;
+}
+
+}  // namespace
+
+namespace {
+
+// Word count of the smallest mask that covers an N*N board: the same dispatch the
+// bit-plane queries use, so a 9x9 position touches two words, not six.
+template <int W>
+int chainEffectiveLibertiesWords(const ChainSet& cs, int idx, Color player) {
+  const char me = colorChar(player);
+  const NeighborTable nt = neighborTable(cs.N);
+  const int count = nt.count[idx];
+  const int* neighbours = nt.idx[idx].data();
+
+  uint64_t mask[W] = {0};
+  int chains[4];
+  int chainCount = 0;
+  for (int k = 0; k < count; ++k) {
+    const int nIdx = neighbours[k];
+    const int chain = cs.id[static_cast<size_t>(nIdx)];
+    if (chain < 0) continue;
+    const char color = cs.chainColor[static_cast<size_t>(chain)];
+    if (color == '.') {
+      // The point becomes a stone, so its empty neighbours are liberties even when
+      // no friendly chain reaches them.
+      mask[nIdx >> 6] |= 1ULL << (nIdx & 63);
+      continue;
+    }
+    if (color != me) continue;
+    bool seen = false;
+    for (int i = 0; i < chainCount; ++i) seen = seen || chains[i] == chain;
+    if (!seen) chains[chainCount++] = chain;
+  }
+  for (int i = 0; i < chainCount; ++i) {
+    for (const int liberty : cs.liberties(chains[i])) mask[liberty >> 6] |= 1ULL << (liberty & 63);
+  }
+
+  int liberties = 0;
+  for (int w = 0; w < W; ++w) liberties += static_cast<int>(__popcnt64(mask[w]));
+  // The point itself is a liberty of every chain it touches, and the stone removes it.
+  return liberties - static_cast<int>((mask[idx >> 6] >> (idx & 63)) & 1ULL);
+}
+
+}  // namespace
+
+int chainEffectiveLiberties(const ChainSet& cs, int x, int y, Color player) {
+  const int idx = flatIndex(cs.N, x, y);
+  switch ((cs.N * cs.N + 63) / 64) {
+    case 1: return chainEffectiveLibertiesWords<1>(cs, idx, player);
+    case 2: return chainEffectiveLibertiesWords<2>(cs, idx, player);
+    case 3: return chainEffectiveLibertiesWords<3>(cs, idx, player);
+    case 4: return chainEffectiveLibertiesWords<4>(cs, idx, player);
+    case 5: return chainEffectiveLibertiesWords<5>(cs, idx, player);
+    default: return chainEffectiveLibertiesWords<6>(cs, idx, player);
+  }
+}
+
+int chainMinAdjacentLiberties(const ChainSet& cs, int x, int y, Color player) {
+  int chains[4];
+  const int chainCount = adjacentChainsOfColor(cs, flatIndex(cs.N, x, y), player, chains);
+  int best = 99;
+  for (int i = 0; i < chainCount; ++i) best = std::min(best, cs.libertyCount(chains[i]));
+  return best;
+}
+
+WeakestAdjacent chainWeakestAdjacent(const ChainSet& cs, int x, int y, Color stone) {
+  WeakestAdjacent out;
+  int chains[4];
+  const int chainCount = adjacentChainsOfColor(cs, flatIndex(cs.N, x, y), stone, chains);
+  int chosen = -1;
+  for (int i = 0; i < chainCount; ++i) {
+    const int liberties = cs.libertyCount(chains[i]);
+    if (!out.found || liberties < out.liberties) {
+      out.found = true;
+      out.liberties = liberties;
+      chosen = chains[i];
+    }
+  }
+  if (!out.found) return out;
+  out.stones = static_cast<int>(cs.members(chosen).size());
+  // Distinct empty regions the liberties belong to, capped at 8 like the bit-plane
+  // version (which stops counting once it has eight).
+  int groups[8];
+  int groupCount = 0;
+  for (const int liberty : cs.liberties(chosen)) {
+    const int region = cs.id[static_cast<size_t>(liberty)];
+    bool seen = false;
+    for (int i = 0; i < groupCount; ++i) seen = seen || groups[i] == region;
+    if (!seen && groupCount < 8) groups[groupCount++] = region;
+  }
+  out.libertyGroups = groupCount;
+  return out;
+}
+
+namespace {
+
 // Core of getAllPotentialEyes(): the same scan, with the candidate handed to the
 // caller instead of pushed into a vector. The eye summary runs this on every reply
 // distribution, and the vector was the largest single allocation site in the

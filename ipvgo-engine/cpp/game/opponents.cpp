@@ -31,22 +31,10 @@ struct GrowthCandidate {
 
 int floorIndex(double rng, size_t size) { return static_cast<int>(std::floor(rng * static_cast<double>(size))); }
 
-// ---- Hot local queries -----------------------------------------------------
-//
-// These are asked once per liberty of every chain on the board, so they run off the
-// bit planes loaded once per position (BoardBits) rather than walking chains.
-int effectiveLibertyCount(const BoardBits& bits, int x, int y, Color player) {
-  return bits.effectiveLibertyCount(x, y, player);
-}
-
-int adjacentMinLibertyCount(const BoardBits& bits, int x, int y, Color chainColor) {
-  return bits.minAdjacentLibertyCount(x, y, chainColor);
-}
-
 // ---- Liberty growth / defend ----------------------------------------------
 
 std::vector<GrowthCandidate> getLibertyGrowthMoves(const SimpleBoard& board, Color player,
-                                                   const PointMask& availableSet, const BoardBits& bits) {
+                                                   const PointMask& availableSet) {
   const ChainSet& cs = chainsCached(board);
   const int N = cs.N;
   const char me = colorChar(player);
@@ -60,8 +48,8 @@ std::vector<GrowthCandidate> getLibertyGrowthMoves(const SimpleBoard& board, Col
       if (!availableSet.count(lib)) continue;
       const int lx = lib / N;
       const int ly = lib % N;
-      const int newLib = effectiveLibertyCount(bits, lx, ly, player);
-      const int oldLib = adjacentMinLibertyCount(bits, lx, ly, player);
+      const int newLib = chainEffectiveLiberties(cs, lx, ly, player);
+      const int oldLib = chainMinAdjacentLiberties(cs, lx, ly, player);
       if (newLib > 1 && newLib >= oldLib) result.push_back({lx, ly, oldLib, newLib});
     }
   }
@@ -133,8 +121,7 @@ AiMove getDefendMove(const std::vector<GrowthCandidate>& growthMoves, MathRandom
 
 // ---- Surround / capture ----------------------------------------------------
 
-AiMove getSurroundMove(const SimpleBoard& board, Color player, const PointMask& availableSet, bool smart,
-                      const BoardBits& bits) {
+AiMove getSurroundMove(const SimpleBoard& board, Color player, const PointMask& availableSet, bool smart) {
   const Color opposing = oppositeColor(player);
   const ChainSet& cs = chainsCached(board);
   const int N = cs.N;
@@ -158,9 +145,9 @@ AiMove getSurroundMove(const SimpleBoard& board, Color player, const PointMask& 
       if (!availableSet.count(lib)) continue;
       const int mx = lib / N;
       const int my = lib % N;
-      const int newLibertyCount = effectiveLibertyCount(bits, mx, my, player);
+      const int newLibertyCount = chainEffectiveLiberties(cs, mx, my, player);
 
-      const BoardBits::Weakest weakest = bits.weakestAdjacent(cs, mx, my, opposing);
+      const WeakestAdjacent weakest = chainWeakestAdjacent(cs, mx, my, opposing);
       const int weakestLength = weakest.found ? weakest.stones : 99;
       const int enemyChainLibertyCount = weakest.found ? weakest.liberties : 99;
       const int libertyGroups = weakest.libertyGroups;
@@ -387,8 +374,7 @@ class MoveGen {
         player_(player),
         rng_(rng),
         smart_(smart),
-        mathRng_(mathRng),
-        bits_(state.board) {
+        mathRng_(mathRng) {
     availableSpaces_ = findDisputedTerritory(state, player, smart, knownValidMoves);
     for (const auto& [x, y] : availableSpaces_) availableSet_.insert(flatIndex(state.size, x, y));
     contestedPoints_ = getDisputedTerritoryMoves(board_, availableSpaces_);
@@ -396,7 +382,7 @@ class MoveGen {
     endGameAvailable_ = contestedPoints_.empty() && state.passCount > 0;
   }
 
-  AiMove surround() { return cached(kSurround, [&] { return getSurroundMove(board_, player_, availableSet_, smart_, bits_); }); }
+  AiMove surround() { return cached(kSurround, [&] { return getSurroundMove(board_, player_, availableSet_, smart_); }); }
 
   AiMove capture() {
     const AiMove s = surround();
@@ -476,6 +462,9 @@ class MoveGen {
     patternCache_.clear();
     if (endGameAvailable_) return patternCache_;
     const int N = static_cast<int>(board_.size());
+    // The smart filter needs the liberty count of the chain the stone would join,
+    // which the cached chain set already knows.
+    const ChainSet& cs = chainsCached(board_);
     // Membership first: the available set is a small subset of the board, and both
     // tests are pure, so this keeps the points and their order while skipping the
     // pattern match for most of them.
@@ -483,7 +472,7 @@ class MoveGen {
       for (int y = 0; y < N; ++y) {
         if (!availableSet_.count(flatIndex(N, x, y))) continue;
         if (!matchesAnyPattern(board_, x, y, player_)) continue;
-        if (smart_ && effectiveLibertyCount(bits_, x, y, player_) <= 1) continue;
+        if (smart_ && chainEffectiveLiberties(cs, x, y, player_) <= 1) continue;
         patternCache_.emplace_back(x, y);
       }
     }
@@ -495,7 +484,7 @@ class MoveGen {
   // from this same list.
   const std::vector<GrowthCandidate>& growthList() const {
     if (!growthCacheReady_) {
-      growthCache_ = getLibertyGrowthMoves(board_, player_, availableSet_, bits_);
+      growthCache_ = getLibertyGrowthMoves(board_, player_, availableSet_);
       growthCacheReady_ = true;
     }
     return growthCache_;
@@ -579,9 +568,6 @@ class MoveGen {
   double rng_;
   bool smart_;
   MathRandom& mathRng_;
-  // Bit planes of board_, loaded once per position: the liberty queries in surround,
-  // growth and the pattern filter all read them, and each used to load its own.
-  BoardBits bits_;
 
   std::vector<Pt> availableSpaces_;
   PointMask availableSet_;
