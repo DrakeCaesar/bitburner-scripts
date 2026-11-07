@@ -395,28 +395,99 @@ xperf -i trace.etl -o trace.csv -a dumper   # then pivot the Stack column
 
 ## Performance baseline
 
-Reference point for optimisation work: the **search-optimisation pass** that
-followed `68813bf` (chain/liberty caches, narrowed bit kernels, local bit-plane
-legality, shared legal-move scan, allocation-free liberty counts, inline
-neighbour lists). The old A/B flags are gone; these paths are the only ones.
-Measure against these numbers, not against older commits.
+Reference point for optimisation work: the **reply-reuse pass** (below), measured
+on top of the earlier search-optimisation pass that followed `68813bf` (chain and
+liberty caches, narrowed bit kernels, local bit-plane legality, shared legal-move
+scan, allocation-free liberty counts, inline neighbour lists). The old A/B flags
+are gone; these paths are the only ones. Measure against these numbers, not
+against older commits.
 
 Reproduce, from a Release build:
 
 ```bash
 # Fixed-depth search cost; threads=1 keeps it deterministic
 ./out/build/x64-Release/bin/ipvgo_game optbench --positions=2 --depth=3 --threads=1 --reps=3
+./out/build/x64-Release/bin/ipvgo_game optbench --size=9 --positions=4 --depth=2 --threads=1 --reps=3
+
+# The configuration the game actually runs: a node budget, one thread so the
+# node counts stay deterministic.
+IPVGO_THREADS=1 IPVGO_NODE_LIMIT=4000 IPVGO_CACHE_STATS=1 \
+  ./out/build/x64-Release/bin/ipvgo_game exploitplay "Slum Snakes" 7 4 2 1
 ```
 
 | measurement | current baseline |
 |---|---|
-| `optbench` per search (2 positions, depth 3) | ~400 ms (was ~1440 ms before the pass; wall clock is noisy, the node counts are the stable part), 39 081 nodes |
-| `optbench` position 1 / 2 | 11 250 nodes / 27 831 nodes (deterministic; values are win probabilities) |
-| `exploitplay Netburners 5 24 2 1` | ~4.8 ms/move (was ~7.3 ms), same results |
-| `profileworkload 5` (Illuminati 9x9) | ~13.9 ms/move (was ~26.3 ms) |
+| `optbench` per search (2 positions, depth 3) | ~245 ms (was ~284 ms before this pass, ~1440 ms before the one before it; wall clock is noisy, the node counts are the stable part), 39 012 nodes |
+| `optbench` position 1 / 2 | 11 181 nodes / 27 831 nodes (deterministic; values are win probabilities) |
+| `optbench --size=9 --positions=4 --depth=2 --threads=1 --reps=3` | ~106 ms/search, 11 537 nodes (was ~121 ms) |
+| `exploitplay Netburners 5 8 2 1` under `nodeLimit=4000` | 754 ms think for 8 games (was 888 ms), same results |
+| `exploitplay Netburners 5 24 2 1` | ~3.5 ms/move, unchanged within noise (fixed depth, so no reply reuse happens) |
+| `exploitplay "Slum Snakes" 7 4 2 1` under `nodeLimit=4000` | 3.50 s think (was 4.07 s), same nodes and moves |
+| `exploitplay Illuminati 9 2 2 1` under `nodeLimit=4000` | 4.05 s think (was 6.47 s), same nodes and moves |
+| `exploitplay Illuminati 13 1 2 1` under `nodeLimit=4000` | 3.27 s think (was 5.93 s), same nodes and moves, peak RSS 61.6 MB (was 57.9 MB) |
+| `profileworkload 5` (Illuminati 9x9) | ~13.9 ms/move before this pass |
 
-The remaining time is mostly `buildPolicyModel` / `getEyeCreationMoves` inside
-`opponentReplyDistribution` (eye analysis and pattern matching).
+Nodes, memo hits, chosen moves and values are identical before and after the
+pass at every configuration above except where noted; only the wall clock moved.
+The remaining time is still `buildPolicyModel` / `getEyeCreationMoves` inside
+`opponentReplyDistribution` (eye analysis, not pattern matching - see
+"Known limits").
+
+### The reply-reuse pass
+
+Profiled with `prof "Slum Snakes" 7 10 4000` (the in-game configuration: 7x7,
+`nodeLimit=4000`, one thread). The profile build is not a speed measurement, only
+a share measurement, because it disables inlining.
+
+What it showed, per move: 169 k allocations, 60 bytes each; 77% of the time
+inside `opponentReplyDistribution`, of which `buildPolicyModel` was 54% and the
+eye work inside it (`getEyeCreationMoves` 26%, `getEyeBlockingMove` 11%) most of
+that; `matchesAnyPattern` was 3.1% of exclusive samples (the 58% figure in the
+older notes predates the bitset rewrite).
+
+Three changes, each verified to keep node counts, memo hits, chosen moves and
+values bit-identical:
+
+- **A reply-distribution table owned by the search.** Iterative deepening revisits
+  every White node of the previous iteration at a different remaining depth, and
+  the memo cannot answer those (it is keyed by depth), so the policy model - the
+  single largest cost - used to be rebuilt once per node per iteration. The
+  distribution is a pure function of the position, so a search-owned
+  `ReplyCache` keyed by `positionKey()` is exact. It lives only for one
+  `runExploiter` call, which sidesteps the memory problem that keeps
+  distributions out of the cross-move session (872 MB on 13x13). This is where
+  the 9x9 gain comes from: 39 246 hits per 203 moves, 6.47 s down to 4.05 s. On a
+  13x13 game at the same budget it is 47 656 hits and 5.93 s down to 3.27 s, for
+  3.7 MB of extra peak RSS (57.9 -> 61.6 MB); the table is capped at 200 000
+  entries, past which a miss simply recomputes, so a very large budget cannot
+  grow it without bound.
+- **One pass over the chain set in the leaf eval.** `evaluatedLead` counted stones
+  with its own board scan and `leafValue` counted empties with another; both now
+  come from the chain set that is already in hand, and the empty-space loop reads
+  the neighbour table instead of rebuilding `onBoardNeighbors` per point.
+- **Membership test before the pattern match** in `patternPoints` and
+  `getPatternMove`. The available set is a small subset of the board and both
+  tests are pure, so the points and their order do not change.
+
+Two ideas were tried and rejected:
+
+- **Hashing `positionKey()` from the packed 2-bit board** instead of cell by cell
+  (81 FNV steps for a 9x9). It looked safe - packing is injective, so the keys
+  should be interchangeable - but it changed the node counts of the budgeted,
+  session-reusing play by 0.4% and flipped one 9x9 game. Single searches at a
+  fixed depth were identical, so the divergence is confined to the cross-move
+  memo, which is exactly the path `IPVGO_CARRY` already warns about. Rejected
+  until the cause is understood.
+- **Memoising `getAllEyesByChainId` per (board, colour) in a small per-thread
+  ring.** One distribution asks for the same pair up to four times, but the ring
+  is evicted by the candidate boards analysed in between, and the hits that do
+  land cost a `ChainSet` copy. Measured inside the noise (7x7 3.62 s -> 3.67 s,
+  9x9 4.06 s -> 3.99 s), so it is not in the tree.
+
+The next target is the same eye analysis, done incrementally: `getEyeCreationMoves`
+evaluates every candidate point by rebuilding the chains, the empty regions and
+the eye map of the whole board, although one stone changes only the regions next
+to it. That is 29% of the time and the only remaining structural cost.
 
 ### Third-party code
 
@@ -658,10 +729,22 @@ games in each mode, so the win counts are not comparable (18/24 vs 19/24 is
 noise, not a regression). Whether reuse helps or hurts win rate needs a fixed
 configuration and roughly 100+ games per faction.
 
-**The dominant remaining cost is pattern matching.** At depth 3, `matchesAnyPattern`
-was ~58% of exclusive samples, reached via `MoveGen::patternPoints` on every
-reply-distribution. The patterns are fixed and the board is at most 13x13, so
-this is the obvious next target; nothing else in the profile comes close.
+**The dominant remaining cost is the eye analysis inside the policy model.**
+`opponentReplyDistribution` is 82% of the search on a 7x7 game at the in-game
+budget, `buildPolicyModel` is 56% of that, and inside it `getEyeCreationMoves`
+(29%) and `getEyeBlockingMove` (14%) are the eye passes: every candidate point is
+checked by rebuilding the board's chains, empty regions and eye map, even though
+one stone only changes the regions next to it. `matchesAnyPattern` is now 1.5%
+of exclusive samples (the ~58% figure in the older notes predates the bitset
+rewrite, and the membership test now runs before the match). What the profile
+does not show is a cheap win: the eye pass is a whole-board analysis called per
+candidate, so making it incremental is a real refactor rather than a
+micro-optimisation.
+
+Reply distributions are reused within one search (see "The reply-reuse pass")
+but not across moves: on 13x13 keeping them for a whole game cost 872 MB for 89
+hits, and cross-move memo hits are only 1.5-9% because `positionKey()` hashes the
+history size.
 
 The HTTP server also exposes the exploiter for real games with
 `IPVGO_ENGINE=exploit` (POST `/api/ipvgo/move`, engine reported as `exploit`,

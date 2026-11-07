@@ -385,10 +385,13 @@ AiMove getPatternMove(const SimpleBoard& board, Color player, const PointMask& a
                       double rng) {
   const int N = static_cast<int>(board.size());
   std::vector<Pt> moves;
+  // Membership first: the available set is a small subset of the board, so this
+  // skips the pattern match for most points. Both tests are pure, so the result
+  // and its order are unchanged.
   for (int x = 0; x < N; ++x) {
     for (int y = 0; y < N; ++y) {
-      if (!matchesAnyPattern(board, x, y, player)) continue;
       if (!availableSet.count(flatIndex(N, x, y))) continue;
+      if (!matchesAnyPattern(board, x, y, player)) continue;
       if (smart && effectiveLibertyCount(board, x, y, player) <= 1) continue;
       moves.emplace_back(x, y);
     }
@@ -482,10 +485,12 @@ class MoveGen {
     if (endGameAvailable_) return {};
     const int N = static_cast<int>(board_.size());
     std::vector<Pt> moves;
+    // Membership first, see getPatternMove(): same points, same order, far fewer
+    // pattern matches.
     for (int x = 0; x < N; ++x) {
       for (int y = 0; y < N; ++y) {
-        if (!matchesAnyPattern(board_, x, y, player_)) continue;
         if (!availableSet_.count(flatIndex(N, x, y))) continue;
+        if (!matchesAnyPattern(board_, x, y, player_)) continue;
         if (smart_ && effectiveLibertyCount(board_, x, y, player_) <= 1) continue;
         moves.emplace_back(x, y);
       }
