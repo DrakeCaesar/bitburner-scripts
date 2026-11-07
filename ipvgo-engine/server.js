@@ -17,6 +17,9 @@ const engineOverride = (process.env.IPVGO_ENGINE ?? "").trim()
 // Set by scripts/dev-server.mjs: enables restart requests and tells the page to
 // reload itself when this id changes.
 const supervised = process.env.IPVGO_SUPERVISED === "1"
+// Carry memo: reuse exact search results across moves and pondering. It returns
+// what a fresh search would, so it is on by default; IPVGO_CARRY=0 turns it off.
+const carryMemo = process.env.IPVGO_CARRY !== "0"
 const serverId = crypto.randomUUID()
 
 /** @type {import("child_process").ChildProcess | null} */
@@ -385,6 +388,7 @@ async function handleBenchStart(req, res) {
     const value = integer(key, min, max)
     if (value !== undefined) options[key] = value
   }
+  if (body?.carry === true) options.carry = true
   const whiteMass = Number(body?.whiteMass)
   if (Number.isFinite(whiteMass) && whiteMass > 0 && whiteMass <= 1) options.whiteMass = whiteMass
   if (![5, 7, 9, 13, 19].includes(options.size)) {
@@ -732,6 +736,7 @@ function spawnEngine() {
 }
 
 function requestServeMove(body, timeoutMs) {
+  if (carryMemo && body.carry === undefined) body = { ...body, carry: true }
   if (!engineAlive()) spawnEngine()
   const id = engineChild.nextId++
   const proc = engineChild.proc

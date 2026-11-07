@@ -23,6 +23,10 @@ struct BenchOptions {
   int endgameEmpties = 6;
   long nodeBudget = 30000;
   int threads = 0;
+  bool carry = false;  // share a depth-aware memo across the moves of a game
+  // "Faction:game" entries. When set only those games run, each seeded from
+  // (seed, faction, game) so it does not depend on the games played before it.
+  std::vector<std::string> only;
 };
 
 struct FactionBenchRow {

@@ -737,6 +737,7 @@ json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session,
   if (cfg.nodeLimit <= 0) cfg.nodeLimit = req.value("iterations", 0L);
   if (cfg.nodeLimit > 0) cfg.budgetMs = 0;
   cfg.cancel = cancel;
+  cfg.carry = req.value("carry", false);
 
   const auto t0 = std::chrono::steady_clock::now();
   const ExploitResult result = runExploiter(state, cfg, nullptr, session);
@@ -808,7 +809,7 @@ std::string searchConfigKey(const json& req) {
                                        "whiteMass",      "endgameEmpties", "nodeBudget",   "threads",
                                        "budgetMs",       "whiteWorstCase", "endgameApprox", "adaptiveWidth",
                                        "nodeLimit",      "iterations",     "opponent",     "komi",
-                                       "playAs"};
+                                       "playAs",         "carry"};
   json key = json::object();
   for (const char* field : fields) {
     if (req.contains(field)) key[field] = req.at(field);
@@ -1054,6 +1055,63 @@ int runReplies(const std::string& inPath) {
 
 // ---- exploitplay (exploiter Black vs scripted faction White) ---------------
 
+// Stands in for the game's delay before White replies: while it runs, searches the
+// positions White is likeliest to reach, as the server's Ponderer does, but in
+// process so exploitplay can measure what pondering is worth.
+class SimPonder {
+ public:
+  ~SimPonder() { stop(); }
+  std::unordered_map<uint64_t, ExploitResult> answers;
+
+  void start(const GameState& afterBlack, ExploitConfig cfg, ipvgo::nn::SearchSession* session, int maxReplies,
+             bool deep) {
+    stop();
+    answers.clear();
+    cfg.cancel = &cancel_;
+    worker_ = std::thread([this, afterBlack, cfg, session, maxReplies, deep] {
+      const ipvgo::game::ReplyDist dist = opponentReplyDistribution(afterBlack, Color::White, afterBlack.ai);
+      std::vector<GameState> predicted;
+      double mass = 0.0;
+      for (const auto& reply : dist.replies) {
+        if (static_cast<int>(predicted.size()) >= maxReplies || mass >= 0.95) break;
+        mass += reply.prob;
+        if (reply.passMove) continue;
+        GameState next = afterBlack;
+        if (!makeMove(next, reply.x, reply.y, Color::White)) continue;
+        const ExploitResult result = runExploiter(next, cfg, nullptr, session);
+        if (result.cancelled) return;
+        answers[ipvgo::nn::positionKey(next)] = result;
+        predicted.push_back(next);
+      }
+      if (!deep) return;
+      for (int round = 1; round <= 6; ++round) {
+        ExploitConfig bigger = cfg;
+        const long scale = 1L << (2 * round);
+        if (cfg.nodeLimit > 0) bigger.nodeLimit = cfg.nodeLimit * scale;
+        else if (cfg.budgetMs > 0) bigger.budgetMs = cfg.budgetMs * static_cast<int>(scale);
+        else return;
+        for (const GameState& next : predicted) {
+          const ExploitResult result = runExploiter(next, bigger, nullptr, session);
+          if (result.cancelled) return;
+          answers[ipvgo::nn::positionKey(next)] = result;
+        }
+      }
+    });
+  }
+
+  void stop() {
+    if (worker_.joinable()) {
+      cancel_.store(true);
+      worker_.join();
+    }
+    cancel_.store(false);
+  }
+
+ private:
+  std::atomic<bool> cancel_{false};
+  std::thread worker_;
+};
+
 int runExploitPlay(const std::string& opponentName, int size, int games, int depth, uint64_t seed,
                    bool fixedWhiteSeed, int beam = 0, int whiteChildren = 0, long nodeLimitOverride = 0,
                    bool progressOverride = false) {
@@ -1075,6 +1133,14 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
     if (parsed > 0) cfg.nodeLimit = parsed;
   }
   if (nodeLimitOverride > 0) cfg.nodeLimit = nodeLimitOverride;
+  if (const char* threads = std::getenv("IPVGO_THREADS")) cfg.threads = std::atoi(threads);
+  cfg.carry = std::getenv("IPVGO_CARRY") != nullptr;
+  // Simulated White delay, and whether the idle time also keeps deepening.
+  const int ponderMs = std::getenv("IPVGO_PONDER_MS") ? std::atoi(std::getenv("IPVGO_PONDER_MS")) : 0;
+  const int ponderReplies = std::getenv("IPVGO_PONDER_REPLIES") ? std::atoi(std::getenv("IPVGO_PONDER_REPLIES")) : 4;
+  SimPonder ponder;
+  long ponderHits = 0;
+  long totalDepth = 0;
 
   int wins = 0;
   double totalBlackMs = 0.0;
@@ -1115,7 +1181,17 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
       if (useSession) session.noteRequest(static_cast<size_t>(state.previousBoards.size()));
 
       const auto t0 = std::chrono::steady_clock::now();
-      const ExploitResult search = runExploiter(state, cfg, nullptr, useSession ? &session : nullptr);
+      ExploitResult search;
+      const auto hit = ponder.answers.find(ipvgo::nn::positionKey(state));
+      if (ponderMs > 0 && hit != ponder.answers.end()) {
+        search = hit->second;
+        search.nodes = 0;
+        search.memoHits = search.memoReusedHits = 0;
+        ++ponderHits;
+      } else {
+        search = runExploiter(state, cfg, nullptr, useSession ? &session : nullptr);
+      }
+      totalDepth += search.depth;
       totalBlackMs +=
           std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
       totalNodes += search.nodes;
@@ -1189,6 +1265,11 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
       ++gameMoves;
       if (state.gameOver) break;
 
+      if (ponderMs > 0) {
+        ponder.start(state, cfg, useSession ? &session : nullptr, ponderReplies, cfg.carry);
+        std::this_thread::sleep_for(std::chrono::milliseconds(ponderMs));
+        ponder.stop();
+      }
       // A real game reseeds the faction AI from Player.totalPlaytime every move.
       const double whiteSeed = fixedWhiteSeed ? 0.0 : static_cast<double>(rng() % 30000000u);
       const Play wp = getMove(state, Color::White, ai, whiteSeed, mathRng);
@@ -1243,7 +1324,9 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
   std::cout << "exploitplay: " << opponentName << " " << size << "x" << size << " "
             << "wins=" << wins << "/" << games << " (" << winPct << "%) "
             << "depth=" << depth << " beam=" << cfg.beam << " whiteChildren=" << cfg.whiteChildren
-            << " avgBlackThinkMs=" << avgMs << " avgMargin=" << avgMargin << "\n";
+            << " avgBlackThinkMs=" << avgMs << " avgMargin=" << avgMargin
+            << " avgDepth=" << (totalMoves > 0 ? static_cast<double>(totalDepth) / static_cast<double>(totalMoves) : 0.0)
+            << " ponderHits=" << ponderHits << "/" << totalMoves << "\n";
   if (std::getenv("IPVGO_CACHE_STATS")) {
     const double hitPct = totalNodes > 0 ? 100.0 * static_cast<double>(totalMemoHits) / static_cast<double>(totalNodes) : 0.0;
     const double reusePct =
@@ -1525,6 +1608,10 @@ int main(int argc, char** argv) {
         if (config.contains(key) && !config.at(key).is_null()) {
           applyTuningOption(options, key, config.at(key).dump());
         }
+      }
+      options.carry = config.value("carry", false);
+      if (config.contains("only")) {
+        for (const auto& tag : config.at("only")) options.only.push_back(tag.get<std::string>());
       }
       if (config.contains("whiteMass") && !config.at("whiteMass").is_null()) {
         applyTuningOption(options, "whiteMass", config.at("whiteMass").dump());

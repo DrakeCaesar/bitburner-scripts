@@ -321,6 +321,7 @@ int runBenchGames(const BenchOptions& options, BenchObserver& observer) {
   cfg.endgameEmpties = options.endgameEmpties;
   cfg.nodeBudget = options.nodeBudget;
   cfg.threads = options.threads;
+  cfg.carry = options.carry;
 
   std::mt19937_64 rng(options.seed ? options.seed : 1);
 
@@ -328,19 +329,25 @@ int runBenchGames(const BenchOptions& options, BenchObserver& observer) {
     const Opponent ai = parseOpponent(factions[f]).value_or(Opponent::Netburners);
 
     for (int g = 0; g < options.gamesPerFaction; ++g) {
+      if (!options.only.empty()) {
+        const std::string tag = factions[f] + ":" + std::to_string(g + 1);
+        if (std::find(options.only.begin(), options.only.end(), tag) == options.only.end()) continue;
+        rng.seed((options.seed ? options.seed : 1) * 1000003ull + f * 1009ull + static_cast<uint64_t>(g));
+      }
       const double clockMs = static_cast<double>(rng() % 30000000u);
       const uint64_t mathSeed = rng();
       MathRandom mathRng(mathSeed);
       GameState state = newBoardState(options.size, ai, true, clockMs, mathRng);
       observer.onGameStart(f, factions[f], g + 1, options.gamesPerFaction);
 
+      SearchSession session;
       const int moveCap = options.size * options.size * 4;
       for (int m = 0; m < moveCap && !state.gameOver; ++m) {
         if (whoseTurn(state) != Color::Black) break;
 
         observer.onThinking(f, state, g + 1, m + 1);
         const auto t0 = std::chrono::steady_clock::now();
-        const ExploitResult search = runExploiter(state, cfg);
+        const ExploitResult search = runExploiter(state, cfg, nullptr, options.carry ? &session : nullptr);
         const double elapsedMs =
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 
