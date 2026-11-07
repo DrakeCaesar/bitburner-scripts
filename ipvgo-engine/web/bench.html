@@ -50,7 +50,7 @@
       select option:checked,
       select option:hover,
       select option:focus { background: #113011 linear-gradient(#113011, #113011); color: #cccccc; }
-      .dd { position: relative; width: 110px; }
+      .dd { position: relative; width: 150px; flex: 0 0 150px; }
       .ddButton {
         display: block;
         width: 100%;
@@ -122,7 +122,7 @@
       .pill.failed { border-color: var(--bad); color: var(--bad); }
       main {
         display: grid;
-        grid-template-columns: minmax(260px, 300px) minmax(0, 1fr) minmax(240px, 320px);
+        grid-template-columns: 360px minmax(0, 1fr) 440px;
         gap: 8px;
         padding: 8px;
         align-items: start;
@@ -153,8 +153,10 @@
         height: 22px;
         font-family: monospace;
         font-size: 12px;
-        width: 110px;
+        width: 150px;
+        flex: 0 0 150px;
       }
+      input::placeholder { color: #666666; opacity: 1; }
       input:focus, select:focus { outline: none; border-color: var(--line); background: var(--selected-bg); }
       .chips { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 8px; }
       details#tuning { margin: 2px 0 8px; }
@@ -166,7 +168,7 @@
         user-select: none;
       }
       details#tuning[open] > summary { color: var(--text); margin-bottom: 4px; }
-      details#tuning input { width: 96px; }
+      details#tuning input { width: 150px; }
       .chip {
         cursor: pointer;
         user-select: none;
@@ -208,6 +210,15 @@
       .info { display: flex; flex-wrap: wrap; gap: 0 16px; line-height: 16px; color: var(--dim); font-size: 12px; }
       .info b { color: var(--text); font-weight: bold; }
       table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      /* Fixed layout so the results table never resizes as numbers change. */
+      table:not(.moves) { table-layout: fixed; }
+      table:not(.moves) th:nth-child(1) { width: 15ch; }
+      table:not(.moves) th:nth-child(2) { width: 7ch; }
+      table:not(.moves) th:nth-child(3), table:not(.moves) th:nth-child(4) { width: 5ch; }
+      table:not(.moves) th:nth-child(5) { width: 8ch; }
+      table:not(.moves) th:nth-child(6) { width: 8ch; }
+      table:not(.moves) th:nth-child(7) { width: 8ch; }
+      table:not(.moves) td:first-child { overflow: hidden; text-overflow: ellipsis; }
       th, td {
         height: 22px;
         padding: 0 0.5ch;
@@ -224,10 +235,6 @@
       }
       th:first-child, td:first-child { text-align: left; }
       tr.total td { background: var(--selected-bg); font-weight: bold; }
-      .bar { height: 6px; background: rgba(255, 255, 255, 0.08); overflow: hidden; min-width: 54px; }
-      .bar > i { display: block; height: 100%; background: var(--accent); }
-      .bar.low > i { background: var(--warn); }
-      .bar.bad > i { background: var(--bad); }
       .win { color: var(--accent); }
       .loss { color: var(--bad); }
       #history { list-style: none; margin: 0; padding: 0; }
@@ -251,7 +258,7 @@
       .err { color: var(--bad); font-size: 12px; white-space: pre-wrap; margin-top: 8px; }
       .hint { color: var(--dim); font-size: 12px; margin-top: 8px; }
       @media (max-width: 1280px) {
-        main { grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); }
+        main { grid-template-columns: 360px minmax(0, 1fr); }
         main > section:last-child { grid-column: 1 / -1; }
       }
       @media (max-width: 860px) {
@@ -279,16 +286,16 @@
         </label>
         <label class="field"><span>Budget type</span>
           <select id="budgetMode">
-            <option value="time">Time (ms)</option>
-            <option value="iterations">Iterations (nodes)</option>
-            <option value="depth">Fixed depth</option>
+            <option value="time">Time</option>
+            <option value="iterations">Nodes</option>
+            <option value="depth">Depth</option>
           </select>
         </label>
-        <label class="field"><span id="budgetLabel">Think budget (ms)</span><input id="budget" type="number" min="1" step="50" value="200" /></label>
-        <label class="field" id="depthField" style="display: none"><span title="Black moves deep; each Black move also expands White's replies">Depth</span><input id="depth" type="number" min="1" max="24" value="2" /></label>
-        <label class="field" id="nodeCapField" style="display: none"><span title="Optional cap. The search runs iterative deepening up to Depth and stops at this many nodes, so a deep run cannot balloon.">Node cap (0 = none)</span><input id="nodeCap" type="number" min="0" step="10000" value="0" /></label>
-        <label class="field"><span>Games per faction</span><input id="games" type="number" min="1" max="500" value="20" /></label>
-        <label class="field"><span>Seed</span><input id="seed" type="number" min="1" value="1" /></label>
+        <label class="field"><span id="budgetLabel">Think budget (ms)</span><input id="budget" type="number" min="1" step="50" placeholder="200" /></label>
+        <label class="field" id="depthField" style="display: none"><span title="Black moves deep; each Black move also expands White's replies">Depth</span><input id="depth" type="number" min="1" max="24" placeholder="2" /></label>
+        <label class="field" id="nodeCapField" style="display: none"><span title="Optional cap. The search runs iterative deepening up to Depth and stops at this many nodes, so a deep run cannot balloon.">Node cap (0 = none)</span><input id="nodeCap" type="number" min="0" step="10000" placeholder="0" /></label>
+        <label class="field"><span>Games per faction</span><input id="games" type="number" min="1" max="500" placeholder="20" /></label>
+        <label class="field"><span>Seed</span><input id="seed" type="number" min="1" placeholder="1" /></label>
         <details id="tuning">
           <summary>Search tuning</summary>
           <label class="field"><span title="Our moves considered per node">Beam (our moves)</span><input id="beam" type="number" min="0" max="64" placeholder="12" /></label>
@@ -320,7 +327,7 @@
         <div class="tableScroll">
           <table>
             <thead>
-              <tr><th>faction</th><th>games</th><th>W</th><th>L</th><th>win %</th><th>margin</th><th>ms</th><th></th></tr>
+              <tr><th>faction</th><th>games</th><th>W</th><th>L</th><th>win %</th><th>margin</th><th>ms</th></tr>
             </thead>
             <tbody id="rows"></tbody>
           </table>
@@ -355,7 +362,7 @@
       let state = { running: false, finished: false, rows: [], history: [], current: null, options: null }
       // The budget box means different units per mode, so each mode keeps its own
       // value and switching back and forth restores what was typed there.
-      let budgetMemory = { time: "200", iterations: "50000" }
+      let budgetMemory = { time: "", iterations: "" }
       let previousBudgetMode = null
 
       // The page is served by the engine server, but it still works when opened
@@ -376,12 +383,12 @@
       const DEFAULT_FORM = {
         size: "5",
         budgetMode: "time",
-        budget: "200",
-        budgetByMode: { time: "200", iterations: "50000" },
-        depth: "2",
-        nodeCap: "0",
-        games: "20",
-        seed: "1",
+        budget: "",
+        budgetByMode: { time: "", iterations: "" },
+        depth: "",
+        nodeCap: "",
+        games: "",
+        seed: "",
         factions: ALL_FACTIONS.slice(),
         tuning: {},
         tuningOpen: false,
@@ -415,6 +422,17 @@
         }
       }
 
+      // Empty inputs show their default as a grey placeholder; this reads the
+      // typed value or falls back to that placeholder.
+      function numberOf(id) {
+        const raw = el(id).value.trim()
+        return Number(raw === "" ? el(id).placeholder : raw)
+      }
+
+      function orDefault(value) {
+        return value === undefined || value === null ? "" : String(value)
+      }
+
       function loadForm() {
         try {
           const raw = localStorage.getItem(STORAGE_KEY)
@@ -428,20 +446,20 @@
           const tuning = {}
           for (const id of TUNING_IDS) {
             const value = stored.tuning?.[id]
-            tuning[id] = value === undefined || value === null ? "" : String(value)
+            tuning[id] = orDefault(value)
           }
           return {
             size: String(stored.size ?? DEFAULT_FORM.size),
             budgetMode,
-            budget: String(stored.budget ?? (budgetMode === "iterations" ? 50000 : 200)),
+            budget: orDefault(stored.budget),
             budgetByMode: {
-              time: String(stored.budgetByMode?.time ?? DEFAULT_FORM.budgetByMode.time),
-              iterations: String(stored.budgetByMode?.iterations ?? DEFAULT_FORM.budgetByMode.iterations),
+              time: orDefault(stored.budgetByMode?.time),
+              iterations: orDefault(stored.budgetByMode?.iterations),
             },
-            depth: String(stored.depth ?? DEFAULT_FORM.depth),
-            nodeCap: String(stored.nodeCap ?? DEFAULT_FORM.nodeCap),
-            games: String(stored.games ?? DEFAULT_FORM.games),
-            seed: String(stored.seed ?? DEFAULT_FORM.seed),
+            depth: orDefault(stored.depth),
+            nodeCap: orDefault(stored.nodeCap),
+            games: orDefault(stored.games),
+            seed: orDefault(stored.seed),
             factions: factions.length > 0 ? factions : DEFAULT_FORM.factions.slice(),
             tuning,
             tuningOpen: stored.tuningOpen === true,
@@ -455,8 +473,8 @@
         el("size").value = form.size
         el("budgetMode").value = form.budgetMode
         el("budget").value = form.budget
-        el("depth").value = form.depth ?? DEFAULT_FORM.depth
-        el("nodeCap").value = form.nodeCap ?? DEFAULT_FORM.nodeCap
+        el("depth").value = form.depth ?? ""
+        el("nodeCap").value = form.nodeCap ?? ""
         budgetMemory = { ...DEFAULT_FORM.budgetByMode, ...(form.budgetByMode ?? {}) }
         previousBudgetMode = form.budgetMode
         el("games").value = form.games
@@ -478,6 +496,7 @@
         el("nodeCapField").style.display = depth ? "" : "none"
         el("budgetLabel").textContent = iterations ? "Node budget" : "Think budget (ms)"
         el("budget").step = iterations ? "1000" : "50"
+        el("budget").placeholder = iterations ? "50000" : "200"
       }
 
       function renderFactionChips() {
@@ -628,7 +647,6 @@
           games += row.games
           wins += row.wins
           const pct = row.winRate
-          const cls = row.games === 0 ? "" : pct >= 99.999 ? "" : pct >= 50 ? "low" : "bad"
           const tr = document.createElement("tr")
           tr.innerHTML =
             `<td>${row.faction}</td>` +
@@ -637,15 +655,14 @@
             `<td class="${row.losses > 0 ? "loss" : ""}">${row.losses}</td>` +
             `<td>${pct.toFixed(1)}</td>` +
             `<td>${row.avgMargin >= 0 ? "+" : ""}${row.avgMargin.toFixed(1)}</td>` +
-            `<td>${row.avgMs > 0 ? Math.round(row.avgMs) : "-"}</td>` +
-            `<td><div class="bar ${cls}"><i style="width:${Math.min(100, pct)}%"></i></div></td>`
+            `<td>${row.avgMs > 0 ? Math.round(row.avgMs) : "-"}</td>`
           body.appendChild(tr)
         }
         const tr = document.createElement("tr")
         tr.className = "total"
         tr.innerHTML =
           `<td>all factions</td><td>${games}</td><td>${wins}</td><td>${games - wins}</td>` +
-          `<td>${games > 0 ? ((100 * wins) / games).toFixed(1) : "0.0"}</td><td></td><td></td><td></td>`
+          `<td>${games > 0 ? ((100 * wins) / games).toFixed(1) : "0.0"}</td><td></td><td></td>`
         body.appendChild(tr)
       }
 
@@ -991,15 +1008,15 @@
       el("start").addEventListener("click", async () => {
         const size = Number(el("size").value)
         const mode = el("budgetMode").value
-        const budget = Math.max(1, Math.floor(Number(el("budget").value) || 1))
+        const budget = Math.max(1, Math.floor(numberOf("budget") || 1))
         const body = {
           size,
-          games: Number(el("games").value),
-          seed: Number(el("seed").value),
+          games: numberOf("games"),
+          seed: numberOf("seed"),
           budgetMode: mode,
           budgetMs: mode === "time" ? budget : 0,
-          iterations: mode === "depth" ? Math.max(0, Math.floor(Number(el("nodeCap").value) || 0)) : mode === "iterations" ? budget : 0,
-          depth: mode === "depth" ? Math.max(1, Math.floor(Number(el("depth").value) || 2)) : undefined,
+          iterations: mode === "depth" ? Math.max(0, Math.floor(numberOf("nodeCap") || 0)) : mode === "iterations" ? budget : 0,
+          depth: mode === "depth" ? Math.max(1, Math.floor(numberOf("depth") || 2)) : undefined,
           factions: size === 19 ? ["WorldDaemon"] : Array.from(selected),
         }
         for (const id of TUNING_IDS) {
