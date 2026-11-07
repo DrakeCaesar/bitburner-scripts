@@ -9,6 +9,11 @@ so a plain shell (including a freshly opened VS Code terminal) cannot compile.
 This script finds the Visual Studio installation with vswhere, imports its
 developer shell, and then runs CMake.
 
+The build directory, build type and generator all come from CMakePresets.json,
+which the editor reads as well: the script only picks the preset matching the
+options below. Anything that describes how to configure belongs in that file, not
+here.
+
 .PARAMETER BuildType
 Release (performance), RelWithDebInfo (profiling, built into x64-Profile) or Debug.
 
@@ -26,6 +31,10 @@ Builds every native target in Release.
 .EXAMPLE
 ./cmake/Build-Native.ps1 -BuildType RelWithDebInfo -Target ipvgo_game
 Builds the profiler-friendly engine build into out/build/x64-Profile.
+
+.EXAMPLE
+./cmake/Build-Native.ps1 -BuildType RelWithDebInfo -Configure -ProfileInlining
+Same tree, with inlining kept on so profile shares match Release.
 #>
 param(
   [ValidateSet('Release', 'RelWithDebInfo', 'Debug')]
@@ -47,33 +56,40 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# CMakeSettings.json names these folders; keep the script's mapping identical so
-# the terminal and the IDE share one build tree.
-$folder = switch ($BuildType) {
-  'Release' { 'x64-Release' }
-  'RelWithDebInfo' { 'x64-Profile' }
-  'Debug' { 'x64-Debug' }
-}
+$repoRoot = Split-Path -Parent $PSScriptRoot
+
+# CMakePresets.json is the single declaration of generator, build type and build
+# directory. This script selects a preset and reads the folder back out of it, so the
+# terminal, the editor and CMakeSettings.json cannot drift apart: a tree is bound to
+# the generator that created it, and two generators on one folder abort a configure
+# with "does not match the generator used previously".
 # PGO lives in its own tree: the flags change between the two passes, so mixing it
 # into x64-Release would rebuild that tree every time.
-if ($Pgo -ne 'Off') { $folder = 'x64-Pgo' }
+$presetName = if ($Pgo -ne 'Off') {
+  if ($Pgo -eq 'Generate') { 'x64-Pgo-Generate' } else { 'x64-Pgo-Optimize' }
+} else {
+  switch ($BuildType) {
+    'Release' { 'x64-Release' }
+    'RelWithDebInfo' { 'x64-Profile' }
+    'Debug' { 'x64-Debug' }
+  }
+}
 
-$repoRoot = Split-Path -Parent $PSScriptRoot
-$buildRoot = Join-Path $repoRoot "out/build/$folder"
+$presets = Get-Content (Join-Path $repoRoot 'CMakePresets.json') -Raw | ConvertFrom-Json
+$preset = $presets.configurePresets | Where-Object { $_.name -eq $presetName }
+if (-not $preset) { throw "configure preset '$presetName' is missing from CMakePresets.json" }
+$buildRoot = $preset.binaryDir.Replace('${sourceDir}', $repoRoot)
+$folder = Split-Path -Leaf $buildRoot
 
-# A CMake build tree is bound to the generator that created it. The IDE (Visual
-# Studio generator, multi-config) and this script (Ninja, single-config) share one
-# folder, and reconfiguring a tree with the other generator aborts with
-# "generator ... does not match the generator used previously". .vscode/settings.json
-# pins CMake Tools to Ninja so the two normally agree; this branch is the safety net
-# for a tree left behind by an older IDE configuration. Everything under the build
-# root is generated output, so nothing is lost.
+# The preset fixes the generator, so a tree created by an older configuration (or by
+# a tool that ignored the preset) can never be reconfigured in place. Everything under
+# the build root is generated output, so nothing is lost by starting over.
 if ($Configure -and (Test-Path (Join-Path $buildRoot 'CMakeCache.txt'))) {
   $cache = Join-Path $buildRoot 'CMakeCache.txt'
   $cachedLine = Select-String -Path $cache -Pattern '^CMAKE_GENERATOR:INTERNAL=' | Select-Object -First 1
   $cachedGenerator = if ($cachedLine) { ($cachedLine.Line -split '=', 2)[1].Trim() } else { '' }
-  if ($cachedGenerator -and $cachedGenerator -ne 'Ninja') {
-    Write-Host "Build tree in out/build/$folder was configured with '$cachedGenerator'; resetting it for Ninja."
+  if ($cachedGenerator -and $cachedGenerator -notlike "$($preset.generator)*") {
+    Write-Host "Build tree in out/build/$folder was configured with '$cachedGenerator'; resetting it for $($preset.generator)."
     Remove-Item -Recurse -Force $buildRoot
   }
 }
@@ -98,12 +114,22 @@ if (-not (Test-Path $devShell)) {
 Import-Module (Join-Path $vsPath 'Common7/Tools/Microsoft.VisualStudio.DevShell.dll')
 Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
 
-# A PGO pass always reconfigures: the two passes differ only in these flags, and
-# CMake has to see the change for Ninja to rebuild against the collected profile.
-if ($Configure -or $Pgo -ne 'Off') {
-  $inlining = if ($ProfileInlining) { 'ON' } else { 'OFF' }
-  & cmake -B $buildRoot -G Ninja "-DCMAKE_BUILD_TYPE=$BuildType" "-DIPVGO_PROFILE_INLINING=$inlining" "-DIPVGO_PGO=$($Pgo.ToUpper())"
-  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+# The configure step only runs when asked: `cmake --preset` re-runs the generator every
+# time, and repeating it on every build costs a couple of seconds. A PGO pass always
+# reconfigures, because the two passes differ only in these flags and CMake has to see
+# the change for Ninja to rebuild against the collected profile.
+if ($Configure -or $Pgo -ne 'Off' -or -not (Test-Path (Join-Path $buildRoot 'CMakeCache.txt'))) {
+  $configureArgs = @('--preset', $presetName)
+  # RelWithDebInfo only, and the same tree: inlining is a cache variable, not a
+  # separate configuration.
+  if ($ProfileInlining) { $configureArgs += '-DIPVGO_PROFILE_INLINING=ON' }
+  Push-Location $repoRoot
+  try {
+    & cmake @configureArgs
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  } finally {
+    Pop-Location
+  }
 }
 
 $buildArgs = @('--build', $buildRoot)
