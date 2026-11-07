@@ -1508,6 +1508,141 @@ int runFuzz(int games, uint64_t seed) {
   return anomalies ? 1 : 0;
 }
 
+// ---- eyetest: the incremental eye totals against the board-wide analysis -----
+//
+// getEyeCreationMoves() derives the eye totals after a candidate move from the
+// summary of the position before it. That is only sound if it agrees with the
+// board-wide analysis on every point of every position, so this walks seeded
+// games and compares the two for both colours at every empty point.
+int runEyeTest(int games, uint64_t seed) {
+  std::mt19937_64 rng(seed);
+  const std::vector<int> sizes = {5, 7, 9, 13};
+  const std::vector<Opponent> factions = {Opponent::Netburners, Opponent::SlumSnakes, Opponent::TheBlackHand,
+                                          Opponent::Tetrads,    Opponent::Daedalus,   Opponent::Illuminati};
+  long checked = 0;
+  long fastPath = 0;
+  long mismatches = 0;
+  long bailInput = 0;
+  long bailCapture = 0;
+  long bailEncircledBase = 0;
+  long bailEncircledNew = 0;
+
+  for (int g = 0; g < games; ++g) {
+    const int size = sizes[rng() % sizes.size()];
+    const Opponent ai = factions[rng() % factions.size()];
+    const double seedMs = static_cast<double>(rng() % 30000000);
+    MathRandom mr(rng());
+    GameState state = newBoardState(size, ai, true, seedMs, mr);
+
+    const int moveCap = size * size * 4;
+    for (int m = 0; m < moveCap && !state.gameOver; ++m) {
+      // Both colours at every empty point: the incremental path is used for
+      // White (the faction's own eyes) and for Black (eye blocking), so neither
+      // side may be taken on trust.
+      for (const Color side : {Color::White, Color::Black}) {
+        const ChainSet cs = computeChains(state.board);
+        const EyeBoardSummary before = summarizeEyes(state.board, cs, side);
+        const double maxSize = eyeCandidateMaxSize(state.board);
+        // The container-free summary against the eye map it replaced.
+        int refLiving = 0;
+        int refEyes = 0;
+        {
+          const EyeMap em = getAllEyesByChainId(state.board, side);
+          for (const auto& [chainIdx, emptyChains] : em.eyes) {
+            (void)chainIdx;
+            if (!emptyChains.empty()) ++refEyes;
+            if (emptyChains.size() >= 2) ++refLiving;
+          }
+        }
+        if (refLiving != before.totals.livingGroups || refEyes != before.totals.eyeCount) {
+          ++mismatches;
+          if (mismatches <= 3) {
+            std::cerr << "eyetest: summarizeEyes disagrees at game " << g << " move " << m << " "
+                      << opponentName(ai) << " size " << size << " "
+                      << (side == Color::Black ? "black" : "white") << ": summary "
+                      << before.totals.eyeCount << "/" << before.totals.livingGroups << ", eye map " << refEyes
+                      << "/" << refLiving << "\n"
+                      << boardString(state.board) << "\n";
+          }
+        }
+        for (int x = 0; x < size; ++x) {
+          for (int y = 0; y < size; ++y) {
+            if (state.board[x][y] != '.') continue;
+            if (evaluateIfMoveIsValid(state, x, y, side) != Validity::Valid) continue;
+            ++checked;
+            EyeTotals incremental;
+            EyeBail bail = EyeBail::None;
+            if (!eyeTotalsAfterMove(state.board, cs, before, side, x, y, maxSize, incremental, &bail)) {
+              switch (bail) {
+                case EyeBail::Capture: ++bailCapture; break;
+                case EyeBail::EncircledBase: ++bailEncircledBase; break;
+                case EyeBail::EncircledNew: ++bailEncircledNew; break;
+                default: ++bailInput; break;
+              }
+              continue;
+            }
+            ++fastPath;
+            const SimpleBoard eval = evaluateMoveResult(state.board, x, y, side);
+            const EyeTotals full = summarizeEyes(eval, computeChains(eval), side).totals;
+            if (incremental.eyeCount != full.eyeCount || incremental.livingGroups != full.livingGroups) {
+              ++mismatches;
+              if (mismatches <= 3) {
+                std::cerr << "eyetest: mismatch at game " << g << " move " << m << " " << opponentName(ai)
+                          << " size " << size << " (" << x << "," << y << ") "
+                          << (side == Color::Black ? "black" : "white") << ": incremental eyes "
+                          << incremental.eyeCount << "/" << incremental.livingGroups << ", full "
+                          << full.eyeCount << "/" << full.livingGroups << "\n";
+                std::cerr << boardString(state.board) << "\n";
+                const ChainSet evalChains = computeChains(eval);
+                const EyeBoardSummary after = summarizeEyes(eval, evalChains, side);
+                std::cerr << "  before:";
+                for (int c = 0; c < cs.count; ++c) {
+                  if (cs.chainColor[c] == '.') continue;
+                  std::cerr << " [" << c << " " << cs.chainColor[c] << " n" << cs.members(c).size() << " e"
+                            << static_cast<int>(before.perChain[static_cast<size_t>(c)]) << "]";
+                }
+                std::cerr << "\n  after:";
+                for (int c = 0; c < evalChains.count; ++c) {
+                  if (evalChains.chainColor[c] == '.') continue;
+                  std::cerr << " [" << c << " " << evalChains.chainColor[c] << " n"
+                            << evalChains.members(c).size() << " e"
+                            << static_cast<int>(after.perChain[static_cast<size_t>(c)]) << "]";
+                }
+                std::cerr << "\n";
+              }
+            }
+          }
+        }
+      }
+
+      const Color mover = whoseTurn(state);
+      if (mover == Color::Black) {
+        const std::vector<std::pair<int, int>> blackMoves = getAllValidMoves(state, Color::Black);
+        if (blackMoves.empty()) {
+          passTurn(state, Color::Black);
+        } else {
+          const auto [bx, by] = blackMoves[rng() % blackMoves.size()];
+          if (!makeMove(state, bx, by, Color::Black)) passTurn(state, Color::Black);
+        }
+      } else {
+        const double whiteSeed = static_cast<double>(rng() % 30000000);
+        MathRandom wmr(rng());
+        const Play wp = getMove(state, Color::White, ai, whiteSeed, wmr);
+        if (wp.type == PlayType::Pass || !makeMove(state, wp.x, wp.y, Color::White)) {
+          passTurn(state, Color::White);
+        }
+      }
+    }
+  }
+
+  std::cout << "eyetest: " << checked << " candidate points, " << fastPath << " on the incremental path ("
+            << (checked > 0 ? 100.0 * static_cast<double>(fastPath) / static_cast<double>(checked) : 0.0)
+            << "%), " << mismatches << " mismatches\n";
+  std::cout << "         declined: capture " << bailCapture << ", encirclement (existing) " << bailEncircledBase
+            << ", encirclement (new) " << bailEncircledNew << ", input " << bailInput << "\n";
+  return mismatches ? 1 : 0;
+}
+
 int main(int argc, char** argv) {
   if (argc < 2) {
     std::cerr << "usage: ipvgo_game "
@@ -1521,6 +1656,7 @@ int main(int argc, char** argv) {
   if (cmd == "safety" && argc >= 3) return runSafety(argv[2]);
   if (cmd == "replies" && argc >= 3) return runReplies(argv[2]);
   if (cmd == "fuzz") return runFuzz(argc >= 3 ? std::stoi(argv[2]) : 200, argc >= 4 ? std::stoull(argv[3]) : 1u);
+  if (cmd == "eyetest") return runEyeTest(argc >= 3 ? std::stoi(argv[2]) : 8, argc >= 4 ? std::stoull(argv[3]) : 1u);
   if (cmd == "parity" && argc >= 3) return runParity(argv[2]);
   if (cmd == "aimove" && argc >= 3) return runAiMove(argv[2], argc >= 4 ? argv[3] : "");
   if (cmd == "mcgsmove" && argc >= 3) return runMcgsMove(argv[2], argc >= 4 ? argv[3] : "");

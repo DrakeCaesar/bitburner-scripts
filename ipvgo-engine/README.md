@@ -417,15 +417,15 @@ IPVGO_THREADS=1 IPVGO_NODE_LIMIT=4000 IPVGO_CACHE_STATS=1 \
 
 | measurement | current baseline |
 |---|---|
-| `optbench` per search (2 positions, depth 3) | ~245 ms (was ~284 ms before this pass, ~1440 ms before the one before it; wall clock is noisy, the node counts are the stable part), 39 012 nodes |
+| `optbench` per search (2 positions, depth 3) | ~230 ms (was ~248 ms before this pass, ~284 ms before the one before it; wall clock is noisy, the node counts are the stable part), 39 012 nodes |
 | `optbench` position 1 / 2 | 11 181 nodes / 27 831 nodes (deterministic; values are win probabilities) |
-| `optbench --size=9 --positions=4 --depth=2 --threads=1 --reps=3` | ~106 ms/search, 11 537 nodes (was ~121 ms) |
-| `exploitplay Netburners 5 8 2 1` under `nodeLimit=4000` | 754 ms think for 8 games (was 888 ms), same results |
-| `exploitplay Netburners 5 24 2 1` | ~3.5 ms/move, unchanged within noise (fixed depth, so no reply reuse happens) |
-| `exploitplay "Slum Snakes" 7 4 2 1` under `nodeLimit=4000` | 3.50 s think (was 4.07 s), same nodes and moves |
-| `exploitplay Illuminati 9 2 2 1` under `nodeLimit=4000` | 4.05 s think (was 6.47 s), same nodes and moves |
-| `exploitplay Illuminati 13 1 2 1` under `nodeLimit=4000` | 3.27 s think (was 5.93 s), same nodes and moves, peak RSS 61.6 MB (was 57.9 MB) |
-| `profileworkload 5` (Illuminati 9x9) | ~13.9 ms/move before this pass |
+| `optbench --size=9 --positions=4 --depth=2 --threads=1 --reps=3` | ~103 ms/search, 11 537 nodes (was ~108 ms) |
+| `exploitplay Netburners 5 8 2 1` @4000, 1 thread | 754 ms think for 8 games (was 888 ms), same results |
+| `exploitplay Netburners 5 24 2 1` (fixed depth) | ~3.5 ms/move, unchanged within noise: no reply reuse and no eye candidates worth the fast path |
+| `exploitplay "Slum Snakes" 7 4 2 1` @4000, 1 thread | 3.35 s think (was 3.45 s), same nodes and moves |
+| `exploitplay Illuminati 9 2 2 1` @4000, 1 thread | 3.68 s think (was 3.88 s), same nodes and moves |
+| `exploitplay Illuminati 13 1 2 1` @4000, 1 thread | 16.4 s think (was 16.9 s), same nodes and moves; peak RSS 61.6 MB (was 57.9 MB) |
+| `profileworkload 5` (Illuminati 9x9) | ~13.9 ms/move before the reply-reuse pass |
 
 Nodes, memo hits, chosen moves and values are identical before and after the
 pass at every configuration above except where noted; only the wall clock moved.
@@ -484,10 +484,67 @@ Two ideas were tried and rejected:
   land cost a `ChainSet` copy. Measured inside the noise (7x7 3.62 s -> 3.67 s,
   9x9 4.06 s -> 3.99 s), so it is not in the tree.
 
-The next target is the same eye analysis, done incrementally: `getEyeCreationMoves`
-evaluates every candidate point by rebuilding the chains, the empty regions and
-the eye map of the whole board, although one stone changes only the regions next
-to it. That is 29% of the time and the only remaining structural cost.
+The next targets, from the inlining profile of the current build (shares of
+29 ms/move, one thread, 7x7, `nodeLimit=4000`): `computeChainsInto` 11.7%
+(the flood fill), `walkChain` 8.5% (the chain-free liberty queries in
+`surround`/`growth`), `validateMove` plus the bit capture sweep 10.4% (legality,
+run for every empty point by `getAllValidMoves` on every reply distribution),
+`eyeTotalsAfterMove` 6.1% and `summarizeEyes` 4.2% (the eye passes, now that the
+board-wide rebuild per candidate is gone), `matchesAnyPattern` 4.8% and
+`evaluatedLead` 3.3%. Nothing there is a single dominating cost any more, and the
+eye path is the one that has already been squeezed hardest.
+
+### The incremental eye pass
+
+`getEyeCreationMoves` decides whether playing at a point creates an eye or a
+living group, and it used to answer that per candidate by rebuilding the board:
+`evaluateMoveResult` (a board copy plus the bitwise capture sweep), a chain flood
+fill, then the whole eye map - for every liberty of every friendly chain.
+
+One stone cannot change anything outside the empty region it lands in and the
+chains it joins, so the totals after the move follow from the analysis of the
+board before it (`summarizeEyes` builds that in fixed storage: one count per
+stone chain and one owner list per empty region, no map, no vector, no `ChainSet`
+copy). `eyeTotalsAfterMove` then:
+
+- drops the contribution of the regions that are touched - the one the stone
+  lands in, which is cut into connected components by the stone, and every region
+  touching a chain the stone joins,
+- re-derives those components' verdicts on the board after the move, with the
+  joined chain folded into one id,
+- and reports the totals as a delta from the chains whose count actually changed.
+
+It refuses, and the caller falls back to the board-wide analysis, when the
+position is outside what that reasoning covers:
+
+- the move captures, because stones then disappear wherever the captured chain
+  reaches;
+- a region's verdict came from `chainsThatFullyEncircle` (a region with several
+  borders of one colour, which only counts as an eye if one of them wraps it) and
+  the move disturbs it: joining a chain that borders it changes both the border and
+  the bounding box the test compares, and joining two chains can collapse two of
+  the chains around an expanded region into one;
+- a re-derived component turns out to have several borders of one colour.
+
+`ipvgo_game eyetest [games] [seed]` is the oracle: it walks seeded games and, for
+every legal point and both colours, compares the incremental totals with the full
+analysis of the board after the move. 49 041 candidate points over mixed board
+sizes and factions: 0 mismatches, 79% answered incrementally.
+
+Two integer overflows inside the region walk cost a day of debugging and are worth
+remembering: the "visited" marks are generation-stamped and reused across calls, so
+the generations for a call have to be reserved *before* the first mark is written -
+an early refusal that left marks behind made the next call treat parts of a region
+as already visited, which shows up as an eye that does not exist.
+
+Gain in Release, identical node counts and moves throughout: ~6% on the fixed-depth
+`optbench` searches (which have no reply reuse to confound it) and 3-5% on the
+budgeted in-game path. That is less than the profile's shares promised, and the
+reason is the profile build: it disables inlining, which inflates code that is
+mostly small calls (the old eye pass was chains of `ChainSet::members`,
+`SimpleBoard::operator[]` and allocator traffic). Rebuilding the profile
+configuration with `-ProfileInlining` gives 29 ms/move against a Release 26 ms/move,
+and the shares from *that* build are the ones to plan with.
 
 ### Third-party code
 
@@ -503,9 +560,13 @@ identical, not merely similar:
 ./out/build/x64-Release/bin/ipvgo_game selftest          # bitwise-capture and make/unmake oracles
 ./out/build/x64-Release/bin/ipvgo_game fuzz 60 11        # expect 6874 moves, 0 anomalies
 ./out/build/x64-Release/bin/ipvgo_game policycheck "The Black Hand" 5 800
+./out/build/x64-Release/bin/ipvgo_game eyetest 8 7       # incremental eye totals vs the full analysis
 # per-move trace, including values and node counts:
 IPVGO_NO_SESSION=1 IPVGO_TRACE=1 ./out/build/x64-Release/bin/ipvgo_game exploitplay "Slum Snakes" 5 2 2 1
 ```
+
+`eyetest` prints how many candidate points the incremental path answered and how
+many it declined, so a change that quietly turns the fast path off is visible.
 
 `optbench` node counts are deterministic at `--threads=1`; at the default thread
 count they vary run to run, so compare node counts only at `--threads=1`. The
@@ -729,17 +790,18 @@ games in each mode, so the win counts are not comparable (18/24 vs 19/24 is
 noise, not a regression). Whether reuse helps or hurts win rate needs a fixed
 configuration and roughly 100+ games per faction.
 
-**The dominant remaining cost is the eye analysis inside the policy model.**
-`opponentReplyDistribution` is 82% of the search on a 7x7 game at the in-game
-budget, `buildPolicyModel` is 56% of that, and inside it `getEyeCreationMoves`
-(29%) and `getEyeBlockingMove` (14%) are the eye passes: every candidate point is
-checked by rebuilding the board's chains, empty regions and eye map, even though
-one stone only changes the regions next to it. `matchesAnyPattern` is now 1.5%
-of exclusive samples (the ~58% figure in the older notes predates the bitset
-rewrite, and the membership test now runs before the match). What the profile
-does not show is a cheap win: the eye pass is a whole-board analysis called per
-candidate, so making it incremental is a real refactor rather than a
-micro-optimisation.
+**The policy model is the search, and its cost is now spread out.** On a 7x7 game
+at the in-game budget `opponentReplyDistribution` is 75% of the search and
+`buildPolicyModel` 49% of that, but inside it no single item dominates any more:
+`getEyeCreationMoves` is 23% (down from 29% before the incremental pass), the
+legality scan behind `MoveGen` 11%, `getSurroundMove` 9%, `growthMaxDeltaPoints`
+8.6%, the eye-blocking pass 12%. Read those shares from a profile built with
+`-ProfileInlining`; the default profile configuration disables inlining, which
+inflates exactly this kind of call-heavy code and made the eye pass look twice as
+expensive as it is in Release.
+
+`matchesAnyPattern` is 4.8% of exclusive samples in that build, and 1.5% in the
+no-inlining one. The ~58% figure in the older notes predates the bitset rewrite.
 
 Reply distributions are reused within one search (see "The reply-reuse pass")
 but not across moves: on 13x13 keeping them for a whole game cost 872 MB for 89

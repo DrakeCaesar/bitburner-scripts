@@ -194,35 +194,21 @@ AiMove getSurroundMove(const SimpleBoard& board, Color player, const PointMask& 
 
 // ---- Eyes ------------------------------------------------------------------
 
-// Count "living groups" (chains with >=2 eyes) and "eye count" (chains with any
-// eye) for `player` on the given board.
-void eyeCounts(const SimpleBoard& board, Color player, int& livingGroups, int& eyeCount) {
-  const EyeMap em = getAllEyesByChainId(board, player);
-  livingGroups = 0;
-  eyeCount = 0;
-  for (const auto& [chainIdx, emptyChains] : em.eyes) {
-    (void)chainIdx;
-    if (!emptyChains.empty()) eyeCount++;
-    if (emptyChains.size() >= 2) livingGroups++;
-  }
-}
-
 std::vector<AiMove> getEyeCreationMoves(const SimpleBoard& board, Color player,
                                         const PointMask& availableSet, int maxLiberties) {
-  const EyeMap allEyes = getAllEyesByChainId(board, player);
-  const ChainSet& cs = allEyes.cs;
+  // A copy: chainsCached() hands out a reference into a small ring that the
+  // candidate evaluations below would evict.
+  const ChainSet cs = chainsCached(board);
+  const EyeBoardSummary base = summarizeEyes(board, cs, player);
   const int N = cs.N;
   const char me = colorChar(player);
+  const double maxSize = eyeCandidateMaxSize(board);
 
   PointMask livingGroupChains;
-  int currentLivingGroups = 0;
-  int currentEyeCount = 0;
-  for (const auto& [chainIdx, emptyChains] : allEyes.eyes) {
-    if (!emptyChains.empty()) currentEyeCount++;
-    if (emptyChains.size() >= 2) {
-      currentLivingGroups++;
-      livingGroupChains.insert(chainIdx);
-    }
+  const int currentLivingGroups = base.totals.livingGroups;
+  const int currentEyeCount = base.totals.eyeCount;
+  for (int c = 0; c < cs.count; ++c) {
+    if (base.perChain[static_cast<size_t>(c)] >= 2) livingGroupChains.insert(c);
   }
 
   // friendly liberties of chains (length>1, liberties<=maxLiberties, not already living)
@@ -257,20 +243,25 @@ std::vector<AiMove> getEyeCreationMoves(const SimpleBoard& board, Color player,
 
   std::vector<AiMove> moves;
   // The candidate list keeps duplicates on purpose (a point touching two weak
-  // chains appears twice) and each candidate costs a board copy plus a full eye
-  // analysis. Remembering the verdict per point keeps the output identical - the
-  // same point always evaluates the same way - while halving the analysis when
-  // duplicates occur.
+  // chains appears twice) and each candidate would otherwise cost a board copy
+  // plus a board-wide eye analysis. Remembering the verdict per point keeps the
+  // output identical - the same point always evaluates the same way - while
+  // halving the analysis when duplicates occur.
   std::vector<int8_t> verdict(static_cast<size_t>(N * N), -1);  // -1 unknown, 0 no, 1 life, 2 eyes
   auto evaluateCandidate = [&](int lib, bool& createsLife) {
     const int px = lib / N;
     const int py = lib % N;
-    const SimpleBoard eval = evaluateMoveResult(board, px, py, player);
-    int newLiving = 0;
-    int newEyeCount = 0;
-    eyeCounts(eval, player, newLiving, newEyeCount);
-    createsLife = newLiving > currentLivingGroups;
-    return createsLife || (newEyeCount > currentEyeCount && newLiving == currentLivingGroups);
+    // One stone changes only the region it lands in, so the totals after the
+    // move follow from the summary of the board before it. The cases that
+    // reasoning does not cover (a capture, an encirclement verdict) fall back to
+    // the board-wide analysis.
+    EyeTotals after;
+    if (!eyeTotalsAfterMove(board, cs, base, player, px, py, maxSize, after)) {
+      const SimpleBoard eval = evaluateMoveResult(board, px, py, player);
+      after = summarizeEyes(eval, chainsCached(eval), player).totals;
+    }
+    createsLife = after.livingGroups > currentLivingGroups;
+    return createsLife || (after.eyeCount > currentEyeCount && after.livingGroups == currentLivingGroups);
   };
 
   for (const int lib : friendlyLiberties) {

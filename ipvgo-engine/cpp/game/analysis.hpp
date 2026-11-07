@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -81,6 +82,67 @@ struct EyeMap {
 };
 EyeMap getAllEyesByChainId(const SimpleBoard& board, Color player);
 
+// The two numbers eyeCounts() derives from an eye map, so a caller that only
+// compares before and after a move does not need the map at all.
+struct EyeTotals {
+  int eyeCount = 0;      // chains with at least one eye
+  int livingGroups = 0;  // chains with at least two
+};
+
+// Everything getAllEyesByChainId() + eyeCounts() derive, in fixed storage: one
+// count per stone chain, and one owner list per empty chain (which chain, if any,
+// has that region as an eye). No map, no vector, no ChainSet copy, so this is what
+// the move generators use while they evaluate candidate points.
+struct EyeBoardSummary {
+  static constexpr int kMaxOwners = ChainList::kMax;
+  static constexpr int kMaxMultiRegions = 8;
+
+  EyeTotals totals;
+  std::array<uint8_t, ChainSet::kMaxPoints> perChain{};   // eyes per stone chain
+  std::array<uint8_t, ChainSet::kMaxPoints> ownerCount{};  // owners per empty chain
+  std::array<std::array<int16_t, kMaxOwners>, ChainSet::kMaxPoints> owners{};
+  // Candidates that needed chainsThatFullyEncircle(): the ones whose verdict
+  // depends on the whole board instead of on the region. Kept with their border
+  // chains, because the incremental path below can still answer a move that
+  // leaves those verdicts alone.
+  struct MultiRegion {
+    int region = -1;
+    ChainList neighbors;
+  };
+  std::array<MultiRegion, kMaxMultiRegions> multiRegions{};
+  int multiRegionCount = 0;
+  int multiNeighbour = 0;  // candidates that needed the encirclement test
+};
+
+// Same result as eyeCounts(getAllEyesByChainId(board, player)), plus the detail
+// that eyeTotalsAfterMove() needs. `cs` must be the chain set of `board`.
+EyeBoardSummary summarizeEyes(const SimpleBoard& board, const ChainSet& cs, Color player);
+
+// The largest empty region that can still count as an eye: the rule
+// getAllPotentialEyes uses.
+double eyeCandidateMaxSize(const SimpleBoard& board);
+
+// Why the incremental path declined a position; only used to report the fast-path
+// rate from `eyetest`.
+enum class EyeBail {
+  None,
+  Input,        // not an empty in-board point, or the chain set is full
+  Capture,      // the move captures, so the change is not local
+  EncircledBase,  // an existing encirclement verdict would change
+  EncircledNew,   // a re-derived region's verdict needs the encirclement test
+};
+
+// Totals for `board` with one extra `player` stone at (x,y), derived from the
+// summary of the board without it. One stone only changes the empty region it
+// lands in and the chains it joins, so re-deriving the board-wide analysis is
+// wasted work; this does the local equivalent.
+//
+// Returns false when the position is outside what that reasoning covers - a
+// capture (stones disappear all over the board), or a region whose verdict needs
+// the encirclement test - and the caller must then do the full analysis.
+bool eyeTotalsAfterMove(const SimpleBoard& board, const ChainSet& cs, const EyeBoardSummary& before,
+                        Color player, int x, int y, double maxSize, EyeTotals& out,
+                        EyeBail* bail = nullptr);
 // Non-empty neighbor chains of chain c (distinct, first-encounter order).
 std::vector<int> neighborChainIndices(const SimpleBoard& board, const ChainSet& cs, int c);
 

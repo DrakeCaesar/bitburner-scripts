@@ -280,6 +280,315 @@ EyeMap getAllEyesByChainId(const SimpleBoard& board, Color player) {
   return out;
 }
 
+double eyeCandidateMaxSize(const SimpleBoard& board) {
+  const int n = board.size();
+  const char* cells = board.flat();
+  int nodeCount = 0;
+  for (int i = 0; i < n * n; ++i) nodeCount += cells[i] != '#' ? 1 : 0;
+  return std::min(nodeCount * 0.4, 11.0);
+}
+
+EyeBoardSummary summarizeEyes(const SimpleBoard& board, const ChainSet& cs, Color player) {
+  EyeBoardSummary out;
+  const std::vector<EyeCandidate> candidates = getAllPotentialEyes(board, cs, player);
+
+  auto addEye = [&out](int chain, int region) {
+    if (out.perChain[static_cast<size_t>(chain)] < 255) ++out.perChain[static_cast<size_t>(chain)];
+    const int count = out.ownerCount[static_cast<size_t>(region)];
+    if (count < EyeBoardSummary::kMaxOwners) {
+      out.owners[static_cast<size_t>(region)][static_cast<size_t>(count)] = static_cast<int16_t>(chain);
+      out.ownerCount[static_cast<size_t>(region)] = static_cast<uint8_t>(count + 1);
+    }
+  };
+
+  for (const auto& candidate : candidates) {
+    if (candidate.neighborChains.empty()) continue;
+    if (candidate.neighborChains.size() == 1) {
+      addEye(candidate.neighborChains[0], candidate.emptyChain);
+      continue;
+    }
+    ++out.multiNeighbour;
+    if (out.multiRegionCount < EyeBoardSummary::kMaxMultiRegions) {
+      // Past the cap the incremental path below simply refuses; the totals here
+      // stay exact either way.
+      EyeBoardSummary::MultiRegion& multi = out.multiRegions[static_cast<size_t>(out.multiRegionCount++)];
+      multi.region = candidate.emptyChain;
+      multi.neighbors = candidate.neighborChains;
+    }
+    for (const int nc : chainsThatFullyEncircle(board, cs, candidate.emptyChain, candidate.neighborChains)) {
+      addEye(nc, candidate.emptyChain);
+    }
+  }
+
+  for (int c = 0; c < cs.count; ++c) {
+    if (cs.chainColor[c] == '.') continue;
+    const int eyes = out.perChain[static_cast<size_t>(c)];
+    if (eyes >= 1) ++out.totals.eyeCount;
+    if (eyes >= 2) ++out.totals.livingGroups;
+  }
+  return out;
+}
+
+namespace {
+
+// A single move touches the region it lands in, the regions around the chains it
+// joins, and the chains those regions counted as eyes. Well under this in
+// practice; past it the incremental path declines and the caller does the
+// board-wide analysis.
+constexpr int kMaxTouchedChains = 32;
+
+}  // namespace
+
+bool eyeTotalsAfterMove(const SimpleBoard& board, const ChainSet& cs, const EyeBoardSummary& before,
+                        Color player, int x, int y, double maxSize, EyeTotals& out, EyeBail* bail) {
+  const auto refuse = [bail](EyeBail reason) {
+    if (bail != nullptr) *bail = reason;
+    return false;
+  };
+  if (bail != nullptr) *bail = EyeBail::None;
+  // One stone is local only if it captures nothing: a capture empties cells that
+  // can be anywhere the captured chain reaches.
+  const int N = cs.N;
+  if (N <= 0 || x < 0 || y < 0 || x >= N || y >= N) return refuse(EyeBail::Input);
+  if (cs.count + 1 >= ChainSet::kMaxPoints) return refuse(EyeBail::Input);
+  const int point = flatIndex(N, x, y);
+  const char* cells = board.flat();
+  if (cells[point] != '.') return refuse(EyeBail::Input);
+
+  const char me = colorChar(player);
+  const char opp = colorChar(oppositeColor(player));
+  const NeighborTable nt = neighborTable(N);
+  const int nbCount = nt.count[point];
+  const int* nbIdx = nt.idx[point].data();
+
+  int merged[4];
+  int mergedCount = 0;
+  for (int k = 0; k < nbCount; ++k) {
+    const int n = nbIdx[k];
+    const char c = cells[n];
+    const int chain = cs.id[static_cast<size_t>(n)];
+    if (chain < 0) continue;
+    if (c == opp && cs.libertyCount(chain) == 1) return refuse(EyeBail::Capture);
+    if (c != me) continue;
+    bool seen = false;
+    for (int i = 0; i < mergedCount; ++i) seen = seen || merged[i] == chain;
+    if (!seen && mergedCount < 4) merged[mergedCount++] = chain;
+  }
+
+  // The chain the new stone ends up in. Existing chains keep their ids, so the
+  // merged ones are folded into one slot past the end of the chain set.
+  const int mergedSlot = cs.count;
+  const auto remap = [&](int chain) {
+    for (int i = 0; i < mergedCount; ++i) {
+      if (merged[i] == chain) return mergedSlot;
+    }
+    return chain;
+  };
+
+  // Regions whose eye verdict came from the encirclement test cannot be re-derived
+  // from their own cells. They only stay valid if the move leaves them alone:
+  // - a chain they border must not be joined here, because that changes both the
+  //   border (the pieces become one chain) and the bounding box the test compares;
+  // - two joined chains must not collapse two of the chains around an expanded
+  //   region into one, which would turn "two chains surround this" into "one does".
+  if (before.multiRegionCount > 0) {
+    std::array<uint8_t, ChainSet::kMaxPoints> nearMerged{};  // bit i: touches merged[i]
+    if (mergedCount >= 2) {
+      for (int i = 0; i < mergedCount; ++i) {
+        for (const int cell : cs.members(merged[i])) {
+          for (int k = 0; k < nt.count[cell]; ++k) {
+            const int n = nt.idx[cell][k];
+            const int chain = cs.id[static_cast<size_t>(n)];
+            if (chain < 0 || cs.chainColor[chain] == '.') continue;
+            if (remap(chain) == mergedSlot) continue;
+            nearMerged[static_cast<size_t>(chain)] |= static_cast<uint8_t>(1u << i);
+          }
+        }
+      }
+    }
+    for (int i = 0; i < before.multiRegionCount; ++i) {
+      const EyeBoardSummary::MultiRegion& multi = before.multiRegions[static_cast<size_t>(i)];
+      unsigned joinedNearby = 0;
+      for (const int chain : multi.neighbors) {
+        if (remap(chain) == mergedSlot) return refuse(EyeBail::EncircledBase);
+        if (mergedCount >= 2) joinedNearby |= nearMerged[static_cast<size_t>(chain)];
+      }
+      // More than one bit: two joined chains could collapse into one, which is
+      // what the encirclement test counts.
+      if ((joinedNearby & (joinedNearby - 1u)) != 0u) return refuse(EyeBail::EncircledBase);
+    }
+  }
+
+  // Only a handful of chains can change: the ones an affected region counted as
+  // its eye, and the one the stone joins. Tracking those instead of copying the
+  // whole per-chain table is what makes this cheaper than the board-wide pass.
+  int touched[kMaxTouchedChains];
+  int16_t touchedBefore[kMaxTouchedChains];
+  int16_t touchedNow[kMaxTouchedChains];
+  int touchedCount = 0;
+  int mergedEyes = 0;
+  for (int i = 0; i < mergedCount; ++i) mergedEyes += before.perChain[static_cast<size_t>(merged[i])];
+
+  const auto findTouched = [&](int chain) {
+    for (int i = 0; i < touchedCount; ++i) {
+      if (touched[i] == chain) return i;
+    }
+    return -1;
+  };
+  // `chain` is a chain id of the board before the move; returns the slot its delta
+  // is recorded in, or -1 when the bookkeeping is full (so the caller falls back).
+  const auto touch = [&](int chain) {
+    const int mapped = remap(chain);
+    int index = findTouched(mapped);
+    if (index >= 0) return index;
+    if (touchedCount >= kMaxTouchedChains) return -1;
+    index = touchedCount++;
+    touched[index] = mapped;
+    // The merged chain is not counted in the totals yet, so its "before" is zero
+    // and its starting count is the eyes its pieces carry.
+    touchedBefore[index] =
+        mapped == mergedSlot ? 0 : static_cast<int16_t>(before.perChain[static_cast<size_t>(mapped)]);
+    touchedNow[index] = mapped == mergedSlot ? static_cast<int16_t>(mergedEyes) : touchedBefore[index];
+    return index;
+  };
+
+  // Regions whose verdict can change: the one the stone lands in (it is split),
+  // and every region that touches a chain the stone joins (its border now reads
+  // the joined chain instead of the pieces).
+  thread_local std::array<uint32_t, ChainSet::kMaxPoints> regionStamp{};
+  thread_local uint32_t regionGen = 0;
+  if (++regionGen == 0) {
+    regionStamp.fill(0);
+    regionGen = 1;
+  }
+  int affected[ChainSet::kMaxPoints];
+  int affectedCount = 0;
+  const auto markAffected = [&](int region) {
+    if (region < 0 || region >= cs.count) return;
+    if (cs.chainColor[region] != '.') return;
+    if (regionStamp[static_cast<size_t>(region)] == regionGen) return;
+    regionStamp[static_cast<size_t>(region)] = regionGen;
+    affected[affectedCount++] = region;
+  };
+  const int ownRegion = cs.id[static_cast<size_t>(point)];
+  markAffected(ownRegion);
+  for (int i = 0; i < mergedCount; ++i) {
+    for (const int cell : cs.members(merged[i])) {
+      for (int k = 0; k < nt.count[cell]; ++k) {
+        const int n = nt.idx[cell][k];
+        if (cells[n] == '.') markAffected(cs.id[static_cast<size_t>(n)]);
+      }
+    }
+  }
+
+  // Drop what those regions contributed before the move.
+  for (int a = 0; a < affectedCount; ++a) {
+    const int region = affected[a];
+    const int owners = before.ownerCount[static_cast<size_t>(region)];
+    for (int i = 0; i < owners; ++i) {
+      const int slot = touch(before.owners[static_cast<size_t>(region)][static_cast<size_t>(i)]);
+      if (slot < 0) return refuse(EyeBail::Input);
+      if (touchedNow[slot] > 0) --touchedNow[slot];
+    }
+  }
+
+  // Re-derive their verdicts on the board after the move. Every region is walked
+  // as connected components, because the region the stone landed in is usually
+  // cut into several.
+  // One generation per region, reserved up front so that an early refusal below
+  // cannot leave marks that a later call would mistake for its own visits.
+  thread_local std::array<uint32_t, ChainSet::kMaxPoints> cellStamp{};
+  thread_local uint32_t cellGen = 0;
+  if (cellGen + static_cast<uint32_t>(affectedCount) + 2 >= 0xFFFF0000u) {
+    cellStamp.fill(0);
+    cellGen = 0;
+  }
+  uint32_t stamp = cellGen;
+  cellGen += static_cast<uint32_t>(affectedCount) + 1;
+  int stack[ChainSet::kMaxPoints];
+  for (int a = 0; a < affectedCount; ++a) {
+    const int region = affected[a];
+    const ChainSpan members = cs.members(region);
+    ++stamp;
+    for (const int start : members) {
+      if (start == point) continue;
+      if (cellStamp[static_cast<size_t>(start)] == stamp) continue;
+
+      int top = 0;
+      stack[top++] = start;
+      cellStamp[static_cast<size_t>(start)] = stamp;
+      int size = 0;
+      bool hasMe = false;
+      bool hasOpp = false;
+      int distinct[4] = {0, 0, 0, 0};
+      int distinctCount = 0;
+
+      while (top > 0) {
+        const int cell = stack[--top];
+        ++size;
+        for (int k = 0; k < nt.count[cell]; ++k) {
+          const int n = nt.idx[cell][k];
+          const int chain = n == point ? mergedSlot : cs.id[static_cast<size_t>(n)];
+          if (n != point) {
+            const char c = cells[n];
+            if (c == '.') {
+              if (cellStamp[static_cast<size_t>(n)] != stamp) {
+                cellStamp[static_cast<size_t>(n)] = stamp;
+                stack[top++] = n;
+              }
+              continue;
+            }
+            if (c == '#') continue;  // offline points are not a border colour
+            if (chain < 0) continue;
+            if (c == me) hasMe = true; else hasOpp = true;
+          } else {
+            hasMe = true;  // the stone itself borders the joined chain
+          }
+          const int mapped = n == point ? mergedSlot : remap(chain);
+          bool seen = false;
+          for (int i = 0; i < distinctCount; ++i) seen = seen || distinct[i] == mapped;
+          if (!seen && distinctCount < 4) distinct[distinctCount++] = mapped;
+        }
+      }
+
+      // A region is an eye candidate only when one colour borders all of it.
+      if (!hasMe || hasOpp) continue;
+      // Two distinct chains of ours: that verdict needs the encirclement test,
+      // which looks at the board rather than at the region.
+      if (distinctCount != 1) return refuse(EyeBail::EncircledNew);
+      if (static_cast<double>(size) > maxSize) continue;
+      const int slot = touch(distinct[0]);
+      if (slot < 0) return refuse(EyeBail::Input);
+      ++touchedNow[slot];
+    }
+  }
+
+  // Totals: the board's own, minus the pieces that are now one chain, plus the
+  // status change of every chain the move touched.
+  int eyeCount = before.totals.eyeCount;
+  int livingGroups = before.totals.livingGroups;
+  for (int i = 0; i < mergedCount; ++i) {
+    const int eyes = before.perChain[static_cast<size_t>(merged[i])];
+    if (eyes >= 1) --eyeCount;
+    if (eyes >= 2) --livingGroups;
+  }
+  int mergedNow = mergedEyes;
+  for (int i = 0; i < touchedCount; ++i) {
+    if (touched[i] == mergedSlot) {
+      mergedNow = touchedNow[i];
+      continue;
+    }
+    eyeCount += (touchedNow[i] >= 1 ? 1 : 0) - (touchedBefore[i] >= 1 ? 1 : 0);
+    livingGroups += (touchedNow[i] >= 2 ? 1 : 0) - (touchedBefore[i] >= 2 ? 1 : 0);
+  }
+  if (mergedNow >= 1) ++eyeCount;
+  if (mergedNow >= 2) ++livingGroups;
+
+  out.eyeCount = eyeCount;
+  out.livingGroups = livingGroups;
+  return true;
+}
+
 std::vector<Pt> getDisputedTerritoryMoves(const SimpleBoard& board, const std::vector<Pt>& availableSpaces,
                                           int maxChainSize) {
   const ChainSet& cs = chainsCached(board);
