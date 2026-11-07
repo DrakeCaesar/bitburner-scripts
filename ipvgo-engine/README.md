@@ -328,6 +328,9 @@ IPVGO_EYE_FILTER=1 ...              # never play inside our own pass-alive eye
 `exploitplay` also takes two cache switches:
 
 - `IPVGO_NO_SESSION=1` - disable the session cache, giving the A/B baseline.
+- `IPVGO_NO_MEMO=1` - disable the transposition table outright, which is how the
+  table's cost is compared against what it saves. Results differ (the search
+  re-explores what it would have reused), so this is a measurement switch only.
 - `IPVGO_CACHE_STATS=1` - report nodes, memo hits, how many of those came from an
   earlier move, reply-cache hits, endgame budget cuts, session size and how many
   times the session was dropped because a new game started.
@@ -598,6 +601,44 @@ Also in this pass, and measured as **not** worth anything:
   traffic per chain, and the change would touch every reader of `memberData` /
   `libertyData` for an unmeasurable gain.
 
+### What belongs in the memo entry
+
+The entry is the table's unit of memory, and the table holds 68 000 entries for a
+7x7 game and 480 000 for a 13x13 one, so what goes in it decides whether a probe
+fits in cache. It used to be 32 bytes and is now 16 (`double value`, `uint32_t
+epoch`, `bool exact`): `depth` was written on every store and never read, and the
+shared carry table keeps its own 16-byte entry (`value`, `history`) instead of
+carrying an epoch and a flag it never consults.
+
+The other half of the same waste was the key. Both tables - the memo and the reply
+distribution cache - are keyed by the position, and both computed it: the memo as
+`fnv1a64(positionKey(state), depth)`, the reply cache as `positionKey(state)`, so
+every White node hashed the board twice. `memoBase()` now returns that position
+half once and the reply cache takes it. Both changes are exact by construction and
+leave node counts, memo hits and moves identical; together they are worth about
+0.5% and half the table's memory (7.7 MB on a 13x13 game).
+
+What is deliberately **not** packed in:
+
+- **The reply distribution** (100-600 bytes). The memo is keyed by position *and*
+  remaining depth, so a distribution hung off it would be duplicated once per depth,
+  and bulk in the entry destroys the density that makes the probe cheap. It stays in
+  its own position-keyed table: the experiment that kept distributions in the
+  session is recorded above at 872 MB for 89 hits.
+- **The chain set** (7.6 KB) or the **eye summary** (6.5 KB). At 180 000-480 000
+  entries that is hundreds of megabytes to gigabytes. Entry density is the whole
+  value of the table; anything kilobyte-sized has to be cached at its own
+  granularity or recomputed.
+- **Facts that are cheap to derive**: stone and empty counts are `popcount` over the
+  bit planes, and a leaf value is already cached by the (position, depth) key that
+  the table holds.
+
+A position-keyed table with a small per-depth value array - one probe for every depth
+of a position, and room to hang a distribution handle off it - is the structural
+alternative to the current two depth-keyed tables. It is not worth building at the
+hit rates measured here (1.3-5.8% of lookups, and the table is break-even at the
+in-game budget on 7x7 and above).
+
 ### Third-party code
 
 `third_party/ankerl/` holds [ankerl::unordered_dense](https://github.com/martinus/unordered_dense)
@@ -836,6 +877,38 @@ only 1.5-5% of memo lookups, because `positionKey()` hashes
 move N+1 can never share a key. Keying on the board plus the single previous
 board (enough for the ko rule) would unlock a lot more, but raises a soundness
 question wherever superko actually binds.
+
+**The transposition table is a hash map, not a tree, and it is not free.**
+`IPVGO_NO_MEMO=1` turns it off in the same binary, which is how its cost and its
+value can be separated. In-game budget, one thread:
+
+| board | with the table | `IPVGO_NO_MEMO=1` |
+|---|---|---|
+| 5x5 Netburners, 8 games | 71 849 nodes, 731 ms | 72 828 nodes, 947 ms |
+| 7x7 Slum Snakes, 4 games | 129 595 nodes, 3 030 ms | 142 133 nodes, 2 983 ms |
+| 9x9 Illuminati, 2 games | 169 705 nodes, 3 731 ms | 141 562 nodes, 3 211 ms |
+| 13x13 Illuminati, 1 game | 152 856 nodes, 15 463 ms | 150 661 nodes, 13 856 ms |
+
+Where it pays, it pays for transpositions: at 5x5 the endgame play-out reaches the
+same position through many move orders, the hit rate is 5.8% and the table is worth
+23%. At 9x9 and 13x13 it *costs*, for an indirect reason - an iteration that hits
+the memo visits fewer nodes, and the iterative-deepening heuristic reads the node
+counts to predict the next depth, so cheaper iterations talk it into attempting a
+depth that then overshoots the budget and is discarded. That work is spent without
+being kept. The hit rate itself is only 1.3-3% there, so the key hashing (one FNV
+step per board cell plus up to four history boards, on every node) is not repaid.
+
+A pointer tree - a node per move with parent/child links - is the wrong fix for
+this. It cannot serve a transposition at all: the same position reached by two move
+orders becomes two nodes, where the hash gives it one entry, so it would *increase*
+both memory (roughly 48-64 bytes per node against 32 per memo entry, and a node per
+distinct path rather than per distinct position) and search time. What a tree could
+do that the hash cannot is keep the subtree under the opponent's actual reply, which
+is path-based reuse; the session memo already provides that by key, and strictly
+more of it. The idea worth pursuing instead is a cheaper key - one hash of the
+packed 2-bit board rather than a per-cell loop - so the cost side of the trade
+above shrinks. An earlier attempt did that and changed budgeted node counts, which
+is still unexplained, so it has to be resolved before it can ship.
 
 **Reuse has no strength measurement.** The 24-game comparison plays *different*
 games in each mode, so the win counts are not comparable (18/24 vs 19/24 is
