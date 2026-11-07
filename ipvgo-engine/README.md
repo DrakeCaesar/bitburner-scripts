@@ -495,18 +495,16 @@ Two ideas were tried and rejected:
   land cost a `ChainSet` copy. Measured inside the noise (7x7 3.62 s -> 3.67 s,
   9x9 4.06 s -> 3.99 s), so it is not in the tree.
 
-The next targets, from the profile taken after the chain-query pass (9x9 Slum Snakes, 2
-games, 4 000-node budget, 36 630 stack samples, 88.6 ms/move instrumented against 23 ms
-in Release - the instrumented build pays the `operator new` hooks and the sampler, so read
-shares, not absolute times): `computeChainsInto` 16.8% (15.8% reached through
-`chainsCached`, most of it from `leafValue`, 17.5% inclusive), `eyeTotalsAfterMove` 13.6%
-(`getEyeCreationMoves` 30.7% inclusive: `eyeMove` 19.7% + `eyeBlock` 11.2%),
-`matchesAnyPattern` 6.3%, `evaluatedLead` 5.3%, `placeStoneBits` 4.7%,
-`neighborChainsOfChain` 3.3%, `getEyeCreationMoves` 2.9% (its own body, besides the eye
-analysis it calls), `chainEffectiveLibertiesWords` 2.7%, `getAllValidMoves` 2.4%,
-`summarizeEyes` 2.1%, `BitPlanes::load` 1.9%, `validateMove` 1.8%, `bits::flood` 1.8%
-(now only `placeStoneBits` and `collectDeadChains`), with `opponentReplyDistribution` at
-71.1% inclusive and `buildPolicyModel` at 48.0%.
+The next targets, from the profile taken after the chain-pass round (9x9 Slum Snakes, 2
+games, 4 000-node budget, one thread, 89.0 ms/move instrumented against 23 ms in Release -
+the instrumented build pays the `operator new` hooks and the sampler, so read shares, not
+absolute times): `computeChainsInto` 19.7% (it now owns the liberty work; the fused inner
+loop at `go_game.cpp:163-169` is 10% of the run), `eyeTotalsAfterMove` 13.6%,
+`matchesAnyPattern` 6.0%, `placeStoneBits` 4.9%, `neighborChainsOfChain` 3.4%,
+`getAllValidMoves` 3.1%, `getEyeCreationMoves` 2.8%, `chainEffectiveLibertiesWords` 2.7%,
+`summarizeEyes` 2.1%, `bits::flood` 1.9%, `opponentReplyDistribution` 1.9%,
+`validateMove` 1.7%. Inclusive: `opponentReplyDistribution` 71% -> `buildPolicyModel` 46%
+-> `getEyeCreationMoves` 29% (`eyeMove` 18% + `eyeBlock` 11%), and `leafValue` 17%.
 
 What that leaves:
 
@@ -519,8 +517,13 @@ What that leaves:
   same question can be asked for the whole board at once: for each of the nine
   pattern offsets and each cell class, one shifted mask, then each pattern is an AND of
   nine masks. That is ~20 patterns x 9 word-ops per board instead of per point.
-- **The eye increment is the other half.** `eyeTotalsAfterMove` is still 13.6% on its own
-  on top of `summarizeEyes`, and the eye generators together are 30.7% of the run.
+- **The eye increment is the other half.** `eyeTotalsAfterMove` is still 11.7% on its own
+  on top of `summarizeEyes`, and the eye generators together are 29.4% of the run.
+- **The chain pass visits every neighbour twice.** Fusing the liberty collection into the
+  flood fill would halve that, but it changes the order liberties are stored in, so the
+  liberty oracle would have to be re-run against every consumer (see "The bit-plane
+  pass"). Doing it with the bit planes instead - flood the chain as words, collect
+  `neighbours & empty` - keeps the order and is the cheaper version of the same idea.
 
 Allocation churn is still large and now measurable per site: 162 673 allocations per
 move (12.5 M over the two profiled games, 1.56 GB of traffic). The biggest sites are
@@ -892,6 +895,42 @@ round robin removes the idle workers, and the sharded cache removes the lock wai
 is why the deterministic mode is already 16% faster on the 2-position bench even though
 it still waits on its slowest worker. The dynamic scheduler is worth the last 1-6% in
 play, where the run-to-run variation does not matter.
+### The chain-pass round
+
+Two changes to `computeChainsInto`, which is the largest single cost and now does all of
+the work in one sweep:
+
+- **Liberties are collected as each stone is discovered**, not in a second pass over the
+  chain. Discovery order *is* the stored member order and each stone's neighbours are
+  visited in the same N/E/S/W order either way, so the liberty lists come out identical -
+  checkable: single-thread `exploitplay` results and node counts are unchanged - while
+  every point's neighbours are visited once per chain build instead of twice. Those two
+  scans were the first and third hottest lines in the profile. **-2.5% / -1.7%**
+  (2-position depth-3 bench / 9x9 depth-2 bench, single thread, interleaved).
+- **Empty regions record which colours border them** (`ChainSet::border`, two bits,
+  filled during the same neighbour scan). The leaf evaluation asks "is this region
+  bordered by exactly one colour" for every region on every leaf, and it was walking the
+  region's members again to answer it; with the flags it is two bit tests.
+  **-1.3% / -4.5%**, and `evaluatedLead` drops out of the exclusive top list.
+
+The selftest oracle for the border flags - compare the recorded flags against a member
+scan on 120 random boards - caught a real bug in the first version: offline nodes (`#`)
+were being counted as White borders, which would have mis-valued every region touching an
+obstacle. That is exactly the kind of silent error the flags introduce, so the check
+stays.
+
+Rejected after measuring: **reordering the nine pattern-mask tests** to try the centre and
+orthogonal neighbours first (+0.3%, noise). The early exit already prunes most points in
+the first few cells.
+
+Profile after this round (same workload as above): `computeChainsInto` 19.7% (it now
+contains the liberty work, so its share rose while the total fell), `eyeTotalsAfterMove`
+13.6%, `matchesAnyPattern` 6.0%, `placeStoneBits` 4.9%, `neighborChainsOfChain` 3.4%,
+`getAllValidMoves` 3.1%, `getEyeCreationMoves` 2.8%, `chainEffectiveLibertiesWords` 2.7%,
+`summarizeEyes` 2.1%, `bits::flood` 1.9%, `opponentReplyDistribution` 1.9%,
+`validateMove` 1.7%; the hottest lines are now the fused inner loop
+(`go_game.cpp:163-169`, 10% between them) and `analysis.cpp:655` in the eye delta.
+
 ### The cleanup pass
 
 Everything the passes above added is now the only path. No switch selects a slower

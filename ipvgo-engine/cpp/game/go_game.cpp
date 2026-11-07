@@ -97,6 +97,47 @@ void computeChainsInto(const SimpleBoard& board, ChainSet& cs) {
   int memberCount = 0;
   cs.memberOffsets[0] = 0;
   const char* cells = board.flat();
+
+  // Liberties are collected as each stone is discovered rather than in a second pass
+  // over the chain. Discovery order is the stored member order, and each stone's
+  // neighbours are visited in the same N/E/S/W order either way, so the liberty lists
+  // come out identical - but every point's neighbours are now visited once per chain
+  // build instead of twice, which was the second and third hottest line in the
+  // profile. A thread-local stamp array tagged per chain replaces clearing a fresh
+  // array: the tag base is reserved per call for the largest possible chain count.
+  static thread_local std::array<uint32_t, ChainSet::kMaxPoints> seenTag{};
+  static thread_local uint32_t tagBase = 0;
+  if (tagBase > 0xFFFF0000u) {
+    seenTag.fill(0);
+    tagBase = 0;
+  }
+  const uint32_t base = tagBase + 1;
+  tagBase += static_cast<uint32_t>(ChainSet::kMaxPoints);
+  int libertyCount = 0;
+  cs.libertyOffsets[0] = 0;
+
+  // Appends the empty neighbours of `idx` that this chain has not seen yet, and - for
+  // an empty region - records which stone colours border it.
+  const auto collectEmpties = [&](int idx, uint32_t tag, bool isRegion, uint8_t& borderFlags) {
+    const int nbCount = neighbors.count[static_cast<size_t>(idx)];
+    const int* nbIdx = neighbors.idx[static_cast<size_t>(idx)].data();
+    for (int k = 0; k < nbCount; ++k) {
+      const int nIdx = nbIdx[k];
+      const char nc = cells[nIdx];
+      if (nc != '.') {
+        // Offline nodes ('#') border a region without owning it.
+        if (isRegion) {
+          if (nc == 'X') borderFlags |= 1;
+          else if (nc == 'O') borderFlags |= 2;
+        }
+        continue;
+      }
+      if (seenTag[static_cast<size_t>(nIdx)] == tag) continue;
+      seenTag[static_cast<size_t>(nIdx)] = tag;
+      cs.libertyData[static_cast<size_t>(libertyCount++)] = nIdx;
+    }
+  };
+
   for (int x = 0; x < N; ++x) {
     for (int y = 0; y < N; ++y) {
       const int start = x * N + y;
@@ -105,9 +146,13 @@ void computeChainsInto(const SimpleBoard& board, ChainSet& cs) {
       if (cs.id[static_cast<size_t>(start)] != -1) continue;
 
       const int chainId = cs.count++;
+      const uint32_t tag = base + static_cast<uint32_t>(chainId);
       cs.chainColor[static_cast<size_t>(chainId)] = c;
       cs.id[static_cast<size_t>(start)] = chainId;
       cs.memberData[static_cast<size_t>(memberCount++)] = start;  // discovery order (matches game)
+      const bool isRegion = c == '.';
+      uint8_t borderFlags = 0;
+      collectEmpties(start, tag, isRegion, borderFlags);
       stackSize = 0;
       stack[static_cast<size_t>(stackSize++)] = start;
 
@@ -121,39 +166,14 @@ void computeChainsInto(const SimpleBoard& board, ChainSet& cs) {
           if (cs.id[static_cast<size_t>(nIdx)] != -1) continue;
           cs.id[static_cast<size_t>(nIdx)] = chainId;
           cs.memberData[static_cast<size_t>(memberCount++)] = nIdx;
+          collectEmpties(nIdx, tag, isRegion, borderFlags);
           stack[static_cast<size_t>(stackSize++)] = nIdx;
         }
       }
       cs.memberOffsets[static_cast<size_t>(chainId) + 1] = memberCount;
+      cs.libertyOffsets[static_cast<size_t>(chainId) + 1] = libertyCount;
+      if (isRegion) cs.border[static_cast<size_t>(chainId)] = borderFlags;
     }
-  }
-
-  // Liberties: unique empty neighbors of each chain. A thread-local stamp array
-  // tagged with a per-call base replaces clearing a fresh array on every call.
-  cs.libertyOffsets[0] = 0;
-  static thread_local std::array<uint32_t, ChainSet::kMaxPoints> seenTag{};
-  static thread_local uint32_t tagBase = 0;
-  if (tagBase > 0xFFFF0000u) {
-    seenTag.fill(0);
-    tagBase = 0;
-  }
-  const uint32_t base = tagBase + 1;
-  tagBase += static_cast<uint32_t>(cs.count);
-  int libertyCount = 0;
-  for (int c = 0; c < cs.count; ++c) {
-    const uint32_t tag = base + static_cast<uint32_t>(c);
-    for (const int idx : cs.members(c)) {
-      const int nbCount = neighbors.count[static_cast<size_t>(idx)];
-      const auto& nbIdx = neighbors.idx[static_cast<size_t>(idx)];
-      for (int k = 0; k < nbCount; ++k) {
-        const int nIdx = nbIdx[static_cast<size_t>(k)];
-        if (cells[nIdx] != '.') continue;
-        if (seenTag[static_cast<size_t>(nIdx)] == tag) continue;
-        seenTag[static_cast<size_t>(nIdx)] = tag;
-        cs.libertyData[static_cast<size_t>(libertyCount++)] = nIdx;
-      }
-    }
-    cs.libertyOffsets[static_cast<size_t>(c) + 1] = libertyCount;
   }
 }
 

@@ -570,6 +570,46 @@ int runSelftest() {
                                std::to_string(foundWeakest) + " with an adjacent chain)");
   }
 
+  // ---- Region border flags: the chain pass records what the leaf eval reads ----
+  {
+    std::mt19937_64 rng(20260404ULL);
+    long regions = 0;
+    long mismatches = 0;
+    for (int board = 0; board < 120; ++board) {
+      const int n = 5 + static_cast<int>(rng() % 8) * 2;  // 5,7,9,11,13,17,19
+      SimpleBoard b(n);
+      for (int x = 0; x < n; ++x) {
+        for (int y = 0; y < n; ++y) {
+          const uint64_t r = rng() % 100;
+          b[x][y] = r < 40 ? 'X' : r < 74 ? 'O' : r < 78 ? '#' : '.';
+        }
+      }
+      const ChainSet cs = computeChains(b);
+      for (int c = 0; c < cs.count; ++c) {
+        if (cs.chainColor[c] != '.') continue;
+        ++regions;
+        uint8_t expected = 0;
+        for (const int idx : cs.members(c)) {
+          for (const int nIdx : onBoardNeighbors(n, idx / n, idx % n)) {
+            const char nc = b[nIdx / n][nIdx % n];
+            if (nc == 'X') expected |= 1;
+            else if (nc == 'O') expected |= 2;
+          }
+        }
+        if (cs.border[static_cast<size_t>(c)] != expected) {
+          ++mismatches;
+          if (mismatches <= 5) {
+            std::cerr << "selftest: region border mismatch at " << n << "x" << n << " chain " << c << ": recorded "
+                      << static_cast<int>(cs.border[static_cast<size_t>(c)]) << ", expected "
+                      << static_cast<int>(expected) << "\n"
+                      << boardString(b) << "\n";
+          }
+        }
+      }
+    }
+    check(mismatches == 0, "region border flags agree with a member scan (" + std::to_string(regions) + " regions)");
+  }
+
   // ---- Chain arrays: the worst case must fit their capacity ---------------------
   {
     // A checkerboard is the worst case for the liberty arrays: every stone is its own

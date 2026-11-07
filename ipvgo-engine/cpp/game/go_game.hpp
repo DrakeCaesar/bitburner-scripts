@@ -330,6 +330,10 @@ struct ChainSet {
   std::array<uint16_t, kMaxPoints> memberData;          // per chain, flat indices
   std::array<uint16_t, kMaxPoints + 1> libertyOffsets;  // count + 1 offsets into libertyData
   std::array<uint16_t, kMaxLiberties> libertyData;  // per chain, flat indices (unique empty neighbors)
+  // For empty regions only: which stone colours border them, bit 0 = Black ('X'),
+  // bit 1 = White ('O'). Collected during the flood fill, so the leaf evaluation can
+  // ask "is this region bordered by one colour" without walking its members again.
+  std::array<uint8_t, kMaxPoints> border;
 
   ChainSpan members(int c) const {
     if (c < 0 || c + 1 >= count + 1) return {};
