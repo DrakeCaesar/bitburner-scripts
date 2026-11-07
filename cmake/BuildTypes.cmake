@@ -50,6 +50,31 @@ if(MSVC)
   endif()
 
   set(CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO "${CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO} /DEBUG:FULL") # Full PDB
+
+  # Profile-guided optimisation, in two passes over the same build tree:
+  #   cmake -DIPVGO_PGO=GENERATE ... ; build ; run a training workload
+  #   cmake -DIPVGO_PGO=OPTIMIZE ... ; build
+  # Everything happens in the linker: cl.exe rejects /GENPROFILE and /USEPROFILE
+  # with D9002, so a build configured that way stays uninstrumented and the profile
+  # reports "Dynamic instructions: 0". The compiler side is plain /GL, already set
+  # for Release above.
+  # /LTCG:PGINSTRUMENT and /LTCG:PGOPTIMIZE both imply plain /LTCG, so the flag is
+  # removed first to avoid D9025 "overriding". cmake/Build-Pgo.ps1 drives the two
+  # passes and the training run.
+  set(IPVGO_PGO "OFF" CACHE STRING "Profile-guided optimisation: OFF, GENERATE or OPTIMIZE")
+  set_property(CACHE IPVGO_PGO PROPERTY STRINGS OFF GENERATE OPTIMIZE)
+  if(NOT IPVGO_PGO STREQUAL "OFF")
+    set(ipvgo_pgd "${CMAKE_BINARY_DIR}/ipvgo.pgd")
+    string(REPLACE "/LTCG" "" CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE}")
+    if(IPVGO_PGO STREQUAL "GENERATE")
+      set(CMAKE_EXE_LINKER_FLAGS_RELEASE
+          "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /LTCG:PGINSTRUMENT /PGD:${ipvgo_pgd}")
+    else()
+      set(CMAKE_EXE_LINKER_FLAGS_RELEASE
+          "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /LTCG:PGOPTIMIZE /PGD:${ipvgo_pgd}")
+    endif()
+    message(STATUS "PGO: ${IPVGO_PGO} (profile ${ipvgo_pgd})")
+  endif()
 else()
   # Unix-style clang/gcc: max optimizations for speed.
   set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3")           # Optimize aggressively

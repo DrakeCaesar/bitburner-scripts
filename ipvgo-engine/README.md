@@ -1001,6 +1001,65 @@ depth, ponder hits). Interleaved against a build of the pre-pass commit, 5 round
 -3.6% on the 2-position bench (199.2 -> 192.0 ms) and -2.2% on the 9x9 bench
 (82.2 -> 80.3 ms), the same place the move-generation pass left off.
 
+### The profile-guided optimisation experiment
+
+The last cheap idea was to let the compiler see where the engine really spends its
+time instead of guessing: profile-guided optimisation, trained on the search itself.
+It does not pay here, and the reason matters for future work, so both the plumbing and
+the numbers stay.
+
+```powershell
+.\cmake\Build-Pgo.ps1           # instrument, train on play, relink optimised
+.\cmake\Build-Pgo.ps1 -Games 8  # more training games
+```
+
+`IPVGO_PGO` (OFF / GENERATE / OPTIMIZE) in `cmake/BuildTypes.cmake` holds the flags;
+`cmake/Build-Pgo.ps1` drives the two passes over `out/build/x64-Pgo`. The training
+workload is what the game asks for - a 4 000-node budget per move, deterministic,
+across 5x5 to 19x19 and several factions - so the profile is reproducible and matches
+the distribution the engine is optimised for.
+
+Three things have to be right, and each of them fails quietly:
+
+- `/GENPROFILE` and `/USEPROFILE` are **linker** options. Passed to `cl.exe` they only
+  earn D9002 ("ignoring unknown option"), the binary stays uninstrumented and the
+  profile arrives with zero counts. Instrument with `/LTCG:PGINSTRUMENT /PGD:<path>`
+  and optimise with `/LTCG:PGOPTIMIZE /PGD:<path>`; both imply `/LTCG`, so the plain
+  flag is dropped first to avoid D9025.
+- The instrumented binary needs `pgort140.dll`, which ships in the toolset's `bin`
+  directory and is not part of the redistributable. Off `PATH` it exits with
+  0xC0000135 (STATUS_DLL_NOT_FOUND) before recording anything - and because the
+  training loop pipes its output, that looks exactly like a successful run.
+- The counters land as `ipvgo!N.pgc` **next to the executable**, not in the working
+  directory. Merge them with `pgomgr /merge ipvgo.pgd ipvgo!*.pgc` and require
+  `pgomgr /summary ipvgo.pgd` to report `Dynamic instructions` above zero before
+  trusting the optimised build; otherwise the optimiser links an empty profile and
+  changes nothing.
+
+Measured against the Release build from a profile of 2.9e12 dynamic instructions,
+interleaved, six rounds on the benches and three on the play rows:
+
+| workload | Release | PGO | delta |
+|----------|---------|-----|-------|
+| 2-position bench, depth 3 (39 012 nodes) | 172.3 ms | 175.2 ms | +1.7% |
+| 9x9 bench (11 537 nodes) | 64.7 ms | 66.0 ms | +1.9% |
+| play, 40 000 nodes per move, 1 thread, Slum Snakes 9x9 | 108.3 ms | 108.8 ms | +0.5% |
+| play, same budget, Netburners 7x7 | 73.1 ms | 72.7 ms | -0.6% |
+
+Node counts are identical (39 012 and 11 537) and `selftest`, `fuzz 60 11` and
+`eyetest` give the same results as Release, so the profile only changes code layout.
+It does shrink the image: 567 KB of code becomes 425 KB.
+
+The regression on the fixed-depth benches is the interesting part. Play never reaches
+those deeper search paths under a 4 000-node budget, so the profile tells the compiler
+they are cold and it stops inlining into them. Training on the benches instead would
+invert that, but then the numbers would only measure the fit to their own training
+set. On the workload the game actually runs, PGO is neutral: these inner loops are
+branch-light and dominated by code that `/GL` already inlines across translation
+units, which is the case profile data has least to add to. The default therefore stays
+`/O2 /GL /LTCG /arch:AVX2`. Worth repeating only after a large structural change, not
+after another tuned micro-optimisation.
+
 ### Third-party code
 
 `third_party/ankerl/` holds [ankerl::unordered_dense](https://github.com/martinus/unordered_dense)

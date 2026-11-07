@@ -36,7 +36,13 @@ param(
   [switch]$Configure,
 
   # RelWithDebInfo only: keep inlining on so profile shares match Release.
-  [switch]$ProfileInlining
+  [switch]$ProfileInlining,
+
+  # Profile-guided optimisation pass: Generate (instrument), Optimize (use the
+  # collected profile) or Off. Both passes live in out/build/x64-Pgo and are driven
+  # by cmake/Build-Pgo.ps1, which also runs the training workload between them.
+  [ValidateSet('Off', 'Generate', 'Optimize')]
+  [string]$Pgo = 'Off'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,6 +54,9 @@ $folder = switch ($BuildType) {
   'RelWithDebInfo' { 'x64-Profile' }
   'Debug' { 'x64-Debug' }
 }
+# PGO lives in its own tree: the flags change between the two passes, so mixing it
+# into x64-Release would rebuild that tree every time.
+if ($Pgo -ne 'Off') { $folder = 'x64-Pgo' }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $buildRoot = Join-Path $repoRoot "out/build/$folder"
@@ -88,9 +97,11 @@ if (-not (Test-Path $devShell)) {
 Import-Module (Join-Path $vsPath 'Common7/Tools/Microsoft.VisualStudio.DevShell.dll')
 Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
 
-if ($Configure) {
+# A PGO pass always reconfigures: the two passes differ only in these flags, and
+# CMake has to see the change for Ninja to rebuild against the collected profile.
+if ($Configure -or $Pgo -ne 'Off') {
   $inlining = if ($ProfileInlining) { 'ON' } else { 'OFF' }
-  & cmake -B $buildRoot -G Ninja "-DCMAKE_BUILD_TYPE=$BuildType" "-DIPVGO_PROFILE_INLINING=$inlining"
+  & cmake -B $buildRoot -G Ninja "-DCMAKE_BUILD_TYPE=$BuildType" "-DIPVGO_PROFILE_INLINING=$inlining" "-DIPVGO_PGO=$($Pgo.ToUpper())"
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
