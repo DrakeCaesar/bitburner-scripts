@@ -321,6 +321,7 @@ int runProfiler(int argc, char** argv) {
   ipvgo::nn::ExploitConfig cfg;
   cfg.depth = 2;
   cfg.threads = 1;          // one thread so the samples are not split across cores
+  cfg.deterministic = true;  // and so the same workload is profiled every run
   cfg.nodeLimit = nodeLimit;  // the budget the game's client actually gives us
 
   std::printf("workload: %s %dx%d, %d games, nodeLimit=%ld, threads=%d (the in-game configuration)\n",

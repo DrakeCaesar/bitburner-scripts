@@ -869,6 +869,9 @@ json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session,
   if (cfg.nodeLimit > 0) cfg.budgetMs = 0;
   cfg.cancel = cancel;
   cfg.carry = req.value("carry", false);
+  // Play uses the faster dynamic root scheduler; IPVGO_DETERMINISTIC=1 pins the
+  // round-robin split for a repeatable session.
+  cfg.deterministic = std::getenv("IPVGO_DETERMINISTIC") != nullptr;
 
   const auto t0 = std::chrono::steady_clock::now();
   const ExploitResult result = runExploiter(state, cfg, nullptr, session);
@@ -1264,6 +1267,9 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
   }
   if (nodeLimitOverride > 0) cfg.nodeLimit = nodeLimitOverride;
   if (const char* threads = std::getenv("IPVGO_THREADS")) cfg.threads = std::atoi(threads);
+  // Play uses the faster dynamic root scheduler. Set IPVGO_DETERMINISTIC=1 to pin the
+  // round-robin split instead, which makes a run repeatable for an A/B or a trace.
+  cfg.deterministic = std::getenv("IPVGO_DETERMINISTIC") != nullptr;
   cfg.carry = std::getenv("IPVGO_CARRY") != nullptr;
   // Simulated White delay, and whether the idle time also keeps deepening.
   const int ponderMs = std::getenv("IPVGO_PONDER_MS") ? std::atoi(std::getenv("IPVGO_PONDER_MS")) : 0;

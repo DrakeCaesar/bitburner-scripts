@@ -321,6 +321,10 @@ int runBenchGames(const BenchOptions& options, BenchObserver& observer) {
   cfg.endgameEmpties = options.endgameEmpties;
   cfg.nodeBudget = options.nodeBudget;
   cfg.threads = options.threads;
+  cfg.deterministic = true;  // a benchmark has to be repeatable
+  // IPVGO_DYNAMIC=1 measures the scheduler play actually uses, at the cost of
+  // repeatability.
+  if (std::getenv("IPVGO_DYNAMIC") != nullptr) cfg.deterministic = false;
   cfg.carry = options.carry;
 
   std::mt19937_64 rng(options.seed ? options.seed : 1);

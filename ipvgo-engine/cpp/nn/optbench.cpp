@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <random>
@@ -132,6 +133,10 @@ int runOptBench(const OptBenchOptions& options) {
   cfg.beam = options.beam;
   cfg.whiteChildren = options.whiteChildren;
   cfg.threads = options.threads;
+  cfg.deterministic = true;  // a benchmark has to be repeatable
+  // IPVGO_DYNAMIC=1 measures the scheduler play actually uses, at the cost of
+  // repeatability.
+  if (std::getenv("IPVGO_DYNAMIC") != nullptr) cfg.deterministic = false;
   cfg.budgetMs = 0;
   cfg.nodeLimit = 0;
 

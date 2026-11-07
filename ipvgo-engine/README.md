@@ -832,6 +832,66 @@ Two ideas from the same profile were tried and rejected:
 - **Growing the chain-cache ring from 6 to 12 slots** to cut the flood at leaf nodes:
   +0.2%, i.e. nothing. The misses are per leaf position, not evictions.
 
+### The threading pass
+
+The engine runs threaded by default (`threads = 0` means `hardware_concurrency()`; the
+client never overrides it), so this was worth measuring. With a temporary instrumented
+build (9x9 Illuminati, 4 000-node budget, 12 threads on a 6-core/12-thread CPU):
+
+- **Sync.** Root candidates are split among workers, one `std::async` future each, and
+  the parent joins them all - a barrier per depth iteration, with no work stealing and no
+  partial results.
+- **Split.** Contiguous blocks of `ceil(children / threads)` children, and the node
+  budget divided as `nodeLimit / threads` per worker regardless of how many children that
+  worker actually got. With the 29 candidates of a typical 9x9 root and 12 workers that
+  is blocks of three, so 10 workers got work and 2 got none - **17% of the node budget
+  was allocated to workers that never ran** - and the slowest block took 1.3-1.5x the
+  mean block, which the barrier then waited for. Measured occupancy
+  (worker-time / wall / threads): **63%** at both 6 and 12 threads.
+- **Redundant work.** The reply cache is the only cross-thread reuse (memos are per
+  worker). It had one mutex for the whole table: at 12 threads that was **3.6% of all
+  thread time** waiting (0.4% at 6), and the `get -> unlock -> compute -> lock -> insert`
+  pattern let two workers compute the same distribution concurrently - **5.3% of all
+  reply computations were duplicates** at 12 threads (2.8% at 6).
+
+Two changes went in, and the root split now has two modes:
+
+- **Round-robin children** instead of contiguous blocks: worker `t` takes child `t`,
+  `t + threads`, `t + 2*threads`, ... . Every worker now gets `floor` or `ceil` of
+  `children / threads` of them, so no worker sits out with an unspent share.
+- **Sharded reply cache**, 64 shards keyed like the carry memo, with the entry cap split
+  per shard. The lock wait falls from 3.6% of thread time to 0.2%.
+- **Two schedulers, chosen by `ExploitConfig::deterministic`.** The deterministic one is
+  the round-robin split above: fixed subset per worker, fixed budget share, so the same
+  seeds and thread count pick the same moves on every run. The faster one is dynamic
+  child claiming: a worker takes the next root move when it finishes the previous one and
+  each move gets an equal share of what is left of the node budget. It recovers the
+  imbalance the barrier would otherwise wait for (74-90% occupancy against 63%), but
+  which worker evaluates a move decides what its session memo ends up holding, so the
+  play varies a little run to run. **Play uses the dynamic scheduler; the tools use the
+  deterministic one** - `optbench`, `bench` and `prof` set it themselves so their numbers
+  are comparable, `IPVGO_DETERMINISTIC=1` forces it for `exploitplay`/`serve`, and
+  `IPVGO_DYNAMIC=1` forces the dynamic one in the tools when its speed is what is being
+  measured.
+
+Interleaved, 5 rounds, 12 threads, identical node counts:
+
+| benchmark | before | round robin | dynamic |
+|---|---|---|---|
+| `optbench --positions=2 --depth=3 --threads=12` | 53.7 ms | 45.3 ms (-16%) | 44.8 ms (**-17%**) |
+| `optbench --size=9 --positions=4 --depth=2 --threads=12` | 13.9 ms | 13.3 ms (-5%) | 12.5 ms (**-10%**) |
+| `exploitplay Illuminati 9 6 2 1` @4000, default threads | 4.7 ms/move | 3.9-4.3 | 3.7-4.5 |
+
+Strength is unchanged within noise: Illuminati 9x9 @4000, 6 seeds x 10 games, three runs
+of the shipping (dynamic) build gave 45/60, 43/60 and 41/60 with margins -13.1, -16.3 and
+-18.9, against 43/60 and -15.5 twice for the build before this pass (the round-robin mode
+reproduces exactly: 42/60, margin -16.6, twice).
+
+Most of the win came from the two structural changes rather than from dynamic claiming:
+round robin removes the idle workers, and the sharded cache removes the lock wait, which
+is why the deterministic mode is already 16% faster on the 2-position bench even though
+it still waits on its slowest worker. The dynamic scheduler is worth the last 1-6% in
+play, where the run-to-run variation does not matter.
 ### The cleanup pass
 
 Everything the passes above added is now the only path. No switch selects a slower
@@ -872,8 +932,9 @@ Removed because they were legacy behaviour behind a comparison switch:
 
 Switches that stay are configuration, not alternatives: `IPVGO_NODE_LIMIT`,
 `IPVGO_THREADS`, `IPVGO_CARRY`, `IPVGO_NO_SESSION`, `IPVGO_PONDER_*`, `IPVGO_TRACE*`,
-`IPVGO_EXPLAIN`, `IPVGO_CACHE_STATS`, `IPVGO_FIXED_WIDTH`, `IPVGO_WHITE_WORST` and the
-evaluation knobs (`IPVGO_SETTLE`, `IPVGO_VITAL`, `IPVGO_EYE_FILTER`, `IPVGO_MOYO*`).
+`IPVGO_EXPLAIN`, `IPVGO_CACHE_STATS`, `IPVGO_FIXED_WIDTH`, `IPVGO_WHITE_WORST`,
+`IPVGO_DETERMINISTIC` / `IPVGO_DYNAMIC` (see "The threading pass") and the evaluation
+knobs (`IPVGO_SETTLE`, `IPVGO_VITAL`, `IPVGO_EYE_FILTER`, `IPVGO_MOYO*`).
 
 Verified after the removal, with the usual suite: `selftest`, `fuzz 60 11` (6874
 moves, 0 anomalies), `policycheck` identical on three factions, `eyetest` unchanged
@@ -909,10 +970,12 @@ many it declined, so a change that quietly turns the fast path off is visible.
 case for the liberty storage, and the check fails if a listed liberty is not an empty
 neighbour or if the totals outgrow the fixed arrays.
 
-`optbench` node counts are deterministic at `--threads=1`; at the default thread
-count they vary run to run, so compare node counts only at `--threads=1`. The
-search has no value-based pruning, so node counts do not depend on the eval -
-only the reported `value` and the chosen move do.
+`optbench` runs the deterministic scheduler, so its node counts repeat exactly at any
+thread count (the count itself differs a little between thread counts, because the
+workers' memo partitions differ - `--threads=1` gives the reference 39 012 / 11 537).
+Compare like with like: same `--threads`, same configuration. The search has no
+value-based pruning, so node counts do not depend on the eval - only the reported
+`value` and the chosen move do.
 
 `IPVGO_NODE_LIMIT` makes `exploitplay` search the way the server does (the client
 sends `iterations`, which becomes a node budget and switches on iterative
@@ -930,7 +993,10 @@ regression-tested:
 - **`nodeBudget`** caps the endgame solve using a per-search node counter, so a
   position's value depends on how many nodes the search visited before reaching
   it. Changing the budget (or the thread count, since each worker gets its own
-  counter and a partition of the root moves) can change the chosen move.
+  counter and a partition of the root moves) can change the chosen move. The default
+  scheduler claims root moves dynamically, so even at a fixed budget and thread count
+  the play varies slightly run to run; set `IPVGO_DETERMINISTIC=1` (or build a tool,
+  which sets it) to pin the round-robin split and get the same moves every time.
 - **The session cache** reuses positions across moves. It only reuses values with
   no endgame cut in their subtree, so reuse cannot lower accuracy, but it does
   change which nodes get evaluated and therefore the play.
