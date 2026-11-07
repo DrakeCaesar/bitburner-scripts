@@ -919,9 +919,27 @@ were being counted as White borders, which would have mis-valued every region to
 obstacle. That is exactly the kind of silent error the flags introduce, so the check
 stays.
 
+**3. The eye delta finds its regions from the liberty lists (kept, -1.7% / -2.4%).**
+`eyeTotalsAfterMove` runs once per eye *candidate point*, and it used to walk every stone
+of the chains the move joins, plus all their neighbours, to discover which empty regions
+those chains border. Those regions are exactly the ones the chains' liberty lists live in,
+and the chain pass already keeps those lists - so the walk is now the chain's perimeter
+instead of its area. `eyetest` is unchanged bit for bit (49 041 candidate points, 38 652
+on the incremental path, same declines), which is the check that matters here.
+
 Rejected after measuring: **reordering the nine pattern-mask tests** to try the centre and
 orthogonal neighbours first (+0.3%, noise). The early exit already prunes most points in
 the first few cells.
+
+Also rejected, and instructive: **skipping the re-derivation of regions that cannot
+change.** A region bordered by one merged piece and credited to that piece looked like it
+had nothing to re-derive - merging pieces of one colour keeps its verdict, and its eye
+moves to the merged chain, which is already in the starting total. That version produced
+2 000-3 000 `eyetest` mismatches, even after restricting it to boards with no
+encirclement-credited regions. The reason is the encirclement test itself: it compares the
+*bounding box* of the bordering chain with the region's, and a chain's box changes when
+unrelated cells join it, so a region whose own cells are untouched can still flip verdict.
+The skip is out; the profile line `analysis.cpp:655` (the component flood) stays.
 
 Profile after this round (same workload as above): `computeChainsInto` 19.7% (it now
 contains the liberty work, so its share rose while the total fell), `eyeTotalsAfterMove`

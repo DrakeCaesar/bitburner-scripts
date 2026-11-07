@@ -592,13 +592,12 @@ bool eyeTotalsAfterMove(const SimpleBoard& board, const ChainSet& cs, const EyeB
   };
   const int ownRegion = cs.id[static_cast<size_t>(point)];
   markAffected(ownRegion);
+  // The regions that touch a joined chain are the regions its liberties are in. The
+  // chain pass already lists those, so this walks the chain's perimeter instead of
+  // its area - the difference matters for a large group, and this runs once per eye
+  // candidate point.
   for (int i = 0; i < mergedCount; ++i) {
-    for (const int cell : cs.members(merged[i])) {
-      for (int k = 0; k < nt.count[cell]; ++k) {
-        const int n = nt.idx[cell][k];
-        if (cells[n] == '.') markAffected(cs.id[static_cast<size_t>(n)]);
-      }
-    }
+    for (const int liberty : cs.liberties(merged[i])) markAffected(cs.id[static_cast<size_t>(liberty)]);
   }
 
   // Drop what those regions contributed before the move.
