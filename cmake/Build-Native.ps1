@@ -64,9 +64,10 @@ $buildRoot = Join-Path $repoRoot "out/build/$folder"
 # A CMake build tree is bound to the generator that created it. The IDE (Visual
 # Studio generator, multi-config) and this script (Ninja, single-config) share one
 # folder, and reconfiguring a tree with the other generator aborts with
-# "generator ... does not match the generator used previously". Rebuild in the same
-# folder instead: drop the generated files and let CMake start over. Everything
-# under the build root is generated output, so nothing is lost.
+# "generator ... does not match the generator used previously". .vscode/settings.json
+# pins CMake Tools to Ninja so the two normally agree; this branch is the safety net
+# for a tree left behind by an older IDE configuration. Everything under the build
+# root is generated output, so nothing is lost.
 if ($Configure -and (Test-Path (Join-Path $buildRoot 'CMakeCache.txt'))) {
   $cache = Join-Path $buildRoot 'CMakeCache.txt'
   $cachedLine = Select-String -Path $cache -Pattern '^CMAKE_GENERATOR:INTERNAL=' | Select-Object -First 1

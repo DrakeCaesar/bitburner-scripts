@@ -72,6 +72,33 @@ performance work, `x64-Profile` (`RelWithDebInfo`) for profiling, plus
 `x64-Debug`, the two `x64-Clang-*` configurations and `Linux-*`. Each
 configuration builds into `out/build/<name>`.
 
+`CMakePresets.json` (repo root, tracked) declares the *generator* for every entry
+point: `x64-Release`, `x64-Debug`, `x64-Profile` and the two `x64-Pgo-*` passes, all
+Ninja and all pointing at the same `out/build/<name>` directories that
+`CMakeSettings.json` and `Build-Native.ps1` use. Use it directly when the MSVC
+environment is already loaded:
+
+```powershell
+cmake --preset x64-Release        # configure
+cmake --build --preset x64-Release
+```
+
+A build tree is bound to the generator that created it, so every entry point has to
+agree on one. CMake Tools gets its generator from the preset (enable presets in the
+editor; the `.vscode/` folder is gitignored, so nothing there can protect another
+checkout), and `Build-Native.ps1` configures through the same preset. Configure the
+same folder with two generators and CMake aborts with `generator ... does not match
+the generator used previously`, and the recovery - deleting the tree, which
+`Build-Native.ps1 -Configure` does automatically - throws away the whole build
+directory. If a toolchain change makes a tree unusable, prefer deleting
+`out/build/<name>` yourself over letting two generators fight over it.
+
+The profiling build keeps inlining off by default (`x64-Profile`). For profile
+numbers that match Release, override the cache variable on either entry point:
+`cmake --preset x64-Profile -DIPVGO_PROFILE_INLINING=ON`, or
+`Build-Native.ps1 -BuildType RelWithDebInfo -ProfileInlining`. It is the same tree
+either way - the flag only changes what the compile step does.
+
 Server listens on **http://localhost:3010** (`IPVGO_PORT` to override).
 
 - `GET /health` — `{ engine: "exploit" | "mcgs" | "native" | "missing", benchEngine, ... }`

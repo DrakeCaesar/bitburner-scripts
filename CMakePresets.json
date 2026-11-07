@@ -1,0 +1,73 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "ninja-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true
+      }
+    },
+    {
+      "name": "x64-Debug",
+      "inherits": "ninja-base",
+      "displayName": "x64 Debug",
+      "binaryDir": "${sourceDir}/out/build/x64-Debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "x64-Release",
+      "inherits": "ninja-base",
+      "displayName": "x64 Release",
+      "binaryDir": "${sourceDir}/out/build/x64-Release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "x64-Profile",
+      "inherits": "ninja-base",
+      "displayName": "x64 RelWithDebInfo (inlining off)",
+      "binaryDir": "${sourceDir}/out/build/x64-Profile",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "IPVGO_PROFILE_INLINING": false
+      }
+    },
+    {
+      "name": "x64-Pgo-Generate",
+      "inherits": "ninja-base",
+      "displayName": "x64 Release, instrumented for PGO",
+      "binaryDir": "${sourceDir}/out/build/x64-Pgo",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "IPVGO_PGO": "GENERATE"
+      }
+    },
+    {
+      "name": "x64-Pgo-Optimize",
+      "inherits": "ninja-base",
+      "displayName": "x64 Release, optimised from the collected PGO profile",
+      "binaryDir": "${sourceDir}/out/build/x64-Pgo",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "IPVGO_PGO": "OPTIMIZE"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "x64-Debug", "configurePreset": "x64-Debug" },
+    { "name": "x64-Release", "configurePreset": "x64-Release" },
+    { "name": "x64-Profile", "configurePreset": "x64-Profile" },
+    { "name": "x64-Pgo-Generate", "configurePreset": "x64-Pgo-Generate" },
+    { "name": "x64-Pgo-Optimize", "configurePreset": "x64-Pgo-Optimize" }
+  ]
+}
