@@ -209,6 +209,14 @@ class BoardHistory {
     if (strideFor(n) != stride_) return false;
     uint64_t probe[12];
     packBoard(board, probe, stride_);
+    return containsPacked(probe);
+  }
+
+  // Same question for a caller that already has the board packed - the legality scan
+  // packs it once and then flips two bits per candidate point instead of packing the
+  // board again for every one of them.
+  bool containsPacked(const uint64_t* probe) const {
+    if (count_ == 0) return false;
     const uint64_t* entry = words_.data();
     const size_t stride = static_cast<size_t>(stride_);
     for (int i = 0; i < count_; ++i, entry += stride) {

@@ -531,18 +531,77 @@ std::vector<std::pair<int, int>> getAllValidMoves(const GameState& state, Color 
   const int N = static_cast<int>(state.board.size());
   std::vector<std::pair<int, int>> out;
   out.reserve(static_cast<size_t>(N) * static_cast<size_t>(N));
+  // Both of these make every point invalid, so the scan can stop before it starts.
+  if (state.gameOver || state.previousPlayer == player) return out;
+  const char me = colorChar(player);
+
   BitPlanes planes;
   const BitPlanes* planesPtr = nullptr;
   if (BitPlanes::fits(N)) {
     BitPlanes::load(state.board, planes);
     planesPtr = &planes;
   }
-  // Walk the board directly: the intermediate point list was one more allocation
-  // and a copy per call, and this is on the hot path for every White node.
+
+  // Most points capture nothing: a point with an empty neighbour cannot be suicide,
+  // and a point with no enemy stone next to it cannot capture, so the board after the
+  // move is the board with one stone added. Those skip the general path - no board
+  // copy, no capture sweep - and only have to answer superko, which the packed board
+  // does: pack it once per scan and flip the stone's two bits per point.
+  const uint64_t stoneCode = me == 'X' ? 1ULL : 2ULL;  // packBoard's code for X and O
+  uint64_t packed[FlatNeighbors::kMaxPoints];
+  const int stride = (N * N * 2 + 63) / 64;
+  packBoard(state.board, packed, stride);
+  const NeighborTable nt = neighborTable(N);
+  const char* cells = state.board.flat();
+
   for (int x = 0; x < N; ++x) {
     for (int y = 0; y < N; ++y) {
-      if (state.board[x][y] != '.') continue;
-      if (validateMove(state, x, y, player, nullptr, planesPtr) == Validity::Valid) out.emplace_back(x, y);
+      const int point = x * N + y;
+      if (cells[point] != '.') continue;
+      bool hasEmptyNeighbour = false;
+      bool hasEnemyNeighbour = false;
+      const int nbCount = nt.count[point];
+      for (int k = 0; k < nbCount; ++k) {
+        const char c = cells[nt.idx[point][k]];
+        if (c == '.') hasEmptyNeighbour = true;
+        else if (c != me && c != '#') hasEnemyNeighbour = true;
+      }
+      const int bit = point * 2;
+      const int word = bit >> 6;
+      const uint64_t shift = static_cast<uint64_t>(bit & 63);
+      if (hasEmptyNeighbour && !hasEnemyNeighbour) {
+        // Nothing to capture and no suicide: patch the stone in, ask superko, put the
+        // word back.
+        const uint64_t saved = packed[word];
+        packed[word] = (saved & ~(3ULL << shift)) | (stoneCode << shift);
+        const bool repeated = state.previousBoards.containsPacked(packed);
+        packed[word] = saved;
+        if (!repeated) out.emplace_back(x, y);
+        continue;
+      }
+      // A contact point may capture: let the bit sweep find the captured stones, then
+      // patch those points out of a scratch copy of the packed board instead of
+      // building and packing the whole board after the move.
+      if (planesPtr == nullptr) {
+        if (validateMove(state, x, y, player, nullptr, nullptr) == Validity::Valid) out.emplace_back(x, y);
+        continue;
+      }
+      uint64_t captured[kBitWords] = {0, 0, 0, 0, 0, 0};
+      if (!placeStone(*planesPtr, N, point, player == Color::Black, captured)) continue;  // suicide
+      uint64_t probe[kBitWords];
+      for (int w = 0; w < kBitWords; ++w) probe[w] = packed[w];
+      probe[word] = (probe[word] & ~(3ULL << shift)) | (stoneCode << shift);
+      for (int w = 0; w < kBitWords; ++w) {
+        uint64_t dead = captured[w];
+        while (dead != 0) {
+          unsigned long b = 0;
+          _BitScanForward64(&b, dead);
+          dead &= dead - 1;
+          const int capturedBit = (w * 64 + static_cast<int>(b)) * 2;
+          probe[capturedBit >> 6] &= ~(3ULL << (capturedBit & 63));
+        }
+      }
+      if (!state.previousBoards.containsPacked(probe)) out.emplace_back(x, y);
     }
   }
   return out;

@@ -420,13 +420,13 @@ IPVGO_THREADS=1 IPVGO_NODE_LIMIT=4000 IPVGO_CACHE_STATS=1 \
 
 | measurement | current baseline |
 |---|---|
-| `optbench` per search (2 positions, depth 3) | ~204 ms (was ~226 ms before the bit-plane pass, ~248 ms before the eye pass, ~284 ms before the reply-reuse pass; wall clock is noisy, the node counts are the stable part), 39 012 nodes |
+| `optbench` per search (2 positions, depth 3) | ~199 ms (was ~230 ms before the legality pass; wall clock is noisy, the node counts are the stable part), 39 012 nodes |
 | `optbench` position 1 / 2 | 11 181 nodes / 27 831 nodes (deterministic; values are win probabilities) |
-| `optbench --size=9 --positions=4 --depth=2 --threads=1 --reps=3` | ~104 ms/search, 11 537 nodes |
-| `exploitplay Netburners 5 8 2 1` @4000, 1 thread | 726 ms think for 8 games (was 754 ms), same results |
-| `exploitplay Netburners 5 24 2 1` (fixed depth) | ~3.4 ms/move, unchanged within noise: no reply reuse and few liberties to query |
-| `exploitplay "Slum Snakes" 7 4 2 1` @4000, 1 thread | 3.02 s think (was 3.35 s), same nodes and moves |
-| `exploitplay Illuminati 9 2 2 1` @4000, 1 thread | 3.71 s think (was 3.88 s), same nodes and moves |
+| `optbench --size=9 --positions=4 --depth=2 --threads=1 --reps=3` | ~79 ms/search (was ~102 ms), 11 537 nodes |
+| `exploitplay Netburners 5 8 2 1` @4000, 1 thread | 668 ms think for 8 games (was 699 ms), same results |
+| `exploitplay Netburners 5 24 2 1` (fixed depth) | ~3.3 ms/move |
+| `exploitplay "Slum Snakes" 7 4 2 1` @4000, 1 thread | 2.79 s think (was 2.98 s), same nodes and moves |
+| `exploitplay Illuminati 9 2 2 1` @4000, 1 thread | 2.91 s think (was 3.66 s), same nodes and moves |
 | `exploitplay Illuminati 13 1 2 1` @4000, 1 thread | 16.0 s think (was 16.9 s), same nodes and moves; peak RSS 61.6 MB |
 | `profileworkload 5` (Illuminati 9x9) | ~13.9 ms/move before the reply-reuse pass |
 
@@ -487,15 +487,26 @@ Two ideas were tried and rejected:
   land cost a `ChainSet` copy. Measured inside the noise (7x7 3.62 s -> 3.67 s,
   9x9 4.06 s -> 3.99 s), so it is not in the tree.
 
-The next targets, from the inlining profile with the bit-plane queries in place
-(shares of 27 ms/move, one thread, 7x7, `nodeLimit=4000`): `computeChainsInto`
-13.3% (the chain flood fill, which every leaf and every reply distribution needs),
-`validateMove` 7.7% (`getAllValidMoves` validates every empty point on every reply
-distribution), `eyeTotalsAfterMove` 7.3% and `summarizeEyes` 4.5% (the eye passes),
-`matchesAnyPattern` 5.7%, `evaluatedLead` 4.5%, `placeStoneBits` 3.1%,
-`BitPlanes::load` 2.5% and the `BitPlanes` constructor 2.2%. Nothing is a single
-dominating cost, and the two levers with real headroom left are the flood fill and
-the legality scan.
+The next targets, from the inlining profile of the current build (shares of
+24.4 ms/move, one thread, 7x7, `nodeLimit=4000`): `computeChainsInto` 14.2% (the
+chain flood fill, which every leaf and every reply distribution needs),
+`eyeTotalsAfterMove` 8.8% and `summarizeEyes` 3.5% (the eye passes),
+`matchesAnyPattern` 6.5%, `evaluatedLead` 5.1%, `getEyeCreationMoves` 4.3%,
+`neighborChainsOfChain` 3.8%, `BitPlanes::load` 2.5%. The legality scan that used to
+head this list is down to 4.3% combined (`getAllValidMoves` 2.2% + `placeStoneBits`
+2.1%).
+
+Two concrete ideas remain, both worth a few percent and both self-contained:
+
+- **The flood fill writes five int arrays per board** (`id`, `memberOffsets`,
+  `memberData`, `libertyOffsets`, `libertyData`). Narrowing them to 16-bit halves that
+  traffic and halves the `ChainSet` copies the eye pass takes, at the cost of touching
+  every reader; the liberty pass could also be fused into the chain pass, which would
+  halve the neighbour visits, but that changes the order liberties are stored in.
+- **`matchesAnyPattern` is evaluated per point**, nine cell classes at a time, when the
+  same question can be asked for the whole board at once: for each of the nine
+  pattern offsets and each cell class, one shifted mask, then each pattern is an AND
+  of nine masks. That is ~20 patterns x 9 word-ops per board instead of per point.
 
 ### The incremental eye pass
 
@@ -635,9 +646,64 @@ What is deliberately **not** packed in:
 
 A position-keyed table with a small per-depth value array - one probe for every depth
 of a position, and room to hang a distribution handle off it - is the structural
-alternative to the current two depth-keyed tables. It is not worth building at the
-hit rates measured here (1.3-5.8% of lookups, and the table is break-even at the
-in-game budget on 7x7 and above).
+alternative to the current depth-keyed entries. It was built and measured, not just
+argued about: one entry per position holding twelve slots (value, epoch and flags per
+remaining depth), with the endgame's history-free key in its own tagged space.
+
+It is exact - node counts, memo hits, moves and values came out identical, and the
+entry count fell by 16% on 7x7 and 56% on 9x9 (68 702 -> 57 471, 180 009 -> 79 225)
+because one entry now covers every depth a position is searched at. It is also
+slower: an entry is 160 bytes instead of 16, so the table grows 2.9 MB -> 12.7 MB on
+a 9x9 game, and a probe touches two or three cache lines instead of one. Interleaved,
+three rounds each:
+
+| | per-depth entries (16 B) | position-keyed (160 B) |
+|---|---|---|
+| `optbench --size=9 --depth=2` | 101.84 / 101.72 / 102.08 ms | 103.42 / 103.66 / 103.47 ms |
+| 7x7 @4000 | 2969 / 2980 / 3048 ms | 3007 / 3062 / 3036 ms |
+
+1-2% slower and 4x the memory, so the depth-keyed entries stay. The table is not
+lookup-bound: it is density-bound, which is the same reason the payload that would
+have gone in it (distributions, chain sets) stays out.
+
+### The legality pass
+
+`getAllValidMoves` is called for every reply distribution and validates every empty
+point (13.5% of the time with the bit-plane queries in place: `validateMove` 7.7%,
+the capture sweep 3.2%, and the bit-plane load behind them). Almost none of those
+points can be affected by the rules that make a move illegal:
+
+- a point with an **empty neighbour** cannot be suicide, because the new stone has a
+  liberty;
+- a point with **no enemy stone next to it** cannot capture, so the board after it is
+  the board with one stone added.
+
+For those two cases together - most points on a board that is not a knife fight - the
+only remaining question is superko, and superko compares boards. Instead of building
+the board after the move and packing it (a 361-byte copy plus a per-cell pack per
+point), the scan packs the current board **once** and flips the point's two bits in
+the packed probe. `BoardHistory::containsPacked()` takes the probe as it is.
+
+Contact points, where a capture is possible, keep the bitwise capture sweep to find
+the captured stones - but they patch those stones out of a scratch copy of the packed
+probe instead of building and packing the whole board. `validateMove` is left for the
+one-shot API (`evaluateIfMoveIsValid`, `makeMove`), which needs the resulting board
+anyway.
+
+Exact by construction, and verified: `selftest`, `fuzz 60 11` (6874 moves, 0
+anomalies), `policycheck` identical on three factions, `eyetest` 0 mismatches, and
+identical node counts, memo hits and moves everywhere. Interleaved against the
+previous build:
+
+| | before | after |
+|---|---|---|
+| `optbench --size=9 --depth=2` | 102.22 / 101.93 ms | 79.22 / 79.48 ms |
+| 9x9 @4000, 2 games | 3645 / 3681 ms | 2920 / 2898 ms |
+| 7x7 @4000, 4 games | 3000 / 2955 ms | 2749 / 2836 ms |
+| 5x5 @4000, 8 games | 698 / 700 ms | 669 / 667 ms |
+
+**-22% at 9x9, -6% at 7x7, -4.5% at 5x5.** The gain scales with how many empty points
+a board has, because that is how many times the old path copied and packed a board.
 
 ### Third-party code
 
