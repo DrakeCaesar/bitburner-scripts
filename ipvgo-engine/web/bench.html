@@ -342,6 +342,16 @@
     <script>
       const ALL_FACTIONS = ["Netburners", "Slum Snakes", "The Black Hand", "Tetrads", "Daedalus", "Illuminati"]
       const selected = new Set(ALL_FACTIONS)
+      // The chips, the run order and the Results table all follow ALL_FACTIONS. `selected`
+      // is a Set, so a faction that is clicked off and back on moves to the end of it;
+      // sending that order made the results disagree with the list above them. Unknown
+      // names (WorldDaemon on 19x19) sort last, and the sort is stable, so they keep
+      // their relative order.
+      const factionRank = (name) => {
+        const at = ALL_FACTIONS.indexOf(name)
+        return at < 0 ? ALL_FACTIONS.length : at
+      }
+      const inListOrder = (names) => names.slice().sort((a, b) => factionRank(a) - factionRank(b))
       // Built with fromCharCode so the source stays ASCII: the glyphs are only
       // presentation and a stray backslash in a template literal renders literally.
       const CARET_OPEN = String.fromCharCode(0x25be)
@@ -410,7 +420,7 @@
           nodeCap: el("nodeCap").value,
           games: el("games").value,
           seed: el("seed").value,
-          factions: Array.from(selected),
+          factions: inListOrder(Array.from(selected)),
           tuning,
           tuningOpen: el("tuning").open,
           carry: el("carry").checked,
@@ -648,7 +658,11 @@
         body.innerHTML = ""
         let games = 0
         let wins = 0
-        for (const row of s.rows) {
+        // The run reports rows in the order it was asked for; sort them back into the
+        // order of the faction list so the table always matches the chips, including
+        // for a snapshot produced by an older page.
+        const rows = s.rows.slice().sort((a, b) => factionRank(a.faction) - factionRank(b.faction))
+        for (const row of rows) {
           games += row.games
           wins += row.wins
           const pct = row.winRate
@@ -1022,7 +1036,7 @@
           budgetMs: mode === "time" ? budget : 0,
           iterations: mode === "depth" ? Math.max(0, Math.floor(numberOf("nodeCap") || 0)) : mode === "iterations" ? budget : 0,
           depth: mode === "depth" ? Math.max(1, Math.floor(numberOf("depth") || 2)) : undefined,
-          factions: size === 19 ? ["WorldDaemon"] : Array.from(selected),
+          factions: size === 19 ? ["WorldDaemon"] : inListOrder(Array.from(selected)),
         }
         for (const id of TUNING_IDS) {
           const raw = el(id).value
