@@ -922,6 +922,57 @@ round robin removes the idle workers, and the sharded cache removes the lock wai
 is why the deterministic mode is already 16% faster on the 2-position bench even though
 it still waits on its slowest worker. The dynamic scheduler is worth the last 1-6% in
 play, where the run-to-run variation does not matter.
+
+### The allocator handover
+
+Long bench runs grew until the machine swapped: 100 games per faction on 5x5 at a 200 ms
+think budget ended with the engine holding 24 GB, against a few hundred MB for the same
+run a day earlier. It is not the search or the memo - it is the small-object pool behind
+`operator new` (`fast_alloc.hpp`), and the trigger is the threading pass above: a fresh
+set of worker threads is created for **every move** and joined at the end of it.
+
+Each thread carved its own 256 KB chunks and kept its own free lists, and when the thread
+exited, both were dropped on the floor: the chunks are never returned to the OS by
+design, and nothing else could reach the freed blocks. Measured on the 40-game 5x5 bench,
+memory grew ~240 MB per game (9.6 GB in total, ~370 bytes per node); with `optbench`
+it grew 7.4 MB per search at 12 threads and stayed flat at one thread, because the main
+thread's pool survives.
+
+Two designs failed before the third worked, and both are worth remembering:
+
+- Draining the shared lists **block by block under the lock** put a global mutex on every
+  allocation that missed the local list and serialised all twelve workers; a 20-repetition
+  bench that normally takes 1.7 s did not finish in ten minutes.
+- Draining **whole class chains** per thread fixed the contention but not the growth: a
+  thread that took every block of a size class held them while its neighbours carved
+  fresh chunks, so the pool still grew by a peak working set per move (25 000 blocks per
+  12-thread round in a standalone reproduction).
+- `new Globals()` for the shared pool deadlocked the process in `--threads=1`: that `new`
+  goes through the very `operator new` being defined, re-enters `allocate()`, and waits on
+  the initialisation guard of the same static. The pool now lives in static storage via
+  placement new.
+
+What shipped: a thread keeps at most 256 blocks per size class, takes up to 128 from a
+process-wide pool at a time, hands its surplus back when a list exceeds that ceiling, and
+donates its lists and its spare chunk tail when it exits. Memory is then bounded by the
+peak working set of one move rather than by the length of the run:
+
+| workload | before | after |
+|---|---|---|
+| `optbench --positions=2 --depth=3 --reps=200` (12 threads) | 1466 MB and climbing | 36 MB flat |
+| `benchjson` 40 games, 5x5, 200 ms budget | 9639 MB and climbing | 346 MB, plateau |
+| standalone: 60 rounds x 12 threads x 20 000 allocations | +3 MB per round | 11 -> 13 MB total |
+
+Node counts (39 012 and 11 537) and `selftest`, `fuzz 60 11`, `eyetest` are unchanged, and
+per-search time is unchanged or slightly better (39.3 ms against 38.5 ms at 12 threads,
+172.2 ms against 172.3 ms single-threaded).
+
+The remaining per-move cost this exposes is the thread churn itself: 12 threads created
+and destroyed for every move is ~150 000 thread creations over a 600-game bench. A small
+persistent worker pool would remove both that and the allocator's dependence on exit
+handover, at the price of a dispatch barrier to reimplement; it is the next thing worth
+measuring here, not another micro-optimisation of the search.
+
 ### The chain-pass round
 
 Two changes to `computeChainsInto`, which is the largest single cost and now does all of
