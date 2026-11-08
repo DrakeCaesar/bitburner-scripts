@@ -2,9 +2,9 @@
 //
 //   pnpm run server:dev
 //
-// Runs server.js and restarts it whenever the server or the bench page changes,
-// so edits show up without touching a terminal. The server advertises
-// IPVGO_SUPERVISED=1, which enables POST /api/server/restart (the GUI's
+// Runs server.js and restarts it whenever the server, the explanation renderer or
+// the bench page changes, so edits show up without touching a terminal. The server
+// advertises IPVGO_SUPERVISED=1, which enables POST /api/server/restart (the GUI's
 // "Restart server" button) and lets the page reload itself when the server
 // instance changes.
 import { spawn } from "node:child_process"
@@ -16,7 +16,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, "..")
 const ENTRY = path.join(ROOT, "server.js")
 
-const WATCH = [ENTRY, path.join(ROOT, "web"), path.join(ROOT, "scripts")]
+const WATCH = [ENTRY, path.join(ROOT, "lib"), path.join(ROOT, "web"), path.join(ROOT, "scripts")]
 const DEBOUNCE_MS = 200
 const RESTART_DELAY_MS = 400
 // server.js exits with this code when it wants to be restarted (GUI button).

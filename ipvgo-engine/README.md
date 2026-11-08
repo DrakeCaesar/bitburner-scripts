@@ -198,7 +198,7 @@ Open **http://localhost:3010/bench**.
 The page **cannot start or restart the server by itself** — a page served over
 http has no process access — so the cycles it can save are handled elsewhere:
 
-- `server:dev` (scripts/dev-server.mjs) watches `server.js`, `web/` and
+- `server:dev` (scripts/dev-server.mjs) watches `server.js`, `lib/`, `web/` and
   `scripts/`, restarts the server on any change, and revives it if it crashes.
 - The workspace task **Server: dev (auto-restart)** runs on folder open, so the
   server is already up when you sit down.
@@ -219,14 +219,81 @@ http has no process access — so the cycles it can save are handled elsewhere:
 Every game of the current batch is archived with its full move list, so the
 decision sequence behind a result can be inspected instead of just its win/loss.
 Under **Games**, click a game to open it: one row per Black move with the move it
-played, the win probability it assigned, the search depth and node count, the
-Wall time, White's actual reply, and the score after the half-move. Clicking a row
-shows that position on the board above, which is how "why did it play there" gets
-answered without re-running anything.
+played, the win probability it assigned, the fixed-depth value (see below), the
+search depth and node count, the wall time, White's actual reply, and the score
+after the half-move. Clicking a row shows that position on the board above, which
+is how "why did it play there" gets answered without re-running anything. Hovering
+a row shows the leaf evaluator's own numbers for it.
+
+Two switches sit above the list:
+
+- **only losses** filters the list to the games Black lost, and reports how many
+  of the archive are shown ("12 of 20 shown"). The faction table above stays
+  complete; only the list is filtered, and expanded rows stay expanded.
+- **write loss files** writes an explanation for every loss as the run goes, to
+  `ipvgo-engine/temp/lost-games/<faction>-<game>-<timestamp>.txt`. Off by default,
+  so a long batch does not leave hundreds of files nobody opens.
+
+Both are remembered across reloads, separately from the run form.
+
+#### Locking losses to tune against them
+
+**Lock losses (N)** keeps this batch's losses as a fixed set. **Replay locked** then
+plays exactly those games again with whatever settings the form holds at that moment
+- budget, beam, replies, endgame knobs - so a tuning change is measured on the same
+boards instead of on a fresh random batch. The bar shows the set's seed and board
+size and, once a batch has replayed it, how that batch did: "this batch: 3 won, 9
+still lost". Games that came from the locked set are tagged `was LOSS` in the list.
+
+This is exact rather than approximate. A game is fully determined by the batch seed
+and the number of rng draws consumed before it started, and `benchjson` reports that
+count per game as `draws` in its `gameStart` event. A replay rewinds the stream to
+each recorded count, so the board, the clock and every one of White's replies are
+identical and only the search differs. Checked by replaying a locked set with
+unchanged settings: same winners, same margins, same move sequences.
+
+The set survives a reload (`localStorage`), but it belongs to the seed and engine
+build it was recorded from - lock again after changing either. Locking from a
+replay batch works the same way and records the same draw counts.
+
+#### Explain (the loss replay)
+
+**Explain** renders the game as plain ASCII in the page; **Write file** saves the
+same text and reports the path; **Copy** puts it on the clipboard. Either button
+works on any game, not just losses.
+
+The text is one line per Black move — `n  Black  p(win)  delta  flat  swing
+d/nodes/ms  White  B:W  evalW  rules  mdl p  flag` — followed by a block for every
+blunder: the position before the move, the boards, what the evaluator said at each
+step, the alternatives the search ranked, and how likely the reply that broke it
+was. Flags are:
+
+| flag | meaning |
+|---|---|
+| `BLUNDER` | `p(win)` of this move minus the next one is above the threshold (0.15) |
+| `SWING` | the same drop on the **fixed-depth** series, i.e. the position really got worse |
+| `CAPPED` | the value is 1.000 from a heuristic leaf: a cap, not a certainty |
+
+`flat` is the value of a fixed one-ply search (Black's move, then the modelled
+White replies, then the leaf), so it means the same thing on every move. The
+search value does not: it depends on how deep the node budget happened to get, and
+that is what most `BLUNDER` rows turn out to be. The per-blunder verdict line says
+which of the two it is; the measurement behind that is in "Known limits".
 
 The move lists are not shipped over the event stream: the snapshot carries
 summaries only, and `GET /api/bench/game?index=N` returns one game's full record on
-demand. The archive is capped at 2000 games (a batch is at most 500).
+demand. The archive is capped at 2000 games, and keeps the most recent ones;
+**Games per faction** has no upper limit, so a long run is bounded by its own
+wall time rather than by a number in the form.
+
+Each move record also carries an `audit` object (what the leaf evaluator said at
+the root and after the move, the top three root alternatives, White's modelled
+replies with their probabilities) and each reply carries `whiteAudit` (the eval
+after it and the modelled probability of the move White actually played). That is
+the data the explanation is built from, so it is on unless the start request sends
+`"audit": false`. It costs a fixed one-ply search plus one policy build per move:
+under 10% on 5x5 and 7x7, about 13% at 13x13, and about 50% at 19x19 with a
+3000-node budget (where that fixed cost is the same size as the search).
 
 The page picks factions, board size (5/7/9/13/19), the thinking budget, games per
 faction and seed, then streams `ipvgo_game benchjson` events through the server:
@@ -264,6 +331,22 @@ tree and cost roughly linearly in think time.
 Endpoints: `GET /bench`, `GET /api/bench/state?since=<seq>`,
 `POST /api/bench/start`, `POST /api/bench/stop`. Stopping the server also stops
 a running bench.
+
+Two more serve the loss explanation:
+
+| endpoint | returns |
+|---|---|
+| `GET /api/bench/game?index=N` | one archived game with its full move list and audit |
+| `GET /api/bench/game?index=N&format=text` | `{index, text, path: null}` — the replay, not written |
+| `POST /api/bench/explain` `{index, threshold?, write?}` | `{index, path, text}` — writes under `temp/lost-games/` unless `write` is `false` |
+
+`threshold` defaults to 0.15 (the `BLUNDER` marker).
+
+`POST /api/bench/start` also accepts `replay: [{faction, game, draws}, ...]` (the
+values a previous run reported per game), which plays exactly those games instead of
+generating a batch; `size` and `seed` must be the ones the set was recorded with,
+and every other field - the budget included - is the tuning to test. The engine's
+`benchjson` config takes the same array.
 
 The state endpoint returns a short log of half-moves (`frames`, each with a
 monotonic `seq`, whose side moved, and the resulting board). Black's move and
@@ -1203,6 +1286,65 @@ so the depth actually reached depends on both.
 
 Recorded so they are not rediscovered from scratch. Every number here was
 measured, not estimated.
+
+**The reported `p(win)` collapse is mostly the value not being one series
+(measured: 5x5, 240 games).** Setup: `benchjson` with the in-game node budget
+(`iterations=1000`, what `src/ipvgo.ts` sends), seed 1, 40 games per faction,
+deterministic round-robin threads: 208/240 = 86.7% wins, 2921 Black moves. The
+bench now records, per half-move, what the leaf evaluator thought (`audit.root`,
+`audit.after`, `whiteAudit.after`), the top three root alternatives, the modelled
+probability of the reply White actually played, and `audit.flat` — the same value
+from a fixed one-ply search, which therefore means the same thing on every move.
+
+- **The reply model is not the cause.** 119 moves dropped more than 0.15 against
+  the next one. All 119 had White's actual reply inside the modelled set, at a
+  median modelled probability of 1.000 (minimum 0.042).
+- **Nor is there one cause per drop.** 47 of the 119 are the leaf itself flipping
+  (the next value is within 0.1 of the leaf after White's reply), 40 are the next
+  search coming out below that leaf — it found a refutation — and 32 are above it.
+- **The value is a depth-varying quantity.** Mean reported value by the depth the
+  search actually reached: 0.55 at depth 1, 0.54 at 2, 0.69 at 3, 0.77 at 4, 0.71
+  at 5, 0.60 at 6, 0.52 at 7, then 0.05, 0.03 and 0.002 at depths 8-10 (those are
+  the exact endgame solve, which is a different, much more accurate estimator).
+  A move searched to depth 4 and the next one to depth 1 differ by about 0.2 for
+  no reason but the budget, which is why consecutive numbers are not comparable.
+- **On a comparable series the blunders mostly disappear.** The same threshold on
+  `flat` flags 41 drops, and only 6 of them are among the 119: 113 of the 119 are
+  not the position getting worse. Mean absolute change between moves is 0.0755 on
+  the search value and 0.0697 on the fixed-depth one, but the *large* changes are
+  concentrated in the first.
+- **Losses do have real swings.** 20 of the 32 losses contain at least one
+  fixed-depth drop above 0.15; the other 12 lose without a single jump ("the slow
+  bleed").
+- **A White pass does not move the value by itself.** 8 of the 119 drops follow a
+  pass: 4 are `depth 3 -> 1`, where the next value returns to the leaf, and 4 are
+  the endgame solve firing (depth 5-8 in a handful of nodes, and those games were
+  all lost). The pass is the occasion, not the cause.
+- **`p(win) = 1.000` is a cap.** 249 of 2921 moves (8.5%) reported exactly 1.000
+  and 137 (4.7%) at or below 0.001. None of the 1.000s was in a game Black lost in
+  this capture, but the eval lead of those roots ran from -9.4 to +22.5 and the
+  rules lead from -7.5 to +22.5 — a position the game's own score calls lost can
+  still be reported as certain, because the atari terms and the face-value region
+  credit saturate the logistic.
+
+The two mechanisms behind those numbers are the ones already on this page: the
+search is at depth 1-2 for most in-game moves, so `value` is close to the leaf,
+and the leaf credits empty space bordered by one colour at face value, so its
+verdict flips when White walks into that space (ten measured variants, none
+better — see below). Neither is a term that can be fixed by editing one
+coefficient, so the eval was left alone and the *reporting* was fixed instead:
+`flat` is emitted next to `value`, the GUI marks `BLUNDER` (search series) apart
+from `SWING` (fixed-depth series) and `CAPPED`, and the explanation says which of
+the two a drop is. Re-running this capture on the instrumented build reproduced
+all 240 results and all 2921 moves exactly, so none of that changes play.
+
+For the record, the calibration of the eval's own `p(win)` over the same 3161
+half-moves (bucket -> actual win rate of the game): 0.0-0.2 -> 8.7% (368 moves),
+0.2-0.4 -> 75.2% (876), 0.4-0.5 -> 90.9% (832), 0.5-0.6 -> 88.5% (471),
+0.6-0.7 -> 94.6% (186), 0.7 and up -> 100% (188). It is deliberately
+*under*-confident in the middle band — the logistic's centre sits at a zero lead
+so that "we are stronger than this faction" is not baked in — and that is the
+design decision recorded in the source, not a bug to fit away.
 
 **The dominant loss signature on small boards is a total wipe-out, and the eval
 cannot see it coming.** Traced Netburners 7x7 at the in-game budget (`IPVGO_EXPLAIN=1`,

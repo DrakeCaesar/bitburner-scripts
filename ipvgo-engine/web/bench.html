@@ -109,7 +109,6 @@
         border-bottom: 1px solid var(--line);
       }
       header h1 { font-size: 12px; margin: 0; font-weight: bold; }
-      header .sub { color: var(--dim); font-size: 12px; }
       .pill {
         margin-left: auto;
         padding: 4px 8px;
@@ -144,6 +143,8 @@
       section h2 .dim { font-weight: normal; }
       label.field { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
       label.field span { color: var(--dim); }
+      /* Keeps a bare checkbox in the same column as the 150px inputs next to it. */
+      label.field .fieldToggle { flex: 0 0 150px; display: flex; align-items: center; }
       input, select {
         background: transparent;
         color: var(--text);
@@ -158,6 +159,30 @@
       }
       input::placeholder { color: #666666; opacity: 1; }
       input:focus, select:focus { outline: none; border-color: var(--line); background: var(--selected-bg); }
+      /* Checkbox drawn like the other controls: a square with the same 1px border
+         that fills with the active colour. The mark is an X corner to corner, as an
+         inline SVG so it renders on a replaced element without relying on ::after. */
+      input[type="checkbox"] {
+        appearance: none;
+        -webkit-appearance: none;
+        width: 14px;
+        height: 14px;
+        flex: 0 0 14px;
+        padding: 0;
+        margin: 0;
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        cursor: pointer;
+      }
+      input[type="checkbox"]:hover { border-color: var(--dim); }
+      input[type="checkbox"]:focus-visible { outline: 1px solid var(--line); outline-offset: 1px; }
+      input[type="checkbox"]:checked {
+        border-color: var(--accent);
+        background: var(--active-bg)
+          url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M2.8 2.8 L7.2 7.2 M7.2 2.8 L2.8 7.2' fill='none' stroke='%2343bf43' stroke-width='1.3'/%3E%3C/svg%3E")
+          center / 10px 10px no-repeat;
+      }
+      input[type="checkbox"]:disabled { opacity: 0.4; cursor: default; }
       .chips { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 8px; }
       details#tuning { margin: 2px 0 8px; }
       details#tuning > summary {
@@ -168,7 +193,7 @@
         user-select: none;
       }
       details#tuning[open] > summary { color: var(--text); margin-bottom: 4px; }
-      details#tuning input { width: 150px; }
+      details#tuning input:not([type="checkbox"]) { width: 150px; }
       .chip {
         cursor: pointer;
         user-select: none;
@@ -205,7 +230,6 @@
       #boardWrap { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; width: 100%; }
       #board { display: inline-block; line-height: 0; overflow-x: auto; max-width: 100%; }
       .boardRow { display: flex; flex-direction: row; }
-      pre.plain { font-family: monospace; font-size: 12px; line-height: 16px; margin: 0; }
       .tableScroll { overflow-x: auto; }
       .info { display: flex; flex-wrap: wrap; gap: 0 16px; line-height: 16px; color: var(--dim); font-size: 12px; }
       .info b { color: var(--text); font-weight: bold; }
@@ -237,6 +261,8 @@
       tr.total td { background: var(--selected-bg); font-weight: bold; }
       .win { color: var(--accent); }
       .loss { color: var(--bad); }
+      .warn { color: var(--warn); }
+      .capped { text-decoration: underline dotted; text-underline-offset: 2px; }
       #history { list-style: none; margin: 0; padding: 0; }
       #history li { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--line-soft); }
       #history li span:first-child { color: var(--dim); }
@@ -256,7 +282,26 @@
       table.moves tr.hasBoard { cursor: pointer; }
       table.moves tr.hasBoard:hover td { background: var(--selected-bg); }
       .err { color: var(--bad); font-size: 12px; white-space: pre-wrap; margin-top: 8px; }
-      .hint { color: var(--dim); font-size: 12px; margin-top: 8px; }
+      .gameOptions { display: flex; align-items: center; gap: 14px; font-size: 12px; margin: 2px 0 6px; }
+      .gameOptions .check { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+      .gameOptions button { flex: 0 0 auto; margin-left: auto; }
+      .lockBar { display: flex; align-items: center; gap: 8px; font-size: 12px; margin: 0 0 6px; }
+      .lockBar .small { color: var(--dim); margin-right: auto; }
+      .lockBar button { flex: 0 0 auto; }
+      .gameTools { display: flex; gap: 6px; align-items: center; margin: 6px 0; }
+      .gameTools button { flex: 0 0 auto; }
+      pre.explain {
+        font-family: monospace;
+        font-size: 12px;
+        line-height: 15px;
+        margin: 6px 0 0;
+        padding: 8px;
+        border: 1px solid var(--line-soft);
+        background: var(--panel-2);
+        overflow-x: auto;
+        max-height: 640px;
+        overflow-y: auto;
+      }
       @media (max-width: 1280px) {
         main { grid-template-columns: 360px minmax(0, 1fr); }
         main > section:last-child { grid-column: 1 / -1; }
@@ -270,7 +315,6 @@
   <body>
     <header>
       <h1>IPvGO exploiter bench</h1>
-      <span class="sub">Black = policy expectimax &nbsp;|&nbsp; White = scripted faction</span>
       <span id="status" class="pill">idle</span>
       <button id="restartServer" class="ghost" title="Restart the engine server (needs pnpm run server:dev)">Restart server</button>
     </header>
@@ -294,25 +338,23 @@
         <label class="field"><span id="budgetLabel">Think budget (ms)</span><input id="budget" type="number" min="1" step="50" placeholder="200" /></label>
         <label class="field" id="depthField" style="display: none"><span title="Black moves deep; each Black move also expands White's replies">Depth</span><input id="depth" type="number" min="1" max="24" placeholder="2" /></label>
         <label class="field" id="nodeCapField" style="display: none"><span title="Optional cap. The search runs iterative deepening up to Depth and stops at this many nodes, so a deep run cannot balloon.">Node cap (0 = none)</span><input id="nodeCap" type="number" min="0" step="10000" placeholder="0" /></label>
-        <label class="field"><span>Games per faction</span><input id="games" type="number" min="1" max="500" placeholder="20" /></label>
+        <label class="field"><span>Games per faction</span><input id="games" type="number" min="1" placeholder="20" /></label>
         <label class="field"><span>Seed</span><input id="seed" type="number" min="1" placeholder="1" /></label>
         <details id="tuning">
           <summary>Search tuning</summary>
-          <label class="field"><span title="Our moves considered per node">Beam (our moves)</span><input id="beam" type="number" min="0" max="64" placeholder="12" /></label>
+          <label class="field"><span title="Our moves considered per node">Beam</span><input id="beam" type="number" min="0" max="64" placeholder="12" /></label>
           <label class="field"><span title="Opponent replies kept per node (0 = all)">Replies kept</span><input id="whiteChildren" type="number" min="0" max="32" placeholder="6" /></label>
           <label class="field"><span title="Stop expanding replies past this probability mass">Reply mass cap</span><input id="whiteMass" type="number" min="0.05" max="1" step="0.05" placeholder="0.9" /></label>
           <label class="field"><span title="Empty points at which the endgame is solved exactly">Endgame empties</span><input id="endgameEmpties" type="number" min="0" max="20" placeholder="6" /></label>
           <label class="field"><span title="Node cap for the endgame solve">Endgame node cap</span><input id="nodeBudget" type="number" min="1000" step="1000" placeholder="30000" /></label>
           <label class="field"><span title="Iterative deepening ceiling">Max depth</span><input id="maxDepth" type="number" min="1" max="24" placeholder="10" /></label>
           <label class="field"><span title="Search threads (0 = all cores)">Threads</span><input id="threads" type="number" min="0" max="64" placeholder="0" /></label>
-          <label class="field"><span title="Reuse exact search results across the moves of a game. Same answers as a fresh search, with less work.">Carry memo</span><input id="carry" type="checkbox" /></label>
-          <div class="hint">Blank = engine default. Larger beam/replies = stronger but much slower.</div>
+          <label class="field"><span title="Reuse exact search results across the moves of a game. Same answers as a fresh search, with less work.">Carry memo</span><span class="fieldToggle"><input id="carry" type="checkbox" /></span></label>
         </details>
         <div class="buttons">
           <button id="start" class="primary">Start</button>
           <button id="stop">Stop</button>
         </div>
-        <div class="hint" id="hint">Settings are remembered across reloads.</div>
       </section>
 
       <section>
@@ -333,7 +375,28 @@
             <tbody id="rows"></tbody>
           </table>
         </div>
-        <h2 style="margin-top: 14px">Games <span class="dim small">- click a game for its full move list</span></h2>
+        <h2 style="margin-top: 14px">Games</h2>
+        <div class="gameOptions">
+          <label class="check" title="Hide games Black won."><input id="onlyLosses" type="checkbox" /> only losses</label>
+          <label class="check" title="Write a text explanation of every loss to ipvgo-engine/temp/lost-games/.">
+            <input id="writeLosses" type="checkbox" /> write loss files
+          </label>
+          <span class="dim small" id="gameCount"></span>
+          <button
+            id="lockLosses"
+            class="ghost"
+            title="Keep this batch's losses as a fixed set, to re-run under other search settings."
+          >
+            Lock losses
+          </button>
+        </div>
+        <div class="lockBar" id="lockBar">
+          <span id="lockInfo" class="small"></span>
+          <button id="replayLocked" class="ghost" title="Play exactly the locked games with the settings above.">
+            Replay locked
+          </button>
+          <button id="clearLock" class="ghost" title="Forget the locked set.">Clear lock</button>
+        </div>
         <ul id="history"></ul>
         <div class="err" id="error"></div>
       </section>
@@ -514,6 +577,140 @@
         el("budget").placeholder = iterations ? "50000" : "200"
       }
 
+      // View options, stored apart from the run form because they only change how
+      // the archive is shown, not what is sent to the engine.
+      const VIEW_KEY = "ipvgo-bench-view-v1"
+
+      function loadViewOptions() {
+        try {
+          const stored = JSON.parse(localStorage.getItem(VIEW_KEY) ?? "{}")
+          el("onlyLosses").checked = stored.onlyLosses === true
+          el("writeLosses").checked = stored.writeLosses === true
+        } catch {
+          /* storage disabled */
+        }
+      }
+
+      function saveViewOptions() {
+        try {
+          localStorage.setItem(
+            VIEW_KEY,
+            JSON.stringify({ onlyLosses: el("onlyLosses").checked, writeLosses: el("writeLosses").checked })
+          )
+        } catch {
+          /* storage disabled */
+        }
+      }
+
+      for (const id of ["onlyLosses", "writeLosses"]) {
+        el(id).addEventListener("change", () => {
+          saveViewOptions()
+          markDirty("history")
+        })
+      }
+
+      // ---- locked game sets -------------------------------------------------
+      // A game is fully determined by the batch seed and the number of rng draws
+      // consumed before it started, so locking only has to remember those two
+      // numbers per game. Replaying then puts the engine back on exactly the same
+      // board with the same White replies and plays it under new search settings:
+      // that is what makes a locked set a tuning regression test.
+      const LOCK_KEY = "ipvgo-bench-lock-v1"
+      let locked = null
+
+      const gameKey = (game) => `${game.faction}#${game.game}`
+
+      function lockedGame(game) {
+        if (!locked) return null
+        return locked.games.find((entry) => gameKey(entry) === gameKey(game)) ?? null
+      }
+
+      function loadLock() {
+        try {
+          const stored = JSON.parse(localStorage.getItem(LOCK_KEY) ?? "null")
+          locked = stored && Array.isArray(stored.games) && stored.games.length > 0 ? stored : null
+        } catch {
+          locked = null
+        }
+        renderLock()
+      }
+
+      function saveLock() {
+        try {
+          if (locked) localStorage.setItem(LOCK_KEY, JSON.stringify(locked))
+          else localStorage.removeItem(LOCK_KEY)
+        } catch {
+          /* storage disabled */
+        }
+      }
+
+      function lockLosses() {
+        const losses = (state.archive ?? []).filter((game) => !game.win)
+        if (losses.length === 0) return
+        const options = state.options ?? {}
+        locked = {
+          size: options.size ?? Number(el("size").value),
+          seed: options.seed ?? Number(el("seed").value),
+          savedAt: new Date().toISOString(),
+          games: losses.map((game) => ({
+            faction: game.faction,
+            game: game.game,
+            draws: game.draws ?? 0,
+            win: game.win,
+            margin: game.margin,
+          })),
+        }
+        saveLock()
+        renderLock()
+        markDirty("history")
+      }
+
+      // The bar says what is locked and, once a batch has replayed it, how that
+      // batch did on those games.
+      function renderLock() {
+        const archive = state.archive ?? []
+        const losses = archive.filter((game) => !game.win)
+        const lockButton = el("lockLosses")
+        lockButton.disabled = losses.length === 0
+        lockButton.textContent = losses.length ? `Lock losses (${losses.length})` : "Lock losses"
+        const bar = el("lockBar")
+        if (!locked) {
+          bar.style.display = "none"
+          el("lockInfo").textContent = ""
+          return
+        }
+        bar.style.display = ""
+        const replayed = archive.filter((game) => lockedGame(game))
+        const stillLost = replayed.filter((game) => !game.win).length
+        el("lockInfo").textContent =
+          `locked: ${locked.games.length} games from seed ${locked.seed} (${locked.size}x${locked.size})` +
+          (replayed.length > 0 ? ` - this batch: ${replayed.length - stillLost} won, ${stillLost} still lost` : "")
+      }
+
+      el("lockLosses").addEventListener("click", lockLosses)
+      el("clearLock").addEventListener("click", () => {
+        locked = null
+        saveLock()
+        renderLock()
+        markDirty("history")
+      })
+      el("replayLocked").addEventListener("click", () => void startBench(replayBody()))
+
+      // A replay keeps the locked board size and seed - those define the games -
+      // and takes every other setting, the budget included, from the form.
+      function replayBody() {
+        if (!locked) return null
+        return {
+          size: locked.size,
+          seed: locked.seed,
+          replay: locked.games.map((game) => ({
+            faction: game.faction,
+            game: game.game,
+            draws: game.draws ?? 0,
+          })),
+        }
+      }
+
       function renderFactionChips() {
         const size = Number(el("size").value)
         const worldDaemon = size === 19
@@ -608,7 +805,7 @@
       function drawBoard(board, current, size) {
         const root = el("board")
         if (!board || board.length === 0) {
-          root.innerHTML = '<pre class="plain">(no board yet)</pre>'
+          root.innerHTML = ""
           return
         }
         const n = board.length
@@ -634,14 +831,15 @@
       function renderInfo(s) {
         const cur = displayed ?? s.current
         if (!cur) {
-          el("info").innerHTML = s.running ? "<span>starting...</span>" : "<span>press Start to run a benchmark</span>"
+          // Nothing to show until the first game starts; "starting..." is only a
+          // nudge while a batch is spinning up.
+          el("info").innerHTML = s.running ? "<span>starting...</span>" : ""
           return
         }
         const bits = []
         bits.push(`<span><b>${cur.faction}</b> (${cur.factionIndex + 1}/${cur.factionCount})</span>`)
         bits.push(`<span>game <b>${cur.game}</b>/${cur.games}</span>`)
         bits.push(`<span>move <b>${cur.move}</b></span>`)
-        if (s.current?.thinking) bits.push('<span style="color:var(--warn)">thinking...</span>')
         if (cur.depth != null) bits.push(`<span>depth <b>${cur.depth}</b></span>`)
         if (cur.nodes != null) bits.push(`<span>nodes <b>${cur.nodes}</b></span>`)
         if (cur.ms != null) bits.push(`<span>think <b>${Math.round(cur.ms)}</b> ms</span>`)
@@ -691,12 +889,17 @@
         const open = new Set([...list.querySelectorAll("li.open")].map((li) => li.dataset.index))
         list.innerHTML = ""
         const games = s.archive && s.archive.length ? s.archive : null
+        const count = el("gameCount")
         if (games) {
-          for (const game of games) {
+          // Only the list is filtered: the faction table above stays complete.
+          const shown = el("onlyLosses").checked ? games.filter((game) => !game.win) : games
+          if (count) count.textContent = `${shown.length} of ${games.length} shown`
+          for (const game of shown) {
             list.appendChild(gameRow(game, open.has(String(game.index))))
           }
           return
         }
+        if (count) count.textContent = ""
         for (const item of (s.history ?? []).slice(0, 12)) {
           const li = document.createElement("li")
           const margin = item.margin >= 0 ? `+${item.margin.toFixed(1)}` : item.margin.toFixed(1)
@@ -712,12 +915,20 @@
         li.dataset.index = String(game.index)
         if (expanded) li.classList.add("open")
         const margin = game.margin >= 0 ? `+${game.margin.toFixed(1)}` : game.margin.toFixed(1)
+        // A game from the locked set says how it went in the batch it was locked from.
+        const before = lockedGame(game)
+        const beforeText = before
+          ? `<span class="dim">was ${before.win ? "WIN" : "LOSS"} ${
+              before.margin >= 0 ? `+${before.margin.toFixed(1)}` : before.margin.toFixed(1)
+            }</span>`
+          : ""
         const head = document.createElement("div")
         head.className = "gameHead"
         head.innerHTML =
           `<span class="caret"></span>` +
           `<span>${game.faction} #${game.game}</span>` +
           `<span class="dim">${game.moveCount} moves</span>` +
+          beforeText +
           `<span class="${game.win ? "win" : "loss"}">${game.win ? "WIN" : "LOSS"} ${margin}</span>`
         head.querySelector(".caret").textContent = expanded ? CARET_OPEN : CARET_CLOSED
         head.addEventListener("click", () => toggleGame(game, li))
@@ -758,10 +969,74 @@
           if (!res.ok) throw new Error(`HTTP ${res.status}`)
           const game = await res.json()
           target.innerHTML = ""
+          target.appendChild(gameTools(index))
           target.appendChild(detailTable(game))
         } catch (err) {
           target.textContent = `could not load the game: ${err.message}`
         }
+      }
+
+      // Explain renders the replay as text in the page; Write file asks the server
+      // to save the same text under temp/lost-games and reports where it went.
+      function gameTools(index) {
+        const wrap = document.createElement("div")
+        wrap.className = "gameTools"
+        const explain = document.createElement("button")
+        explain.textContent = "Explain"
+        explain.title = "Plain-text replay: per-move values, the drop each move caused, and a board per blunder"
+        const write = document.createElement("button")
+        write.textContent = "Write file"
+        write.title = "Save the same text under ipvgo-engine/temp/lost-games/"
+        const copy = document.createElement("button")
+        copy.textContent = "Copy"
+        copy.title = "Copy the explanation to the clipboard"
+        copy.disabled = true
+        const status = document.createElement("span")
+        status.className = "dim small"
+        const pre = document.createElement("pre")
+        pre.className = "explain"
+        pre.style.display = "none"
+        const box = document.createElement("div")
+        box.append(wrap, pre)
+
+        const run = async (writeFile) => {
+          explain.disabled = true
+          write.disabled = true
+          status.textContent = writeFile ? "writing..." : "explaining..."
+          try {
+            const res = await fetch(`${API_BASE}/api/bench/explain`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ index, write: writeFile }),
+            })
+            const body = await res.json()
+            if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`)
+            pre.textContent = body.text ?? ""
+            pre.style.display = ""
+            copy.disabled = false
+            status.textContent = body.path ? `wrote ${body.path}` : ""
+          } catch (err) {
+            status.textContent = `failed: ${err.message}`
+          } finally {
+            explain.disabled = false
+            write.disabled = false
+          }
+        }
+        explain.addEventListener("click", () => void run(false))
+        write.addEventListener("click", () => void run(true))
+        copy.addEventListener("click", () => {
+          const text = pre.textContent ?? ""
+          if (navigator.clipboard?.writeText) {
+            navigator.clipboard.writeText(text).then(
+              () => (status.textContent = "copied"),
+              () => (status.textContent = "copy failed")
+            )
+          } else {
+            status.textContent = "clipboard unavailable"
+          }
+        })
+        wrap.append(explain, write, copy, status)
+        return box
       }
 
       function fmtPoint(p, isPass) {
@@ -776,24 +1051,51 @@
         const table = document.createElement("table")
         table.className = "moves"
         table.innerHTML =
-          "<thead><tr><th>#</th><th>Black</th><th>p(win)</th><th>depth</th>" +
+          "<thead><tr><th>#</th><th>Black</th><th>p(win)</th><th>flat</th><th>depth</th>" +
           "<th>nodes</th><th>ms</th><th>White</th><th>score B:W</th></tr></thead>"
         const body = document.createElement("tbody")
-        for (const mv of game.moves) {
+        const moves = game.moves ?? []
+        // p(win) moves with the depth the budget happened to reach, so a drop in it
+        // is not by itself a blunder. `flat` is the same value from a fixed one-ply
+        // search: a drop there is the position getting worse.
+        const flatDrop = (i) => {
+          const a = moves[i]?.audit?.flat
+          const b = moves[i + 1]?.audit?.flat
+          return typeof a === "number" && typeof b === "number" ? a - b : null
+        }
+        for (let i = 0; i < moves.length; i++) {
+          const mv = moves[i]
           const value = typeof mv.value === "number" ? mv.value.toFixed(3) : "-"
           const tr = document.createElement("tr")
-          const swing = typeof mv.value === "number" && mv.value < 0.35 ? "loss" : ""
+          const swing = flatDrop(i)
+          const searchDrop =
+            typeof mv.value === "number" && typeof moves[i + 1]?.value === "number"
+              ? mv.value - moves[i + 1].value
+              : null
+          const mark = swing !== null && swing > 0.15 ? "loss" : searchDrop !== null && searchDrop > 0.15 ? "warn" : ""
+          const flat = typeof mv.audit?.flat === "number" ? mv.audit.flat.toFixed(3) : "-"
+          // A heuristic leaf cannot mean "certain"; say so rather than printing 1.000.
+          const capped = typeof mv.value === "number" && mv.value >= 0.999
+          const root = mv.audit?.root
+          const title = []
+          if (capped) title.push("capped: 1.000 is the top of the leaf eval's scale, not certainty")
+          if (root && typeof root.win === "number" && typeof root.rulesLead === "number") {
+            title.push(`eval p(win) ${root.win.toFixed(3)}, rules lead ${root.rulesLead.toFixed(1)}`)
+          }
+          if (mv.whiteAudit?.model?.found) title.push(`modelled p=${mv.whiteAudit.model.prob.toFixed(2)}`)
+          if (mv.board && mv.board.length) title.push(mv.board.join("\n"))
           tr.innerHTML =
             `<td class="dim">${mv.move}</td>` +
             `<td>${fmtPoint(mv.black, mv.blackPass)}</td>` +
-            `<td class="${swing}">${value}</td>` +
+            `<td class="${mark}${capped ? " capped" : ""}">${value}</td>` +
+            `<td class="dim">${flat}</td>` +
             `<td class="dim">${mv.depth ?? "-"}</td>` +
             `<td class="dim">${mv.nodes ?? "-"}</td>` +
             `<td class="dim">${mv.ms == null ? "-" : Math.round(mv.ms)}</td>` +
             `<td>${mv.white === null && !mv.whitePass ? "-" : fmtPoint(mv.white, mv.whitePass)}</td>` +
             `<td class="dim">${Math.round(mv.blackScore)}:${Math.round(mv.whiteScore)}</td>`
+          if (title.length) tr.title = title.join("\n")
           if (mv.board && mv.board.length) {
-            tr.title = mv.board.join("\\n")
             tr.classList.add("hasBoard")
             tr.addEventListener("click", () => showPosition(mv.board, game, mv))
           }
@@ -803,7 +1105,8 @@
         wrap.appendChild(table)
         const hint = document.createElement("div")
         hint.className = "dim small"
-        hint.textContent = "click a row to show that position"
+        hint.textContent =
+          "click a row to show that position; p(win) in red drops with the position, in amber only with the search depth"
         wrap.appendChild(hint)
         return wrap
       }
@@ -860,6 +1163,7 @@
         }
         if (dirty.history) {
           renderHistory(state)
+          renderLock()
           dirty.history = false
         }
         if (dirty.info) {
@@ -965,10 +1269,22 @@
                 margin: result.margin,
                 movesPlayed: result.moves,
                 moveCount: result.moveCount ?? result.moves,
+                draws: result.draws ?? 0,
               },
             ]
           }
           markDirty("history")
+          // Ticked "write loss files" means every loss leaves an explanation under
+          // temp/lost-games; unticked means a long run writes nothing.
+          if (!result.win && el("writeLosses").checked && typeof result.archiveIndex === "number") {
+            void fetch(`${API_BASE}/api/bench/explain`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ index: result.archiveIndex, write: true }),
+            }).catch(() => {
+              /* the run must not stop because a file could not be written */
+            })
+          }
         })
         source.addEventListener("done", (e) => {
           state.finished = true
@@ -1024,7 +1340,9 @@
         }
       }
 
-      el("start").addEventListener("click", async () => {
+      // The run form, as a start request. A replay replaces the parts that define
+      // which games are played (size, seed, and the game list) and keeps the rest.
+      function startBody() {
         const size = Number(el("size").value)
         const mode = el("budgetMode").value
         const budget = Math.max(1, Math.floor(numberOf("budget") || 1))
@@ -1046,6 +1364,16 @@
         }
         if (el("carry").checked) body.carry = true
         if (body.factions.length === 0) body.factions = null
+        return body
+      }
+
+      async function startBench(overrides = null) {
+        const body = startBody()
+        if (overrides) {
+          Object.assign(body, overrides)
+          // The engine derives the faction list from the replay entries.
+          delete body.factions
+        }
         saveForm()
         el("start").disabled = true
         await fetch(`${API_BASE}/api/bench/start`, {
@@ -1054,7 +1382,9 @@
           body: JSON.stringify(body),
         })
         await poll()
-      })
+      }
+
+      el("start").addEventListener("click", () => void startBench())
 
       el("stop").addEventListener("click", async () => {
         await fetch(`${API_BASE}/api/bench/stop`, { method: "POST" })
@@ -1169,6 +1499,8 @@
       for (const select of document.querySelectorAll("select")) enhanceSelect(select)
 
       applyForm(loadForm())
+      loadViewOptions()
+      loadLock()
       renderFactionChips()
       el("stop").disabled = true
       requestAnimationFrame(frameLoop)

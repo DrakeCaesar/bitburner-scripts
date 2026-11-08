@@ -291,7 +291,10 @@ std::vector<std::string> defaultFactions(int size) {
 class BenchObserver {
  public:
   virtual ~BenchObserver() = default;
-  virtual void onGameStart(size_t index, const std::string& faction, int game, int games) = 0;
+  // `drawsBefore` is the number of rng draws consumed before this game started: it
+  // is what a replay needs to put the game back on exactly the same board.
+  virtual void onGameStart(size_t index, const std::string& faction, int game, int games,
+                           long drawsBefore) = 0;
   virtual void onThinking(size_t index, const GameState& state, int game, int move) = 0;
   virtual void onBlackMove(size_t index, const GameState& state, int game, int move,
                            const ExploitResult& search, double elapsedMs, bool passed) = 0;
@@ -302,8 +305,17 @@ class BenchObserver {
 };
 
 int runBenchGames(const BenchOptions& options, BenchObserver& observer) {
-  const std::vector<std::string> factions =
+  std::vector<std::string> factions =
       options.factions.empty() ? defaultFactions(options.size) : options.factions;
+  if (!options.replay.empty()) {
+    // A replay names its own games, so the faction list is whatever they mention.
+    factions.clear();
+    for (const BenchOptions::ReplayGame& game : options.replay) {
+      if (std::find(factions.begin(), factions.end(), game.faction) == factions.end()) {
+        factions.push_back(game.faction);
+      }
+    }
+  }
   if (factions.empty()) return 0;
 
   std::vector<FactionBenchRow> rows(factions.size());
@@ -328,67 +340,107 @@ int runBenchGames(const BenchOptions& options, BenchObserver& observer) {
   cfg.carry = options.carry;
 
   std::mt19937_64 rng(options.seed ? options.seed : 1);
+  // Draws consumed so far. Every game input (the clock, the MathRandom seed and
+  // each of White's seeds) comes from this stream, so a game is reproduced exactly
+  // by rewinding the stream to the number of draws it started at.
+  long draws = 0;
+  const auto nextDraw = [&]() {
+    ++draws;
+    return rng();
+  };
 
-  for (size_t f = 0; f < factions.size(); ++f) {
+  // One game, start to finish. `gameNumber` is the 1-based number shown in the GUI
+  // (and the one a replay refers to), `gamesInFaction` only drives the progress
+  // display.
+  const auto playGame = [&](size_t f, int gameNumber, int gamesInFaction) {
     const Opponent ai = parseOpponent(factions[f]).value_or(Opponent::Netburners);
+    const long drawsBefore = draws;
 
-    for (int g = 0; g < options.gamesPerFaction; ++g) {
-      if (!options.only.empty()) {
-        const std::string tag = factions[f] + ":" + std::to_string(g + 1);
-        if (std::find(options.only.begin(), options.only.end(), tag) == options.only.end()) continue;
-        rng.seed((options.seed ? options.seed : 1) * 1000003ull + f * 1009ull + static_cast<uint64_t>(g));
-      }
-      const double clockMs = static_cast<double>(rng() % 30000000u);
-      const uint64_t mathSeed = rng();
-      MathRandom mathRng(mathSeed);
-      GameState state = newBoardState(options.size, ai, true, clockMs, mathRng);
-      observer.onGameStart(f, factions[f], g + 1, options.gamesPerFaction);
+    const double clockMs = static_cast<double>(nextDraw() % 30000000u);
+    const uint64_t mathSeed = nextDraw();
+    MathRandom mathRng(mathSeed);
+    GameState state = newBoardState(options.size, ai, true, clockMs, mathRng);
+    observer.onGameStart(f, factions[f], gameNumber, gamesInFaction, drawsBefore);
 
-      SearchSession session;
-      const int moveCap = options.size * options.size * 4;
-      for (int m = 0; m < moveCap && !state.gameOver; ++m) {
-        if (whoseTurn(state) != Color::Black) break;
+    SearchSession session;
+    const int moveCap = options.size * options.size * 4;
+    for (int m = 0; m < moveCap && !state.gameOver; ++m) {
+      if (whoseTurn(state) != Color::Black) break;
 
-        observer.onThinking(f, state, g + 1, m + 1);
-        const auto t0 = std::chrono::steady_clock::now();
-        const ExploitResult search = runExploiter(state, cfg, nullptr, options.carry ? &session : nullptr);
-        const double elapsedMs =
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+      observer.onThinking(f, state, gameNumber, m + 1);
+      const auto t0 = std::chrono::steady_clock::now();
+      const ExploitResult search = runExploiter(state, cfg, nullptr, options.carry ? &session : nullptr);
+      const double elapsedMs =
+          std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 
-        const int action = search.bestAction;
-        const bool passed = action == passAction(options.size);
-        if (passed) {
-          passTurn(state, Color::Black);
-        } else if (!makeMove(state, action / options.size, action % options.size, Color::Black)) {
-          passTurn(state, Color::Black);
-        }
-
-        rows[f].moves += 1;
-        rows[f].msSum += elapsedMs;
-        observer.onBlackMove(f, state, g + 1, m + 1, search, elapsedMs, passed);
-
-        if (state.gameOver) break;
-
-        const Play whitePlay =
-            getMove(state, Color::White, ai, static_cast<double>(rng() % 30000000u), mathRng);
-        if (whitePlay.type == PlayType::Pass) {
-          passTurn(state, Color::White);
-        } else if (!makeMove(state, whitePlay.x, whitePlay.y, Color::White)) {
-          passTurn(state, Color::White);
-        }
-        observer.onWhiteReply(f, state, g + 1, m + 1, whitePlay);
+      const int action = search.bestAction;
+      const bool passed = action == passAction(options.size);
+      if (passed) {
+        passTurn(state, Color::Black);
+      } else if (!makeMove(state, action / options.size, action % options.size, Color::Black)) {
+        passTurn(state, Color::Black);
       }
 
-      const Score score = getScore(state);
-      const double margin = score.blackSum - score.whiteSum;
-      const bool win = blackWins(score);
-      rows[f].games += 1;
-      if (win) rows[f].wins += 1;
-      else rows[f].losses += 1;
-      rows[f].marginSum += margin;
+      rows[f].moves += 1;
+      rows[f].msSum += elapsedMs;
+      observer.onBlackMove(f, state, gameNumber, m + 1, search, elapsedMs, passed);
 
-      observer.onGameEnd(f, rows[f], win, margin);
-      observer.onRows(rows);
+      if (state.gameOver) break;
+
+      const Play whitePlay =
+          getMove(state, Color::White, ai, static_cast<double>(nextDraw() % 30000000u), mathRng);
+      if (whitePlay.type == PlayType::Pass) {
+        passTurn(state, Color::White);
+      } else if (!makeMove(state, whitePlay.x, whitePlay.y, Color::White)) {
+        passTurn(state, Color::White);
+      }
+      observer.onWhiteReply(f, state, gameNumber, m + 1, whitePlay);
+    }
+
+    const Score score = getScore(state);
+    const double margin = score.blackSum - score.whiteSum;
+    const bool win = blackWins(score);
+    rows[f].games += 1;
+    if (win) rows[f].wins += 1;
+    else rows[f].losses += 1;
+    rows[f].marginSum += margin;
+
+    observer.onGameEnd(f, rows[f], win, margin);
+    observer.onRows(rows);
+  };
+
+  if (!options.replay.empty()) {
+    const uint64_t seed = options.seed ? options.seed : 1;
+    for (const BenchOptions::ReplayGame& game : options.replay) {
+      const auto where = std::find(factions.begin(), factions.end(), game.faction);
+      if (where == factions.end()) continue;
+      const size_t f = static_cast<size_t>(where - factions.begin());
+      int gamesInFaction = 0;
+      for (const BenchOptions::ReplayGame& other : options.replay) {
+        if (other.faction == game.faction) ++gamesInFaction;
+      }
+      // A locked set is normally in the order it was played, so rewinding forward is
+      // enough; a set that is not costs one reseed and a re-run of the draws.
+      if (draws > game.drawsBefore) {
+        rng.seed(seed);
+        draws = 0;
+      }
+      while (draws < game.drawsBefore) nextDraw();
+      playGame(f, game.game, gamesInFaction);
+    }
+  } else {
+    for (size_t f = 0; f < factions.size(); ++f) {
+      for (int g = 0; g < options.gamesPerFaction; ++g) {
+        if (!options.only.empty()) {
+          const std::string tag = factions[f] + ":" + std::to_string(g + 1);
+          if (std::find(options.only.begin(), options.only.end(), tag) == options.only.end()) continue;
+          // Reseeding invalidates the draw count, which is why `only` and `replay`
+          // do not mix.
+          rng.seed((options.seed ? options.seed : 1) * 1000003ull + f * 1009ull + static_cast<uint64_t>(g));
+          draws = 0;
+        }
+        playGame(f, g + 1, options.gamesPerFaction);
+      }
     }
   }
 
@@ -422,7 +474,8 @@ class LiveObserver : public BenchObserver {
     ui_.stop();
   }
 
-  void onGameStart(size_t index, const std::string& faction, int game, int games) override {
+  void onGameStart(size_t index, const std::string& faction, int game, int games,
+                   long drawsBefore) override {
     std::lock_guard<std::mutex> lock(view_.mutex);
     view_.faction = faction;
     view_.factionIndex = index;
@@ -534,22 +587,34 @@ class LiveObserver : public BenchObserver {
 
 class JsonObserver : public BenchObserver {
  public:
-  explicit JsonObserver(size_t factionCount) : factionCount_(factionCount) {}
+  JsonObserver(size_t factionCount, bool audit) : factionCount_(factionCount), audit_(audit) {}
 
-  void onGameStart(size_t index, const std::string& faction, int game, int games) override {
+  void onGameStart(size_t index, const std::string& faction, int game, int games,
+                   long drawsBefore) override {
     faction_ = faction;
     game_ = game;
     games_ = games;
+    rootReport_ = EvalReport{};
+    rootRulesLead_ = 0.0;
+    replies_.replies.clear();
     emit({{"type", "gameStart"},
           {"faction", faction},
           {"factionIndex", index},
           {"factionCount", factionCount_},
           {"game", game},
-          {"games", games}});
+          {"games", games},
+          // Kept so the page can lock this game and replay it under other settings.
+          {"draws", drawsBefore}});
   }
 
   void onThinking(size_t, const GameState& state, int game, int move) override {
     const Score score = getScore(state);
+    // Before the search runs, so the audit costs nothing out of the think budget.
+    if (audit_) {
+      rootReport_ = explainEval(state);
+      rootRulesLead_ = score.blackSum - score.whiteSum;
+      flatValue_ = flatValue(state);
+    }
     emit({{"type", "thinking"},
           {"faction", faction_},
           {"game", game},
@@ -563,33 +628,38 @@ class JsonObserver : public BenchObserver {
                    double elapsedMs, bool passed) override {
     const Score score = getScore(state);
     const int n = state.size;
-    emit({{"type", "move"},
-          {"faction", faction_},
-          {"game", game},
-          {"move", move},
-          {"black", passed ? json(nullptr)
-                           : json{{"x", search.bestAction / n}, {"y", search.bestAction % n}}},
-          {"pass", passed},
-          {"value", search.value},
-          {"depth", search.depth},
-          {"nodes", search.nodes},
-          {"ms", elapsedMs},
-          {"board", boardJson(state.board)},
-          {"blackScore", score.blackSum},
-          {"whiteScore", score.whiteSum}});
+    json event = {{"type", "move"},
+                  {"faction", faction_},
+                  {"game", game},
+                  {"move", move},
+                  {"black", passed ? json(nullptr)
+                                   : json{{"x", search.bestAction / n}, {"y", search.bestAction % n}}},
+                  {"pass", passed},
+                  {"value", search.value},
+                  {"depth", search.depth},
+                  {"nodes", search.nodes},
+                  {"ms", elapsedMs},
+                  {"board", boardJson(state.board)},
+                  {"blackScore", score.blackSum},
+                  {"whiteScore", score.whiteSum}};
+    if (audit_) event["audit"] = moveAudit(state, score, search);
+    emit(event);
   }
 
   void onWhiteReply(size_t, const GameState& state, int game, int move, const Play& play) override {
     const Score score = getScore(state);
-    emit({{"type", "reply"},
-          {"faction", faction_},
-          {"game", game},
-          {"move", move},
-          {"white", play.type == PlayType::Pass ? json(nullptr) : json{{"x", play.x}, {"y", play.y}}},
-          {"pass", play.type == PlayType::Pass},
-          {"board", boardJson(state.board)},
-          {"blackScore", score.blackSum},
-          {"whiteScore", score.whiteSum}});
+    json event = {{"type", "reply"},
+                  {"faction", faction_},
+                  {"game", game},
+                  {"move", move},
+                  {"white", play.type == PlayType::Pass ? json(nullptr) : json{{"x", play.x}, {"y", play.y}}},
+                  {"pass", play.type == PlayType::Pass},
+                  {"board", boardJson(state.board)},
+                  {"blackScore", score.blackSum},
+                  {"whiteScore", score.whiteSum}};
+    if (audit_) event["audit"] = replyAudit(state, score, play);
+    replies_.replies.clear();
+    emit(event);
   }
 
   void onGameEnd(size_t, const FactionBenchRow& row, bool win, double margin) override {
@@ -610,6 +680,92 @@ class JsonObserver : public BenchObserver {
   }
 
  private:
+  // One position as the leaf evaluator and the rules score see it. `lead` is the
+  // eval's own lead (stones plus territory it credits, minus komi, plus the atari
+  // terms); `rulesLead` is what getScore says, which is the game's win condition.
+  // The two disagreeing is the thing the loss analysis looks for.
+  static json evalJson(const EvalReport& report, double rulesLead) {
+    return {{"lead", report.lead},
+            {"win", report.winProbability},
+            {"empties", report.empties},
+            {"rulesLead", rulesLead}};
+  }
+
+  static json actionJson(int action, int size) {
+    if (action == passAction(size)) return {{"x", nullptr}, {"y", nullptr}, {"pass", true}};
+    return {{"x", action / size}, {"y", action % size}, {"pass", false}};
+  }
+
+  // Per Black move: what the eval said at the root (before the search, so it is on
+  // the same position `value` describes), what it says after the move, the top
+  // alternatives the search ranked, and White's modelled replies with their
+  // probabilities. The reply set is kept so onWhiteReply can price the real one.
+  json moveAudit(const GameState& state, const Score& score, const ExploitResult& search) {
+    json top = json::array();
+    const size_t n = std::min<size_t>(3, search.rootScores.size());
+    for (size_t i = 0; i < n; ++i) {
+      json entry = actionJson(search.rootScores[i].first, state.size);
+      entry["value"] = search.rootScores[i].second;
+      top.push_back(entry);
+    }
+
+    replies_.replies.clear();
+    if (!state.gameOver) replies_ = opponentReplyDistribution(state, Color::White, state.ai);
+    json replies = json::array();
+    for (size_t i = 0; i < replies_.replies.size() && i < 3; ++i) {
+      const WeightedReply& reply = replies_.replies[i];
+      replies.push_back({{"x", reply.passMove ? json(nullptr) : json(reply.x)},
+                         {"y", reply.passMove ? json(nullptr) : json(reply.y)},
+                         {"pass", reply.passMove},
+                         {"prob", reply.prob}});
+    }
+
+    const EvalReport after = explainEval(state);
+    return {{"root", evalJson(rootReport_, rootRulesLead_)},
+            {"after", evalJson(after, score.blackSum - score.whiteSum)},
+            {"flat", flatValue_},
+            {"top", top},
+            {"replies", replies}};
+  }
+
+  // The depth-independent reference value: one Black ply, then the modelled White
+  // replies, then the leaf. The search value depends on how deep the budget got,
+  // so two consecutive moves are not comparable; this one is the same search on
+  // every move, which is what a blunder has to be measured against. The endgame
+  // solve is disabled on purpose: it is a third estimator, it would make the value
+  // jump when the empty-point threshold is crossed, and one exact solve per root
+  // move is not a "one-ply" cost.
+  static double flatValue(const GameState& state) {
+    ExploitConfig cfg;
+    cfg.depth = 1;
+    cfg.maxDepth = 1;
+    cfg.endgameEmpties = 0;
+    cfg.threads = 1;
+    cfg.deterministic = true;
+    return runExploiter(state, cfg).value;
+  }
+
+  // Per White reply: the eval after it, and how likely the model thought that exact
+  // move was. A blunder whose reply had a high model probability was in the tree,
+  // so it is the leaf eval's fault; one that was not is the reply model's.
+  json replyAudit(const GameState& state, const Score& score, const Play& play) {
+    double prob = 0.0;
+    bool found = false;
+    for (const WeightedReply& reply : replies_.replies) {
+      const bool same = play.type == PlayType::Pass ? reply.passMove
+                                                   : (!reply.passMove && reply.x == play.x && reply.y == play.y);
+      if (!same) continue;
+      prob = reply.prob;
+      found = true;
+      break;
+    }
+    const EvalReport after = explainEval(state);
+    return {{"after", evalJson(after, score.blackSum - score.whiteSum)},
+            {"model", {{"prob", found ? prob : 0.0},
+                       {"points", replies_.replies.size()},
+                       {"found", found}}}};
+  }
+
   void emitRows(const std::vector<FactionBenchRow>& rows) {
     json list = json::array();
     for (const FactionBenchRow& row : rows) {
@@ -639,9 +795,16 @@ class JsonObserver : public BenchObserver {
   }
 
   size_t factionCount_ = 0;
+  bool audit_ = true;
   std::string faction_;
   int game_ = 0;
   int games_ = 0;
+  // Root eval of the position the pending move was chosen in, and White's reply
+  // distribution after that move (cleared on every reply).
+  EvalReport rootReport_;
+  double rootRulesLead_ = 0.0;
+  double flatValue_ = 0.0;
+  ReplyDist replies_;
 };
 
 }  // namespace
@@ -660,7 +823,7 @@ int runExploitBenchJson(const BenchOptions& options) {
       options.factions.empty() ? defaultFactions(options.size) : options.factions;
   if (factions.empty()) return 0;
 
-  JsonObserver observer(factions.size());
+  JsonObserver observer(factions.size(), options.audit);
   return runBenchGames(options, observer);
 }
 

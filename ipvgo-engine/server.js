@@ -10,6 +10,8 @@ import http from "http"
 import path from "path"
 import { fileURLToPath } from "url"
 
+import { BLUNDER_DELTA, explainGame, writeExplainFile } from "./lib/explain.js"
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const port = Number(process.env.IPVGO_PORT ?? 3010)
 const maxBodyBytes = 4 * 1024 * 1024
@@ -199,6 +201,9 @@ function applyBenchEvent(event) {
       state.live = {
         faction: event.faction,
         game: event.game,
+        // Where this game started in the rng stream: enough to replay it exactly
+        // under different search settings (see BenchOptions::replay).
+        draws: event.draws ?? 0,
         moves: [],
       }
       benchBroadcast("game", state.current)
@@ -247,6 +252,10 @@ function applyBenchEvent(event) {
           whiteScore: event.whiteScore,
           white: null,
           whitePass: false,
+          // What the leaf evaluator said at the root and after the move, the
+          // alternatives the search ranked and White's modelled replies.
+          audit: event.audit ?? null,
+          whiteAudit: null,
         })
       }
       break
@@ -266,6 +275,8 @@ function applyBenchEvent(event) {
         last.boardAfterWhite = event.board
         last.blackScoreAfterWhite = event.blackScore
         last.whiteScoreAfterWhite = event.whiteScore
+        // The eval after White's real reply, and how likely the model thought it was.
+        last.whiteAudit = event.audit ?? null
       }
       break
     }
@@ -288,6 +299,7 @@ function applyBenchEvent(event) {
           win: event.win,
           margin: event.margin,
           movesPlayed: event.moves,
+          draws: state.live.draws,
           moves: state.live.moves,
         })
         if (state.archive.length > BENCH_ARCHIVE_LIMIT) {
@@ -295,6 +307,7 @@ function applyBenchEvent(event) {
         }
         state.lastResult.archiveIndex = state.archive.length - 1
         state.lastResult.moveCount = state.live.moves.length
+        state.lastResult.draws = state.live.draws
         state.live = null
       }
       state.history.unshift(state.lastResult)
@@ -355,7 +368,9 @@ async function handleBenchStart(req, res) {
     iterations: fixedDepth ? depthNodeCap : iterations,
     depth: depthCap,
     maxDepth: depthCap,
-    games: Math.max(1, Math.min(500, Number(body?.games ?? 20))),
+    // No cap: a long batch is bounded by its own wall time, and the archive keeps
+    // the most recent games only.
+    games: Math.max(1, Math.floor(Number(body?.games ?? 20)) || 20),
     seed: Number(body?.seed ?? 1),
     factions: Array.isArray(body?.factions) && body.factions.length > 0 ? body.factions : undefined,
   }
@@ -389,13 +404,38 @@ async function handleBenchStart(req, res) {
     if (value !== undefined) options[key] = value
   }
   if (body?.carry === true) options.carry = true
+  // Audit fields (the eval's own numbers, White's modelled reply probability and
+  // the fixed-depth value) cost one extra policy build per move. On by default
+  // because the loss explanation is built from them.
+  if (body?.audit === false) options.audit = false
+
+  // A locked set: play exactly these games instead of generating a batch. The
+  // engine derives the faction list from them, so none is sent.
+  const replay = Array.isArray(body?.replay) ? body.replay : null
+  if (replay) {
+    const games = replay
+      .map((game) => ({
+        faction: String(game?.faction ?? ""),
+        game: Math.floor(Number(game?.game ?? 0)),
+        draws: Math.max(0, Math.floor(Number(game?.draws ?? 0))),
+      }))
+      .filter((game) => game.faction && game.game > 0)
+      .slice(0, 5000)
+    if (games.length === 0) {
+      return sendJson(res, 400, { error: "replay needs at least one {faction, game, draws} entry" })
+    }
+    options.replay = games
+    delete options.factions
+  }
   const whiteMass = Number(body?.whiteMass)
   if (Number.isFinite(whiteMass) && whiteMass > 0 && whiteMass <= 1) options.whiteMass = whiteMass
   if (![5, 7, 9, 13, 19].includes(options.size)) {
     return sendJson(res, 400, { error: "size must be 5, 7, 9, 13 or 19" })
   }
 
-  const resolved = options.factions ?? (options.size === 19 ? ["WorldDaemon"] : BENCH_FACTIONS)
+  const resolved = options.replay
+    ? [...new Set(options.replay.map((game) => game.faction))]
+    : options.factions ?? (options.size === 19 ? ["WorldDaemon"] : BENCH_FACTIONS)
   resetBenchState({ ...options, factions: resolved })
 
   const child = spawn(exe, ["benchjson", JSON.stringify(options)], { cwd: __dirname })
@@ -506,6 +546,8 @@ function handleBenchState(req, res, url) {
       margin: game.margin,
       movesPlayed: game.movesPlayed,
       moveCount: game.moves.length,
+      // Needed to lock this game into a replay set.
+      draws: game.draws ?? 0,
     })),
     liveMoves: live ? live.moves.length : 0,
   })
@@ -514,12 +556,60 @@ function handleBenchState(req, res, url) {
 // One archived game with its full move list: the decision sequence behind a result.
 function handleBenchGame(req, res, url) {
   const raw = Number(url?.searchParams?.get("index"))
-  const { archive = [] } = bench.state
-  if (!Number.isFinite(raw) || raw < 0 || raw >= archive.length) {
+  const game = archivedGame(url?.searchParams?.get("index"))
+  if (!game) {
     sendJson(res, 404, { error: `no archived game at index ${url?.searchParams?.get("index")}` })
     return
   }
-  sendJson(res, 200, archive[Math.floor(raw)])
+  if (url?.searchParams?.get("format") === "text") {
+    sendJson(res, 200, {
+      index: Math.floor(raw),
+      text: explainGame(game, { threshold: explainThreshold(url) }),
+      path: null,
+    })
+    return
+  }
+  sendJson(res, 200, game)
+}
+
+function archivedGame(rawIndex) {
+  const raw = Number(rawIndex)
+  const { archive = [] } = bench.state
+  if (!Number.isFinite(raw) || raw < 0 || raw >= archive.length) return null
+  return archive[Math.floor(raw)]
+}
+
+function explainThreshold(url) {
+  const raw = Number(url?.searchParams?.get("threshold"))
+  return Number.isFinite(raw) && raw > 0 ? raw : BLUNDER_DELTA
+}
+
+// Render one archived game's explanation, write it under temp/lost-games and hand
+// both back. `write: false` only renders, which is what the page's Explain button
+// asks for; the Write file button leaves it on and shows the path.
+async function handleBenchExplain(req, res) {
+  let body
+  try {
+    body = await readJsonBody(req)
+  } catch (err) {
+    return sendJson(res, 400, { error: err.message })
+  }
+  const game = archivedGame(body?.index)
+  if (!game) {
+    return sendJson(res, 404, { error: `no archived game at index ${body?.index}` })
+  }
+  const raw = Number(body?.threshold)
+  const threshold = Number.isFinite(raw) && raw > 0 ? raw : BLUNDER_DELTA
+  const text = explainGame(game, { threshold })
+  let file = null
+  if (body?.write !== false) {
+    try {
+      file = writeExplainFile(game, text, path.join(__dirname, "temp", "lost-games"))
+    } catch (err) {
+      return sendJson(res, 500, { error: `could not write the explanation: ${err.message}`, text })
+    }
+  }
+  sendJson(res, 200, { index: Math.floor(Number(body.index)), path: file, text })
 }
 
 function handleBenchPage(req, res) {
@@ -1002,6 +1092,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/api/bench/game") {
     handleBenchGame(req, res, url)
+    return
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/bench/explain") {
+    await handleBenchExplain(req, res)
     return
   }
 

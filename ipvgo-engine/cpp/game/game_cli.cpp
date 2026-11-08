@@ -1922,6 +1922,16 @@ int main(int argc, char** argv) {
         }
       }
       options.carry = config.value("carry", false);
+      options.audit = config.value("audit", true);
+      if (config.contains("replay")) {
+        for (const auto& entry : config.at("replay")) {
+          BenchOptions::ReplayGame game;
+          game.faction = entry.value("faction", std::string());
+          game.game = entry.value("game", 0);
+          game.drawsBefore = entry.value("draws", 0L);
+          if (!game.faction.empty() && game.game > 0) options.replay.push_back(game);
+        }
+      }
       if (config.contains("only")) {
         for (const auto& tag : config.at("only")) options.only.push_back(tag.get<std::string>());
       }

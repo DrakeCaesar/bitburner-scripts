@@ -7,6 +7,17 @@
 namespace ipvgo::nn {
 
 struct BenchOptions {
+  // A game to replay instead of generating one: exactly what a previous run
+  // reported in its gameStart event. The rng is rewound to the position that run
+  // was in when the game started (every draw before it is a function of the seed
+  // and the count), so the board and White's replies are identical and only the
+  // search settings differ. That makes a locked set a regression test for tuning.
+  struct ReplayGame {
+    std::string faction;
+    int game = 0;         // 1-based, as shown in the GUI
+    long drawsBefore = 0;  // rng() calls consumed before this game
+  };
+
   int size = 5;
   int gamesPerFaction = 20;
   int budgetMs = 300;  // per-move wall-clock budget (iterative deepening)
@@ -24,9 +35,20 @@ struct BenchOptions {
   long nodeBudget = 30000;
   int threads = 0;
   bool carry = false;  // share a depth-aware memo across the moves of a game
+  // Emit, per half-move, what the leaf evaluator thought of the position, how
+  // likely the opponent's actual reply was under the policy model, and the value of
+  // a fixed one-ply search. This is the audit trail the loss explanation is built
+  // from; the cost is a fixed one-ply search plus one policy build per move -
+  // measured under 10% at 5x5 and 7x7, about 13% at 13x13 and about 50% at 19x19 on
+  // a 3000-node budget - so the web bench leaves it on.
+  bool audit = true;
   // "Faction:game" entries. When set only those games run, each seeded from
   // (seed, faction, game) so it does not depend on the games played before it.
   std::vector<std::string> only;
+  // When non-empty, exactly these games are played, in this order, and `factions`,
+  // `gamesPerFaction` and `only` are ignored. Only the search settings come from
+  // the rest of this struct.
+  std::vector<ReplayGame> replay;
 };
 
 struct FactionBenchRow {
