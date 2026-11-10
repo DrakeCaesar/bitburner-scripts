@@ -7,6 +7,7 @@ import { execFile, spawn } from "child_process"
 import crypto from "crypto"
 import fs from "fs"
 import http from "http"
+import os from "os"
 import path from "path"
 import { fileURLToPath } from "url"
 
@@ -486,10 +487,191 @@ function handleBenchStop(req, res) {
   sendJson(res, 200, { ok: true })
 }
 
+// ---- Auto-tuner: per-faction genetic search over the widths ---------------
+// The engine runs the whole algorithm (selection, breeding, held-back
+// validation); the server only spawns it and forwards the NDJSON it prints, so
+// a closed page cannot lose a run and the CLI stays the single source of truth.
+
+/** @type {Set<import("http").ServerResponse>} */
+const tuneClients = new Set()
+
+const tune = {
+  child: null,
+  state: {
+    running: false,
+    faction: null,
+    size: 5,
+    options: null,
+    generations: [],
+    done: null,
+    error: null,
+    startedAt: 0,
+    endedAt: 0,
+  },
+}
+
+function tuneSnapshot() {
+  return { ...tune.state, pid: undefined, serverId, supervised }
+}
+
+function tuneBroadcast(event, data) {
+  if (tuneClients.size === 0) return
+  const payload = JSON.stringify(data)
+  for (const res of tuneClients) {
+    try {
+      res.write(`event: ${event}\ndata: ${payload}\n\n`)
+    } catch {
+      tuneClients.delete(res)
+    }
+  }
+}
+
+function stopTune() {
+  const child = tune.child
+  tune.child = null
+  tune.state.running = false
+  if (!child) return
+  try {
+    child.kill()
+  } catch {
+    /* already gone */
+  }
+}
+
+function tuneInt(value, min, max, fallback) {
+  const parsed = Math.floor(Number(value))
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.min(max, Math.max(min, parsed))
+}
+
+async function handleTuneStart(req, res) {
+  if (tune.state.running) {
+    return sendJson(res, 409, { error: "A tuning run is already in progress" })
+  }
+  const body = await readJsonBody(req)
+  const exe = mcgsExecutablePath()
+  if (!fs.existsSync(exe)) {
+    return sendJson(res, 503, { error: "Engine not built. Run: pnpm run ipvgo:build" })
+  }
+  const faction = BENCH_FACTIONS.includes(String(body?.faction)) ? String(body.faction) : "Illuminati"
+  const size = [5, 7, 9].includes(Number(body?.size)) ? Number(body.size) : 5
+  const options = {
+    faction,
+    size,
+    generations: tuneInt(body?.generations, 1, 60, 6),
+    population: tuneInt(body?.population, 2, 40, 10),
+    games: tuneInt(body?.games, 4, 400, 24),
+    nodeLimit: tuneInt(body?.nodeLimit, 100, 200000, 1000),
+    threads: tuneInt(body?.threads, 1, 64, Math.max(1, os.cpus().length)),
+    seed: tuneInt(body?.seed, 1, Number.MAX_SAFE_INTEGER, 1),
+  }
+
+  tune.state = {
+    running: true,
+    faction,
+    size,
+    options,
+    generations: [],
+    done: null,
+    error: null,
+    startedAt: Date.now(),
+    endedAt: 0,
+  }
+
+  const args = [
+    "tune",
+    faction,
+    String(options.generations),
+    String(options.population),
+    String(options.games),
+    String(options.nodeLimit),
+    String(size),
+    String(options.threads),
+    String(options.seed),
+    "json",
+  ]
+  const child = spawn(exe, args, { cwd: __dirname })
+  tune.child = child
+
+  let buffer = ""
+  child.stdout.on("data", (chunk) => {
+    buffer += chunk.toString()
+    let newline = buffer.indexOf("\n")
+    while (newline >= 0) {
+      const line = buffer.slice(0, newline).trim()
+      buffer = buffer.slice(newline + 1)
+      if (line) {
+        try {
+          const event = JSON.parse(line)
+          if (event.type === "generation") {
+            tune.state.generations.push(event)
+            tuneBroadcast("generation", event)
+          } else if (event.type === "done") {
+            tune.state.done = event
+            tuneBroadcast("done", event)
+          }
+        } catch {
+          /* ignore malformed line */
+        }
+      }
+      newline = buffer.indexOf("\n")
+    }
+  })
+  child.stderr.on("data", (chunk) => {
+    tune.state.error = chunk.toString().trim().slice(0, 2000)
+    tuneBroadcast("error", { error: tune.state.error })
+  })
+  child.on("error", (err) => {
+    tune.state.error = err.message
+    tune.state.running = false
+    if (tune.child === child) tune.child = null
+    tuneBroadcast("snapshot", tuneSnapshot())
+  })
+  child.on("close", () => {
+    tune.state.running = false
+    tune.state.endedAt = Date.now()
+    if (tune.child === child) tune.child = null
+    tuneBroadcast("snapshot", tuneSnapshot())
+  })
+
+  tuneBroadcast("snapshot", tuneSnapshot())
+  sendJson(res, 202, { ok: true, options })
+}
+
+function handleTuneStop(req, res) {
+  stopTune()
+  tune.state.endedAt = Date.now()
+  tuneBroadcast("snapshot", tuneSnapshot())
+  sendJson(res, 200, { ok: true })
+}
+
+function handleTuneEvents(req, res) {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "Access-Control-Allow-Origin": "*",
+    "X-Accel-Buffering": "no",
+  })
+  if (typeof res.flushHeaders === "function") res.flushHeaders()
+  sseSend(res, "snapshot", tuneSnapshot())
+  tuneClients.add(res)
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(": ping\n\n")
+    } catch {
+      /* removed on close */
+    }
+  }, 15000)
+  req.on("close", () => {
+    clearInterval(heartbeat)
+    tuneClients.delete(res)
+  })
+}
+
 // Only meaningful under scripts/dev-server.mjs: exiting makes the supervisor
 // spawn a fresh process, which is how the GUI restarts the server.
 const RESTART_EXIT_CODE = 75
-
 function handleServerRestart(req, res) {
   if (!supervised) {
     return sendJson(res, 409, {
@@ -497,6 +679,7 @@ function handleServerRestart(req, res) {
     })
   }
   stopBench()
+  stopTune()
   sendJson(res, 202, { ok: true, serverId })
   // A distinct exit code tells the supervisor this exit was requested, so it
   // restarts immediately instead of treating it as a crash and backing off.
@@ -1107,6 +1290,21 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/api/bench/stop") {
     handleBenchStop(req, res)
+    return
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/tune/events") {
+    handleTuneEvents(req, res)
+    return
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/tune/start") {
+    await handleTuneStart(req, res)
+    return
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/tune/stop") {
+    handleTuneStop(req, res)
     return
   }
 

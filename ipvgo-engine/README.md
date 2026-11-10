@@ -1280,13 +1280,16 @@ held-back seeds:
 ./out/build/x64-Release/bin/ipvgo_game.exe tune Illuminati 3 6 12 1000 5 8 1 text
 ```
 
+The same search is wired into the bench GUI under **Auto-tune widths for one faction**,
+which streams each generation over SSE and shows the validation pair when it finishes.
+
 Two design points that matter more than the GA itself:
 
 - **Evaluation is game-parallel, not search-parallel.** Every worker plays whole games
   with `threads = 1`. At a node budget search threads buy no strength and only scale ~4.8x
   on 12 threads, while independent games scale with the core count and stay reproducible
   per seed because nothing is shared. Measured: **~5.5 ms per 5x5 game against ~33 ms
-  serially**, i.e. roughly 6x throughput from the same machine.
+  serially**, so a 1800-game generation set finishes in seconds.
 - **Common random numbers.** Every individual in a generation plays the *same* seed set,
   so differences between genomes are not confused with differences between openings, and
   the winner is then re-measured on seeds never used during the search. With 12-30 games
@@ -1296,6 +1299,22 @@ Two design points that matter more than the GA itself:
 A game that reaches the move cap is counted as `unfinished` and excluded from the win rate
 rather than scored, because a position cut off mid-play is not a result (see the note on
 the move cap above).
+
+**What it found.** Six generations, population 10, 30 games per genome, 5x5 at 1000 nodes,
+validated on 60 held-back seeds:
+
+| faction | tuned (beam / replies / mass) | tuned | default | delta |
+|---|---|---|---|---|
+| Illuminati | 16 / 7 / 0.30 | 73.3% | 78.9% | **-5.6** |
+| Tetrads | 3 / 8 / 1.00 | 80.0% | 81.1% | **-1.1** |
+| Slum Snakes | 11 / 5 / 0.85 | 87.8% | 85.6% | +2.2 |
+
+Only one of three survived validation, which is the headline result: **these three knobs
+are close to flat around the defaults**, and a search that picks purely on training games
+will happily report a winner that is worse. Treat the tuned numbers as a hypothesis to
+re-test with the bench (paired, several hundred games), not as a config to ship. The
+mechanism earns its place as a way to ask the question cheaply, not as an optimiser that
+is expected to return a better genome than the defaults.
 
 ### Root width is worth more than root completeness (IPVGO_ROOTW)
 

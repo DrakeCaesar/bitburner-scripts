@@ -286,6 +286,13 @@
       .gameOptions .check { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
       .gameOptions button { flex: 0 0 auto; margin-left: auto; }
       .lockBar { display: flex; align-items: center; gap: 8px; font-size: 12px; margin: 0 0 6px; }
+      .tuneFields {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+        gap: 8px;
+        margin: 6px 0 10px;
+      }
+      .tuneFields label.field { margin-bottom: 0; }
       .lockBar .small { color: var(--dim); margin-right: auto; }
       .lockBar button { flex: 0 0 auto; }
       .gameTools { display: flex; gap: 6px; align-items: center; margin: 6px 0; }
@@ -398,6 +405,57 @@
           <button id="clearLock" class="ghost" title="Forget the locked set.">Clear lock</button>
         </div>
         <ul id="history"></ul>
+        <details id="autoTune">
+          <summary>Auto-tune widths for one faction</summary>
+          <p class="dim small">
+            Genetic search over beam, replies kept and the reply mass cap, then the winner is re-measured
+            against the defaults on seeds the search never saw. Every genome in a generation plays the same
+            games, and games run in parallel (one search thread each), so a run finishes in seconds at 5x5.
+          </p>
+          <div class="tuneFields">
+            <label class="field"><span>Faction</span>
+              <select id="tuneFaction">
+                <option>Netburners</option>
+                <option>Slum Snakes</option>
+                <option>The Black Hand</option>
+                <option>Tetrads</option>
+                <option>Daedalus</option>
+                <option selected>Illuminati</option>
+              </select>
+            </label>
+            <label class="field"><span>Board size</span>
+              <select id="tuneSize"><option>5</option><option>7</option><option>9</option></select>
+            </label>
+            <label class="field"><span>Generations</span><input id="tuneGenerations" type="number" min="1" max="60" value="6" /></label>
+            <label class="field"><span>Population</span><input id="tunePopulation" type="number" min="2" max="40" value="10" /></label>
+            <label class="field"><span title="Games each genome plays on the shared training seeds">Games per genome</span><input id="tuneGames" type="number" min="4" max="400" value="24" /></label>
+            <label class="field"><span>Node limit</span><input id="tuneNodeLimit" type="number" min="100" step="100" value="1000" /></label>
+            <label class="field"><span title="Games in flight at once. Each one searches on a single thread.">Parallel games</span><input id="tuneThreads" type="number" min="1" max="64" value="8" /></label>
+            <label class="field"><span>Seed</span><input id="tuneSeed" type="number" min="1" value="1" /></label>
+          </div>
+          <div class="buttons">
+            <button id="tuneStart" class="primary">Start tuning</button>
+            <button id="tuneStop">Stop</button>
+          </div>
+          <div class="small" id="tuneStatus">idle</div>
+          <div class="err" id="tuneError"></div>
+          <div class="tableScroll" style="margin-top: 10px">
+            <table>
+              <thead>
+                <tr><th>gen</th><th>#</th><th>beam</th><th>replies</th><th>mass</th><th>win %</th><th>margin</th><th>unfinished</th></tr>
+              </thead>
+              <tbody id="tuneRows"></tbody>
+            </table>
+          </div>
+          <div class="tableScroll" style="margin-top: 10px">
+            <table>
+              <thead>
+                <tr><th>held-back validation</th><th>beam</th><th>replies</th><th>mass</th><th>win %</th><th>margin</th><th>unfinished</th></tr>
+              </thead>
+              <tbody id="tuneValidation"></tbody>
+            </table>
+          </div>
+        </details>
         <div class="err" id="error"></div>
       </section>
     </main>
@@ -1498,9 +1556,179 @@
       }
       for (const select of document.querySelectorAll("select")) enhanceSelect(select)
 
+      // ---- Auto-tune panel -------------------------------------------------
+      // The engine owns the search; the page only submits a job and renders the
+      // generations as they arrive, so closing the tab cannot corrupt a run.
+      const TUNE_FIELDS = ["tuneFaction", "tuneSize", "tuneGenerations", "tunePopulation", "tuneGames", "tuneNodeLimit", "tuneThreads", "tuneSeed"]
+      const TUNE_STORAGE_KEY = "ipvgo-tune-form-v1"
+
+      const tunePct = (value) => `${(100 * Number(value ?? 0)).toFixed(1)}%`
+      const tuneSigned = (value) => {
+        const number = Number(value ?? 0)
+        return `${number >= 0 ? "+" : ""}${number.toFixed(1)}`
+      }
+
+      function renderTuneRows(events) {
+        const body = el("tuneRows")
+        body.innerHTML = ""
+        // Only the newest generation is shown: it is the one being selected from.
+        const latest = events[events.length - 1]
+        if (!latest) return
+        for (const row of latest.rows ?? []) {
+          const tr = document.createElement("tr")
+          const cells = [
+            `${latest.gen}/${latest.generations}`,
+            String(row.rank),
+            String(row.genome.beam),
+            String(row.genome.whiteChildren),
+            Number(row.genome.whiteMass).toFixed(2),
+            tunePct(row.winRate),
+            tuneSigned(row.avgMargin),
+            String(row.unfinished ?? 0),
+          ]
+          for (const [index, text] of cells.entries()) {
+            const td = document.createElement("td")
+            td.textContent = text
+            if (row.rank === 1 && index >= 5) td.style.color = "var(--accent)"
+            tr.appendChild(td)
+          }
+          body.appendChild(tr)
+        }
+      }
+
+      function renderTuneValidation(done) {
+        const body = el("tuneValidation")
+        body.innerHTML = ""
+        for (const entry of done?.validation ?? []) {
+          const tr = document.createElement("tr")
+          const cells = [
+            entry.label,
+            String(entry.genome.beam),
+            String(entry.genome.whiteChildren),
+            Number(entry.genome.whiteMass).toFixed(2),
+            tunePct(entry.winRate),
+            tuneSigned(entry.avgMargin),
+            String(entry.unfinished ?? 0),
+          ]
+          for (const [index, text] of cells.entries()) {
+            const td = document.createElement("td")
+            td.textContent = text
+            if (index === 0) td.style.color = entry.label === "tuned" ? "var(--accent)" : "var(--dim)"
+            tr.appendChild(td)
+          }
+          body.appendChild(tr)
+        }
+      }
+
+      function setTuneRunning(running) {
+        el("tuneStart").disabled = running
+        el("tuneStop").disabled = !running
+        for (const id of TUNE_FIELDS) el(id).disabled = running
+      }
+
+      function saveTuneForm() {
+        const form = {}
+        for (const id of TUNE_FIELDS) form[id] = el(id).value
+        try {
+          localStorage.setItem(TUNE_STORAGE_KEY, JSON.stringify(form))
+        } catch {
+          /* private mode */
+        }
+      }
+
+      function loadTuneForm() {
+        try {
+          const form = JSON.parse(localStorage.getItem(TUNE_STORAGE_KEY) ?? "null")
+          if (!form) return
+          for (const id of TUNE_FIELDS) if (form[id] !== undefined) el(id).value = form[id]
+        } catch {
+          /* corrupt entry */
+        }
+      }
+
+      function initAutoTune() {
+        loadTuneForm()
+        setTuneRunning(false)
+        for (const id of TUNE_FIELDS) el(id).addEventListener("change", saveTuneForm)
+
+        const source = new EventSource(`${API_BASE}/api/tune/events`)
+        const generations = []
+        source.addEventListener("snapshot", (event) => {
+          const snapshot = JSON.parse(event.data)
+          generations.length = 0
+          for (const item of snapshot.generations ?? []) generations.push(item)
+          renderTuneRows(generations)
+          renderTuneValidation(snapshot.done)
+          setTuneRunning(Boolean(snapshot.running))
+          if (snapshot.error) el("tuneError").textContent = snapshot.error
+          if (snapshot.running && snapshot.options) {
+            el("tuneStatus").textContent = `tuning ${snapshot.faction} (${snapshot.size}x${snapshot.size})...`
+          } else if (snapshot.done) {
+            el("tuneStatus").textContent = "finished - compare the two validation rows"
+          } else {
+            el("tuneStatus").textContent = "idle"
+          }
+        })
+        source.addEventListener("generation", (event) => {
+          const data = JSON.parse(event.data)
+          generations.push(data)
+          renderTuneRows(generations)
+          el("tuneStatus").textContent = `generation ${data.gen}/${data.generations} - ${data.faction}`
+        })
+        source.addEventListener("done", (event) => {
+          const data = JSON.parse(event.data)
+          renderTuneValidation(data)
+          setTuneRunning(false)
+          el("tuneStatus").textContent = "finished - compare the two validation rows"
+        })
+        source.addEventListener("error", (event) => {
+          if (event.data) el("tuneError").textContent = JSON.parse(event.data).error ?? ""
+        })
+
+        el("tuneStart").addEventListener("click", async () => {
+          el("tuneError").textContent = ""
+          el("tuneValidation").innerHTML = ""
+          const body = {
+            faction: el("tuneFaction").value,
+            size: Number(el("tuneSize").value),
+            generations: Number(el("tuneGenerations").value),
+            population: Number(el("tunePopulation").value),
+            games: Number(el("tuneGames").value),
+            nodeLimit: Number(el("tuneNodeLimit").value),
+            threads: Number(el("tuneThreads").value),
+            seed: Number(el("tuneSeed").value),
+          }
+          saveTuneForm()
+          setTuneRunning(true)
+          el("tuneStatus").textContent = "starting..."
+          try {
+            const res = await fetch(`${API_BASE}/api/tune/start`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            })
+            if (!res.ok) {
+              const payload = await res.json().catch(() => ({}))
+              throw new Error(payload.error ?? `HTTP ${res.status}`)
+            }
+          } catch (err) {
+            el("tuneError").textContent = err.message
+            setTuneRunning(false)
+            el("tuneStatus").textContent = "idle"
+          }
+        })
+
+        el("tuneStop").addEventListener("click", async () => {
+          await fetch(`${API_BASE}/api/tune/stop`, { method: "POST" }).catch(() => {})
+          setTuneRunning(false)
+          el("tuneStatus").textContent = "stopped"
+        })
+      }
+
       applyForm(loadForm())
       loadViewOptions()
       loadLock()
+      initAutoTune()
       renderFactionChips()
       el("stop").disabled = true
       requestAnimationFrame(frameLoop)
