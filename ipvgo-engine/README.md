@@ -1268,7 +1268,38 @@ reaches 3 sigma, so treat it as a probable ~1.5-2 point gain rather than a measu
 It is kept behind the environment variable, off, until a full 240-games-per-arm campaign
 confirms it at the budget the game actually uses.
 
+### Auto-tuning the widths per faction (`tune`)
+
+`beam`, `whiteChildren` and `whiteMass` interact per faction and per board size, so the
+right combination is a per-opponent question. `ipvgo_game tune` searches it with a genetic
+algorithm and prints the winner together with the shipped defaults re-measured on
+held-back seeds:
+
+```powershell
+# tune <faction> [generations] [population] [games] [nodeLimit] [size] [threads] [seed] [json|text]
+./out/build/x64-Release/bin/ipvgo_game.exe tune Illuminati 3 6 12 1000 5 8 1 text
+```
+
+Two design points that matter more than the GA itself:
+
+- **Evaluation is game-parallel, not search-parallel.** Every worker plays whole games
+  with `threads = 1`. At a node budget search threads buy no strength and only scale ~4.8x
+  on 12 threads, while independent games scale with the core count and stay reproducible
+  per seed because nothing is shared. Measured: **~5.5 ms per 5x5 game against ~33 ms
+  serially**, i.e. roughly 6x throughput from the same machine.
+- **Common random numbers.** Every individual in a generation plays the *same* seed set,
+  so differences between genomes are not confused with differences between openings, and
+  the winner is then re-measured on seeds never used during the search. With 12-30 games
+  per genome the training fitness is very noisy; the validation pass is what stops the
+  reported winner from being pure noise.
+
+A game that reaches the move cap is counted as `unfinished` and excluded from the win rate
+rather than scored, because a position cut off mid-play is not a result (see the note on
+the move cap above).
+
 ### Root width is worth more than root completeness (IPVGO_ROOTW)
+
+
 
 A diagnostic first: play the same opening at 1 000 and at 20 000 nodes and compare the
 first move. **Seven of nine differ.** The move the engine picks at the in-game budget is

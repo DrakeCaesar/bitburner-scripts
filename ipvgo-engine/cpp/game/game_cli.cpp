@@ -1823,11 +1823,288 @@ int runEyeTest(int games, uint64_t seed) {
   return mismatches ? 1 : 0;
 }
 
+// ---- tune: genetic search over the per-faction search widths ---------------
+//
+// beam, whiteChildren and whiteMass interact per faction and per board size, and they
+// are the three knobs that decide how much of the tree is explored. Tuning them by hand
+// is what the bench GUI is for; this does it automatically.
+//
+// Evaluation is game-parallel, not search-parallel: every worker plays whole games with
+// threads = 1. At a node budget search threads buy no strength and only scale ~4.8x on
+// 12 threads, while independent games scale with the core count and stay reproducible
+// per seed because no state is shared between them.
+//
+// Every individual in a generation plays the same seed set (common random numbers), so
+// the differences between genomes are not confused with differences between openings.
+// The winner is then re-measured on held-back seeds, because 30 games cannot separate
+// two genomes that are a couple of points apart.
+
+struct TuneGenome {
+  int beam = 12;
+  int whiteChildren = 6;
+  double whiteMass = 0.9;
+};
+
+struct TuneTally {
+  int finished = 0;
+  int wins = 0;
+  int unfinished = 0;
+  double marginSum = 0.0;
+  double winRate() const { return finished > 0 ? static_cast<double>(wins) / finished : 0.0; }
+  double averageMargin() const { return finished > 0 ? marginSum / finished : 0.0; }
+};
+
+struct TuneGenomeTally {
+  TuneGenome genome;
+  TuneTally train;
+  TuneTally validation;
+};
+
+int tuneMoveCap(int size) {
+  const char* capEnv = std::getenv("IPVGO_MOVECAP");
+  return capEnv != nullptr ? std::max(1, std::atoi(capEnv)) : size * size * 4;
+}
+
+// One complete self-play game with this genome. Returns whether the game actually ended;
+// a game that hits the move cap is reported as unfinished rather than scored, because a
+// position cut off mid-play is not a result.
+TuneTally tunePlayGame(int size, Opponent ai, const TuneGenome& genome, long nodeLimit, uint64_t seed) {
+  std::mt19937_64 rng(seed != 0 ? seed : 1);
+  const double clockMs = static_cast<double>(rng() % 30000000u);
+  MathRandom mathRng(rng());
+  GameState state = newBoardState(size, ai, true, clockMs, mathRng);
+
+  ExploitConfig cfg;
+  cfg.beam = genome.beam;
+  cfg.whiteChildren = genome.whiteChildren;
+  cfg.whiteMass = genome.whiteMass;
+  cfg.nodeLimit = nodeLimit;
+  cfg.threads = 1;
+  cfg.deterministic = true;
+  ipvgo::nn::SearchSession session;
+
+  const int cap = tuneMoveCap(size);
+  for (int m = 0; m < cap && !state.gameOver; ++m) {
+    if (whoseTurn(state) != Color::Black) break;
+    session.noteRequest(static_cast<size_t>(state.previousBoards.size()));
+    const ipvgo::nn::ExploitResult r = ipvgo::nn::runExploiter(state, cfg, nullptr, &session);
+    if (r.bestAction == ipvgo::nn::passAction(size)) {
+      passTurn(state, Color::Black);
+    } else if (!makeMove(state, r.bestAction / size, r.bestAction % size, Color::Black)) {
+      passTurn(state, Color::Black);
+    }
+    if (state.gameOver) break;
+    const Play white = getMove(state, Color::White, ai, static_cast<double>(rng() % 30000000u), mathRng);
+    if (white.type == PlayType::Pass) passTurn(state, Color::White);
+    else if (!makeMove(state, white.x, white.y, Color::White)) passTurn(state, Color::White);
+  }
+
+  TuneTally tally;
+  const Score score = getScore(state);
+  if (!state.gameOver) {
+    tally.unfinished = 1;
+    return tally;
+  }
+  tally.finished = 1;
+  tally.wins = blackWins(score) ? 1 : 0;
+  tally.marginSum = score.blackSum - score.whiteSum;
+  return tally;
+}
+
+// Plays every (genome, seed) pair across `threads` workers, then sums per genome in seed
+// order so the totals do not depend on how the work was interleaved.
+std::vector<TuneTally> tuneEvaluate(const std::vector<TuneGenome>& genomes, const std::vector<uint64_t>& seeds,
+                                    int size, Opponent ai, long nodeLimit, unsigned threads) {
+  std::vector<TuneTally> tallies(genomes.size());
+  std::vector<TuneTally> results(genomes.size() * seeds.size());
+  std::atomic<size_t> next{0};
+  const size_t jobs = results.size();
+  const unsigned workers = std::max(1u, std::min<unsigned>(threads, static_cast<unsigned>(std::max<size_t>(jobs, 1))));
+
+  auto run = [&]() {
+    for (;;) {
+      const size_t job = next.fetch_add(1, std::memory_order_relaxed);
+      if (job >= jobs) break;
+      results[job] = tunePlayGame(size, ai, genomes[job / seeds.size()], nodeLimit, seeds[job % seeds.size()]);
+    }
+  };
+  if (workers <= 1) {
+    run();
+  } else {
+    std::vector<std::thread> pool;
+    pool.reserve(workers);
+    for (unsigned t = 0; t < workers; ++t) pool.emplace_back(run);
+    for (std::thread& thread : pool) thread.join();
+  }
+
+  for (size_t g = 0; g < genomes.size(); ++g) {
+    TuneTally total;
+    for (size_t s = 0; s < seeds.size(); ++s) {
+      const TuneTally& one = results[g * seeds.size() + s];
+      total.finished += one.finished;
+      total.wins += one.wins;
+      total.unfinished += one.unfinished;
+      total.marginSum += one.marginSum;
+    }
+    tallies[g] = total;
+  }
+  return tallies;
+}
+
+TuneGenome clampGenome(TuneGenome g) {
+  g.beam = std::clamp(g.beam, 2, 24);
+  g.whiteChildren = std::clamp(g.whiteChildren, 1, 16);
+  g.whiteMass = std::clamp(g.whiteMass, 0.05, 1.0);
+  return g;
+}
+
+json genomeJson(const TuneGenome& g) {
+  return json{{"beam", g.beam}, {"whiteChildren", g.whiteChildren}, {"whiteMass", g.whiteMass}};
+}
+
+int runTune(const std::string& faction, int generations, int populationSize, int gamesPerGenome, long nodeLimit,
+            int size, unsigned threads, uint64_t seedBase, bool emitJson) {
+  const Opponent ai = parseOpponent(faction).value_or(Opponent::Netburners);
+  std::mt19937_64 rng(seedBase != 0 ? seedBase : 1);
+
+  // Training seeds are shared by every individual, so two genomes are compared on the
+  // same openings. Validation seeds are never used during the search.
+  std::vector<uint64_t> trainSeeds;
+  for (int i = 0; i < gamesPerGenome; ++i) trainSeeds.push_back(rng());
+  std::vector<uint64_t> validationSeeds;
+  for (int i = 0; i < std::max(gamesPerGenome * 3, 60); ++i) validationSeeds.push_back(rng());
+
+  std::vector<TuneGenome> population;
+  population.reserve(static_cast<size_t>(populationSize));
+  for (int i = 0; i < populationSize; ++i) {
+    TuneGenome g;
+    g.beam = 4 + static_cast<int>(rng() % 19u);          // 4..22
+    g.whiteChildren = 2 + static_cast<int>(rng() % 9u);  // 2..10
+    g.whiteMass = 0.2 + 0.05 * static_cast<double>(rng() % 17u);  // 0.20..1.00
+    population.push_back(clampGenome(g));
+  }
+  population[0] = TuneGenome{};  // always seed the current defaults in the first generation
+
+  TuneGenome bestOverall;
+  TuneTally bestOverallTally;
+  double bestFitness = -1.0;
+
+  for (int gen = 0; gen < generations; ++gen) {
+    const std::vector<TuneTally> tallies = tuneEvaluate(population, trainSeeds, size, ai, nodeLimit, threads);
+    std::vector<int> order(population.size());
+    for (size_t i = 0; i < order.size(); ++i) order[i] = static_cast<int>(i);
+    std::stable_sort(order.begin(), order.end(), [&](int a, int b) {
+      const double wa = tallies[a].winRate();
+      const double wb = tallies[b].winRate();
+      if (wa != wb) return wa > wb;
+      return tallies[a].averageMargin() > tallies[b].averageMargin();
+    });
+    if (tallies[order[0]].winRate() > bestFitness) {
+      bestFitness = tallies[order[0]].winRate();
+      bestOverall = population[order[0]];
+      bestOverallTally = tallies[order[0]];
+    }
+
+    if (emitJson) {
+      json rows = json::array();
+      for (size_t i = 0; i < order.size(); ++i) {
+        const int idx = order[i];
+        rows.push_back(json{{"rank", static_cast<int>(i) + 1},
+                            {"genome", genomeJson(population[idx])},
+                            {"winRate", tallies[idx].winRate()},
+                            {"avgMargin", tallies[idx].averageMargin()},
+                            {"finished", tallies[idx].finished},
+                            {"unfinished", tallies[idx].unfinished}});
+      }
+      std::cout << json{{"type", "generation"},
+                        {"gen", gen + 1},
+                        {"generations", generations},
+                        {"faction", faction},
+                        {"rows", rows}}
+                       .dump()
+                << "\n";
+      std::cout.flush();
+    } else {
+      std::printf("gen %d/%d  best %5.1f%% (beam %d, replies %d, mass %.2f)  margin %+5.1f\n", gen + 1, generations,
+                  100.0 * tallies[order[0]].winRate(), population[order[0]].beam,
+                  population[order[0]].whiteChildren, population[order[0]].whiteMass,
+                  tallies[order[0]].averageMargin());
+      std::fflush(stdout);
+    }
+
+    // Next generation: keep the two best, then tournament-select parents and breed.
+    std::vector<TuneGenome> next;
+    next.reserve(population.size());
+    next.push_back(population[order[0]]);
+    next.push_back(population[order[std::min<size_t>(1, order.size() - 1)]]);
+    auto pick = [&]() {
+      const int a = static_cast<int>(rng() % order.size());
+      const int b = static_cast<int>(rng() % order.size());
+      return population[tallies[order[a]].winRate() >= tallies[order[b]].winRate() ? order[a] : order[b]];
+    };
+    while (next.size() < population.size()) {
+      const TuneGenome pa = pick();
+      const TuneGenome pb = pick();
+      TuneGenome child;
+      child.beam = (rng() & 1u) ? pa.beam : pb.beam;
+      child.whiteChildren = (rng() & 1u) ? pa.whiteChildren : pb.whiteChildren;
+      child.whiteMass = (rng() & 1u) ? pa.whiteMass : pb.whiteMass;
+      if (rng() % 100u < 40u) child.beam += static_cast<int>(rng() % 7u) - 3;
+      if (rng() % 100u < 40u) child.whiteChildren += static_cast<int>(rng() % 5u) - 2;
+      if (rng() % 100u < 40u) child.whiteMass += 0.05 * (static_cast<double>(rng() % 7u) - 3.0);
+      next.push_back(clampGenome(child));
+    }
+    population = std::move(next);
+  }
+
+  // Re-measure the winner and the shipped defaults on the held-back seeds.
+  std::vector<TuneGenome> finalists = {bestOverall, TuneGenome{}};
+  const std::vector<TuneTally> finalTallies =
+      tuneEvaluate(finalists, validationSeeds, size, ai, nodeLimit, threads);
+
+  if (emitJson) {
+    std::cout << json{{"type", "done"},
+                      {"faction", faction},
+                      {"size", size},
+                      {"nodeLimit", nodeLimit},
+                      {"train", json{{"genome", genomeJson(bestOverall)},
+                                     {"winRate", bestOverallTally.winRate()},
+                                     {"avgMargin", bestOverallTally.averageMargin()},
+                                     {"finished", bestOverallTally.finished},
+                                     {"unfinished", bestOverallTally.unfinished}}},
+                      {"validation",
+                       json::array({json{{"label", "tuned"},
+                                         {"genome", genomeJson(bestOverall)},
+                                         {"winRate", finalTallies[0].winRate()},
+                                         {"avgMargin", finalTallies[0].averageMargin()},
+                                         {"finished", finalTallies[0].finished},
+                                         {"unfinished", finalTallies[0].unfinished}},
+                                   json{{"label", "default"},
+                                        {"genome", genomeJson(TuneGenome{})},
+                                        {"winRate", finalTallies[1].winRate()},
+                                        {"avgMargin", finalTallies[1].averageMargin()},
+                                        {"finished", finalTallies[1].finished},
+                                        {"unfinished", finalTallies[1].unfinished}}})}}
+                     .dump()
+              << "\n";
+  } else {
+    std::printf("\nvalidated on %zu held-back seeds:\n", validationSeeds.size());
+    std::printf("  tuned   beam %2d  replies %2d  mass %.2f   %5.1f%%  margin %+5.1f\n", bestOverall.beam,
+                bestOverall.whiteChildren, bestOverall.whiteMass, 100.0 * finalTallies[0].winRate(),
+                finalTallies[0].averageMargin());
+    std::printf("  default beam %2d  replies %2d  mass %.2f   %5.1f%%  margin %+5.1f\n", TuneGenome{}.beam,
+                TuneGenome{}.whiteChildren, TuneGenome{}.whiteMass, 100.0 * finalTallies[1].winRate(),
+                finalTallies[1].averageMargin());
+  }
+  std::cout.flush();
+  return 0;
+}
+
 int main(int argc, char** argv) {
   if (argc < 2) {
     std::cerr << "usage: ipvgo_game "
                  "<selftest|fuzz|parity|aimove|mcgsmove|mcgsplay|exploitmove|exploitplay|"
-                 "profileworkload|prof|serve|policycheck|optbench|gen> ...\n";
+                 "profileworkload|prof|serve|policycheck|optbench|gen|tune> ...\n";
     return 2;
   }
   const std::string cmd = argv[1];
@@ -1858,6 +2135,24 @@ int main(int argc, char** argv) {
       return 2;
     }
     return runExploitPlay("Illuminati", 9, games, 2, seed, false, 0, 0, 5000, true);
+  }
+  if (cmd == "tune" && argc >= 3) {
+    // tune <faction> [generations] [population] [gamesPerGenome] [nodeLimit] [size] [threads] [seed] [json]
+    const std::string faction = argv[2];
+    const int generations = argc >= 4 ? std::stoi(argv[3]) : 8;
+    const int population = argc >= 5 ? std::stoi(argv[4]) : 10;
+    const int games = argc >= 6 ? std::stoi(argv[5]) : 30;
+    const long nodeLimit = argc >= 7 ? std::stol(argv[6]) : 1000;
+    const int size = argc >= 8 ? std::stoi(argv[7]) : 5;
+    const unsigned threads = argc >= 9 ? static_cast<unsigned>(std::max(1, std::stoi(argv[8])))
+                                       : std::max(1u, std::thread::hardware_concurrency());
+    const uint64_t seed = argc >= 10 ? std::stoull(argv[9]) : 1u;
+    const bool emitJson = argc < 11 || std::string(argv[10]) == "json";
+    if (generations < 1 || population < 2 || games < 1) {
+      std::cerr << "tune: generations and games must be positive, population at least 2\n";
+      return 2;
+    }
+    return runTune(faction, generations, population, games, nodeLimit, size, threads, seed, emitJson);
   }
   if (cmd == "exploitplay" && argc >= 6) {
     const int size = std::stoi(argv[3]);
