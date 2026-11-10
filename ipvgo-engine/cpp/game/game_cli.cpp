@@ -1852,6 +1852,13 @@ struct TuneTally {
   double marginSum = 0.0;
   double winRate() const { return finished > 0 ? static_cast<double>(wins) / finished : 0.0; }
   double averageMargin() const { return finished > 0 ? marginSum / finished : 0.0; }
+  // Standard error of the win rate. With 30 games it is ~8 points, which is larger
+  // than any effect these knobs produce, so every number the tuner prints carries it.
+  double standardError() const {
+    if (finished <= 0) return 1.0;
+    const double p = winRate();
+    return std::sqrt(p * (1.0 - p) / static_cast<double>(finished));
+  }
 };
 
 struct TuneGenomeTally {
@@ -2012,6 +2019,7 @@ int runTune(const std::string& faction, int generations, int populationSize, int
         rows.push_back(json{{"rank", static_cast<int>(i) + 1},
                             {"genome", genomeJson(population[idx])},
                             {"winRate", tallies[idx].winRate()},
+                            {"se", tallies[idx].standardError()},
                             {"avgMargin", tallies[idx].averageMargin()},
                             {"finished", tallies[idx].finished},
                             {"unfinished", tallies[idx].unfinished}});
@@ -2076,12 +2084,14 @@ int runTune(const std::string& faction, int generations, int populationSize, int
                        json::array({json{{"label", "tuned"},
                                          {"genome", genomeJson(bestOverall)},
                                          {"winRate", finalTallies[0].winRate()},
+                                         {"se", finalTallies[0].standardError()},
                                          {"avgMargin", finalTallies[0].averageMargin()},
                                          {"finished", finalTallies[0].finished},
                                          {"unfinished", finalTallies[0].unfinished}},
                                    json{{"label", "default"},
                                         {"genome", genomeJson(TuneGenome{})},
                                         {"winRate", finalTallies[1].winRate()},
+                                        {"se", finalTallies[1].standardError()},
                                         {"avgMargin", finalTallies[1].averageMargin()},
                                         {"finished", finalTallies[1].finished},
                                         {"unfinished", finalTallies[1].unfinished}}})}}
@@ -2089,12 +2099,12 @@ int runTune(const std::string& faction, int generations, int populationSize, int
               << "\n";
   } else {
     std::printf("\nvalidated on %zu held-back seeds:\n", validationSeeds.size());
-    std::printf("  tuned   beam %2d  replies %2d  mass %.2f   %5.1f%%  margin %+5.1f\n", bestOverall.beam,
+    std::printf("  tuned   beam %2d  replies %2d  mass %.2f   %5.1f%% +-%.1f  margin %+5.1f\n", bestOverall.beam,
                 bestOverall.whiteChildren, bestOverall.whiteMass, 100.0 * finalTallies[0].winRate(),
-                finalTallies[0].averageMargin());
-    std::printf("  default beam %2d  replies %2d  mass %.2f   %5.1f%%  margin %+5.1f\n", TuneGenome{}.beam,
+                100.0 * finalTallies[0].standardError(), finalTallies[0].averageMargin());
+    std::printf("  default beam %2d  replies %2d  mass %.2f   %5.1f%% +-%.1f  margin %+5.1f\n", TuneGenome{}.beam,
                 TuneGenome{}.whiteChildren, TuneGenome{}.whiteMass, 100.0 * finalTallies[1].winRate(),
-                finalTallies[1].averageMargin());
+                100.0 * finalTallies[1].standardError(), finalTallies[1].averageMargin());
   }
   std::cout.flush();
   return 0;

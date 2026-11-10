@@ -1582,7 +1582,7 @@
             String(row.genome.beam),
             String(row.genome.whiteChildren),
             Number(row.genome.whiteMass).toFixed(2),
-            tunePct(row.winRate),
+            `${tunePct(row.winRate)} +-${tunePct(row.se)}`,
             tuneSigned(row.avgMargin),
             String(row.unfinished ?? 0),
           ]
@@ -1606,7 +1606,7 @@
             String(entry.genome.beam),
             String(entry.genome.whiteChildren),
             Number(entry.genome.whiteMass).toFixed(2),
-            tunePct(entry.winRate),
+            `${tunePct(entry.winRate)} +-${tunePct(entry.se)}`,
             tuneSigned(entry.avgMargin),
             String(entry.unfinished ?? 0),
           ]
