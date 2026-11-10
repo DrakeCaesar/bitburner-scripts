@@ -1268,7 +1268,45 @@ reaches 3 sigma, so treat it as a probable ~1.5-2 point gain rather than a measu
 It is kept behind the environment variable, off, until a full 240-games-per-arm campaign
 confirms it at the budget the game actually uses.
 
-### Eval terms tried and rejected (and a warning about cheap screening)
+### Root width is worth more than root completeness (IPVGO_ROOTW)
+
+A diagnostic first: play the same opening at 1 000 and at 20 000 nodes and compare the
+first move. **Seven of nine differ.** The move the engine picks at the in-game budget is
+not a converged answer, so the search is the binding constraint, not only the leaf.
+
+That reframes the root. It is searched at full width on purpose - "dropping a big
+territory move there costs whole games, and the cost is one level of branching" - but with
+a *node budget* the width divides everything else. 5x5 has ~20 legal points, so 1 000
+nodes is ~50 nodes per child, which is one or two plies per child. 9x9 is ~60 points, so
+**~16 nodes per child**, which is not a search at all.
+
+`IPVGO_ROOTW=n` keeps the `n` root moves the existing beam prior likes most (the same
+`blackCandidatePrior` the beam already trusts - nothing new is being believed) and searches
+only those, so each surviving child is actually evaluated rather than all of them being
+guessed at. Note `avgDepth` barely moves (4.63 -> 4.62 at 5x5): this is not buying depth,
+it is buying a *reliable comparison* between the moves that matter.
+
+Paired per faction-and-seed cell, 1 thread, **in-game budget (1 000 nodes)**:
+
+| board | full width | cap | delta | sigma |
+|---|---|---|---|---|
+| 5x5 | 86.3% | 12 -> 89.0% | +2.7 | 2.6 |
+| 5x5 | 86.3% | **8 -> 89.6%** | **+3.3** | **3.2** |
+| 5x5 | 86.3% | 6 -> 87.2% | +0.9 | 0.6 |
+| 5x5, fresh seeds | 86.9% | 8 -> 88.6% | +1.7 | 1.4 |
+| **9x9** | 75.6% | **16 -> 81.9%** | **+6.3** | **2.3** |
+
+Pooled 5x5 (12 seeds, 2 880 games per arm) is +2.5 points. The effect grows with the
+board, which is what the mechanism predicts: the wider the root, the less each child was
+worth. Too narrow loses it again (6 on 5x5), because the prior is not good enough to
+throw away 14 of 20 moves.
+
+Off by default (`IPVGO_ROOTW` unset = full width, and every measurement above that
+predates this section used full width). Making it the default needs the same campaign at
+7x7 and 13x13 to choose the cap per size; the shape of the data suggests something like
+`max(8, 2*sqrt(points))`.
+
+
 
 Four more eval terms were measured with the same paired-cell method. Two are still in the
 code behind environment variables (off), two were removed.
