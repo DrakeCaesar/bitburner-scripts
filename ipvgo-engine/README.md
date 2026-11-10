@@ -1268,6 +1268,49 @@ reaches 3 sigma, so treat it as a probable ~1.5-2 point gain rather than a measu
 It is kept behind the environment variable, off, until a full 240-games-per-arm campaign
 confirms it at the budget the game actually uses.
 
+### Eval terms tried and rejected (and a warning about cheap screening)
+
+Four more eval terms were measured with the same paired-cell method. Two are still in the
+code behind environment variables (off), two were removed.
+
+- **Worst-case White aggregation** (`IPVGO_WHITE_WORST`, already existing):
+  70.2% -> 68.5%, **-1.7 points / -1.7 sigma**. Treating White as adversarial when it
+  actually follows a policy loses, which is what the exploit model is for.
+- **Concentration of force** (`IPVGO_CONC`): the stone-weighted average chain size,
+  `sum(size^2)/sum(size)`, i.e. 23 stones in one chain scores 23 and the same stones
+  scattered score 1. Positive weight (reward *our* concentration) was +1.0 at 200 nodes;
+  **negative weight (reward White's, i.e. make Black spread out) was +2.7 games per
+  40-game cell at 3.6 sigma**, and replicated on fresh seeds at 3.2 / 2.9 / 1.8 sigma.
+- **Room to live** (`IPVGO_REGS`): regions bordered per side, +1.1 sigma. Weak.
+- **Race at a 3-liberty horizon** (`IPVGO_RACE_LIBS=3`): +1.5 points at the in-game
+  budget, 1.4 sigma. Slightly better than the 2-liberty version and not yet resolved.
+
+**The warning.** The concentration term looked like the best result of the session at the
+screening budget and then evaporated:
+
+| 5x5 | budget 200 | budget 1000 (in game) |
+|---|---|---|
+| `IPVGO_CONC=-0.05` | +2.4 games/cell (3.2 sigma) | **-0.04 games/cell (0.0 sigma)** |
+| `IPVGO_CONC=-0.1` | +2.5 games/cell (2.9 sigma) | - |
+
+Screening at a low node budget is fast and sensitive, and the reasoning for it was sound -
+more games, more headroom - but it answers "does this help a *shallow* search", which is
+not the question. A term that supplies information the search cannot reach at depth 1-2 is
+worthless once depth 4 finds it. **A low-budget result has to be confirmed at the in-game
+budget before it means anything**, and the two can disagree in both magnitude and sign.
+The same caveat applies to the older 5x5 screens recorded earlier in this file.
+
+Pooled, the capture-race term is the only eval change that has been positive in every run
+at *both* budgets: at 200 nodes +2.1 to +2.5 points (2.4 sigma at 5 760 games per arm), at
+1000 nodes +1.2 to +1.5 points (1.0-1.4 sigma). Ten runs, ~17 000 games, always positive,
+never individually above 2.4 sigma. Treat it as a probable ~1.3 point gain at the in-game
+budget and keep it off until a campaign resolves it.
+
+Since the remaining eval terms are at the horizon's edge, the next lever is the **search**,
+not the leaf: a quiescence extension that keeps searching forcing moves (captures, atari
+replies) past the depth limit, instead of evaluating statically exactly where the losses
+are decided.
+
 ### Two ideas measured and rejected
 
 - **Cache-line padding.** `SearchSession::Impl::Slot` is exactly 64 bytes but a
