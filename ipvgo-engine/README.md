@@ -1286,25 +1286,44 @@ only those, so each surviving child is actually evaluated rather than all of the
 guessed at. Note `avgDepth` barely moves (4.63 -> 4.62 at 5x5): this is not buying depth,
 it is buying a *reliable comparison* between the moves that matter.
 
-Paired per faction-and-seed cell, 1 thread, **in-game budget (1 000 nodes)**:
+Paired per faction-and-seed cell, 1 thread, **in-game budget (1 000 nodes)**, children kept
+in the generator's order so pruning is the only thing that changes:
 
 | board | full width | cap | delta | sigma |
 |---|---|---|---|---|
-| 5x5 | 86.3% | 12 -> 89.0% | +2.7 | 2.6 |
-| 5x5 | 86.3% | **8 -> 89.6%** | **+3.3** | **3.2** |
+| 5x5, 48 cells x 40 games | 86.0% | **12 -> 88.7%** | **+2.7** | **2.9** |
+| 5x5, same | 86.0% | 8 -> 87.4% | +1.4 | 1.4 |
 | 5x5 | 86.3% | 6 -> 87.2% | +0.9 | 0.6 |
-| 5x5, fresh seeds | 86.9% | 8 -> 88.6% | +1.7 | 1.4 |
-| **9x9** | 75.6% | **16 -> 81.9%** | **+6.3** | **2.3** |
 
-Pooled 5x5 (12 seeds, 2 880 games per arm) is +2.5 points. The effect grows with the
-board, which is what the mechanism predicts: the wider the root, the less each child was
-worth. Too narrow loses it again (6 on 5x5), because the prior is not good enough to
-throw away 14 of 20 moves.
+**Correction.** The first version of this cap re-sorted the surviving moves by `y`
+coordinate instead of restoring the generator's order, so it pruned *and* reordered - and
+reordering changes which move wins a tie and the order the scheduler hands children out.
+That version measured +3.3 at cap 8 and +6.3 on 9x9; with the order restored, cap 8 gives
++1.4 and **cap 12** is the better setting. The 9x9 figure has not been re-measured and
+should be treated as unconfirmed.
 
-Off by default (`IPVGO_ROOTW` unset = full width, and every measurement above that
-predates this section used full width). Making it the default needs the same campaign at
-7x7 and 13x13 to choose the cap per size; the shape of the data suggests something like
-`max(8, 2*sqrt(points))`.
+Off by default (`IPVGO_ROOTW` unset = full width, and every measurement elsewhere in this
+file that predates this section used full width). Making it the default needs the same
+de-ordered campaign at 7x7, 9x9 and 13x13 to fix the cap per size.
+
+### Aggregation and selection rules (all rejected)
+
+The search combines numbers in exactly two ways: White's node is the probability-weighted
+**average** over its replies, Black's node is the **max** over its candidates, and the root
+takes the argmax. Four alternatives were measured at the in-game budget, 5x5, paired,
+1 440 games per arm:
+
+| rule | knob | result |
+|---|---|---|
+| worst case instead of average | `IPVGO_WHITE_WORST` | -1.7 pts, -1.7 sigma |
+| 25% blend of mean and worst | `IPVGO_AGG=0.25` | -0.6 sigma |
+| sharpen White's probabilities (`p^2`) | `IPVGO_PGAMMA=2` | -0.2 sigma |
+| root ties broken by prior, not order | `IPVGO_TIEB` | -0.3 sigma |
+
+So the expectation is the right aggregation even though it lets one rare killing reply be
+paid for with many comfortable ones, and the root argmax does not need help breaking ties.
+That closes off the aggregation question: what is left is *which* positions get evaluated
+(root width, above) and *how well* the leaf prices them.
 
 
 
