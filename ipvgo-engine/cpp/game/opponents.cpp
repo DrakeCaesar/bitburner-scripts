@@ -192,9 +192,10 @@ struct EyeMoveSet {
 
 EyeMoveSet getEyeCreationMoves(const SimpleBoard& board, Color player, const PointMask& availableSet,
                                int maxLiberties) {
-  // A copy: chainsCached() hands out a reference into a small ring that the
-  // candidate evaluations below would evict.
-  const ChainSet cs = chainsCached(board);
+  // A reference, not a copy: the candidate evaluations below no longer go through
+  // chainsCached() for the board after a move, so nothing can evict this slot of the
+  // ring. That removes a 6.5 KB memcpy from every policy build.
+  const ChainSet& cs = chainsCached(board);
   const EyeBoardSummary base = summarizeEyes(board, cs, player);
   const int N = cs.N;
   const char me = colorChar(player);
@@ -253,8 +254,12 @@ EyeMoveSet getEyeCreationMoves(const SimpleBoard& board, Color player, const Poi
     // the board-wide analysis.
     EyeTotals after;
     if (!eyeTotalsAfterMove(board, cs, base, player, px, py, maxSize, after)) {
+      // Local storage rather than chainsCached(): a copy of the parent's chain set is
+      // held by reference above, and this call must not evict its ring slot.
       const SimpleBoard eval = evaluateMoveResult(board, px, py, player);
-      after = summarizeEyes(eval, chainsCached(eval), player).totals;
+      ChainSet evalChains;
+      computeChainsInto(eval, evalChains);
+      after = summarizeEyes(eval, evalChains, player).totals;
     }
     createsLife = after.livingGroups > currentLivingGroups;
     return createsLife || (after.eyeCount > currentEyeCount && after.livingGroups == currentLivingGroups);

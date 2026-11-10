@@ -953,7 +953,8 @@ build (9x9 Illuminati, 4 000-node budget, 12 threads on a 6-core/12-thread CPU):
 
 - **Sync.** Root candidates are split among workers, one `std::async` future each, and
   the parent joins them all - a barrier per depth iteration, with no work stealing and no
-  partial results.
+  partial results. (The futures have since been replaced by a persistent worker pool; see
+  "The worker pool" below for what that changed.)
 - **Split.** Contiguous blocks of `ceil(children / threads)` children, and the node
   budget divided as `nodeLimit / threads` per worker regardless of how many children that
   worker actually got. With the 29 candidates of a typical 9x9 root and 12 workers that
@@ -1005,6 +1006,169 @@ round robin removes the idle workers, and the sharded cache removes the lock wai
 is why the deterministic mode is already 16% faster on the 2-position bench even though
 it still waits on its slowest worker. The dynamic scheduler is worth the last 1-6% in
 play, where the run-to-run variation does not matter.
+
+### The worker pool
+
+`std::async(std::launch::async, ...)` is not a thread creation on MSVC: it constructs a
+`_Task_async_state`, which is `Concurrency::create_task`, so the C++ runtime hands the
+task to its own pool. Measured here: 2 400 calls ran on **7 distinct thread ids** at
+**3.2 us** each, against 48.7 us and 2 400 ids for a real `std::thread`. So dispatch was
+already cheap. What it was not, was free: every round routes each task through the
+runtime's queue, so the last worker starts later than it would if it were already parked
+and directly signalled.
+
+`exploiter.cpp` now keeps its own workers alive for the life of the process (`RoundPool`)
+and wakes worker `t` for session slot `t`. The slot index, not the OS thread, is what the
+memo is keyed by, so `deterministic` mode and per-worker memo ownership are unchanged -
+verified by diffing `exploitplay` output line for line (moves, values, node counts,
+scores) before and after, at 12 and 6 threads and at 4 000 and 1 000 nodes.
+
+Round shape (N workers x W of work, one depth iteration, joined per round), medians of
+paired interleaved trials on a 6-core/12-thread CPU:
+
+| round | `std::async` | persistent pool |
+|---|---|---|
+| 6 x 60 us | 0.089 ms | 0.073 ms (-18%) |
+| 12 x 60 us | 0.123 ms | 0.102 ms (-17%) |
+| 6 x 2.5 ms | 2.538 ms | 2.516 ms (-1%) |
+| 12 x 2.5 ms | 3.72 ms | 3.77 ms (parity: another run had the pool 4% ahead) |
+| 12 x no work | 0.016 ms | 0.020 ms (**slower**) |
+
+The last row is the honest shape of the trade, and the reason not to reach for a pool on
+principle: a round that dispatches but does no work is still faster through `std::async`,
+because the runtime can complete trivial tasks without parking and waking twelve threads.
+The pool only pays once a round does real work, and it pays more the shorter the round is.
+
+In the engine, paired against the build before it (deterministic mode, so node counts and
+moves are identical - diffed line for line on three configurations), median of the paired
+per-move think time:
+
+| benchmark | before | after |
+|---|---|---|
+| `exploitplay Illuminati 9 4 2 1` @1000 nodes, 12 threads | 1.85 ms/move | 1.76 ms/move (**-4.8%**, faster in 8 of 11 pairs) |
+| `exploitplay Illuminati 9 4 2 1` @4000 nodes, 12 threads | 3.13 ms/move | 3.08 ms/move (-1.1%, faster in 6 of 9) |
+| `optbench --positions=2 --depth=3 --threads=12` | - | noise: runs came out 5.7% faster and 3.0% slower |
+
+The `optbench` row is a warning rather than a result. `optbench --depth=N` runs a
+**single** `searchRoot` per measurement, so it has one round and cannot amortise a
+per-round cost at all; the gain only accumulates where iterative deepening runs several
+rounds per move (`exploitplay`, `bench`). Do not screen this change on `optbench`.
+
+So the gain lives where the round is short - many workers, or a small node budget - and it
+shrinks as the search lengthens (4.8% at 1 000 nodes, 1.1% at 4 000, nothing measurable on
+a 45 ms fixed-depth search at 6 threads). It is worth keeping because it is free and
+behaviour-preserving, not because it is large. A side effect worth knowing: the workers now
+live as long as the process, so each keeps one `fast_alloc` pool instead of runtime-pool
+threads being created and retired (see the allocator handover below), and the engine no
+longer depends on `std::async`'s platform behaviour - on libstdc++ and libc++ the same call
+really does start a thread (measured 48.7 us here for `std::thread`), which would have
+turned every round into twelve thread creations.
+
+`mcts.cpp` and `mcgs.cpp` still use `std::async`; their rounds are one synchronous
+split-and-merge per move, so the same change is available there if it is ever wanted.
+
+### The superko hash and the hoisted plane load
+
+A mutation used to spend almost none of its time on Go and almost all of it on
+re-encoding. Measured on a 9x9 position with 40 moves of history, `applyMove` +
+`undoMove` cost **0.397 us**, split as:
+
+| step | us | share |
+|---|---|---|
+| `previousBoards.contains` - linear scan of every history entry | 0.122 | 31% |
+| `packBoard` - once for the probe, once for the append | 0.168 | 42% |
+| `BitPlanes::load` - chars -> 5 planes, per candidate | 0.070 | 18% |
+| `SimpleBoard` copy (368 bytes) | 0.005 | 1% |
+| `placeStone` floods, by difference | ~0.00 | ~0% |
+
+Two changes, both behaviour-preserving:
+
+- **One 64-bit hash per history entry** (`BoardHistory::hashWords`), so a superko
+  question is a hash compare per historical board instead of a word-by-word
+  comparison of all of them. A hash match is still confirmed on the words, so a
+  collision cannot answer wrongly. This also stops the cost from growing with the
+  length of the game.
+- **`applyMove` takes an optional `const BitPlanes*`**, and the two search loops
+  (`blackToMove`, `expectOverReplies`) load the planes once per position instead of
+  once per candidate move. Every candidate is tried on the same position and undone,
+  so one load is valid for all of them.
+
+Paired, interleaved, deterministic mode so the node counts are identical - and the
+`exploitplay` traces are byte-identical before and after (moves, values, node counts,
+scores) at 5x5/9x9/13x13 and at 12/1/4 threads:
+
+| benchmark | before | after |
+|---|---|---|
+| `exploitplay Netburners 5 12 2 1` @1000 nodes, 1 thread | 4.149 ms/move | 4.067 (**-2.0%**, faster in 8/9) |
+| `exploitplay "Slum Snakes" 9 6 2 1` @1000 nodes, 1 thread | 20.787 ms/move | 19.803 (**-4.7%**, 8/9) |
+| `exploitplay "Slum Snakes" 9 4 2 1` @4000 nodes, 1 thread | 63.937 ms/move | 61.986 (**-3.1%**, 9/9) |
+
+**Negative result, worth recording.** The remaining per-node cost is dominated by
+full-board chain floods (19.7% of samples), and the obvious guess is that the same
+board is being flooded repeatedly. It is not. Growing the `chainsCached` ring from 6
+to 32 slots measured **-0.1% on 9x9 and +0.4% on 13x13** (coin-flip ordering): the
+floods are one per *candidate position the policy model evaluates*, not repeats of
+one board, so no cache size can remove them. The only way is to analyse positions
+incrementally - play, analyse, undo on one mutable state - which is a rewrite of the
+policy model, not a cache.
+
+Three other "obvious redundancy" ideas were checked and are already done, so the
+ground should not be re-covered:
+
+- `MoveGen`'s accessors are already memoised per position (`cached(kEyeMove, ...)`,
+  `patternPoints()`, `growthList()`), even though several call sites call `eyeMove()`
+  twice in one expression.
+- `getEyeCreationMoves` already deduplicates repeated candidate points and already
+  uses the incremental `eyeTotalsAfterMove` in preference to a board-wide
+  `summarizeEyes`.
+- The reply cache is not under-used because it is per move: measured with
+  `IPVGO_CACHE_STATS=1` on 9x9 Slum Snakes @4000, **8318 reply hits over 100 446
+  nodes (8.3%)** and 784 memo hits (0.8%, 155 of them across moves). The positions
+  really are distinct, so a longer-lived cache would not repay its memory.
+
+The one piece of real waste left in that path was a **6.5 KB `ChainSet` copy per policy
+build** in `getEyeCreationMoves`, taken only to protect the ring reference from the
+candidate fallback. The fallback now uses its own local chain set, so the reference is
+safe and the copy is gone. Nothing reachable from that loop calls `chainsCached()`, which
+is what makes the reference valid - worth re-checking if that loop ever grows a new call.
+
+### Cumulative effect of the three exact-output changes
+
+Paired, interleaved, `IPVGO_DETERMINISTIC=1` so the node counts are identical, 9 pairs
+each, median of the paired per-move think time; the `exploitplay` traces are
+byte-identical at 5x5/7x7/9x9/13x13 and at 1/4/12 threads:
+
+| benchmark | HEAD | after | |
+|---|---|---|---|
+| `exploitplay Netburners 5 12 2 1` @1000 nodes, 1 thread | 4.093 ms/move | 3.936 | **-3.8%**, faster in 9/9 |
+| `exploitplay "Slum Snakes" 9 6 2 1` @1000 nodes, 1 thread | 20.212 ms/move | 19.887 | -1.6%, 8/9 |
+| `exploitplay "Slum Snakes" 9 4 2 1` @4000 nodes, 1 thread | 63.141 ms/move | 60.832 | **-3.7%**, 9/9 |
+| `exploitplay Daedalus 13 1 2 1` @4000 nodes, 1 thread | 111.463 ms/move | 108.075 | **-3.0%**, 8/9 |
+
+### The scheduler changes strength, not just speed
+
+`ExploitConfig::deterministic` is not only a reproducibility switch: at 12 threads it
+measurably weakens the engine. 5x5, in-game budget (1000 nodes), 40 games x 6
+factions x seeds, pooled:
+
+| scheduler | 1 thread | 12 threads |
+|---|---|---|
+| deterministic (fixed subset + fixed budget share per worker) | 86.3% (1243/1440) | **81.3%** (1171/1440) |
+| dynamic (each worker claims the next root move) - **what play uses** | 86.0% (1652/1920) | 86.6% (1663/1920) |
+
+The deterministic split gives every worker a fixed slice of the node budget, so at 12
+threads each root move gets ~83 nodes and nothing is searched deeply
+(avgDepth 4.22 against 4.59 at one thread); the dynamic scheduler recovers all of it.
+Consequences:
+
+- **Never compare strength across thread counts in deterministic mode.** A first pass
+  through this comparison used `IPVGO_DETERMINISTIC=1` and "found" a 5-point penalty
+  for 12 threads; in the play path the difference is 0.6 points, i.e. noise.
+- Thread count makes **no measurable difference to strength** in play (86.0% vs
+  86.6% over 1920 games each, sign flips between seed sets), so the client's default
+  of "all cores" costs nothing and buys 3x the wall clock.
+- Use deterministic mode for timing and A/B of node counts, dynamic for anything
+  that asks "is this stronger".
 
 ### The allocator handover
 

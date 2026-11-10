@@ -162,12 +162,14 @@ class BoardHistory {
   // A copy is made for every candidate move and is then immediately appended to,
   // so leave a little headroom: otherwise the copy's buffer is always exactly
   // full and the next append always reallocates.
-  BoardHistory(const BoardHistory& other) : words_(other.words_), stride_(other.stride_), count_(other.count_) {
+  BoardHistory(const BoardHistory& other)
+      : words_(other.words_), hashes_(other.hashes_), stride_(other.stride_), count_(other.count_) {
     if (count_ > 0) words_.reserve(static_cast<size_t>(count_ + 8) * static_cast<size_t>(stride_));
   }
   BoardHistory& operator=(const BoardHistory& other) {
     if (this == &other) return *this;
     words_ = other.words_;
+    hashes_ = other.hashes_;
     stride_ = other.stride_;
     count_ = other.count_;
     if (count_ > 0) words_.reserve(static_cast<size_t>(count_ + 8) * static_cast<size_t>(stride_));
@@ -178,14 +180,28 @@ class BoardHistory {
 
   static int strideFor(int n) { return (n * n * 2 + 63) / 64; }
 
+  // One hash per entry, so a superko question is a 64-bit compare per historical
+  // board instead of a word-by-word comparison of all of them. The scan it replaces
+  // was 31% of a mutation and grew with the length of the game.
+  static uint64_t hashWords(const uint64_t* words, int stride) {
+    uint64_t h = 0xcbf29ce484222325ULL;
+    for (int w = 0; w < stride; ++w) {
+      h ^= words[w];
+      h *= 0x100000001b3ULL;
+    }
+    return h ^ (static_cast<uint64_t>(stride) << 56);
+  }
+
   void clear() {
     words_.clear();
+    hashes_.clear();
     count_ = 0;
   }
   int size() const { return count_; }
   bool empty() const { return count_ == 0; }
   void reserve(int boards) {
     if (stride_ > 0) words_.reserve(static_cast<size_t>(boards) * static_cast<size_t>(stride_));
+    hashes_.reserve(static_cast<size_t>(boards));
   }
 
   void append(const SimpleBoard& board) {
@@ -195,11 +211,14 @@ class BoardHistory {
       // A different board size invalidates the packed layout; histories never
       // mix sizes, so restart cleanly.
       words_.clear();
+      hashes_.clear();
       count_ = 0;
       stride_ = stride;
     }
     words_.resize(static_cast<size_t>(count_ + 1) * static_cast<size_t>(stride));
-    packBoard(board, words_.data() + static_cast<size_t>(count_) * static_cast<size_t>(stride), stride);
+    uint64_t* entry = words_.data() + static_cast<size_t>(count_) * static_cast<size_t>(stride);
+    packBoard(board, entry, stride);
+    hashes_.push_back(hashWords(entry, stride));
     ++count_;
   }
 
@@ -209,19 +228,21 @@ class BoardHistory {
     if (strideFor(n) != stride_) return false;
     uint64_t probe[12];
     packBoard(board, probe, stride_);
-    return containsPacked(probe);
+    return containsPacked(probe, hashWords(probe, stride_));
   }
 
   // Same question for a caller that already has the board packed - the legality scan
   // packs it once and then flips two bits per candidate point instead of packing the
-  // board again for every one of them.
-  bool containsPacked(const uint64_t* probe) const {
+  // board again for every one of them. The hash is passed in because the same call
+  // site patches the packed words per point and can update the hash incrementally.
+  bool containsPacked(const uint64_t* probe, uint64_t probeHash) const {
     if (count_ == 0) return false;
-    const uint64_t* entry = words_.data();
     const size_t stride = static_cast<size_t>(stride_);
-    for (int i = 0; i < count_; ++i, entry += stride) {
-      if (entry[0] != probe[0]) continue;
-      size_t w = 1;
+    for (int i = 0; i < count_; ++i) {
+      if (hashes_[static_cast<size_t>(i)] != probeHash) continue;
+      // Hash match: confirm on the words, so a collision can never answer wrongly.
+      const uint64_t* entry = words_.data() + static_cast<size_t>(i) * stride;
+      size_t w = 0;
       while (w < stride && entry[w] == probe[w]) ++w;
       if (w == stride) return true;
     }
@@ -234,6 +255,7 @@ class BoardHistory {
     if (count_ == 0) return;
     --count_;
     words_.resize(static_cast<size_t>(count_) * static_cast<size_t>(stride_));
+    hashes_.pop_back();
   }
 
   // Word view of entry i, for hashing.
@@ -244,6 +266,7 @@ class BoardHistory {
 
  private:
   std::vector<uint64_t> words_;
+  std::vector<uint64_t> hashes_;
   int stride_ = 0;
   int count_ = 0;
 };
@@ -361,6 +384,9 @@ double opponentKomi(Opponent ai);
 // ---- Chains / captures ---------------------------------------------------
 
 ChainSet computeChains(const SimpleBoard& board);
+// Same, into caller-provided storage, so a caller that must not touch the shared
+// chainsCached() ring can avoid a 6.5 KB copy.
+void computeChainsInto(const SimpleBoard& board, ChainSet& out);
 
 // Precomputed on-board neighbour flat indices (N, E, S, W order) per point.
 struct NeighborTable {
@@ -379,8 +405,12 @@ SimpleBoard evaluateMoveResult(const SimpleBoard& board, int x, int y, Color pla
 
 // ---- Rules ---------------------------------------------------------------
 
+// Defined in bitboard.hpp, which includes this header; only a pointer is passed.
+struct BitPlanes;
+
 Validity evaluateIfMoveIsValid(const GameState& state, int x, int y, Color player,
-                               SimpleBoard* resultBoard = nullptr);
+                               SimpleBoard* resultBoard = nullptr,
+                               const BitPlanes* planes = nullptr);
 bool makeMove(GameState& state, int x, int y, Color player);
 void passTurn(GameState& state, Color player, bool allowEndGame = true);
 
@@ -395,8 +425,10 @@ struct MoveUndo {
 };
 
 // Applies the move in place. On an illegal move the state is left untouched and
-// false is returned.
-bool applyMove(GameState& state, int x, int y, Color player, MoveUndo& undo);
+// false is returned. `planes` may carry the bit planes of the board as it is before
+// the move, so a caller that tries many candidate moves on the same position loads
+// them once instead of rebuilding them per candidate.
+bool applyMove(GameState& state, int x, int y, Color player, MoveUndo& undo, const BitPlanes* planes = nullptr);
 void applyPass(GameState& state, Color player, MoveUndo& undo);
 void undoMove(GameState& state, const MoveUndo& undo);
 

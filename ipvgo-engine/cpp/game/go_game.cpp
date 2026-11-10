@@ -186,6 +186,10 @@ ChainSet computeChains(const SimpleBoard& board) {
 // Small per-thread memo of recent boards. The move generators ask for the chains
 // of the same position from several helpers; a hit skips the flood fill. The
 // returned reference stays valid until six other boards are analysed.
+//
+// The ring is deliberately small. Growing it to 32 slots measured -0.1% and +0.4%
+// on 9x9 and 13x13: the floods are not repeats of one board, they are one flood per
+// candidate position the policy model evaluates, so a bigger cache cannot help.
 const ChainSet& chainsCached(const SimpleBoard& board) {
   constexpr int kSlots = 6;
   struct Slot {
@@ -446,8 +450,9 @@ Validity validateMove(const GameState& state, int x, int y, Color player, Simple
 
 }  // namespace
 
-Validity evaluateIfMoveIsValid(const GameState& state, int x, int y, Color player, SimpleBoard* resultBoard) {
-  return validateMove(state, x, y, player, resultBoard, nullptr);
+Validity evaluateIfMoveIsValid(const GameState& state, int x, int y, Color player, SimpleBoard* resultBoard,
+                               const BitPlanes* planes) {
+  return validateMove(state, x, y, player, resultBoard, planes);
 }
 
 namespace {
@@ -472,9 +477,9 @@ bool makeMove(GameState& state, int x, int y, Color player) {
   return true;
 }
 
-bool applyMove(GameState& state, int x, int y, Color player, MoveUndo& undo) {
+bool applyMove(GameState& state, int x, int y, Color player, MoveUndo& undo, const BitPlanes* planes) {
   SimpleBoard result;
-  if (evaluateIfMoveIsValid(state, x, y, player, &result) != Validity::Valid) return false;
+  if (evaluateIfMoveIsValid(state, x, y, player, &result, planes) != Validity::Valid) return false;
   undo.board = state.board;
   undo.previousPlayer = state.previousPlayer;
   undo.passCount = state.passCount;
@@ -558,7 +563,7 @@ std::vector<std::pair<int, int>> getAllValidMoves(const GameState& state, Color 
         // word back.
         const uint64_t saved = packed[word];
         packed[word] = (saved & ~(3ULL << shift)) | (stoneCode << shift);
-        const bool repeated = state.previousBoards.containsPacked(packed);
+        const bool repeated = state.previousBoards.containsPacked(packed, BoardHistory::hashWords(packed, stride));
         packed[word] = saved;
         if (!repeated) out.emplace_back(x, y);
         continue;
@@ -585,7 +590,7 @@ std::vector<std::pair<int, int>> getAllValidMoves(const GameState& state, Color 
           probe[capturedBit >> 6] &= ~(3ULL << (capturedBit & 63));
         }
       }
-      if (!state.previousBoards.containsPacked(probe)) out.emplace_back(x, y);
+      if (!state.previousBoards.containsPacked(probe, BoardHistory::hashWords(probe, stride))) out.emplace_back(x, y);
     }
   }
   return out;
