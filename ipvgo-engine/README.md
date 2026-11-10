@@ -1170,6 +1170,51 @@ Consequences:
 - Use deterministic mode for timing and A/B of node counts, dynamic for anything
   that asks "is this stronger".
 
+### The leaf evaluator without a chain set
+
+`leafValue` is the hottest single consumer of the chain pass, and it needs far less than
+`computeChains` builds: stones per colour, the empty count, each **stone chain's size and
+liberty count** (for the atari term) and each **empty region's size and border colours**
+(for the territory term). It never reads a member list or a liberty list - the counts are
+the whole interface.
+
+`leafLeadBits<W>` computes exactly those from the bit planes, with `bits::flood` and
+`__popcnt64`, and builds no `ChainSet` at all. Standalone, on real in-game positions:
+
+| board | chains avg | full `ChainSet` | counts only | speedup |
+|---|---|---|---|---|
+| 7x7 | 12.9 | 1.394 us | 0.334 us | **4.2x** |
+| 9x9 | 18.1 | 1.567 us | 1.021 us | 1.5x |
+| 13x13 | 38.2 | 2.506 us | 0.929 us | **2.7x** |
+
+**Why the values stay bit-identical.** `evaluatedLead` accumulates floats in chain order,
+so a faster traversal is only equivalent if it visits chains in the same order. The scalar
+pass discovers chains by sweeping `x`, then `y`, i.e. ascending flat index; the bit-plane
+pass always takes the *lowest* unseen point, which is the same order. `black` and `white`
+are separate accumulators, so interleaving stones with regions cannot reorder either sum,
+and the atari term is still one accumulation in stone-chain order. Same order, same
+additions, same bits - verified by diffing `exploitplay` traces (moves, values, node
+counts, scores) at 5x5/7x7/9x9/13x13, which differ in no line.
+
+Two options still need the chain structure and are guarded, falling back to the old path:
+the safety discount (`IPVGO_SETTLE` != 1, which calls `analyzeSafety`) and the influence
+moyo (`IPVGO_MOYO` > 0). `selftest` passes with both set.
+
+Paired, interleaved, deterministic mode, 9 samples each, 11 of 11 pairs faster:
+
+| benchmark | before | after |
+|---|---|---|
+| `exploitplay Netburners 5 12 2 1` @1000 nodes, 1 thread | 4.080 ms/move | 3.544 (**-13.1%**) |
+| `exploitplay Tetrads 7 4 2 1` @4000 nodes, 1 thread | 7.295 | 6.901 (-5.4%) |
+| `exploitplay "Slum Snakes" 9 6 2 1` @1000 nodes, 1 thread | 19.895 | 18.646 (-6.3%) |
+| `exploitplay "Slum Snakes" 9 4 2 1` @4000 nodes, 1 thread | 61.015 | 56.789 (**-6.9%**) |
+| `exploitplay Daedalus 13 1 2 1` @4000 nodes, 1 thread | 108.059 | 104.884 (-2.9%) |
+| 5x5 @1000 / 9x9 @1000 / 9x9 @4000, **12 threads** | 0.901 / 3.188 / 11.850 | 0.771 (**-14.4%**) / 2.916 (-8.5%) / 10.650 (**-10.1%**) |
+
+The 5x5 win is the largest because 25 points fit in one 64-bit word, so every flood is a
+single-word loop; the 13x13 win is the smallest because the per-chain flood iterations
+multiply.
+
 ### The allocator handover
 
 Long bench runs grew until the machine swapped: 100 games per faction on 5x5 at a 200 ms
