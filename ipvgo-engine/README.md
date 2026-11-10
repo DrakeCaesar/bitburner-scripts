@@ -1215,6 +1215,38 @@ The 5x5 win is the largest because 25 points fit in one 64-bit word, so every fl
 single-word loop; the 13x13 win is the smallest because the per-chain flood iterations
 multiply.
 
+### Reserve the vectors the generators fill
+
+The two largest allocation sites in the search were push_back loops without a `reserve`:
+`getExpansionMoveArray` and `getLibertyGrowthMoves` each grew their result 1, 2, 4, ... 32
+entries per call, and between them that was 3.3 million allocations per two games
+(~17 per node). `contactPoints` had the same shape. Reserving the known upper bound
+turns each into one allocation. Output is unchanged - `reserve` cannot alter contents -
+confirmed by the same trace diff at 5x5/7x7/9x9/13x13.
+
+Paired, interleaved, deterministic, 9 samples: **-2.3%** at 5x5 @1000 (8/9 pairs),
+-0.1% at 9x9 @4000 single-threaded, **-2.9%** at 9x9 @4000 on 12 threads (6/9).
+Small, because the allocator is the per-thread `fast_alloc` free list, but it is free
+and it removes the pointer-chasing the growth caused.
+
+### Two ideas measured and rejected
+
+- **Cache-line padding.** `SearchSession::Impl::Slot` is exactly 64 bytes but a
+  `std::vector` only guarantees 16-byte alignment, so neighbouring slots shared a line;
+  `Shard {mutex, map}` is 144 bytes, so nearly every adjacent pair did. Both look like
+  textbook false sharing. Padding `Slot`, both shard arrays and `RoundPool::Worker` to
+  64 bytes measured **+1.2%, +1.7%, -0.6%, -0.5%, +0.8%** against a ~1% noise floor -
+  nothing. Coherence traffic is not the bottleneck; the per-node working set is L1
+  resident, so there is no line pressure to relieve.
+- **The shared carry table as a cross-worker cache** (the substrate a lazy-SMP search
+  would need). `IPVGO_CARRY=1` gives every worker and every search of the session one
+  sharded, mutex-guarded memo. It is **not** free: at 9x9 @4000 on 12 threads it is
+  **3.2% slower** (the lock traffic costs more than the hits save) and at 9x9 @1000 it
+  is 8.2% faster. It also changes the search - `avgDepth` 3.547 -> 3.595 at the same
+  budget - because a hit does not consume nodes, so the budget stretches further. True
+  lazy SMP (every worker on one tree, shared table, divergent ordering) is therefore a
+  strength change that needs the full 240-games-per-arm campaign, not a free win.
+
 ### The allocator handover
 
 Long bench runs grew until the machine swapped: 100 games per faction on 5x5 at a 200 ms

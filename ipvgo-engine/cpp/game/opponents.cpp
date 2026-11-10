@@ -40,6 +40,9 @@ std::vector<GrowthCandidate> getLibertyGrowthMoves(const SimpleBoard& board, Col
   const char me = colorChar(player);
 
   std::vector<GrowthCandidate> result;
+  // Reserve: without it the push_back loop below reallocates 1, 2, 4, ... 32 times per
+  // call, and this runs on every policy build.
+  result.reserve(static_cast<size_t>(std::max(8, cs.count)));
   bool anyFriendly = false;
   for (int c = 0; c < cs.count; ++c) {
     if (cs.chainColor[c] != me) continue;

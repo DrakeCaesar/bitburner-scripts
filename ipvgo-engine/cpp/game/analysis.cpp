@@ -744,6 +744,10 @@ std::vector<Pt> getDisputedTerritoryMoves(const SimpleBoard& board, const std::v
 std::vector<Pt> getExpansionMoveArray(const SimpleBoard& board, const std::vector<Pt>& availableSpaces) {
   const int N = static_cast<int>(board.size());
   std::vector<Pt> emptySpaces;
+  // Same reason as getDisputedTerritoryMoves: without the reserve the push_back loop
+  // reallocates once per doubling, and this is one of the two largest allocation sites
+  // in the search.
+  emptySpaces.reserve(availableSpaces.size());
   for (const auto& [x, y] : availableSpaces) {
     int emptyNeighbors = 0;
     for (const auto& [dx, dy] : kNeighbors) {
