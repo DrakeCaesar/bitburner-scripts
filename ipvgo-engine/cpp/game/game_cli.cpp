@@ -1345,7 +1345,11 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
     const uint64_t mathSeed = rng();
     MathRandom mathRng(mathSeed);
     GameState state = newBoardState(size, ai, true, clockMs, mathRng);
-    const int moveCap = size * size * 4;
+    // IPVGO_MOVECAP overrides the built-in size*size*4 cap (100 Black moves on 5x5).
+    // A game that reaches the cap is scored as if it had ended, so the default silently
+    // decides long games on the spot score; the override exists to measure that.
+    const char* capEnv = std::getenv("IPVGO_MOVECAP");
+    const int moveCap = capEnv != nullptr ? std::max(1, std::atoi(capEnv)) : size * size * 4;
     int gameMoves = 0;
 
     for (int m = 0; m < moveCap && !state.gameOver; ++m) {

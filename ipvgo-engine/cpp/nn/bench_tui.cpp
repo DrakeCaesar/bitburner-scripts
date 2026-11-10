@@ -363,7 +363,10 @@ int runBenchGames(const BenchOptions& options, BenchObserver& observer) {
     observer.onGameStart(f, factions[f], gameNumber, gamesInFaction, drawsBefore);
 
     SearchSession session;
-    const int moveCap = options.size * options.size * 4;
+    // IPVGO_MOVECAP overrides the built-in size*size*4 cap; a game that reaches it is
+    // scored as if it had ended there.
+    const char* capEnv = std::getenv("IPVGO_MOVECAP");
+    const int moveCap = capEnv != nullptr ? std::max(1, std::atoi(capEnv)) : options.size * options.size * 4;
     for (int m = 0; m < moveCap && !state.gameOver; ++m) {
       if (whoseTurn(state) != Color::Black) break;
 
