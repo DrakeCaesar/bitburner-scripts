@@ -1229,6 +1229,45 @@ Paired, interleaved, deterministic, 9 samples: **-2.3%** at 5x5 @1000 (8/9 pairs
 Small, because the allocator is the per-thread `fast_alloc` free list, but it is free
 and it removes the pointer-chasing the growth caused.
 
+### The capture-race experiment (IPVGO_RACE, off by default)
+
+The README's own diagnosis of the losses is that the eval has no term for the thing that
+decides them: *a capturing race between a big group with few liberties and the scattered
+groups around it*. The flat atari bonus prices a group in atari at 0.6 points per stone
+capped at five, while capturing it is worth **two points per stone** in area scoring. But
+simply paying the full value for every group in atari measured as noise earlier, because a
+two-liberty group in the opening is not capturable.
+
+`leafLeadBits` now has an optional term that pays the full value **only when the race is
+actually won**: the best liberty count among the stones surrounding the target exceeds the
+target's own, so it cannot run and the attacker can afford to fill. It replaces the atari
+bonus for those chains rather than adding to it, so nothing is double counted.
+
+```powershell
+IPVGO_RACE=0.5 ./out/build/x64-Release/bin/ipvgo_game.exe exploitplay Netburners 5 80 2 1
+```
+
+Off by default (`IPVGO_RACE` unset or 0 skips the term entirely), so the default path is
+byte-identical to before - confirmed by the same trace diff at 5x5/9x9/13x13.
+
+Measured on 5x5 with 1 thread. Screening at a **low node budget on purpose**: the real
+budget saturates at 86% wins, which compresses differences, while 200 nodes gives 70% and
+games that run 3x faster, so many more can be played in the same time.
+
+| budget | games per arm | baseline | `IPVGO_RACE=0.5` | delta | sigma |
+|---|---|---|---|---|---|
+| 200 | 1 920 | 69.4% | 71.9% | **+2.5** | 1.7 |
+| 200 | 5 760 | 70.2% | 72.3% | **+2.1** | **2.4** |
+| 100 | 4 320 | 66.1% | 67.2% | +1.1 | 1.2 |
+| 1000 (in game) | 1 920 | 86.0% | 87.4% | +1.4 | 1.3 |
+
+Paired per faction-and-seed cell, same seeds for both arms. Weights 0.25 and 1.0 at
+budget 200 gave +2.0 and +2.0. **Every arm of every run is positive** - six arms, four
+independent experiments, ~14 000 games - which is unlikely to be chance, but no single run
+reaches 3 sigma, so treat it as a probable ~1.5-2 point gain rather than a measured one.
+It is kept behind the environment variable, off, until a full 240-games-per-arm campaign
+confirms it at the budget the game actually uses.
+
 ### Two ideas measured and rejected
 
 - **Cache-line padding.** `SearchSession::Impl::Slot` is exactly 64 bytes but a
