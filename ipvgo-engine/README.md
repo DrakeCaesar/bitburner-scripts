@@ -1316,6 +1316,45 @@ re-test with the bench (paired, several hundred games), not as a config to ship.
 mechanism earns its place as a way to ask the question cheaply, not as an optimiser that
 is expected to return a better genome than the defaults.
 
+### Depth is derived, not configured
+
+`maxDepth` used to be a number you had to choose, and that made it a trap: deeper looks
+strictly better, but with a bounded search it is really a cap on *time*. Measured on 5x5
+against Tetrads + Daedalus at a 50k node budget, ceilings of 4 / 6 / 8 / 100 all reached
+median depth 4-5 and scored 36-40 of 40 games, while costing 8.9 s / 17.8 s / 21.6 s /
+30.5 s. The ceiling never changed strength; it only changed how long the answer took.
+
+So `maxDepth = 0` (the default) means automatic, and three separate stops decide where
+the search ends:
+
+1. **What the position can use.** Depth is capped at two half-moves per empty point - the
+   game cannot outlast that, so a deeper iteration can only re-derive a known result.
+   This is also what bounds the endgame, where `childDepth` is never decremented: with a
+   ceiling of 100 the same endgame tree was re-searched 100 times, 17 s on one move, and
+   the last iteration replaced the answer with an equally settled one.
+2. **What the budget can afford.** The loop predicts the next iteration's cost before
+   starting it - nodes times the measured growth for a node budget, and the same estimate
+   scaled by the measured milliseconds per node for a time budget. A timed search that
+   cannot predict spends its clock on iterations it then throws away: measured 8 740
+   median nodes per move against 2 927 for a node budget that reached the same depth.
+   With the prediction a move that completes depth 5 in 65 ms stops there instead of
+   starting a depth-6 attempt that would blow a 200 ms deadline.
+3. **Whether it is still learning.** In the endgame, an iteration that searches no more
+   nodes than the previous one did not add a ply, so the loop stops.
+
+A node budget is also now enforced per **move** rather than per depth iteration. It used
+to be per iteration, so a `maxDepth` of 100 with a 1e6 budget could spend 100 x that on a
+single move - which is how the reported 200 ms average ended up hiding 17-second moves.
+
+| config (5x5, Tetrads + Daedalus, 20 games each) | won | time | p50 ms | max ms | median depth |
+|---|---|---|---|---|---|
+| auto, nodes 50k | 40/40 | 29.4 s | 13.2 | 294 | 4 |
+| maxDepth 100, nodes 50k | 40/40 | 30.8 s | 14.7 | 321 | 4 |
+| auto, nodes 200k | 40/40 | 104.5 s | 32.1 | 1017 | 6 |
+| auto, time 200 ms | 40/40 | 25.0 s | 22.3 | 201 | 4 |
+
+Auto costs nothing against the best explicit ceiling and does not depend on picking one.
+
 ### Root width is worth more than root completeness (IPVGO_ROOTW)
 
 

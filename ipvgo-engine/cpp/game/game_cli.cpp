@@ -895,7 +895,7 @@ json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session,
 
   ExploitConfig cfg;
   cfg.depth = req.value("depth", 4);
-  cfg.maxDepth = req.value("maxDepth", 10);
+  cfg.maxDepth = req.value("maxDepth", 0);   // 0 = automatic
   cfg.beam = req.value("beam", 12);
   cfg.whiteChildren = req.value("whiteChildren", 6);
   cfg.whiteMass = req.value("whiteMass", 0.9);
@@ -2459,7 +2459,7 @@ int main(int argc, char** argv) {
       options.gamesPerFaction = config.value("games", 10);
       options.seed = config.value("seed", static_cast<uint64_t>(1));
       options.depth = config.value("depth", 2);
-      options.maxDepth = config.value("maxDepth", 10);
+      options.maxDepth = config.value("maxDepth", 0);   // 0 = automatic
       for (const char* key : {"beam", "whiteChildren", "endgameEmpties", "nodeBudget", "threads"}) {
         if (config.contains(key) && !config.at(key).is_null()) {
           applyTuningOption(options, key, config.at(key).dump());

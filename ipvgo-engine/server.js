@@ -398,7 +398,7 @@ async function handleBenchStart(req, res) {
     ["whiteChildren", 0, 32],
     ["endgameEmpties", 0, 20],
     ["nodeBudget", 1000, 5000000],
-    ["maxDepth", 1, 24],
+    ["maxDepth", 0, 64],   // 0 = automatic
     ["threads", 0, 64],
   ]) {
     const value = integer(key, min, max)

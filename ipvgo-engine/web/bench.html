@@ -482,7 +482,7 @@
           <div class="playTuneGrid" id="playTuningRows"></div>
           <label class="field"><span title="Empty points at which the endgame is solved exactly">Endgame empties</span><input id="endgameEmpties" type="number" min="0" max="20" placeholder="6" /></label>
           <label class="field"><span title="Node cap for the endgame solve">Endgame node cap</span><input id="nodeBudget" type="number" min="1000" step="1000" placeholder="30000" /></label>
-          <label class="field"><span title="Iterative deepening ceiling">Max depth</span><input id="maxDepth" type="number" min="1" max="24" placeholder="10" /></label>
+          <label class="field"><span title="Ceiling for iterative deepening. 0 = automatic: the budget decides how deep the search goes and the position decides how deep it can ever mean anything, so there is nothing to tune here. A positive value overrides it, for experiments.">Max depth (0 = auto)</span><input id="maxDepth" type="number" min="0" max="64" placeholder="0" /></label>
           <label class="field"><span title="Search threads (0 = all cores)">Threads</span><input id="threads" type="number" min="0" max="64" placeholder="0" /></label>
           <label class="field"><span title="Reuse exact search results across the moves of a game. Same answers as a fresh search, with less work.">Carry memo</span><span class="fieldToggle"><input id="carry" type="checkbox" /></span></label>
         </details>
