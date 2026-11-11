@@ -236,13 +236,123 @@
       table { width: 100%; border-collapse: collapse; font-size: 12px; }
       /* Fixed layout so the results table never resizes as numbers change. */
       table:not(.moves) { table-layout: fixed; }
-      table:not(.moves) th:nth-child(1) { width: 15ch; }
-      table:not(.moves) th:nth-child(2) { width: 7ch; }
-      table:not(.moves) th:nth-child(3), table:not(.moves) th:nth-child(4) { width: 5ch; }
-      table:not(.moves) th:nth-child(5) { width: 8ch; }
-      table:not(.moves) th:nth-child(6) { width: 8ch; }
-      table:not(.moves) th:nth-child(7) { width: 8ch; }
-      table:not(.moves) td:first-child { overflow: hidden; text-overflow: ellipsis; }
+      /* Column widths belong to the results table only. Left unscoped they applied to
+         every table on the page, which is what made the newer ones look wrong. */
+      table.resultsTable th:nth-child(1) { width: 15ch; }
+      table.resultsTable th:nth-child(2) { width: 7ch; }
+      table.resultsTable th:nth-child(3), table.resultsTable th:nth-child(4) { width: 5ch; }
+      table.resultsTable th:nth-child(5) { width: 8ch; }
+      table.resultsTable th:nth-child(6) { width: 8ch; }
+      /* The tuning results sit in the narrow left column, so they are a compact list
+         rather than a table: seven or eight columns cannot fit beside the board. */
+      .tuneList { font-size: 12px; margin-top: 8px; }
+      .tuneRow {
+        display: grid;
+        grid-template-columns: 4ch minmax(0, 1fr) auto;
+        gap: 0 6px;
+        padding: 3px 0;
+        border-bottom: 1px solid var(--line-soft);
+        align-items: baseline;
+      }
+      .tuneRow.wide { grid-template-columns: 7ch minmax(0, 1fr) auto; }
+      .tuneRow.best { color: var(--accent); }
+      .tuneId { color: var(--dim); }
+      .tuneRow.best .tuneId { color: inherit; }
+      .tuneWin { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .tuneMeta { grid-column: 2 / -1; color: var(--dim); font-size: 11px; }
+      .tuneTiming { color: var(--dim); font-size: 12px; margin-top: 6px; min-height: 16px; }
+      .tuneTiming b { color: var(--text); font-weight: normal; }
+      .tuneCaption { color: var(--dim); font-size: 12px; margin-top: 12px; }
+      /* One column per faction: every tuned value at a glance, so a faction that was
+         never tuned is as obvious as the one that was. */
+      table.factionTable th:nth-child(n + 2),
+      table.factionTable td:nth-child(n + 2) { text-align: right; }
+      table.factionTable td.untuned { color: #555555; }
+      /* Per-faction widths as ONE grid: the header cells and every input are siblings
+         in the same grid context, so a value can never drift from its heading. Before,
+         the header and the rows were separate grids and any width difference between
+         them shifted the columns. */
+      .playTuneGrid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 46px 46px 52px;
+        align-items: center;
+        column-gap: 8px;
+        row-gap: 2px;
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+        margin: 6px 0 10px;
+      }
+      .playTuneGrid > * { min-width: 0; }
+      .playTuneGrid > .head {
+        color: var(--dim);
+        padding-bottom: 3px;
+        border-bottom: 1px solid var(--line);
+      }
+      .playTuneGrid > .num { text-align: right; }
+      .playTuneGrid > .name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .playTuneGrid input {
+        /* An <input> carries an intrinsic width (from its default size attribute) and
+           grid items default to min-width: auto, so without this the field is painted
+           wider than its 46px track and overlaps the next column. */
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+        box-sizing: border-box;
+        height: 18px;
+        padding: 0 3px;
+        text-align: right;
+      }
+      /* The spinner is a second bordered box inside a box at this width. */
+      .playTuneGrid input::-webkit-outer-spin-button,
+      .playTuneGrid input::-webkit-inner-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+      }
+      .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+      .tab {
+        background: transparent;
+        border: 1px solid var(--line);
+        color: var(--dim);
+        padding: 4px 12px;
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .tab.on { color: var(--accent); border-color: var(--accent); }
+      /* The tuning tables are not the results table: no per-cell boxes, fixed layout so
+         they cannot grow past their column, and a single rule between rows. */
+      table.gridTable,
+      table.factionTable { table-layout: fixed; }
+      table.gridTable th,
+      table.gridTable td,
+      table.factionTable th,
+      table.factionTable td {
+        border: 0;
+        border-bottom: 1px solid var(--line-soft);
+        padding: 0 0.5ch;
+        height: 20px;
+      }
+      table.gridTable th,
+      table.factionTable th { border-bottom-color: var(--line); }
+      table.gridTable th:first-child { width: 10ch; }
+      table.factionTable th:first-child { width: 10ch; }
+      /* Numbers line up when every value column is the same width; the first column
+         takes whatever is left. */
+      table.factionTable th:nth-child(n + 2) { width: 62px; }
+      table.gridTable { margin-top: 6px; }
+      table.gridTable th { text-align: left; color: var(--dim); font-weight: normal; }
+      table.gridTable th:nth-child(n + 2), table.gridTable td:nth-child(n + 2) { text-align: right; }
+      table.gridTable tr.best td { color: var(--accent); }
+      /* The unfinished column exists to expose games cut off by the move cap. When a
+         run has none, a wall of zeros is noise, so the whole column is hidden. */
+      table.gridTable.hideUnfinished th:last-child,
+      table.gridTable.hideUnfinished td:last-child { display: none; }
+      table.resultsTable th:nth-child(7) { width: 8ch; }
+      table.resultsTable td:first-child { overflow: hidden; text-overflow: ellipsis; }
       th, td {
         height: 22px;
         padding: 0 0.5ch;
@@ -286,13 +396,31 @@
       .gameOptions .check { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
       .gameOptions button { flex: 0 0 auto; margin-left: auto; }
       .lockBar { display: flex; align-items: center; gap: 8px; font-size: 12px; margin: 0 0 6px; }
+      /* The tuning form is a grid of short numbers, so each field keeps its label and
+         a narrow input on one line. Items fill down a column and then start the next
+         one, which keeps the related pair (faction, board size) together at the top of
+         the first column instead of spreading left to right. The inputs are
+         deliberately small: at the panel's default 150px they were mostly empty space
+         around a two-digit value. */
       .tuneFields {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-        gap: 8px;
-        margin: 6px 0 10px;
+        grid-auto-flow: column;
+        grid-template-rows: repeat(4, auto);
+        grid-auto-columns: minmax(184px, max-content);
+        justify-content: start;
+        gap: 4px 22px;
+        margin: 8px 0 12px;
       }
       .tuneFields label.field { margin-bottom: 0; }
+      .tuneFields input { width: 64px; flex: 0 0 64px; }
+      /* .dd is the element drawn in place of a <select>; it carries its own
+         flex-basis, so it is sized here instead of being left at the 150px default. */
+      .tuneFields .dd { width: 104px; flex: 0 0 104px; }
+      #tuneFaction + .dd { width: 130px; flex: 0 0 130px; }
+      .tuneFields label.field span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .rangeCell { display: flex; align-items: center; gap: 6px; }
+      .rangeCell input { width: 58px; flex: 0 0 58px; text-align: right; }
+      .rangeCell span { color: var(--dim); font-size: 11px; }
       .lockBar .small { color: var(--dim); margin-right: auto; }
       .lockBar button { flex: 0 0 auto; }
       .gameTools { display: flex; gap: 6px; align-items: center; margin: 6px 0; }
@@ -349,9 +477,7 @@
         <label class="field"><span>Seed</span><input id="seed" type="number" min="1" placeholder="1" /></label>
         <details id="tuning">
           <summary>Search tuning</summary>
-          <label class="field"><span title="Our moves considered per node">Beam</span><input id="beam" type="number" min="0" max="64" placeholder="12" /></label>
-          <label class="field"><span title="Opponent replies kept per node (0 = all)">Replies kept</span><input id="whiteChildren" type="number" min="0" max="32" placeholder="6" /></label>
-          <label class="field"><span title="Stop expanding replies past this probability mass">Reply mass cap</span><input id="whiteMass" type="number" min="0.05" max="1" step="0.05" placeholder="0.9" /></label>
+          <div class="playTuneGrid" id="playTuningRows"></div>
           <label class="field"><span title="Empty points at which the endgame is solved exactly">Endgame empties</span><input id="endgameEmpties" type="number" min="0" max="20" placeholder="6" /></label>
           <label class="field"><span title="Node cap for the endgame solve">Endgame node cap</span><input id="nodeBudget" type="number" min="1000" step="1000" placeholder="30000" /></label>
           <label class="field"><span title="Iterative deepening ceiling">Max depth</span><input id="maxDepth" type="number" min="1" max="24" placeholder="10" /></label>
@@ -362,20 +488,134 @@
           <button id="start" class="primary">Start</button>
           <button id="stop">Stop</button>
         </div>
+        <button id="openTune" class="ghost" style="margin-top: 8px; width: 100%">Tune widths for one faction...</button>
       </section>
 
       <section>
-        <h2>Board</h2>
-        <div id="boardWrap">
-          <div id="board"></div>
-          <div class="info" id="info"></div>
+        <div class="tabs">
+          <button id="tabBoard" class="tab on">Board</button>
+          <button id="tabTune" class="tab">Tuning</button>
+        </div>
+        <div id="boardPane">
+          <div id="boardWrap">
+            <div id="board"></div>
+            <div class="info" id="info"></div>
+          </div>
+        </div>
+        <div id="tunePane" style="display: none">
+          <p class="dim small">
+            Genetic search over beam, replies kept and the reply mass cap for one faction. Every genome in a
+            generation plays the same games, games run in parallel (one search thread each), and the winner is
+            re-measured against the defaults on seeds the search never saw. Starting again continues from the
+            best genome found so far.
+          </p>
+          <div class="tuneFields">
+            <label class="field"><span>Faction</span>
+              <select id="tuneFaction">
+                <option>Netburners</option>
+                <option>Slum Snakes</option>
+                <option>The Black Hand</option>
+                <option>Tetrads</option>
+                <option>Daedalus</option>
+                <option selected>Illuminati</option>
+              </select>
+            </label>
+            <label class="field"><span>Board size</span>
+              <select id="tuneSize"><option>5</option><option>7</option><option>9</option></select>
+            </label>
+            <label class="field"><span>Generations</span><input id="tuneGenerations" type="number" min="1" max="60" value="6" /></label>
+            <label class="field"><span>Population</span><input id="tunePopulation" type="number" min="2" max="40" value="10" /></label>
+            <label class="field"><span title="Games each genome plays on the shared training seeds">Games per genome</span><input id="tuneGames" type="number" min="4" max="400" value="24" /></label>
+            <label class="field"><span>Node limit</span><input id="tuneNodeLimit" type="number" min="100" step="100" value="1000" /></label>
+            <label class="field"><span title="Games in flight at once. Each one searches on a single thread.">Parallel games</span><input id="tuneThreads" type="number" min="1" max="64" value="8" /></label>
+            <label class="field"><span>Seed</span><input id="tuneSeed" type="number" min="1" value="1" /></label>
+          </div>
+          <div class="buttons">
+            <button id="tuneStart" class="primary">Start tuning</button>
+            <button id="tuneRestart" class="ghost" title="Ignore the stored best and search from the shipped defaults again.">
+              Start from defaults
+            </button>
+            <button id="tuneStop">Stop</button>
+          </div>
+          <div class="tuneTiming" id="tuneTiming"></div>
+          <div class="small" id="tuneStatus">idle</div>
+          <div class="err" id="tuneError"></div>
+
+          <table class="gridTable" id="tuneGeneTable">
+            <thead>
+              <tr><th>gene</th><th>range</th><th>best found</th><th>stored for play</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>beam</td>
+                <td class="rangeCell">
+                  <input id="boxBeamMin" type="number" min="1" max="64" value="2" />
+                  <span>to</span>
+                  <input id="boxBeamMax" type="number" min="1" max="64" value="24" />
+                </td>
+                <td id="bestBeam">-</td>
+                <td id="storedBeam">-</td>
+              </tr>
+              <tr>
+                <td>replies</td>
+                <td class="rangeCell">
+                  <input id="boxRepliesMin" type="number" min="1" max="64" value="1" />
+                  <span>to</span>
+                  <input id="boxRepliesMax" type="number" min="1" max="64" value="16" />
+                </td>
+                <td id="bestReplies">-</td>
+                <td id="storedReplies">-</td>
+              </tr>
+              <tr>
+                <td>mass cap</td>
+                <td class="rangeCell">
+                  <input id="boxMassMin" type="number" min="0.01" max="1" step="0.01" value="0.05" />
+                  <span>to</span>
+                  <input id="boxMassMax" type="number" min="0.01" max="1" step="0.01" value="1" />
+                </td>
+                <td id="bestMass">-</td>
+                <td id="storedMass">-</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="small dim" id="tuneBestNote" style="margin-top: 4px"></div>
+
+          <div class="tuneCaption" id="tuneRowsCaption" style="display: none">newest generation</div>
+          <table class="gridTable">
+            <thead>
+              <tr><th>#</th><th>beam</th><th>replies</th><th>mass</th><th>win %</th><th>margin</th><th>unfinished</th></tr>
+            </thead>
+            <tbody id="tuneRows"></tbody>
+          </table>
+
+          <div class="tuneCaption" id="tuneValidationCaption" style="display: none">held-back validation</div>
+          <table class="gridTable">
+            <thead>
+              <tr><th>set</th><th>beam</th><th>replies</th><th>mass</th><th>win %</th><th>margin</th><th>unfinished</th></tr>
+            </thead>
+            <tbody id="tuneValidation"></tbody>
+          </table>
+          <button id="tuneApply" class="ghost" style="margin-top: 10px" disabled>Store as current setting for play</button>
+          <button id="tuneClear" class="ghost" style="margin-top: 10px">Clear stored setting</button>
+
+          <div class="tuneCaption">stored for play, one column per faction</div>
+          <table class="gridTable factionTable">
+            <thead id="storedHead"></thead>
+            <tbody id="storedBody"></tbody>
+          </table>
+
+          <div class="tuneCaption">best found so far (the next "Continue" resumes from this)</div>
+          <table class="gridTable factionTable">
+            <thead id="bestHead"></thead>
+            <tbody id="bestBody"></tbody>
+          </table>
         </div>
       </section>
 
       <section>
         <h2>Results</h2>
         <div class="tableScroll">
-          <table>
+          <table class="resultsTable">
             <thead>
               <tr><th>faction</th><th>games</th><th>W</th><th>L</th><th>win %</th><th>margin</th><th>ms</th></tr>
             </thead>
@@ -405,57 +645,6 @@
           <button id="clearLock" class="ghost" title="Forget the locked set.">Clear lock</button>
         </div>
         <ul id="history"></ul>
-        <details id="autoTune">
-          <summary>Auto-tune widths for one faction</summary>
-          <p class="dim small">
-            Genetic search over beam, replies kept and the reply mass cap, then the winner is re-measured
-            against the defaults on seeds the search never saw. Every genome in a generation plays the same
-            games, and games run in parallel (one search thread each), so a run finishes in seconds at 5x5.
-          </p>
-          <div class="tuneFields">
-            <label class="field"><span>Faction</span>
-              <select id="tuneFaction">
-                <option>Netburners</option>
-                <option>Slum Snakes</option>
-                <option>The Black Hand</option>
-                <option>Tetrads</option>
-                <option>Daedalus</option>
-                <option selected>Illuminati</option>
-              </select>
-            </label>
-            <label class="field"><span>Board size</span>
-              <select id="tuneSize"><option>5</option><option>7</option><option>9</option></select>
-            </label>
-            <label class="field"><span>Generations</span><input id="tuneGenerations" type="number" min="1" max="60" value="6" /></label>
-            <label class="field"><span>Population</span><input id="tunePopulation" type="number" min="2" max="40" value="10" /></label>
-            <label class="field"><span title="Games each genome plays on the shared training seeds">Games per genome</span><input id="tuneGames" type="number" min="4" max="400" value="24" /></label>
-            <label class="field"><span>Node limit</span><input id="tuneNodeLimit" type="number" min="100" step="100" value="1000" /></label>
-            <label class="field"><span title="Games in flight at once. Each one searches on a single thread.">Parallel games</span><input id="tuneThreads" type="number" min="1" max="64" value="8" /></label>
-            <label class="field"><span>Seed</span><input id="tuneSeed" type="number" min="1" value="1" /></label>
-          </div>
-          <div class="buttons">
-            <button id="tuneStart" class="primary">Start tuning</button>
-            <button id="tuneStop">Stop</button>
-          </div>
-          <div class="small" id="tuneStatus">idle</div>
-          <div class="err" id="tuneError"></div>
-          <div class="tableScroll" style="margin-top: 10px">
-            <table>
-              <thead>
-                <tr><th>gen</th><th>#</th><th>beam</th><th>replies</th><th>mass</th><th>win %</th><th>margin</th><th>unfinished</th></tr>
-              </thead>
-              <tbody id="tuneRows"></tbody>
-            </table>
-          </div>
-          <div class="tableScroll" style="margin-top: 10px">
-            <table>
-              <thead>
-                <tr><th>held-back validation</th><th>beam</th><th>replies</th><th>mass</th><th>win %</th><th>margin</th><th>unfinished</th></tr>
-              </thead>
-              <tbody id="tuneValidation"></tbody>
-            </table>
-          </div>
-        </details>
         <div class="err" id="error"></div>
       </section>
     </main>
@@ -504,14 +693,16 @@
 
       const STORAGE_KEY = "ipvgo-bench-form-v1"
       const TUNING_IDS = [
-        "beam",
-        "whiteChildren",
-        "whiteMass",
         "endgameEmpties",
         "nodeBudget",
         "maxDepth",
         "threads",
       ]
+      // The three width settings are per faction, so they live in their own inputs
+      // rather than in the shared tuning fields above.
+      const PLAY_TUNING_DEFAULTS = { beam: 12, whiteChildren: 6, whiteMass: 0.9 }
+      const PLAY_TUNING_KEY = "ipvgo-play-tuning-v1"
+      let playTuning = {}
       const DEFAULT_FORM = {
         size: "5",
         budgetMode: "time",
@@ -1422,6 +1613,9 @@
         }
         if (el("carry").checked) body.carry = true
         if (body.factions.length === 0) body.factions = null
+        // Explicit per-faction widths: the server uses these instead of the store, so
+        // what the Run table shows is exactly what the engine gets.
+        body.tuningByFaction = readPlayTuning()
         return body
       }
 
@@ -1556,9 +1750,10 @@
       }
       for (const select of document.querySelectorAll("select")) enhanceSelect(select)
 
-      // ---- Auto-tune panel -------------------------------------------------
-      // The engine owns the search; the page only submits a job and renders the
-      // generations as they arrive, so closing the tab cannot corrupt a run.
+      // ---- Tuning view -----------------------------------------------------
+      // The engine owns the search; the page submits a job and renders what comes
+      // back. Stored settings live on the server (temp/tuning.json) so the CLI, the
+      // play path and this page all read the same numbers.
       const TUNE_FIELDS = ["tuneFaction", "tuneSize", "tuneGenerations", "tunePopulation", "tuneGames", "tuneNodeLimit", "tuneThreads", "tuneSeed"]
       const TUNE_STORAGE_KEY = "ipvgo-tune-form-v1"
 
@@ -1568,62 +1763,259 @@
         return `${number >= 0 ? "+" : ""}${number.toFixed(1)}`
       }
 
+      let tuneRanges = null
+      let tuneStore = {}
+      let tuneDone = null
+      let tuneRunning = false
+
+      function showPane(which) {
+        const tuning = which === "tune"
+        el("boardPane").style.display = tuning ? "none" : ""
+        el("tunePane").style.display = tuning ? "" : "none"
+        el("tabBoard").classList.toggle("on", !tuning)
+        el("tabTune").classList.toggle("on", tuning)
+      }
+
+      function tableRow(cells, className) {
+        const tr = document.createElement("tr")
+        if (className) tr.className = className
+        for (const text of cells) {
+          const td = document.createElement("td")
+          td.textContent = text
+          tr.appendChild(td)
+        }
+        return tr
+      }
+
+      const genomeCells = (genome) => [
+        String(genome.beam),
+        String(genome.whiteChildren),
+        Number(genome.whiteMass).toFixed(2),
+      ]
+
+      // The ms reference is the point of the panel next to the node limit: it turns
+      // "how many nodes can I afford" into a measurement.
+      function renderTuneTiming(event) {
+        const ms = Number(event?.msPerMove ?? 0)
+        const games = Number(event?.recentGames ?? 0)
+        const host = el("tuneTiming")
+        host.innerHTML = ""
+        if (!(ms > 0)) return
+        const strong = document.createElement("b")
+        strong.textContent = `${ms.toFixed(2)} ms`
+        host.append(
+          "reference: ",
+          strong,
+          ` per Black move, averaged over the last ${games} games at node limit ${event?.nodeLimit ?? el("tuneNodeLimit").value}`,
+        )
+      }
+
       function renderTuneRows(events) {
         const body = el("tuneRows")
         body.innerHTML = ""
-        // Only the newest generation is shown: it is the one being selected from.
         const latest = events[events.length - 1]
+        el("tuneRowsCaption").style.display = latest ? "" : "none"
         if (!latest) return
+        if (latest.ranges) tuneRanges = latest.ranges
+        renderTuneTiming(latest)
+        el("tuneRowsCaption").textContent = `generation ${latest.gen}/${latest.generations} - ranked by training win rate on the shared seeds`
         for (const row of latest.rows ?? []) {
-          const tr = document.createElement("tr")
-          const cells = [
-            `${latest.gen}/${latest.generations}`,
-            String(row.rank),
-            String(row.genome.beam),
-            String(row.genome.whiteChildren),
-            Number(row.genome.whiteMass).toFixed(2),
-            `${tunePct(row.winRate)} +-${tunePct(row.se)}`,
-            tuneSigned(row.avgMargin),
-            String(row.unfinished ?? 0),
-          ]
-          for (const [index, text] of cells.entries()) {
-            const td = document.createElement("td")
-            td.textContent = text
-            if (row.rank === 1 && index >= 5) td.style.color = "var(--accent)"
-            tr.appendChild(td)
-          }
-          body.appendChild(tr)
+          body.appendChild(
+            tableRow(
+              [
+                `#${row.rank}`,
+                ...genomeCells(row.genome),
+                `${tunePct(row.winRate)} +-${tunePct(row.se)}`,
+                tuneSigned(row.avgMargin),
+                String(row.unfinished ?? 0),
+              ],
+              row.rank === 1 ? "best" : "",
+            ),
+          )
         }
+        setUnfinishedVisible(
+          "tuneRows",
+          (latest.rows ?? []).some((row) => (row.unfinished ?? 0) > 0),
+        )
+        renderTuneGenes()
+      }
+
+      // 0 means every game in view reached a real result; only then is the column
+      // worth the width.
+      function setUnfinishedVisible(tbodyId, anyUnfinished) {
+        const table = el(tbodyId).closest("table")
+        if (table) table.classList.toggle("hideUnfinished", !anyUnfinished)
       }
 
       function renderTuneValidation(done) {
+        tuneDone = done
+        if (done?.ranges) tuneRanges = done.ranges
+        renderTuneTiming(done)
         const body = el("tuneValidation")
         body.innerHTML = ""
+        el("tuneValidationCaption").style.display = done ? "" : "none"
         for (const entry of done?.validation ?? []) {
-          const tr = document.createElement("tr")
-          const cells = [
-            entry.label,
-            String(entry.genome.beam),
-            String(entry.genome.whiteChildren),
-            Number(entry.genome.whiteMass).toFixed(2),
-            `${tunePct(entry.winRate)} +-${tunePct(entry.se)}`,
-            tuneSigned(entry.avgMargin),
-            String(entry.unfinished ?? 0),
-          ]
-          for (const [index, text] of cells.entries()) {
-            const td = document.createElement("td")
-            td.textContent = text
-            if (index === 0) td.style.color = entry.label === "tuned" ? "var(--accent)" : "var(--dim)"
-            tr.appendChild(td)
-          }
-          body.appendChild(tr)
+          body.appendChild(
+            tableRow(
+              [
+                entry.label,
+                ...genomeCells(entry.genome),
+                `${tunePct(entry.winRate)} +-${tunePct(entry.se)}`,
+                tuneSigned(entry.avgMargin),
+                String(entry.unfinished ?? 0),
+              ],
+              entry.label === "tuned" ? "best" : "",
+            ),
+          )
+        }
+        setUnfinishedVisible(
+          "tuneValidation",
+          (done?.validation ?? []).some((entry) => (entry.unfinished ?? 0) > 0),
+        )
+        el("tuneApply").disabled = !done?.validation?.[0]?.genome
+        renderTuneGenes()
+      }
+
+      // Where the search can go and how far it has got. The range cells are inputs, so
+      // a faction whose optimum is plainly at one end of a gene can be searched there
+      // instead of spending games on values already known to be worse.
+      const TUNE_BOX_IDS = ["boxBeamMin", "boxBeamMax", "boxRepliesMin", "boxRepliesMax", "boxMassMin", "boxMassMax"]
+      const TUNE_BOX_DEFAULTS = { beam: [2, 24], whiteChildren: [1, 16], whiteMass: [0.05, 1] }
+      const TUNE_BOX_STORAGE_KEY = "ipvgo-tune-boxes-v1"
+      let tuneBoxes = {}
+
+      function loadTuneBoxes() {
+        try {
+          tuneBoxes = JSON.parse(localStorage.getItem(TUNE_BOX_STORAGE_KEY) ?? "{}") ?? {}
+        } catch {
+          tuneBoxes = {}
         }
       }
 
+      function saveTuneBoxes() {
+        try {
+          localStorage.setItem(TUNE_BOX_STORAGE_KEY, JSON.stringify(tuneBoxes))
+        } catch {
+          /* private mode */
+        }
+      }
+
+      // The box for a faction: what was last typed for it, else the defaults.
+      function tuneBoxFor(faction) {
+        const saved = tuneBoxes[faction]
+        const box = {}
+        for (const [key, fallback] of Object.entries(TUNE_BOX_DEFAULTS)) {
+          const pair = saved?.[key]
+          box[key] = pair?.length === 2 ? [Number(pair[0]), Number(pair[1])] : [...fallback]
+        }
+        return box
+      }
+
+      function applyBoxToInputs(box) {
+        el("boxBeamMin").value = box.beam[0]
+        el("boxBeamMax").value = box.beam[1]
+        el("boxRepliesMin").value = box.whiteChildren[0]
+        el("boxRepliesMax").value = box.whiteChildren[1]
+        el("boxMassMin").value = box.whiteMass[0]
+        el("boxMassMax").value = box.whiteMass[1]
+      }
+
+      function readBoxFromInputs() {
+        const pair = (lo, hi, floor, ceiling) => {
+          const a = Math.min(ceiling, Math.max(floor, Number(el(lo).value)))
+          const b = Math.min(ceiling, Math.max(floor, Number(el(hi).value)))
+          return Number.isFinite(a) && Number.isFinite(b) ? [Math.min(a, b), Math.max(a, b)] : null
+        }
+        return {
+          beam: pair("boxBeamMin", "boxBeamMax", 1, 64),
+          whiteChildren: pair("boxRepliesMin", "boxRepliesMax", 1, 64),
+          whiteMass: pair("boxMassMin", "boxMassMax", 0.01, 1),
+        }
+      }
+
+      function renderTuneGenes() {
+        const faction = el("tuneFaction").value
+        const entry = tuneStore[faction] ?? {}
+        const best = entry.best
+        const applied = entry.applied
+        const value = (source, key, digits) => (source ? Number(source[key]).toFixed(digits) : "-")
+        el("bestBeam").textContent = value(best, "beam", 0)
+        el("bestReplies").textContent = value(best, "whiteChildren", 0)
+        el("bestMass").textContent = value(best, "whiteMass", 2)
+        el("storedBeam").textContent = value(applied, "beam", 0)
+        el("storedReplies").textContent = value(applied, "whiteChildren", 0)
+        el("storedMass").textContent = value(applied, "whiteMass", 2)
+
+        el("tuneBestNote").textContent = best
+          ? `best found for ${el("tuneFaction").value}: ${best.gen ? `generation ${best.gen}, ` : ""}${tunePct(best.winRate)} +-${tunePct(best.se)} (${
+              best.source === "validation" ? "held-back seeds" : "training seeds"
+            })`
+          : "no best found yet - the next search starts from the shipped defaults"
+        // The two start buttons differ only in whether the stored best is reused, so
+        // the difference is spelled out on the buttons instead of hidden in a checkbox.
+        const continueLabel = best
+          ? `Continue from best (b${best.beam} r${best.whiteChildren} m${Number(best.whiteMass).toFixed(2)})`
+          : "Start tuning"
+        el("tuneStart").textContent = continueLabel
+        el("tuneStart").title = best
+          ? `Resume the search around the best genome found so far; use "Start from defaults" to ignore it.`
+          : "No stored best for this faction yet, so this is a fresh search."
+        el("tuneRestart").disabled = Boolean(tuneRunning)
+        el("tuneApply").title = best
+          ? `Store ${el("tuneFaction").value} b${best.beam} r${best.whiteChildren} m${Number(best.whiteMass).toFixed(2)}`
+          : "Run a search first"
+        renderFactionTables()
+      }
+
+      // Both matrices share a shape: a row per gene, a column per faction.
+      function renderFactionTables() {
+        const factions = [...new Set([...ALL_FACTIONS, ...Object.keys(tuneStore)])]
+        const genes = [
+          ["beam", (s) => Number(s.beam).toFixed(0)],
+          ["replies", (s) => Number(s.whiteChildren).toFixed(0)],
+          ["mass cap", (s) => Number(s.whiteMass).toFixed(2)],
+        ]
+        const fill = (headId, bodyId, pick) => {
+          const head = el(headId)
+          const body = el(bodyId)
+          head.innerHTML = ""
+          body.innerHTML = ""
+          const headerRow = document.createElement("tr")
+          headerRow.appendChild(cell("th", "gene"))
+          for (const faction of factions) {
+            const th = cell("th", shortName(faction))
+            th.title = faction
+            headerRow.appendChild(th)
+          }
+          head.appendChild(headerRow)
+          for (const [label, format] of genes) {
+            const row = document.createElement("tr")
+            row.appendChild(cell("td", label))
+            for (const faction of factions) {
+              const source = pick(tuneStore[faction] ?? {})
+              const td = cell("td", source ? format(source) : "-")
+              if (!source) td.className = "untuned"
+              row.appendChild(td)
+            }
+            body.appendChild(row)
+          }
+        }
+        const cell = (tag, text) => {
+          const element = document.createElement(tag)
+          element.textContent = text
+          return element
+        }
+        fill("storedHead", "storedBody", (entry) => entry.applied)
+        fill("bestHead", "bestBody", (entry) => entry.best)
+      }
+
       function setTuneRunning(running) {
+        tuneRunning = running
         el("tuneStart").disabled = running
         el("tuneStop").disabled = !running
+        el("tuneRestart").disabled = running
         for (const id of TUNE_FIELDS) el(id).disabled = running
+        for (const id of TUNE_BOX_IDS) el(id).disabled = running
       }
 
       function saveTuneForm() {
@@ -1646,10 +2038,67 @@
         }
       }
 
+      async function postTune(path, body) {
+        const res = await fetch(`${API_BASE}${path}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body ?? {}),
+        })
+        const payload = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(payload.error ?? `HTTP ${res.status}`)
+        return payload
+      }
+
       function initAutoTune() {
         loadTuneForm()
+        loadTuneBoxes()
+        applyBoxToInputs(tuneBoxFor(el("tuneFaction").value))
         setTuneRunning(false)
-        for (const id of TUNE_FIELDS) el(id).addEventListener("change", saveTuneForm)
+        for (const id of TUNE_FIELDS) {
+          el(id).addEventListener("change", () => {
+            saveTuneForm()
+            if (id === "tuneFaction") applyBoxToInputs(tuneBoxFor(el("tuneFaction").value))
+            renderTuneGenes()
+          })
+        }
+        // The ranges belong to a faction: they are remembered per faction and restored
+        // when the selection changes.
+        for (const id of TUNE_BOX_IDS) {
+          el(id).addEventListener("change", () => {
+            const faction = el("tuneFaction").value
+            tuneBoxes[faction] = readBoxFromInputs()
+            saveTuneBoxes()
+          })
+        }
+        el("tabBoard").addEventListener("click", () => showPane("board"))
+        el("tabTune").addEventListener("click", () => showPane("tune"))
+        el("openTune").addEventListener("click", () => showPane("tune"))
+
+        const refreshSettings = (payload) => {
+          tuneStore = payload?.store ?? {}
+          renderTuneGenes()
+          // Adopt stored values for factions the user has not overridden locally, but
+          // never redraw a field that is being edited.
+          const focused = document.activeElement
+          if (!focused || !el("playTuningRows")?.contains(focused)) renderPlayTuning()
+        }
+        fetch(`${API_BASE}/api/tune/settings`)
+          .then((res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`)
+            return res.json()
+          })
+          .then(refreshSettings)
+          .catch(() => {
+            // A server started before the store existed answers 404 and never sends
+            // settings events. That silently disabled resume, which looked like the
+            // resume option simply not working.
+            const message =
+              "this server predates the tuning store - restart the engine server. Until then every run starts from scratch and nothing is remembered."
+            el("tuneBestNote").textContent = message
+            el("tuneError").textContent = message
+            // Still draw the (empty) per-faction tables so the Run column is not blank.
+            renderFactionTables()
+          })
 
         const source = new EventSource(`${API_BASE}/api/tune/events`)
         const generations = []
@@ -1662,7 +2111,10 @@
           setTuneRunning(Boolean(snapshot.running))
           if (snapshot.error) el("tuneError").textContent = snapshot.error
           if (snapshot.running && snapshot.options) {
-            el("tuneStatus").textContent = `tuning ${snapshot.faction} (${snapshot.size}x${snapshot.size})...`
+            const from = snapshot.options.resumeFrom
+            el("tuneStatus").textContent = from
+              ? `tuning ${snapshot.options.faction} - continuing from b${from.beam} r${from.whiteChildren} m${Number(from.whiteMass).toFixed(2)}`
+              : `tuning ${snapshot.options.faction} - new search`
           } else if (snapshot.done) {
             el("tuneStatus").textContent = "finished - compare the two validation rows"
           } else {
@@ -1681,13 +2133,14 @@
           setTuneRunning(false)
           el("tuneStatus").textContent = "finished - compare the two validation rows"
         })
+        source.addEventListener("settings", (event) => refreshSettings(JSON.parse(event.data)))
         source.addEventListener("error", (event) => {
           if (event.data) el("tuneError").textContent = JSON.parse(event.data).error ?? ""
         })
 
-        el("tuneStart").addEventListener("click", async () => {
+        const startTuning = async (resume) => {
           el("tuneError").textContent = ""
-          el("tuneValidation").innerHTML = ""
+          renderTuneValidation(null)
           const body = {
             faction: el("tuneFaction").value,
             size: Number(el("tuneSize").value),
@@ -1697,38 +2150,174 @@
             nodeLimit: Number(el("tuneNodeLimit").value),
             threads: Number(el("tuneThreads").value),
             seed: Number(el("tuneSeed").value),
+            resume,
+            ranges: readBoxFromInputs(),
           }
           saveTuneForm()
+          showPane("tune")
           setTuneRunning(true)
-          el("tuneStatus").textContent = "starting..."
+          el("tuneStatus").textContent = resume ? "starting from the best found so far..." : "starting from the defaults..."
           try {
-            const res = await fetch(`${API_BASE}/api/tune/start`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(body),
-            })
-            if (!res.ok) {
-              const payload = await res.json().catch(() => ({}))
-              throw new Error(payload.error ?? `HTTP ${res.status}`)
-            }
+            await postTune("/api/tune/start", body)
           } catch (err) {
             el("tuneError").textContent = err.message
             setTuneRunning(false)
             el("tuneStatus").textContent = "idle"
           }
-        })
+        }
+        el("tuneStart").addEventListener("click", () => startTuning(true))
+        el("tuneRestart").addEventListener("click", () => startTuning(false))
 
         el("tuneStop").addEventListener("click", async () => {
           await fetch(`${API_BASE}/api/tune/stop`, { method: "POST" }).catch(() => {})
           setTuneRunning(false)
-          el("tuneStatus").textContent = "stopped"
+          el("tuneStatus").textContent = "stopped - starting again continues from the best found so far"
         })
+
+        el("tuneApply").addEventListener("click", async () => {
+          const genome = tuneDone?.validation?.[0]?.genome ?? tuneStore[el("tuneFaction").value]?.best
+          if (!genome) return
+          const faction = tuneDone?.faction ?? el("tuneFaction").value
+          try {
+            refreshSettings(await postTune("/api/tune/apply", { faction, genome, action: "apply" }))
+            // The Run table is the authority for play, so mirror the stored value there.
+            playTuning[faction] = {
+              beam: Number(genome.beam),
+              whiteChildren: Number(genome.whiteChildren),
+              whiteMass: Number(genome.whiteMass),
+            }
+            savePlayTuning()
+            renderPlayTuning()
+          } catch (err) {
+            el("tuneError").textContent = err.message
+          }
+        })
+
+        el("tuneClear").addEventListener("click", async () => {
+          const faction = el("tuneFaction").value
+          try {
+            refreshSettings(await postTune("/api/tune/apply", { faction, action: "clear" }))
+            // With nothing stored, play goes back to the engine defaults.
+            delete playTuning[faction]
+            savePlayTuning()
+            renderPlayTuning()
+          } catch (err) {
+            el("tuneError").textContent = err.message
+          }
+        })
+      }
+
+      // ---- Per-faction width inputs (Run column) ---------------------------
+      // The values play actually uses, one row per faction. They start from the tuning
+      // store, are remembered locally, and are written back to the store so the tuning
+      // pane and the CLI see the same numbers.
+      function loadPlayTuning() {
+        try {
+          const saved = JSON.parse(localStorage.getItem(PLAY_TUNING_KEY) ?? "null")
+          if (saved && typeof saved === "object") playTuning = saved
+        } catch {
+          playTuning = {}
+        }
+      }
+
+      function savePlayTuning() {
+        try {
+          localStorage.setItem(PLAY_TUNING_KEY, JSON.stringify(playTuning))
+        } catch {
+          /* private mode */
+        }
+      }
+
+      function playTuningFor(faction) {
+        const saved = playTuning[faction]
+        if (saved) return { ...PLAY_TUNING_DEFAULTS, ...saved }
+        const applied = tuneStore[faction]?.applied
+        return applied ? { ...applied } : { ...PLAY_TUNING_DEFAULTS }
+      }
+
+      // What Start sends: an explicit width triple for every faction selected.
+      function readPlayTuning() {
+        const out = {}
+        for (const faction of inListOrder(Array.from(selected))) out[faction] = playTuningFor(faction)
+        return out
+      }
+
+      // The narrow tables (Run column, faction matrices) cannot afford "The Black Hand",
+      // so headers and row labels drop the article.
+      const shortName = (name) => String(name).replace(/^The /, "")
+
+      function renderPlayTuning() {
+        const grid = el("playTuningRows")
+        if (!grid) return
+        grid.innerHTML = ""
+        // Header cells and data cells share this one grid, so they cannot misalign.
+        for (const [label, align] of [["faction", ""], ["beam", "num"], ["replies", "num"], ["mass", "num"]]) {
+          const cell = document.createElement("span")
+          cell.className = `head ${align}`.trim()
+          cell.textContent = label
+          grid.appendChild(cell)
+        }
+        for (const faction of ALL_FACTIONS) {
+          const name = document.createElement("span")
+          name.className = "name"
+          name.textContent = shortName(faction)
+          name.title = faction
+          grid.appendChild(name)
+          for (const gene of ["beam", "whiteChildren", "whiteMass"]) {
+            const input = document.createElement("input")
+            input.type = "number"
+            if (gene === "whiteMass") {
+              input.min = "0.05"
+              input.max = "1"
+              input.step = "0.01"
+              input.value = Number(playTuningFor(faction)[gene]).toFixed(2)
+            } else {
+              input.min = "1"
+              input.max = "64"
+              input.value = String(playTuningFor(faction)[gene])
+            }
+            input.addEventListener("change", () => {
+              const raw = Number(input.value)
+              if (!Number.isFinite(raw)) return
+              const clamped =
+                gene === "whiteMass" ? Math.min(1, Math.max(0.05, raw)) : Math.min(64, Math.max(1, Math.round(raw)))
+              input.value = gene === "whiteMass" ? clamped.toFixed(2) : String(clamped)
+              playTuning[faction] = { ...playTuningFor(faction), [gene]: clamped }
+              savePlayTuning()
+              // Keep the store, and so the tuning pane, in step with what play will use.
+              fetch(`${API_BASE}/api/tune/apply`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ faction, genome: playTuning[faction], action: "apply" }),
+              })
+                .then((res) => (res.ok ? res.json() : null))
+                .then((payload) => {
+                  if (payload) tuneStore = payload.store ?? tuneStore
+                  renderFactionTablesSafe()
+                })
+                .catch(() => {})
+            })
+            grid.appendChild(input)
+          }
+        }
+      }
+
+      // The matrices live in the tuning block; guard so the Run column can be drawn
+      // before the store has ever loaded.
+      function renderFactionTablesSafe() {
+        try {
+          renderFactionTables()
+        } catch {
+          /* tuning pane not ready */
+        }
       }
 
       applyForm(loadForm())
       loadViewOptions()
       loadLock()
       initAutoTune()
+      loadPlayTuning()
+      renderPlayTuning()
       renderFactionChips()
       el("stop").disabled = true
       requestAnimationFrame(frameLoop)

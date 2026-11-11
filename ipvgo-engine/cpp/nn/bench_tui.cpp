@@ -339,6 +339,18 @@ int runBenchGames(const BenchOptions& options, BenchObserver& observer) {
   if (std::getenv("IPVGO_DYNAMIC") != nullptr) cfg.deterministic = false;
   cfg.carry = options.carry;
 
+  // A tuned setting applies to its own faction only; everything else keeps the
+  // globals, so leaving one faction tuned cannot change how the others play.
+  std::vector<ExploitConfig> configs(factions.size(), cfg);
+  for (size_t i = 0; i < factions.size(); ++i) {
+    for (const auto& [name, tuning] : options.tuningByFaction) {
+      if (name != factions[i]) continue;
+      if (tuning.beam > 0) configs[i].beam = tuning.beam;
+      if (tuning.whiteChildren > 0) configs[i].whiteChildren = tuning.whiteChildren;
+      if (tuning.whiteMass > 0.0) configs[i].whiteMass = tuning.whiteMass;
+    }
+  }
+
   std::mt19937_64 rng(options.seed ? options.seed : 1);
   // Draws consumed so far. Every game input (the clock, the MathRandom seed and
   // each of White's seeds) comes from this stream, so a game is reproduced exactly
@@ -372,7 +384,7 @@ int runBenchGames(const BenchOptions& options, BenchObserver& observer) {
 
       observer.onThinking(f, state, gameNumber, m + 1);
       const auto t0 = std::chrono::steady_clock::now();
-      const ExploitResult search = runExploiter(state, cfg, nullptr, options.carry ? &session : nullptr);
+      const ExploitResult search = runExploiter(state, configs[f], nullptr, options.carry ? &session : nullptr);
       const double elapsedMs =
           std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 

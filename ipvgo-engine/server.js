@@ -437,6 +437,34 @@ async function handleBenchStart(req, res) {
   const resolved = options.replay
     ? [...new Set(options.replay.map((game) => game.faction))]
     : options.factions ?? (options.size === 19 ? ["WorldDaemon"] : BENCH_FACTIONS)
+
+  // Each faction plays with the widths the caller sent; factions it does not mention
+  // fall back to their stored setting, then to the engine defaults. The page sends an
+  // explicit triple per faction, which is what its Run table displays.
+  if (body?.useStoredTuning !== false) {
+    const sent = body?.tuningByFaction
+    const tuningByFaction = {}
+    if (sent && typeof sent === "object") {
+      for (const faction of resolved) {
+        const triple = sent[faction]
+        const beam = tuneInt(triple?.beam, 1, 64, 0)
+        const whiteChildren = tuneInt(triple?.whiteChildren, 1, 64, 0)
+        const whiteMass = Number(triple?.whiteMass)
+        if (beam > 0 && whiteChildren > 0 && Number.isFinite(whiteMass) && whiteMass >= 0.05 && whiteMass <= 1) {
+          tuningByFaction[faction] = { beam, whiteChildren, whiteMass }
+        }
+      }
+    }
+    if (Object.keys(tuningByFaction).length === 0) {
+      const store = readTuningStore()
+      for (const faction of resolved) {
+        const applied = store[faction]?.applied
+        if (applied) tuningByFaction[faction] = applied
+      }
+    }
+    if (Object.keys(tuningByFaction).length > 0) options.tuningByFaction = tuningByFaction
+  }
+
   resetBenchState({ ...options, factions: resolved })
 
   const child = spawn(exe, ["benchjson", JSON.stringify(options)], { cwd: __dirname })
@@ -495,6 +523,60 @@ function handleBenchStop(req, res) {
 /** @type {Set<import("http").ServerResponse>} */
 const tuneClients = new Set()
 
+// Per-faction tuning, kept beside the engine so it survives a server restart and is
+// shared by the GUI and the CLI. `applied` is what play uses; `best` is where the
+// next tuning run resumes from. Untracked (temp/ is in .gitignore).
+const TUNING_FILE = path.join(__dirname, "temp", "tuning.json")
+
+function readTuningStore() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(TUNING_FILE, "utf8"))
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed
+  } catch {
+    /* missing or unreadable: start from nothing */
+  }
+  return {}
+}
+
+function writeTuningStore(store) {
+  fs.mkdirSync(path.dirname(TUNING_FILE), { recursive: true })
+  fs.writeFileSync(TUNING_FILE, JSON.stringify(store, null, 2) + "\n")
+}
+
+function tuningSnapshot() {
+  return { store: readTuningStore(), file: path.relative(__dirname, TUNING_FILE) }
+}
+
+function handleTuneSettings(req, res) {
+  sendJson(res, 200, tuningSnapshot())
+}
+
+// Body: { faction, action: "apply" | "clear", genome?: {beam, whiteChildren, whiteMass} }
+function handleTuneApply(req, res, body) {
+  const faction = String(body?.faction ?? "")
+  if (!faction) return sendJson(res, 400, { error: "faction is required" })
+  const store = readTuningStore()
+  const entry = store[faction] ?? {}
+  const action = String(body?.action ?? "apply")
+  if (action === "clear") {
+    delete entry.applied
+  } else {
+    const genome = body?.genome ?? {}
+    const beam = tuneInt(genome.beam, 0, 64, 0)
+    const whiteChildren = tuneInt(genome.whiteChildren, 0, 32, 0)
+    const whiteMass = Number(genome.whiteMass)
+    if (beam <= 0 || whiteChildren <= 0 || !Number.isFinite(whiteMass) || whiteMass <= 0 || whiteMass > 1) {
+      return sendJson(res, 400, { error: "genome needs beam > 0, whiteChildren > 0, whiteMass in (0, 1]" })
+    }
+    entry.applied = { beam, whiteChildren, whiteMass }
+  }
+  if (Object.keys(entry).length === 0) delete store[faction]
+  else store[faction] = entry
+  writeTuningStore(store)
+  tuneBroadcast("settings", tuningSnapshot())
+  sendJson(res, 200, tuningSnapshot())
+}
+
 const tune = {
   child: null,
   state: {
@@ -544,6 +626,26 @@ function tuneInt(value, min, max, fallback) {
   return Math.min(max, Math.max(min, parsed))
 }
 
+// Normalises an incoming search box to { key: [lo, hi] }, or null when the caller did
+// not ask for one. Ranges the engine would clamp anyway are clamped here too, so the
+// panel shows what will actually be searched.
+function tuneRanges(input) {
+  if (!input || typeof input !== "object") return null
+  const pair = (value, lo, hi, fallback) => {
+    if (!Array.isArray(value) || value.length !== 2) return fallback
+    const a = Number(value[0])
+    const b = Number(value[1])
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return fallback
+    const clamped = [Math.min(hi, Math.max(lo, a)), Math.min(hi, Math.max(lo, b))]
+    return [Math.min(...clamped), Math.max(...clamped)]
+  }
+  return {
+    beam: pair(input.beam, 1, 64, [2, 24]),
+    whiteChildren: pair(input.whiteChildren, 1, 64, [1, 16]),
+    whiteMass: pair(input.whiteMass, 0.01, 1, [0.05, 1]),
+  }
+}
+
 async function handleTuneStart(req, res) {
   if (tune.state.running) {
     return sendJson(res, 409, { error: "A tuning run is already in progress" })
@@ -590,6 +692,23 @@ async function handleTuneStart(req, res) {
     String(options.seed),
     "json",
   ]
+  // Resume from this faction's stored best unless the caller asked for a fresh start.
+  const resume = body?.resume === false ? null : readTuningStore()[faction]?.best
+  const resumeTriple =
+    resume && Number(resume.beam) > 0 && Number(resume.whiteChildren) > 0 && Number(resume.whiteMass) > 0
+      ? [Number(resume.beam), Number(resume.whiteChildren), Number(resume.whiteMass)]
+      : [0, 0, 0]
+  if (resumeTriple[0] > 0) {
+    options.resumeFrom = { beam: resumeTriple[0], whiteChildren: resumeTriple[1], whiteMass: resumeTriple[2] }
+  }
+  // The search box is optional and travels as one JSON argument, so an old caller that
+  // sends nothing gets the engine's own defaults.
+  const ranges = tuneRanges(body?.ranges)
+  if (ranges) options.ranges = ranges
+  if (ranges || resumeTriple[0] > 0) {
+    args.push(...resumeTriple.map(String))
+    if (ranges) args.push(JSON.stringify(ranges))
+  }
   const child = spawn(exe, args, { cwd: __dirname })
   tune.child = child
 
@@ -605,9 +724,45 @@ async function handleTuneStart(req, res) {
           const event = JSON.parse(line)
           if (event.type === "generation") {
             tune.state.generations.push(event)
+            // Every generation records its leader as this faction's "best found", so
+            // the number is live during a run and a stopped run still has a resume
+            // point. Waiting for `done` lost everything if the run was cut short.
+            const leader = event.rows?.[0]
+            if (leader?.genome) {
+              const store = readTuningStore()
+              const entry = store[event.faction] ?? {}
+              entry.best = {
+                ...leader.genome,
+                winRate: leader.winRate,
+                se: leader.se,
+                gen: event.gen,
+                source: "training",
+              }
+              store[event.faction] = entry
+              writeTuningStore(store)
+              tuneBroadcast("settings", tuningSnapshot())
+            }
             tuneBroadcast("generation", event)
           } else if (event.type === "done") {
             tune.state.done = event
+            // The final leader re-measured on held-back seeds: same genome, honest
+            // number, and the point the next run resumes from.
+            const best = event.validation?.[0]
+            if (best?.genome) {
+              const store = readTuningStore()
+              const entry = store[event.faction] ?? {}
+              entry.best = {
+                ...best.genome,
+                winRate: best.winRate,
+                se: best.se,
+                source: "validation",
+                size: event.size,
+                nodeLimit: event.nodeLimit,
+              }
+              store[event.faction] = entry
+              writeTuningStore(store)
+              tuneBroadcast("settings", tuningSnapshot())
+            }
             tuneBroadcast("done", event)
           }
         } catch {
@@ -1305,6 +1460,16 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/api/tune/stop") {
     handleTuneStop(req, res)
+    return
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/tune/settings") {
+    handleTuneSettings(req, res)
+    return
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/tune/apply") {
+    await handleTuneApply(req, res, await readJsonBody(req))
     return
   }
 

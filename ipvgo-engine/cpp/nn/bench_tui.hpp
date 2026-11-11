@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace ipvgo::nn {
@@ -35,6 +36,15 @@ struct BenchOptions {
   long nodeBudget = 30000;
   int threads = 0;
   bool carry = false;  // share a depth-aware memo across the moves of a game
+  // Per-faction overrides of the three width settings, produced by `tune`. A faction
+  // that is absent (or leaves a field at 0) uses the global values above, so a stored
+  // setting only ever changes the faction it was tuned for.
+  struct FactionTuning {
+    int beam = 0;
+    int whiteChildren = 0;
+    double whiteMass = 0.0;
+  };
+  std::vector<std::pair<std::string, FactionTuning>> tuningByFaction;
   // Emit, per half-move, what the leaf evaluator thought of the position, how
   // likely the opponent's actual reply was under the policy model, and the value of
   // a fixed one-ply search. This is the audit trail the loss explanation is built
