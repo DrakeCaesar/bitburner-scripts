@@ -547,6 +547,9 @@
           <label class="check tuneAllOption" title="Reuse exact search results across the moves of a game. Faster per move and the freed budget buys extra depth, but it does change the numbers, so compare runs at the same setting.">
             <input id="tuneCarry" type="checkbox" checked /> carry memo
           </label>
+          <label class="check tuneAllOption" title="Each faction continues from its own stored best. Uncheck to search every faction from a fresh random population instead.">
+            <input id="tuneAllResume" type="checkbox" checked /> continue from each faction's best
+          </label>
           <div class="tuneTiming" id="tuneTiming"></div>
           <div class="small" id="tuneStatus">idle</div>
           <div class="tuneTiming" id="tuneEta"></div>
@@ -2078,6 +2081,7 @@
         for (const id of TUNE_FIELDS) el(id).disabled = running
         for (const id of TUNE_BOX_IDS) el(id).disabled = running
         el("tuneCarry").disabled = running
+        el("tuneAllResume").disabled = running
       }
 
       function saveTuneForm() {
@@ -2086,6 +2090,7 @@
         // Checkboxes are part of the tuning setup, so they persist with it.
         form.autoApply = el("tuneAllApply").checked
         form.carry = el("tuneCarry").checked
+        form.resume = el("tuneAllResume").checked
         try {
           localStorage.setItem(TUNE_STORAGE_KEY, JSON.stringify(form))
         } catch {
@@ -2100,6 +2105,7 @@
           for (const id of TUNE_FIELDS) if (form[id] !== undefined) el(id).value = form[id]
           el("tuneAllApply").checked = form.autoApply !== false
           el("tuneCarry").checked = form.carry !== false
+          el("tuneAllResume").checked = form.resume !== false
         } catch {
           /* corrupt entry */
         }
@@ -2130,7 +2136,7 @@
         }
         // The ranges belong to a faction: they are remembered per faction and restored
         // when the selection changes.
-        for (const id of ["tuneAllApply", "tuneCarry"]) el(id).addEventListener("change", saveTuneForm)
+        for (const id of ["tuneAllApply", "tuneCarry", "tuneAllResume"]) el(id).addEventListener("change", saveTuneForm)
         for (const id of TUNE_BOX_IDS) {
           el(id).addEventListener("change", () => {
             const faction = el("tuneFaction").value
@@ -2261,7 +2267,7 @@
             nodeLimit: Number(el("tuneNodeLimit").value),
             threads: Number(el("tuneThreads").value),
             seed: Number(el("tuneSeed").value),
-            resume: true,
+            resume: el("tuneAllResume").checked,
             autoApply: el("tuneAllApply").checked,
             carry: el("tuneCarry").checked,
             rangesByFaction,
