@@ -579,6 +579,8 @@ function handleTuneApply(req, res, body) {
 
 const tune = {
   child: null,
+  // Factions still to run, and where we are in that list. Empty when not queueing.
+  queue: { factions: [], index: 0, options: null, durations: [], averageFactionMs: 0, factionStartedAt: 0 },
   state: {
     running: false,
     faction: null,
@@ -593,7 +595,39 @@ const tune = {
 }
 
 function tuneSnapshot() {
-  return { ...tune.state, pid: undefined, serverId, supervised }
+  const queue = tune.queue
+  return {
+    ...tune.state,
+    ...tuneEta(),
+    queue: queue.factions.length
+      ? { index: queue.index + 1, total: queue.factions.length, faction: queue.factions[queue.index], order: queue.factions }
+      : null,
+    pid: undefined,
+    serverId,
+    supervised,
+  }
+}
+
+// Time left, from the rate actually observed so far rather than from a guess: the
+// elapsed time divided by the generations that finished, times the ones still to run.
+// The queue estimate adds one faction's worth of time per faction still queued, using
+// the average of the factions already finished when there is one.
+function tuneEta() {
+  const state = tune.state
+  const now = Date.now()
+  const elapsedMs = state.startedAt ? (state.endedAt || now) - state.startedAt : 0
+  const doneGens = state.generations.length
+  const totalGens = state.options?.generations ?? 0
+  const perGenMs = doneGens > 0 ? elapsedMs / doneGens : 0
+  const etaMs = state.running && perGenMs > 0 && totalGens > doneGens ? perGenMs * (totalGens - doneGens) : 0
+  const queue = tune.queue
+  let queueEtaMs = 0
+  if (queue.factions.length > 0) {
+    const remaining = Math.max(0, queue.factions.length - queue.index - 1)
+    const factionMs = queue.averageFactionMs > 0 ? queue.averageFactionMs : perGenMs * totalGens
+    queueEtaMs = etaMs + remaining * factionMs
+  }
+  return { elapsedMs, etaMs, queueEtaMs, perGenMs }
 }
 
 function tuneBroadcast(event, data) {
@@ -612,6 +646,8 @@ function stopTune() {
   const child = tune.child
   tune.child = null
   tune.state.running = false
+  // Stopping cancels the whole queue, not just the faction in flight.
+  tune.queue = { factions: [], index: 0, options: null, durations: [], averageFactionMs: 0, factionStartedAt: 0 }
   if (!child) return
   try {
     child.kill()
@@ -646,18 +682,9 @@ function tuneRanges(input) {
   }
 }
 
-async function handleTuneStart(req, res) {
-  if (tune.state.running) {
-    return sendJson(res, 409, { error: "A tuning run is already in progress" })
-  }
-  const body = await readJsonBody(req)
-  const exe = mcgsExecutablePath()
-  if (!fs.existsSync(exe)) {
-    return sendJson(res, 503, { error: "Engine not built. Run: pnpm run ipvgo:build" })
-  }
-  const faction = BENCH_FACTIONS.includes(String(body?.faction)) ? String(body.faction) : "Illuminati"
-  const size = [5, 7, 9].includes(Number(body?.size)) ? Number(body.size) : 5
-  const options = {
+// Builds the option object shared by a single run and by a queue of runs.
+function tuneOptions(body, faction, size) {
+  return {
     faction,
     size,
     generations: tuneInt(body?.generations, 1, 60, 6),
@@ -666,19 +693,35 @@ async function handleTuneStart(req, res) {
     nodeLimit: tuneInt(body?.nodeLimit, 100, 200000, 1000),
     threads: tuneInt(body?.threads, 1, 64, Math.max(1, os.cpus().length)),
     seed: tuneInt(body?.seed, 1, Number.MAX_SAFE_INTEGER, 1),
+    resume: body?.resume !== false,
+    // A queued run stores each faction's winner as its play setting as it finishes,
+    // which is the point of leaving it running unattended.
+    autoApply: body?.autoApply === true,
+    rangesFor: (name) => tuneRanges(body?.rangesByFaction?.[name] ?? body?.ranges),
+  }
+}
+
+// Runs one faction. The queue (tune.queue) decides whether another follows.
+function beginTuneRun(faction, options) {
+  const exe = mcgsExecutablePath()
+  if (!fs.existsSync(exe)) {
+    tune.state.running = false
+    tune.state.error = "Engine not built. Run: pnpm run ipvgo:build"
+    // No child will ever fire `close`, so a queue left here would stall forever.
+    tune.queue = { factions: [], index: 0, options: null, durations: [], averageFactionMs: 0, factionStartedAt: 0 }
+    tuneBroadcast("snapshot", tuneSnapshot())
+    return
   }
 
-  tune.state = {
-    running: true,
-    faction,
-    size,
-    options,
-    generations: [],
-    done: null,
-    error: null,
-    startedAt: Date.now(),
-    endedAt: 0,
-  }
+  tune.state.running = true
+  tune.state.faction = faction
+  tune.state.size = options.size
+  tune.state.options = options
+  tune.state.generations = []
+  tune.state.done = null
+  tune.state.error = null
+  tune.state.startedAt = Date.now()
+  tune.state.endedAt = 0
 
   const args = [
     "tune",
@@ -687,32 +730,36 @@ async function handleTuneStart(req, res) {
     String(options.population),
     String(options.games),
     String(options.nodeLimit),
-    String(size),
+    String(options.size),
     String(options.threads),
     String(options.seed),
     "json",
   ]
   // Resume from this faction's stored best unless the caller asked for a fresh start.
-  const resume = body?.resume === false ? null : readTuningStore()[faction]?.best
+  const resume = options.resume ? readTuningStore()[faction]?.best : null
   const resumeTriple =
     resume && Number(resume.beam) > 0 && Number(resume.whiteChildren) > 0 && Number(resume.whiteMass) > 0
       ? [Number(resume.beam), Number(resume.whiteChildren), Number(resume.whiteMass)]
       : [0, 0, 0]
   if (resumeTriple[0] > 0) {
     options.resumeFrom = { beam: resumeTriple[0], whiteChildren: resumeTriple[1], whiteMass: resumeTriple[2] }
+  } else {
+    delete options.resumeFrom
   }
   // The search box is optional and travels as one JSON argument, so an old caller that
   // sends nothing gets the engine's own defaults.
-  const ranges = tuneRanges(body?.ranges)
-  if (ranges) options.ranges = ranges
+  const ranges = options.rangesFor(faction)
+  options.ranges = ranges
   if (ranges || resumeTriple[0] > 0) {
     args.push(...resumeTriple.map(String))
     if (ranges) args.push(JSON.stringify(ranges))
   }
+
   const child = spawn(exe, args, { cwd: __dirname })
   tune.child = child
 
   let buffer = ""
+  tune.queue.factionStartedAt = Date.now()
   child.stdout.on("data", (chunk) => {
     buffer += chunk.toString()
     let newline = buffer.indexOf("\n")
@@ -726,8 +773,7 @@ async function handleTuneStart(req, res) {
             tune.state.generations.push(event)
             // Every generation records its leader as this faction's "best found", so
             // the number is live during a run and a stopped run still has a resume
-            // point. Waiting for `done` lost everything if the run was cut short.
-            const leader = event.rows?.[0]
+            // point. Waiting for `done` lost everything if the run was cut short.            const leader = event.rows?.[0]
             if (leader?.genome) {
               const store = readTuningStore()
               const entry = store[event.faction] ?? {}
@@ -742,7 +788,7 @@ async function handleTuneStart(req, res) {
               writeTuningStore(store)
               tuneBroadcast("settings", tuningSnapshot())
             }
-            tuneBroadcast("generation", event)
+            tuneBroadcast("generation", { ...event, ...tuneEta() })
           } else if (event.type === "done") {
             tune.state.done = event
             // The final leader re-measured on held-back seeds: same genome, honest
@@ -758,6 +804,15 @@ async function handleTuneStart(req, res) {
                 source: "validation",
                 size: event.size,
                 nodeLimit: event.nodeLimit,
+              }
+              // A queued "tune all" run applies its result, so an unattended session
+              // ends with every faction upgraded rather than just measured.
+              if (options.autoApply) {
+                entry.applied = {
+                  beam: best.genome.beam,
+                  whiteChildren: best.genome.whiteChildren,
+                  whiteMass: best.genome.whiteMass,
+                }
               }
               store[event.faction] = entry
               writeTuningStore(store)
@@ -783,14 +838,74 @@ async function handleTuneStart(req, res) {
     tuneBroadcast("snapshot", tuneSnapshot())
   })
   child.on("close", () => {
-    tune.state.running = false
     tune.state.endedAt = Date.now()
     if (tune.child === child) tune.child = null
-    tuneBroadcast("snapshot", tuneSnapshot())
+    tune.state.running = false
+    // Remember how long this faction took, so the queue estimate uses measured
+    // faction times rather than extrapolating one faction to all of them.
+    const queue = tune.queue
+    if (queue.factionStartedAt) {
+      queue.durations = queue.durations ?? []
+      queue.durations.push(Date.now() - queue.factionStartedAt)
+      queue.averageFactionMs = queue.durations.reduce((sum, ms) => sum + ms, 0) / queue.durations.length
+      queue.factionStartedAt = 0
+    }
+    // Next faction in the queue, if this run was part of one.
+    if (!advanceTuneQueue()) tuneBroadcast("snapshot", tuneSnapshot())
   })
 
   tuneBroadcast("snapshot", tuneSnapshot())
+}
+
+// Returns true when another faction was started.
+function advanceTuneQueue() {
+  const queue = tune.queue
+  if (queue.factions.length === 0) return false
+  if (queue.index + 1 >= queue.factions.length) {
+    queue.factions = []
+    queue.index = 0
+    return false
+  }
+  queue.index += 1
+  beginTuneRun(queue.factions[queue.index], queue.options)
+  return true
+}
+
+async function handleTuneStart(req, res) {
+  if (tune.state.running) {
+    return sendJson(res, 409, { error: "A tuning run is already in progress" })
+  }
+  const body = await readJsonBody(req)
+  if (!fs.existsSync(mcgsExecutablePath())) {
+    return sendJson(res, 503, { error: "Engine not built. Run: pnpm run ipvgo:build" })
+  }
+  const faction = BENCH_FACTIONS.includes(String(body?.faction)) ? String(body.faction) : "Illuminati"
+  const size = [5, 7, 9].includes(Number(body?.size)) ? Number(body.size) : 5
+  const options = tuneOptions(body, faction, size)
+  tune.queue = { factions: [], index: 0, options: null, durations: [], averageFactionMs: 0, factionStartedAt: 0 }
+  beginTuneRun(faction, options)
   sendJson(res, 202, { ok: true, options })
+}
+
+// Tune every listed faction in turn, optionally storing each winner for play.
+async function handleTuneStartAll(req, res) {
+  if (tune.state.running) {
+    return sendJson(res, 409, { error: "A tuning run is already in progress" })
+  }
+  const body = await readJsonBody(req)
+  if (!fs.existsSync(mcgsExecutablePath())) {
+    return sendJson(res, 503, { error: "Engine not built. Run: pnpm run ipvgo:build" })
+  }
+  const requested = Array.isArray(body?.factions) ? body.factions.map(String) : []
+  const factions = BENCH_FACTIONS.filter((name) => requested.includes(name))
+  if (factions.length === 0) {
+    return sendJson(res, 400, { error: "factions must list at least one known faction" })
+  }
+  const size = [5, 7, 9].includes(Number(body?.size)) ? Number(body.size) : 5
+  const options = tuneOptions(body, factions[0], size)
+  tune.queue = { factions, index: 0, options, durations: [], averageFactionMs: 0, factionStartedAt: 0 }
+  beginTuneRun(factions[0], options)
+  sendJson(res, 202, { ok: true, options, factions })
 }
 
 function handleTuneStop(req, res) {
@@ -1455,6 +1570,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/api/tune/start") {
     await handleTuneStart(req, res)
+    return
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/tune/start-all") {
+    await handleTuneStartAll(req, res)
     return
   }
 

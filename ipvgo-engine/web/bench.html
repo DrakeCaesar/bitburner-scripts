@@ -262,6 +262,8 @@
       .tuneMeta { grid-column: 2 / -1; color: var(--dim); font-size: 11px; }
       .tuneTiming { color: var(--dim); font-size: 12px; margin-top: 6px; min-height: 16px; }
       .tuneTiming b { color: var(--text); font-weight: normal; }
+      .tuneAllOption { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-top: 6px; cursor: pointer; }
+      .tuneAllOption input { flex: 0 0 14px; }
       .tuneCaption { color: var(--dim); font-size: 12px; margin-top: 12px; }
       /* One column per faction: every tuned value at a glance, so a faction that was
          never tuned is as obvious as the one that was. */
@@ -534,10 +536,17 @@
             <button id="tuneRestart" class="ghost" title="Ignore the stored best and search from the shipped defaults again.">
               Start from defaults
             </button>
+            <button id="tuneAll" class="ghost" title="Run every faction in turn with these settings and store each winner for play. Runs on the server, so the page can be closed.">
+              Tune all factions
+            </button>
             <button id="tuneStop">Stop</button>
           </div>
+          <label class="check tuneAllOption" title="Store each faction's winner as its play setting when its run finishes.">
+            <input id="tuneAllApply" type="checkbox" checked /> store each result for play when it finishes
+          </label>
           <div class="tuneTiming" id="tuneTiming"></div>
           <div class="small" id="tuneStatus">idle</div>
+          <div class="tuneTiming" id="tuneEta"></div>
           <div class="err" id="tuneError"></div>
 
           <table class="gridTable" id="tuneGeneTable">
@@ -1762,6 +1771,31 @@
         return `${number >= 0 ? "+" : ""}${number.toFixed(1)}`
       }
 
+      // "1h 05m", "12m 30s", "45s" - coarse on purpose: an estimate good to the second
+      // invites reading precision that the measurement does not have.
+      function formatDuration(ms) {
+        const total = Math.max(0, Math.round(Number(ms) / 1000))
+        const hours = Math.floor(total / 3600)
+        const minutes = Math.floor((total % 3600) / 60)
+        const seconds = total % 60
+        const pad = (n) => String(n).padStart(2, "0")
+        if (hours > 0) return `${hours}h ${pad(minutes)}m`
+        if (minutes > 0) return `${minutes}m ${pad(seconds)}s`
+        return `${seconds}s`
+      }
+
+      function renderTuneEta(source) {
+        const host = el("tuneEta")
+        if (!host) return
+        host.textContent = ""
+        if (!source || !(Number(source.etaMs) > 0 || Number(source.queueEtaMs) > 0)) return
+        const parts = []
+        if (Number(source.etaMs) > 0) parts.push(`this faction about ${formatDuration(source.etaMs)} left`)
+        if (Number(source.queueEtaMs) > 0) parts.push(`whole queue about ${formatDuration(source.queueEtaMs)} left`)
+        if (Number(source.elapsedMs) > 0) parts.unshift(`${formatDuration(source.elapsedMs)} elapsed`)
+        host.textContent = parts.join("   ")
+      }
+
       let tuneRanges = null
       let tuneStore = {}
       let tuneDone = null
@@ -2037,6 +2071,7 @@
         el("tuneStart").disabled = running
         el("tuneStop").disabled = !running
         el("tuneRestart").disabled = running
+        el("tuneAll").disabled = running
         for (const id of TUNE_FIELDS) el(id).disabled = running
         for (const id of TUNE_BOX_IDS) el(id).disabled = running
       }
@@ -2131,13 +2166,17 @@
           for (const item of snapshot.generations ?? []) generations.push(item)
           renderTuneRows(generations)
           renderTuneValidation(snapshot.done)
+          renderTuneEta(snapshot)
           setTuneRunning(Boolean(snapshot.running))
           if (snapshot.error) el("tuneError").textContent = snapshot.error
+          const queue = snapshot.queue
+          const where = queue ? ` (${queue.index}/${queue.total} in queue)` : ""
           if (snapshot.running && snapshot.options) {
             const from = snapshot.options.resumeFrom
-            el("tuneStatus").textContent = from
-              ? `tuning ${snapshot.options.faction} - continuing from b${from.beam} r${from.whiteChildren} m${Number(from.whiteMass).toFixed(2)}`
-              : `tuning ${snapshot.options.faction} - new search`
+            el("tuneStatus").textContent =
+              (from
+                ? `tuning ${snapshot.faction} from b${from.beam} r${from.whiteChildren} m${Number(from.whiteMass).toFixed(2)}`
+                : `tuning ${snapshot.faction} - new search`) + where
           } else if (snapshot.done) {
             el("tuneStatus").textContent = "finished - compare the two validation rows"
           } else {
@@ -2148,6 +2187,7 @@
           const data = JSON.parse(event.data)
           generations.push(data)
           renderTuneRows(generations)
+          renderTuneEta(data)
           el("tuneStatus").textContent = `generation ${data.gen}/${data.generations} - ${data.faction}`
         })
         source.addEventListener("done", (event) => {
@@ -2190,6 +2230,42 @@
         }
         el("tuneStart").addEventListener("click", () => startTuning(true))
         el("tuneRestart").addEventListener("click", () => startTuning(false))
+
+        // One run per faction, back to back, on the server. Each faction uses its own
+        // range box, and the queue survives closing this page.
+        el("tuneAll").addEventListener("click", async () => {
+          el("tuneError").textContent = ""
+          renderTuneValidation(null)
+          const rangesByFaction = {}
+          for (const faction of ALL_FACTIONS) {
+            const saved = tuneBoxes[faction]
+            rangesByFaction[faction] = saved ?? tuneBoxFor(el("tuneFaction").value)
+          }
+          const body = {
+            factions: ALL_FACTIONS,
+            size: Number(el("tuneSize").value),
+            generations: Number(el("tuneGenerations").value),
+            population: Number(el("tunePopulation").value),
+            games: Number(el("tuneGames").value),
+            nodeLimit: Number(el("tuneNodeLimit").value),
+            threads: Number(el("tuneThreads").value),
+            seed: Number(el("tuneSeed").value),
+            resume: true,
+            autoApply: el("tuneAllApply").checked,
+            rangesByFaction,
+          }
+          saveTuneForm()
+          showPane("tune")
+          setTuneRunning(true)
+          el("tuneStatus").textContent = `queueing ${ALL_FACTIONS.length} factions...`
+          try {
+            await postTune("/api/tune/start-all", body)
+          } catch (err) {
+            el("tuneError").textContent = err.message
+            setTuneRunning(false)
+            el("tuneStatus").textContent = "idle"
+          }
+        })
 
         el("tuneStop").addEventListener("click", async () => {
           await fetch(`${API_BASE}/api/tune/stop`, { method: "POST" }).catch(() => {})
@@ -2318,8 +2394,7 @@
                 .then((res) => (res.ok ? res.json() : null))
                 .then((payload) => {
                   if (payload) tuneStore = payload.store ?? tuneStore
-                  renderFactionTablesSafe()
-                })
+                  renderFactionTablesSafe()                })
                 .catch(() => {})
             })
             grid.appendChild(input)
