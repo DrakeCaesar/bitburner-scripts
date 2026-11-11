@@ -1,8 +1,6 @@
 #include "go_game.hpp"
 
-#include <algorithm>
 #include <array>
-#include <cmath>
 #include <cstring>
 #include <utility>
 

@@ -4,8 +4,6 @@
 #include <array>
 #include <cmath>
 #include <optional>
-#include <unordered_map>
-#include <unordered_set>
 
 #include "analysis.hpp"
 #include "patterns.hpp"

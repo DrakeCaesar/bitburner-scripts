@@ -1300,6 +1300,19 @@ A game that reaches the move cap is counted as `unfinished` and excluded from th
 rather than scored, because a position cut off mid-play is not a result (see the note on
 the move cap above).
 
+**Repeated genomes are measured once.** Within one run, fitness is a pure function of the
+genome: the training seeds are drawn once, the search is bounded by nodes rather than wall
+clock, and the tuner pins threads to 1. So a genome that appeared in an earlier generation
+already has an exact score, and replaying it plays the same games to the same result.
+Elitism alone guarantees at least one such genome per generation, and convergence produces
+several. The tuner keys a cache on `(beam, replies, mass)` and only plays the genomes it has
+not seen; validation always runs fresh, because it uses the held-back seeds. Because the
+cache does not consume the GA's random stream, the sequence of populations is unchanged:
+measured over 8 generations x 10 genomes, **60 evaluations instead of 80 (-25%) and 31.0 s
+instead of 40.7 s**, with every generation's genomes, win rates and margins identical and
+the same champion. `IPVGO_TUNE_NOCACHE=1` disables the reuse, which is how that equivalence
+was checked.
+
 **What it found.** Six generations, population 10, 30 games per genome, 5x5 at 1000 nodes,
 validated on 60 held-back seeds:
 

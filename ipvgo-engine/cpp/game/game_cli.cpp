@@ -35,7 +35,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
+#include <map>
 #include <mutex>
+#include <tuple>
 #include <fstream>
 #include <iostream>
 #include <random>
@@ -2143,8 +2145,43 @@ int runTune(const std::string& faction, int generations, int populationSize, int
   TuneTally bestOverallTally;
   double bestFitness = -1.0;
 
+  // Fitness is a pure function of the genome within a run: the training seeds are
+  // drawn once above, the search is bounded by nodes rather than by wall clock, and
+  // the tuner pins threads to 1. So a genome that appeared in an earlier generation
+  // has already been measured exactly - replaying it is pure waste, and elitism alone
+  // guarantees at least one such genome every generation once the search converges.
+  // Keying on the three genes also keeps the GA's own random stream untouched, so the
+  // sequence of populations is identical to an uncached run: same answer, less work.
+  auto genomeKey = [](const TuneGenome& g) {
+    return std::make_tuple(g.beam, g.whiteChildren, static_cast<int>(std::lround(g.whiteMass * 100.0)));
+  };
+  // Escape hatch for verifying that reuse changes nothing: with this set, every
+  // generation measures its whole population again, exactly as before.
+  const bool reuseMeasured = std::getenv("IPVGO_TUNE_NOCACHE") == nullptr;
+  std::map<std::tuple<int, int, int>, TuneTally> measured;
+  long cachedEvaluations = 0;
+  long playedEvaluations = 0;
+
   for (int gen = 0; gen < generations; ++gen) {
-    const std::vector<TuneTally> tallies = tuneEvaluate(population, trainSeeds, size, ai, nodeLimit, threads, carry);
+    // Measure only the genomes this run has not seen before.
+    std::vector<TuneGenome> unseenGenomes;
+    std::vector<size_t> unseenAt;
+    if (!reuseMeasured) measured.clear();
+    for (size_t i = 0; i < population.size(); ++i) {
+      if (measured.find(genomeKey(population[i])) != measured.end()) continue;
+      unseenGenomes.push_back(population[i]);
+      unseenAt.push_back(i);
+    }
+    if (!unseenGenomes.empty()) {
+      const std::vector<TuneTally> fresh =
+          tuneEvaluate(unseenGenomes, trainSeeds, size, ai, nodeLimit, threads, carry);
+      for (size_t j = 0; j < fresh.size(); ++j) measured[genomeKey(unseenGenomes[j])] = fresh[j];
+    }
+    playedEvaluations += static_cast<long>(unseenGenomes.size());
+    cachedEvaluations += static_cast<long>(population.size() - unseenGenomes.size());
+
+    std::vector<TuneTally> tallies(population.size());
+    for (size_t i = 0; i < population.size(); ++i) tallies[i] = measured.at(genomeKey(population[i]));
     std::vector<int> order(population.size());
     for (size_t i = 0; i < order.size(); ++i) order[i] = static_cast<int>(i);
     std::stable_sort(order.begin(), order.end(), [&](int a, int b) {
@@ -2175,6 +2212,7 @@ int runTune(const std::string& faction, int generations, int populationSize, int
                         {"gen", gen + 1},
                         {"generations", generations},
                         {"faction", faction},
+                        {"cached", static_cast<long>(population.size() - unseenGenomes.size())},
                         {"msPerMove", tuneTiming().first},
                         {"recentGames", tuneTiming().second},
                         {"ranges", bounds.toJson()},
@@ -2183,7 +2221,8 @@ int runTune(const std::string& faction, int generations, int populationSize, int
                 << "\n";
       std::cout.flush();
     } else {
-      std::printf("gen %d/%d  best %5.1f%% (beam %d, replies %d, mass %.2f)  margin %+5.1f\n", gen + 1, generations,
+      std::printf("gen %d/%d  best %5.1f%% (beam %d, replies %d, mass %.2f)  margin %+5.1f  [%zu reused]\n",
+                gen + 1, generations,
                   100.0 * tallies[order[0]].winRate(), population[order[0]].beam,
                   population[order[0]].whiteChildren, population[order[0]].whiteMass,
                   tallies[order[0]].averageMargin());
@@ -2259,6 +2298,8 @@ int runTune(const std::string& faction, int generations, int populationSize, int
                       {"faction", faction},
                       {"size", size},
                       {"nodeLimit", nodeLimit},
+                      {"cachedEvaluations", cachedEvaluations},
+                      {"playedEvaluations", playedEvaluations},
                       {"msPerMove", tuneTiming().first},
                       {"recentGames", tuneTiming().second},
                       {"ranges", bounds.toJson()},
