@@ -488,7 +488,6 @@
           <button id="start" class="primary">Start</button>
           <button id="stop">Stop</button>
         </div>
-        <button id="openTune" class="ghost" style="margin-top: 8px; width: 100%">Tune widths for one faction...</button>
       </section>
 
       <section>
@@ -1768,12 +1767,27 @@
       let tuneDone = null
       let tuneRunning = false
 
+      const PANE_KEY = "ipvgo-bench-pane-v1"
+
       function showPane(which) {
         const tuning = which === "tune"
         el("boardPane").style.display = tuning ? "none" : ""
         el("tunePane").style.display = tuning ? "" : "none"
         el("tabBoard").classList.toggle("on", !tuning)
         el("tabTune").classList.toggle("on", tuning)
+        try {
+          localStorage.setItem(PANE_KEY, tuning ? "tune" : "board")
+        } catch {
+          /* private mode */
+        }
+      }
+
+      function savedPane() {
+        try {
+          return localStorage.getItem(PANE_KEY) === "tune" ? "tune" : "board"
+        } catch {
+          return "board"
+        }
       }
 
       function tableRow(cells, className) {
@@ -1872,7 +1886,7 @@
           "tuneValidation",
           (done?.validation ?? []).some((entry) => (entry.unfinished ?? 0) > 0),
         )
-        el("tuneApply").disabled = !done?.validation?.[0]?.genome
+        refreshTuneApply()
         renderTuneGenes()
       }
 
@@ -1961,9 +1975,7 @@
           ? `Resume the search around the best genome found so far; use "Start from defaults" to ignore it.`
           : "No stored best for this faction yet, so this is a fresh search."
         el("tuneRestart").disabled = Boolean(tuneRunning)
-        el("tuneApply").title = best
-          ? `Store ${el("tuneFaction").value} b${best.beam} r${best.whiteChildren} m${Number(best.whiteMass).toFixed(2)}`
-          : "Run a search first"
+        refreshTuneApply()
         renderFactionTables()
       }
 
@@ -2007,6 +2019,17 @@
         }
         fill("storedHead", "storedBody", (entry) => entry.applied)
         fill("bestHead", "bestBody", (entry) => entry.best)
+      }
+
+      // Store is available as soon as there is a best genome for the faction, which the
+      // server records after every generation - so a run stopped early can still be
+      // stored, using the best found so far rather than a validated winner.
+      function refreshTuneApply() {
+        const genome = tuneDone?.validation?.[0]?.genome ?? tuneStore[el("tuneFaction").value]?.best
+        el("tuneApply").disabled = !genome
+        el("tuneApply").title = genome
+          ? `Store ${el("tuneFaction").value} b${genome.beam} r${genome.whiteChildren} m${Number(genome.whiteMass).toFixed(2)} for play`
+          : "Run a search first (or tune for this faction at least one generation)"
       }
 
       function setTuneRunning(running) {
@@ -2072,7 +2095,7 @@
         }
         el("tabBoard").addEventListener("click", () => showPane("board"))
         el("tabTune").addEventListener("click", () => showPane("tune"))
-        el("openTune").addEventListener("click", () => showPane("tune"))
+        showPane(savedPane())
 
         const refreshSettings = (payload) => {
           tuneStore = payload?.store ?? {}
@@ -2171,6 +2194,8 @@
         el("tuneStop").addEventListener("click", async () => {
           await fetch(`${API_BASE}/api/tune/stop`, { method: "POST" }).catch(() => {})
           setTuneRunning(false)
+          // The best found so far is still storable after a stop.
+          refreshTuneApply()
           el("tuneStatus").textContent = "stopped - starting again continues from the best found so far"
         })
 
