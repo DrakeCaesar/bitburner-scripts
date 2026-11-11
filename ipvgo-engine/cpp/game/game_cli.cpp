@@ -1883,7 +1883,8 @@ int tuneMoveCap(int size) {
 // One complete self-play game with this genome. Returns whether the game actually ended;
 // a game that hits the move cap is reported as unfinished rather than scored, because a
 // position cut off mid-play is not a result.
-TuneTally tunePlayGame(int size, Opponent ai, const TuneGenome& genome, long nodeLimit, uint64_t seed) {
+TuneTally tunePlayGame(int size, Opponent ai, const TuneGenome& genome, long nodeLimit, uint64_t seed,
+                       bool carry) {
   std::mt19937_64 rng(seed != 0 ? seed : 1);
   const double clockMs = static_cast<double>(rng() % 30000000u);
   MathRandom mathRng(rng());
@@ -1905,7 +1906,8 @@ TuneTally tunePlayGame(int size, Opponent ai, const TuneGenome& genome, long nod
     if (whoseTurn(state) != Color::Black) break;
     session.noteRequest(static_cast<size_t>(state.previousBoards.size()));
     const auto searchStart = std::chrono::steady_clock::now();
-    const ipvgo::nn::ExploitResult r = ipvgo::nn::runExploiter(state, cfg, nullptr, &session);
+    const ipvgo::nn::ExploitResult r =
+        ipvgo::nn::runExploiter(state, cfg, nullptr, carry ? &session : nullptr);
     tallyMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - searchStart).count();
     ++tallyMoves;
     if (r.bestAction == ipvgo::nn::passAction(size)) {
@@ -1964,7 +1966,7 @@ std::pair<double, size_t> tuneTiming() {
 }
 
 std::vector<TuneTally> tuneEvaluate(const std::vector<TuneGenome>& genomes, const std::vector<uint64_t>& seeds,
-                                    int size, Opponent ai, long nodeLimit, unsigned threads) {
+                                    int size, Opponent ai, long nodeLimit, unsigned threads, bool carry) {
   std::vector<TuneTally> tallies(genomes.size());
   std::vector<TuneTally> results(genomes.size() * seeds.size());
   std::atomic<size_t> next{0};
@@ -1975,7 +1977,7 @@ std::vector<TuneTally> tuneEvaluate(const std::vector<TuneGenome>& genomes, cons
     for (;;) {
       const size_t job = next.fetch_add(1, std::memory_order_relaxed);
       if (job >= jobs) break;
-      results[job] = tunePlayGame(size, ai, genomes[job / seeds.size()], nodeLimit, seeds[job % seeds.size()]);
+      results[job] = tunePlayGame(size, ai, genomes[job / seeds.size()], nodeLimit, seeds[job % seeds.size()], carry);
     }
   };
   if (workers <= 1) {
@@ -2076,7 +2078,7 @@ bool tuneContainsGenome(const std::vector<TuneGenome>& genomes, const TuneGenome
 
 int runTune(const std::string& faction, int generations, int populationSize, int gamesPerGenome, long nodeLimit,
             int size, unsigned threads, uint64_t seedBase, bool emitJson, bool haveSeed, TuneGenome seedGenome,
-            const TuneBounds& bounds) {
+            const TuneBounds& bounds, bool carry) {
   const Opponent ai = parseOpponent(faction).value_or(Opponent::Netburners);
   std::mt19937_64 rng(seedBase != 0 ? seedBase : 1);
   tuneResetTiming();
@@ -2142,7 +2144,7 @@ int runTune(const std::string& faction, int generations, int populationSize, int
   double bestFitness = -1.0;
 
   for (int gen = 0; gen < generations; ++gen) {
-    const std::vector<TuneTally> tallies = tuneEvaluate(population, trainSeeds, size, ai, nodeLimit, threads);
+    const std::vector<TuneTally> tallies = tuneEvaluate(population, trainSeeds, size, ai, nodeLimit, threads, carry);
     std::vector<int> order(population.size());
     for (size_t i = 0; i < order.size(); ++i) order[i] = static_cast<int>(i);
     std::stable_sort(order.begin(), order.end(), [&](int a, int b) {
@@ -2250,7 +2252,7 @@ int runTune(const std::string& faction, int generations, int populationSize, int
   // Re-measure the winner and the shipped defaults on the held-back seeds.
   std::vector<TuneGenome> finalists = {bestOverall, TuneGenome{}};
   const std::vector<TuneTally> finalTallies =
-      tuneEvaluate(finalists, validationSeeds, size, ai, nodeLimit, threads);
+      tuneEvaluate(finalists, validationSeeds, size, ai, nodeLimit, threads, carry);
 
   if (emitJson) {
     std::cout << json{{"type", "done"},
@@ -2386,12 +2388,16 @@ int main(int argc, char** argv) {
         return 2;
       }
     }
+    // Optional argv[15]: "carry" or "nocarry". Carry memo is on by default because it
+    // only ever reuses exact results, but it must be switchable so the two can be compared.
+    bool carry = true;
+    if (argc >= 16) carry = std::string(argv[15]) != "nocarry";
     if (generations < 1 || population < 2 || games < 1) {
       std::cerr << "tune: generations and games must be positive, population at least 2\n";
       return 2;
     }
     return runTune(faction, generations, population, games, nodeLimit, size, threads, seed, emitJson, haveSeed,
-                   seedGenome, bounds);
+                   seedGenome, bounds, carry);
   }
   if (cmd == "exploitplay" && argc >= 6) {
     const int size = std::stoi(argv[3]);

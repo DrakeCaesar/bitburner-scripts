@@ -697,6 +697,10 @@ function tuneOptions(body, faction, size) {
     // A queued run stores each faction's winner as its play setting as it finishes,
     // which is the point of leaving it running unattended.
     autoApply: body?.autoApply === true,
+    // Carry memo shares exact search results across the moves of a game. On by
+    // default: it is ~30% faster per move and the freed budget buys extra depth, but
+    // it does change the numbers, so both arms of any A/B must use the same setting.
+    carry: body?.carry !== false,
     rangesFor: (name) => tuneRanges(body?.rangesByFaction?.[name] ?? body?.ranges),
   }
 }
@@ -747,13 +751,13 @@ function beginTuneRun(faction, options) {
     delete options.resumeFrom
   }
   // The search box is optional and travels as one JSON argument, so an old caller that
-  // sends nothing gets the engine's own defaults.
+  // sends nothing gets the engine's own defaults. The carry flag follows it, which is
+  // why an empty box is sent as `{}` rather than omitted.
   const ranges = options.rangesFor(faction)
   options.ranges = ranges
-  if (ranges || resumeTriple[0] > 0) {
-    args.push(...resumeTriple.map(String))
-    if (ranges) args.push(JSON.stringify(ranges))
-  }
+  args.push(...resumeTriple.map(String))
+  args.push(JSON.stringify(ranges ?? {}))
+  args.push(options.carry ? "carry" : "nocarry")
 
   const child = spawn(exe, args, { cwd: __dirname })
   tune.child = child
@@ -773,7 +777,8 @@ function beginTuneRun(faction, options) {
             tune.state.generations.push(event)
             // Every generation records its leader as this faction's "best found", so
             // the number is live during a run and a stopped run still has a resume
-            // point. Waiting for `done` lost everything if the run was cut short.            const leader = event.rows?.[0]
+            // point. Waiting for `done` lost everything if the run was cut short.
+            const leader = event.rows?.[0]
             if (leader?.genome) {
               const store = readTuningStore()
               const entry = store[event.faction] ?? {}
@@ -820,8 +825,11 @@ function beginTuneRun(faction, options) {
             }
             tuneBroadcast("done", event)
           }
-        } catch {
-          /* ignore malformed line */
+        } catch (err) {
+          // Never swallow this silently: an exception in here once stopped every live
+          // update while the run itself looked healthy, and nothing anywhere said why.
+          tune.state.error = `tune event: ${err.message}`
+          tuneBroadcast("error", { error: tune.state.error })
         }
       }
       newline = buffer.indexOf("\n")
