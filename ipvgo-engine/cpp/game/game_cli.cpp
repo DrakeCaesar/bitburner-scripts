@@ -916,6 +916,11 @@ json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session,
   // Play uses the faster dynamic root scheduler; IPVGO_DETERMINISTIC=1 pins the
   // round-robin split for a repeatable session.
   cfg.deterministic = std::getenv("IPVGO_DETERMINISTIC") != nullptr;
+  // Cheat moves: enabled by the caller, which knows the game's cheat count and stats.
+  cfg.cheatsEnabled = req.value("cheats", false);
+  cfg.crimeSuccessMult = req.value("crimeSuccessMult", 1.0);
+  cfg.sourceFile14Level = req.value("sourceFile14Level", 0);
+  cfg.maxCheatPairs = req.value("maxCheatPairs", 6);
 
   const auto t0 = std::chrono::steady_clock::now();
   const ExploitResult result = runExploiter(state, cfg, nullptr, session);
@@ -933,6 +938,16 @@ json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session,
   out["reusedHits"] = result.memoReusedHits;
   out["cachedEntries"] = result.cachedEntries;
   out["sessionResets"] = result.sessionResets;
+  if (cfg.cheatsEnabled) {
+    out["cheat"] = json{{"kind", result.cheat.kind},
+                        {"x1", result.cheat.x1},
+                        {"y1", result.cheat.y1},
+                        {"x2", result.cheat.x2},
+                        {"y2", result.cheat.y2},
+                        {"value", result.cheat.value},
+                        {"successChance", result.cheat.successChance}};
+    out["cheatPreferred"] = result.cheatPreferred;
+  }
   out["engine"] = "exploit";
   return out;
 }
@@ -2507,6 +2522,7 @@ int main(int argc, char** argv) {
         }
       }
       options.carry = config.value("carry", false);
+      options.dynamicRoot = config.value("dynamicRoot", false);
       options.audit = config.value("audit", true);
       if (config.contains("replay")) {
         for (const auto& entry : config.at("replay")) {

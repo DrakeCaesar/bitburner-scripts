@@ -986,7 +986,8 @@ Two changes went in, and the root split now has two modes:
   deterministic one** - `optbench`, `bench` and `prof` set it themselves so their numbers
   are comparable, `IPVGO_DETERMINISTIC=1` forces it for `exploitplay`/`serve`, and
   `IPVGO_DYNAMIC=1` forces the dynamic one in the tools when its speed is what is being
-  measured.
+  measured. The bench GUI's **Dynamic scheduler** checkbox and `benchjson`'s
+  `"dynamicRoot": true` do the same per run, without the environment variable.
 
 Interleaved, 5 rounds, 12 threads, identical node counts:
 
@@ -1169,6 +1170,25 @@ Consequences:
   of "all cores" costs nothing and buys 3x the wall clock.
 - Use deterministic mode for timing and A/B of node counts, dynamic for anything
   that asks "is this stronger".
+
+The bench GUI exposes this as **Dynamic scheduler** (Search tuning), off by default so a
+benchmark repeats; turn it on to measure what play actually does. The same fixed-slice
+behaviour bites the *budget*, not only the strength, and it is easy to misread as a
+depth cap. Same position, round-robin, 5x5, 12 threads, beam 12 / replies 6, with a
+per-worker `[worker]` trace under `IPVGO_DEBUG_DEPTH=1`:
+
+| node budget | per-worker slice | depth-3 iteration | result |
+|---|---|---|---|
+| 50 000 | 4 086 | 43 971 nodes - 5 of 12 workers hit the slice | discarded, plays depth 2 |
+| 100 000 | 8 333 | 45 693 nodes - every worker finishes | kept, plays depth 3 |
+
+Depth 3 needed 45 693 nodes, so 50 000 was enough; it failed because the round-robin
+split assigns children by *count* (3 or 2 of the 29 root moves each) and not by cost.
+Five workers needed more than their 4 086 and one `timedOut` discards the whole ply, so
+43 971 nodes (96% of the tree) were thrown away **and** 5 066 nodes of budget were left
+unallocated. The dynamic scheduler on the same 50 000 reaches depth 3 at the identical
+45 693 nodes. Over 10 games at a 50 000 budget this cost 63 of 506 depth iterations and
+left 51 of 126 moves at depth 2 or less - which reads like the budget being ignored.
 
 ### The leaf evaluator without a chain set
 
@@ -1755,7 +1775,9 @@ regression-tested:
   counter and a partition of the root moves) can change the chosen move. The default
   scheduler claims root moves dynamically, so even at a fixed budget and thread count
   the play varies slightly run to run; set `IPVGO_DETERMINISTIC=1` (or build a tool,
-  which sets it) to pin the round-robin split and get the same moves every time.
+  which sets it) to pin the round-robin split and get the same moves every time. The
+  bench GUI's **Dynamic scheduler** toggle selects the same thing per run, and
+  `benchjson` takes `"dynamicRoot": true`.
 - **The session cache** reuses positions across moves. It only reuses values with
   no endgame cut in their subtree, so reuse cannot lower accuracy, but it does
   change which nodes get evaluated and therefore the play.

@@ -333,7 +333,9 @@ int runBenchGames(const BenchOptions& options, BenchObserver& observer) {
   cfg.endgameEmpties = options.endgameEmpties;
   cfg.nodeBudget = options.nodeBudget;
   cfg.threads = options.threads;
-  cfg.deterministic = true;  // a benchmark has to be repeatable
+  // A benchmark defaults to the repeatable round-robin split; the GUI's scheduler
+  // toggle asks for the dynamic one instead.
+  cfg.deterministic = !options.dynamicRoot;
   // IPVGO_DYNAMIC=1 measures the scheduler play actually uses, at the cost of
   // repeatability.
   if (std::getenv("IPVGO_DYNAMIC") != nullptr) cfg.deterministic = false;

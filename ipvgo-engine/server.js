@@ -405,6 +405,10 @@ async function handleBenchStart(req, res) {
     if (value !== undefined) options[key] = value
   }
   if (body?.carry === true) options.carry = true
+  // Root scheduler: the repeatable round-robin split by default, the dynamic one on
+  // request. They are not equivalent - a fixed per-worker slice discards a ply when one
+  // root move outgrows it, and at 12 threads that costs about 5 points of win rate.
+  if (body?.dynamicRoot === true) options.dynamicRoot = true
   // Audit fields (the eval's own numbers, White's modelled reply probability and
   // the fixed-depth value) cost one extra policy build per move. On by default
   // because the loss explanation is built from them.

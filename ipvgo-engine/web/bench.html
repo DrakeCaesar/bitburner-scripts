@@ -485,6 +485,7 @@
           <label class="field"><span title="Ceiling for iterative deepening. 0 = automatic: the budget decides how deep the search goes and the position decides how deep it can ever mean anything, so there is nothing to tune here. A positive value overrides it, for experiments.">Max depth (0 = auto)</span><input id="maxDepth" type="number" min="0" max="64" placeholder="0" /></label>
           <label class="field"><span title="Search threads (0 = all cores)">Threads</span><input id="threads" type="number" min="0" max="64" placeholder="0" /></label>
           <label class="field"><span title="Reuse exact search results across the moves of a game. Same answers as a fresh search, with less work.">Carry memo</span><span class="fieldToggle"><input id="carry" type="checkbox" /></span></label>
+          <label class="field"><span title="Off: every worker gets a fixed slice of the node budget (repeatable, but a ply is discarded the moment one root move outgrows its slice). On: workers claim the next root move as they finish and split what is left, which is what play uses - stronger at high thread counts, but a run does not repeat exactly.">Dynamic scheduler</span><span class="fieldToggle"><input id="dynamicRoot" type="checkbox" /></span></label>
         </details>
         <div class="buttons">
           <button id="start" class="primary">Start</button>
@@ -730,6 +731,7 @@
         tuning: {},
         tuningOpen: false,
         carry: false,
+        dynamicRoot: false,
       }
 
       const el = (id) => document.getElementById(id)
@@ -750,6 +752,7 @@
           tuning,
           tuningOpen: el("tuning").open,
           carry: el("carry").checked,
+          dynamicRoot: el("dynamicRoot").checked,
         }
       }
 
@@ -803,6 +806,7 @@
             tuning,
             tuningOpen: stored.tuningOpen === true,
             carry: stored.carry === true,
+            dynamicRoot: stored.dynamicRoot === true,
           }
         } catch {
           return { ...DEFAULT_FORM }
@@ -822,6 +826,7 @@
         for (const id of TUNING_IDS) el(id).value = form.tuning?.[id] ?? ""
         el("tuning").open = form.tuningOpen === true
         el("carry").checked = form.carry === true
+        el("dynamicRoot").checked = form.dynamicRoot === true
         selected.clear()
         for (const faction of form.factions) selected.add(faction)
         updateBudgetLabel()
@@ -1626,6 +1631,7 @@
           if (Number.isFinite(value)) body[id] = value
         }
         if (el("carry").checked) body.carry = true
+        if (el("dynamicRoot").checked) body.dynamicRoot = true
         if (body.factions.length === 0) body.factions = null
         // Explicit per-faction widths: the server uses these instead of the store, so
         // what the Run table shows is exactly what the engine gets.
@@ -1697,6 +1703,7 @@
 
       el("tuning").addEventListener("toggle", saveForm)
       el("carry").addEventListener("change", saveForm)
+      el("dynamicRoot").addEventListener("change", saveForm)
 
       el("size").addEventListener("change", renderFactionChips)
 

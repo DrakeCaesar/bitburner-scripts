@@ -36,6 +36,14 @@ struct BenchOptions {
   long nodeBudget = 30000;
   int threads = 0;
   bool carry = false;  // share a depth-aware memo across the moves of a game
+  // Root scheduler. Off = the deterministic round-robin split: every worker gets a
+  // fixed 1/threads slice of the node budget up front, which repeats exactly but
+  // discards a ply as soon as one expensive root move outgrows its slice. On = the
+  // dynamic scheduler play uses: a worker claims the next root move when it finishes
+  // the previous one and each move gets a share of what is left, so it is both
+  // stronger (-5 points at 12 threads) and unable to starve a move - at the cost of
+  // run-to-run variation. See "The scheduler changes strength, not just speed".
+  bool dynamicRoot = false;
   // Per-faction overrides of the three width settings, produced by `tune`. A faction
   // that is absent (or leaves a field at 0) uses the global values above, so a stored
   // setting only ever changes the faction it was tuned for.
