@@ -4,15 +4,20 @@ Builds the engine with profile-guided optimisation, using the search itself as t
 training workload.
 
 .DESCRIPTION
-Two passes over out/build/x64-Pgo. The first builds an instrumented ipvgo_game and
-plays a spread of board sizes and factions through it, which writes the branch and
-value profiles; the second rebuilds with /USEPROFILE, so the compiler lays out the
-hot paths, splits the cold ones and decides inlining from real edge counts instead
-of from static guesses.
+Two passes over out/build/x64-Pgo with clang-cl. The first builds an instrumented
+ipvgo_game (-fprofile-generate) and plays a spread of board sizes and factions
+through it, which writes LLVM .profraw counter files; llvm-profdata merges them into
+ipvgo.profdata, and the second pass rebuilds with -fprofile-use, so the compiler
+decides branch weights, inlining and code layout from real edge counts instead of
+from static guesses.
 
 The training workload is the in-game configuration (a 4 000-node budget per move)
-across 5x5, 7x7, 9x9 and 13x13, plus the 25-game profileworkload, so the profit
-does not come from one board size only.
+across 5x5, 7x7, 9x9, 13x13 and 19x19, plus the 25-game profileworkload, so the
+profit does not come from one board size only.
+
+It is measured neutral on this codebase - see the README - because the hot loops are
+branch-light and the optimiser already handles what a profile can tell it. The script
+stays so the experiment is repeatable after a structural change.
 
 .PARAMETER BuildType
 Release (default) or RelWithDebInfo.
@@ -38,6 +43,8 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $buildRoot = Join-Path $repoRoot 'out/build/x64-Pgo'
 $exe = Join-Path $buildRoot 'bin/ipvgo_game.exe'
 $buildScript = Join-Path $PSScriptRoot 'Build-Native.ps1'
+$profDir = Join-Path $buildRoot 'prof'
+$profDataPath = Join-Path $buildRoot 'ipvgo.profdata'
 
 function Invoke-Pass {
   param([string]$Mode, [string[]]$Targets = @())
@@ -47,46 +54,38 @@ function Invoke-Pass {
   if ($LASTEXITCODE -ne 0) { throw "PGO $Mode build failed" }
 }
 
-$binDir = Split-Path -Parent $exe
-$pgd = Join-Path $buildRoot 'ipvgo.pgd'
-
-# The instrumented binary needs the PGO runtime (pgort140.dll), which ships in the
-# toolset's bin directory and not with the redistributable. Off PATH, every training
-# run dies with 0xC0000135 (STATUS_DLL_NOT_FOUND) before writing a single counter,
-# and the optimising pass then merges an empty profile without complaining.
+# llvm-profdata ships beside clang-cl, which the presets take from PATH, so this
+# script locates the tool in the same toolset.
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
 $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-$toolBin = Get-ChildItem (Join-Path $vsPath 'VC/Tools/MSVC') -Directory |
-  Sort-Object Name -Descending |
-  ForEach-Object { Join-Path $_.FullName 'bin/Hostx64/x64' } |
-  Where-Object { Test-Path (Join-Path $_ 'pgort140.dll') } |
-  Select-Object -First 1
-if (-not $toolBin) { throw 'pgort140.dll not found; cannot run the instrumented build.' }
-$pgomgr = Join-Path $toolBin 'pgomgr.exe'
+$llvmProfdata = Join-Path $vsPath 'VC/Tools/Llvm/x64/bin/llvm-profdata.exe'
+if (-not (Test-Path $llvmProfdata)) { throw "llvm-profdata.exe not found at $llvmProfdata" }
 
-# Start from a clean profile: stale counters from an older binary would be merged
-# into the new one. Deleting the exe also forces the instrumented relink that writes
-# the fresh .pgd skeleton.
-Get-ChildItem (Join-Path $binDir '*.pgc') -ErrorAction SilentlyContinue | Remove-Item -Force
-Remove-Item $pgd -ErrorAction SilentlyContinue
+# Counters from an older binary would be merged into the new one, and -fprofile-use
+# will not compile against a missing profile, so both are cleared first.
+if (Test-Path $profDir) { Remove-Item -Recurse -Force $profDir }
+Remove-Item $profDataPath -ErrorAction SilentlyContinue
 Remove-Item $exe -ErrorAction SilentlyContinue
 
 Write-Host 'PGO pass 1/2: instrumented build' -ForegroundColor Cyan
 Invoke-Pass -Mode Generate -Targets @('ipvgo_game')
-
 if (-not (Test-Path $exe)) { throw "instrumented engine not found at $exe" }
-if (-not (Test-Path $pgd)) { throw "instrumented link did not produce $pgd" }
 
 Write-Host 'PGO training: the search plays the workload it is being optimised for' -ForegroundColor Cyan
 
-$oldPath = $env:PATH
-$env:PATH = "$toolBin;$env:PATH"
+$oldProfile = $env:LLVM_PROFILE_FILE
+$env:LLVM_PROFILE_FILE = (Join-Path $profDir 'train_%p.profraw')
 $env:IPVGO_NODE_LIMIT = '4000'
 $env:IPVGO_DETERMINISTIC = '1'  # same training run every time
+# The training runs write progress to stderr, which PowerShell turns into a
+# terminating NativeCommandError under 'Stop', so the error action is relaxed for
+# the duration and the exit codes are checked instead.
+$oldErrorAction = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 try {
-  # Mixed sizes so the shared code paths (chain pass, eye analysis, patterns) are
-  # trained on the shapes the game actually uses. The instrumented run writes
-  # ipvgo!N.pgc beside the executable, one file per process.
+  # One .profraw per process, named by pid. Without %p every run writes the same
+  # default file name and each training run overwrites the previous counters.
+  & $exe profileworkload (2 * [Math]::Max(1, [int]($Games / 2))) 1 *> $null
   foreach ($spec in @(
       @('Illuminati', 9, 2),
       @('Slum Snakes', 7, 2),
@@ -104,25 +103,27 @@ try {
     if ($LASTEXITCODE -gt 1) { throw ("training run failed (exit 0x{0:X})" -f $LASTEXITCODE) }
   }
 } finally {
-  $env:PATH = $oldPath
+  $ErrorActionPreference = $oldErrorAction
+  if ($null -eq $oldProfile) { Remove-Item Env:LLVM_PROFILE_FILE -ErrorAction SilentlyContinue }
+  else { $env:LLVM_PROFILE_FILE = $oldProfile }
   Remove-Item Env:IPVGO_NODE_LIMIT -ErrorAction SilentlyContinue
   Remove-Item Env:IPVGO_DETERMINISTIC -ErrorAction SilentlyContinue
 }
 
-$pgc = @(Get-ChildItem (Join-Path $binDir '*.pgc') -ErrorAction SilentlyContinue)
-if ($pgc.Count -eq 0) { throw "training produced no .pgc counters in $binDir" }
-Write-Host ("  collected {0} counter file(s), {1:N0} KB" -f $pgc.Count, (($pgc | Measure-Object Length -Sum).Sum / 1KB))
+# A run that exits without flushing its counters leaves a zero-length .profraw
+# behind, and llvm-profdata refuses the whole merge when one is in the list.
+$raw = @(Get-ChildItem (Join-Path $profDir '*.profraw') -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 0 })
+if ($raw.Count -eq 0) { throw "training produced no .profraw counters in $profDir" }
+Write-Host ("  collected {0} counter file(s), {1:N0} KB" -f $raw.Count, (($raw | Measure-Object Length -Sum).Sum / 1KB))
 
-# Merge explicitly rather than relying on the optimising link to find the counters:
-# it is the step that silently produces an empty profile when it does not.
-& $pgomgr /merge $pgd @($pgc.FullName) | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'pgomgr /merge failed' }
-$summary = (& $pgomgr /summary $pgd) -join "`n"
-if ($LASTEXITCODE -ne 0) { throw 'pgomgr /summary failed' }
-$dynamicLine = ($summary -split "`n" | Where-Object { $_ -match 'Dynamic instructions' } | Select-Object -First 1)
-Write-Host ("  profile: {0}" -f ($dynamicLine -replace '^\s+', ''))
-if ($summary -notmatch 'Dynamic instructions:\s*[1-9]') { throw 'collected profile carries no execution counts' }
-foreach ($file in $pgc) { Remove-Item $file.FullName -Force }
+& $llvmProfdata merge -o $profDataPath @($raw.FullName)
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $profDataPath)) { throw 'llvm-profdata merge failed' }
+# An empty profile still links and compiles, so the counts are checked explicitly.
+$summary = (& $llvmProfdata show --counts --all-functions $profDataPath 2>&1 | Out-String)
+$functions = ([regex]::Match($summary, 'Total functions: (\d+)')).Groups[1].Value
+$maxCount = ([regex]::Match($summary, 'Maximum function count: (\d+)')).Groups[1].Value
+Write-Host ("  profile: {0} functions, maximum function count {1}" -f $functions, $maxCount)
+if (-not $maxCount -or [long]$maxCount -le 0) { throw 'collected profile carries no execution counts' }
 
 Write-Host 'PGO pass 2/2: optimised build from the collected profile' -ForegroundColor Cyan
 Invoke-Pass -Mode Optimize -Targets @('ipvgo_game')

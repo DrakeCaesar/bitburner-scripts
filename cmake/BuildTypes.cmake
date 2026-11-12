@@ -19,62 +19,70 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-if(MSVC)
-  # Release: fastest executable. Whole program optimization is deliberately on,
-  # which means this build is the wrong one to profile - use RelWithDebInfo.
+if(MSVC AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  # clang-cl, the LLVM toolset that ships with Visual Studio (VC\Tools\Llvm\x64\bin),
+  # is the compiler for every configuration here. It produces the same search
+  # decisions as cl.exe - identical node counts, selftest passes - in 16-18% less
+  # time, so there is no reason to build this project with anything else:
+  #
+  #   optbench   MSVC (cl)   clang-cl   delta
+  #   depth 3      415.3 ms    348.1 ms   -16.2%
+  #   depth 4     7321.2 ms   6028.6 ms   -17.7%
+  #
+  # About two points of that is link-time optimisation (clang without -flto lands at
+  # 358.6 ms, -13.7%); the rest is codegen. Nothing further is left in the flags:
+  # -march=native, /GS-, -flto=thin and PGO were each built and measured flat, and
+  # /O2 is already cc1 -O3 (clang-cl -### shows it).
   set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2")        # Optimize for speed
-  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /GL")        # Whole program optimization (needs /LTCG)
   set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /arch:AVX2") # Enable AVX2
-  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /DNDEBUG")   # Disable asserts
-
-  set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /LTCG") # Link-time codegen
+  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -flto=full") # /GL equivalent
+  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -DNDEBUG")
+  # -flto here is the link-time half of the same option, and lld-link is the only
+  # linker that consumes the bitcode (link.exe cannot). Both are needed.
+  set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} -flto=full -fuse-ld=lld")
 
   # RelWithDebInfo: same optimisation class, but every frame and every line stays
   # visible to the profiler. /Ob0 turns inlining off, so samples point at the line
-  # that did the work instead of the caller it was folded into; flip it to /Ob2
-  # when the timings need to reflect the performance build.
-  #
-  # The variable is reset to the MSVC default first: RelWithDebInfo already ships
-  # /Ob1, and appending /Ob0 on top of it only earns a "D9025: overriding" warning.
-  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "/O2 /Zi /DNDEBUG")
-  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /arch:AVX2") # Enable AVX2
-  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /Zo")        # Better source-line info
-  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /Oy-")       # Keep frame pointers
-  # -DIPVGO_PROFILE_INLINING=ON keeps inlining on (/Ob2): tiny accessors then stop
-  # showing up as hot spots, and the shares match what the Release build does.
+  # that did the work instead of the caller it was folded into; flip it to /Ob2 when
+  # the timings need to reflect the performance build.
+  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "/O2 /arch:AVX2 /Zi /DNDEBUG /Oy-")
   option(IPVGO_PROFILE_INLINING "Keep inlining enabled in the RelWithDebInfo (profiling) build" OFF)
   if(IPVGO_PROFILE_INLINING)
     set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /Ob2")
   else()
-    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /Ob0")     # Inlining OFF for profiling
+    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /Ob0")
   endif()
-
-  set(CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO "${CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO} /DEBUG:FULL") # Full PDB
+  set(CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO "${CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO} /DEBUG:FULL")
 
   # Profile-guided optimisation, in two passes over the same build tree:
   #   cmake -DIPVGO_PGO=GENERATE ... ; build ; run a training workload
   #   cmake -DIPVGO_PGO=OPTIMIZE ... ; build
-  # Everything happens in the linker: cl.exe rejects /GENPROFILE and /USEPROFILE
-  # with D9002, so a build configured that way stays uninstrumented and the profile
-  # reports "Dynamic instructions: 0". The compiler side is plain /GL, already set
-  # for Release above.
-  # /LTCG:PGINSTRUMENT and /LTCG:PGOPTIMIZE both imply plain /LTCG, so the flag is
-  # removed first to avoid D9025 "overriding". cmake/Build-Pgo.ps1 drives the two
-  # passes and the training run.
+  # The instrumented build writes .profraw files under ${CMAKE_BINARY_DIR}/prof
+  # (LLVM_PROFILE_FILE overrides the name per process), llvm-profdata merges them
+  # into ipvgo.profdata, and the second pass reads it. cmake/Build-Pgo.ps1 drives
+  # all of that. It is neutral on this codebase - see the README - but the plumbing
+  # stays because a structural change is the only thing that would move it.
   set(IPVGO_PGO "OFF" CACHE STRING "Profile-guided optimisation: OFF, GENERATE or OPTIMIZE")
   set_property(CACHE IPVGO_PGO PROPERTY STRINGS OFF GENERATE OPTIMIZE)
   if(NOT IPVGO_PGO STREQUAL "OFF")
-    set(ipvgo_pgd "${CMAKE_BINARY_DIR}/ipvgo.pgd")
-    string(REPLACE "/LTCG" "" CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE}")
     if(IPVGO_PGO STREQUAL "GENERATE")
-      set(CMAKE_EXE_LINKER_FLAGS_RELEASE
-          "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /LTCG:PGINSTRUMENT /PGD:${ipvgo_pgd}")
+      set(CMAKE_CXX_FLAGS_RELEASE
+          "${CMAKE_CXX_FLAGS_RELEASE} -fprofile-generate=${CMAKE_BINARY_DIR}/prof")
     else()
-      set(CMAKE_EXE_LINKER_FLAGS_RELEASE
-          "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /LTCG:PGOPTIMIZE /PGD:${ipvgo_pgd}")
+      set(CMAKE_CXX_FLAGS_RELEASE
+          "${CMAKE_CXX_FLAGS_RELEASE} -fprofile-use=${CMAKE_BINARY_DIR}/ipvgo.profdata -Wno-profile-instr-out-of-date -Wno-profile-instr-unprofiled")
     endif()
-    message(STATUS "PGO: ${IPVGO_PGO} (profile ${ipvgo_pgd})")
+    message(STATUS "PGO: ${IPVGO_PGO}")
   endif()
+elseif(MSVC)
+  # Plain cl.exe is not supported: it compiles this search 17% slower than clang-cl
+  # on the same flags, and the measured result is in the README.
+  message(FATAL_ERROR
+    "This project builds with clang-cl, not cl.exe.\n"
+    "  - Configure through the presets (cmake --preset x64-Release) or "
+    "cmake/Build-Native.ps1, which pass the compiler.\n"
+    "  - clang-cl comes from the \"C++ Clang tools for Windows\" component of Visual "
+    "Studio; check that VC\\Tools\\Llvm\\x64\\bin\\clang-cl.exe exists.")
 else()
   # Unix-style clang/gcc: max optimizations for speed.
   set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3")           # Optimize aggressively
@@ -84,7 +92,8 @@ else()
 
   set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} -flto")
 
-  # Profiling mirrors the MSVC split: line attribution and walkable stacks.
+  # Profiling mirrors the RelWithDebInfo split above: line attribution and walkable
+  # stacks.
   set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -O2")
   set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -march=native")
   set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -g")

@@ -20,7 +20,6 @@ function findExe(name) {
   const candidates = [
     path.join(root, "..", "out", "build", "x64-Release", "bin", exe),
     path.join(root, "..", "out", "build", "x64-Release", "bin", "Release", exe),
-    path.join(root, "..", "out", "build", "x64-Clang-Release", "bin", exe),
     path.join(root, "..", "out", "build", "x64-Profile", "bin", exe),
     path.join(root, "build", "Release", exe),
     path.join(root, "build", exe),

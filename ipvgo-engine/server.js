@@ -49,7 +49,7 @@ function nativeExecutableCandidates(name) {
   const isWindows = process.platform === "win32"
   const suffixes = isWindows ? [".exe"] : ["", ".exe"]
   const buildRoot = path.join(__dirname, "..", "out", "build")
-  const releaseBinDirs = ["x64-Release", "x64-Clang-Release"].flatMap((config) => {
+  const releaseBinDirs = ["x64-Release"].flatMap((config) => {
     const bin = path.join(buildRoot, config, "bin")
     return [bin, path.join(bin, "Release")]
   })

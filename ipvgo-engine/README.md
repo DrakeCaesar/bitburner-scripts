@@ -40,6 +40,7 @@ IPVGO_ENGINE=exploit  # force the exploiter
 
 - CMake 3.18+
 - C++17 compiler
+- **clang-cl** (the "C++ Clang tools for Windows" component of Visual Studio)
 
 `nlohmann/json` is fetched automatically via CMake if not installed.
 
@@ -55,7 +56,7 @@ other native components (`tests/koth_tune`):
 pnpm run ipvgo:build
 ```
 
-Ninja invokes `cl.exe` directly, so it needs the variables the Visual Studio
+Ninja invokes the compiler directly, so it needs the variables the Visual Studio
 developer environment sets up (`INCLUDE`, `LIB`, `PATH`); without them a compile
 fails with `C1083: Cannot open include file: 'array'`. `Build-Native.ps1` finds
 Visual Studio with `vswhere`, imports that environment, and then runs CMake, so
@@ -68,30 +69,72 @@ older per-component `ipvgo-engine/build` layout, which still works for a
 standalone `cmake -S ipvgo-engine -B ipvgo-engine/build`.
 
 `CMakeSettings.json` defines the same tree for the IDE: `x64-Release` for
-performance work, `x64-Profile` (`RelWithDebInfo`) for profiling, plus
-`x64-Debug`, the two `x64-Clang-*` configurations and `Linux-*`. Each
-configuration builds into `out/build/<name>`.
+performance work, `x64-Profile` (`RelWithDebInfo`) for profiling, plus `x64-Debug`
+and `Linux-*`. Each configuration builds into `out/build/<name>`, and all three
+x64 ones inherit `clang_cl_x64_x64`.
 
-`CMakePresets.json` (repo root, tracked) declares the *generator* for every entry
-point: `x64-Release`, `x64-Debug`, `x64-Profile` and the two `x64-Pgo-*` passes, all
-Ninja and all pointing at the same `out/build/<name>` directories that
-`CMakeSettings.json` and `Build-Native.ps1` use. Use it directly when the MSVC
-environment is already loaded:
+`CMakePresets.json` (repo root, tracked) declares the *generator* and the *compiler*
+for every entry point: `x64-Release`, `x64-Debug`, `x64-Profile` and the two
+`x64-Pgo-*` passes, all Ninja, all `clang-cl`, and all pointing at the same
+`out/build/<name>` directories that `CMakeSettings.json` and `Build-Native.ps1` use.
+Use it directly when the compiler environment is already loaded:
 
 ```powershell
 cmake --preset x64-Release        # configure
 cmake --build --preset x64-Release
 ```
 
-A build tree is bound to the generator that created it, so every entry point has to
-agree on one. CMake Tools gets its generator from the preset (enable presets in the
+### clang-cl, not cl.exe
+
+Visual Studio ships two C++ compilers; this project builds with the LLVM one,
+`clang-cl` (component "C++ Clang tools for Windows", `VC\Tools\Llvm\x64\bin`, on
+`PATH` inside the developer shell that `Build-Native.ps1` enters). Configure a tree
+with `cl.exe` and CMake stops with a message saying so, because the difference is
+large enough that a silent fallback would be a trap:
+
+| `optbench`, single-threaded, 12 runs per arm interleaved | MSVC (cl) | clang-cl | delta |
+|---|---|---|---|
+| depth 3, best of 5 | 415.3 ms | **348.1 ms** | **-16.2%** |
+| depth 4, best of 2 | 7 321.2 ms | **6 028.6 ms** | **-17.7%** |
+
+Node counts are identical in every run (51 818 at depth 3, 985 794 at depth 4) and
+`selftest` passes in both, so the search makes exactly the same decisions and only the
+speed changes. About two points of that is link-time optimisation (clang without
+`-flto` lands at 358.6 ms, -13.7%); the rest is codegen. The flags are in
+`cmake/BuildTypes.cmake`: `/O2 /arch:AVX2 -DNDEBUG` plus `-flto=full`, and
+`-flto=full -fuse-ld=lld` at link time, because lld-link is the only linker that
+consumes the bitcode.
+
+Nothing further is left in the flags. Each of these was built and measured against the
+clang-cl binary, all inside the run-to-run noise, and is recorded so it is not tried
+again:
+
+- `-march=native` (clang can target `znver3` here): 350.3 ms, no better than
+  `/arch:AVX2`.
+- `-O3`: not even a lever - clang-cl's `/O2` already emits cc1 `"-O3"` (`clang-cl -###`
+  shows the same for `/Ox`), so the build is at clang's top optimisation level.
+- `-GS-` / `-fno-stack-protector`: 340.1 ms against 341.9.
+- `-flto=thin` instead of `-flto=full`: 341.6 ms.
+- **PGO**: `-fprofile-generate`, trained on `profileworkload` plus `exploitplay` at
+  5x5/7x7/9x9/13x13 (111 s, 11.1 billion dynamic counts over 1229 functions), merged
+  with `llvm-profdata`, then `-fprofile-use` with `-flto=full`. Image 1.64 MB -> 1.24 MB
+  and node counts unchanged, but 342.3 ms at depth 3 / 5 902 ms at depth 4 against
+  341.9 / 5 936. The instrumentation works - `cmake/Build-Pgo.ps1` keeps the two passes
+  runnable - the profile simply has nothing to add here.
+
+**Which build the game uses**: `nativeExecutableCandidates` in
+[server.js](../ipvgo-engine/server.js) resolves `out/build/x64-Release/bin/ipvgo_game.exe`
+only, so the Release tree is the served engine. `IPVGO_ENGINE` overrides it with an
+absolute path.
+
+A build tree is bound to the generator and the compiler that created it, so every entry
+point has to agree on both. CMake Tools gets them from the preset (enable presets in the
 editor; the `.vscode/` folder is gitignored, so nothing there can protect another
-checkout), and `Build-Native.ps1` configures through the same preset. Configure the
-same folder with two generators and CMake aborts with `generator ... does not match
-the generator used previously`, and the recovery - deleting the tree, which
-`Build-Native.ps1 -Configure` does automatically - throws away the whole build
-directory. If a toolchain change makes a tree unusable, prefer deleting
-`out/build/<name>` yourself over letting two generators fight over it.
+checkout), and `Build-Native.ps1` configures through the same preset. Configure the same
+folder with two generators, or with a different compiler - including every tree built
+before this project switched to clang-cl - and CMake aborts with `generator ... does not
+match` or `CMAKE_CXX_COMPILER` mismatch. `Build-Native.ps1 -Configure` detects both and
+resets that tree, which is safe because everything under `out/build` is generated output.
 
 The profiling build keeps inlining off by default (`x64-Profile`). For profile
 numbers that match Release, override the cache variable on either entry point:
@@ -453,19 +496,19 @@ IPVGO_CACHE_STATS=1 IPVGO_NO_SESSION=1 ./out/build/x64-Release/bin/ipvgo_game ex
 For a repeatable CPU-profile workload, open the repository root in Visual
 Studio, select the **`x64-Profile`** configuration (`RelWithDebInfo`) and the
 `ipvgo_game` target, then launch it with `profileworkload` as its command-line
-argument. `x64-Release` is tuned for throughput (whole program optimization,
-`/GL`+`/LTCG`) and is the wrong build to read a profile from; `x64-Profile`
-keeps the same optimisation level but adds `/Zi` (PDB), `/Zo` (line info for
-optimized code), `/Oy-` (frame pointers) and `/Ob0` (inlining off), plus a
-`/DEBUG:FULL` link, so every sample resolves to the line that did the work.
-Rebuild after changing the CMake configuration:
+argument. `x64-Release` is tuned for throughput (`/O2 /arch:AVX2 -flto=full` with
+lld-link) and is the wrong build to read a profile from; `x64-Profile` keeps the
+same optimisation class but adds `/Zi` (debug info), `/Oy-` (frame pointers) and
+`/Ob0` (inlining off), plus a `/DEBUG:FULL` link, so every sample resolves to the
+line that did the work. Rebuild after changing the CMake configuration:
 
 ```powershell
 .\cmake\Build-Native.ps1 -BuildType RelWithDebInfo -Configure -Target ipvgo_game
 .\out\build\x64-Profile\bin\ipvgo_game.exe profileworkload
 ```
 
-Both configurations use Ninja, so on Windows they need an MSVC environment.
+Both configurations use Ninja and clang-cl, so on Windows they need the Visual
+Studio developer environment for the headers, libraries and the compiler itself.
 Visual Studio supplies it automatically and VS Code passes it through
 `"cmake.useVsDeveloperEnvironment": "always"`; in a plain terminal use
 `Build-Native.ps1`, which sets the environment up itself.
@@ -1724,24 +1767,22 @@ workload is what the game asks for - a 4 000-node budget per move, deterministic
 across 5x5 to 19x19 and several factions - so the profile is reproducible and matches
 the distribution the engine is optimised for.
 
-Three things have to be right, and each of them fails quietly:
+It was tried on both compilers, and both are neutral. First with cl.exe and MSVC's
+profile-guided linker:
 
 - `/GENPROFILE` and `/USEPROFILE` are **linker** options. Passed to `cl.exe` they only
   earn D9002 ("ignoring unknown option"), the binary stays uninstrumented and the
-  profile arrives with zero counts. Instrument with `/LTCG:PGINSTRUMENT /PGD:<path>`
-  and optimise with `/LTCG:PGOPTIMIZE /PGD:<path>`; both imply `/LTCG`, so the plain
-  flag is dropped first to avoid D9025.
-- The instrumented binary needs `pgort140.dll`, which ships in the toolset's `bin`
-  directory and is not part of the redistributable. Off `PATH` it exits with
+  profile arrives with zero counts. Instrumenting needed `/LTCG:PGINSTRUMENT /PGD:<path>`
+  and `/LTCG:PGOPTIMIZE /PGD:<path>`; both imply `/LTCG`, so the plain flag had to be
+  dropped to avoid D9025.
+- The instrumented binary needed `pgort140.dll`, which ships in the toolset's `bin`
+  directory and is not part of the redistributable. Off `PATH` it exited with
   0xC0000135 (STATUS_DLL_NOT_FOUND) before recording anything - and because the
-  training loop pipes its output, that looks exactly like a successful run.
-- The counters land as `ipvgo!N.pgc` **next to the executable**, not in the working
-  directory. Merge them with `pgomgr /merge ipvgo.pgd ipvgo!*.pgc` and require
-  `pgomgr /summary ipvgo.pgd` to report `Dynamic instructions` above zero before
-  trusting the optimised build; otherwise the optimiser links an empty profile and
-  changes nothing.
+  training loop pipes its output, that looked exactly like a successful run.
+- The counters landed as `ipvgo!N.pgc` **next to the executable**, not in the working
+  directory.
 
-Measured against the Release build from a profile of 2.9e12 dynamic instructions,
+Measured against the MSVC Release build from a profile of 2.9e12 dynamic instructions,
 interleaved, six rounds on the benches and three on the play rows:
 
 | workload | Release | PGO | delta |
@@ -1755,15 +1796,32 @@ Node counts are identical (39 012 and 11 537) and `selftest`, `fuzz 60 11` and
 `eyetest` give the same results as Release, so the profile only changes code layout.
 It does shrink the image: 567 KB of code becomes 425 KB.
 
+Then again with clang, whose instrument is stronger (real edge counts plus indirect
+call profiling) and whose pipeline is now the only one in the tree:
+`-fprofile-generate`, 111 s of training over 5x5/7x7/9x9/13x13 and the 9x9
+`profileworkload`, 11.1 billion dynamic counts over 1229 functions merged by
+`llvm-profdata`, then `-fprofile-use` with `-flto=full`. Node counts unchanged,
+`selftest` and `fuzz` pass, image 1.64 MB -> 1.24 MB, and **342.3 ms at depth 3 /
+5 902 ms at depth 4 against 341.9 / 5 936** for the same build without a profile. Also
+neutral.
+
+The clang pass has three quiet failure modes of its own, all handled in
+`Build-Pgo.ps1`: without `LLVM_PROFILE_FILE` containing `%p` every training run
+overwrites the same counter file and only the last one survives; a run that exits
+without flushing leaves a **zero-length** `.profraw` that makes `llvm-profdata merge`
+refuse the whole set; and `-fprofile-use` against a missing `.profdata` fails at
+compile time, so the merge has to be verified before the second pass (`llvm-profdata
+show` reporting `Maximum function count` above zero).
+
 The regression on the fixed-depth benches is the interesting part. Play never reaches
 those deeper search paths under a 4 000-node budget, so the profile tells the compiler
 they are cold and it stops inlining into them. Training on the benches instead would
 invert that, but then the numbers would only measure the fit to their own training
-set. On the workload the game actually runs, PGO is neutral: these inner loops are
-branch-light and dominated by code that `/GL` already inlines across translation
-units, which is the case profile data has least to add to. The default therefore stays
-`/O2 /GL /LTCG /arch:AVX2`. Worth repeating only after a large structural change, not
-after another tuned micro-optimisation.
+set. On the workload the game actually runs, PGO is neutral under both compilers:
+these inner loops are branch-light and dominated by code that LTO already inlines
+across translation units, which is the case profile data has least to add to. Worth
+repeating only after a large structural change, not after another tuned
+micro-optimisation.
 
 ### Third-party code
 
