@@ -71,13 +71,15 @@ standalone `cmake -S ipvgo-engine -B ipvgo-engine/build`.
 `CMakeSettings.json` defines the same tree for the IDE: `x64-Release` for
 performance work, `x64-Profile` (`RelWithDebInfo`) for profiling, plus `x64-Debug`
 and `Linux-*`. Each configuration builds into `out/build/<name>`, and all three
-x64 ones inherit `clang_cl_x64_x64`.
+x64 ones inherit `clang_cl_x64_x64`. It also carries `x64-Release-Msvc`, the
+cl.exe cross-check described below.
 
 `CMakePresets.json` (repo root, tracked) declares the *generator* and the *compiler*
 for every entry point: `x64-Release`, `x64-Debug`, `x64-Profile` and the two
 `x64-Pgo-*` passes, all Ninja, all `clang-cl`, and all pointing at the same
-`out/build/<name>` directories that `CMakeSettings.json` and `Build-Native.ps1` use.
-Use it directly when the compiler environment is already loaded:
+`out/build/<name>` directories that `CMakeSettings.json` and `Build-Native.ps1` use,
+plus `x64-Release-Msvc`. Use it directly when the compiler environment is already
+loaded:
 
 ```powershell
 cmake --preset x64-Release        # configure
@@ -89,8 +91,8 @@ cmake --build --preset x64-Release
 Visual Studio ships two C++ compilers; this project builds with the LLVM one,
 `clang-cl` (component "C++ Clang tools for Windows", `VC\Tools\Llvm\x64\bin`, on
 `PATH` inside the developer shell that `Build-Native.ps1` enters). Configure a tree
-with `cl.exe` and CMake stops with a message saying so, because the difference is
-large enough that a silent fallback would be a trap:
+with `cl.exe` without asking for it and CMake stops with a message saying so, because
+the difference is large enough that a silent fallback would be a trap:
 
 | `optbench`, single-threaded, 12 runs per arm interleaved | MSVC (cl) | clang-cl | delta |
 |---|---|---|---|
@@ -124,8 +126,44 @@ again:
 
 **Which build the game uses**: `nativeExecutableCandidates` in
 [server.js](../ipvgo-engine/server.js) resolves `out/build/x64-Release/bin/ipvgo_game.exe`
-only, so the Release tree is the served engine. `IPVGO_ENGINE` overrides it with an
-absolute path.
+by default, so the clang-cl Release tree is the served engine. The bench page carries a
+**Engine** dropdown in its header (`clang-cl` / `cl.exe`) that switches it at runtime -
+`POST /api/engine/build` - and the choice is saved in `ipvgo-engine/temp/engine-build`, so
+it survives a restart:
+
+- the switch is refused while a bench or tune run is in flight, because the engine is
+  spawned per move and per game and mixing two binaries in one result set would be silent
+  nonsense;
+- an option whose tree is not built is disabled in the dropdown (the server reports both
+  paths and whether each exists in the snapshot, so it is never a guess);
+- `IPVGO_ENGINE_BUILD=clang|msvc` in the environment is an operator override: it wins over
+  the saved choice and the dropdown then shows itself as locked with `forced by
+  IPVGO_ENGINE_BUILD`.
+
+Whatever is active is visible three ways: the startup banner prints
+`Engine binary: out/build/<tree>/bin/ipvgo_game.exe`, the header dropdown names it, and
+`/health` reports `gamePath`. Both trees answer identically - same node counts, `selftest`
+passes - so flipping is for measuring one against the other, not for changing behaviour.
+Note that `IPVGO_ENGINE` is a different knob: it picks the *engine kind* (`exploit`,
+`mcgs` or `native`), not a binary path.
+
+#### The cl.exe cross-check build
+
+`x64-Release-Msvc` builds the same Release configuration with `cl.exe`, into its own
+tree so the two compilers cannot share a cache:
+
+```powershell
+.\cmake\Build-Native.ps1 -Compiler msvc -Configure -Target ipvgo_game
+# -> out/build/x64-Release-Msvc/bin/ipvgo_game.exe
+```
+
+It exists to re-measure the table above, not to run the engine by default: the flags are
+the ones the clang-cl numbers were taken against (`/O2 /GL /arch:AVX2 /DNDEBUG` with
+`/LTCG`), and it is opt-in - the preset (or `-DIPVGO_ALLOW_MSVC=ON`) is what lets an MSVC
+configure past the error above. To play or bench against it anyway, serve it with
+`IPVGO_ENGINE_BUILD=msvc` (see "Which build the game uses"). PGO is clang-cl only,
+because the instrumentation is `-fprofile-generate` / `-fprofile-use` merged by
+`llvm-profdata`.
 
 A build tree is bound to the generator and the compiler that created it, so every entry
 point has to agree on both. CMake Tools gets them from the preset (enable presets in the

@@ -45,22 +45,87 @@ function mcgsExecutablePath() {
 // does not hide the binaries. The legacy per-component directories are checked
 // last: an old binary can predate the `serve` protocol the server speaks, which
 // shows up as a bench that never leaves "thinking".
+//
+// Two Release trees can exist - x64-Release (clang-cl, the default, 17% faster) and
+// x64-Release-Msvc (cl.exe, the cross-check build). They produce the same answers, so
+// which one is served is a measurement choice, not a behaviour switch, and the bench
+// page switches it from the header dropdown (POST /api/engine/build).
+//
+// Precedence: IPVGO_ENGINE_BUILD in the environment > the choice saved by the page >
+// clang. The environment variable is an operator override, so the page refuses to fight
+// it. The chosen tree is tried first and the other stays as a fallback, so a selection
+// whose tree was never built still serves something instead of failing to start.
+const ENGINE_BUILD_CONFIGS = { clang: "x64-Release", msvc: "x64-Release-Msvc" }
+const ENGINE_BUILD_FILE = path.join(__dirname, "temp", "engine-build")
+
+function readEngineBuild() {
+  const fromEnv = (process.env.IPVGO_ENGINE_BUILD ?? "").trim().toLowerCase()
+  if (ENGINE_BUILD_CONFIGS[fromEnv]) return { build: fromEnv, source: "env" }
+  try {
+    const saved = fs.readFileSync(ENGINE_BUILD_FILE, "utf8").trim().toLowerCase()
+    if (ENGINE_BUILD_CONFIGS[saved]) return { build: saved, source: "saved" }
+  } catch {
+    /* nothing saved yet: default below */
+  }
+  return { build: "clang", source: "default" }
+}
+
+let engineBuildChoice = readEngineBuild()
+
+function saveEngineBuild(build) {
+  fs.mkdirSync(path.dirname(ENGINE_BUILD_FILE), { recursive: true })
+  fs.writeFileSync(ENGINE_BUILD_FILE, build + "\n")
+  engineBuildChoice = { build, source: "saved" }
+}
+
+// The chosen tree first, then the other one as the fallback.
+function releaseConfigs() {
+  const first = ENGINE_BUILD_CONFIGS[engineBuildChoice.build]
+  return [first, ...Object.values(ENGINE_BUILD_CONFIGS).filter((config) => config !== first)]
+}
+
+// `bin` for the single-config generators, `bin/<Config>` for a multi-config one.
+function binDirs(config) {
+  const bin = path.join(__dirname, "..", "out", "build", config, "bin")
+  return [bin, path.join(bin, "Release")]
+}
+
+function binSuffixes() {
+  return process.platform === "win32" ? [".exe"] : ["", ".exe"]
+}
+
+// What each tree resolves to on its own, so the page can grey out a build that is not
+// there instead of silently falling back to the other one.
+function engineBuildOptions() {
+  const out = {}
+  for (const [build, config] of Object.entries(ENGINE_BUILD_CONFIGS)) {
+    const candidates = binDirs(config).flatMap((dir) => binSuffixes().map((s) => path.join(dir, "ipvgo_game" + s)))
+    const found = candidates.find((candidate) => fs.existsSync(candidate))
+    out[build] = { config, path: found ?? candidates[0], built: Boolean(found) }
+  }
+  return out
+}
+
+// The engine-build part of every page payload. The SSE snapshot and the polling
+// fallback both carry it, so the header dropdown is never stale.
+function engineBuildFields() {
+  return {
+    engineBuild: engineBuildChoice.build,
+    engineBuildSource: engineBuildChoice.source,
+    engineBuilds: engineBuildOptions(),
+    engineBinary: mcgsExecutablePath(),
+  }
+}
+
 function nativeExecutableCandidates(name) {
-  const isWindows = process.platform === "win32"
-  const suffixes = isWindows ? [".exe"] : ["", ".exe"]
-  const buildRoot = path.join(__dirname, "..", "out", "build")
-  const releaseBinDirs = ["x64-Release"].flatMap((config) => {
-    const bin = path.join(buildRoot, config, "bin")
-    return [bin, path.join(bin, "Release")]
-  })
   const dirs = [
-    ...releaseBinDirs,
+    ...releaseConfigs().flatMap((config) => binDirs(config)),
     path.join(__dirname, "build", "Release"),
     path.join(__dirname, "build"),
   ]
   const out = []
   for (const dir of dirs) {
-    for (const suffix of suffixes) out.push(path.join(dir, name + suffix))
+    for (const suffix of binSuffixes()) out.push(path.join(dir, name + suffix))
   }
   return out
 }
@@ -153,7 +218,14 @@ const benchClients = new Set()
 
 function benchSnapshot() {
   const { frames, archive, live, ...rest } = bench.state
-  return { ...rest, pid: undefined, frameSeq: bench.state.frameSeq, serverId, supervised }
+  return {
+    ...rest,
+    pid: undefined,
+    frameSeq: bench.state.frameSeq,
+    serverId,
+    supervised,
+    ...engineBuildFields(),
+  }
 }
 
 function sseSend(res, event, data) {
@@ -687,6 +759,53 @@ function handleTuneReset(req, res) {
   sendJson(res, 200, tuningSnapshot())
 }
 
+function handleEngineBuild(req, res) {
+  sendJson(res, 200, {
+    build: engineBuildChoice.build,
+    source: engineBuildChoice.source,
+    builds: engineBuildOptions(),
+    resolved: mcgsExecutablePath(),
+    running: Boolean(bench.state.running || tune.state.running),
+  })
+}
+
+// Body: { build: "clang" | "msvc" }. Refused while a run is in flight: the engine is
+// spawned per move and per bench game, so switching mid-run would mix two binaries in
+// one result set.
+async function handleEngineBuildSet(req, res) {
+  let body
+  try {
+    body = await readJsonBody(req)
+  } catch (err) {
+    return sendJson(res, 400, { error: err.message })
+  }
+  const build = String(body?.build ?? "").trim().toLowerCase()
+  if (!ENGINE_BUILD_CONFIGS[build]) {
+    return sendJson(res, 400, { error: `build must be one of ${Object.keys(ENGINE_BUILD_CONFIGS).join(", ")}` })
+  }
+  if (engineBuildChoice.source === "env") {
+    return sendJson(res, 409, {
+      error: "IPVGO_ENGINE_BUILD is set in the environment, which takes precedence; unset it to choose here.",
+    })
+  }
+  if (bench.state.running || tune.state.running) {
+    return sendJson(res, 409, { error: "a run is in progress; stop it before switching the engine build" })
+  }
+  const option = engineBuildOptions()[build]
+  if (!option.built) {
+    return sendJson(res, 409, { error: `the ${build} tree is not built (${option.path})` })
+  }
+  saveEngineBuild(build)
+  benchBroadcast("snapshot", benchSnapshot())
+  sendJson(res, 200, {
+    build: engineBuildChoice.build,
+    source: engineBuildChoice.source,
+    builds: engineBuildOptions(),
+    resolved: mcgsExecutablePath(),
+    running: false,
+  })
+}
+
 function handleTuneSettings(req, res) {
   sendJson(res, 200, tuningSnapshot())
 }
@@ -1137,6 +1256,7 @@ function handleBenchState(req, res, url) {
     ...rest,
     pid: undefined,
     frameSeq,
+    ...engineBuildFields(),
     frames: since > 0 ? frames.filter((frame) => frame.seq > since) : frames,
     // Summaries only: the page fetches a game's move list when it is expanded.
     archive: archive.map((game, index) => ({
@@ -1736,6 +1856,13 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
+  if (url.pathname === "/api/engine/build") {
+    if (req.method === "GET") handleEngineBuild(req, res)
+    else if (req.method === "POST") await handleEngineBuildSet(req, res)
+    else sendJson(res, 405, { error: "use GET or POST" })
+    return
+  }
+
   if (req.method === "GET" && url.pathname === "/api/tune/export") {
     handleTuneExport(req, res, url)
     return
@@ -1793,6 +1920,7 @@ server.listen(port, () => {
   const engine = activeEngine()
   console.log(`IPvGO engine server http://localhost:${port}`)
   console.log(`In-game move engine: ${engine}  (POST /api/ipvgo/move only)`)
+  console.log(`Engine binary: ${path.relative(path.join(__dirname, ".."), mcgsExecutablePath())}`)
   console.log(`Bench GUI: http://localhost:${port}/bench  (always the C++ exploiter, ipvgo_game)`)
   console.log(`Health: http://localhost:${port}/health`)
   console.log(`Move API: POST http://localhost:${port}/api/ipvgo/move`)

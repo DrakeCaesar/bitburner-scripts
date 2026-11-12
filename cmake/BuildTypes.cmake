@@ -23,7 +23,8 @@ if(MSVC AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   # clang-cl, the LLVM toolset that ships with Visual Studio (VC\Tools\Llvm\x64\bin),
   # is the compiler for every configuration here. It produces the same search
   # decisions as cl.exe - identical node counts, selftest passes - in 16-18% less
-  # time, so there is no reason to build this project with anything else:
+  # time, so there is no reason to build this project with anything else. cl.exe stays
+  # reachable as an opt-in cross-check (x64-Release-Msvc) purely to re-measure this:
   #
   #   optbench   MSVC (cl)   clang-cl   delta
   #   depth 3      415.3 ms    348.1 ms   -16.2%
@@ -75,14 +76,53 @@ if(MSVC AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     message(STATUS "PGO: ${IPVGO_PGO}")
   endif()
 elseif(MSVC)
-  # Plain cl.exe is not supported: it compiles this search 17% slower than clang-cl
-  # on the same flags, and the measured result is in the README.
-  message(FATAL_ERROR
-    "This project builds with clang-cl, not cl.exe.\n"
-    "  - Configure through the presets (cmake --preset x64-Release) or "
-    "cmake/Build-Native.ps1, which pass the compiler.\n"
-    "  - clang-cl comes from the \"C++ Clang tools for Windows\" component of Visual "
-    "Studio; check that VC\\Tools\\Llvm\\x64\\bin\\clang-cl.exe exists.")
+  # cl.exe, kept only as an explicit cross-check target for the clang-cl numbers
+  # above. It compiles this search 17% slower on the same flags, so nothing is served
+  # from it and it is opt-in: the x64-Release-Msvc preset (or -DIPVGO_ALLOW_MSVC=ON)
+  # sets the flag, and a plain cl.exe configure stops here rather than quietly
+  # producing the slower binary.
+  if(NOT IPVGO_ALLOW_MSVC)
+    message(FATAL_ERROR
+      "This project builds with clang-cl, not cl.exe.\n"
+      "  - Configure through the presets (cmake --preset x64-Release) or "
+      "cmake/Build-Native.ps1, which pass the compiler.\n"
+      "  - clang-cl comes from the \"C++ Clang tools for Windows\" component of Visual "
+      "Studio; check that VC\\Tools\\Llvm\\x64\\bin\\clang-cl.exe exists.\n"
+      "  - For the MSVC cross-check build, use the x64-Release-Msvc preset or "
+      "-DIPVGO_ALLOW_MSVC=ON.")
+  endif()
+
+  # Release: the flags the clang-cl numbers were measured against.
+  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2")
+  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /GL")
+  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /arch:AVX2")
+  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /DNDEBUG")
+  set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /LTCG")
+
+  # Profiling build, same split as the clang-cl branch: debug info and frame pointers
+  # kept, inlining off, no LTO.
+  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "/O2 /Zi /DNDEBUG")
+  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /arch:AVX2")
+  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /Zo")
+  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /Oy-")
+  option(IPVGO_PROFILE_INLINING "Keep inlining enabled in the RelWithDebInfo (profiling) build" OFF)
+  if(IPVGO_PROFILE_INLINING)
+    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /Ob2")
+  else()
+    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /Ob0")
+  endif()
+  set(CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO "${CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO} /DEBUG:FULL")
+
+  # PGO stays clang-cl only: the instrumentation is -fprofile-generate/-fprofile-use
+  # and cmake/Build-Pgo.ps1 merges with llvm-profdata. The variable is declared here
+  # too so an MSVC configure gets this message instead of an empty-string comparison.
+  set(IPVGO_PGO "OFF" CACHE STRING "Profile-guided optimisation: OFF, GENERATE or OPTIMIZE")
+  set_property(CACHE IPVGO_PGO PROPERTY STRINGS OFF GENERATE OPTIMIZE)
+  if(NOT IPVGO_PGO STREQUAL "OFF")
+    message(FATAL_ERROR
+      "IPVGO_PGO is wired for clang-cl only; build the PGO tree with the clang-cl "
+      "presets (cmake/Build-Pgo.ps1 does that).")
+  endif()
 else()
   # Unix-style clang/gcc: max optimizations for speed.
   set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3")           # Optimize aggressively

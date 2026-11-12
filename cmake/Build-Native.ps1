@@ -8,8 +8,8 @@ Studio) using Ninja, which invokes the compiler directly. It needs the
 INCLUDE/LIB/PATH variables that the Visual Studio developer environment sets up, so
 a plain shell (including a freshly opened VS Code terminal) cannot compile. This
 script finds the Visual Studio installation with vswhere, imports its developer
-shell, and then runs CMake. cl.exe is not supported: it compiles this search 17%
-slower on the same flags.
+shell, and then runs CMake. cl.exe compiles this search 17% slower on the same
+flags, so it is only reachable as an explicit cross-check build (-Compiler msvc).
 
 The build directory, build type and generator all come from CMakePresets.json,
 which the editor reads as well: the script only picks the preset matching the
@@ -18,6 +18,11 @@ here.
 
 .PARAMETER BuildType
 Release (performance), RelWithDebInfo (profiling, built into x64-Profile) or Debug.
+
+.PARAMETER Compiler
+Release only: clang (default, into out/build/x64-Release, the tree the game serves)
+or msvc (into out/build/x64-Release-Msvc, for re-measuring the compiler comparison;
+nothing is served from it).
 
 .PARAMETER Target
 Optional CMake target names. Omit to build everything.
@@ -31,6 +36,10 @@ CMakeLists.txt that adds targets or options.
 Builds every native target in Release.
 
 .EXAMPLE
+./cmake/Build-Native.ps1 -Compiler msvc -Configure -Target ipvgo_game
+Cross-check build with cl.exe into out/build/x64-Release-Msvc.
+
+.EXAMPLE
 ./cmake/Build-Native.ps1 -BuildType RelWithDebInfo -Target ipvgo_game
 Builds the profiler-friendly engine build into out/build/x64-Profile.
 
@@ -42,6 +51,11 @@ param(
   [ValidateSet('Release', 'RelWithDebInfo', 'Debug')]
   [string]$BuildType = 'Release',
 
+  # Release only. Each compiler has its own tree, so switching cannot reuse a cache
+  # built by the other one.
+  [ValidateSet('clang', 'msvc')]
+  [string]$Compiler = 'clang',
+
   [string[]]$Target = @(),
 
   [switch]$Configure,
@@ -52,6 +66,7 @@ param(
   # Profile-guided optimisation pass: Generate (instrument), Optimize (use the
   # collected profile) or Off. Both passes live in out/build/x64-Pgo and are driven
   # by cmake/Build-Pgo.ps1, which also runs the training workload between them.
+  # clang-cl only: the instrumentation flags are -fprofile-*.
   [ValidateSet('Off', 'Generate', 'Optimize')]
   [string]$Pgo = 'Off'
 )
@@ -71,10 +86,14 @@ $presetName = if ($Pgo -ne 'Off') {
   if ($Pgo -eq 'Generate') { 'x64-Pgo-Generate' } else { 'x64-Pgo-Optimize' }
 } else {
   switch ($BuildType) {
-    'Release' { 'x64-Release' }
+    'Release' { if ($Compiler -eq 'msvc') { 'x64-Release-Msvc' } else { 'x64-Release' } }
     'RelWithDebInfo' { 'x64-Profile' }
     'Debug' { 'x64-Debug' }
   }
+}
+
+if ($Compiler -eq 'msvc' -and ($BuildType -ne 'Release' -or $Pgo -ne 'Off')) {
+  throw '-Compiler msvc selects the Release cross-check tree only; the profiling and PGO trees stay on clang-cl.'
 }
 
 $presets = Get-Content (Join-Path $repoRoot 'CMakePresets.json') -Raw | ConvertFrom-Json
@@ -151,9 +170,9 @@ if (-not (Test-Path $devShell)) {
 Import-Module (Join-Path $vsPath 'Common7/Tools/Microsoft.VisualStudio.DevShell.dll')
 Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
 
-# Every preset configures with clang-cl, so a missing LLVM toolset has to fail here
-# with instructions rather than inside CMake's compiler test.
-if (-not (Get-Command clang-cl -ErrorAction SilentlyContinue)) {
+# Every preset except the msvc cross-check configures with clang-cl, so a missing LLVM
+# toolset has to fail here with instructions rather than inside CMake's compiler test.
+if ($Compiler -eq 'clang' -and -not (Get-Command clang-cl -ErrorAction SilentlyContinue)) {
   throw ('clang-cl not found on PATH after loading the Visual Studio environment. ' +
     'Install the "C++ Clang tools for Windows" component (it puts clang-cl in ' +
     "$vsPath\VC\Tools\Llvm\x64\bin) and run this again.")

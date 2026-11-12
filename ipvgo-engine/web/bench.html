@@ -109,6 +109,11 @@
         border-bottom: 1px solid var(--line);
       }
       header h1 { font-size: 12px; margin: 0; font-weight: bold; }
+      /* Which compiler built the engine the server spawns: it applies to every run on
+         the page, so it sits in the header rather than in a per-run form. */
+      .enginePick { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dim); }
+      .enginePick select { width: auto; flex: 0 0 auto; padding-right: 1.5ch; }
+      .enginePick select:disabled { opacity: 0.55; }
       .pill {
         margin-left: auto;
         padding: 4px 8px;
@@ -457,6 +462,13 @@
   <body>
     <header>
       <h1>IPvGO exploiter bench</h1>
+      <label class="enginePick">
+        <span>Engine</span>
+        <select id="engineBuild" title="Which compiler built the engine the server spawns">
+          <option value="clang">clang-cl</option>
+          <option value="msvc">cl.exe</option>
+        </select>
+      </label>
       <span id="status" class="pill">idle</span>
       <button id="restartServer" class="ghost" title="Restart the engine server (needs pnpm run server:dev)">Restart server</button>
     </header>
@@ -1512,6 +1524,7 @@
         restartButton.title = data.supervised
           ? "Restart the engine server (supervised)"
           : "Start the server with `pnpm run server:dev` to enable this"
+        updateEngineBuild()
         frameQueue = []
         displayed = null
         lastFrameSeq = data.frameSeq ?? 0
@@ -1694,6 +1707,63 @@
       el("stop").addEventListener("click", async () => {
         await fetch(`${API_BASE}/api/bench/stop`, { method: "POST" })
         await poll()
+      })
+
+      // Which compiler built the engine. The choice lives on the server (it is what the
+      // next spawn resolves), so the select mirrors the snapshot and writes back through
+      // the API; a rebuild is not needed to switch, and a run in progress is left alone.
+      const engineBuildLabels = { clang: "clang-cl", msvc: "cl.exe" }
+
+      function updateEngineBuild() {
+        const select = el("engineBuild")
+        if (!select) return
+        const current = state.engineBuild
+        if (!current) return
+        if (select.value !== current) select.value = current
+        const builds = state.engineBuilds ?? {}
+        const option = builds[current]
+        const forced = state.engineBuildSource === "env"
+        const running = state.running === true
+        select.disabled = forced || running
+        const missing = Object.entries(builds)
+          .filter(([, info]) => info && info.built === false)
+          .map(([build]) => engineBuildLabels[build] ?? build)
+        const parts = []
+        if (forced) parts.push("forced by IPVGO_ENGINE_BUILD")
+        if (running) parts.push("stop the run to switch")
+        if (missing.length > 0) parts.push(`not built: ${missing.join(", ")}`)
+        if (option?.path) parts.push(option.path)
+        select.title = parts.join(" - ")
+        for (const choice of select.options ?? []) {
+          const info = builds[choice.value]
+          choice.disabled = Boolean(info && info.built === false)
+        }
+      }
+
+      el("engineBuild").addEventListener("change", async () => {
+        const select = el("engineBuild")
+        const wanted = select.value
+        select.disabled = true
+        try {
+          const res = await fetch(`${API_BASE}/api/engine/build`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ build: wanted }),
+          })
+          const payload = await res.json().catch(() => ({}))
+          if (!res.ok) throw new Error(payload.error ?? `could not switch the engine build (${res.status})`)
+          state.engineBuild = payload.build
+          state.engineBuildSource = payload.source
+          state.engineBuilds = payload.builds
+          el("status").textContent = `engine: ${engineBuildLabels[payload.build] ?? payload.build}`
+          el("status").className = "pill"
+        } catch (err) {
+          // Put the select back on whatever the server is still serving.
+          state.error = err.message
+          markDirty("status")
+        } finally {
+          updateEngineBuild()
+        }
       })
 
       el("restartServer").addEventListener("click", async () => {

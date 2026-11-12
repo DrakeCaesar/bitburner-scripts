@@ -34,6 +34,24 @@
       "inheritEnvironments": [ "clang_cl_x64_x64" ]
     },
     {
+      "name": "x64-Release-Msvc",
+      "generator": "Ninja",
+      "configurationType": "Release",
+      "buildRoot": "${projectDir}\\out\\build\\${name}",
+      "installRoot": "${projectDir}\\out\\install\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "variables": [
+        {
+          "name": "IPVGO_ALLOW_MSVC",
+          "value": "true",
+          "type": "BOOL"
+        }
+      ],
+      "inheritEnvironments": [ "msvc_x64_x64" ]
+    },
+    {
       "name": "Linux-Debug",
       "generator": "Unix Makefiles",
       "configurationType": "Debug",

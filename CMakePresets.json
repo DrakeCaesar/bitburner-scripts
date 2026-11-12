@@ -34,6 +34,17 @@
       }
     },
     {
+      "name": "x64-Release-Msvc",
+      "inherits": "ninja-base",
+      "displayName": "x64 Release (cl.exe, cross-check only)",
+      "binaryDir": "${sourceDir}/out/build/x64-Release-Msvc",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_COMPILER": "cl",
+        "IPVGO_ALLOW_MSVC": true
+      }
+    },
+    {
       "name": "x64-Profile",
       "inherits": "ninja-base",
       "displayName": "x64 RelWithDebInfo (inlining off)",
@@ -67,6 +78,7 @@
   "buildPresets": [
     { "name": "x64-Debug", "configurePreset": "x64-Debug" },
     { "name": "x64-Release", "configurePreset": "x64-Release" },
+    { "name": "x64-Release-Msvc", "configurePreset": "x64-Release-Msvc" },
     { "name": "x64-Profile", "configurePreset": "x64-Profile" },
     { "name": "x64-Pgo-Generate", "configurePreset": "x64-Pgo-Generate" },
     { "name": "x64-Pgo-Optimize", "configurePreset": "x64-Pgo-Optimize" }
