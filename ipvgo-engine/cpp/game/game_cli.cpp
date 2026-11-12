@@ -897,7 +897,10 @@ json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session,
 
   ExploitConfig cfg;
   cfg.depth = req.value("depth", 4);
-  cfg.maxDepth = req.value("maxDepth", 0);   // 0 = automatic
+  cfg.maxDepth = req.value("maxDepth", 10);  // 0 asks for the automatic ceiling
+  cfg.autoDepth = req.value("autoDepth", false);
+  cfg.perMoveBudget = req.value("perMoveBudget", false);
+  cfg.widen = req.value("widen", false);
   cfg.beam = req.value("beam", 12);
   cfg.whiteChildren = req.value("whiteChildren", 6);
   cfg.whiteMass = req.value("whiteMass", 0.9);
@@ -2237,10 +2240,10 @@ int runTune(const std::string& faction, int generations, int populationSize, int
       std::cout.flush();
     } else {
       std::printf("gen %d/%d  best %5.1f%% (beam %d, replies %d, mass %.2f)  margin %+5.1f  [%zu reused]\n",
-                gen + 1, generations,
-                  100.0 * tallies[order[0]].winRate(), population[order[0]].beam,
+                  gen + 1, generations, 100.0 * tallies[order[0]].winRate(), population[order[0]].beam,
                   population[order[0]].whiteChildren, population[order[0]].whiteMass,
-                  tallies[order[0]].averageMargin());
+                  tallies[order[0]].averageMargin(),
+                  population.size() - unseenGenomes.size());
       std::fflush(stdout);
     }
 
@@ -2515,7 +2518,10 @@ int main(int argc, char** argv) {
       options.gamesPerFaction = config.value("games", 10);
       options.seed = config.value("seed", static_cast<uint64_t>(1));
       options.depth = config.value("depth", 2);
-      options.maxDepth = config.value("maxDepth", 0);   // 0 = automatic
+      options.maxDepth = config.value("maxDepth", 10);  // 0 asks for the automatic ceiling
+      options.autoDepth = config.value("autoDepth", false);
+      options.perMoveBudget = config.value("perMoveBudget", false);
+      options.widen = config.value("widen", false);
       for (const char* key : {"beam", "whiteChildren", "endgameEmpties", "nodeBudget", "threads"}) {
         if (config.contains(key) && !config.at(key).is_null()) {
           applyTuningOption(options, key, config.at(key).dump());

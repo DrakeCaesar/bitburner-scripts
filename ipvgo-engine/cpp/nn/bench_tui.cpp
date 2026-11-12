@@ -327,6 +327,9 @@ int runBenchGames(const BenchOptions& options, BenchObserver& observer) {
   cfg.nodeLimit = options.iterations;
   cfg.depth = options.depth;
   cfg.maxDepth = options.maxDepth;
+  cfg.autoDepth = options.autoDepth;
+  cfg.perMoveBudget = options.perMoveBudget;
+  cfg.widen = options.widen;
   cfg.beam = options.beam;
   cfg.whiteChildren = options.whiteChildren;
   cfg.whiteMass = options.whiteMass;

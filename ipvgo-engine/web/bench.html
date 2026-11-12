@@ -145,6 +145,9 @@
       label.field span { color: var(--dim); }
       /* Keeps a bare checkbox in the same column as the 150px inputs next to it. */
       label.field .fieldToggle { flex: 0 0 150px; display: flex; align-items: center; }
+      /* A labelled block of related switches inside Search tuning. */
+      .switchGroup { border-top: 1px solid var(--line-soft); margin-top: 6px; padding-top: 4px; }
+      .switchHead { color: var(--dim); font-size: 12px; margin-bottom: 4px; cursor: help; }
       input, select {
         background: transparent;
         color: var(--text);
@@ -265,6 +268,8 @@
       .tuneAllOption { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-top: 6px; cursor: pointer; }
       .tuneAllOption input { flex: 0 0 14px; }
       .tuneCaption { color: var(--dim); font-size: 12px; margin-top: 12px; }
+      .tuneTools { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+      .tuneTools button.ghost { margin-left: 0; }
       /* One column per faction: every tuned value at a glance, so a faction that was
          never tuned is as obvious as the one that was. */
       table.factionTable th:nth-child(n + 2),
@@ -480,12 +485,25 @@
         <details id="tuning">
           <summary>Search tuning</summary>
           <div class="playTuneGrid" id="playTuningRows"></div>
+          <div class="tuneTools">
+            <button id="tuneImport" class="ghost" title="Replace the whole per-faction tuning store from a file">Import file...</button>
+            <button id="tuneExport" class="ghost" title="Save the whole per-faction tuning store to a dated file">Export file</button>
+            <button id="tuneReset" class="ghost" title="Clear the tuning stored for every faction">Reset all</button>
+            <span id="tuneFileNote" class="small dim"></span>
+            <input type="file" id="tuneImportFile" accept=".json,application/json" style="display: none" />
+          </div>
           <label class="field"><span title="Empty points at which the endgame is solved exactly">Endgame empties</span><input id="endgameEmpties" type="number" min="0" max="20" placeholder="6" /></label>
           <label class="field"><span title="Node cap for the endgame solve">Endgame node cap</span><input id="nodeBudget" type="number" min="1000" step="1000" placeholder="30000" /></label>
-          <label class="field"><span title="Ceiling for iterative deepening. 0 = automatic: the budget decides how deep the search goes and the position decides how deep it can ever mean anything, so there is nothing to tune here. A positive value overrides it, for experiments.">Max depth (0 = auto)</span><input id="maxDepth" type="number" min="0" max="64" placeholder="0" /></label>
+          <label class="field"><span title="Ceiling for iterative deepening. Blank or 0 uses the default of 10. With Auto depth on this only caps the derived ceiling.">Max depth (0 = default)</span><input id="maxDepth" type="number" min="0" max="64" placeholder="10" /></label>
           <label class="field"><span title="Search threads (0 = all cores)">Threads</span><input id="threads" type="number" min="0" max="64" placeholder="0" /></label>
           <label class="field"><span title="Reuse exact search results across the moves of a game. Same answers as a fresh search, with less work.">Carry memo</span><span class="fieldToggle"><input id="carry" type="checkbox" /></span></label>
           <label class="field"><span title="Off: every worker gets a fixed slice of the node budget (repeatable, but a ply is discarded the moment one root move outgrows its slice). On: workers claim the next root move as they finish and split what is left, which is what play uses - stronger at high thread counts, but a run does not repeat exactly.">Dynamic scheduler</span><span class="fieldToggle"><input id="dynamicRoot" type="checkbox" /></span></label>
+          <div class="switchGroup">
+            <div class="switchHead" title="Changes to the deepening loop that arrived on 11-12 Nov. All off, because they measured slightly worse than what they replaced: 1 080 games on 5x5 at a 1 000-node budget came out 2.3 points behind, spending 14% fewer nodes per move. Turn one on to measure it.">Deepening switches (off = pre-11-Nov behaviour)</div>
+            <label class="field"><span title="Derive the depth ceiling from the position (two half-moves per empty point) instead of using Max depth. With it off, Max depth is the ceiling and 0 means 10.">Auto depth</span><span class="fieldToggle"><input id="autoDepth" type="checkbox" /></span></label>
+            <label class="field"><span title="Enforce the node and time budget per move instead of per depth iteration, and stop before starting an iteration the remaining budget cannot afford. Note that this makes the same Iterations value mean less search.">Per-move budget</span><span class="fieldToggle"><input id="perMoveBudget" type="checkbox" /></span></label>
+            <label class="field"><span title="After deepening ends, retry the completed depth with a wider beam and more replies while budget remains, keeping the better answer.">Widen at the root</span><span class="fieldToggle"><input id="widen" type="checkbox" /></span></label>
+          </div>
         </details>
         <div class="buttons">
           <button id="start" class="primary">Start</button>
@@ -732,6 +750,9 @@
         tuningOpen: false,
         carry: false,
         dynamicRoot: false,
+        autoDepth: false,
+        perMoveBudget: false,
+        widen: false,
       }
 
       const el = (id) => document.getElementById(id)
@@ -753,6 +774,9 @@
           tuningOpen: el("tuning").open,
           carry: el("carry").checked,
           dynamicRoot: el("dynamicRoot").checked,
+          autoDepth: el("autoDepth").checked,
+          perMoveBudget: el("perMoveBudget").checked,
+          widen: el("widen").checked,
         }
       }
 
@@ -807,6 +831,9 @@
             tuningOpen: stored.tuningOpen === true,
             carry: stored.carry === true,
             dynamicRoot: stored.dynamicRoot === true,
+            autoDepth: stored.autoDepth === true,
+            perMoveBudget: stored.perMoveBudget === true,
+            widen: stored.widen === true,
           }
         } catch {
           return { ...DEFAULT_FORM }
@@ -827,6 +854,9 @@
         el("tuning").open = form.tuningOpen === true
         el("carry").checked = form.carry === true
         el("dynamicRoot").checked = form.dynamicRoot === true
+        el("autoDepth").checked = form.autoDepth === true
+        el("perMoveBudget").checked = form.perMoveBudget === true
+        el("widen").checked = form.widen === true
         selected.clear()
         for (const faction of form.factions) selected.add(faction)
         updateBudgetLabel()
@@ -1632,6 +1662,9 @@
         }
         if (el("carry").checked) body.carry = true
         if (el("dynamicRoot").checked) body.dynamicRoot = true
+        if (el("autoDepth").checked) body.autoDepth = true
+        if (el("perMoveBudget").checked) body.perMoveBudget = true
+        if (el("widen").checked) body.widen = true
         if (body.factions.length === 0) body.factions = null
         // Explicit per-faction widths: the server uses these instead of the store, so
         // what the Run table shows is exactly what the engine gets.
@@ -1704,6 +1737,7 @@
       el("tuning").addEventListener("toggle", saveForm)
       el("carry").addEventListener("change", saveForm)
       el("dynamicRoot").addEventListener("change", saveForm)
+      for (const id of ["autoDepth", "perMoveBudget", "widen"]) el(id).addEventListener("change", saveForm)
 
       el("size").addEventListener("change", renderFactionChips)
 
@@ -2327,6 +2361,84 @@
             delete playTuning[faction]
             savePlayTuning()
             renderPlayTuning()
+          } catch (err) {
+            el("tuneError").textContent = err.message
+          }
+        })
+
+        // ---- Tuning store file: import / export / reset ------------------
+        // The store is the whole per-faction table, so all three act on every faction at
+        // once. Local Run-column overrides shadow the store, so they are dropped whenever
+        // the store is replaced - otherwise the imported numbers would not be the ones
+        // play uses.
+        const tuneFileNote = (text) => {
+          el("tuneFileNote").textContent = text
+        }
+
+        const adoptStore = (payload) => {
+          playTuning = {}
+          savePlayTuning()
+          refreshSettings(payload)
+          renderPlayTuning()
+        }
+
+        el("tuneExport").addEventListener("click", async () => {
+          try {
+            const res = await fetch(`${API_BASE}/api/tune/export?inline=1`)
+            const payload = await res.json().catch(() => ({}))
+            if (!res.ok) throw new Error(payload.error ?? `HTTP ${res.status}`)
+            const blob = new Blob([JSON.stringify(payload.store ?? {}, null, 2) + "\n"], { type: "application/json" })
+            const link = document.createElement("a")
+            const href = URL.createObjectURL(blob)
+            link.href = href
+            link.download = payload.filename ?? "tuning.json"
+            document.body.appendChild(link)
+            link.click()
+            link.remove()
+            // Revoked on a timer: revoking straight away can cancel the download.
+            setTimeout(() => URL.revokeObjectURL(href), 10000)
+            tuneFileNote(`exported ${payload.filename}`)
+          } catch (err) {
+            el("tuneError").textContent = err.message
+          }
+        })
+
+        el("tuneImport").addEventListener("click", () => el("tuneImportFile").click())
+
+        el("tuneImportFile").addEventListener("change", async () => {
+          const file = el("tuneImportFile").files?.[0]
+          if (!file) return
+          try {
+            const text = await file.text()
+            let parsed
+            try {
+              parsed = JSON.parse(text)
+            } catch {
+              throw new Error(`${file.name} is not JSON`)
+            }
+            // Replacing, not merging: an export is a snapshot of the whole store, and a
+            // merge would silently keep factions the file does not have.
+            const payload = await postTune("/api/tune/import", { store: parsed })
+            adoptStore(payload)
+            const kept = `${payload.imported} faction${payload.imported === 1 ? "" : "s"}`
+            tuneFileNote(`imported ${kept}${payload.skipped ? `, skipped ${payload.skipped}` : ""}`)
+          } catch (err) {
+            el("tuneError").textContent = err.message
+          } finally {
+            // Clearing the value allows picking the same file again.
+            el("tuneImportFile").value = ""
+          }
+        })
+
+        el("tuneReset").addEventListener("click", async () => {
+          const count = Object.keys(tuneStore).length
+          const question = count
+            ? `Clear the tuning stored for all ${count} faction${count === 1 ? "" : "s"}?\n\nThis cannot be undone.`
+            : "Nothing is stored for any faction.\n\nClear the store anyway?"
+          if (!confirm(question)) return
+          try {
+            adoptStore(await postTune("/api/tune/reset"))
+            tuneFileNote("store cleared")
           } catch (err) {
             el("tuneError").textContent = err.message
           }

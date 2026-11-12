@@ -24,7 +24,13 @@ struct BenchOptions {
   int budgetMs = 300;  // per-move wall-clock budget (iterative deepening)
   long iterations = 0;  // per-move node budget; takes precedence over budgetMs
   int depth = 2;       // fixed depth, used when there is no budget
-  int maxDepth = 0;    // 0 = automatic (derived from the position, bounded by the budget)
+  // Iterative-deepening ceiling. 10 matches the engine default; 0 asks for the automatic
+  // ceiling, which only takes effect with `autoDepth` (or IPVGO_AUTODEPTH=1).
+  int maxDepth = 10;
+  // The three deepening-loop switches (see ExploitConfig). Off = the pre-11-Nov behaviour.
+  bool autoDepth = false;
+  bool perMoveBudget = false;
+  bool widen = false;
   uint64_t seed = 1;
   std::vector<std::string> factions;  // empty = every faction for this board size
 

@@ -3,7 +3,7 @@
  * Runs the C++ exploiter by default; native MCTS is available as a fallback.
  */
 
-import { execFile, spawn } from "child_process"
+import { execFile, execFileSync, spawn } from "child_process"
 import crypto from "crypto"
 import fs from "fs"
 import http from "http"
@@ -398,13 +398,18 @@ async function handleBenchStart(req, res) {
     ["whiteChildren", 0, 32],
     ["endgameEmpties", 0, 20],
     ["nodeBudget", 1000, 5000000],
-    ["maxDepth", 0, 64],   // 0 = automatic
+    ["maxDepth", 0, 64],   // 0 = engine default; see the autoDepth switch
     ["threads", 0, 64],
   ]) {
     const value = integer(key, min, max)
     if (value !== undefined) options[key] = value
   }
   if (body?.carry === true) options.carry = true
+  // The three deepening-loop switches. Off unless asked for: they arrived on 11-12 Nov
+  // and measured slightly worse than the behaviour they replaced.
+  if (body?.autoDepth === true) options.autoDepth = true
+  if (body?.perMoveBudget === true) options.perMoveBudget = true
+  if (body?.widen === true) options.widen = true
   // Root scheduler: the repeatable round-robin split by default, the dynamic one on
   // request. They are not equivalent - a fixed per-worker slice discards a ply when one
   // root move outgrows it, and at 12 threads that costs about 5 points of win rate.
@@ -549,6 +554,137 @@ function writeTuningStore(store) {
 
 function tuningSnapshot() {
   return { store: readTuningStore(), file: path.relative(__dirname, TUNING_FILE) }
+}
+
+// The commit the store was exported from, for the file name. Read every time rather than
+// cached: the server outlives commits, and a stale hash would name a file after a build
+// that did not produce it.
+function gitShortHash() {
+  try {
+    const out = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+      cwd: path.join(__dirname, ".."),
+      encoding: "utf8",
+      windowsHide: true,
+    }).trim()
+    return /^[0-9a-f]{4,40}$/i.test(out) ? out : "nogit"
+  } catch {
+    return "nogit"
+  }
+}
+
+// yyyy-mm-dd-hh-mm-<hash>.json, in local time so it matches the clock in the GUI.
+function tuningExportName(now = new Date()) {
+  const pad = (n) => String(n).padStart(2, "0")
+  const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}-${pad(
+    now.getMinutes()
+  )}`
+  return `${stamp}-${gitShortHash()}.json`
+}
+
+// Accepts either the file this server exports ({faction: entry, ...}) or a snapshot
+// ({store: {...}}), and rebuilds it from the fields that are allowed to be there, so an
+// imported file cannot introduce anything the tuning code does not expect. Anything that
+// fails a range check is dropped and counted rather than rejecting the whole file; the
+// ranges are the ones the run path uses, so nothing imported can be silently ignored.
+function sanitizeTuningStore(raw) {
+  const source = raw && typeof raw === "object" && !Array.isArray(raw) && raw.store ? raw.store : raw
+  if (!source || typeof source !== "object" || Array.isArray(source)) {
+    throw new Error("not a tuning store: expected an object of faction entries")
+  }
+  const store = {}
+  let skipped = 0
+  let imported = 0
+  for (const [faction, entry] of Object.entries(source)) {
+    if (!faction || !entry || typeof entry !== "object" || Array.isArray(entry)) {
+      skipped++
+      continue
+    }
+    const clean = {}
+    let dropped = 0
+    for (const key of ["applied", "best"]) {
+      const genome = entry[key]
+      if (genome === undefined || genome === null) continue
+      if (typeof genome !== "object" || Array.isArray(genome)) {
+        dropped++
+        continue
+      }
+      // The floor is 0, as in the apply endpoint, so a zero or negative width is a
+      // missing value and is dropped rather than clamped up to the minimum.
+      const beam = tuneInt(genome.beam, 0, 64, 0)
+      const whiteChildren = tuneInt(genome.whiteChildren, 0, 64, 0)
+      const whiteMass = Number(genome.whiteMass)
+      if (beam <= 0 || whiteChildren <= 0 || !Number.isFinite(whiteMass) || whiteMass <= 0 || whiteMass > 1) {
+        dropped++
+        continue
+      }
+      // Keep the numbers the tuner records beside a best genome; they are display-only.
+      const extra = {}
+      for (const field of ["winRate", "se", "gen", "size", "nodeLimit", "source"]) {
+        const value = genome[field]
+        if (typeof value === "number" && Number.isFinite(value)) extra[field] = value
+        else if (typeof value === "string") extra[field] = value
+      }
+      clean[key] = { beam, whiteChildren, whiteMass, ...extra }
+    }
+    if (Object.keys(clean).length === 0) {
+      // One skip per faction that imported nothing, however many of its genomes failed.
+      skipped++
+      continue
+    }
+    skipped += dropped
+    store[faction] = clean
+    imported++
+  }
+  return { store, imported, skipped }
+}
+
+// The store as a file. `?inline=1` returns {filename, store} so the page can save it
+// under the name this server chose and show that name; anything else downloads it.
+function handleTuneExport(req, res, url) {
+  const store = readTuningStore()
+  const filename = tuningExportName()
+  if (url?.searchParams?.get("inline") === "1") {
+    sendJson(res, 200, { filename, store })
+    return
+  }
+  const body = JSON.stringify(store, null, 2) + "\n"
+  res.writeHead(200, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Disposition": `attachment; filename="${filename}"`,
+    "X-Tuning-File": filename,
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Expose-Headers": "X-Tuning-File, Content-Disposition",
+  })
+  res.end(body)
+}
+
+async function handleTuneImport(req, res) {
+  let body
+  try {
+    body = await readJsonBody(req)
+  } catch (err) {
+    return sendJson(res, 400, { error: err.message })
+  }
+  let result
+  try {
+    result = sanitizeTuningStore(body?.store ?? body)
+  } catch (err) {
+    return sendJson(res, 400, { error: err.message })
+  }
+  if (result.imported === 0) {
+    return sendJson(res, 400, { error: "nothing usable in that file", skipped: result.skipped })
+  }
+  // Replacing rather than merging: an export is a snapshot of the whole store, and a
+  // merge would silently keep a faction the imported file does not have.
+  writeTuningStore(result.store)
+  tuneBroadcast("settings", tuningSnapshot())
+  sendJson(res, 200, { ...tuningSnapshot(), imported: result.imported, skipped: result.skipped })
+}
+
+function handleTuneReset(req, res) {
+  writeTuningStore({})
+  tuneBroadcast("settings", tuningSnapshot())
+  sendJson(res, 200, tuningSnapshot())
 }
 
 function handleTuneSettings(req, res) {
@@ -1597,6 +1733,21 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/api/tune/settings") {
     handleTuneSettings(req, res)
+    return
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/tune/export") {
+    handleTuneExport(req, res, url)
+    return
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/tune/import") {
+    await handleTuneImport(req, res)
+    return
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/tune/reset") {
+    handleTuneReset(req, res)
     return
   }
 

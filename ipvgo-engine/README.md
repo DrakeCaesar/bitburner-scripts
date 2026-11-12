@@ -1349,7 +1349,20 @@ re-test with the bench (paired, several hundred games), not as a config to ship.
 mechanism earns its place as a way to ask the question cheaply, not as an optimiser that
 is expected to return a better genome than the defaults.
 
-### Depth is derived, not configured
+**The store is a file, and it is portable.** Everything the tuner and the GUI commit lands
+in `ipvgo-engine/temp/tuning.json` as `{faction: {applied, best}}`, and that file is what
+play and the bench read at start. The Run pane's **Search tuning** block, directly under the
+per-faction width rows, has three buttons: **Import file...** replaces the whole store from
+a snapshot, **Export file** downloads the current one, and **Reset all** clears it after a
+confirmation. An export is named `yyyy-mm-dd-hh-mm-<hash>.json`
+(`2026-11-12-22-11-12e5569.json`): the timestamp of the export and the commit the server is
+running, so two snapshots from different builds cannot be confused. Import replaces rather
+than merges, and it validates: a faction whose genome is missing, out of range or not an
+object is dropped and counted in the reply instead of rejecting the file, and a file with
+nothing usable in it is refused so a bad pick cannot wipe the store. Anything imported also
+clears the page's local width overrides, which would otherwise shadow the new numbers.
+
+### Depth is derived, not configured (Auto depth)
 
 `maxDepth` used to be a number you had to choose, and that made it a trap: deeper looks
 strictly better, but with a bounded search it is really a cap on *time*. Measured on 5x5
@@ -1357,27 +1370,36 @@ against Tetrads + Daedalus at a 50k node budget, ceilings of 4 / 6 / 8 / 100 all
 median depth 4-5 and scored 36-40 of 40 games, while costing 8.9 s / 17.8 s / 21.6 s /
 30.5 s. The ceiling never changed strength; it only changed how long the answer took.
 
-So `maxDepth = 0` (the default) means automatic, and three separate stops decide where
-the search ends:
+**This is off by default.** It shipped on, and re-measuring the whole change (auto depth +
+per-move budget + root widening, all of which arrived together) against the previous
+commit over 1 080 games put it 3.2 points behind (2.0 sigma), with 14% fewer nodes spent
+per move. So the ceiling is `maxDepth` again, and this behaviour needs the **Auto depth**
+switch (or `IPVGO_AUTODEPTH=1`). When it is on, `maxDepth = 0` means automatic and three
+separate stops decide where the search ends:
 
 1. **What the position can use.** Depth is capped at two half-moves per empty point - the
    game cannot outlast that, so a deeper iteration can only re-derive a known result.
    This is also what bounds the endgame, where `childDepth` is never decremented: with a
    ceiling of 100 the same endgame tree was re-searched 100 times, 17 s on one move, and
    the last iteration replaced the answer with an equally settled one.
-2. **What the budget can afford.** The loop predicts the next iteration's cost before
-   starting it - nodes times the measured growth for a node budget, and the same estimate
-   scaled by the measured milliseconds per node for a time budget. A timed search that
-   cannot predict spends its clock on iterations it then throws away: measured 8 740
-   median nodes per move against 2 927 for a node budget that reached the same depth.
-   With the prediction a move that completes depth 5 in 65 ms stops there instead of
-   starting a depth-6 attempt that would blow a 200 ms deadline.
-3. **Whether it is still learning.** In the endgame, an iteration that searches no more
-   nodes than the previous one did not add a ply, so the loop stops.
+2. **What the budget can afford** (**Per-move budget**, or `IPVGO_PERMOVE_BUDGET`). The
+   loop predicts the next iteration's cost before starting it - nodes times the measured
+   growth for a node budget, and the same estimate scaled by the measured milliseconds per
+   node for a time budget. A timed search that cannot predict spends its clock on
+   iterations it then throws away: measured 8 740 median nodes per move against 2 927 for
+   a node budget that reached the same depth. With the prediction a move that completes
+   depth 5 in 65 ms stops there instead of starting a depth-6 attempt that would blow a
+   200 ms deadline.
+3. **Whether it is still learning** (also **Per-move budget**). In the endgame, an
+   iteration that searches no more nodes than the previous one did not add a ply, so the
+   loop stops.
 
-A node budget is also now enforced per **move** rather than per depth iteration. It used
-to be per iteration, so a `maxDepth` of 100 with a 1e6 budget could spend 100 x that on a
-single move - which is how the reported 200 ms average ended up hiding 17-second moves.
+A node budget can also be enforced per **move** rather than per depth iteration, under the
+same switch. It used to be per iteration, so a `maxDepth` of 100 with a 1e6 budget could
+spend 100 x that on a single move - which is how the reported 200 ms average ended up
+hiding 17-second moves. Off by default, so every iteration still gets the full configured
+budget; turning it on makes `iterations` mean "per move", which is a different (smaller)
+amount of search for the same number.
 
 | config (5x5, Tetrads + Daedalus, 20 games each) | won | time | p50 ms | max ms | median depth |
 |---|---|---|---|---|---|
@@ -1386,7 +1408,27 @@ single move - which is how the reported 200 ms average ended up hiding 17-second
 | auto, nodes 200k | 40/40 | 104.5 s | 32.1 | 1017 | 6 |
 | auto, time 200 ms | 40/40 | 25.0 s | 22.3 | 201 | 4 |
 
-Auto costs nothing against the best explicit ceiling and does not depend on picking one.
+With the switch on, auto costs nothing against the best explicit ceiling and does not
+depend on picking one. With it off, none of the above applies. **Widen at the root**
+(`IPVGO_WIDEN=1` or `"widen": true`) adds the separate root-widening retry described below.
+
+### Measuring the search switches
+
+All three are per-run settings, exposed as checkboxes in the bench GUI's **Search tuning**
+panel (**Auto depth**, **Per-move budget**, **Widen at the root**), as keys in a
+`benchjson` config, and over `POST /api/bench/start`. Each also reads an environment
+variable so a CLI run can set it without a config:
+
+| GUI / config key | environment variable | effect |
+|---|---|---|
+| `autoDepth` | `IPVGO_AUTODEPTH=1` | derive the depth ceiling from the position instead of `maxDepth` |
+| `perMoveBudget` | `IPVGO_PERMOVE_BUDGET=1` | per-move node/time budget, cost prediction, endgame saturation stop |
+| `widen` | `IPVGO_WIDEN=1` | after deepening, retry the completed depth wider while budget remains |
+
+With all three unset the engine reproduces the 11 Nov behaviour exactly: 240 games of
+`benchjson` on 5x5 at a 1 000-node budget compare line-for-line identical to a binary
+built from commit `9bd3bd1`, and setting all three reproduces the 12 Nov binary line for
+line. That is the check to run after touching any of them.
 
 ### Root width is worth more than root completeness (IPVGO_ROOTW)
 
