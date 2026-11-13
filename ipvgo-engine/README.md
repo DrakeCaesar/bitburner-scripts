@@ -338,16 +338,22 @@ boards instead of on a fresh random batch. The bar shows the set's seed and boar
 size and, once a batch has replayed it, how that batch did: "this batch: 3 won, 9
 still lost". Games that came from the locked set are tagged `was LOSS` in the list.
 
-This is exact rather than approximate. A game is fully determined by the batch seed
-and the number of rng draws consumed before it started, and `benchjson` reports that
-count per game as `draws` in its `gameStart` event. A replay rewinds the stream to
-each recorded count, so the board, the clock and every one of White's replies are
+This is exact rather than approximate. A game is fully determined by the batch seed,
+its faction and its game number: `benchjson` reports the derived `seed` in its
+`gameStart` event, and a replay names the faction and the game so the engine derives
+the same seed again. The board, the clock and every one of White's replies are then
 identical and only the search differs. Checked by replaying a locked set with
-unchanged settings: same winners, same margins, same move sequences.
+unchanged settings: same winners, same margins, same move sequences, same seeds.
+
+Before this, the whole batch shared one rng stream and each game consumed a variable
+number of draws, so game N's opening depended on how long games 1..N-1 had run - which
+also meant two engine builds were never compared on the same openings. That is fixed
+here, and it is why a bench recorded before the change is not comparable with one
+recorded after it: the games themselves differ.
 
 The set survives a reload (`localStorage`), but it belongs to the seed and engine
 build it was recorded from - lock again after changing either. Locking from a
-replay batch works the same way and records the same draw counts.
+replay batch works the same way.
 
 #### Explain (the loss replay)
 
@@ -394,7 +400,14 @@ faction and seed, then streams `ipvgo_game benchjson` events through the server:
 - live board (stones, obstacles, last Black/White move markers, star points),
 - per-move search numbers (depth, nodes, think ms, score),
 - per-faction table with W/L, win %, average margin, ms/move and progress bar,
-- recent game results and a PASS/FAIL pill when the run finishes.
+- recent game results and a PASS/FAIL pill when the run finishes,
+- a live progress line under the buttons: `2m 14s elapsed   38/120 games   32%   82 left
+  5.9 games/min   about 14m 02s left`, and the batch's total time once it ends. It is
+  derived from the games that actually finished (`done / elapsed`), not from the per-move
+  budget, so it accounts for whatever the search settings and the parallel-game setting do
+  to throughput, and it waits for a couple of games before quoting a number so one slow
+  opening cannot set the rate. A replay batch counts its own games instead of
+  factions x games.
 
 The thinking budget comes in two flavours, chosen with **Budget type**:
 
@@ -417,9 +430,21 @@ is stored in `localStorage` and restored on reload, so a refresh keeps your setu
 | Endgame node cap | node cap for that endgame solve | 30000 |
 | Max depth | iterative-deepening ceiling | 10 |
 | Threads | search threads (0 = all cores) | 0 |
+| Parallel games | play N games at once, one search thread each (N = core count; results unchanged) | off |
 
 Blank fields keep the engine default. Bigger beam/replies search more of the
 tree and cost roughly linearly in think time.
+
+**Parallel games** moves the parallelism out of one game's search and into the batch:
+each game searches on a single thread and several games play at once. It is worth
+more than it sounds, because independent games scale with the core count where
+parallel search inside one game does not, and it keeps the single-threaded answer:
+at 20 000 nodes, 8 games against each of three factions came out **1 700 ms with
+12 games in flight (1 thread each) against 2 324 ms with 12 search threads and one
+game at a time**, and identical to the single-threaded run (9 780 ms) game for game -
+24 of 24 move streams, same winners and margins. The one-game-at-a-time path with
+many search threads is still there (uncheck the box) and is what measures the
+per-worker budget split; it is just weaker and slower.
 
 Endpoints: `GET /bench`, `GET /api/bench/state?since=<seq>`,
 `POST /api/bench/start`, `POST /api/bench/stop`. Stopping the server also stops
@@ -435,11 +460,12 @@ Two more serve the loss explanation:
 
 `threshold` defaults to 0.15 (the `BLUNDER` marker).
 
-`POST /api/bench/start` also accepts `replay: [{faction, game, draws}, ...]` (the
-values a previous run reported per game), which plays exactly those games instead of
-generating a batch; `size` and `seed` must be the ones the set was recorded with,
-and every other field - the budget included - is the tuning to test. The engine's
-`benchjson` config takes the same array.
+`POST /api/bench/start` also accepts `replay: [{faction, game}, ...]` (the games a
+previous run reported), which plays exactly those games instead of generating a batch;
+`size` and `seed` must be the ones the set was recorded with, and every other field -
+the budget included - is the tuning to test. It also accepts
+`parallelGames: N` to play N games at once with one search thread each. The engine's
+`benchjson` config takes the same `replay` array and the same `parallelGames` key.
 
 The state endpoint returns a short log of half-moves (`frames`, each with a
 monotonic `seq`, whose side moved, and the resulting board). Black's move and

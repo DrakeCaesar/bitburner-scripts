@@ -7,7 +7,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iomanip>
+#include <iostream>
 #include <mutex>
+#include <ostream>
+#include <random>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -291,10 +294,9 @@ std::vector<std::string> defaultFactions(int size) {
 class BenchObserver {
  public:
   virtual ~BenchObserver() = default;
-  // `drawsBefore` is the number of rng draws consumed before this game started: it
-  // is what a replay needs to put the game back on exactly the same board.
-  virtual void onGameStart(size_t index, const std::string& faction, int game, int games,
-                           long drawsBefore) = 0;
+  // `seed` is the seed this game's inputs are derived from: (options.seed, faction,
+  // game number) make a game reproducible on its own.
+  virtual void onGameStart(size_t index, const std::string& faction, int game, int games, uint64_t seed) = 0;
   virtual void onThinking(size_t index, const GameState& state, int game, int move) = 0;
   virtual void onBlackMove(size_t index, const GameState& state, int game, int move,
                            const ExploitResult& search, double elapsedMs, bool passed) = 0;
@@ -304,23 +306,110 @@ class BenchObserver {
   virtual void onFinish(const std::vector<FactionBenchRow>& rows, int failures) = 0;
 };
 
-int runBenchGames(const BenchOptions& options, BenchObserver& observer) {
-  std::vector<std::string> factions =
-      options.factions.empty() ? defaultFactions(options.size) : options.factions;
+// The seed of one game, derived from (options.seed, faction, game number) instead of from
+// a stream shared by the whole batch. The old stream drew per move, so game N's opening
+// depended on how long games 1..N-1 ran - which also meant two engine builds were never
+// compared on the same openings. With a per-game seed a game can be replayed on its own,
+// played out of order, and played alongside other games.
+uint64_t benchGameSeed(const BenchOptions& options, size_t factionIndex, int gameNumber) {
+  return (options.seed ? options.seed : 1) * 1000003ull + static_cast<uint64_t>(factionIndex) * 1009ull +
+         static_cast<uint64_t>(gameNumber);
+}
+
+struct BenchGameResult {
+  int moves = 0;
+  double msSum = 0.0;
+  bool win = false;
+  double margin = 0.0;
+};
+
+// One game, start to finish. `gameNumber` is the 1-based number shown in the GUI (and the
+// one a replay refers to); `gamesInFaction` only drives the progress display.
+BenchGameResult playBenchGame(const BenchOptions& options, const ExploitConfig& cfg, size_t factionIndex,
+                              const std::string& faction, int gameNumber, int gamesInFaction, uint64_t seed,
+                              BenchObserver& observer) {
+  const Opponent ai = parseOpponent(faction).value_or(Opponent::Netburners);
+  std::mt19937_64 rng(seed);
+  const double clockMs = static_cast<double>(rng() % 30000000u);
+  MathRandom mathRng(rng());
+  GameState state = newBoardState(options.size, ai, true, clockMs, mathRng);
+  observer.onGameStart(factionIndex, faction, gameNumber, gamesInFaction, seed);
+
+  BenchGameResult result;
+  SearchSession session;
+  // IPVGO_MOVECAP overrides the built-in size*size*4 cap; a game that reaches it is
+  // scored as if it had ended there.
+  const char* capEnv = std::getenv("IPVGO_MOVECAP");
+  const int moveCap = capEnv != nullptr ? std::max(1, std::atoi(capEnv)) : options.size * options.size * 4;
+  for (int m = 0; m < moveCap && !state.gameOver; ++m) {
+    if (whoseTurn(state) != Color::Black) break;
+
+    observer.onThinking(factionIndex, state, gameNumber, m + 1);
+    const auto t0 = std::chrono::steady_clock::now();
+    const ExploitResult search = runExploiter(state, cfg, nullptr, options.carry ? &session : nullptr);
+    const double elapsedMs =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+
+    const int action = search.bestAction;
+    const bool passed = action == passAction(options.size);
+    if (passed) {
+      passTurn(state, Color::Black);
+    } else if (!makeMove(state, action / options.size, action % options.size, Color::Black)) {
+      passTurn(state, Color::Black);
+    }
+
+    result.moves += 1;
+    result.msSum += elapsedMs;
+    observer.onBlackMove(factionIndex, state, gameNumber, m + 1, search, elapsedMs, passed);
+
+    if (state.gameOver) break;
+
+    const Play whitePlay = getMove(state, Color::White, ai, static_cast<double>(rng() % 30000000u), mathRng);
+    if (whitePlay.type == PlayType::Pass) {
+      passTurn(state, Color::White);
+    } else if (!makeMove(state, whitePlay.x, whitePlay.y, Color::White)) {
+      passTurn(state, Color::White);
+    }
+    observer.onWhiteReply(factionIndex, state, gameNumber, m + 1, whitePlay);
+  }
+
+  const Score score = getScore(state);
+  result.margin = score.blackSum - score.whiteSum;
+  result.win = blackWins(score);
+  return result;
+}
+
+struct BenchJob {
+  size_t faction = 0;
+  int game = 0;
+  int gamesInFaction = 0;
+};
+
+// Everything a batch needs before the first game: the faction list, one search config per
+// faction, and the games to play in the order a sequential run plays them.
+struct BenchRun {
+  std::vector<std::string> factions;
+  std::vector<FactionBenchRow> rows;
+  std::vector<ExploitConfig> configs;
+  std::vector<BenchJob> jobs;
+};
+
+BenchRun prepareBenchRun(const BenchOptions& options, bool singleThreadedGames) {
+  BenchRun run;
+  run.factions = options.factions.empty() ? defaultFactions(options.size) : options.factions;
   if (!options.replay.empty()) {
     // A replay names its own games, so the faction list is whatever they mention.
-    factions.clear();
+    run.factions.clear();
     for (const BenchOptions::ReplayGame& game : options.replay) {
-      if (std::find(factions.begin(), factions.end(), game.faction) == factions.end()) {
-        factions.push_back(game.faction);
+      if (std::find(run.factions.begin(), run.factions.end(), game.faction) == run.factions.end()) {
+        run.factions.push_back(game.faction);
       }
     }
   }
-  if (factions.empty()) return 0;
+  if (run.factions.empty()) return run;
 
-  std::vector<FactionBenchRow> rows(factions.size());
-  for (size_t i = 0; i < factions.size(); ++i) rows[i].faction = factions[i];
-  observer.onRows(rows);
+  run.rows.resize(run.factions.size());
+  for (size_t i = 0; i < run.factions.size(); ++i) run.rows[i].faction = run.factions[i];
 
   ExploitConfig cfg;
   cfg.budgetMs = options.budgetMs;
@@ -336,6 +425,9 @@ int runBenchGames(const BenchOptions& options, BenchObserver& observer) {
   cfg.endgameEmpties = options.endgameEmpties;
   cfg.nodeBudget = options.nodeBudget;
   cfg.threads = options.threads;
+  // Games running side by side get their parallelism from the game count, so each one
+  // searches on a single thread - that is the whole point of the switch.
+  if (singleThreadedGames) cfg.threads = 1;
   // A benchmark defaults to the repeatable round-robin split; the GUI's scheduler
   // toggle asks for the dynamic one instead.
   cfg.deterministic = !options.dynamicRoot;
@@ -346,130 +438,77 @@ int runBenchGames(const BenchOptions& options, BenchObserver& observer) {
 
   // A tuned setting applies to its own faction only; everything else keeps the
   // globals, so leaving one faction tuned cannot change how the others play.
-  std::vector<ExploitConfig> configs(factions.size(), cfg);
-  for (size_t i = 0; i < factions.size(); ++i) {
+  run.configs.assign(run.factions.size(), cfg);
+  for (size_t i = 0; i < run.factions.size(); ++i) {
     for (const auto& [name, tuning] : options.tuningByFaction) {
-      if (name != factions[i]) continue;
-      if (tuning.beam > 0) configs[i].beam = tuning.beam;
-      if (tuning.whiteChildren > 0) configs[i].whiteChildren = tuning.whiteChildren;
-      if (tuning.whiteMass > 0.0) configs[i].whiteMass = tuning.whiteMass;
+      if (name != run.factions[i]) continue;
+      if (tuning.beam > 0) run.configs[i].beam = tuning.beam;
+      if (tuning.whiteChildren > 0) run.configs[i].whiteChildren = tuning.whiteChildren;
+      if (tuning.whiteMass > 0.0) run.configs[i].whiteMass = tuning.whiteMass;
     }
   }
 
-  std::mt19937_64 rng(options.seed ? options.seed : 1);
-  // Draws consumed so far. Every game input (the clock, the MathRandom seed and
-  // each of White's seeds) comes from this stream, so a game is reproduced exactly
-  // by rewinding the stream to the number of draws it started at.
-  long draws = 0;
-  const auto nextDraw = [&]() {
-    ++draws;
-    return rng();
+  const auto wants = [&](size_t f, int gameNumber) {
+    if (options.only.empty()) return true;
+    const std::string tag = run.factions[f] + ":" + std::to_string(gameNumber);
+    return std::find(options.only.begin(), options.only.end(), tag) != options.only.end();
   };
-
-  // One game, start to finish. `gameNumber` is the 1-based number shown in the GUI
-  // (and the one a replay refers to), `gamesInFaction` only drives the progress
-  // display.
-  const auto playGame = [&](size_t f, int gameNumber, int gamesInFaction) {
-    const Opponent ai = parseOpponent(factions[f]).value_or(Opponent::Netburners);
-    const long drawsBefore = draws;
-
-    const double clockMs = static_cast<double>(nextDraw() % 30000000u);
-    const uint64_t mathSeed = nextDraw();
-    MathRandom mathRng(mathSeed);
-    GameState state = newBoardState(options.size, ai, true, clockMs, mathRng);
-    observer.onGameStart(f, factions[f], gameNumber, gamesInFaction, drawsBefore);
-
-    SearchSession session;
-    // IPVGO_MOVECAP overrides the built-in size*size*4 cap; a game that reaches it is
-    // scored as if it had ended there.
-    const char* capEnv = std::getenv("IPVGO_MOVECAP");
-    const int moveCap = capEnv != nullptr ? std::max(1, std::atoi(capEnv)) : options.size * options.size * 4;
-    for (int m = 0; m < moveCap && !state.gameOver; ++m) {
-      if (whoseTurn(state) != Color::Black) break;
-
-      observer.onThinking(f, state, gameNumber, m + 1);
-      const auto t0 = std::chrono::steady_clock::now();
-      const ExploitResult search = runExploiter(state, configs[f], nullptr, options.carry ? &session : nullptr);
-      const double elapsedMs =
-          std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-
-      const int action = search.bestAction;
-      const bool passed = action == passAction(options.size);
-      if (passed) {
-        passTurn(state, Color::Black);
-      } else if (!makeMove(state, action / options.size, action % options.size, Color::Black)) {
-        passTurn(state, Color::Black);
-      }
-
-      rows[f].moves += 1;
-      rows[f].msSum += elapsedMs;
-      observer.onBlackMove(f, state, gameNumber, m + 1, search, elapsedMs, passed);
-
-      if (state.gameOver) break;
-
-      const Play whitePlay =
-          getMove(state, Color::White, ai, static_cast<double>(nextDraw() % 30000000u), mathRng);
-      if (whitePlay.type == PlayType::Pass) {
-        passTurn(state, Color::White);
-      } else if (!makeMove(state, whitePlay.x, whitePlay.y, Color::White)) {
-        passTurn(state, Color::White);
-      }
-      observer.onWhiteReply(f, state, gameNumber, m + 1, whitePlay);
-    }
-
-    const Score score = getScore(state);
-    const double margin = score.blackSum - score.whiteSum;
-    const bool win = blackWins(score);
-    rows[f].games += 1;
-    if (win) rows[f].wins += 1;
-    else rows[f].losses += 1;
-    rows[f].marginSum += margin;
-
-    observer.onGameEnd(f, rows[f], win, margin);
-    observer.onRows(rows);
-  };
-
   if (!options.replay.empty()) {
-    const uint64_t seed = options.seed ? options.seed : 1;
     for (const BenchOptions::ReplayGame& game : options.replay) {
-      const auto where = std::find(factions.begin(), factions.end(), game.faction);
-      if (where == factions.end()) continue;
-      const size_t f = static_cast<size_t>(where - factions.begin());
+      const auto where = std::find(run.factions.begin(), run.factions.end(), game.faction);
+      if (where == run.factions.end()) continue;
+      const size_t f = static_cast<size_t>(where - run.factions.begin());
       int gamesInFaction = 0;
       for (const BenchOptions::ReplayGame& other : options.replay) {
         if (other.faction == game.faction) ++gamesInFaction;
       }
-      // A locked set is normally in the order it was played, so rewinding forward is
-      // enough; a set that is not costs one reseed and a re-run of the draws.
-      if (draws > game.drawsBefore) {
-        rng.seed(seed);
-        draws = 0;
-      }
-      while (draws < game.drawsBefore) nextDraw();
-      playGame(f, game.game, gamesInFaction);
+      run.jobs.push_back({f, game.game, gamesInFaction});
     }
   } else {
-    for (size_t f = 0; f < factions.size(); ++f) {
-      for (int g = 0; g < options.gamesPerFaction; ++g) {
-        if (!options.only.empty()) {
-          const std::string tag = factions[f] + ":" + std::to_string(g + 1);
-          if (std::find(options.only.begin(), options.only.end(), tag) == options.only.end()) continue;
-          // Reseeding invalidates the draw count, which is why `only` and `replay`
-          // do not mix.
-          rng.seed((options.seed ? options.seed : 1) * 1000003ull + f * 1009ull + static_cast<uint64_t>(g));
-          draws = 0;
-        }
-        playGame(f, g + 1, options.gamesPerFaction);
+    for (size_t f = 0; f < run.factions.size(); ++f) {
+      for (int g = 1; g <= options.gamesPerFaction; ++g) {
+        if (wants(f, g)) run.jobs.push_back({f, g, options.gamesPerFaction});
       }
     }
   }
+  return run;
+}
 
+// Folds one finished game into its faction's row.
+void foldBenchResult(FactionBenchRow& row, const BenchGameResult& result) {
+  row.moves += result.moves;
+  row.msSum += result.msSum;
+  row.games += 1;
+  if (result.win) row.wins += 1;
+  else row.losses += 1;
+  row.marginSum += result.margin;
+}
+
+// Plays one job and folds its outcome into the faction's row.
+void playBenchJob(const BenchOptions& options, BenchRun& run, const BenchJob& job, BenchObserver& observer) {
+  const BenchGameResult result =
+      playBenchGame(options, run.configs[job.faction], job.faction, run.factions[job.faction], job.game,
+                    job.gamesInFaction, benchGameSeed(options, job.faction, job.game), observer);
+  foldBenchResult(run.rows[job.faction], result);
+  observer.onGameEnd(job.faction, run.rows[job.faction], result.win, result.margin);
+  observer.onRows(run.rows);
+}
+
+int finishBenchRun(const std::vector<FactionBenchRow>& rows, BenchObserver& observer) {
   int failures = 0;
   for (const FactionBenchRow& row : rows) {
     if (row.games == 0 || row.wins != row.games) ++failures;
   }
   observer.onFinish(rows, failures);
   return failures;
+}
+
+int runBenchGames(const BenchOptions& options, BenchObserver& observer) {
+  BenchRun run = prepareBenchRun(options, false);
+  if (run.factions.empty()) return 0;
+  observer.onRows(run.rows);
+  for (const BenchJob& job : run.jobs) playBenchJob(options, run, job, observer);
+  return finishBenchRun(run.rows, observer);
 }
 
 class LiveObserver : public BenchObserver {
@@ -494,8 +533,8 @@ class LiveObserver : public BenchObserver {
     ui_.stop();
   }
 
-  void onGameStart(size_t index, const std::string& faction, int game, int games,
-                   long drawsBefore) override {
+  void onGameStart(size_t index, const std::string& faction, int game, int games, uint64_t seed) override {
+    (void)seed;
     std::lock_guard<std::mutex> lock(view_.mutex);
     view_.faction = faction;
     view_.factionIndex = index;
@@ -607,10 +646,13 @@ class LiveObserver : public BenchObserver {
 
 class JsonObserver : public BenchObserver {
  public:
-  JsonObserver(size_t factionCount, bool audit) : factionCount_(factionCount), audit_(audit) {}
+  // `out` is where the NDJSON goes. Games played side by side are given one observer each
+  // writing to its own buffer, because this class keeps the state of the game it is
+  // describing; the buffers are flushed whole so a game's events stay contiguous.
+  JsonObserver(size_t factionCount, bool audit, std::ostream& out)
+      : factionCount_(factionCount), audit_(audit), out_(out) {}
 
-  void onGameStart(size_t index, const std::string& faction, int game, int games,
-                   long drawsBefore) override {
+  void onGameStart(size_t index, const std::string& faction, int game, int games, uint64_t seed) override {
     faction_ = faction;
     game_ = game;
     games_ = games;
@@ -623,8 +665,8 @@ class JsonObserver : public BenchObserver {
           {"factionCount", factionCount_},
           {"game", game},
           {"games", games},
-          // Kept so the page can lock this game and replay it under other settings.
-          {"draws", drawsBefore}});
+          // The seed this game's inputs come from: enough to replay exactly this game.
+          {"seed", seed}});
   }
 
   void onThinking(size_t, const GameState& state, int game, int move) override {
@@ -808,14 +850,13 @@ class JsonObserver : public BenchObserver {
   }
 
   void emit(const json& event) {
-    const std::string line = event.dump();
-    std::fwrite(line.data(), 1, line.size(), stdout);
-    std::fputc('\n', stdout);
-    std::fflush(stdout);
+    out_ << event.dump() << '\n';
+    out_.flush();
   }
 
   size_t factionCount_ = 0;
   bool audit_ = true;
+  std::ostream& out_;
   std::string faction_;
   int game_ = 0;
   int games_ = 0;
@@ -835,16 +876,71 @@ int runExploitBench(const BenchOptions& options) {
   if (factions.empty()) return 0;
 
   LiveObserver observer(options, factions.size());
+  if (options.gamesInParallel > 1) {
+    // The live view shows one board and this path writes one game at a time; the JSON
+    // path (benchjson) is the one that runs games side by side. The answers are identical
+    // either way, only the wall clock differs.
+    std::fprintf(stderr, "bench: parallel games are a benchjson option; playing one game at a time\n");
+  }
   return runBenchGames(options, observer);
 }
 
 int runExploitBenchJson(const BenchOptions& options) {
-  const std::vector<std::string> factions =
-      options.factions.empty() ? defaultFactions(options.size) : options.factions;
-  if (factions.empty()) return 0;
+  const bool parallel = options.gamesInParallel > 1;
+  BenchRun run = prepareBenchRun(options, parallel);
+  if (run.factions.empty()) return 0;
+  const size_t factionCount = run.factions.size();
 
-  JsonObserver observer(factions.size(), options.audit);
-  return runBenchGames(options, observer);
+  const unsigned workers =
+      parallel ? std::max(1u, std::min<unsigned>(static_cast<unsigned>(options.gamesInParallel),
+                                                 static_cast<unsigned>(run.jobs.size())))
+               : 1u;
+  if (workers <= 1) {
+    JsonObserver observer(factionCount, options.audit, std::cout);
+    observer.onRows(run.rows);
+    for (const BenchJob& job : run.jobs) playBenchJob(options, run, job, observer);
+    return finishBenchRun(run.rows, observer);
+  }
+
+  {
+    JsonObserver observer(factionCount, options.audit, std::cout);
+    observer.onRows(run.rows);
+  }
+  // Games run side by side, each on one search thread. The rows they feed are shared, and
+  // each game's events are buffered and written in one piece, so what the stream shows is
+  // still one whole game at a time.
+  std::mutex rowsMutex;
+  std::mutex outMutex;
+  std::atomic<size_t> next{0};
+  std::vector<std::thread> pool;
+  pool.reserve(workers);
+  for (unsigned t = 0; t < workers; ++t) {
+    pool.emplace_back([&]() {
+      for (;;) {
+        const size_t index = next.fetch_add(1, std::memory_order_relaxed);
+        if (index >= run.jobs.size()) break;
+        const BenchJob& job = run.jobs[index];
+        std::ostringstream buffer;
+        JsonObserver observer(factionCount, options.audit, buffer);
+        // The game itself runs outside the lock: only the row it feeds is shared.
+        const BenchGameResult result =
+            playBenchGame(options, run.configs[job.faction], job.faction, run.factions[job.faction], job.game,
+                          job.gamesInFaction, benchGameSeed(options, job.faction, job.game), observer);
+        {
+          std::lock_guard<std::mutex> lock(rowsMutex);
+          foldBenchResult(run.rows[job.faction], result);
+          observer.onGameEnd(job.faction, run.rows[job.faction], result.win, result.margin);
+          observer.onRows(run.rows);
+        }
+        std::lock_guard<std::mutex> lock(outMutex);
+        std::cout << buffer.str();
+        std::cout.flush();
+      }
+    });
+  }
+  for (std::thread& thread : pool) thread.join();
+  JsonObserver observer(factionCount, options.audit, std::cout);
+  return finishBenchRun(run.rows, observer);
 }
 
 }  // namespace ipvgo::nn

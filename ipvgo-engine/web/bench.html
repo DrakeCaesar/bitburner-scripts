@@ -508,6 +508,7 @@
           <label class="field"><span title="Node cap for the endgame solve">Endgame node cap</span><input id="nodeBudget" type="number" min="1000" step="1000" placeholder="30000" /></label>
           <label class="field"><span title="Ceiling for iterative deepening. Blank or 0 uses the default of 10. With Auto depth on this only caps the derived ceiling.">Max depth (0 = default)</span><input id="maxDepth" type="number" min="0" max="64" placeholder="10" /></label>
           <label class="field"><span title="Search threads (0 = all cores)">Threads</span><input id="threads" type="number" min="0" max="64" placeholder="0" /></label>
+          <label class="field"><span title="Play several games at once, one search thread each, instead of one game with many threads. Independent games scale with the core count where parallel search inside one game does not, and every game is seeded from (seed, faction, game number) - so the results are identical either way; only the wall clock changes.">Parallel games (1 thread each)</span><span class="fieldToggle"><input id="parallelGames" type="checkbox" /></span></label>
           <label class="field"><span title="Reuse exact search results across the moves of a game. Same answers as a fresh search, with less work.">Carry memo</span><span class="fieldToggle"><input id="carry" type="checkbox" /></span></label>
           <label class="field"><span title="Off: every worker gets a fixed slice of the node budget (repeatable, but a ply is discarded the moment one root move outgrows its slice). On: workers claim the next root move as they finish and split what is left, which is what play uses - stronger at high thread counts, but a run does not repeat exactly.">Dynamic scheduler</span><span class="fieldToggle"><input id="dynamicRoot" type="checkbox" /></span></label>
           <div class="switchGroup">
@@ -521,6 +522,7 @@
           <button id="start" class="primary">Start</button>
           <button id="stop">Stop</button>
         </div>
+        <div class="tuneTiming" id="runEta"></div>
       </section>
 
       <section>
@@ -767,6 +769,7 @@
         autoDepth: false,
         perMoveBudget: false,
         widen: false,
+        parallelGames: false,
       }
 
       const el = (id) => document.getElementById(id)
@@ -791,6 +794,7 @@
           autoDepth: el("autoDepth").checked,
           perMoveBudget: el("perMoveBudget").checked,
           widen: el("widen").checked,
+          parallelGames: el("parallelGames").checked,
         }
       }
 
@@ -848,6 +852,7 @@
             autoDepth: stored.autoDepth === true,
             perMoveBudget: stored.perMoveBudget === true,
             widen: stored.widen === true,
+            parallelGames: stored.parallelGames === true,
           }
         } catch {
           return { ...DEFAULT_FORM }
@@ -871,6 +876,7 @@
         el("autoDepth").checked = form.autoDepth === true
         el("perMoveBudget").checked = form.perMoveBudget === true
         el("widen").checked = form.widen === true
+        el("parallelGames").checked = form.parallelGames === true
         selected.clear()
         for (const faction of form.factions) selected.add(faction)
         updateBudgetLabel()
@@ -922,9 +928,9 @@
       }
 
       // ---- locked game sets -------------------------------------------------
-      // A game is fully determined by the batch seed and the number of rng draws
-      // consumed before it started, so locking only has to remember those two
-      // numbers per game. Replaying then puts the engine back on exactly the same
+      // A game is fully determined by the batch seed, its faction and its number, so
+      // locking only has to remember those. Replaying then puts the engine back on
+      // exactly the same
       // board with the same White replies and plays it under new search settings:
       // that is what makes a locked set a tuning regression test.
       const LOCK_KEY = "ipvgo-bench-lock-v1"
@@ -967,7 +973,7 @@
           games: losses.map((game) => ({
             faction: game.faction,
             game: game.game,
-            draws: game.draws ?? 0,
+            seed: game.seed ?? 0,
             win: game.win,
             margin: game.margin,
           })),
@@ -1018,7 +1024,7 @@
           replay: locked.games.map((game) => ({
             faction: game.faction,
             game: game.game,
-            draws: game.draws ?? 0,
+            seed: game.seed ?? 0,
           })),
         }
       }
@@ -1456,6 +1462,58 @@
           pill.textContent = "idle"
         }
         el("error").textContent = s.error || ""
+        renderRunEta(s)
+      }
+
+      // Games the batch was started with. `options.factions` is the resolved list and a
+      // replay names its own games, so this needs nothing but what was started.
+      function plannedGames(s) {
+        const options = s.options ?? {}
+        if (Array.isArray(options.replay)) return options.replay.length
+        const factions = Array.isArray(options.factions) ? options.factions.length : 0
+        const games = Number(options.games ?? 0)
+        return factions > 0 && games > 0 ? factions * games : 0
+      }
+
+      // Progress and time left for the run in flight, from the games that actually
+      // finished: a batch is a fixed number of games, so the rate observed so far is a
+      // better estimate than the per-move budget would give.
+      function renderRunEta(s) {
+        const host = el("runEta")
+        if (!host) return
+        const planned = plannedGames(s)
+        const done = (s.rows ?? []).reduce((sum, row) => sum + (Number(row.games) || 0), 0)
+        const startedAt = Number(s.startedAt ?? 0)
+        const endedAt = Number(s.endedAt ?? 0)
+        if (!startedAt || done === 0) {
+          host.textContent = ""
+          return
+        }
+        const elapsedMs = Math.max(0, (endedAt || Date.now()) - startedAt)
+        if (!s.running) {
+          host.textContent =
+            planned > 0
+              ? `${done}/${planned} games in ${formatDuration(elapsedMs)}`
+              : `${done} games in ${formatDuration(elapsedMs)}`
+          return
+        }
+        const remaining = Math.max(0, planned - done)
+        const perGameMs = elapsedMs / done
+        // One or two games say nothing about the batch - a single long game would set the
+        // rate - so the estimate waits until a few have landed.
+        const warm = done >= Math.min(4, Math.max(2, Math.ceil(planned / 10)))
+        const parts = [`${formatDuration(elapsedMs)} elapsed`, `${done}${planned > 0 ? `/${planned}` : ""} games`]
+        if (planned > 0) parts.push(`${((100 * done) / planned).toFixed(0)}%`)
+        if (remaining > 0) parts.push(`${remaining} left`)
+        if (warm) {
+          parts.push(`${(60000 / perGameMs).toFixed(1)} games/min`)
+          // Never say "0s left": a rounding to zero reads as "done" while a game is still
+          // running.
+          if (remaining > 0) parts.push(`about ${formatDuration(Math.max(1000, perGameMs * remaining))} left`)
+        } else {
+          parts.push("timing the first games")
+        }
+        host.textContent = parts.join("   ")
       }
 
       function markDirty(...parts) {
@@ -1492,6 +1550,7 @@
 
       // One animation frame loop: advance the half-move queue when its slot is
       // due, then repaint only the parts that changed. No polling, no timers.
+      let lastRunEtaAt = 0
       function frameLoop(now) {
         if (frameQueue.length > 0 && now >= nextFrameAt) {
           if (frameQueue.length > FRAME_MAX_BACKLOG) frameQueue = frameQueue.slice(-4)
@@ -1499,6 +1558,12 @@
           if (displayed) markDirty("board", "info")
           // Backlog costs latency, so shorten the slot to catch up.
           nextFrameAt = now + (frameQueue.length > 3 ? 25 : FRAME_MS)
+        }
+        // The ETA moves with the wall clock, not with events: one long game should still
+        // count down. Once a second is plenty for a number shown to the second.
+        if (state.running && now - lastRunEtaAt >= 1000) {
+          lastRunEtaAt = now
+          renderRunEta(state)
         }
         renderIfDirty()
         requestAnimationFrame(frameLoop)
@@ -1582,7 +1647,7 @@
                 margin: result.margin,
                 movesPlayed: result.moves,
                 moveCount: result.moveCount ?? result.moves,
-                draws: result.draws ?? 0,
+                seed: result.seed ?? 0,
               },
             ]
           }
@@ -1680,6 +1745,8 @@
         if (el("autoDepth").checked) body.autoDepth = true
         if (el("perMoveBudget").checked) body.perMoveBudget = true
         if (el("widen").checked) body.widen = true
+        // Several games at once, one search thread each: same results, more cores used.
+        if (el("parallelGames").checked) body.parallelGames = navigator.hardwareConcurrency || 8
         if (body.factions.length === 0) body.factions = null
         // Explicit per-faction widths: the server uses these instead of the store, so
         // what the Run table shows is exactly what the engine gets.
@@ -1810,7 +1877,7 @@
       el("tuning").addEventListener("toggle", saveForm)
       el("carry").addEventListener("change", saveForm)
       el("dynamicRoot").addEventListener("change", saveForm)
-      for (const id of ["autoDepth", "perMoveBudget", "widen"]) el(id).addEventListener("change", saveForm)
+      for (const id of ["autoDepth", "perMoveBudget", "widen", "parallelGames"]) el(id).addEventListener("change", saveForm)
       // The tuning pane shows these, so it has to be redrawn when one of them moves.
       for (const id of [...TUNING_IDS, "carry", "dynamicRoot", "autoDepth", "perMoveBudget", "widen"]) {
         el(id).addEventListener("change", renderTuneInherited)

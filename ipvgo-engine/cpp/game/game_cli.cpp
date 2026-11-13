@@ -1625,6 +1625,7 @@ bool applyTuningOption(BenchOptions& options, const std::string& key, const std:
   else if (key == "max-depth" || key == "maxDepth") options.maxDepth = std::stoi(value);
   else if (key == "depth") options.depth = std::stoi(value);
   else if (key == "threads") options.threads = std::stoi(value);
+  else if (key == "parallel" || key == "parallelGames") options.gamesInParallel = std::stoi(value);
   else return false;
   return true;
 }
@@ -2648,13 +2649,14 @@ int main(int argc, char** argv) {
       }
       options.carry = config.value("carry", false);
       options.dynamicRoot = config.value("dynamicRoot", false);
+      // Play this many games at once, each on one search thread (0/1 = one at a time).
+      options.gamesInParallel = std::max(0, config.value("parallelGames", 0));
       options.audit = config.value("audit", true);
       if (config.contains("replay")) {
         for (const auto& entry : config.at("replay")) {
           BenchOptions::ReplayGame game;
           game.faction = entry.value("faction", std::string());
           game.game = entry.value("game", 0);
-          game.drawsBefore = entry.value("draws", 0L);
           if (!game.faction.empty() && game.game > 0) options.replay.push_back(game);
         }
       }

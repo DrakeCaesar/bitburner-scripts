@@ -8,15 +8,13 @@
 namespace ipvgo::nn {
 
 struct BenchOptions {
-  // A game to replay instead of generating one: exactly what a previous run
-  // reported in its gameStart event. The rng is rewound to the position that run
-  // was in when the game started (every draw before it is a function of the seed
-  // and the count), so the board and White's replies are identical and only the
-  // search settings differ. That makes a locked set a regression test for tuning.
+  // A game to replay instead of generating one: exactly the game a previous run played.
+  // Every game's inputs come from (seed, faction, game number), so naming those three is
+  // enough to reproduce the board and White's replies; only the search settings differ.
+  // That makes a locked set a regression test for tuning.
   struct ReplayGame {
     std::string faction;
-    int game = 0;         // 1-based, as shown in the GUI
-    long drawsBefore = 0;  // rng() calls consumed before this game
+    int game = 0;  // 1-based, as shown in the GUI
   };
 
   int size = 5;
@@ -50,6 +48,13 @@ struct BenchOptions {
   // stronger (-5 points at 12 threads) and unable to starve a move - at the cost of
   // run-to-run variation. See "The scheduler changes strength, not just speed".
   bool dynamicRoot = false;
+  // Play this many games at the same time instead of one at a time. Each game still
+  // searches on a single thread (`threads` is forced to 1), which is the trade the tuner
+  // measured: independent games scale with the core count, parallel search inside one
+  // game does not. Games are independent by construction - each is seeded from (seed,
+  // faction, game number) - so the answers do not depend on this setting. 0 or 1 = one
+  // game at a time.
+  int gamesInParallel = 0;
   // Per-faction overrides of the three width settings, produced by `tune`. A faction
   // that is absent (or leaves a field at 0) uses the global values above, so a stored
   // setting only ever changes the faction it was tuned for.

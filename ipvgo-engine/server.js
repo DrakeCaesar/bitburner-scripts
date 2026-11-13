@@ -161,8 +161,10 @@ const bench = {
     frameSeq: 0,
     // Archived games of this batch: { faction, game, win, margin, moves: [...] }
     archive: [],
-    // The game being played, so moves can be attached to it as they arrive.
-    live: null,
+    // Games in flight, keyed by "faction#game". Several are open at once when the bench
+    // plays parallel games, so every event is routed by its own faction and game number
+    // rather than to whichever game started last.
+    liveByGame: new Map(),
   },
 }
 
@@ -182,8 +184,23 @@ function resetBenchState(options) {
     frames: [],
     frameSeq: 0,
     archive: [],
-    live: null,
+    liveByGame: new Map(),
   }
+}
+
+const benchGameKey = (faction, game) => `${faction}#${game}`
+
+// True when the event belongs to the game the board is showing.
+function isShownGame(state, event) {
+  return Boolean(
+    state.current && event.faction === state.current.faction && event.game === state.current.game,
+  )
+}
+
+// The record of the game an event belongs to, or null when it is not one we track.
+function liveGameFor(state, event) {
+  if (!event || !event.faction || event.game === undefined || event.game === null) return null
+  return state.liveByGame.get(benchGameKey(event.faction, event.game)) ?? null
 }
 
 function pushFrame(state, side, event, extra) {
@@ -196,9 +213,11 @@ function pushFrame(state, side, event, extra) {
     board: event.board,
     blackScore: event.blackScore,
     whiteScore: event.whiteScore,
-    move: state.current.move,
-    faction: state.current.faction,
-    game: state.current.game,
+    // From the event, not from `current`: with games running side by side the newest
+    // event is not necessarily the newest game.
+    move: event.move ?? state.current.move,
+    faction: event.faction ?? state.current.faction,
+    game: event.game ?? state.current.game,
     games: state.current.games,
   }
   state.frames.push(frame)
@@ -214,7 +233,7 @@ function pushFrame(state, side, event, extra) {
 const benchClients = new Set()
 
 function benchSnapshot() {
-  const { frames, archive, live, ...rest } = bench.state
+  const { frames, archive, liveByGame, ...rest } = bench.state
   return {
     ...rest,
     pid: undefined,
@@ -253,33 +272,49 @@ function applyBenchEvent(event) {
       benchBroadcast("rows", { rows: state.rows })
       break
     case "gameStart":
-      state.current = {
-        faction: event.faction,
-        factionIndex: event.factionIndex,
-        factionCount: event.factionCount,
-        game: event.game,
-        games: event.games,
-        move: 0,
-        thinking: false,
-        board: null,
-        lastBlack: null,
-        lastWhite: null,
-        blackScore: 0,
-        whiteScore: 0,
+      // The board shows one game at a time. `current` moves on only when the game it was
+      // showing has finished, so a batch of parallel games does not make the board flicker
+      // between them.
+      const showing = state.current && state.liveByGame.has(benchGameKey(state.current.faction, state.current.game))
+      if (!showing) {
+        state.current = {
+          faction: event.faction,
+          factionIndex: event.factionIndex,
+          factionCount: event.factionCount,
+          game: event.game,
+          games: event.games,
+          move: 0,
+          thinking: false,
+          board: null,
+          lastBlack: null,
+          lastWhite: null,
+          blackScore: 0,
+          whiteScore: 0,
+        }
+        // One record per game of the batch, so the page can expand it afterwards. Several
+        // are open at once when games run in parallel, which is why they live in a map
+        // keyed by faction and game number.
+        state.liveByGame.set(benchGameKey(event.faction, event.game), {
+          faction: event.faction,
+          game: event.game,
+          // The seed this game's inputs came from: enough to replay it exactly
+          // under different search settings (see BenchOptions::replay).
+          seed: event.seed ?? 0,
+          moves: [],
+        })
+        benchBroadcast("game", state.current)
+      } else {
+        // Still recorded, just not shown.
+        state.liveByGame.set(benchGameKey(event.faction, event.game), {
+          faction: event.faction,
+          game: event.game,
+          seed: event.seed ?? 0,
+          moves: [],
+        })
       }
-      // One record per game of the batch, so the page can expand it afterwards.
-      state.live = {
-        faction: event.faction,
-        game: event.game,
-        // Where this game started in the rng stream: enough to replay it exactly
-        // under different search settings (see BenchOptions::replay).
-        draws: event.draws ?? 0,
-        moves: [],
-      }
-      benchBroadcast("game", state.current)
       break
     case "thinking":
-      if (!state.current) break
+      if (!state.current || !isShownGame(state, event)) break
       state.current.thinking = true
       state.current.move = event.move
       state.current.board = event.board
@@ -295,21 +330,10 @@ function applyBenchEvent(event) {
       })
       break
     case "move": {
-      if (!state.current) break
-      state.current.thinking = false
-      state.current.move = event.move
-      state.current.board = event.board
-      state.current.blackScore = event.blackScore
-      state.current.whiteScore = event.whiteScore
-      state.current.lastBlack = event.pass ? "pass" : `${event.black.x},${event.black.y}`
-      state.current.depth = event.depth
-      state.current.nodes = event.nodes
-      state.current.ms = event.ms
-      state.current.value = event.value
-      const frame = pushFrame(state, "B", event, event.pass ? null : { x: event.black.x, y: event.black.y })
-      if (frame) benchBroadcast("frame", frame)
-      if (state.live) {
-        state.live.moves.push({
+      // The archive record first: it belongs to its own game whatever the board is showing.
+      const live = liveGameFor(state, event)
+      if (live) {
+        live.moves.push({
           move: event.move,
           black: event.pass ? null : { x: event.black.x, y: event.black.y },
           blackPass: !!event.pass,
@@ -328,18 +352,25 @@ function applyBenchEvent(event) {
           whiteAudit: null,
         })
       }
-      break
-    }
-    case "reply": {
-      if (!state.current) break
+      if (!isShownGame(state, event)) break
+      state.current.thinking = false
+      state.current.move = event.move
       state.current.board = event.board
       state.current.blackScore = event.blackScore
       state.current.whiteScore = event.whiteScore
-      state.current.lastWhite = event.pass ? "pass" : `${event.white.x},${event.white.y}`
-      const frame = pushFrame(state, "W", event, event.pass ? null : { x: event.white.x, y: event.white.y })
+      state.current.lastBlack = event.pass ? "pass" : `${event.black.x},${event.black.y}`
+      state.current.depth = event.depth
+      state.current.nodes = event.nodes
+      state.current.ms = event.ms
+      state.current.value = event.value
+      const frame = pushFrame(state, "B", event, event.pass ? null : { x: event.black.x, y: event.black.y })
       if (frame) benchBroadcast("frame", frame)
-      if (state.live && state.live.moves.length > 0) {
-        const last = state.live.moves[state.live.moves.length - 1]
+      break
+    }
+    case "reply": {
+      const liveReplies = liveGameFor(state, event)
+      if (liveReplies && liveReplies.moves.length > 0) {
+        const last = liveReplies.moves[liveReplies.moves.length - 1]
         last.white = event.pass ? null : { x: event.white.x, y: event.white.y }
         last.whitePass = !!event.pass
         last.boardAfterWhite = event.board
@@ -348,6 +379,13 @@ function applyBenchEvent(event) {
         // The eval after White's real reply, and how likely the model thought it was.
         last.whiteAudit = event.audit ?? null
       }
+      if (!isShownGame(state, event)) break
+      state.current.board = event.board
+      state.current.blackScore = event.blackScore
+      state.current.whiteScore = event.whiteScore
+      state.current.lastWhite = event.pass ? "pass" : `${event.white.x},${event.white.y}`
+      const frame = pushFrame(state, "W", event, event.pass ? null : { x: event.white.x, y: event.white.y })
+      if (frame) benchBroadcast("frame", frame)
       break
     }
     case "gameEnd":
@@ -361,24 +399,26 @@ function applyBenchEvent(event) {
       }
       // Archive the finished game with its move list, and hand the page the index
       // so it can fetch the detail on demand instead of shipping every move to
-      // every client up front.
-      if (state.live) {
+      // every client up front. The record is the one this game's own events filled,
+      // which matters when several games ran side by side.
+      const finished = liveGameFor(state, event)
+      if (finished) {
         state.archive.push({
-          faction: state.live.faction,
-          game: state.live.game,
+          faction: finished.faction,
+          game: finished.game,
           win: event.win,
           margin: event.margin,
           movesPlayed: event.moves,
-          draws: state.live.draws,
-          moves: state.live.moves,
+          seed: finished.seed,
+          moves: finished.moves,
         })
         if (state.archive.length > BENCH_ARCHIVE_LIMIT) {
           state.archive.splice(0, state.archive.length - BENCH_ARCHIVE_LIMIT)
         }
         state.lastResult.archiveIndex = state.archive.length - 1
-        state.lastResult.moveCount = state.live.moves.length
-        state.lastResult.draws = state.live.draws
-        state.live = null
+        state.lastResult.moveCount = finished.moves.length
+        state.lastResult.seed = finished.seed
+        state.liveByGame.delete(benchGameKey(finished.faction, finished.game))
       }
       state.history.unshift(state.lastResult)
       if (state.history.length > BENCH_HISTORY_LIMIT) state.history.length = BENCH_HISTORY_LIMIT
@@ -457,6 +497,11 @@ async function handleBenchStart(req, res) {
     if (Number.isFinite(value)) options[key] = value
   }
   if (body?.carry === true) options.carry = true
+  // Play several games at once, one search thread each, instead of one game with many
+  // threads. 0 or 1 = one game at a time; the results are identical either way because
+  // every game is seeded from (seed, faction, game number).
+  const parallelGames = Math.max(0, Math.floor(Number(body?.parallelGames ?? 0)))
+  if (Number.isFinite(parallelGames) && parallelGames > 1) options.parallelGames = Math.min(64, parallelGames)
   // The three deepening-loop switches. Off unless asked for: they arrived on 11-12 Nov
   // and measured slightly worse than the behaviour they replaced.
   if (body?.autoDepth === true) options.autoDepth = true
@@ -479,12 +524,12 @@ async function handleBenchStart(req, res) {
       .map((game) => ({
         faction: String(game?.faction ?? ""),
         game: Math.floor(Number(game?.game ?? 0)),
-        draws: Math.max(0, Math.floor(Number(game?.draws ?? 0))),
+        seed: Math.max(0, Math.floor(Number(game?.seed ?? 0))),
       }))
       .filter((game) => game.faction && game.game > 0)
       .slice(0, 5000)
     if (games.length === 0) {
-      return sendJson(res, 400, { error: "replay needs at least one {faction, game, draws} entry" })
+      return sendJson(res, 400, { error: "replay needs at least one {faction, game} entry" })
     }
     options.replay = games
     delete options.factions
@@ -1361,7 +1406,7 @@ function handleBenchEvents(req, res) {
 function handleBenchState(req, res, url) {
   const sinceRaw = Number(url?.searchParams?.get("since") ?? 0)
   const since = Number.isFinite(sinceRaw) && sinceRaw > 0 ? Math.floor(sinceRaw) : 0
-  const { frames = [], frameSeq = 0, archive = [], live, ...rest } = bench.state
+  const { frames = [], frameSeq = 0, archive = [], liveByGame, ...rest } = bench.state
   sendJson(res, 200, {
     ...rest,
     pid: undefined,
@@ -1378,9 +1423,9 @@ function handleBenchState(req, res, url) {
       movesPlayed: game.movesPlayed,
       moveCount: game.moves.length,
       // Needed to lock this game into a replay set.
-      draws: game.draws ?? 0,
+      seed: game.seed ?? 0,
     })),
-    liveMoves: live ? live.moves.length : 0,
+    liveMoves: liveByGame.size,
   })
 }
 
