@@ -1395,7 +1395,12 @@ held-back seeds:
 ```
 
 The same search is wired into the bench GUI under **Auto-tune widths for one faction**,
-which streams each generation over SSE and shows the validation pair when it finishes.
+which streams every finished game over SSE - so the pane's counters (generation, games in
+this generation, genomes measured, games left for the faction) and its ETA move inside a
+generation rather than once per generation - and shows the validation pair when the run
+finishes. The ETA is derived from the games actually played since the faction started, and
+`gamesPlanned` is an upper bound: a genome that was measured in an earlier generation is
+not replayed, so the estimate only gets more accurate as a run proceeds.
 
 **The GUI inherits the search settings.** The tuning pane owns only the workload - faction,
 board size, generations, population, games per genome, node limit, games in flight, seed.
@@ -1459,6 +1464,17 @@ will happily report a winner that is worse. Treat the tuned numbers as a hypothe
 re-test with the bench (paired, several hundred games), not as a config to ship. The
 mechanism earns its place as a way to ask the question cheaply, not as an optimiser that
 is expected to return a better genome than the defaults.
+
+**Every finished faction also leaves its measurements on disk.**
+`ipvgo-engine/temp/tuning-runs/<date>-<faction>-<n>x<n>.json` holds the whole final
+generation - rank, beam, replies kept, mass cap, win rate, standard error, margin and
+finished/unfinished for **every genome in it** - together with the champion's training
+tally, the two held-back validation rows, and the settings that produced them (generations,
+population, games per genome, node limit, games in flight, seed, carry memo, the inherited
+search block, and the range box), plus the engine build and binary path. The pane prints the
+path when the faction finishes. The store only remembers the winner; this is the evidence
+behind it, and because it is written per run rather than per faction, two runs of the same
+faction do not overwrite each other.
 
 **The store is a file, and it is portable.** Everything the tuner and the GUI commit lands
 in `ipvgo-engine/temp/tuning.json` as `{faction: {applied, best}}`, and that file is what

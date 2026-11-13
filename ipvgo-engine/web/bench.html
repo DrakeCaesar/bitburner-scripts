@@ -559,8 +559,8 @@
             </label>
             <label class="field"><span>Generations</span><input id="tuneGenerations" type="number" min="1" max="60" value="6" /></label>
             <label class="field"><span>Population</span><input id="tunePopulation" type="number" min="2" max="40" value="10" /></label>
-            <label class="field"><span title="Games each genome plays on the shared training seeds">Games per genome</span><input id="tuneGames" type="number" min="4" max="400" value="24" /></label>
-            <label class="field"><span title="Per-move node budget for the tuning games. Max depth and the endgame node cap come from the Run pane.">Node limit</span><input id="tuneNodeLimit" type="number" min="100" step="100" value="1000" /></label>
+            <label class="field"><span title="Games each genome plays on the shared training seeds">Games per genome</span><input id="tuneGames" type="number" min="4" max="100000" value="24" /></label>
+            <label class="field"><span title="Per-move node budget for the tuning games. Max depth and the endgame node cap come from the Run pane.">Node limit</span><input id="tuneNodeLimit" type="number" min="100" max="5000000" step="100" value="1000" /></label>
             <label class="field"><span title="Games in flight at once. Each one searches on a single thread.">Parallel games</span><input id="tuneThreads" type="number" min="1" max="64" value="8" /></label>
             <label class="field"><span>Seed</span><input id="tuneSeed" type="number" min="1" value="1" /></label>
           </div>
@@ -583,7 +583,9 @@
           </label>
           <div class="tuneTiming" id="tuneTiming"></div>
           <div class="small" id="tuneStatus">idle</div>
+          <div class="tuneTiming" id="tuneProgress"></div>
           <div class="tuneTiming" id="tuneEta"></div>
+          <div class="small dim" id="tuneRunFile"></div>
           <div class="err" id="tuneError"></div>
 
           <table class="gridTable" id="tuneGeneTable">
@@ -1887,6 +1889,27 @@
       // play path and this page all read the same numbers.
       const TUNE_FIELDS = ["tuneFaction", "tuneSize", "tuneGenerations", "tunePopulation", "tuneGames", "tuneNodeLimit", "tuneThreads", "tuneSeed"]
       const TUNE_STORAGE_KEY = "ipvgo-tune-form-v1"
+      // The server clamps every tuner number to the range it accepts. Clamping here too
+      // means the fields show what will actually run. The bounds are wide on purpose -
+      // games per genome only stops a typo, it does not cap the workload you asked for.
+      const TUNE_LIMITS = {
+        tuneGenerations: [1, 60],
+        tunePopulation: [2, 40],
+        tuneGames: [4, 100000],
+        tuneNodeLimit: [100, 5000000],
+        tuneThreads: [1, 64],
+        tuneSeed: [1, Number.MAX_SAFE_INTEGER],
+      }
+
+      function tuneValue(id) {
+        const input = el(id)
+        const limits = TUNE_LIMITS[id]
+        if (!limits) return Number(input.value)
+        const parsed = Math.floor(Number(input.value))
+        const value = Number.isFinite(parsed) ? Math.min(limits[1], Math.max(limits[0], parsed)) : limits[0]
+        if (String(value) !== input.value.trim()) input.value = String(value)
+        return value
+      }
 
       const tunePct = (value) => `${(100 * Number(value ?? 0)).toFixed(1)}%`
       const tuneSigned = (value) => {
@@ -1911,18 +1934,74 @@
         const host = el("tuneEta")
         if (!host) return
         host.textContent = ""
-        if (!source || !(Number(source.etaMs) > 0 || Number(source.queueEtaMs) > 0)) return
+        if (!source) return
         const parts = []
-        if (Number(source.etaMs) > 0) parts.push(`this faction about ${formatDuration(source.etaMs)} left`)
-        if (Number(source.queueEtaMs) > 0) parts.push(`whole queue about ${formatDuration(source.queueEtaMs)} left`)
+        // The faction ETA is recomputed from the counters the progress line is showing,
+        // so the two lines can never belong to different moments. The server's number is
+        // the fallback for an event that carries no counts of its own.
+        const p = tuneLastProgress
+        const played = Number(p?.gamesPlayed ?? 0)
+        const planned = Number(p?.gamesPlanned ?? 0)
+        const perGameMs = played > 0 ? Number(p.elapsedMs ?? 0) / played : 0
+        // One slow first game says nothing about the run, so wait until a couple of
+        // rounds of games have landed before quoting a time.
+        const inFlight = Math.max(1, Number(el("tuneThreads").value) || 1)
+        const warm = played >= Math.min(24, 2 * inFlight)
+        const etaMs = warm && perGameMs > 0 ? perGameMs * Math.max(0, planned - played) : 0
+        const queueEtaMs = Number(source.queueEtaMs ?? 0)
+        if (etaMs > 0) parts.push(`this faction about ${formatDuration(etaMs)} left`)
+        else if (!warm && Number(source.etaMs) > 0) parts.push("timing the first games")
+        if (queueEtaMs > etaMs) parts.push(`whole queue about ${formatDuration(queueEtaMs)} left`)
         if (Number(source.elapsedMs) > 0) parts.unshift(`${formatDuration(source.elapsedMs)} elapsed`)
         host.textContent = parts.join("   ")
+      }
+
+      // The tuner reports after every finished game, so these counters move during a
+      // generation rather than once per generation. The faction total is an upper bound:
+      // a genome already measured is not replayed.
+      function renderTuneProgress(source) {
+        const host = el("tuneProgress")
+        if (!host) return
+        const p = source?.progress
+        if (!p) {
+          host.textContent = ""
+          return
+        }
+        const validation = p.phase === "validation"
+        const played = Number(p.gamesPlayed ?? 0)
+        const planned = Number(p.gamesPlanned ?? 0)
+        const done = Number(p.gamesDone ?? 0)
+        const total = Number(p.games ?? 0)
+        const genomes = Number(p.genomes ?? 0)
+        // Games are claimed in genome order, so the genome being measured is the one the
+        // batch is currently inside - which is the honest reading of a parallel batch
+        // where 12 games of the same genome can be running at once.
+        const perGenome = genomes > 0 && total > 0 ? total / genomes : 0
+        const current = perGenome > 0 ? Math.min(genomes, Math.floor(done / perGenome) + 1) : 0
+        const finished = total > 0 && done >= total
+        const genomePart = finished
+          ? validation
+            ? "both finalists measured"
+            : `all ${genomes} genomes measured`
+          : current > 0
+            ? `${validation ? "finalist" : "genome"} ${current}/${genomes} in progress`
+            : ""
+        const parts = [
+          validation ? "held-back validation" : `generation ${p.gen}/${p.generations}`,
+          `games ${done}/${total} in this ${validation ? "phase" : "generation"}`,
+          genomePart,
+          planned > 0 ? `${played}/${planned} games for this faction, ${Math.max(0, planned - played)} left` : "",
+        ]
+        host.textContent = parts.filter(Boolean).join("   ")
       }
 
       let tuneRanges = null
       let tuneStore = {}
       let tuneDone = null
       let tuneRunning = false
+      // Latest per-game counters, so the ETA line and the counters line always describe
+      // the same moment even when they are redrawn by a different event.
+      let tuneLastProgress = null
 
       const PANE_KEY = "ipvgo-bench-pane-v1"
 
@@ -2286,6 +2365,7 @@
         setTuneRunning(false)
         for (const id of TUNE_FIELDS) {
           el(id).addEventListener("change", () => {
+            tuneValue(id)
             saveTuneForm()
             if (id === "tuneFaction") applyBoxToInputs(tuneBoxFor(el("tuneFaction").value))
             if (id === "tuneThreads") renderTuneInherited()
@@ -2340,7 +2420,10 @@
           for (const item of snapshot.generations ?? []) generations.push(item)
           renderTuneRows(generations)
           renderTuneValidation(snapshot.done)
+          tuneLastProgress = snapshot.progress ?? null
           renderTuneEta(snapshot)
+          renderTuneProgress(snapshot)
+          el("tuneRunFile").textContent = snapshot.runFile ? `final generation saved to ${snapshot.runFile}` : ""
           tuneRunSearch =
             snapshot.running && snapshot.options?.search
               ? { ...snapshot.options.search, carry: snapshot.options.carry !== false }
@@ -2361,6 +2444,12 @@
             el("tuneStatus").textContent = "idle"
           }
         })
+        source.addEventListener("progress", (event) => {
+          const data = JSON.parse(event.data)
+          tuneLastProgress = data
+          renderTuneProgress({ progress: data })
+          renderTuneEta(data)
+        })
         source.addEventListener("generation", (event) => {
           const data = JSON.parse(event.data)
           generations.push(data)
@@ -2373,6 +2462,8 @@
           renderTuneValidation(data)
           setTuneRunning(false)
           el("tuneStatus").textContent = "finished - compare the two validation rows"
+          // The server keeps the whole final generation in a file; say where.
+          if (data.file) el("tuneRunFile").textContent = `final generation saved to ${data.file}`
         })
         source.addEventListener("settings", (event) => refreshSettings(JSON.parse(event.data)))
         source.addEventListener("error", (event) => {
@@ -2385,12 +2476,12 @@
           const body = {
             faction: el("tuneFaction").value,
             size: Number(el("tuneSize").value),
-            generations: Number(el("tuneGenerations").value),
-            population: Number(el("tunePopulation").value),
-            games: Number(el("tuneGames").value),
-            nodeLimit: Number(el("tuneNodeLimit").value),
-            threads: Number(el("tuneThreads").value),
-            seed: Number(el("tuneSeed").value),
+            generations: tuneValue("tuneGenerations"),
+            population: tuneValue("tunePopulation"),
+            games: tuneValue("tuneGames"),
+            nodeLimit: tuneValue("tuneNodeLimit"),
+            threads: tuneValue("tuneThreads"),
+            seed: tuneValue("tuneSeed"),
             resume,
             search: inheritedSearch(),
             ranges: readBoxFromInputs(),
@@ -2423,12 +2514,12 @@
           const body = {
             factions: ALL_FACTIONS,
             size: Number(el("tuneSize").value),
-            generations: Number(el("tuneGenerations").value),
-            population: Number(el("tunePopulation").value),
-            games: Number(el("tuneGames").value),
-            nodeLimit: Number(el("tuneNodeLimit").value),
-            threads: Number(el("tuneThreads").value),
-            seed: Number(el("tuneSeed").value),
+            generations: tuneValue("tuneGenerations"),
+            population: tuneValue("tunePopulation"),
+            games: tuneValue("tuneGames"),
+            nodeLimit: tuneValue("tuneNodeLimit"),
+            threads: tuneValue("tuneThreads"),
+            seed: tuneValue("tuneSeed"),
             resume: el("tuneAllResume").checked,
             autoApply: el("tuneAllApply").checked,
             search: inheritedSearch(),

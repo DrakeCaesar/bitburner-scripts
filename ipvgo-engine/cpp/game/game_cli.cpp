@@ -43,6 +43,7 @@
 #include <random>
 #include <sstream>
 #include <string>
+#include <functional>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -1920,6 +1921,11 @@ struct TuneSearchConfig {
   }
 };
 
+// Called from a worker thread after each finished game, with how many of the batch are
+// done. Runs while other games of the batch are still playing, so an implementation has
+// to serialise its own output.
+using TuneGameProgress = std::function<void(long done, long total)>;
+
 int tuneMoveCap(int size) {
   const char* capEnv = std::getenv("IPVGO_MOVECAP");
   return capEnv != nullptr ? std::max(1, std::atoi(capEnv)) : size * size * 4;
@@ -2023,10 +2029,11 @@ std::pair<double, size_t> tuneTiming() {
 
 std::vector<TuneTally> tuneEvaluate(const std::vector<TuneGenome>& genomes, const std::vector<uint64_t>& seeds,
                                     int size, Opponent ai, long nodeLimit, unsigned threads, bool carry,
-                                    const TuneSearchConfig& search) {
+                                    const TuneSearchConfig& search, const TuneGameProgress& onGame = {}) {
   std::vector<TuneTally> tallies(genomes.size());
   std::vector<TuneTally> results(genomes.size() * seeds.size());
   std::atomic<size_t> next{0};
+  std::atomic<long> played{0};
   const size_t jobs = results.size();
   const unsigned workers = std::max(1u, std::min<unsigned>(threads, static_cast<unsigned>(std::max<size_t>(jobs, 1))));
 
@@ -2036,6 +2043,7 @@ std::vector<TuneTally> tuneEvaluate(const std::vector<TuneGenome>& genomes, cons
       if (job >= jobs) break;
       results[job] =
           tunePlayGame(size, ai, genomes[job / seeds.size()], nodeLimit, seeds[job % seeds.size()], carry, search);
+      if (onGame) onGame(played.fetch_add(1, std::memory_order_relaxed) + 1, static_cast<long>(jobs));
     }
   };
   if (workers <= 1) {
@@ -2148,6 +2156,40 @@ int runTune(const std::string& faction, int generations, int populationSize, int
   std::vector<uint64_t> validationSeeds;
   for (int i = 0; i < std::max(gamesPerGenome * 3, 60); ++i) validationSeeds.push_back(rng());
 
+  // Progress: one line per finished game, so the caller can show how far into the faction
+  // it is and extrapolate an ETA instead of waiting for the next generation. `gamesPlanned`
+  // is an upper bound - reusing a measured genome skips games, and the held-back pass adds
+  // two more - so the estimate only ever gets more accurate as a run proceeds.
+  const auto runStart = std::chrono::steady_clock::now();
+  const long plannedGames =
+      static_cast<long>(generations) * populationSize * gamesPerGenome + 2L * static_cast<long>(validationSeeds.size());
+  std::mutex progressMutex;
+  std::atomic<long> gamesPlayed{0};
+  // Workers call this concurrently, so the line is written under a lock and in one go.
+  auto reportGame = [&](const char* phase, int gen, long batchDone, long batchTotal, long seedsPerGenome,
+                        int genomesInBatch) {
+    const long gamesDone = gamesPlayed.fetch_add(1) + 1;
+    if (!emitJson) return;
+    const auto elapsed = static_cast<long>(
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - runStart).count());
+    std::lock_guard<std::mutex> lock(progressMutex);
+    std::cout << json{{"type", "progress"},
+                      {"phase", phase},
+                      {"faction", faction},
+                      {"gen", gen},
+                      {"generations", generations},
+                      {"gamesDone", batchDone},
+                      {"games", batchTotal},
+                      {"genomesDone", seedsPerGenome > 0 ? batchDone / seedsPerGenome : 0L},
+                      {"genomes", genomesInBatch},
+                      {"gamesPlayed", gamesDone},
+                      {"gamesPlanned", plannedGames},
+                      {"elapsedMs", elapsed}}
+                     .dump()
+              << "\n";
+    std::cout.flush();
+  };
+
   std::vector<TuneGenome> population;
   population.reserve(static_cast<size_t>(populationSize));
   if (haveSeed) {
@@ -2229,8 +2271,12 @@ int runTune(const std::string& faction, int generations, int populationSize, int
       unseenAt.push_back(i);
     }
     if (!unseenGenomes.empty()) {
-      const std::vector<TuneTally> fresh =
-          tuneEvaluate(unseenGenomes, trainSeeds, size, ai, nodeLimit, threads, carry, search);
+      const std::vector<TuneTally> fresh = tuneEvaluate(
+          unseenGenomes, trainSeeds, size, ai, nodeLimit, threads, carry, search,
+          [&](long done, long total) {
+            reportGame("generation", gen + 1, done, total, static_cast<long>(trainSeeds.size()),
+                       static_cast<int>(unseenGenomes.size()));
+          });
       for (size_t j = 0; j < fresh.size(); ++j) measured[genomeKey(unseenGenomes[j])] = fresh[j];
     }
     playedEvaluations += static_cast<long>(unseenGenomes.size());
@@ -2346,8 +2392,12 @@ int runTune(const std::string& faction, int generations, int populationSize, int
 
   // Re-measure the winner and the shipped defaults on the held-back seeds.
   std::vector<TuneGenome> finalists = {bestOverall, TuneGenome{}};
-  const std::vector<TuneTally> finalTallies =
-      tuneEvaluate(finalists, validationSeeds, size, ai, nodeLimit, threads, carry, search);
+  const std::vector<TuneTally> finalTallies = tuneEvaluate(
+      finalists, validationSeeds, size, ai, nodeLimit, threads, carry, search,
+      [&](long done, long total) {
+        reportGame("validation", generations + 1, done, total, static_cast<long>(validationSeeds.size()),
+                   static_cast<int>(finalists.size()));
+      });
 
   if (emitJson) {
     std::cout << json{{"type", "done"},

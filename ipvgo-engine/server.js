@@ -444,34 +444,17 @@ async function handleBenchStart(req, res) {
     seed: Number(body?.seed ?? 1),
     factions: Array.isArray(body?.factions) && body.factions.length > 0 ? body.factions : undefined,
   }
-  // Every search-shaping knob the form can set. Without this the "Search tuning"
-  // fields were collected by the page and then silently discarded here, so the GUI
-  // could not reproduce any experiment that changed them.
-  for (const key of ["depth", "maxDepth", "beam", "whiteChildren", "whiteMass", "endgameEmpties", "nodeBudget", "threads"]) {
+  // Every search-shaping knob the form can set, taken exactly as typed. Absent or
+  // non-numeric fields are skipped so the engine default applies; nothing is clamped
+  // here, because a bound at this layer only ever meant the GUI quietly ran something
+  // other than what was asked for (the tuner's old 400-games and 200k-node ceilings did
+  // exactly that). The engine clamps only what it must: the thread count to the number
+  // of root moves, and whiteMass is validated below.
+  for (const key of ["depth", "maxDepth", "beam", "whiteChildren", "endgameEmpties", "nodeBudget", "threads"]) {
     const raw = body?.[key]
     if (raw === null || raw === undefined || raw === "") continue
     const value = Number(raw)
     if (Number.isFinite(value)) options[key] = value
-  }
-
-  // Optional search tuning; anything absent keeps the engine default.
-  const integer = (key, min, max) => {
-    const raw = body?.[key]
-    if (raw === undefined || raw === null || raw === "") return undefined
-    const value = Math.floor(Number(raw))
-    if (!Number.isFinite(value) || value < min || value > max) return undefined
-    return value
-  }
-  for (const [key, min, max] of [
-    ["beam", 0, 64],
-    ["whiteChildren", 0, 32],
-    ["endgameEmpties", 0, 20],
-    ["nodeBudget", 1000, 5000000],
-    ["maxDepth", 0, 64],   // 0 = engine default; see the autoDepth switch
-    ["threads", 0, 64],
-  ]) {
-    const value = integer(key, min, max)
-    if (value !== undefined) options[key] = value
   }
   if (body?.carry === true) options.carry = true
   // The three deepening-loop switches. Off unless asked for: they arrived on 11-12 Nov
@@ -623,6 +606,70 @@ function writeTuningStore(store) {
 
 function tuningSnapshot() {
   return { store: readTuningStore(), file: path.relative(__dirname, TUNING_FILE) }
+}
+
+// One file per finished faction, holding the whole final generation with its training
+// measurements, the held-back validation pair and the settings that produced them. The
+// store only keeps the winner; this keeps the evidence, so a result can be re-read or
+// re-ranked without the page or a re-run. Untracked, like the rest of temp/.
+const TUNE_RUNS_DIR = path.join(__dirname, "temp", "tuning-runs")
+
+function saveTuneRunFile(options, event) {
+  // The engine's own faction/size/nodeLimit win: a queued run reuses one `options`
+  // object for every faction, so `options.faction` is still the first one's.
+  const faction = event?.faction ?? options.faction
+  const size = event?.size ?? options.size
+  const lastGen = tune.state.generations[tune.state.generations.length - 1] ?? null
+  const startedAt = tune.state.startedAt
+  const record = {
+    faction,
+    savedAt: new Date().toISOString(),
+    size,
+    durationMs: startedAt ? Date.now() - startedAt : null,
+    settings: {
+      generations: options.generations,
+      population: options.population,
+      gamesPerGenome: options.games,
+      nodeLimit: event?.nodeLimit ?? options.nodeLimit,
+      gamesInFlight: options.threads,
+      seed: options.seed,
+      resume: options.resume,
+      resumedFrom: options.resumeFrom ?? null,
+      carry: options.carry,
+      search: options.search,
+      ranges: options.ranges ?? null,
+    },
+    engine: { build: engineBuildChoice.build, binary: mcgsExecutablePath() },
+    evaluations: { played: event?.playedEvaluations ?? null, reused: event?.cachedEvaluations ?? null },
+    finalGeneration: lastGen
+      ? {
+          gen: lastGen.gen,
+          generations: lastGen.generations,
+          msPerMove: lastGen.msPerMove ?? null,
+          reusedThisGeneration: lastGen.cached ?? null,
+          genomes: (lastGen.rows ?? []).map((row) => ({
+            rank: row.rank,
+            beam: row.genome?.beam,
+            whiteChildren: row.genome?.whiteChildren,
+            whiteMass: row.genome?.whiteMass,
+            winRate: row.winRate,
+            se: row.se,
+            avgMargin: row.avgMargin,
+            finished: row.finished,
+            unfinished: row.unfinished,
+          })),
+        }
+      : null,
+    // The champion's training tally and the two held-back rows (tuned vs shipped defaults).
+    train: event?.train ?? null,
+    validation: event?.validation ?? null,
+  }
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")
+  const slug = String(faction).toLowerCase().replace(/[^a-z0-9]+/g, "-")
+  const file = path.join(TUNE_RUNS_DIR, `${stamp}-${slug}-${size}x${size}.json`)
+  fs.mkdirSync(TUNE_RUNS_DIR, { recursive: true })
+  fs.writeFileSync(file, JSON.stringify(record, null, 2) + "\n")
+  return { file, relative: path.relative(__dirname, file) }
 }
 
 // The commit the store was exported from, for the file name. Read every time rather than
@@ -847,6 +894,10 @@ const tune = {
     size: 5,
     options: null,
     generations: [],
+    // Latest per-game progress line from the tuner, or null before the first game ends.
+    progress: null,
+    // File written when the last faction finished, relative to ipvgo-engine/.
+    runFile: null,
     done: null,
     error: null,
     startedAt: 0,
@@ -868,23 +919,38 @@ function tuneSnapshot() {
   }
 }
 
-// Time left, from the rate actually observed so far rather than from a guess: the
-// elapsed time divided by the generations that finished, times the ones still to run.
-// The queue estimate adds one faction's worth of time per faction still queued, using
-// the average of the factions already finished when there is one.
+// Time left, from the games actually played rather than from a guess: the elapsed time
+// divided by the games finished, times the games still planned for this faction. The
+// tuner emits that after every game, so the estimate is live inside a generation; before
+// the first game lands it falls back to the per-generation rate. The queue estimate adds
+// one faction's worth of time per faction still queued, using the average of the factions
+// already finished when there is one.
 function tuneEta() {
   const state = tune.state
   const now = Date.now()
   const elapsedMs = state.startedAt ? (state.endedAt || now) - state.startedAt : 0
+  const progress = state.progress
   const doneGens = state.generations.length
   const totalGens = state.options?.generations ?? 0
   const perGenMs = doneGens > 0 ? elapsedMs / doneGens : 0
-  const etaMs = state.running && perGenMs > 0 && totalGens > doneGens ? perGenMs * (totalGens - doneGens) : 0
+  let etaMs = 0
+  if (state.running) {
+    if (progress && progress.gamesPlayed > 0 && progress.gamesPlanned > 0) {
+      const perGameMs = progress.elapsedMs / progress.gamesPlayed
+      etaMs = perGameMs * Math.max(0, progress.gamesPlanned - progress.gamesPlayed)
+    } else if (perGenMs > 0 && totalGens > doneGens) {
+      etaMs = perGenMs * (totalGens - doneGens)
+    }
+  }
   const queue = tune.queue
   let queueEtaMs = 0
   if (queue.factions.length > 0) {
     const remaining = Math.max(0, queue.factions.length - queue.index - 1)
-    const factionMs = queue.averageFactionMs > 0 ? queue.averageFactionMs : perGenMs * totalGens
+    // Until one faction has finished there is no average to multiply, and adding
+    // nothing made the queue figure equal the faction figure. Fall back to this run's
+    // own projection: what it has taken so far plus what it still expects to take.
+    const factionMs =
+      queue.averageFactionMs > 0 ? queue.averageFactionMs : Math.max(perGenMs * totalGens, elapsedMs + etaMs)
     queueEtaMs = etaMs + remaining * factionMs
   }
   return { elapsedMs, etaMs, queueEtaMs, perGenMs }
@@ -967,8 +1033,10 @@ function tuneOptions(body, faction, size) {
     size,
     generations: tuneInt(body?.generations, 1, 60, 6),
     population: tuneInt(body?.population, 2, 40, 10),
-    games: tuneInt(body?.games, 4, 400, 24),
-    nodeLimit: tuneInt(body?.nodeLimit, 100, 200000, 1000),
+    // Games per genome: the ceiling is only there to stop a typo from allocating a
+    // huge seed set, not to second-guess the workload (a deliberate 1 000 is allowed).
+    games: tuneInt(body?.games, 4, 100000, 24),
+    nodeLimit: tuneInt(body?.nodeLimit, 100, 5000000, 1000),
     // How many games run at once. Throughput only - the search shape is in `search`.
     threads: tuneInt(body?.threads, 1, 64, Math.max(1, os.cpus().length)),
     seed: tuneInt(body?.seed, 1, Number.MAX_SAFE_INTEGER, 1),
@@ -1003,6 +1071,8 @@ function beginTuneRun(faction, options) {
   tune.state.size = options.size
   tune.state.options = options
   tune.state.generations = []
+  tune.state.progress = null
+  tune.state.runFile = null
   tune.state.done = null
   tune.state.error = null
   tune.state.startedAt = Date.now()
@@ -1057,7 +1127,12 @@ function beginTuneRun(faction, options) {
       if (line) {
         try {
           const event = JSON.parse(line)
-          if (event.type === "generation") {
+          if (event.type === "progress") {
+            // One event per finished game: the panel's counters and ETA advance while a
+            // generation is still running instead of jumping once per generation.
+            tune.state.progress = event
+            tuneBroadcast("progress", { ...event, ...tuneEta() })
+          } else if (event.type === "generation") {
             tune.state.generations.push(event)
             // Every generation records its leader as this faction's "best found", so
             // the number is live during a run and a stopped run still has a resume
@@ -1107,7 +1182,17 @@ function beginTuneRun(faction, options) {
               writeTuningStore(store)
               tuneBroadcast("settings", tuningSnapshot())
             }
-            tuneBroadcast("done", event)
+            // Keep the final generation on disk too: the store only remembers the winner,
+            // so the measurements behind it would otherwise exist only in this page.
+            let saved = null
+            try {
+              saved = saveTuneRunFile(options, event)
+              tune.state.runFile = saved.relative
+            } catch (err) {
+              tune.state.error = `could not save the run file: ${err.message}`
+              tuneBroadcast("error", { error: tune.state.error })
+            }
+            tuneBroadcast("done", saved ? { ...event, file: saved.relative } : event)
           }
         } catch (err) {
           // Never swallow this silently: an exception in here once stopped every live
