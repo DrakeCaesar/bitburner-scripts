@@ -1388,24 +1388,28 @@ which streams each generation over SSE and shows the validation pair when it fin
 
 **The GUI inherits the search settings.** The tuning pane owns only the workload - faction,
 board size, generations, population, games per genome, node limit, games in flight, seed.
-Everything that shapes the search itself (**Threads**, **Carry memo**, **Endgame empties**,
-**Endgame node cap**, **Max depth**, **Dynamic scheduler**, **Auto depth**, **Per-move
-budget**, **Widen at the root**) is read from the Run pane's **Search tuning** block when
-the run starts and travels to the engine as one JSON argument, and the pane prints the
-inherited values above its own fields so there is no doubt which search is being measured.
-A genome is therefore always measured with the search that will play with it. The
-consequence worth knowing is that inheriting **Dynamic scheduler**, or more than one search
-thread, makes a tuning run repeat only approximately - which is why that line says so.
+Everything that shapes a single-threaded search - **Carry memo**, **Endgame empties**,
+**Endgame node cap**, **Max depth**, **Auto depth**, **Per-move budget**, **Widen at the
+root** - is read from the Run pane's **Search tuning** block when the run starts and travels
+to the engine as one JSON argument, and the pane prints the inherited values above its own
+fields. A genome is therefore measured with the search that will play with it.
+
+Two switches are deliberately *not* inherited, because a tuning game searches on one worker
+(see the next section): **Threads** and **Dynamic scheduler**. With one worker
+`resolveThreads` returns 1, the whole per-move node budget belongs to that worker instead of
+being sliced by the thread count, and `runExploiter` takes `evaluateRange(0, 0, 1)` before it
+ever looks at `deterministic`, so the dynamic scheduler is unreachable. Inheriting them could
+not change a tuning result; it would only have run 8 games x 12 threads on 12 cores. The pane
+says so on the inherited line, with the values it is ignoring.
 
 Two design points that matter more than the GA itself:
 
-- **Evaluation is game-parallel by default.** Every worker plays whole games, and the
-  search inside a game is single-threaded unless the caller asks otherwise. At a node
-  budget search threads buy no strength and only scale ~4.8x on 12 threads, while
-  independent games scale with the core count and stay reproducible per seed because
-  nothing is shared. Measured: **~5.5 ms per 5x5 game against ~33 ms serially**, so a
-  1800-game generation set finishes in seconds. The GUI inherits the Run pane's **Threads**
-  instead (see above), which only pays when the games in flight leave cores idle.
+- **Evaluation is game-parallel, not search-parallel.** Every worker plays whole games
+  with `threads = 1`. At a node budget search threads buy no strength and only scale ~4.8x
+  on 12 threads, while independent games scale with the core count and stay reproducible
+  per seed because nothing is shared. Measured: **~5.5 ms per 5x5 game against ~33 ms
+  serially**, so a 1800-game generation set finishes in seconds. It is also why the tuning
+  pane does not inherit the Run pane's **Threads** or **Dynamic scheduler**.
 - **Common random numbers.** Every individual in a generation plays the *same* seed set,
   so differences between genomes are not confused with differences between openings, and
   the winner is then re-measured on seeds never used during the search. With 12-30 games
@@ -1417,11 +1421,9 @@ rather than scored, because a position cut off mid-play is not a result (see the
 the move cap above).
 
 **Repeated genomes are measured once.** Within one run, fitness is a pure function of the
-genome: the training seeds are drawn once and the search is bounded by nodes rather than
-wall clock. So a genome that appeared in an earlier generation already has an exact score,
-and replaying it plays the same games to the same result. (A genome measured with more than
-one search thread, or with the dynamic scheduler inherited from the Run pane, repeats only
-approximately; reusing its earlier result is then a saving rather than an assumption.)
+genome: the training seeds are drawn once, the search is bounded by nodes rather than wall
+clock, and the tuner pins threads to 1. So a genome that appeared in an earlier generation
+already has an exact score, and replaying it plays the same games to the same result.
 Elitism alone guarantees at least one such genome per generation, and convergence produces
 several. The tuner keys a cache on `(beam, replies, mass)` and only plays the genomes it has
 not seen; validation always runs fresh, because it uses the held-back seeds. Because the

@@ -539,8 +539,9 @@
             Genetic search over beam, replies kept and the reply mass cap for one faction. Every genome in a
             generation plays the same games, games run in parallel, and the winner is re-measured against the
             defaults on seeds the search never saw. Starting again continues from the best genome found so far.
-            The search itself - threads, carry memo, endgame, dynamic scheduler and the deepening switches - is
-            whatever the Run pane holds, so a genome is measured with the search that will play with it.
+            The search itself - carry memo, endgame, max depth and the deepening switches - is whatever the
+            Run pane holds, so a genome is measured with the search that will play with it. Each game searches
+            on one thread, so Run's Threads and Dynamic scheduler do not apply here.
           </p>
           <div class="tuneFields">
             <label class="field"><span>Faction</span>
@@ -560,7 +561,7 @@
             <label class="field"><span>Population</span><input id="tunePopulation" type="number" min="2" max="40" value="10" /></label>
             <label class="field"><span title="Games each genome plays on the shared training seeds">Games per genome</span><input id="tuneGames" type="number" min="4" max="400" value="24" /></label>
             <label class="field"><span title="Per-move node budget for the tuning games. Max depth and the endgame node cap come from the Run pane.">Node limit</span><input id="tuneNodeLimit" type="number" min="100" step="100" value="1000" /></label>
-            <label class="field"><span title="Games in flight at once. The search threads each game uses come from the Run pane, so the load is games x threads.">Parallel games</span><input id="tuneThreads" type="number" min="1" max="64" value="8" /></label>
+            <label class="field"><span title="Games in flight at once. Each one searches on a single thread.">Parallel games</span><input id="tuneThreads" type="number" min="1" max="64" value="8" /></label>
             <label class="field"><span>Seed</span><input id="tuneSeed" type="number" min="1" value="1" /></label>
           </div>
           <div class="small dim" id="tuneInherited"></div>
@@ -2195,14 +2196,15 @@
 
       // The search shape belongs to the Run pane: the tuner reports what it will use
       // rather than keeping a second copy that can drift out of step with what play uses.
+      // Threads and the root scheduler are absent because every tuning game searches on
+      // one worker - with a single worker the dynamic scheduler is never reached - so
+      // neither setting can change a tuning result.
       function inheritedSearch() {
         return {
-          threads: numberOf("threads"),
           endgameEmpties: numberOf("endgameEmpties"),
           nodeBudget: numberOf("nodeBudget"),
           maxDepth: numberOf("maxDepth"),
           carry: el("carry").checked,
-          dynamicRoot: el("dynamicRoot").checked,
           autoDepth: el("autoDepth").checked,
           perMoveBudget: el("perMoveBudget").checked,
           widen: el("widen").checked,
@@ -2216,23 +2218,17 @@
         const search = inFlight ?? inheritedSearch()
         const onOff = (value) => (value ? "on" : "off")
         const games = Math.max(1, Math.floor(Number(el("tuneThreads").value) || 1))
-        const threads = search.threads === 0 ? "0 (all cores)" : String(search.threads)
-        const inFlightGames = games === 1 ? "1 game in flight" : `${games} games in flight`
+        const gamesLabel = games === 1 ? "1 game in flight" : `${games} games in flight`
+        const threadsValue = numberOf("threads")
+        const runThreads = threadsValue === 0 ? "0 = all cores" : String(threadsValue)
         host.textContent =
-          `${inFlight ? "search this run uses" : "search inherited from Run"}: threads ${threads} x ${inFlightGames}, ` +
+          `${inFlight ? "search this run uses" : "search inherited from Run"}: ` +
           `endgame ${search.endgameEmpties} empties / ${search.nodeBudget} nodes, ` +
           `max depth ${search.maxDepth === 0 ? "default" : search.maxDepth}, ` +
-          `carry ${onOff(search.carry)}, dynamic ${onOff(search.dynamicRoot)}, ` +
-          `auto depth ${onOff(search.autoDepth)}, per-move budget ${onOff(search.perMoveBudget)}, ` +
-          `widen ${onOff(search.widen)}`
-        host.textContent += search.dynamicRoot ? " - the dynamic scheduler makes repeated runs differ" : ""
-        // Inheriting the Run pane's thread count makes the load games x threads, which a
-        // default of "all cores" turns into a large oversubscription unless it is said out loud.
-        const cores = Number(navigator?.hardwareConcurrency ?? 0)
-        const perGame = search.threads === 0 ? cores : search.threads
-        if (cores > 0 && perGame * games > cores) {
-          host.textContent += " - oversubscribed: lower Parallel games or Threads"
-        }
+          `carry ${onOff(search.carry)}, auto depth ${onOff(search.autoDepth)}, ` +
+          `per-move budget ${onOff(search.perMoveBudget)}, widen ${onOff(search.widen)}; ` +
+          `${gamesLabel}, one search thread each - Run's Threads (${runThreads}) and ` +
+          `Dynamic scheduler (${onOff(el("dynamicRoot").checked)}) do not apply to a single-threaded search`
       }
 
       function setTuneRunning(running) {

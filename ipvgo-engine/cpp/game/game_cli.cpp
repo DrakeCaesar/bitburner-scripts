@@ -1897,27 +1897,26 @@ struct TuneGenomeTally {
 
 // The search settings the tuner inherits from the bench form. A genome is only
 // meaningful if it was measured with the search that will play with it, so these
-// travel with every tuning game instead of sitting at the engine defaults. How many
-// games run at once is not here: that is throughput, and it is a tuner argument.
+// travel with every tuning game instead of sitting at the engine defaults. Two things
+// are deliberately absent: the thread count and the root scheduler. Tuning games are
+// searched on one worker each (the parallelism is over games), and a one-worker search
+// never reaches the dynamic scheduler - evaluateRange(0, 0, 1) is taken first - so
+// neither could change a tuning result; inheriting them would only add load.
 struct TuneSearchConfig {
-  int threads = 1;  // search threads per game; 0 = hardware concurrency
   int endgameEmpties = 6;
   long nodeBudget = 30000;
   int maxDepth = 10;
   bool autoDepth = false;
   bool perMoveBudget = false;
   bool widen = false;
-  bool dynamicRoot = false;
 
   json toJson() const {
-    return json{{"threads", threads},
-                {"endgameEmpties", endgameEmpties},
+    return json{{"endgameEmpties", endgameEmpties},
                 {"nodeBudget", nodeBudget},
                 {"maxDepth", maxDepth},
                 {"autoDepth", autoDepth},
                 {"perMoveBudget", perMoveBudget},
-                {"widen", widen},
-                {"dynamicRoot", dynamicRoot}};
+                {"widen", widen}};
   }
 };
 
@@ -1941,17 +1940,19 @@ TuneTally tunePlayGame(int size, Opponent ai, const TuneGenome& genome, long nod
   cfg.whiteChildren = genome.whiteChildren;
   cfg.whiteMass = genome.whiteMass;
   cfg.nodeLimit = nodeLimit;
-  cfg.threads = search.threads;
   cfg.endgameEmpties = search.endgameEmpties;
   cfg.nodeBudget = search.nodeBudget;
   cfg.maxDepth = search.maxDepth;
   cfg.autoDepth = search.autoDepth;
   cfg.perMoveBudget = search.perMoveBudget;
   cfg.widen = search.widen;
-  // Round-robin root ownership is what makes two runs of the same seed identical, so
-  // the dynamic scheduler is inherited only when the bench form asks for it - a genome
-  // tuned with it is measured a little differently every time.
-  cfg.deterministic = !search.dynamicRoot;
+  // One worker per game: the tuning runner gets its parallelism from playing several
+  // games at once, and a single-worker search is both the repeatable case and the one
+  // where the whole per-move node budget belongs to this move rather than being sliced
+  // by the thread count. With one worker the dynamic scheduler is unreachable, so
+  // `deterministic` is set for clarity rather than to choose a path.
+  cfg.threads = 1;
+  cfg.deterministic = true;
   ipvgo::nn::SearchSession session;
 
   double tallyMs = 0.0;
@@ -2201,14 +2202,12 @@ int runTune(const std::string& faction, int generations, int populationSize, int
   double bestFitness = -1.0;
 
   // Fitness is a pure function of the genome within a run: the training seeds are
-  // drawn once above and the search is bounded by nodes rather than by wall clock, so
-  // a genome that appeared in an earlier generation has already been measured.
-  // Replaying it is pure waste, and elitism alone guarantees at least one such genome
-  // every generation once the search converges. Keying on the three genes also keeps
-  // the GA's own random stream untouched, so the sequence of populations is identical
-  // to an uncached run: same answer, less work. A genome measured with more than one
-  // search thread, or with the dynamic scheduler inherited, repeats only approximately;
-  // reusing its earlier result is then a saving rather than an assumption.
+  // drawn once above, the search is bounded by nodes rather than by wall clock, and
+  // the tuner pins threads to 1. So a genome that appeared in an earlier generation
+  // has already been measured exactly - replaying it is pure waste, and elitism alone
+  // guarantees at least one such genome every generation once the search converges.
+  // Keying on the three genes also keeps the GA's own random stream untouched, so the
+  // sequence of populations is identical to an uncached run: same answer, less work.
   auto genomeKey = [](const TuneGenome& g) {
     return std::make_tuple(g.beam, g.whiteChildren, static_cast<int>(std::lround(g.whiteMass * 100.0)));
   };
@@ -2495,8 +2494,10 @@ int main(int argc, char** argv) {
     bool carry = true;
     if (argc >= 16) carry = std::string(argv[15]) != "nocarry";
     // Optional argv[16]: the search settings inherited from the bench form, as JSON:
-    // {"threads":0,"endgameEmpties":6,"nodeBudget":30000,"maxDepth":10,
-    //  "autoDepth":false,"perMoveBudget":false,"widen":false,"dynamicRoot":false}
+    // {"endgameEmpties":6,"nodeBudget":30000,"maxDepth":10,
+    //  "autoDepth":false,"perMoveBudget":false,"widen":false}
+    // Unknown keys are ignored, so a caller that also sends a thread count or the root
+    // scheduler gets the single-threaded search every tuning game uses anyway.
     TuneSearchConfig search;
     if (argc >= 17) {
       try {
@@ -2507,7 +2508,6 @@ int main(int argc, char** argv) {
         const auto asBool = [&](const char* key, bool fallback) {
           return raw.contains(key) && raw.at(key).is_boolean() ? raw.at(key).get<bool>() : fallback;
         };
-        search.threads = std::clamp(asInt("threads", search.threads), 0, 64);
         search.endgameEmpties = std::clamp(asInt("endgameEmpties", search.endgameEmpties), 0, 20);
         search.nodeBudget = std::clamp(static_cast<long>(asInt("nodeBudget", static_cast<int>(search.nodeBudget))),
                                        1000L, 5000000L);
@@ -2515,7 +2515,6 @@ int main(int argc, char** argv) {
         search.autoDepth = asBool("autoDepth", search.autoDepth);
         search.perMoveBudget = asBool("perMoveBudget", search.perMoveBudget);
         search.widen = asBool("widen", search.widen);
-        search.dynamicRoot = asBool("dynamicRoot", search.dynamicRoot);
       } catch (const std::exception& err) {
         std::cerr << "tune: bad search JSON: " << err.what() << "\n";
         return 2;

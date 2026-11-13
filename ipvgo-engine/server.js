@@ -945,19 +945,18 @@ function tuneRanges(input) {
 // The search settings the tuner inherits from the bench form. A genome is only
 // meaningful if it was measured with the search that will play with it, so the tuning
 // pane has no second copy of any of these; it sends what the Run pane holds.
+// The thread count and the root scheduler are not here: tuning games are searched on one
+// worker each, and a one-worker search never reaches the dynamic scheduler, so neither
+// could change a tuning result.
 function tuneSearch(input) {
   const flag = (key) => input?.[key] === true
   return {
-    // 1, not 0: a caller that never sent a search shape gets the single-threaded
-    // search the tuner used before these settings became inherited.
-    threads: tuneInt(input?.threads, 0, 64, 1),
     endgameEmpties: tuneInt(input?.endgameEmpties, 0, 20, 6),
     nodeBudget: tuneInt(input?.nodeBudget, 1000, 5000000, 30000),
     maxDepth: tuneInt(input?.maxDepth, 0, 64, 10),
     autoDepth: flag("autoDepth"),
     perMoveBudget: flag("perMoveBudget"),
     widen: flag("widen"),
-    dynamicRoot: flag("dynamicRoot"),
   }
 }
 
