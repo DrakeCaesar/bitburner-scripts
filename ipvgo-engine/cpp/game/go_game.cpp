@@ -355,9 +355,7 @@ bool placeStoneBits(const BitPlanes& pl, const BitLayout& layout, int n, int idx
     for (;;) {
       const uint64_t candidates = adjacent[w] & enemy[w] & ~checked[w];
       if (candidates == 0) break;
-      unsigned long b = 0;
-      _BitScanForward64(&b, candidates);
-      const int seedIdx = w * 64 + static_cast<int>(b);
+      const int seedIdx = w * 64 + bits::lowestBit(candidates);
       uint64_t chain[W] = {};
       chain[seedIdx >> 6] = 1ULL << (seedIdx & 63);
       bits::flood<W>(enemy, chain, layout, n);
@@ -429,10 +427,8 @@ Validity validateMove(const GameState& state, int x, int y, Color player, Simple
     for (int w = 0; w < kBitWords; ++w) {
       uint64_t word = captured[w];
       while (word != 0) {
-        unsigned long b = 0;
-        _BitScanForward64(&b, word);
+        const int idx = w * 64 + bits::lowestBit(word);
         word &= word - 1;
-        const int idx = w * 64 + static_cast<int>(b);
         eval[idx / n][idx % n] = '.';
       }
     }
@@ -581,10 +577,8 @@ std::vector<std::pair<int, int>> getAllValidMoves(const GameState& state, Color 
       for (int w = 0; w < kBitWords; ++w) {
         uint64_t dead = captured[w];
         while (dead != 0) {
-          unsigned long b = 0;
-          _BitScanForward64(&b, dead);
+          const int capturedBit = (w * 64 + bits::lowestBit(dead)) * 2;
           dead &= dead - 1;
-          const int capturedBit = (w * 64 + static_cast<int>(b)) * 2;
           probe[capturedBit >> 6] &= ~(3ULL << (capturedBit & 63));
         }
       }

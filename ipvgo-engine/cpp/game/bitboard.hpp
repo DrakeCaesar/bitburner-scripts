@@ -10,8 +10,7 @@
 #include <array>
 #include <cstdint>
 
-#include <intrin.h>
-
+#include "bit_ops.hpp"
 #include "go_game.hpp"
 
 namespace ipvgo::game {
@@ -176,9 +175,7 @@ template <int W>
 inline int lowest(const uint64_t* m) {
   for (int w = 0; w < W; ++w) {
     if (m[w] == 0) continue;
-    unsigned long bit = 0;
-    _BitScanForward64(&bit, m[w]);
-    return w * 64 + static_cast<int>(bit);
+    return w * 64 + lowestBit(m[w]);
   }
   return -1;
 }

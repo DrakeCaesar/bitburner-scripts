@@ -82,6 +82,17 @@ cmake --preset x64-Release        # configure
 cmake --build --preset x64-Release
 ```
 
+**On macOS** use `macos-Release` instead. It configures the same
+`out/build/x64-Release` tree - the one `server.js` serves - with Apple clang
+(`/usr/bin/clang++`) rather than clang-cl, which additionally would pull the Windows
+flag set (`/arch:AVX2`, `-fuse-ld=lld`) onto an arm64 target where it does not apply.
+`BuildTypes.cmake` takes its Unix branch there (`-O3 -march=native -flto`):
+
+```bash
+cmake --preset macos-Release
+cmake --build --preset macos-Release
+```
+
 **Building from the VS Code GUI.** CMake Tools builds *the selected target*, and the
 engine is one target (`ipvgo_game`), so pick it - or `all` - in the target picker in the
 status bar ("CMake: Set Build Target"); the selection is remembered per folder. The build
@@ -1693,6 +1704,22 @@ peak working set of one move rather than by the length of the run:
 Node counts (39 012 and 11 537) and `selftest`, `fuzz 60 11`, `eyetest` are unchanged, and
 per-search time is unchanged or slightly better (39.3 ms against 38.5 ms at 12 threads,
 172.2 ms against 172.3 ms single-threaded).
+
+The pool is the one part of this that does not port to Apple platforms: there only the
+explicit `ipvgo::fastalloc` entry points are built, not the global `operator new`/`delete`
+replacements. Part of `libc++.dylib`'s non-template state is allocated and freed by the
+dylib's own malloc-backed routines, and dyld's two-level namespace keeps those calls bound
+to the dylib, so the two allocators cross: a pool block reaches `free()` from libc++'s
+thread-exit cleanup, and a malloc block reaches `release()`. libmalloc aborts on both.
+Windows and ELF builds keep the replacements.
+
+The worker threads are the second Apple difference, and a purely environmental one:
+the endgame solve recurses roughly five frames per ply for up to `kMaxPly` (80) plies, a
+few hundred kilobytes of stack. Darwin hands a `std::thread` 512 KiB, which is not enough
+- a 5x5 `benchjson` run died with `SIGBUS` on the stack guard in game 2 - while the 1 MiB
+Windows default fits. `SearchThread` therefore creates the round workers through
+`pthread_create` with an 8 MiB stack on Apple and stays a plain `std::thread` everywhere
+else, so no search result changes.
 
 The remaining per-move cost this exposes is the thread churn itself: 12 threads created
 and destroyed for every move is ~150 000 thread creations over a 600-game bench. A small

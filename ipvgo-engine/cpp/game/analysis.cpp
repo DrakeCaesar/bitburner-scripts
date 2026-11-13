@@ -234,7 +234,7 @@ int chainEffectiveLibertiesWords(const ChainSet& cs, int idx, Color player) {
   }
 
   int liberties = 0;
-  for (int w = 0; w < W; ++w) liberties += static_cast<int>(__popcnt64(mask[w]));
+  for (int w = 0; w < W; ++w) liberties += bits::popcount(mask[w]);
   // The point itself is a liberty of every chain it touches, and the stone removes it.
   return liberties - static_cast<int>((mask[idx >> 6] >> (idx & 63)) & 1ULL);
 }

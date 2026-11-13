@@ -37,7 +37,7 @@ int libertyCountBits(const uint64_t* chain, const BitPlanes& planes, const BitLa
   int count = 0;
   for (int w = 0; w < W; ++w) {
     liberties[w] &= planes.empty[w];
-    count += static_cast<int>(__popcnt64(liberties[w]));
+    count += bits::popcount(liberties[w]);
   }
   return count;
 }
@@ -103,7 +103,7 @@ void weakestAdjacentBits(const BitPlanes& planes, const BitLayout& layout, int n
       out.found = true;
       out.liberties = libertiesCount;
       int stoneCount = 0;
-      for (int w = 0; w < W; ++w) stoneCount += static_cast<int>(__popcnt64(chain[w]));
+      for (int w = 0; w < W; ++w) stoneCount += bits::popcount(chain[w]);
       out.stones = stoneCount;
       for (int w = 0; w < W; ++w) bestLiberties[w] = liberties[w];
     }
@@ -115,10 +115,8 @@ void weakestAdjacentBits(const BitPlanes& planes, const BitLayout& layout, int n
   for (int w = 0; w < W; ++w) {
     uint64_t word = bestLiberties[w];
     while (word != 0) {
-      unsigned long bit = 0;
-      _BitScanForward64(&bit, word);
+      const int point = w * 64 + bits::lowestBit(word);
       word &= word - 1;
-      const int point = w * 64 + static_cast<int>(bit);
       const int chain = point < static_cast<int>(cs.id.size()) ? cs.id[static_cast<size_t>(point)] : -1;
       bool seenGroup = false;
       for (int i = 0; i < groupCount; ++i) seenGroup = seenGroup || groups[i] == chain;

@@ -73,6 +73,29 @@
         "CMAKE_BUILD_TYPE": "Release",
         "IPVGO_PGO": "OPTIMIZE"
       }
+    },
+    {
+      "name": "macos-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "CMAKE_CXX_COMPILER": "/usr/bin/clang++"
+      }
+    },
+    {
+      "name": "macos-Release",
+      "inherits": "macos-base",
+      "displayName": "macOS Release (Apple clang)",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "binaryDir": "${sourceDir}/out/build/x64-Release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
     }
   ],
   "buildPresets": [
@@ -81,6 +104,7 @@
     { "name": "x64-Release-Msvc", "configurePreset": "x64-Release-Msvc", "targets": [ "ipvgo_game" ] },
     { "name": "x64-Profile", "configurePreset": "x64-Profile", "targets": [ "ipvgo_game" ] },
     { "name": "x64-Pgo-Generate", "configurePreset": "x64-Pgo-Generate", "targets": [ "ipvgo_game" ] },
-    { "name": "x64-Pgo-Optimize", "configurePreset": "x64-Pgo-Optimize", "targets": [ "ipvgo_game" ] }
+    { "name": "x64-Pgo-Optimize", "configurePreset": "x64-Pgo-Optimize", "targets": [ "ipvgo_game" ] },
+    { "name": "macos-Release", "configurePreset": "macos-Release", "targets": [ "ipvgo_game" ] }
   ]
 }
