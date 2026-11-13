@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.18)
 # Single entry point for every native component in this repository.
 #
 #   ./cmake/Build-Native.ps1 -Configure             # configure and build everything
-#   ./cmake/Build-Native.ps1 -Target ipvgo_engine   # one target, no reconfigure
+#   ./cmake/Build-Native.ps1 -Target ipvgo_game     # one target, no reconfigure
 #
 # The Visual Studio generator and CMake Tools drive the same folder, so a
 # generator change has to reconfigure in place; Build-Native.ps1 does that.

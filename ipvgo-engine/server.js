@@ -1,6 +1,7 @@
 /**
  * Local JSON API for IPvGO move search.
- * Runs the C++ exploiter by default; native MCTS is available as a fallback.
+ * Runs the C++ engine (`ipvgo_game`): its policy exploiter by default, or its MCGS mode
+ * when IPVGO_ENGINE=mcgs.
  */
 
 import { execFile, execFileSync, spawn } from "child_process"
@@ -26,17 +27,13 @@ const carryMemo = process.env.IPVGO_CARRY !== "0"
 const serverId = crypto.randomUUID()
 
 /** @type {import("child_process").ChildProcess | null} */
-let activeNativeChild = null
-
-function nativeExecutablePath() {
-  return findNativeExecutable("ipvgo_engine")
-}
+let activeOneShotChild = null
 
 function mcgsExecutablePath() {
-  return findNativeExecutable("ipvgo_game")
+  return findBinary("ipvgo_game")
 }
 
-// Native targets are built from the repo root into `out/build/<config>` (see
+// The binaries are built from the repo root into `out/build/<config>` (see
 // CMakeSettings.json and cmake/BuildTypes.cmake). Only a Release tree is served: a
 // Debug or RelWithDebInfo binary is several times slower per move, and the bench
 // numbers would silently describe the wrong build. Every release folder is read in
@@ -117,7 +114,7 @@ function engineBuildFields() {
   }
 }
 
-function nativeExecutableCandidates(name) {
+function binaryCandidates(name) {
   const dirs = [
     ...releaseConfigs().flatMap((config) => binDirs(config)),
     path.join(__dirname, "build", "Release"),
@@ -130,8 +127,8 @@ function nativeExecutableCandidates(name) {
   return out
 }
 
-function findNativeExecutable(name) {
-  const candidates = nativeExecutableCandidates(name)
+function findBinary(name) {
+  const candidates = binaryCandidates(name)
   return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[0]
 }
 
@@ -793,7 +790,11 @@ async function handleEngineBuildSet(req, res) {
   }
   const option = engineBuildOptions()[build]
   if (!option.built) {
-    return sendJson(res, 409, { error: `the ${build} tree is not built (${option.path})` })
+    // "not built" is the state a fresh cross-check tree is in: it is configured but its
+    // targets were never built, so the message says what to run rather than only what is
+    // missing.
+    const hint = build === "msvc" ? "pnpm run ipvgo:build:msvc" : "pnpm run ipvgo:build"
+    return sendJson(res, 409, { error: `the ${build} tree is not built (${option.path}); run ${hint}` })
   }
   saveEngineBuild(build)
   benchBroadcast("snapshot", benchSnapshot())
@@ -1343,15 +1344,10 @@ function handleBenchPage(req, res) {
 }
 
 function activeEngine() {
-  const hasGame = fs.existsSync(mcgsExecutablePath())
-  const hasNative = fs.existsSync(nativeExecutablePath())
-  if (engineOverride === "native") return hasNative ? "native" : "missing"
-  if (engineOverride === "mcgs") return hasGame ? "mcgs" : "missing"
-  if (engineOverride === "exploit") return hasGame ? "exploit" : "missing"
-  // Default: the policy exploiter, which is what this engine exists for.
-  if (hasGame) return "exploit"
-  if (hasNative) return "native"
-  return "missing"
+  if (!fs.existsSync(mcgsExecutablePath())) return "missing"
+  // IPVGO_ENGINE only chooses between the two modes of the one engine binary: the
+  // policy exploiter (default) and MCGS. Anything else falls back to the exploiter.
+  return engineOverride === "mcgs" ? "mcgs" : "exploit"
 }
 
 function sendJson(res, status, body) {
@@ -1397,8 +1393,6 @@ function handleHealth(_req, res) {
     engine,
     serverId,
     supervised,
-    nativePath: nativeExecutablePath(),
-    nativeBuilt: fs.existsSync(nativeExecutablePath()),
     gamePath: mcgsExecutablePath(),
     gameBuilt: fs.existsSync(mcgsExecutablePath()),
     // The bench never uses the in-game move engine; it always runs the exploiter.
@@ -1426,7 +1420,7 @@ async function requestGameMove(body, { command, engine, tempPrefix, timeoutMs })
       [command, inputPath, outputPath],
       { timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 },
       (error, _stdout, stderr) => {
-        if (activeNativeChild === child) activeNativeChild = null
+        if (activeOneShotChild === child) activeOneShotChild = null
         try {
           if (error) {
             if (error.killed || error.signal) {
@@ -1455,7 +1449,7 @@ async function requestGameMove(body, { command, engine, tempPrefix, timeoutMs })
         }
       }
     )
-    activeNativeChild = child
+    activeOneShotChild = child
   })
 }
 
@@ -1625,68 +1619,6 @@ async function requestExploitPonder(body) {
   return requestServeMove(body, 10_000)
 }
 
-async function requestNativeMove(body) {
-  const exe = nativeExecutablePath()
-  if (!fs.existsSync(exe)) {
-    throw new Error("Native engine not built. Run: pnpm run ipvgo:build")
-  }
-
-  const tempDir = path.join(__dirname, "temp")
-  if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true })
-
-  const inputPath = path.join(tempDir, `input-${Date.now()}.json`)
-  const outputPath = path.join(tempDir, `output-${Date.now()}.json`)
-
-  fs.writeFileSync(inputPath, JSON.stringify(body))
-
-  return new Promise((resolve, reject) => {
-    const child = execFile(
-      exe,
-      [inputPath, outputPath],
-      { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 },
-      (error, _stdout, stderr) => {
-        if (activeNativeChild === child) activeNativeChild = null
-        try {
-          if (error) {
-            if (error.killed || error.signal) {
-              reject(new Error("Native engine cancelled"))
-              return
-            }
-            reject(new Error(`${error.message}${stderr ? `: ${stderr}` : ""}`))
-            return
-          }
-          if (!fs.existsSync(outputPath)) {
-            reject(new Error("Engine produced no output file"))
-            return
-          }
-          const result = JSON.parse(fs.readFileSync(outputPath, "utf8"))
-          resolve({ ...result, engine: "native" })
-        } catch (err) {
-          reject(err)
-        } finally {
-          for (const file of [inputPath, outputPath]) {
-            try {
-              if (fs.existsSync(file)) fs.unlinkSync(file)
-            } catch {
-              /* ignore */
-            }
-          }
-        }
-      }
-    )
-    activeNativeChild = child
-  })
-}
-
-function cancelNativeMove() {
-  if (activeNativeChild && !activeNativeChild.killed) {
-    activeNativeChild.kill()
-    activeNativeChild = null
-  }
-  // The long-lived engine is mid-search for whichever request is pending.
-  stopEngine()
-}
-
 async function handleCancel(req, res) {
   let body
   try {
@@ -1700,10 +1632,13 @@ async function handleCancel(req, res) {
     return sendJson(res, 400, { error: "requestId required" })
   }
 
-  const engine = activeEngine()
-  if (engine === "native" || engine === "mcgs" || engine === "exploit") {
-    cancelNativeMove()
+  // Cancels whichever child process is mid-search: the one-shot run or the long-lived
+  // `serve` process.
+  if (activeOneShotChild && !activeOneShotChild.killed) {
+    activeOneShotChild.kill()
+    activeOneShotChild = null
   }
+  stopEngine()
 
   sendJson(res, 200, { ok: true, requestId })
 }
@@ -1733,29 +1668,17 @@ async function handleMove(req, res) {
       }
     }
     const result =
-      engine === "mcgs"
-        ? await requestMcgsMove(body)
-        : engine === "exploit"
-          ? await requestExploitMove(body)
-          : await requestNativeMove(body)
+      engine === "mcgs" ? await requestMcgsMove(body) : await requestExploitMove(body)
     sendJson(res, 200, result)
   } catch (err) {
     console.error(`${engine} move error:`, err.message)
-    if (engine === "exploit") {
-      try {
-        const fallback = await requestNativeMove(body)
-        return sendJson(res, 200, { ...fallback, engine: "native", [`${engine}Error`]: err.message })
-      } catch (nativeErr) {
-        return sendJson(res, 500, { error: err.message, fallbackError: nativeErr.message })
-      }
-    }
     return sendJson(res, 500, { error: err.message })
   }
 }
 
 /**
  * Receives parity test cases dumped from the live game (ipvgoParityDump.js) and
- * writes them to temp/parity_cases.json for the native `ipvgo_game parity` tool.
+ * writes them to temp/parity_cases.json for the `ipvgo_game parity` tool.
  */
 async function handleParityDump(req, res) {
   let body

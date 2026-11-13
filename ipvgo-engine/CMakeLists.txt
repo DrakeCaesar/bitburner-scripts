@@ -52,28 +52,13 @@ target_include_directories(ipvgo_game_core PUBLIC cpp/game third_party)
 # safe under it because this library is only used by the native tools).
 set_property(TARGET ipvgo_game_core PROPERTY POSITION_INDEPENDENT_CODE ON)
 
-# ---------------------------------------------------------------------------
-# Legacy heuristic MCTS engine (native passthrough target).
-#
-# The WebAssembly build of this engine used to live here too; it is abandoned, so
-# only the native binary remains (the server uses it as the "native" fallback).
-# ---------------------------------------------------------------------------
-set(ENGINE_SOURCES
-  cpp/board.cpp
-  cpp/mcts.cpp
-  cpp/engine.cpp
-  cpp/json_api.cpp
-)
-
-message(STATUS "Building native IPvGO engines")
+message(STATUS "Building the native IPvGO engine")
 find_package(Threads REQUIRED)
 
-add_executable(ipvgo_engine cpp/standalone.cpp ${ENGINE_SOURCES})
-target_include_directories(ipvgo_engine PRIVATE cpp)
-target_link_libraries(ipvgo_engine PRIVATE nlohmann_json::nlohmann_json Threads::Threads)
-install(TARGETS ipvgo_engine DESTINATION bin)
-
-# Faithful-engine CLI: selftest / parity / aimove / gen / mcgs / exploit / serve / bench.
+# The one engine binary: selftest / parity / aimove / gen / mcgs / exploit / serve /
+# bench / optbench / tune / prof. The legacy heuristic MCTS engine that used to build
+# alongside it as `ipvgo_engine` is gone: it had no exploiter, nothing served it, and a
+# tree built with only that target looked built while having no engine at all.
 add_executable(ipvgo_game cpp/game/game_cli.cpp cpp/nn/mcgs.cpp cpp/nn/exploiter.cpp cpp/nn/bench_tui.cpp cpp/nn/optbench.cpp cpp/nn/profiler.cpp cpp/nn/fast_alloc.cpp)
 target_include_directories(ipvgo_game PRIVATE cpp/game cpp/nn)
 target_link_libraries(ipvgo_game PRIVATE ipvgo_game_core nlohmann_json::nlohmann_json Threads::Threads)

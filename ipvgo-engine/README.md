@@ -9,7 +9,7 @@ heuristic MCTS engine as alternatives.
 From the **repo root**:
 
 ```bash
-pnpm run ipvgo:build   # Build-Native.ps1: configure + build ipvgo_engine/ipvgo_game
+pnpm run ipvgo:build   # Build-Native.ps1: configure + build ipvgo_game
 pnpm run server        # http://localhost:3010
 ```
 
@@ -21,21 +21,17 @@ run ipvgo.js
 
 Then open **http://localhost:3010/bench** for the benchmark GUI.
 
-## Engine priority
+## Engine modes
 
-The server picks the first available of:
+There is one engine binary, `ipvgo_game`, and the server runs it in one of two modes:
 
-1. **Exploit** (`ipvgo_game`) — policy expectimax against the faction AI (default)
-2. **Native** (`ipvgo_engine`) — legacy heuristic MCTS, used if the exploiter is missing or errors
+1. **Exploit** - policy expectimax against the faction AI (default)
+2. **MCGS** - Monte Carlo graph search
 
-Overrides with `IPVGO_ENGINE`:
-
-```bash
-IPVGO_ENGINE=native   # legacy heuristic MCTS
-IPVGO_ENGINE=mcgs     # Monte Carlo graph search
-IPVGO_ENGINE=exploit  # force the exploiter
-```
-
+`IPVGO_ENGINE=mcgs` selects the second; anything else, including unset, runs the
+exploiter. The legacy heuristic MCTS engine that used to build as `ipvgo_engine` (and
+`IPVGO_ENGINE=native`) is gone: it contained no exploiter, nothing served it, and a tree
+built with only that target looked built while having no engine at all.
 ## Prerequisites
 
 - CMake 3.18+
@@ -63,7 +59,7 @@ Visual Studio with `vswhere`, imports that environment, and then runs CMake, so
 it works from any shell. Running bare `cmake --build ...` only works inside a
 *Developer PowerShell for VS*.
 
-Executables land in **`out/build/x64-Release/bin/`** (`ipvgo_engine`,
+Executables land in **`out/build/x64-Release/bin/`** (`ipvgo_game`,
 `ipvgo_game`, `koth_bench`, `koth_tune`). The helper scripts also accept the
 older per-component `ipvgo-engine/build` layout, which still works for a
 standalone `cmake -S ipvgo-engine -B ipvgo-engine/build`.
@@ -85,6 +81,11 @@ loaded:
 cmake --preset x64-Release        # configure
 cmake --build --preset x64-Release
 ```
+
+**Building from the VS Code GUI.** CMake Tools builds *the selected target*, and the
+engine is one target (`ipvgo_game`), so pick it - or `all` - in the target picker in the
+status bar ("CMake: Set Build Target"); the selection is remembered per folder. The build
+presets name it explicitly, so driving builds through the preset works too.
 
 ### clang-cl, not cl.exe
 
@@ -182,7 +183,7 @@ either way - the flag only changes what the compile step does.
 
 Server listens on **http://localhost:3010** (`IPVGO_PORT` to override).
 
-- `GET /health` — `{ engine: "exploit" | "mcgs" | "native" | "missing", benchEngine, ... }`
+- `GET /health` — `{ engine: "exploit" | "mcgs" | "missing", benchEngine, ... }`
 - `POST /api/ipvgo/move` — JSON body from `ns.go`, returns `{ move, iterations, elapsedMs, engine? }`
 
 ## Request JSON

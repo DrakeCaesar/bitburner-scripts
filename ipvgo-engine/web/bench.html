@@ -1713,6 +1713,7 @@
       // next spawn resolves), so the select mirrors the snapshot and writes back through
       // the API; a rebuild is not needed to switch, and a run in progress is left alone.
       const engineBuildLabels = { clang: "clang-cl", msvc: "cl.exe" }
+      const engineBuildHints = { clang: "pnpm run ipvgo:build", msvc: "pnpm run ipvgo:build:msvc" }
 
       function updateEngineBuild() {
         const select = el("engineBuild")
@@ -1727,7 +1728,7 @@
         select.disabled = forced || running
         const missing = Object.entries(builds)
           .filter(([, info]) => info && info.built === false)
-          .map(([build]) => engineBuildLabels[build] ?? build)
+          .map(([build]) => `${engineBuildLabels[build] ?? build} (${engineBuildHints[build] ?? "not built"})`)
         const parts = []
         if (forced) parts.push("forced by IPVGO_ENGINE_BUILD")
         if (running) parts.push("stop the run to switch")

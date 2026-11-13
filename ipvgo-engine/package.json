@@ -9,6 +9,7 @@
     "build": "pnpm run build:native",
     "server": "node server.js",
     "game:build": "powershell -NoProfile -ExecutionPolicy Bypass -File ../cmake/Build-Native.ps1 -Configure -Target ipvgo_game",
+    "game:build:msvc": "powershell -NoProfile -ExecutionPolicy Bypass -File ../cmake/Build-Native.ps1 -Compiler msvc -Configure -Target ipvgo_game",
     "game:mcgs": "bash scripts/mcgs.sh",
     "game:selftest": "bash scripts/mcgs.sh selftest",
     "game:bench": "bash scripts/mcgs.sh bench",

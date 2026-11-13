@@ -77,10 +77,10 @@
   ],
   "buildPresets": [
     { "name": "x64-Debug", "configurePreset": "x64-Debug" },
-    { "name": "x64-Release", "configurePreset": "x64-Release" },
-    { "name": "x64-Release-Msvc", "configurePreset": "x64-Release-Msvc" },
-    { "name": "x64-Profile", "configurePreset": "x64-Profile" },
-    { "name": "x64-Pgo-Generate", "configurePreset": "x64-Pgo-Generate" },
-    { "name": "x64-Pgo-Optimize", "configurePreset": "x64-Pgo-Optimize" }
+    { "name": "x64-Release", "configurePreset": "x64-Release", "targets": [ "ipvgo_game" ] },
+    { "name": "x64-Release-Msvc", "configurePreset": "x64-Release-Msvc", "targets": [ "ipvgo_game" ] },
+    { "name": "x64-Profile", "configurePreset": "x64-Profile", "targets": [ "ipvgo_game" ] },
+    { "name": "x64-Pgo-Generate", "configurePreset": "x64-Pgo-Generate", "targets": [ "ipvgo_game" ] },
+    { "name": "x64-Pgo-Optimize", "configurePreset": "x64-Pgo-Optimize", "targets": [ "ipvgo_game" ] }
   ]
 }
