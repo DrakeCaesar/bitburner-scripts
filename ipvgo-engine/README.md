@@ -1601,13 +1601,128 @@ nodes it cannot afford its first real ply and falls back to a leaf-only depth 1 
 it needs roughly 60 000 nodes to reach the same depth 2 - 43 791 nodes, the same move, and a
 value of **0.620** instead of 0.546 (the old number prices the unsearched tail at the static
 eval). On 5×5 at 8 000 nodes it costs **-39%** wall clock for the same depth and the margins
-went 14.8/15.0 to 17.5/15.0 over 6 games each. Off by default. The move list tags each attempt with what was tried - `REMOVE ROUTER`,
-`TWO MOVES`, `DESTROY NODE`, `REPAIR NODE` - coloured by the roll: green when it landed, red
-when it failed, with the ejection case in the row tooltip. Measured with the switch on, a
-10-game 5x5 batch at margin 0 made 21 attempts: 7 succeeded, 13 skipped our turn and 1 got us
-ejected, which is what a 60% chance per attempt looks like. The **SF14.3 cheat bonus** toggle
-beside it adds the game's flat +25 points (only at Source-File 14 level 3), and it is greyed
-out while cheats are off.
+went 14.8/15.0 to 17.5/15.0 over 6 games each. Off by default.
+
+### Cheats: when the engine spends one
+
+`ns.go.cheat` is priced like any other move - each candidate is applied to a copy of the
+board, the resulting position is searched like an ordinary child, and the value is an
+expectation over the game's own roll: `chance * V1 + (1 - chance) * (1 - ejection) * pass`,
+where `chance` is the game formula `0.6 * (0.7 - 0.02n)^n * crime_success` plus the flat
++0.25 at Source-File 14 level 3, and a failed attempt skips our turn (the pass child, already
+evaluated). A cheat is played only when all three hold:
+
+1. its risk-adjusted value beats the best legal move by `cheatMargin` (0.1),
+2. every legal move makes the position worse - the best of them is below the position's own
+   static eval,
+3. the position is lost on the numbers - the best legal move is still under an even game.
+
+Conditions 2 and 3 are what stop the engine from spending an attempt while a move holds the
+game, and a game spends at most two attempts (see below). The move list tags each attempt with
+what was tried - `REMOVE ROUTER`, `TWO MOVES`, `DESTROY NODE`, `REPAIR NODE` - coloured by the
+roll: green when it landed, red when it failed, with the ejection case in the row tooltip. Measured with the switch on, a 10-game 5x5
+batch at margin 0 made 21 attempts: 7 succeeded, 13 skipped our turn and 1 got us ejected,
+which is what a 60% chance per attempt looks like. The **SF14.3 cheat bonus** toggle beside it
+adds the game's flat +25 points (only at Source-File 14 level 3).
+
+**Two attempts per game, and the gate is what recovered the lost games.** A loss that shows
+cheat attempts is mostly the gate working - the engine cheats because it is already losing -
+but the gate as it stood still spent attempts in positions it was *winning*, and that is where
+the catastrophic losses came from. Measured on the live configuration (5×5, 10 000 iterations,
+12 games in parallel, Netburners, 1000 games, seed 1):
+
+| rule | wins | games with cheats | attempts | worst game |
+|---|---|---|---|---|
+| cheats off (500-game arm) | 472/500 (94.4%) | 0 | 0 | - |
+| **losing gate, 2 attempts (default)** | 966 (96.6%) | 87 | 143 | 2 |
+| losing gate, uncapped attempts | 979 (97.9%) | 87 | 224 | 8 |
+| losing gate, 3 attempts | 973 | 87 | 176 | 3 |
+| losing gate, margin 0.3 | 981 | 84 | 156 | 5 |
+| no losing gate, uncapped (the old rule) | 978 | **208** | 374 | 8 |
+
+Cheating is worth **+3.4 points** here, paired on the same 500 games: 17 lost without cheats
+and won with them, 2 the other way. The gate then removes 58% of the cheating games for
+nothing - 208 games down to 87 at the same 978/979 wins. The attempt cap is the one thing that
+costs: uncapped scores 13 games higher than two, and on 9×9 (280 games, 6 000 iterations,
+12 in parallel) the cap is worth 12 games and a paired 19 losses against 7 wins
+(McNemar p ≈ 0.04), with a monotone cap sweep on the 160-game arm: 1 attempt 127 wins,
+2 → 132, 3 → 133, uncapped 140. It is shipped anyway because it bounds how many tries a lost
+game can spend, which is a decision about how the engine behaves rather than about the score.
+
+**The three levers are per-run settings**, all in the Run pane beside the Cheats switch and
+all carried by a tuning run:
+
+| Run pane | config / API key | default | what it does |
+|---|---|---|---|
+| Cheat attempts per game | `cheatMaxAttempts` | 2 | attempts a game may spend; 0 never cheats, 99 is uncapped |
+| Cheat margin | `cheatMargin` | 0.1 | how much better than the best legal move it has to be |
+| Cheat only when losing | `cheatLosingGate` | on | require the best legal move to be under 50% |
+
+`cheatMaxAttempts` / `cheatLosingGate` / `cheatMargin` are read by `benchjson`, by the `bench`
+CLI (`--cheat-cap=`, `--cheat-losing=`), by `POST /api/bench/start` and by
+`POST /api/tune/start` (as part of `search`), and the values a run used are echoed back in
+`/api/bench/state` options and in the tuner's inherited-search line.
+
+**Replayed against a real 1000-game run.** A finished 5×5 run (Netburners, 100 000 iterations,
+12 games in parallel, cheats on at SF14.3, the run archive served by `/api/bench/state`) lost
+six games: 162, 300, 703, 720, 747 and 789. Replaying exactly those six with the pre-change
+binary reproduces them margin for margin (-25.5, +4.5, -25.5, -3.5, -20.5, -0.5), so the replay
+is faithful; game 300 is the ejection loss - it ends with Black ahead by 4.5 and is still a
+loss. With the shipped rule three of the six are won:
+
+| game | no gate | **2 attempts + losing gate** | 1 attempt + losing gate |
+|---|---|---|---|
+| 162 | loss -25.5 | **win +22.5** | **win +22.5** |
+| 300 | loss +4.5 (ejected) | **win +1.5** | **win +1.5** |
+| 703 | loss -25.5 | loss -25.5 | **win +0.5** |
+| 720 | loss -3.5 | loss -3.5 | loss -3.5 |
+| 747 | loss -20.5 | **win +17.5** | **win +17.5** |
+| 789 | loss -0.5 | loss -0.5 | loss -19.5 |
+
+Game 300 is the gate doing exactly what it is for: it never spends an attempt in a position it
+is winning, so the ejection that lost that game cannot happen. Game 703 is the one the second
+attempt costs, and 789 is what a second attempt can still cost when it misses.
+
+
+### A decided game ends on a pass, not on fifteen more solves
+
+Two consecutive passes end a game and the score decides it, so when White has just passed in
+a position we are not behind in, passing wins by the rules. Playing on is only worth anything
+if a stone can still raise the final score - and in area scoring a stone inside our own
+territory turns one territory point into one stone, leaving `pieces + territory` unchanged.
+That is exactly what the tail of a won 5x5 game looks like: the engine used to spend an
+endgame solve per move filling its own area, fifteen times in the worst games, gaining nothing.
+
+The root now checks the score before searching: if White has passed, we are not behind and no
+legal move raises `blackSum`, it returns the pass immediately (0 nodes, 0 ms) and the game
+ends. Measured over the same 1000 5x5 games at 10 000 iterations (`benchjson`, 12 in
+parallel):
+
+| | wins | mean nodes/game | mean ms/game | black moves | frozen tail moves |
+|---|---|---|---|---|---|
+| before | 966 | 21 594 | 582 | 16 346 | 4 830 |
+| pass rule | 966 | 17 837 | 530 | 12 661 | 1 106 |
+| pass rule + score pick | 966 | 16 515 | 405 | 11 421 | 1 106 |
+
+The worst games went from 15 frozen moves to 1 (e.g. game 309: 24 moves -> 10). Wins and every
+single final margin are identical with the pass rule alone, so it only removes moves that could
+not change anything.
+
+The score matters because it is what the game pays out: `endGoGame` adds
+`score[black].sum * difficultyMultiplier * winstreakMultiplier` to that opponent's `nodePower`,
+and `nodePower` is the stat-multiplier effect of the Go node. So among moves that keep a
+*certain* win (value 1.0, the same as the pass), the engine now prefers one that raises the
+score - over the same 1000 games that is +293 total margin (24 games higher, 2 lower, wins
+unchanged) and a further 24% off the nodes, because decisive moves finish games sooner.
+
+That tail is not cheap, and making it cheaper was measured and rejected. The last one or two
+moves of a won game are the exact endgame solve - 70 000-85 000 nodes, 400-600 ms each at a
+100 000-node budget - and they are what turns 15:9 into 23:2. On 200 games at that budget:
+capping those moves at an 8 000-node budget saved **3% of the time for 11% of the score**
+(3282 -> 2929 total margin), and restricting the root to moves that raise the score saved 3.6%
+of the nodes with **no** time change and 3% less score (3282 -> 3186). Neither trade was worth
+taking, so the tail keeps its solve; the lever for a faster game is the per-move node budget.
+
 
 ### The growth estimate that capped depth at 2 on 9x9
 

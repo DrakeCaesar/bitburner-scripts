@@ -529,8 +529,11 @@
           <label class="field"><span title="Play several games at once, one search thread each, instead of one game with many threads. Independent games scale with the core count where parallel search inside one game does not, and every game is seeded from (seed, faction, game number) - so the results are identical either way; only the wall clock changes.">Parallel games (1 thread each)</span><span class="fieldToggle"><input id="parallelGames" type="checkbox" /></span></label>
           <label class="field"><span title="Reuse exact search results across the moves of a game. Same answers as a fresh search, with less work.">Carry memo</span><span class="fieldToggle"><input id="carry" type="checkbox" /></span></label>
           <label class="field"><span title="Off: every worker gets a fixed slice of the node budget (repeatable, but a ply is discarded the moment one root move outgrows its slice). On: workers claim the next root move as they finish and split what is left, which is what play uses - stronger at high thread counts, but a run does not repeat exactly.">Dynamic scheduler</span><span class="fieldToggle"><input id="dynamicRoot" type="checkbox" /></span></label>
-          <label class="field"><span title="Evaluate the ns.go.cheat moves too, and play one when it beats the best legal move by the margin. The search prices it as an expectation over the success roll (0.6*(0.7-0.02n)^n*crimeSuccess, +0.25 at Source-File 14.3); the game rolls once, so a failed attempt skips our turn and, after a prior attempt, ejects us 10% of the time. Off by default.">Cheats (ns.go.cheat)</span><span class="fieldToggle"><input id="cheats" type="checkbox" /></span></label>
+          <label class="field"><span title="Evaluate the ns.go.cheat moves too, and play one when it beats the best legal move by the margin, every legal move makes the position worse and the game is being lost (best move still under 50%), at most twice per game. The search prices it as an expectation over the success roll (0.6*(0.7-0.02n)^n*crimeSuccess, +0.25 at Source-File 14.3); the game rolls once, so a failed attempt skips our turn and, after a prior attempt, ejects us 10% of the time. Off by default.">Cheats (ns.go.cheat)</span><span class="fieldToggle"><input id="cheats" type="checkbox" /></span></label>
           <label class="field"><span title="Adds a flat +25 percentage points to every cheat attempt: the game's Source-File 14 bonus, which only applies at level 3. Only affects anything with Cheats on.">SF14.3 cheat bonus</span><span class="fieldToggle"><input id="sf14Bonus" type="checkbox" /></span></label>
+          <label class="field"><span title="How many cheat attempts one game may spend. Each attempt after the first also rolls a 10% ejection on a miss, so a cap bounds what a lost game can cost: 0 never cheats, 99 is effectively uncapped. Measured on 1000 5x5 games: 2 attempts 966 wins, 3 attempts 973, uncapped 979.">Cheat attempts per game</span><input id="cheatAttempts" type="number" min="0" max="99" step="1" placeholder="2" /></label>
+          <label class="field"><span title="How much better than the best legal move a cheat has to be, in search-value units (roughly win probability). Higher means fewer, better-timed attempts: 0.1 is the default, 0.3 measured the same win rate with 30% fewer attempts.">Cheat margin</span><input id="cheatMargin" type="number" min="0" max="1" step="0.05" placeholder="0.1" /></label>
+          <label class="field"><span title="On: an attempt also requires the game to be lost on the numbers (the best legal move under 50%), so a cheat is never spent while a move holds the game. Off: the old rule, which will spend attempts in won positions - it cheated in 208 of 1000 games instead of 87 for the same score, and a lost ejection on a winning position is how a 4.5-point lead becomes a loss.">Cheat only when losing</span><span class="fieldToggle"><input id="cheatLosing" type="checkbox" /></span></label>
           <div class="switchGroup">
             <div class="switchHead" title="Changes to the deepening loop that arrived on 11-12 Nov. All off, because they measured slightly worse than what they replaced: 1 080 games on 5x5 at a 1 000-node budget came out 2.3 points behind, spending 14% fewer nodes per move. Turn one on to measure it.">Deepening switches (off = pre-11-Nov behaviour)</div>
             <label class="field"><span title="Derive the depth ceiling from the position (two half-moves per empty point) instead of using Max depth. With it off, Max depth is the ceiling and 0 means 10.">Auto depth</span><span class="fieldToggle"><input id="autoDepth" type="checkbox" /></span></label>
@@ -793,6 +796,9 @@
         verifyRootReplies: false,
         cheats: false,
         sf14Bonus: false,
+        cheatAttempts: "",
+        cheatMargin: "",
+        cheatLosing: true,
         parallelGames: false,
       }
 
@@ -821,6 +827,9 @@
           verifyRootReplies: el("verifyRootReplies").checked,
           cheats: el("cheats").checked,
           sf14Bonus: el("sf14Bonus").checked,
+          cheatAttempts: el("cheatAttempts").value,
+          cheatMargin: el("cheatMargin").value,
+          cheatLosing: el("cheatLosing").checked,
           parallelGames: el("parallelGames").checked,
         }
       }
@@ -882,6 +891,9 @@
             verifyRootReplies: stored.verifyRootReplies === true,
             cheats: stored.cheats === true,
             sf14Bonus: stored.sf14Bonus === true,
+            cheatAttempts: orDefault(stored.cheatAttempts),
+            cheatMargin: orDefault(stored.cheatMargin),
+            cheatLosing: stored.cheatLosing !== false,
             parallelGames: stored.parallelGames === true,
           }
         } catch {
@@ -909,6 +921,9 @@
         el("verifyRootReplies").checked = form.verifyRootReplies === true
         el("cheats").checked = form.cheats === true
         el("sf14Bonus").checked = form.sf14Bonus === true
+        el("cheatAttempts").value = form.cheatAttempts ?? ""
+        el("cheatMargin").value = form.cheatMargin ?? ""
+        el("cheatLosing").checked = form.cheatLosing !== false
         el("parallelGames").checked = form.parallelGames === true
         selected.clear()
         for (const faction of form.factions) selected.add(faction)
@@ -1495,7 +1510,7 @@
             title.push(
               `cheat ${cheatName(mv.cheat.kind)}: value ${Number(mv.cheat.value).toFixed(3)} at ` +
                 `p(success) ${(100 * Number(mv.cheat.successChance)).toFixed(0)}%, best move ${Number(mv.cheat.bestMoveValue).toFixed(3)}, ` +
-                `position ${Number(mv.cheat.currentValue).toFixed(3)}, margin ${Number(mv.cheat.margin).toFixed(2)} (${mv.cheat.reason})`,
+                `position ${Number(mv.cheat.currentValue).toFixed(3)} (${mv.cheat.reason})`,
             )
             if (CHEAT_OUTCOMES[mv.cheat.outcome]) title.push(`outcome: ${CHEAT_OUTCOMES[mv.cheat.outcome]}`)
           }
@@ -1849,6 +1864,15 @@
         if (el("cheats").checked) body.cheats = true
         // The game's Source-File 14 bonus: a flat +25 points, and only at level 3.
         if (el("cheats").checked && el("sf14Bonus").checked) body.sourceFile14Level = 3
+        // The cheat levers: how many attempts a game may spend, how much better than the
+        // best legal move one has to be, and whether it also needs a lost position.
+        if (el("cheats").checked) {
+          const attempts = Math.floor(numberOf("cheatAttempts"))
+          if (Number.isFinite(attempts) && attempts >= 0) body.cheatMaxAttempts = Math.min(99, attempts)
+          const margin = Number(el("cheatMargin").value.trim() || el("cheatMargin").placeholder)
+          if (Number.isFinite(margin) && margin >= 0 && margin <= 1) body.cheatMargin = margin
+          body.cheatLosingGate = el("cheatLosing").checked
+        }
         // Several games at once, one search thread each: same results, more cores used.
         if (el("parallelGames").checked) body.parallelGames = navigator.hardwareConcurrency || 8
         if (body.factions.length === 0) body.factions = null
@@ -1981,12 +2005,13 @@
       el("tuning").addEventListener("toggle", saveForm)
       el("carry").addEventListener("change", saveForm)
       el("dynamicRoot").addEventListener("change", saveForm)
-      for (const id of ["autoDepth", "perMoveBudget", "widen", "verifyRootReplies", "cheats", "sf14Bonus", "parallelGames"]) {
+      for (const id of ["autoDepth", "perMoveBudget", "widen", "verifyRootReplies", "cheats", "sf14Bonus", "parallelGames", "cheatAttempts", "cheatMargin", "cheatLosing"]) {
         el(id).addEventListener("change", saveForm)
+        if (el(id).type !== "checkbox") el(id).addEventListener("input", saveForm)
       }
 
       // The tuning pane shows these, so it has to be redrawn when one of them moves.
-      for (const id of [...TUNING_IDS, "carry", "dynamicRoot", "autoDepth", "perMoveBudget", "widen", "verifyRootReplies", "cheats", "sf14Bonus"]) {
+      for (const id of [...TUNING_IDS, "carry", "dynamicRoot", "autoDepth", "perMoveBudget", "widen", "verifyRootReplies", "cheats", "sf14Bonus", "cheatAttempts", "cheatMargin", "cheatLosing"]) {
         el(id).addEventListener("change", renderTuneInherited)
         el(id).addEventListener("input", renderTuneInherited)
       }
@@ -2464,6 +2489,9 @@
           verifyRootReplies: el("verifyRootReplies").checked,
           cheats: el("cheats").checked,
           sourceFile14Level: el("cheats").checked && el("sf14Bonus").checked ? 3 : 0,
+          cheatMaxAttempts: Math.max(0, Math.floor(numberOf("cheatAttempts")) || 0),
+          cheatMargin: Number(el("cheatMargin").value.trim() || el("cheatMargin").placeholder),
+          cheatLosingGate: el("cheatLosing").checked,
         }
       }
 
@@ -2484,7 +2512,7 @@
           `carry ${onOff(search.carry)}, auto depth ${onOff(search.autoDepth)}, ` +
           `per-move budget ${onOff(search.perMoveBudget)}, widen ${onOff(search.widen)}, ` +
           `verify replies ${onOff(search.verifyRootReplies)}, cheats ${onOff(search.cheats)}` +
-          `${search.cheats ? ` (SF14 bonus ${onOff(search.sourceFile14Level >= 3)})` : ""}; ` +
+          `${search.cheats ? ` (SF14 bonus ${onOff(search.sourceFile14Level >= 3)}, ${search.cheatMaxAttempts} tries, margin ${search.cheatMargin}, only when losing ${onOff(search.cheatLosingGate)})` : ""}; ` +
           `${gamesLabel}, one search thread each - Run's Threads (${runThreads}) and ` +
           `Dynamic scheduler (${onOff(el("dynamicRoot").checked)}) do not apply to a single-threaded search`
       }

@@ -932,6 +932,8 @@ json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session,
   cfg.sourceFile14Level = req.value("sourceFile14Level", 0);
   cfg.maxCheatPairs = req.value("maxCheatPairs", 6);
   cfg.cheatMargin = req.value("cheatMargin", 0.1);
+  cfg.cheatMaxAttempts = std::clamp(req.value("cheatMaxAttempts", 2), 0, 99);
+  cfg.cheatOnlyWhenLosing = req.value("cheatLosingGate", true);
 
   const auto t0 = std::chrono::steady_clock::now();
   const ExploitResult result = runExploiter(state, cfg, nullptr, session);
@@ -971,6 +973,8 @@ json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session,
                         {"bestMoveValue", result.cheat.bestMoveValue},
                         {"currentValue", result.cheat.currentValue},
                         {"margin", cfg.cheatMargin},
+                        {"maxAttempts", cfg.cheatMaxAttempts},
+                        {"onlyWhenLosing", cfg.cheatOnlyWhenLosing},
                         {"reason", result.cheat.reason}};
     out["cheatPreferred"] = result.cheatPreferred;
   }
@@ -1648,6 +1652,8 @@ bool applyTuningOption(BenchOptions& options, const std::string& key, const std:
   else if (key == "depth") options.depth = std::stoi(value);
   else if (key == "threads") options.threads = std::stoi(value);
   else if (key == "parallel" || key == "parallelGames") options.gamesInParallel = std::stoi(value);
+  else if (key == "cheat-cap" || key == "cheatMaxAttempts") options.cheatMaxAttempts = std::clamp(std::stoi(value), 0, 99);
+  else if (key == "cheat-losing" || key == "cheatLosingGate") options.cheatLosingGate = value != "0" && value != "false";
   else return false;
   return true;
 }
@@ -1936,6 +1942,8 @@ struct TuneSearchConfig {
   bool verifyRootReplies = false;
   bool cheats = false;
   double cheatMargin = 0.1;
+  int cheatMaxAttempts = 2;
+  bool cheatLosingGate = true;
   int sourceFile14Level = 0;  // 3 adds a flat +25 points to the cheat chance
 
   json toJson() const {
@@ -1948,6 +1956,8 @@ struct TuneSearchConfig {
                 {"verifyRootReplies", verifyRootReplies},
                 {"cheats", cheats},
                 {"cheatMargin", cheatMargin},
+                {"cheatMaxAttempts", cheatMaxAttempts},
+                {"cheatLosingGate", cheatLosingGate},
                 {"sourceFile14Level", sourceFile14Level}};
   }
 };
@@ -1986,6 +1996,8 @@ TuneTally tunePlayGame(int size, Opponent ai, const TuneGenome& genome, long nod
   cfg.verifyRootReplies = search.verifyRootReplies;
   cfg.cheatsEnabled = search.cheats;
   cfg.cheatMargin = search.cheatMargin;
+  cfg.cheatMaxAttempts = search.cheatMaxAttempts;
+  cfg.cheatOnlyWhenLosing = search.cheatLosingGate;
   cfg.sourceFile14Level = search.sourceFile14Level;
   // One worker per game: the tuning runner gets its parallelism from playing several
   // games at once, and a single-worker search is both the repeatable case and the one
@@ -2633,6 +2645,8 @@ int main(int argc, char** argv) {
         if (raw.contains("cheatMargin") && raw.at("cheatMargin").is_number()) {
           search.cheatMargin = std::clamp(raw.at("cheatMargin").get<double>(), 0.0, 1.0);
         }
+        search.cheatMaxAttempts = std::clamp(asInt("cheatMaxAttempts", search.cheatMaxAttempts), 0, 99);
+        search.cheatLosingGate = asBool("cheatLosingGate", search.cheatLosingGate);
       } catch (const std::exception& err) {
         std::cerr << "tune: bad search JSON: " << err.what() << "\n";
         return 2;
@@ -2721,6 +2735,8 @@ int main(int argc, char** argv) {
       // One global switch for cheat moves, plus the player inputs the success roll needs.
       options.cheats = config.value("cheats", false);
       options.cheatMargin = config.value("cheatMargin", 0.1);
+      options.cheatMaxAttempts = std::clamp(config.value("cheatMaxAttempts", 2), 0, 99);
+      options.cheatLosingGate = config.value("cheatLosingGate", true);
       options.crimeSuccessMult = config.value("crimeSuccessMult", 1.0);
       options.sourceFile14Level = config.value("sourceFile14Level", 0);
       // Play this many games at once, each on one search thread (0/1 = one at a time).

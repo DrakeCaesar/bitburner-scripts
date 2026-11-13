@@ -505,6 +505,8 @@ BenchRun prepareBenchRun(const BenchOptions& options, bool singleThreadedGames) 
   // outcome and applies it, so a cheat costs the game what it costs in the real one.
   cfg.cheatsEnabled = options.cheats;
   cfg.cheatMargin = options.cheatMargin;
+  cfg.cheatMaxAttempts = options.cheatMaxAttempts;
+  cfg.cheatOnlyWhenLosing = options.cheatLosingGate;
   cfg.crimeSuccessMult = options.crimeSuccessMult;
   cfg.sourceFile14Level = options.sourceFile14Level;
 

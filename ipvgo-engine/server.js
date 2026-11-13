@@ -527,6 +527,13 @@ async function handleBenchStart(req, res) {
     const margin = Number(body.cheatMargin)
     if (Number.isFinite(margin) && margin >= 0 && margin <= 1) options.cheatMargin = margin
   }
+  // How many attempts a game may spend, and whether an attempt needs the position to be
+  // lost. Both bound what the cheats can cost, so they are per-run settings.
+  if (body?.cheats === true && body?.cheatMaxAttempts !== undefined && body?.cheatMaxAttempts !== "") {
+    const attempts = Math.floor(Number(body.cheatMaxAttempts))
+    if (Number.isFinite(attempts) && attempts >= 0) options.cheatMaxAttempts = Math.min(99, attempts)
+  }
+  if (body?.cheats === true && typeof body?.cheatLosingGate === "boolean") options.cheatLosingGate = body.cheatLosingGate
   // Root scheduler: the repeatable round-robin split by default, the dynamic one on
   // request. They are not equivalent - a fixed per-worker slice discards a ply when one
   // root move outgrows it, and at 12 threads that costs about 5 points of win rate.
@@ -1053,6 +1060,13 @@ function tuneInt(value, min, max, fallback) {
   return Math.min(max, Math.max(min, parsed))
 }
 
+// Same, for the settings measured in search-value units rather than counts.
+function tuneFloat(value, min, max, fallback) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.min(max, Math.max(min, parsed))
+}
+
 // Normalises an incoming search box to { key: [lo, hi] }, or null when the caller did
 // not ask for one. Ranges the engine would clamp anyway are clamped here too, so the
 // panel shows what will actually be searched.
@@ -1090,6 +1104,11 @@ function tuneSearch(input) {
     widen: flag("widen"),
     verifyRootReplies: flag("verifyRootReplies"),
     cheats: flag("cheats"),
+    // The cheat levers travel with the rest of the search shape, so a tuning run plays
+    // the same cheat policy the Run pane would.
+    cheatMaxAttempts: tuneInt(input?.cheatMaxAttempts, 0, 99, 2),
+    cheatLosingGate: input?.cheatLosingGate !== false,
+    cheatMargin: tuneFloat(input?.cheatMargin, 0, 1, 0.1),
     sourceFile14Level: tuneInt(input?.sourceFile14Level, 0, 3, 0),
   }
 }

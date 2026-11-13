@@ -54,9 +54,13 @@ struct BenchOptions {
   // Cheat moves (ns.go.cheat, Source-File 14.2+). One global switch: when on, every game's
   // search values the cheats as an expectation over the game's success roll, and the game
   // plays the one the search preferred - rolling once, on the game state, like the real
-  // thing. `cheatMargin` is how much better than the best legal move it has to be.
+  // thing. `cheatMargin` is how much better than the best legal move it has to be, and
+  // `cheatMaxAttempts` / `cheatLosingGate` bound what a game can spend and where.
   bool cheats = false;
   double cheatMargin = 0.1;
+  // Attempts a game may spend, and whether an attempt also needs the position to be lost.
+  int cheatMaxAttempts = 2;
+  bool cheatLosingGate = true;
   double crimeSuccessMult = 1.0;
   int sourceFile14Level = 0;
   // Play this many games at the same time instead of one at a time. Each game still
