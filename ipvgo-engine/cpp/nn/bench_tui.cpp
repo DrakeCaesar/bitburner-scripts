@@ -647,7 +647,7 @@ class LiveObserver : public BenchObserver {
     updateScore(state);
     if (traceEnabled()) {
       std::printf("  g%d m%d B %s v=%.3f d=%d nodes=%ld score=%.1f:%.1f\n", game, move,
-                  view_.lastBlack.c_str(), search.value, search.depth, search.nodes, view_.blackScore,
+                  view_.lastBlack.c_str(), reportedValue(search.value), search.depth, search.nodes, view_.blackScore,
                   view_.whiteScore);
       std::fflush(stdout);
     }
@@ -771,7 +771,7 @@ class JsonObserver : public BenchObserver {
                   {"black", passed ? json(nullptr)
                                    : json{{"x", search.bestAction / n}, {"y", search.bestAction % n}}},
                   {"pass", passed},
-                  {"value", search.value},
+                  {"value", reportedValue(search.value)},
                   {"depth", search.depth},
                   {"nodes", search.nodes},
                   {"ms", elapsedMs},
@@ -787,10 +787,10 @@ class JsonObserver : public BenchObserver {
                         {"y1", search.cheat.y1},
                         {"x2", search.cheat.x2},
                         {"y2", search.cheat.y2},
-                        {"value", search.cheat.value},
+                        {"value", reportedValue(search.cheat.value)},
                         {"successChance", search.cheat.successChance},
-                        {"bestMoveValue", search.cheat.bestMoveValue},
-                        {"currentValue", search.cheat.currentValue},
+                        {"bestMoveValue", reportedValue(search.cheat.bestMoveValue)},
+                        {"currentValue", reportedValue(search.cheat.currentValue)},
                         {"reason", search.cheat.reason},
                         {"outcome", search.cheat.outcome}};
     }
@@ -856,7 +856,7 @@ class JsonObserver : public BenchObserver {
     const size_t n = std::min<size_t>(3, search.rootScores.size());
     for (size_t i = 0; i < n; ++i) {
       json entry = actionJson(search.rootScores[i].first, state.size);
-      entry["value"] = search.rootScores[i].second;
+      entry["value"] = reportedValue(search.rootScores[i].second);
       top.push_back(entry);
     }
 

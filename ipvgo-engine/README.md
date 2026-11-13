@@ -1716,12 +1716,34 @@ score - over the same 1000 games that is +293 total margin (24 games higher, 2 l
 unchanged) and a further 24% off the nodes, because decisive moves finish games sooner.
 
 That tail is not cheap, and making it cheaper was measured and rejected. The last one or two
-moves of a won game are the exact endgame solve - 70 000-85 000 nodes, 400-600 ms each at a
-100 000-node budget - and they are what turns 15:9 into 23:2. On 200 games at that budget:
-capping those moves at an 8 000-node budget saved **3% of the time for 11% of the score**
-(3282 -> 2929 total margin), and restricting the root to moves that raise the score saved 3.6%
-of the nodes with **no** time change and 3% less score (3282 -> 3186). Neither trade was worth
-taking, so the tail keeps its solve; the lever for a faster game is the per-move node budget.
+moves of a won game are the exact play-out - 70 000-85 000 nodes, 400-600 ms each at a
+100 000-node budget - and they are what turns 15:9 into 23:2. With `IPVGO_DEBUG_DEPTH=1` on
+one of those positions (9 empty points left) the cost is legible:
+
+```
+[iter] depth=1 nodes=10      ms=0.9                       one leaf eval per root move
+[child] i=0 nodes=6403       ... i=1..8 all ~6 400 nodes  a play-out of the 8-empty board
+[iter] depth=2 nodes=51890   ms=11.5
+[iter] depth=3 nodes=130436 timedOut=1                    aborted at the budget
+```
+
+~6 400 nodes per candidate is 3^8: every way of filling the remaining 8 points. It is not
+looking ten moves ahead through the reply model, it is enumerating the rest of the board once
+per candidate move. On 200 games at that budget, capping those moves at an 8 000-node budget
+saved **3% of the time for 11% of the score** (3282 -> 2929 total margin), restricting the root
+to moves that raise the score saved 3.6% of the nodes with **no** time change and 3% less score
+(3282 -> 3186), and pushing the root itself into the endgame path (`endgameEmpties = 9`) costs
+**131 987 nodes** at the next depth instead of 51 890. The enumeration is the cost; there is no
+cheaper exact answer, so the lever for a faster game is the per-move node budget.
+
+What the score term does buy is inside the tree: a finished game is now valued
+`1 + score * 1/4096` when won and `score * 1/4096` when lost, so the search has a reason to
+prefer the line that ends 23:2 over the one that ends 15:8.5 - and, because losses carry their
+score too, the same reason to bank points in games it is losing (`endGoGame` pays nodePower for
+the final score either way). Over the same 1000 games that is 967 wins instead of 966 and
+13 165 total margin instead of 13 077, for the same nodes. Every reported value is clamped back
+to a probability, so `p(win)` in the GUI still reads 1.000 at the top of the scale.
+
 
 
 ### The growth estimate that capped depth at 2 on 9x9

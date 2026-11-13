@@ -72,6 +72,7 @@ using namespace ipvgo::game;
 using ipvgo::nn::BenchOptions;
 using ipvgo::nn::ExploitConfig;
 using ipvgo::nn::ExploitResult;
+using ipvgo::nn::reportedValue;
 using ipvgo::nn::McgsConfig;
 using ipvgo::nn::McgsResult;
 using ipvgo::nn::OptBenchOptions;
@@ -944,7 +945,7 @@ json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session,
   json out;
   out["move"] = actionToMoveJson(state.size, action);
   out["depth"] = result.depth;
-  out["value"] = result.value;
+  out["value"] = reportedValue(result.value);
   out["nodes"] = result.nodes;
   out["elapsedMs"] = ms;
   // Root width and the reply pruning actually used, so a search can be read without
@@ -968,10 +969,10 @@ json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session,
                         {"y1", result.cheat.y1},
                         {"x2", result.cheat.x2},
                         {"y2", result.cheat.y2},
-                        {"value", result.cheat.value},
+                        {"value", reportedValue(result.cheat.value)},
                         {"successChance", result.cheat.successChance},
-                        {"bestMoveValue", result.cheat.bestMoveValue},
-                        {"currentValue", result.cheat.currentValue},
+                        {"bestMoveValue", reportedValue(result.cheat.bestMoveValue)},
+                        {"currentValue", reportedValue(result.cheat.currentValue)},
                         {"margin", cfg.cheatMargin},
                         {"maxAttempts", cfg.cheatMaxAttempts},
                         {"onlyWhenLosing", cfg.cheatOnlyWhenLosing},
@@ -1441,7 +1442,7 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
         if (action == ipvgo::nn::passAction(size)) std::cout << "pass";
         else std::cout << (action / size) << "," << (action % size);
         const Score probe = getScore(state);
-        std::cout << "  p(win)=" << search.value << "  lead=" << (probe.blackSum - probe.whiteSum)
+        std::cout << "  p(win)=" << reportedValue(search.value) << "  lead=" << (probe.blackSum - probe.whiteSum)
                   << "  depth=" << search.depth << " nodes=" << search.nodes << "\n";
 
         int shown = 0;
@@ -1475,7 +1476,7 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
         std::cout << "  g" << g << " m" << m << " B ";
         if (action == ipvgo::nn::passAction(size)) std::cout << "pass";
         else std::cout << (action / size) << "," << (action % size);
-        std::cout << " v=" << search.value << " nodes=" << search.nodes << " score=" << probe.blackSum << ":"
+        std::cout << " v=" << reportedValue(search.value) << " nodes=" << search.nodes << " score=" << probe.blackSum << ":"
                   << probe.whiteSum << " e=" << empties << "\n";
         if (std::getenv("IPVGO_TRACE_BOARD")) {
           std::cout << "  pos g" << g << " m" << m << " [";
