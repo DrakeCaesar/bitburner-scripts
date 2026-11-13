@@ -1378,20 +1378,34 @@ algorithm and prints the winner together with the shipped defaults re-measured o
 held-back seeds:
 
 ```powershell
-# tune <faction> [generations] [population] [games] [nodeLimit] [size] [threads] [seed] [json|text]
+# tune <faction> [generations] [population] [games] [nodeLimit] [size] [gamesInFlight] [seed] [json|text]
+#      [resumeBeam resumeChildren resumeMass] [rangeJson] [carry|nocarry] [searchJson]
 ./out/build/x64-Release/bin/ipvgo_game.exe tune Illuminati 3 6 12 1000 5 8 1 text
 ```
 
 The same search is wired into the bench GUI under **Auto-tune widths for one faction**,
 which streams each generation over SSE and shows the validation pair when it finishes.
 
+**The GUI inherits the search settings.** The tuning pane owns only the workload - faction,
+board size, generations, population, games per genome, node limit, games in flight, seed.
+Everything that shapes the search itself (**Threads**, **Carry memo**, **Endgame empties**,
+**Endgame node cap**, **Max depth**, **Dynamic scheduler**, **Auto depth**, **Per-move
+budget**, **Widen at the root**) is read from the Run pane's **Search tuning** block when
+the run starts and travels to the engine as one JSON argument, and the pane prints the
+inherited values above its own fields so there is no doubt which search is being measured.
+A genome is therefore always measured with the search that will play with it. The
+consequence worth knowing is that inheriting **Dynamic scheduler**, or more than one search
+thread, makes a tuning run repeat only approximately - which is why that line says so.
+
 Two design points that matter more than the GA itself:
 
-- **Evaluation is game-parallel, not search-parallel.** Every worker plays whole games
-  with `threads = 1`. At a node budget search threads buy no strength and only scale ~4.8x
-  on 12 threads, while independent games scale with the core count and stay reproducible
-  per seed because nothing is shared. Measured: **~5.5 ms per 5x5 game against ~33 ms
-  serially**, so a 1800-game generation set finishes in seconds.
+- **Evaluation is game-parallel by default.** Every worker plays whole games, and the
+  search inside a game is single-threaded unless the caller asks otherwise. At a node
+  budget search threads buy no strength and only scale ~4.8x on 12 threads, while
+  independent games scale with the core count and stay reproducible per seed because
+  nothing is shared. Measured: **~5.5 ms per 5x5 game against ~33 ms serially**, so a
+  1800-game generation set finishes in seconds. The GUI inherits the Run pane's **Threads**
+  instead (see above), which only pays when the games in flight leave cores idle.
 - **Common random numbers.** Every individual in a generation plays the *same* seed set,
   so differences between genomes are not confused with differences between openings, and
   the winner is then re-measured on seeds never used during the search. With 12-30 games
@@ -1403,9 +1417,11 @@ rather than scored, because a position cut off mid-play is not a result (see the
 the move cap above).
 
 **Repeated genomes are measured once.** Within one run, fitness is a pure function of the
-genome: the training seeds are drawn once, the search is bounded by nodes rather than wall
-clock, and the tuner pins threads to 1. So a genome that appeared in an earlier generation
-already has an exact score, and replaying it plays the same games to the same result.
+genome: the training seeds are drawn once and the search is bounded by nodes rather than
+wall clock. So a genome that appeared in an earlier generation already has an exact score,
+and replaying it plays the same games to the same result. (A genome measured with more than
+one search thread, or with the dynamic scheduler inherited from the Run pane, repeats only
+approximately; reusing its earlier result is then a saving rather than an assumption.)
 Elitism alone guarantees at least one such genome per generation, and convergence produces
 several. The tuner keys a cache on `(beam, replies, mass)` and only plays the genomes it has
 not seen; validation always runs fresh, because it uses the held-back seeds. Because the

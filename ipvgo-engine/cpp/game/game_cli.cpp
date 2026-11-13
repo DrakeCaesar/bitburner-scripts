@@ -1895,6 +1895,32 @@ struct TuneGenomeTally {
   TuneTally validation;
 };
 
+// The search settings the tuner inherits from the bench form. A genome is only
+// meaningful if it was measured with the search that will play with it, so these
+// travel with every tuning game instead of sitting at the engine defaults. How many
+// games run at once is not here: that is throughput, and it is a tuner argument.
+struct TuneSearchConfig {
+  int threads = 1;  // search threads per game; 0 = hardware concurrency
+  int endgameEmpties = 6;
+  long nodeBudget = 30000;
+  int maxDepth = 10;
+  bool autoDepth = false;
+  bool perMoveBudget = false;
+  bool widen = false;
+  bool dynamicRoot = false;
+
+  json toJson() const {
+    return json{{"threads", threads},
+                {"endgameEmpties", endgameEmpties},
+                {"nodeBudget", nodeBudget},
+                {"maxDepth", maxDepth},
+                {"autoDepth", autoDepth},
+                {"perMoveBudget", perMoveBudget},
+                {"widen", widen},
+                {"dynamicRoot", dynamicRoot}};
+  }
+};
+
 int tuneMoveCap(int size) {
   const char* capEnv = std::getenv("IPVGO_MOVECAP");
   return capEnv != nullptr ? std::max(1, std::atoi(capEnv)) : size * size * 4;
@@ -1903,8 +1929,8 @@ int tuneMoveCap(int size) {
 // One complete self-play game with this genome. Returns whether the game actually ended;
 // a game that hits the move cap is reported as unfinished rather than scored, because a
 // position cut off mid-play is not a result.
-TuneTally tunePlayGame(int size, Opponent ai, const TuneGenome& genome, long nodeLimit, uint64_t seed,
-                       bool carry) {
+TuneTally tunePlayGame(int size, Opponent ai, const TuneGenome& genome, long nodeLimit, uint64_t seed, bool carry,
+                       const TuneSearchConfig& search) {
   std::mt19937_64 rng(seed != 0 ? seed : 1);
   const double clockMs = static_cast<double>(rng() % 30000000u);
   MathRandom mathRng(rng());
@@ -1915,8 +1941,17 @@ TuneTally tunePlayGame(int size, Opponent ai, const TuneGenome& genome, long nod
   cfg.whiteChildren = genome.whiteChildren;
   cfg.whiteMass = genome.whiteMass;
   cfg.nodeLimit = nodeLimit;
-  cfg.threads = 1;
-  cfg.deterministic = true;
+  cfg.threads = search.threads;
+  cfg.endgameEmpties = search.endgameEmpties;
+  cfg.nodeBudget = search.nodeBudget;
+  cfg.maxDepth = search.maxDepth;
+  cfg.autoDepth = search.autoDepth;
+  cfg.perMoveBudget = search.perMoveBudget;
+  cfg.widen = search.widen;
+  // Round-robin root ownership is what makes two runs of the same seed identical, so
+  // the dynamic scheduler is inherited only when the bench form asks for it - a genome
+  // tuned with it is measured a little differently every time.
+  cfg.deterministic = !search.dynamicRoot;
   ipvgo::nn::SearchSession session;
 
   double tallyMs = 0.0;
@@ -1986,7 +2021,8 @@ std::pair<double, size_t> tuneTiming() {
 }
 
 std::vector<TuneTally> tuneEvaluate(const std::vector<TuneGenome>& genomes, const std::vector<uint64_t>& seeds,
-                                    int size, Opponent ai, long nodeLimit, unsigned threads, bool carry) {
+                                    int size, Opponent ai, long nodeLimit, unsigned threads, bool carry,
+                                    const TuneSearchConfig& search) {
   std::vector<TuneTally> tallies(genomes.size());
   std::vector<TuneTally> results(genomes.size() * seeds.size());
   std::atomic<size_t> next{0};
@@ -1997,7 +2033,8 @@ std::vector<TuneTally> tuneEvaluate(const std::vector<TuneGenome>& genomes, cons
     for (;;) {
       const size_t job = next.fetch_add(1, std::memory_order_relaxed);
       if (job >= jobs) break;
-      results[job] = tunePlayGame(size, ai, genomes[job / seeds.size()], nodeLimit, seeds[job % seeds.size()], carry);
+      results[job] =
+          tunePlayGame(size, ai, genomes[job / seeds.size()], nodeLimit, seeds[job % seeds.size()], carry, search);
     }
   };
   if (workers <= 1) {
@@ -2098,7 +2135,7 @@ bool tuneContainsGenome(const std::vector<TuneGenome>& genomes, const TuneGenome
 
 int runTune(const std::string& faction, int generations, int populationSize, int gamesPerGenome, long nodeLimit,
             int size, unsigned threads, uint64_t seedBase, bool emitJson, bool haveSeed, TuneGenome seedGenome,
-            const TuneBounds& bounds, bool carry) {
+            const TuneBounds& bounds, bool carry, const TuneSearchConfig& search) {
   const Opponent ai = parseOpponent(faction).value_or(Opponent::Netburners);
   std::mt19937_64 rng(seedBase != 0 ? seedBase : 1);
   tuneResetTiming();
@@ -2164,12 +2201,14 @@ int runTune(const std::string& faction, int generations, int populationSize, int
   double bestFitness = -1.0;
 
   // Fitness is a pure function of the genome within a run: the training seeds are
-  // drawn once above, the search is bounded by nodes rather than by wall clock, and
-  // the tuner pins threads to 1. So a genome that appeared in an earlier generation
-  // has already been measured exactly - replaying it is pure waste, and elitism alone
-  // guarantees at least one such genome every generation once the search converges.
-  // Keying on the three genes also keeps the GA's own random stream untouched, so the
-  // sequence of populations is identical to an uncached run: same answer, less work.
+  // drawn once above and the search is bounded by nodes rather than by wall clock, so
+  // a genome that appeared in an earlier generation has already been measured.
+  // Replaying it is pure waste, and elitism alone guarantees at least one such genome
+  // every generation once the search converges. Keying on the three genes also keeps
+  // the GA's own random stream untouched, so the sequence of populations is identical
+  // to an uncached run: same answer, less work. A genome measured with more than one
+  // search thread, or with the dynamic scheduler inherited, repeats only approximately;
+  // reusing its earlier result is then a saving rather than an assumption.
   auto genomeKey = [](const TuneGenome& g) {
     return std::make_tuple(g.beam, g.whiteChildren, static_cast<int>(std::lround(g.whiteMass * 100.0)));
   };
@@ -2192,7 +2231,7 @@ int runTune(const std::string& faction, int generations, int populationSize, int
     }
     if (!unseenGenomes.empty()) {
       const std::vector<TuneTally> fresh =
-          tuneEvaluate(unseenGenomes, trainSeeds, size, ai, nodeLimit, threads, carry);
+          tuneEvaluate(unseenGenomes, trainSeeds, size, ai, nodeLimit, threads, carry, search);
       for (size_t j = 0; j < fresh.size(); ++j) measured[genomeKey(unseenGenomes[j])] = fresh[j];
     }
     playedEvaluations += static_cast<long>(unseenGenomes.size());
@@ -2309,13 +2348,16 @@ int runTune(const std::string& faction, int generations, int populationSize, int
   // Re-measure the winner and the shipped defaults on the held-back seeds.
   std::vector<TuneGenome> finalists = {bestOverall, TuneGenome{}};
   const std::vector<TuneTally> finalTallies =
-      tuneEvaluate(finalists, validationSeeds, size, ai, nodeLimit, threads, carry);
+      tuneEvaluate(finalists, validationSeeds, size, ai, nodeLimit, threads, carry, search);
 
   if (emitJson) {
     std::cout << json{{"type", "done"},
                       {"faction", faction},
                       {"size", size},
                       {"nodeLimit", nodeLimit},
+                      {"threads", threads},
+                      {"carry", carry},
+                      {"search", search.toJson()},
                       {"cachedEvaluations", cachedEvaluations},
                       {"playedEvaluations", playedEvaluations},
                       {"msPerMove", tuneTiming().first},
@@ -2395,7 +2437,8 @@ int main(int argc, char** argv) {
     return runExploitPlay("Illuminati", 9, games, 2, seed, false, 0, 0, 5000, true);
   }
   if (cmd == "tune" && argc >= 3) {
-    // tune <faction> [generations] [population] [gamesPerGenome] [nodeLimit] [size] [threads] [seed] [json]
+    // tune <faction> [generations] [population] [gamesPerGenome] [nodeLimit] [size] [gamesInFlight] [seed] [json]
+    //      [resumeBeam resumeChildren resumeMass] [rangeJson] [carry|nocarry] [searchJson]
     const std::string faction = argv[2];
     const int generations = argc >= 4 ? std::stoi(argv[3]) : 8;
     const int population = argc >= 5 ? std::stoi(argv[4]) : 10;
@@ -2451,12 +2494,39 @@ int main(int argc, char** argv) {
     // only ever reuses exact results, but it must be switchable so the two can be compared.
     bool carry = true;
     if (argc >= 16) carry = std::string(argv[15]) != "nocarry";
+    // Optional argv[16]: the search settings inherited from the bench form, as JSON:
+    // {"threads":0,"endgameEmpties":6,"nodeBudget":30000,"maxDepth":10,
+    //  "autoDepth":false,"perMoveBudget":false,"widen":false,"dynamicRoot":false}
+    TuneSearchConfig search;
+    if (argc >= 17) {
+      try {
+        const json raw = json::parse(argv[16]);
+        const auto asInt = [&](const char* key, int fallback) {
+          return raw.contains(key) && raw.at(key).is_number() ? raw.at(key).get<int>() : fallback;
+        };
+        const auto asBool = [&](const char* key, bool fallback) {
+          return raw.contains(key) && raw.at(key).is_boolean() ? raw.at(key).get<bool>() : fallback;
+        };
+        search.threads = std::clamp(asInt("threads", search.threads), 0, 64);
+        search.endgameEmpties = std::clamp(asInt("endgameEmpties", search.endgameEmpties), 0, 20);
+        search.nodeBudget = std::clamp(static_cast<long>(asInt("nodeBudget", static_cast<int>(search.nodeBudget))),
+                                       1000L, 5000000L);
+        search.maxDepth = std::clamp(asInt("maxDepth", search.maxDepth), 0, 64);
+        search.autoDepth = asBool("autoDepth", search.autoDepth);
+        search.perMoveBudget = asBool("perMoveBudget", search.perMoveBudget);
+        search.widen = asBool("widen", search.widen);
+        search.dynamicRoot = asBool("dynamicRoot", search.dynamicRoot);
+      } catch (const std::exception& err) {
+        std::cerr << "tune: bad search JSON: " << err.what() << "\n";
+        return 2;
+      }
+    }
     if (generations < 1 || population < 2 || games < 1) {
       std::cerr << "tune: generations and games must be positive, population at least 2\n";
       return 2;
     }
     return runTune(faction, generations, population, games, nodeLimit, size, threads, seed, emitJson, haveSeed,
-                   seedGenome, bounds, carry);
+                   seedGenome, bounds, carry, search);
   }
   if (cmd == "exploitplay" && argc >= 6) {
     const int size = std::stoi(argv[3]);

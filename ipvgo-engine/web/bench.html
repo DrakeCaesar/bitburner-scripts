@@ -537,9 +537,10 @@
         <div id="tunePane" style="display: none">
           <p class="dim small">
             Genetic search over beam, replies kept and the reply mass cap for one faction. Every genome in a
-            generation plays the same games, games run in parallel (one search thread each), and the winner is
-            re-measured against the defaults on seeds the search never saw. Starting again continues from the
-            best genome found so far.
+            generation plays the same games, games run in parallel, and the winner is re-measured against the
+            defaults on seeds the search never saw. Starting again continues from the best genome found so far.
+            The search itself - threads, carry memo, endgame, dynamic scheduler and the deepening switches - is
+            whatever the Run pane holds, so a genome is measured with the search that will play with it.
           </p>
           <div class="tuneFields">
             <label class="field"><span>Faction</span>
@@ -558,10 +559,11 @@
             <label class="field"><span>Generations</span><input id="tuneGenerations" type="number" min="1" max="60" value="6" /></label>
             <label class="field"><span>Population</span><input id="tunePopulation" type="number" min="2" max="40" value="10" /></label>
             <label class="field"><span title="Games each genome plays on the shared training seeds">Games per genome</span><input id="tuneGames" type="number" min="4" max="400" value="24" /></label>
-            <label class="field"><span>Node limit</span><input id="tuneNodeLimit" type="number" min="100" step="100" value="1000" /></label>
-            <label class="field"><span title="Games in flight at once. Each one searches on a single thread.">Parallel games</span><input id="tuneThreads" type="number" min="1" max="64" value="8" /></label>
+            <label class="field"><span title="Per-move node budget for the tuning games. Max depth and the endgame node cap come from the Run pane.">Node limit</span><input id="tuneNodeLimit" type="number" min="100" step="100" value="1000" /></label>
+            <label class="field"><span title="Games in flight at once. The search threads each game uses come from the Run pane, so the load is games x threads.">Parallel games</span><input id="tuneThreads" type="number" min="1" max="64" value="8" /></label>
             <label class="field"><span>Seed</span><input id="tuneSeed" type="number" min="1" value="1" /></label>
           </div>
+          <div class="small dim" id="tuneInherited"></div>
           <div class="buttons">
             <button id="tuneStart" class="primary">Start tuning</button>
             <button id="tuneRestart" class="ghost" title="Ignore the stored best and search from the shipped defaults again.">
@@ -574,9 +576,6 @@
           </div>
           <label class="check tuneAllOption" title="Store each faction's winner as its play setting when its run finishes.">
             <input id="tuneAllApply" type="checkbox" checked /> store each result for play when it finishes
-          </label>
-          <label class="check tuneAllOption" title="Reuse exact search results across the moves of a game. Faster per move and the freed budget buys extra depth, but it does change the numbers, so compare runs at the same setting.">
-            <input id="tuneCarry" type="checkbox" checked /> carry memo
           </label>
           <label class="check tuneAllOption" title="Each faction continues from its own stored best. Uncheck to search every faction from a fresh random population instead.">
             <input id="tuneAllResume" type="checkbox" checked /> continue from each faction's best
@@ -1809,6 +1808,11 @@
       el("carry").addEventListener("change", saveForm)
       el("dynamicRoot").addEventListener("change", saveForm)
       for (const id of ["autoDepth", "perMoveBudget", "widen"]) el(id).addEventListener("change", saveForm)
+      // The tuning pane shows these, so it has to be redrawn when one of them moves.
+      for (const id of [...TUNING_IDS, "carry", "dynamicRoot", "autoDepth", "perMoveBudget", "widen"]) {
+        el(id).addEventListener("change", renderTuneInherited)
+        el(id).addEventListener("input", renderTuneInherited)
+      }
 
       el("size").addEventListener("change", renderFactionChips)
 
@@ -1927,6 +1931,7 @@
         el("tunePane").style.display = tuning ? "" : "none"
         el("tabBoard").classList.toggle("on", !tuning)
         el("tabTune").classList.toggle("on", tuning)
+        if (tuning) renderTuneInherited()
         try {
           localStorage.setItem(PANE_KEY, tuning ? "tune" : "board")
         } catch {
@@ -2184,6 +2189,52 @@
           : "Run a search first (or tune for this faction at least one generation)"
       }
 
+      // What the run in flight was started with: the Run pane can be edited while a
+      // tune runs, so the summary must not drift away from the search actually in use.
+      let tuneRunSearch = null
+
+      // The search shape belongs to the Run pane: the tuner reports what it will use
+      // rather than keeping a second copy that can drift out of step with what play uses.
+      function inheritedSearch() {
+        return {
+          threads: numberOf("threads"),
+          endgameEmpties: numberOf("endgameEmpties"),
+          nodeBudget: numberOf("nodeBudget"),
+          maxDepth: numberOf("maxDepth"),
+          carry: el("carry").checked,
+          dynamicRoot: el("dynamicRoot").checked,
+          autoDepth: el("autoDepth").checked,
+          perMoveBudget: el("perMoveBudget").checked,
+          widen: el("widen").checked,
+        }
+      }
+
+      function renderTuneInherited() {
+        const host = el("tuneInherited")
+        if (!host) return
+        const inFlight = tuneRunning && tuneRunSearch ? tuneRunSearch : null
+        const search = inFlight ?? inheritedSearch()
+        const onOff = (value) => (value ? "on" : "off")
+        const games = Math.max(1, Math.floor(Number(el("tuneThreads").value) || 1))
+        const threads = search.threads === 0 ? "0 (all cores)" : String(search.threads)
+        const inFlightGames = games === 1 ? "1 game in flight" : `${games} games in flight`
+        host.textContent =
+          `${inFlight ? "search this run uses" : "search inherited from Run"}: threads ${threads} x ${inFlightGames}, ` +
+          `endgame ${search.endgameEmpties} empties / ${search.nodeBudget} nodes, ` +
+          `max depth ${search.maxDepth === 0 ? "default" : search.maxDepth}, ` +
+          `carry ${onOff(search.carry)}, dynamic ${onOff(search.dynamicRoot)}, ` +
+          `auto depth ${onOff(search.autoDepth)}, per-move budget ${onOff(search.perMoveBudget)}, ` +
+          `widen ${onOff(search.widen)}`
+        host.textContent += search.dynamicRoot ? " - the dynamic scheduler makes repeated runs differ" : ""
+        // Inheriting the Run pane's thread count makes the load games x threads, which a
+        // default of "all cores" turns into a large oversubscription unless it is said out loud.
+        const cores = Number(navigator?.hardwareConcurrency ?? 0)
+        const perGame = search.threads === 0 ? cores : search.threads
+        if (cores > 0 && perGame * games > cores) {
+          host.textContent += " - oversubscribed: lower Parallel games or Threads"
+        }
+      }
+
       function setTuneRunning(running) {
         tuneRunning = running
         el("tuneStart").disabled = running
@@ -2192,8 +2243,8 @@
         el("tuneAll").disabled = running
         for (const id of TUNE_FIELDS) el(id).disabled = running
         for (const id of TUNE_BOX_IDS) el(id).disabled = running
-        el("tuneCarry").disabled = running
         el("tuneAllResume").disabled = running
+        renderTuneInherited()
       }
 
       function saveTuneForm() {
@@ -2201,7 +2252,6 @@
         for (const id of TUNE_FIELDS) form[id] = el(id).value
         // Checkboxes are part of the tuning setup, so they persist with it.
         form.autoApply = el("tuneAllApply").checked
-        form.carry = el("tuneCarry").checked
         form.resume = el("tuneAllResume").checked
         try {
           localStorage.setItem(TUNE_STORAGE_KEY, JSON.stringify(form))
@@ -2216,7 +2266,6 @@
           if (!form) return
           for (const id of TUNE_FIELDS) if (form[id] !== undefined) el(id).value = form[id]
           el("tuneAllApply").checked = form.autoApply !== false
-          el("tuneCarry").checked = form.carry !== false
           el("tuneAllResume").checked = form.resume !== false
         } catch {
           /* corrupt entry */
@@ -2243,12 +2292,13 @@
           el(id).addEventListener("change", () => {
             saveTuneForm()
             if (id === "tuneFaction") applyBoxToInputs(tuneBoxFor(el("tuneFaction").value))
+            if (id === "tuneThreads") renderTuneInherited()
             renderTuneGenes()
           })
         }
         // The ranges belong to a faction: they are remembered per faction and restored
         // when the selection changes.
-        for (const id of ["tuneAllApply", "tuneCarry", "tuneAllResume"]) el(id).addEventListener("change", saveTuneForm)
+        for (const id of ["tuneAllApply", "tuneAllResume"]) el(id).addEventListener("change", saveTuneForm)
         for (const id of TUNE_BOX_IDS) {
           el(id).addEventListener("change", () => {
             const faction = el("tuneFaction").value
@@ -2295,6 +2345,10 @@
           renderTuneRows(generations)
           renderTuneValidation(snapshot.done)
           renderTuneEta(snapshot)
+          tuneRunSearch =
+            snapshot.running && snapshot.options?.search
+              ? { ...snapshot.options.search, carry: snapshot.options.carry !== false }
+              : null
           setTuneRunning(Boolean(snapshot.running))
           if (snapshot.error) el("tuneError").textContent = snapshot.error
           const queue = snapshot.queue
@@ -2342,7 +2396,7 @@
             threads: Number(el("tuneThreads").value),
             seed: Number(el("tuneSeed").value),
             resume,
-            carry: el("tuneCarry").checked,
+            search: inheritedSearch(),
             ranges: readBoxFromInputs(),
           }
           saveTuneForm()
@@ -2381,7 +2435,7 @@
             seed: Number(el("tuneSeed").value),
             resume: el("tuneAllResume").checked,
             autoApply: el("tuneAllApply").checked,
-            carry: el("tuneCarry").checked,
+            search: inheritedSearch(),
             rangesByFaction,
           }
           saveTuneForm()

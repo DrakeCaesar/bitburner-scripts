@@ -942,6 +942,25 @@ function tuneRanges(input) {
   }
 }
 
+// The search settings the tuner inherits from the bench form. A genome is only
+// meaningful if it was measured with the search that will play with it, so the tuning
+// pane has no second copy of any of these; it sends what the Run pane holds.
+function tuneSearch(input) {
+  const flag = (key) => input?.[key] === true
+  return {
+    // 1, not 0: a caller that never sent a search shape gets the single-threaded
+    // search the tuner used before these settings became inherited.
+    threads: tuneInt(input?.threads, 0, 64, 1),
+    endgameEmpties: tuneInt(input?.endgameEmpties, 0, 20, 6),
+    nodeBudget: tuneInt(input?.nodeBudget, 1000, 5000000, 30000),
+    maxDepth: tuneInt(input?.maxDepth, 0, 64, 10),
+    autoDepth: flag("autoDepth"),
+    perMoveBudget: flag("perMoveBudget"),
+    widen: flag("widen"),
+    dynamicRoot: flag("dynamicRoot"),
+  }
+}
+
 // Builds the option object shared by a single run and by a queue of runs.
 function tuneOptions(body, faction, size) {
   return {
@@ -951,16 +970,19 @@ function tuneOptions(body, faction, size) {
     population: tuneInt(body?.population, 2, 40, 10),
     games: tuneInt(body?.games, 4, 400, 24),
     nodeLimit: tuneInt(body?.nodeLimit, 100, 200000, 1000),
+    // How many games run at once. Throughput only - the search shape is in `search`.
     threads: tuneInt(body?.threads, 1, 64, Math.max(1, os.cpus().length)),
     seed: tuneInt(body?.seed, 1, Number.MAX_SAFE_INTEGER, 1),
     resume: body?.resume !== false,
     // A queued run stores each faction's winner as its play setting as it finishes,
     // which is the point of leaving it running unattended.
     autoApply: body?.autoApply === true,
-    // Carry memo shares exact search results across the moves of a game. On by
-    // default: it is ~30% faster per move and the freed budget buys extra depth, but
-    // it does change the numbers, so both arms of any A/B must use the same setting.
-    carry: body?.carry !== false,
+    // Carry memo shares exact search results across the moves of a game. Inherited from
+    // the Run pane with the rest of the search shape, and on when nothing is sent: it is
+    // ~30% faster per move and the freed budget buys extra depth, but it does change the
+    // numbers, so both arms of any A/B must use the same setting.
+    carry: (body?.search?.carry ?? body?.carry) !== false,
+    search: tuneSearch(body?.search),
     rangesFor: (name) => tuneRanges(body?.rangesByFaction?.[name] ?? body?.ranges),
   }
 }
@@ -1018,6 +1040,9 @@ function beginTuneRun(faction, options) {
   args.push(...resumeTriple.map(String))
   args.push(JSON.stringify(ranges ?? {}))
   args.push(options.carry ? "carry" : "nocarry")
+  // The search shape travels last so every tuning game is measured with exactly the
+  // search the Run pane describes, and so a completed run records what it used.
+  args.push(JSON.stringify(options.search))
 
   const child = spawn(exe, args, { cwd: __dirname })
   tune.child = child
