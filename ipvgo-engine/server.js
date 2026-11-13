@@ -346,6 +346,9 @@ function applyBenchEvent(event) {
           whiteScore: event.whiteScore,
           white: null,
           whitePass: false,
+          // A cheat the search preferred, when the run had cheats on: the move above is
+          // its target and this says what was attempted.
+          cheat: event.cheat ?? null,
           // What the leaf evaluator said at the root and after the move, the
           // alternatives the search ranked and White's modelled replies.
           audit: event.audit ?? null,
@@ -507,6 +510,23 @@ async function handleBenchStart(req, res) {
   if (body?.autoDepth === true) options.autoDepth = true
   if (body?.perMoveBudget === true) options.perMoveBudget = true
   if (body?.widen === true) options.widen = true
+  // Verify each played move against every reply in the model at the first White ply.
+  if (body?.verifyRootReplies === true) options.verifyRootReplies = true
+  // One global switch for cheat moves: the search values them and the bench games play
+  // whichever it prefers, rolling the game's own success chance.
+  if (body?.cheats === true) options.cheats = true
+  if (body?.cheats === true) {
+    // The game's Source-File 14 bonus is a flat +25 points at level 3, so only 0 or 3 is
+    // meaningful; the player's crime-success multiplier scales the base chance.
+    const sf14 = Math.floor(Number(body?.sourceFile14Level ?? 0))
+    if (Number.isFinite(sf14) && sf14 > 0) options.sourceFile14Level = Math.min(3, Math.max(0, sf14))
+    const crime = Number(body?.crimeSuccessMult)
+    if (Number.isFinite(crime) && crime > 0) options.crimeSuccessMult = Math.min(100, crime)
+  }
+  if (body?.cheats === true && body?.cheatMargin !== undefined && body?.cheatMargin !== "") {
+    const margin = Number(body.cheatMargin)
+    if (Number.isFinite(margin) && margin >= 0 && margin <= 1) options.cheatMargin = margin
+  }
   // Root scheduler: the repeatable round-robin split by default, the dynamic one on
   // request. They are not equivalent - a fixed per-worker slice discards a ply when one
   // root move outgrows it, and at 12 threads that costs about 5 points of win rate.
@@ -1068,6 +1088,9 @@ function tuneSearch(input) {
     autoDepth: flag("autoDepth"),
     perMoveBudget: flag("perMoveBudget"),
     widen: flag("widen"),
+    verifyRootReplies: flag("verifyRootReplies"),
+    cheats: flag("cheats"),
+    sourceFile14Level: tuneInt(input?.sourceFile14Level, 0, 3, 0),
   }
 }
 

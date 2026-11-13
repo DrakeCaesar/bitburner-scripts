@@ -19,6 +19,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "cheats.hpp"
 #include "exploiter.hpp"
 #include "features.hpp"
 #include "game_engine.hpp"
@@ -321,7 +322,55 @@ struct BenchGameResult {
   double msSum = 0.0;
   bool win = false;
   double margin = 0.0;
+  // Cheats this game attempted, and whether one got us ejected (which is a loss whatever
+  // the board says, as it is in the game).
+  int cheats = 0;
+  bool ejected = false;
 };
+
+// The engine's cheat kinds and the game's CheatType are declared in different orders, so
+// map them explicitly rather than casting.
+ipvgo::game::CheatType cheatTypeFor(int kind) {
+  switch (static_cast<ipvgo::nn::CheatKind>(kind)) {
+    case ipvgo::nn::CheatKind::PlayTwoMoves: return ipvgo::game::CheatType::PlayTwoMoves;
+    case ipvgo::nn::CheatKind::DestroyNode: return ipvgo::game::CheatType::DestroyNode;
+    case ipvgo::nn::CheatKind::RepairOfflineNode: return ipvgo::game::CheatType::RepairOfflineNode;
+    case ipvgo::nn::CheatKind::RemoveRouter:
+    case ipvgo::nn::CheatKind::None: break;
+  }
+  return ipvgo::game::CheatType::RemoveRouter;
+}
+
+// Plays whatever the search preferred, and reports the roll. Returns 0 when no cheat was
+// attempted, otherwise 1 = succeeded, 2 = turn skipped, 3 = ejected.
+int playPreferredCheat(GameState& state, const ExploitResult& search, std::mt19937_64& rng,
+                       const BenchOptions& options, BenchGameResult& result) {
+  if (!options.cheats || !search.cheatPreferred || search.cheat.kind == 0) return 0;
+  const ipvgo::game::CheatType type = cheatTypeFor(search.cheat.kind);
+  std::vector<std::pair<int, int>> points{{search.cheat.x1, search.cheat.y1}};
+  if (type == ipvgo::game::CheatType::PlayTwoMoves) points.emplace_back(search.cheat.x2, search.cheat.y2);
+  ipvgo::game::CheatParams params;
+  params.crimeSuccessMult = options.crimeSuccessMult;
+  params.sourceFileBonus = options.sourceFile14Level >= 3 ? 0.25 : 0.0;
+  std::uniform_real_distribution<double> unit(0.0, 1.0);
+  const double successRng = unit(rng);
+  const double ejectRng = unit(rng);
+  const ipvgo::game::CheatResult outcome =
+      ipvgo::game::applyCheat(state, Color::Black, type, points, successRng, ejectRng, params);
+  if (outcome == ipvgo::game::CheatResult::InvalidTarget) return 0;
+  result.cheats += 1;
+  switch (outcome) {
+    case ipvgo::game::CheatResult::Success: return 1;
+    case ipvgo::game::CheatResult::TurnSkipped: return 2;
+    case ipvgo::game::CheatResult::Ejected:
+      // Ejection ends the game as a loss, whatever the score says.
+      state.gameOver = true;
+      result.ejected = true;
+      return 3;
+    case ipvgo::game::CheatResult::InvalidTarget: break;
+  }
+  return 0;
+}
 
 // One game, start to finish. `gameNumber` is the 1-based number shown in the GUI (and the
 // one a replay refers to); `gamesInFaction` only drives the progress display.
@@ -350,9 +399,14 @@ BenchGameResult playBenchGame(const BenchOptions& options, const ExploitConfig& 
     const double elapsedMs =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 
+    // A cheat, when the search preferred one, replaces the normal move for this turn.
+    const int cheatOutcome = playPreferredCheat(state, search, rng, options, result);
+    const bool cheated = cheatOutcome != 0;
     const int action = search.bestAction;
-    const bool passed = action == passAction(options.size);
-    if (passed) {
+    const bool passed = !cheated && action == passAction(options.size);
+    if (cheated) {
+      // `state` already holds the outcome (effect applied, turn skipped, or game over).
+    } else if (passed) {
       passTurn(state, Color::Black);
     } else if (!makeMove(state, action / options.size, action % options.size, Color::Black)) {
       passTurn(state, Color::Black);
@@ -360,7 +414,16 @@ BenchGameResult playBenchGame(const BenchOptions& options, const ExploitConfig& 
 
     result.moves += 1;
     result.msSum += elapsedMs;
-    observer.onBlackMove(factionIndex, state, gameNumber, m + 1, search, elapsedMs, passed);
+    // Report the cheat's own target so the move list matches the board; the search result
+    // also carries the cheat fields, which the JSON observer includes.
+    if (cheated) {
+      ExploitResult shown = search;
+      shown.bestAction = flatIndex(options.size, search.cheat.x1, search.cheat.y1);
+      shown.cheat.outcome = cheatOutcome;
+      observer.onBlackMove(factionIndex, state, gameNumber, m + 1, shown, elapsedMs, false);
+    } else {
+      observer.onBlackMove(factionIndex, state, gameNumber, m + 1, search, elapsedMs, passed);
+    }
 
     if (state.gameOver) break;
 
@@ -375,7 +438,7 @@ BenchGameResult playBenchGame(const BenchOptions& options, const ExploitConfig& 
 
   const Score score = getScore(state);
   result.margin = score.blackSum - score.whiteSum;
-  result.win = blackWins(score);
+  result.win = result.ejected ? false : blackWins(score);
   return result;
 }
 
@@ -435,6 +498,15 @@ BenchRun prepareBenchRun(const BenchOptions& options, bool singleThreadedGames) 
   // repeatability.
   if (std::getenv("IPVGO_DYNAMIC") != nullptr) cfg.deterministic = false;
   cfg.carry = options.carry;
+  // Verify the move this game plays against every reply in the model (the first White
+  // ply only); deeper plies keep the normal width.
+  cfg.verifyRootReplies = options.verifyRootReplies;
+  // Cheats: the one global switch. The search values them; playBenchGame rolls the
+  // outcome and applies it, so a cheat costs the game what it costs in the real one.
+  cfg.cheatsEnabled = options.cheats;
+  cfg.cheatMargin = options.cheatMargin;
+  cfg.crimeSuccessMult = options.crimeSuccessMult;
+  cfg.sourceFile14Level = options.sourceFile14Level;
 
   // A tuned setting applies to its own faction only; everything else keeps the
   // globals, so leaving one faction tuned cannot change how the others play.
@@ -705,6 +777,21 @@ class JsonObserver : public BenchObserver {
                   {"blackScore", score.blackSum},
                   {"whiteScore", score.whiteSum}};
     if (audit_) event["audit"] = moveAudit(state, score, search);
+    // When the search preferred a cheat, the move above is the cheat's own target and
+    // these fields say what was attempted and what it was worth.
+    if (search.cheatPreferred) {
+      event["cheat"] = {{"kind", search.cheat.kind},
+                        {"x1", search.cheat.x1},
+                        {"y1", search.cheat.y1},
+                        {"x2", search.cheat.x2},
+                        {"y2", search.cheat.y2},
+                        {"value", search.cheat.value},
+                        {"successChance", search.cheat.successChance},
+                        {"bestMoveValue", search.cheat.bestMoveValue},
+                        {"currentValue", search.cheat.currentValue},
+                        {"reason", search.cheat.reason},
+                        {"outcome", search.cheat.outcome}};
+    }
     emit(event);
   }
 

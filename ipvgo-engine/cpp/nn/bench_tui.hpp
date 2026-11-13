@@ -48,6 +48,17 @@ struct BenchOptions {
   // stronger (-5 points at 12 threads) and unable to starve a move - at the cost of
   // run-to-run variation. See "The scheduler changes strength, not just speed".
   bool dynamicRoot = false;
+  // Verify each played move against every reply in the model at the first White ply
+  // (normal pruning below it). Off by default, so results stay comparable.
+  bool verifyRootReplies = false;
+  // Cheat moves (ns.go.cheat, Source-File 14.2+). One global switch: when on, every game's
+  // search values the cheats as an expectation over the game's success roll, and the game
+  // plays the one the search preferred - rolling once, on the game state, like the real
+  // thing. `cheatMargin` is how much better than the best legal move it has to be.
+  bool cheats = false;
+  double cheatMargin = 0.1;
+  double crimeSuccessMult = 1.0;
+  int sourceFile14Level = 0;
   // Play this many games at the same time instead of one at a time. Each game still
   // searches on a single thread (`threads` is forced to 1), which is the trade the tuner
   // measured: independent games scale with the core count, parallel search inside one

@@ -52,6 +52,7 @@
 
 #include "analysis.hpp"
 #include "bench_tui.hpp"
+#include "cheats.hpp"
 #include "exploiter.hpp"
 #include "features.hpp"
 #include "game_engine.hpp"
@@ -103,6 +104,9 @@ GameState stateFromRequest(const json& req) {
   state.previousPlayer = oppositeColor(mover);  // it is `mover`'s turn
   state.gameOver = false;
   state.passCount = req.value("passCount", 0);
+  // Cheat bookkeeping travels with the request: the success chance falls with every
+  // attempt made this game, and after the first failure the ejection risk appears.
+  state.cheatCount = req.value("cheatCount", 0);
 
   if (req.contains("opponent")) {
     if (auto ai = parseOpponent(req.at("opponent").get<std::string>())) state.ai = *ai;
@@ -912,6 +916,8 @@ json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session,
   // `iterations` is what the in-game client sends; treat it as a node budget.
   cfg.whiteWorstCase = req.value("whiteWorstCase", false);
   cfg.adaptiveWidth = req.value("adaptiveWidth", true);
+  // Verify the played move against every reply in the model, not just the likely ones.
+  cfg.verifyRootReplies = req.value("verifyRootReplies", false);
   cfg.nodeLimit = req.value("nodeLimit", 0L);
   if (cfg.nodeLimit <= 0) cfg.nodeLimit = req.value("iterations", 0L);
   if (cfg.nodeLimit > 0) cfg.budgetMs = 0;
@@ -925,6 +931,7 @@ json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session,
   cfg.crimeSuccessMult = req.value("crimeSuccessMult", 1.0);
   cfg.sourceFile14Level = req.value("sourceFile14Level", 0);
   cfg.maxCheatPairs = req.value("maxCheatPairs", 6);
+  cfg.cheatMargin = req.value("cheatMargin", 0.1);
 
   const auto t0 = std::chrono::steady_clock::now();
   const ExploitResult result = runExploiter(state, cfg, nullptr, session);
@@ -938,6 +945,17 @@ json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session,
   out["value"] = result.value;
   out["nodes"] = result.nodes;
   out["elapsedMs"] = ms;
+  // Root width and the reply pruning actually used, so a search can be read without
+  // guessing: the root is not every legal point, and White's replies are capped at every
+  // node including the children of the move we pick.
+  out["rootMoves"] = static_cast<int>(result.rootScores.size());
+  out["search"] = json{{"beam", cfg.beam},
+                       {"whiteChildren", cfg.whiteChildren},
+                       {"whiteMass", cfg.whiteMass},
+                       {"whiteWorstCase", cfg.whiteWorstCase},
+                       {"adaptiveWidth", cfg.adaptiveWidth},
+                       {"verifyRootReplies", cfg.verifyRootReplies},
+                       {"endgameEmpties", cfg.endgameEmpties}};
   out["memoHits"] = result.memoHits;
   out["reusedHits"] = result.memoReusedHits;
   out["cachedEntries"] = result.cachedEntries;
@@ -949,7 +967,11 @@ json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session,
                         {"x2", result.cheat.x2},
                         {"y2", result.cheat.y2},
                         {"value", result.cheat.value},
-                        {"successChance", result.cheat.successChance}};
+                        {"successChance", result.cheat.successChance},
+                        {"bestMoveValue", result.cheat.bestMoveValue},
+                        {"currentValue", result.cheat.currentValue},
+                        {"margin", cfg.cheatMargin},
+                        {"reason", result.cheat.reason}};
     out["cheatPreferred"] = result.cheatPreferred;
   }
   out["engine"] = "exploit";
@@ -1911,6 +1933,10 @@ struct TuneSearchConfig {
   bool autoDepth = false;
   bool perMoveBudget = false;
   bool widen = false;
+  bool verifyRootReplies = false;
+  bool cheats = false;
+  double cheatMargin = 0.1;
+  int sourceFile14Level = 0;  // 3 adds a flat +25 points to the cheat chance
 
   json toJson() const {
     return json{{"endgameEmpties", endgameEmpties},
@@ -1918,7 +1944,11 @@ struct TuneSearchConfig {
                 {"maxDepth", maxDepth},
                 {"autoDepth", autoDepth},
                 {"perMoveBudget", perMoveBudget},
-                {"widen", widen}};
+                {"widen", widen},
+                {"verifyRootReplies", verifyRootReplies},
+                {"cheats", cheats},
+                {"cheatMargin", cheatMargin},
+                {"sourceFile14Level", sourceFile14Level}};
   }
 };
 
@@ -1953,6 +1983,10 @@ TuneTally tunePlayGame(int size, Opponent ai, const TuneGenome& genome, long nod
   cfg.autoDepth = search.autoDepth;
   cfg.perMoveBudget = search.perMoveBudget;
   cfg.widen = search.widen;
+  cfg.verifyRootReplies = search.verifyRootReplies;
+  cfg.cheatsEnabled = search.cheats;
+  cfg.cheatMargin = search.cheatMargin;
+  cfg.sourceFile14Level = search.sourceFile14Level;
   // One worker per game: the tuning runner gets its parallelism from playing several
   // games at once, and a single-worker search is both the repeatable case and the one
   // where the whole per-move node budget belongs to this move rather than being sliced
@@ -1964,6 +1998,7 @@ TuneTally tunePlayGame(int size, Opponent ai, const TuneGenome& genome, long nod
 
   double tallyMs = 0.0;
   long tallyMoves = 0;
+  bool ejected = false;
   const int cap = tuneMoveCap(size);
   for (int m = 0; m < cap && !state.gameOver; ++m) {
     if (whoseTurn(state) != Color::Black) break;
@@ -1973,7 +2008,33 @@ TuneTally tunePlayGame(int size, Opponent ai, const TuneGenome& genome, long nod
         ipvgo::nn::runExploiter(state, cfg, nullptr, carry ? &session : nullptr);
     tallyMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - searchStart).count();
     ++tallyMoves;
-    if (r.bestAction == ipvgo::nn::passAction(size)) {
+    // A cheat the search preferred replaces the normal move for this turn. The search
+    // values it as an expectation; here it is rolled once, like the game does.
+    bool cheated = false;
+    if (search.cheats && r.cheatPreferred && r.cheat.kind != 0) {
+      ipvgo::game::CheatType type = ipvgo::game::CheatType::RemoveRouter;
+      switch (static_cast<ipvgo::nn::CheatKind>(r.cheat.kind)) {
+        case ipvgo::nn::CheatKind::PlayTwoMoves: type = ipvgo::game::CheatType::PlayTwoMoves; break;
+        case ipvgo::nn::CheatKind::DestroyNode: type = ipvgo::game::CheatType::DestroyNode; break;
+        case ipvgo::nn::CheatKind::RepairOfflineNode: type = ipvgo::game::CheatType::RepairOfflineNode; break;
+        default: break;
+      }
+      std::vector<std::pair<int, int>> points{{r.cheat.x1, r.cheat.y1}};
+      if (type == ipvgo::game::CheatType::PlayTwoMoves) points.emplace_back(r.cheat.x2, r.cheat.y2);
+      ipvgo::game::CheatParams params;
+      const auto outcome = ipvgo::game::applyCheat(state, Color::Black, type, points,
+                                                   static_cast<double>(rng() % 1000000u) / 1000000.0,
+                                                   static_cast<double>(rng() % 1000000u) / 1000000.0, params);
+      cheated = outcome != ipvgo::game::CheatResult::InvalidTarget;
+      if (outcome == ipvgo::game::CheatResult::Ejected) {
+        // Ejection ends the game as a loss whatever the board says.
+        state.gameOver = true;
+        ejected = true;
+      }
+    }
+    if (cheated) {
+      // The board already holds the outcome: the effect, a skipped turn, or the end.
+    } else if (r.bestAction == ipvgo::nn::passAction(size)) {
       passTurn(state, Color::Black);
     } else if (!makeMove(state, r.bestAction / size, r.bestAction % size, Color::Black)) {
       passTurn(state, Color::Black);
@@ -1993,7 +2054,7 @@ TuneTally tunePlayGame(int size, Opponent ai, const TuneGenome& genome, long nod
     return tally;
   }
   tally.finished = 1;
-  tally.wins = blackWins(score) ? 1 : 0;
+  tally.wins = !ejected && blackWins(score) ? 1 : 0;
   tally.marginSum = score.blackSum - score.whiteSum;
   return tally;
 }
@@ -2566,6 +2627,12 @@ int main(int argc, char** argv) {
         search.autoDepth = asBool("autoDepth", search.autoDepth);
         search.perMoveBudget = asBool("perMoveBudget", search.perMoveBudget);
         search.widen = asBool("widen", search.widen);
+        search.verifyRootReplies = asBool("verifyRootReplies", search.verifyRootReplies);
+        search.cheats = asBool("cheats", search.cheats);
+        search.sourceFile14Level = std::clamp(asInt("sourceFile14Level", search.sourceFile14Level), 0, 3);
+        if (raw.contains("cheatMargin") && raw.at("cheatMargin").is_number()) {
+          search.cheatMargin = std::clamp(raw.at("cheatMargin").get<double>(), 0.0, 1.0);
+        }
       } catch (const std::exception& err) {
         std::cerr << "tune: bad search JSON: " << err.what() << "\n";
         return 2;
@@ -2649,6 +2716,13 @@ int main(int argc, char** argv) {
       }
       options.carry = config.value("carry", false);
       options.dynamicRoot = config.value("dynamicRoot", false);
+      // Verify each played move against the whole reply model (first White ply only).
+      options.verifyRootReplies = config.value("verifyRootReplies", false);
+      // One global switch for cheat moves, plus the player inputs the success roll needs.
+      options.cheats = config.value("cheats", false);
+      options.cheatMargin = config.value("cheatMargin", 0.1);
+      options.crimeSuccessMult = config.value("crimeSuccessMult", 1.0);
+      options.sourceFile14Level = config.value("sourceFile14Level", 0);
       // Play this many games at once, each on one search thread (0/1 = one at a time).
       options.gamesInParallel = std::max(0, config.value("parallelGames", 0));
       options.audit = config.value("audit", true);

@@ -401,6 +401,8 @@ faction and seed, then streams `ipvgo_game benchjson` events through the server:
 - per-move search numbers (depth, nodes, think ms, score),
 - per-faction table with W/L, win %, average margin, ms/move and progress bar,
 - recent game results and a PASS/FAIL pill when the run finishes,
+- a game list that only ever grows: rows are keyed by archive index and appended, so an open
+  game's move table stays put and the scroll position survives games finishing under it,
 - a live progress line under the buttons: `2m 14s elapsed   38/120 games   32%   82 left
   5.9 games/min   about 14m 02s left`, and the batch's total time once it ends. It is
   derived from the games that actually finished (`done / elapsed`), not from the per-move
@@ -1577,11 +1579,52 @@ variable so a CLI run can set it without a config:
 | `autoDepth` | `IPVGO_AUTODEPTH=1` | derive the depth ceiling from the position instead of `maxDepth` |
 | `perMoveBudget` | `IPVGO_PERMOVE_BUDGET=1` | per-move node/time budget, cost prediction, endgame saturation stop |
 | `widen` | `IPVGO_WIDEN=1` | after deepening, retry the completed depth wider while budget remains |
+| `verifyRootReplies` | — | at the first White ply keep every reply in the model, not just the likely ones |
 
-With all three unset the engine reproduces the 11 Nov behaviour exactly: 240 games of
-`benchjson` on 5x5 at a 1 000-node budget compare line-for-line identical to a binary
-built from commit `9bd3bd1`, and setting all three reproduces the 12 Nov binary line for
-line. That is the check to run after touching any of them.
+With all three of the older switches unset the engine reproduces the 11 Nov behaviour
+exactly: 240 games of `benchjson` on 5x5 at a 1 000-node budget compare line-for-line
+identical to a binary built from commit `9bd3bd1`, and setting all three reproduces the
+12 Nov binary line for line. That is the check to run after touching any of them.
+
+**What the root actually searches.** Every legal Black move: measured on a blank board the
+root holds 26 / 50 / 82 / 170 candidates on 5×5 / 7×7 / 9×9 / 13×13, i.e. every empty point
+plus passing, and `beam` does not apply there - it prunes Black's moves *inside* the tree.
+The reply pruning is the asymmetry: `whiteChildren` (6) and `whiteMass` (0.9) apply at every
+node, including the children of the move we are about to play, and the dropped tail is priced
+at the position's static eval rather than searched. On one 9×9 position the same root came out
+**0.546** at the default pruning, **0.587** with 16 replies and mass 1.0, and **0.488** on the
+worst of the kept replies: a real effect, in the direction of optimism.
+
+`verifyRootReplies` closes that hole for the played move only: the first White ply keeps the
+whole reply distribution (deeper plies are unchanged). Measured on a mid-game 9×9 at 20 000
+nodes it cannot afford its first real ply and falls back to a leaf-only depth 1 (59 nodes), so
+it needs roughly 60 000 nodes to reach the same depth 2 - 43 791 nodes, the same move, and a
+value of **0.620** instead of 0.546 (the old number prices the unsearched tail at the static
+eval). On 5×5 at 8 000 nodes it costs **-39%** wall clock for the same depth and the margins
+went 14.8/15.0 to 17.5/15.0 over 6 games each. Off by default. The move list tags each attempt with what was tried - `REMOVE ROUTER`,
+`TWO MOVES`, `DESTROY NODE`, `REPAIR NODE` - coloured by the roll: green when it landed, red
+when it failed, with the ejection case in the row tooltip. Measured with the switch on, a
+10-game 5x5 batch at margin 0 made 21 attempts: 7 succeeded, 13 skipped our turn and 1 got us
+ejected, which is what a 60% chance per attempt looks like. The **SF14.3 cheat bonus** toggle
+beside it adds the game's flat +25 points (only at Source-File 14 level 3), and it is greyed
+out while cheats are off.
+
+### The growth estimate that capped depth at 2 on 9x9
+
+The deepening loop decides whether the next ply is affordable by scaling the last
+iteration's cost by the *measured* growth. It used to measure that growth against the
+depth-1 iteration, which evaluates every root move straight at the leaf - no White ply at all
+- so its node count is a fraction of a real one: on 9×9 the pair was 59 -> 4 661 nodes,
+reported as **79× growth**, and the resulting "prediction" of 368 000 against a 200 000 budget
+refused depth 3 at *every* budget. The same arithmetic is why `Replies kept = 0` collapsed to a
+leaf-only depth 1: the only affordable iteration was the stub one.
+
+Growth is now measured between two **real** plies (depth >= 2), and until two of those exist
+the fallback is the nominal branching, `beam x replies`, rather than 1. Both halves matter: with
+only the first change the loop stopped refusing depth 3 but then *ran* an iteration it could not
+finish, and 9×9 at 200 000 nodes went from 36 ms to 583 ms for the identical answer. With both,
+9×9 returns depth 2 in 34 ms at every budget, 5×5 keeps its depth (6.14 -> 6.16 measured over
+12 games, same margins), and repeated runs are still bit-identical apart from wall clock.
 
 ### Root width is worth more than root completeness (IPVGO_ROOTW)
 
