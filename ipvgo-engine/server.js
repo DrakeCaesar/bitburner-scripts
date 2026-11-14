@@ -143,6 +143,10 @@ const BENCH_ARCHIVE_LIMIT = 2000
 // land milliseconds apart, far faster than the browser can poll.
 const BENCH_FRAME_LIMIT = 120
 
+// The raw body of the most recent /api/bench/start, so "the checkbox does nothing" can be
+// answered with the payload instead of a theory. Exposed through /health.
+let benchLastStart = null
+
 const bench = {
   child: null,
   state: {
@@ -462,6 +466,17 @@ async function handleBenchStart(req, res) {
 
   stopBench()
 
+  // Record what the run form actually sent. A checkbox that "does nothing" is either not in
+  // the payload or is in it and being ignored, and those are the only two possibilities -
+  // writing the raw body down is what tells them apart instead of guessing.
+  benchLastStart = { at: new Date().toISOString(), body }
+  try {
+    fs.mkdirSync(path.join(__dirname, "temp"), { recursive: true })
+    fs.writeFileSync(path.join(__dirname, "temp", "last-bench-start.json"), JSON.stringify(body, null, 2))
+  } catch {
+    /* diagnostics only */
+  }
+
   const size = Number(body?.size ?? 5)
   const requestedMs = Math.max(0, Number(body?.budgetMs ?? 0))
   const iterations = Math.max(0, Math.floor(Number(body?.iterations ?? 0)))
@@ -500,6 +515,19 @@ async function handleBenchStart(req, res) {
     if (Number.isFinite(value)) options[key] = value
   }
   if (body?.carry === true) options.carry = true
+  // Engine selection. The playout engine is a separate search, not a tuning knob, and it plays
+  // 5x5 boards only: its board is a flat 25-entry array and its opponent model is tuned for that
+  // board. A run that asks for it on another board is refused here rather than silently falling
+  // back, because a silent fallback would report exploit numbers under a playout label.
+  const engine = body?.engine === "playout" ? "playout" : "exploit"
+  if (engine === "playout") {
+    if (size !== 5) {
+      return sendJson(res, 400, {
+        error: `the playout engine plays 5x5 boards only (this run is ${size}x${size})`,
+      })
+    }
+    options.engine = "playout"
+  }
   // Play several games at once, one search thread each, instead of one game with many
   // threads. 0 or 1 = one game at a time; the results are identical either way because
   // every game is seeded from (seed, faction, game number).
@@ -1535,15 +1563,22 @@ function handleBenchPage(req, res) {
   if (!fs.existsSync(file)) {
     return sendJson(res, 404, { error: "web/bench.html missing" })
   }
-  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
+  // No-store: the page is edited in place while the engine is developed, and a browser
+  // that heuristically caches it keeps running the old form - which shows up as a control
+  // that looks present but whose value never reaches the server.
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" })
   res.end(fs.readFileSync(file))
 }
 
 function activeEngine() {
   if (!fs.existsSync(mcgsExecutablePath())) return "missing"
-  // IPVGO_ENGINE only chooses between the two modes of the one engine binary: the
-  // policy exploiter (default) and MCGS. Anything else falls back to the exploiter.
-  return engineOverride === "mcgs" ? "mcgs" : "exploit"
+  // IPVGO_ENGINE chooses between the modes of the one engine binary: the policy
+  // exploiter (default), MCGS, and the playout engine. Anything else falls back to the
+  // exploiter. This is the engine that plays real game moves; a bench run asks for its own
+  // engine per request, so the two do not interfere.
+  if (engineOverride === "mcgs") return "mcgs"
+  if (engineOverride === "playout") return "playout"
+  return "exploit"
 }
 
 function sendJson(res, status, body) {
@@ -1591,8 +1626,10 @@ function handleHealth(_req, res) {
     supervised,
     gamePath: mcgsExecutablePath(),
     gameBuilt: fs.existsSync(mcgsExecutablePath()),
-    // The bench never uses the in-game move engine; it always runs the exploiter.
-    benchEngine: "exploit",
+    // The bench runs whichever search the run form asked for; this reports the last one it
+    // was actually sent, plus that choice, so the two can be compared.
+    benchEngine: bench.state.options?.engine ?? "exploit",
+    benchStartBody: benchLastStart,
     timestamp: new Date().toISOString(),
   })
 }
@@ -1815,6 +1852,40 @@ async function requestExploitPonder(body) {
   return requestServeMove(body, 10_000)
 }
 
+// The playout engine speaks the same request shape; the `engine` field is what routes
+// it inside the long-lived process. For it, a ponder is not a prediction of White's
+// replies but a continuation of the same graph, so the next real request descends into
+// work that already exists.
+async function requestPlayoutMove(body) {
+  const gameKey = JSON.stringify({ opponent: body.opponent ?? null, size: body.board?.length ?? null })
+  if (engineGameKey !== gameKey) {
+    stopEngine()
+    engineGameKey = gameKey
+  }
+  try {
+    const result = await requestServeMove({ ...body, engine: "playout" }, 300_000)
+    return { ...result, engine: "playout" }
+  } catch (err) {
+    stopEngine()
+    console.error(`[playout engine] falling back to one-shot: ${err.message}`)
+    return requestGameMove(body, {
+      command: "playoutmove",
+      engine: "playout",
+      tempPrefix: "playout",
+      timeoutMs: 300_000,
+    })
+  }
+}
+
+async function requestPlayoutPonder(body) {
+  const gameKey = JSON.stringify({ opponent: body.opponent ?? null, size: body.board?.length ?? null })
+  if (engineGameKey !== gameKey) {
+    stopEngine()
+    engineGameKey = gameKey
+  }
+  return requestServeMove({ ...body, engine: "playout" }, 10_000)
+}
+
 async function handleCancel(req, res) {
   let body
   try {
@@ -1840,8 +1911,8 @@ async function handleCancel(req, res) {
 }
 
 async function handleMove(req, res) {
-  const engine = activeEngine()
-  if (engine === "missing") {
+  const requested = activeEngine()
+  if (requested === "missing") {
     return sendJson(res, 503, {
       error: "No engine available. Run: pnpm run ipvgo:build",
     })
@@ -1854,18 +1925,41 @@ async function handleMove(req, res) {
     return sendJson(res, 400, { error: err.message })
   }
 
+  // The playout engine is 5x5 only by construction, so a request for another board is played by
+  // the exploiter instead. Falling back keeps the game moving, and the response says so in
+  // `engineFallback` - a silent fallback would report exploiter numbers under a playout label,
+  // which is the one thing this must never do.
+  const boardSize = Array.isArray(body?.board) ? body.board.length : 0
+  let engine = requested
+  let engineFallback = null
+  if (requested === "playout" && boardSize !== 5) {
+    engine = "exploit"
+    engineFallback = `the playout engine plays 5x5 boards only; this board is ${boardSize}x${boardSize}`
+  }
+
   try {
     if (body?.ponder) {
+      if (engine === "playout") {
+        try {
+          return sendJson(res, 200, await requestPlayoutPonder(body))
+        } catch (err) {
+          return sendJson(res, 200, { ponder: "failed", error: err.message })
+        }
+      }
       if (engine !== "exploit") return sendJson(res, 200, { ponder: "unsupported" })
       try {
-        return sendJson(res, 200, await requestExploitPonder(body))
+        return sendJson(res, 200, { ...(await requestExploitPonder(body)), engineFallback })
       } catch (err) {
         return sendJson(res, 200, { ponder: "failed", error: err.message })
       }
     }
     const result =
-      engine === "mcgs" ? await requestMcgsMove(body) : await requestExploitMove(body)
-    sendJson(res, 200, result)
+      engine === "mcgs"
+        ? await requestMcgsMove(body)
+        : engine === "playout"
+          ? await requestPlayoutMove(body)
+          : await requestExploitMove(body)
+    sendJson(res, 200, engineFallback ? { ...result, engineFallback } : result)
   } catch (err) {
     console.error(`${engine} move error:`, err.message)
     return sendJson(res, 500, { error: err.message })

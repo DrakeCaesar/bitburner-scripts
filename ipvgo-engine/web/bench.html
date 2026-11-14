@@ -481,13 +481,14 @@
     <header>
       <h1>IPvGO exploiter bench</h1>
       <label class="enginePick">
-        <span>Engine</span>
+        <span>Build</span>
         <select id="engineBuild" title="Which compiler built the engine the server spawns">
           <option value="clang">clang-cl</option>
           <option value="msvc">cl.exe</option>
         </select>
       </label>
       <span id="status" class="pill">idle</span>
+      <span class="small dim" id="pageVersion" title="Bumped whenever this page's request logic changes. If this does not match the version in the README, the browser is running a cached copy - hard-reload with Ctrl+Shift+R."></span>
       <button id="restartServer" class="ghost" title="Restart the engine server (needs pnpm run server:dev)">Restart server</button>
     </header>
 
@@ -528,6 +529,8 @@
           <label class="field"><span title="Search threads (0 = all cores)">Threads</span><input id="threads" type="number" min="0" max="64" placeholder="0" /></label>
           <label class="field"><span title="Play several games at once, one search thread each, instead of one game with many threads. Independent games scale with the core count where parallel search inside one game does not, and every game is seeded from (seed, faction, game number) - so the results are identical either way; only the wall clock changes.">Parallel games (1 thread each)</span><span class="fieldToggle"><input id="parallelGames" type="checkbox" /></span></label>
           <label class="field"><span title="Reuse exact search results across the moves of a game. Same answers as a fresh search, with less work.">Carry memo</span><span class="fieldToggle"><input id="carry" type="checkbox" /></span></label>
+          <label class="field"><span title="Run the playout engine instead of the policy exploiter. It reads the budget the other way round: iterations becomes playouts per move, and the time budget stays a wall-clock cap. It is a Monte Carlo graph search: every move plays games out to a finished board and keeps what it counted. 5x5 boards only.">Playout engine</span><span class="fieldToggle"><input id="playoutEngine" type="checkbox" /></span></label>
+          <div class="small dim" id="runEngine" title="The search engine the current or last run was started with, as the server recorded it. A playout run reports depth 0 on every move; the exploiter reports the depth it reached.">search: -</div>
           <label class="field"><span title="Off: every worker gets a fixed slice of the node budget (repeatable, but a ply is discarded the moment one root move outgrows its slice). On: workers claim the next root move as they finish and split what is left, which is what play uses - stronger at high thread counts, but a run does not repeat exactly.">Dynamic scheduler</span><span class="fieldToggle"><input id="dynamicRoot" type="checkbox" /></span></label>
           <label class="field"><span title="Evaluate the ns.go.cheat moves too, and play one when it beats the best legal move by the margin, every legal move makes the position worse and the game is being lost (best move still under 50%), at most twice per game. The search prices it as an expectation over the success roll (0.6*(0.7-0.02n)^n*crimeSuccess, +0.25 at Source-File 14.3); the game rolls once, so a failed attempt skips our turn and, after a prior attempt, ejects us 10% of the time. Off by default.">Cheats (ns.go.cheat)</span><span class="fieldToggle"><input id="cheats" type="checkbox" /></span></label>
           <label class="field"><span title="Adds a flat +25 percentage points to every cheat attempt: the game's Source-File 14 bonus, which only applies at level 3. Only affects anything with Cheats on.">SF14.3 cheat bonus</span><span class="fieldToggle"><input id="sf14Bonus" type="checkbox" /></span></label>
@@ -544,6 +547,7 @@
         </details>
         <div class="buttons">
           <button id="start" class="primary">Start</button>
+          <div class="small dim" id="startHint" title="Exactly what the Start button will ask the server for, read the same way the request reads it.">Start will ask for: -</div>
           <button id="stop">Stop</button>
         </div>
         <div class="tuneTiming" id="runEta"></div>
@@ -768,6 +772,14 @@
         location.protocol === "file:" ? "http://localhost:3010" : ""
 
       const STORAGE_KEY = "ipvgo-bench-form-v1"
+      // What a playout run gets when the form's budget is not a playout count. Kept in step with
+      // PlayoutConfig::playoutsPerMove in the engine, so the number in the box is the number that
+      // runs.
+      const PLAYOUT_DEFAULT_PLAYOUTS = 10000
+      // Bumped whenever the request logic in this page changes: a stale cached page is
+      // otherwise indistinguishable from a control that does not work, because both look
+      // like "I set it and the server did something else".
+      const PAGE_VERSION = "2026-11-14-playout-4"
       const TUNING_IDS = [
         "endgameEmpties",
         "nodeBudget",
@@ -792,6 +804,7 @@
         tuning: {},
         tuningOpen: false,
         carry: false,
+        playoutEngine: false,
         dynamicRoot: false,
         autoDepth: false,
         perMoveBudget: false,
@@ -823,6 +836,7 @@
           tuning,
           tuningOpen: el("tuning").open,
           carry: el("carry").checked,
+          playoutEngine: el("playoutEngine").checked,
           dynamicRoot: el("dynamicRoot").checked,
           autoDepth: el("autoDepth").checked,
           perMoveBudget: el("perMoveBudget").checked,
@@ -887,6 +901,7 @@
             tuning,
             tuningOpen: stored.tuningOpen === true,
             carry: stored.carry === true,
+            playoutEngine: stored.playoutEngine === true,
             dynamicRoot: stored.dynamicRoot === true,
             autoDepth: stored.autoDepth === true,
             perMoveBudget: stored.perMoveBudget === true,
@@ -917,6 +932,7 @@
         for (const id of TUNING_IDS) el(id).value = form.tuning?.[id] ?? ""
         el("tuning").open = form.tuningOpen === true
         el("carry").checked = form.carry === true
+        el("playoutEngine").checked = form.playoutEngine === true
         el("dynamicRoot").checked = form.dynamicRoot === true
         el("autoDepth").checked = form.autoDepth === true
         el("perMoveBudget").checked = form.perMoveBudget === true
@@ -1476,9 +1492,17 @@
         wrap.className = "tableScroll"
         const table = document.createElement("table")
         table.className = "moves"
-        table.innerHTML =
-          "<thead><tr><th>#</th><th>Black</th><th>p(win)</th><th>flat</th><th>depth</th>" +
-          "<th>nodes</th><th>ms</th><th>White</th><th>score B:W</th></tr></thead>"
+        // The `flat` column and the BLUNDER/SWING marks are the exploiter's evaluator: a
+        // fixed one-ply leaf value to tell "the position got worse" apart from "the search
+        // happened to look shallower". None of that exists under the playout engine, whose value
+        // comes from games played to a finished board, so the column is dropped rather than
+        // filled with numbers from a search that did not run.
+        const playoutRun = state.options?.engine === "playout"
+        table.innerHTML = playoutRun
+          ? "<thead><tr><th>#</th><th>Black</th><th title=\"Black's share of the board from the playouts through this move. Higher is better; it is a counted mean over finished games, not the exploiter's leaf estimate. Hover a value for the number of playouts behind it.\">value</th><th>depth</th>" +
+            "<th>nodes</th><th>ms</th><th>White</th><th>score B:W</th></tr></thead>"
+          : "<thead><tr><th>#</th><th>Black</th><th>p(win)</th><th>flat</th><th>depth</th>" +
+            "<th>nodes</th><th>ms</th><th>White</th><th>score B:W</th></tr></thead>"
         const body = document.createElement("tbody")
         const moves = game.moves ?? []
         // p(win) moves with the depth the budget happened to reach, so a drop in it
@@ -1498,10 +1522,18 @@
             typeof mv.value === "number" && typeof moves[i + 1]?.value === "number"
               ? mv.value - moves[i + 1].value
               : null
-          const mark = swing !== null && swing > 0.15 ? "loss" : searchDrop !== null && searchDrop > 0.15 ? "warn" : ""
+          const mark = playoutRun
+            ? searchDrop !== null && searchDrop > 0.15
+              ? "warn"
+              : ""
+            : swing !== null && swing > 0.15
+              ? "loss"
+              : searchDrop !== null && searchDrop > 0.15
+                ? "warn"
+                : ""
           const flat = typeof mv.audit?.flat === "number" ? mv.audit.flat.toFixed(3) : "-"
           // A heuristic leaf cannot mean "certain"; say so rather than printing 1.000.
-          const capped = typeof mv.value === "number" && mv.value >= 0.999
+          const capped = !playoutRun && typeof mv.value === "number" && mv.value >= 0.999
           const root = mv.audit?.root
           const title = []
           if (capped) title.push("capped: 1.000 is the top of the leaf eval's scale, not certainty")
@@ -1509,6 +1541,11 @@
             title.push(`eval p(win) ${root.win.toFixed(3)}, rules lead ${root.rulesLead.toFixed(1)}`)
           }
           if (mv.whiteAudit?.model?.found) title.push(`modelled p=${mv.whiteAudit.model.prob.toFixed(2)}`)
+          // The value is a mean taken over playouts, so name the count: 2/3 and 2000/3000 print the
+          // same number and are not the same claim.
+          if (playoutRun && typeof mv.playouts === "number") {
+            title.push(`${mv.playouts} playouts through this move`)
+          }
           if (mv.cheat) {
             title.push(
               `cheat ${cheatName(mv.cheat.kind)}: value ${Number(mv.cheat.value).toFixed(3)} at ` +
@@ -1522,7 +1559,7 @@
             `<td class="dim">${mv.move}</td>` +
             `<td>${fmtPoint(mv.black, mv.blackPass)}${cheatTag(mv.cheat)}</td>` +
             `<td class="${mark}${capped ? " capped" : ""}">${value}</td>` +
-            `<td class="dim">${flat}</td>` +
+            (playoutRun ? "" : `<td class="dim">${flat}</td>`) +
             `<td class="dim">${mv.depth ?? "-"}</td>` +
             `<td class="dim">${mv.nodes ?? "-"}</td>` +
             `<td class="dim">${mv.ms == null ? "-" : Math.round(mv.ms)}</td>` +
@@ -1701,6 +1738,27 @@
           restartWatchdog = null
         }
         state = { ...state, ...data }
+        // What the current (or last) run was started with, as the server recorded it. The
+        // header pill next to the build selector only ever said which compiler built the
+        // binary, which is easy to read as "the search engine" - this says the other half.
+        const runEngine = el("runEngine")
+        if (runEngine) {
+          const ran = data?.options?.engine === "playout" ? "playout" : data?.options ? "exploit" : null
+          let budgetText = ""
+          if (ran === "playout" && data.options) {
+            // Say what the search actually spent: a playout count means nothing without it,
+            // and a count the engine had to raise is exactly what used to go unnoticed.
+            const asked = Number(data.options.iterations || 0)
+            const ms = Number(data.options.budgetMs || 0)
+            if (ms > 0) budgetText = `, ${ms} ms/move`
+            else if (asked > 0 && asked < 100) budgetText = `, ${PLAYOUT_DEFAULT_PLAYOUTS} playouts/move (asked ${asked})`
+            else if (asked > 0) budgetText = `, ${asked} playouts/move`
+            else budgetText = `, ${PLAYOUT_DEFAULT_PLAYOUTS} playouts/move (default)`
+          }
+          runEngine.textContent = ran
+            ? `search: ${ran} (${data.options.size}x${data.options.size}${budgetText})`
+            : "search: -"
+        }
         const restartButton = el("restartServer")
         restartButton.disabled = !data.supervised
         restartButton.textContent = "Restart server"
@@ -1857,6 +1915,7 @@
           if (Number.isFinite(value)) body[id] = value
         }
         if (el("carry").checked) body.carry = true
+        if (el("playoutEngine").checked) body.engine = "playout"
         if (el("dynamicRoot").checked) body.dynamicRoot = true
         if (el("autoDepth").checked) body.autoDepth = true
         if (el("perMoveBudget").checked) body.perMoveBudget = true
@@ -1904,6 +1963,33 @@
 
       el("start").addEventListener("click", () => void startBench())
 
+      // Pre-flight: the exact engine and budget the next Start will ask for, read the same
+      // way the request reads them. A control that looks set but whose value never reaches
+      // the server is invisible otherwise, so the page says what it is about to send.
+      function updateStartHint() {
+        const hint = el("startHint")
+        if (!hint) return
+        const engine = el("playoutEngine").checked ? "playout" : "exploit"
+        const mode = el("budgetMode").value
+        const budget = Number(el("budget").value)
+        let budgetText
+        if (mode === "time") budgetText = `${budget || 1} ms per move`
+        else if (engine === "playout") {
+          budgetText =
+            Number.isFinite(budget) && budget >= 100
+              ? `${Math.floor(budget)} playouts per move`
+              : `${PLAYOUT_DEFAULT_PLAYOUTS} playouts per move (budget too small for playouts)`
+        } else budgetText = `${Math.max(0, Math.floor(budget || 0))} node budget`
+        hint.textContent = `Start will ask for: ${engine}, ${Number(el("size").value)}x${Number(el("size").value)}, ${budgetText}`
+      }
+      for (const id of ["playoutEngine", "budgetMode", "budget", "size", "nodeCap", "depth"]) {
+        const node = el(id)
+        if (node) node.addEventListener("change", updateStartHint)
+      }
+      el("budget").addEventListener("input", updateStartHint)
+      updateStartHint()
+      const pageVersion = el("pageVersion")
+      if (pageVersion) pageVersion.textContent = PAGE_VERSION
       el("stop").addEventListener("click", async () => {
         await fetch(`${API_BASE}/api/bench/stop`, { method: "POST" })
         await poll()
@@ -1956,7 +2042,7 @@
           state.engineBuild = payload.build
           state.engineBuildSource = payload.source
           state.engineBuilds = payload.builds
-          el("status").textContent = `engine: ${engineBuildLabels[payload.build] ?? payload.build}`
+          el("status").textContent = `build: ${engineBuildLabels[payload.build] ?? payload.build}`
           el("status").className = "pill"
         } catch (err) {
           // Put the select back on whatever the server is still serving.
@@ -2007,6 +2093,7 @@
 
       el("tuning").addEventListener("toggle", saveForm)
       el("carry").addEventListener("change", saveForm)
+      el("playoutEngine").addEventListener("change", saveForm)
       el("dynamicRoot").addEventListener("change", saveForm)
       for (const id of ["autoDepth", "perMoveBudget", "widen", "verifyRootReplies", "cheats", "sf14Bonus", "parallelGames", "cheatAttempts", "cheatMargin", "cheatLosing"]) {
         el(id).addEventListener("change", saveForm)
@@ -2014,7 +2101,7 @@
       }
 
       // The tuning pane shows these, so it has to be redrawn when one of them moves.
-      for (const id of [...TUNING_IDS, "carry", "dynamicRoot", "autoDepth", "perMoveBudget", "widen", "verifyRootReplies", "cheats", "sf14Bonus", "cheatAttempts", "cheatMargin", "cheatLosing"]) {
+      for (const id of [...TUNING_IDS, "carry", "playoutEngine", "dynamicRoot", "autoDepth", "perMoveBudget", "widen", "verifyRootReplies", "cheats", "sf14Bonus", "cheatAttempts", "cheatMargin", "cheatLosing"]) {
         el(id).addEventListener("change", renderTuneInherited)
         el(id).addEventListener("input", renderTuneInherited)
       }
@@ -2024,7 +2111,42 @@
         // 19x19 swaps the whole faction list for the hidden faction, so the widths grid has
         // to follow or it would keep editing factions the run does not play.
         renderPlayTuning()
+        syncPlayoutEngine()
       })
+
+      // The playout engine is a 5x5 player by construction - its board is a flat 25-entry array
+      // and its opponent model is tuned for that board - so its switch follows the board size: on
+      // another size it is disabled and unticked rather than silently ignored, and the run would
+      // otherwise report exploit numbers under a playout label.
+      //
+      // It also takes its budget in playouts, not nodes, and has no depth: the Run form's budget
+      // fields mean the exploiter's node count and depth. Ticking the box therefore puts the form
+      // in Nodes mode with a playout count, because a leftover node budget (1, 10, 400) would be
+      // one playout per move, which is a coin flip and reads as "the engine is not running".
+      function syncPlayoutEngine() {
+        const supported = Number(el("size").value) === 5
+        const box = el("playoutEngine")
+        box.disabled = !supported
+        if (!supported && box.checked) {
+          box.checked = false
+          saveForm()
+        }
+        if (supported && box.checked) {
+          const mode = el("budgetMode").value
+          const budget = Number(el("budget").value)
+          const tooSmall = !Number.isFinite(budget) || budget < 100
+          if (mode !== "time" && (mode === "depth" || tooSmall)) {
+            el("budgetMode").value = "iterations"
+            el("budget").value = String(PLAYOUT_DEFAULT_PLAYOUTS)
+            saveForm()
+          }
+        }
+        const label = box.closest("label")
+        if (label) label.classList.toggle("dim", !supported)
+        box.title = supported
+          ? "Run the playout engine instead of the policy exploiter. The budget becomes playouts per move (depth and node counts do not apply), and a time budget stays a wall-clock cap."
+          : "The playout engine plays 5x5 boards only."
+      }
 
       el("budgetMode").addEventListener("change", () => {
         const mode = el("budgetMode").value
@@ -2989,12 +3111,20 @@
       }
 
       applyForm(loadForm())
+      // A URL override, so the engine can be forced without depending on the form's saved
+      // state or on the browser having a current copy of this page: ?engine=playout.
+      const urlEngine = new URLSearchParams(location.search).get("engine")
+      if (urlEngine === "playout" || urlEngine === "exploit") {
+        el("playoutEngine").checked = urlEngine === "playout"
+        saveForm()
+      }
       loadViewOptions()
       loadLock()
       initAutoTune()
       loadPlayTuning()
       renderPlayTuning()
       renderFactionChips()
+      syncPlayoutEngine()
       el("stop").disabled = true
       requestAnimationFrame(frameLoop)
       connectStream()

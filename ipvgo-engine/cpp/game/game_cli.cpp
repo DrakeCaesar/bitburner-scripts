@@ -61,6 +61,7 @@
 #include "patterns.hpp"
 #include "influence.hpp"
 #include "optbench.hpp"
+#include "playout/playout_search.hpp"
 #include "profiler.hpp"
 #include "mcgs.hpp"
 #include "obstacles.hpp"
@@ -1040,6 +1041,250 @@ int runExploitMove(const std::string& inPath, const std::string& outPath) {
   return 0;
 }
 
+// ---- playout engine requests ------------------------------------------------
+
+ipvgo::search::playout::PlayoutConfig playoutConfigFromRequest(const json& req) {
+  ipvgo::search::playout::PlayoutConfig cfg;
+  // The in-game client sends `iterations`; for this engine it means playouts per move, the same
+  // way the exploit engine reads it as a node budget. The response reports how many playouts were
+  // actually run, so the two can never be confused after the fact.
+  cfg.playoutsPerMove = req.value("playouts", req.value("iterations", 10000L));
+  cfg.exploration = req.value("exploration", 0.3);
+  cfg.useAiTweaks = req.value("aiTweaks", true);
+  cfg.suppressTransposition = req.value("suppressTransposition", true);
+  cfg.maxNodes = static_cast<int>(req.value("nodeCap", 200000L));
+  cfg.timeLimitMs = req.value("budgetMs", 0);
+  return cfg;
+}
+
+json computePlayoutMoveJson(const json& req, ipvgo::search::playout::PlayoutSession* session,
+                            const std::atomic<bool>* cancel = nullptr) {
+  // A new game restarts the move history, which is the session's signal to drop the
+  // graph: positions from the previous game say nothing about this one.
+  if (session != nullptr && cancel == nullptr && req.contains("history") && req.at("history").is_array()) {
+    session->noteRequest(req.at("history").size());
+  }
+  GameState state = stateFromRequest(req);
+  if (whoseTurn(state) != Color::Black) {
+    return json{{"error", "playAs must be Black (X); it is not Black's turn"}};
+  }
+  if (state.size != ipvgo::search::playout::kSize) {
+    // The playout engine is a 5x5 player by construction - its board is a flat 25-entry array and
+    // its opponent model is tuned for that board. A bigger subnet belongs to the exploiter, which
+    // covers every size.
+    return json{{"error", "the playout engine plays 5x5 boards only; this board is " + std::to_string(state.size) +
+                              "x" + std::to_string(state.size)}};
+  }
+
+  ipvgo::search::playout::PlayoutConfig cfg = playoutConfigFromRequest(req);
+  cfg.komi = getKomi(state);
+  cfg.cancel = cancel;
+
+  const auto t0 = std::chrono::steady_clock::now();
+  const ipvgo::search::playout::PlayoutResult result = ipvgo::search::playout::runPlayoutSearch(state, cfg, session);
+  if (result.cancelled) return json{{"cancelled", true}};
+  const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+
+  json out;
+  out["move"] = actionToMoveJson(state.size, result.bestAction);
+  // The graph search reports what it counted, not an estimate of it: how many playouts reached
+  // this position's children and what share of the board the playouts gave Black.
+  out["value"] = result.value;
+  out["playouts"] = result.playouts;
+  out["nodes"] = result.nodes;
+  out["elapsedMs"] = ms;
+  out["rootMoves"] = static_cast<int>(result.rootScores.size());
+  if (!result.note.empty()) out["note"] = result.note;
+  out["engine"] = "playout";
+  return out;
+}
+
+// ---- refparity (differential test against the reference implementation) ----
+
+// Reads the corpus that `tools/refparity.mjs` produced by running the reference script, and
+// recomputes every deterministic part of it here. A pass means the two agree on liberty counts, the
+// influence map, the terminal score in both modes, White's eye count, and the children and weights
+// of every position in the corpus - which is everything the stochastic search is built from.
+//
+// The search itself is deliberately not compared move for move: both sides draw random numbers, and
+// two independent random streams will not agree on a sampled move even when the engine behind them
+// is identical.
+int runRefParity(const std::string& corpusPath) {
+  std::ifstream in(corpusPath);
+  if (!in) {
+    std::cerr << "refparity: cannot open " << corpusPath << "\n";
+    return 1;
+  }
+  json corpus;
+  in >> corpus;
+  if (!corpus.contains("cases") || !corpus.at("cases").is_array()) {
+    std::cerr << "refparity: " << corpusPath << " has no cases array\n";
+    return 1;
+  }
+
+  ipvgo::search::playout::autokroos::Config cfg;
+  cfg.useAiTweaks = true;
+
+  struct Tally {
+    long checked = 0;
+    long mismatched = 0;
+    std::string first;
+  };
+  Tally liberties;
+  Tally territory;
+  Tally scoreInfluence;
+  Tally scoreImmediate;
+  Tally eyes;
+  Tally children;
+
+  const auto expect = [](Tally& tally, bool ok, const std::string& detail) {
+    ++tally.checked;
+    if (ok) return;
+    ++tally.mismatched;
+    if (tally.first.empty()) tally.first = detail;
+  };
+
+  int caseIndex = 0;
+  for (const json& entry : corpus.at("cases")) {
+    using ipvgo::search::playout::autokroos::Board;
+    using ipvgo::search::playout::autokroos::kPoints;
+
+    Board board{};
+    const json& linear = entry.at("board");
+    for (int i = 0; i < kPoints && i < static_cast<int>(linear.size()); ++i) {
+      board[static_cast<size_t>(i)] = static_cast<int8_t>(linear.at(static_cast<size_t>(i)).get<int>());
+    }
+    const bool blackToPlay = entry.value("blackToPlay", true);
+    const std::string where = "case " + std::to_string(caseIndex++) +
+                              " (" + (blackToPlay ? "black" : "white") + " to play)";
+    int8_t computedLiberties[kPoints];
+    ipvgo::search::playout::autokroos::libertyCounts(board, computedLiberties);
+    {
+      bool ok = true;
+      std::string detail;
+      const json& want = entry.at("liberties");
+      for (int i = 0; i < kPoints; ++i) {
+        const int expected = want.at(static_cast<size_t>(i)).get<int>();
+        if (computedLiberties[i] == expected || !ok) continue;
+        ok = false;
+        detail = where + ": liberties[" + std::to_string(i) + "] reference " + std::to_string(expected) +
+                 ", engine " + std::to_string(computedLiberties[i]);
+      }
+      expect(liberties, ok, detail);
+    }
+
+    int8_t computedTerritory[kPoints];
+    ipvgo::search::playout::autokroos::influenceMap(board, computedTerritory);
+    {
+      bool ok = true;
+      std::string detail;
+      const json& want = entry.at("territory");
+      for (int i = 0; i < kPoints; ++i) {
+        const int expected = want.at(static_cast<size_t>(i)).get<int>();
+        if (computedTerritory[i] == expected || !ok) continue;
+        ok = false;
+        detail = where + ": territory[" + std::to_string(i) + "] reference " + std::to_string(expected) +
+                 ", engine " + std::to_string(computedTerritory[i]);
+      }
+      expect(territory, ok, detail);
+    }
+
+    {
+      const double expected = entry.at("scoreInfluence").get<double>();
+      const double computed = ipvgo::search::playout::autokroos::terminalScore(board, false);
+      expect(scoreInfluence, std::fabs(computed - expected) < 1e-9,
+             where + ": scoreInfluence reference " + std::to_string(expected) + ", engine " +
+                 std::to_string(computed));
+    }
+    {
+      const double expected = entry.at("scoreImmediate").get<double>();
+      const double computed = ipvgo::search::playout::autokroos::terminalScore(board, true);
+      expect(scoreImmediate, std::fabs(computed - expected) < 1e-9,
+             where + ": scoreImmediate reference " + std::to_string(expected) + ", engine " +
+                 std::to_string(computed));
+    }
+    {
+      const int expected = entry.at("whiteEyes").get<int>();
+      const int computed = ipvgo::search::playout::autokroos::whiteEyeCount(board);
+      expect(eyes, computed == expected,
+             where + ": whiteEyes reference " + std::to_string(expected) + ", engine " +
+                 std::to_string(computed));
+    }
+
+    std::vector<std::pair<int, int>> computedChildren;
+    ipvgo::search::playout::autokroos::enumerateChildren(board, blackToPlay, cfg, computedChildren);
+    {
+      const json& want = entry.at("children");
+      bool ok = static_cast<int>(computedChildren.size()) == static_cast<int>(want.size());
+      std::string detail;
+      if (!ok) {
+        detail = where + ": child count reference " + std::to_string(want.size()) + ", engine " +
+                 std::to_string(computedChildren.size());
+      }
+      for (int i = 0; ok && i < static_cast<int>(want.size()); ++i) {
+        const int expectedPos = want.at(static_cast<size_t>(i)).at(0).get<int>();
+        const int expectedWeight = want.at(static_cast<size_t>(i)).at(1).get<int>();
+        const auto& got = computedChildren[static_cast<size_t>(i)];
+        if (got.first == expectedPos && got.second == expectedWeight) continue;
+        ok = false;
+        std::string rows;
+        for (int row = 0; row < ipvgo::search::playout::autokroos::kSize; ++row) {
+          rows += "\n           ";
+          for (int column = 0; column < ipvgo::search::playout::autokroos::kSize; ++column) {
+            const int8_t cell = board[static_cast<size_t>(column * ipvgo::search::playout::autokroos::kSize + row)];
+            rows += cell == -1 ? '#' : cell == 0 ? '.' : cell == 1 ? 'X' : 'O';
+          }
+        }
+        detail = where + ": child[" + std::to_string(i) + "] reference (" + std::to_string(expectedPos) + "," +
+                 std::to_string(expectedWeight) + "), engine (" + std::to_string(got.first) + "," +
+                 std::to_string(got.second) + ")" + rows;
+      }
+      expect(children, ok, detail);
+    }
+  }
+
+  const Tally* all[] = {&liberties, &territory, &scoreInfluence, &scoreImmediate, &eyes, &children};
+  const char* names[] = {"liberties", "territory", "scoreInfluence", "scoreImmediate", "whiteEyes", "children"};
+  long mismatched = 0;
+  std::cout << "refparity: " << caseIndex << " cases from " << corpusPath << "\n";
+  for (int i = 0; i < 6; ++i) {
+    mismatched += all[i]->mismatched;
+    std::cout << "  " << (all[i]->mismatched == 0 ? "ok   " : "FAIL ") << names[i] << ": "
+              << all[i]->checked << " checked, " << all[i]->mismatched << " mismatched";
+    if (!all[i]->first.empty()) std::cout << "\n         first: " << all[i]->first;
+    std::cout << "\n";
+  }
+  if (mismatched == 0) {
+    std::cout << "REFPARITY PASSED\n";
+    return 0;
+  }
+  std::cout << "REFPARITY FAILED\n";
+  return 1;
+}
+
+int runPlayoutMove(const std::string& inPath, const std::string& outPath) {  std::ifstream in(inPath);
+  if (!in) {
+    std::cerr << "cannot open " << inPath << "\n";
+    return 1;
+  }
+  json req;
+  in >> req;
+
+  const json out = computePlayoutMoveJson(req, nullptr);
+  if (out.contains("error")) {
+    std::cerr << "playoutmove: " << out["error"].get<std::string>() << "\n";
+    return 1;
+  }
+  const std::string text = out.dump();
+  if (!outPath.empty()) {
+    std::ofstream fout(outPath);
+    fout << text;
+  } else {
+    std::cout << text << "\n";
+  }
+  return 0;
+}
+
 // ---- pondering ---------------------------------------------------------------
 //
 // The game pads White's reply with a delay, and the opponent policy itself is
@@ -1170,6 +1415,49 @@ class Ponderer {
   std::thread worker_;
 };
 
+// Pondering for the playout engine is not a separate search: the graph already holds
+// every position the reply can lead to, so "ponder" just means keep expanding it until
+// the real request arrives. The next request stops this and descends into the child
+// that the actual reply created.
+class PlayoutPonderer {
+ public:
+  explicit PlayoutPonderer(ipvgo::search::playout::PlayoutSession* session) : session_(session) {}
+  ~PlayoutPonderer() { stop(); }
+
+  void start(const json& req) {
+    stop();
+    worker_ = std::thread([this, req] {
+      try {
+        const GameState state = stateFromRequest(req);
+        if (whoseTurn(state) != Color::Black) return;
+        ipvgo::search::playout::PlayoutConfig cfg = playoutConfigFromRequest(req);
+        cfg.komi = getKomi(state);
+        cfg.cancel = &cancel_;
+        // The move budget is a chunking hint here, not a limit: the request that arrives
+        // next is what ends the ponder, with a wall-clock ceiling as a backstop.
+        cfg.playoutsPerMove = 1L << 30;
+        if (cfg.timeLimitMs <= 0) cfg.timeLimitMs = 30000;
+        ipvgo::search::playout::ponderPlayouts(state, cfg, *session_);
+      } catch (const std::exception&) {
+        // Speculation is best effort; the real request recomputes anything missing.
+      }
+    });
+  }
+
+  void stop() {
+    if (worker_.joinable()) {
+      cancel_.store(true);
+      worker_.join();
+    }
+    cancel_.store(false);
+  }
+
+ private:
+  ipvgo::search::playout::PlayoutSession* session_;
+  std::atomic<bool> cancel_{false};
+  std::thread worker_;
+};
+
 // One long-lived engine: reads one JSON request per line and answers on one line,
 // keeping the search session alive so positions solved for an earlier move are
 // not solved again. Requests may carry an "id" that is echoed back. A request
@@ -1177,7 +1465,9 @@ class Ponderer {
 // until the next request arrives.
 int runEngineServer() {
   ipvgo::search::SearchSession session;
+  ipvgo::search::playout::PlayoutSession playoutSession;
   Ponderer ponderer(&session);
+  PlayoutPonderer playoutPonderer(&playoutSession);
   std::ios::sync_with_stdio(false);
   std::string line;
   while (std::getline(std::cin, line)) {
@@ -1190,11 +1480,25 @@ int runEngineServer() {
       std::cout.flush();
       continue;
     }
+    const bool playout = req.value("engine", std::string("exploit")) == "playout";
     json out;
     if (req.value("ponder", false)) {
-      ponderer.start(req);
+      if (playout) {
+        playoutPonderer.start(req);
+      } else {
+        ponderer.start(req);
+      }
       out = json{{"ponder", "started"}};
+    } else if (playout) {
+      ponderer.stop();
+      playoutPonderer.stop();
+      try {
+        out = computePlayoutMoveJson(req, &playoutSession);
+      } catch (const std::exception& err) {
+        out = json{{"error", std::string("search failed: ") + err.what()}};
+      }
     } else {
+      playoutPonderer.stop();
       ponderer.stop();
       try {
         const auto hit = ponderer.results.find(ponderKey(req));
@@ -1603,6 +1907,92 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
   return wins == games ? 0 : 1;
 }
 
+// ---- playoutplay (playout engine Black vs scripted faction White) ---------
+
+int runPlayoutPlay(const std::string& opponentName, int size, int games, long playouts, uint64_t seed,
+                   int threads, bool baseline) {
+  (void)threads;
+  if (size != ipvgo::search::playout::kSize) {
+    std::cerr << "playoutplay: the playout engine plays 5x5 boards only (asked for " << size << "x" << size << ")\n";
+    return 2;
+  }
+  const Opponent ai = parseOpponent(opponentName).value_or(Opponent::Netburners);
+  std::mt19937_64 rng(seed ? seed : 1);
+
+  ipvgo::search::playout::PlayoutConfig cfg;
+  cfg.playoutsPerMove = playouts > 0 ? playouts : 10000;
+
+  int wins = 0;
+  long totalMoves = 0;
+  long totalPasses = 0;
+  long totalPlayouts = 0;
+  long totalNodes = 0;
+  double totalBlackMs = 0.0;
+  double totalMargin = 0.0;
+
+  ipvgo::search::playout::PlayoutSession session;
+
+  for (int g = 0; g < games; ++g) {
+    // A new game is a new board: different obstacles, different history.
+    session.clear();
+    MathRandom mathRng(rng());
+    GameState state = newBoardState(size, ai, true, static_cast<double>(rng() % 30000000u), mathRng);
+    const int moveCap = size * size * 4;
+
+    for (int m = 0; m < moveCap && !state.gameOver; ++m) {
+      if (whoseTurn(state) != Color::Black) break;
+
+      cfg.komi = getKomi(state);
+      const auto t0 = std::chrono::steady_clock::now();
+      const ipvgo::search::playout::PlayoutResult result =
+          baseline ? ipvgo::search::playout::runAutokroosBaseline(state, cfg)
+                   : ipvgo::search::playout::runPlayoutSearch(state, cfg, &session);
+      totalBlackMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+      totalNodes += result.nodes;
+      totalPlayouts += result.playouts;
+      ++totalMoves;
+      const bool passed = result.bestAction == ipvgo::search::passAction(size);
+      if (passed) ++totalPasses;
+      if (std::getenv("IPVGO_TRACE") != nullptr) {
+        std::fprintf(stderr, "  [%d] move %d: action=%d value=%.4f playouts=%ld nodes=%ld\n", g, m + 1,
+                     result.bestAction, result.value, result.playouts, result.nodes);
+      }
+
+      if (passed) {
+        passTurn(state, Color::Black);
+      } else if (!makeMove(state, result.bestAction / size, result.bestAction % size, Color::Black)) {
+        passTurn(state, Color::Black);
+      }
+      if (state.gameOver) break;
+
+      const Play whitePlay = getMove(state, Color::White, ai, static_cast<double>(rng() % 30000000u), mathRng);
+      if (whitePlay.type == PlayType::Pass) {
+        passTurn(state, Color::White);
+      } else if (!makeMove(state, whitePlay.x, whitePlay.y, Color::White)) {
+        passTurn(state, Color::White);
+      }
+    }
+
+    const Score sc = getScore(state);
+    if (blackWins(sc)) ++wins;
+    totalMargin += sc.blackSum - sc.whiteSum;
+  }
+
+  const double avgMs = totalMoves > 0 ? totalBlackMs / static_cast<double>(totalMoves) : 0.0;
+  const double winPct = 100.0 * static_cast<double>(wins) / static_cast<double>(std::max(games, 1));
+  const double avgMargin = games > 0 ? totalMargin / static_cast<double>(games) : 0.0;
+  std::cout << (baseline ? "baselineplay" : "playoutplay") << ": " << opponentName << " " << size << "x" << size
+            << " wins=" << wins << "/" << games
+            << " (" << winPct << "%) playouts/move=" << cfg.playoutsPerMove
+            << " avgBlackThinkMs=" << avgMs << " avgMargin=" << avgMargin
+            << " passes=" << totalPasses << "/" << totalMoves
+            << " avgPlayoutsPerMove="
+            << (totalMoves > 0 ? static_cast<double>(totalPlayouts) / static_cast<double>(totalMoves) : 0.0)
+            << " avgNodesPerMove="
+            << (totalMoves > 0 ? static_cast<double>(totalNodes) / static_cast<double>(totalMoves) : 0.0) << "\n";
+  return wins == games ? 0 : 1;
+}
+
 // ---- policycheck (reply distribution vs sampled getMove) -------------------
 
 int runPolicyCheck(const std::string& opponentName, int size, int samples, uint64_t seed) {
@@ -1685,6 +2075,7 @@ bool applyTuningOption(BenchOptions& options, const std::string& key, const std:
   else if (key == "max-depth" || key == "maxDepth") options.maxDepth = std::stoi(value);
   else if (key == "depth") options.depth = std::stoi(value);
   else if (key == "threads") options.threads = std::stoi(value);
+  else if (key == "engine") options.playoutEngine = value == "playout" || value == "playouts";
   else if (key == "parallel" || key == "parallelGames") options.gamesInParallel = std::stoi(value);
   else if (key == "cheat-cap" || key == "cheatMaxAttempts") options.cheatMaxAttempts = std::clamp(std::stoi(value), 0, 99);
   else if (key == "cheat-losing" || key == "cheatLosingGate") options.cheatLosingGate = value != "0" && value != "false";
@@ -2561,7 +2952,7 @@ int main(int argc, char** argv) {
   if (argc < 2) {
     std::cerr << "usage: ipvgo_game "
                  "<selftest|fuzz|parity|aimove|mcgsmove|mcgsplay|exploitmove|exploitplay|"
-                 "profileworkload|prof|serve|policycheck|optbench|gen|tune> ...\n";
+                 "playoutmove|playoutplay|baselineplay|refparity|profileworkload|prof|serve|policycheck|optbench|gen|tune> ...\n";
     return 2;
   }
   const std::string cmd = argv[1];
@@ -2582,6 +2973,8 @@ int main(int argc, char** argv) {
     return runMcgsPlay(argv[2], size, games, playouts, seed);
   }
   if (cmd == "exploitmove" && argc >= 3) return runExploitMove(argv[2], argc >= 4 ? argv[3] : "");
+  if (cmd == "playoutmove" && argc >= 3) return runPlayoutMove(argv[2], argc >= 4 ? argv[3] : "");
+  if (cmd == "refparity" && argc >= 3) return runRefParity(argv[2]);
   if (cmd == "prof") return runProfiler(argc - 1, argv + 1);
   if (cmd == "serve") return runEngineServer();
   if (cmd == "profileworkload") {
@@ -2703,6 +3096,24 @@ int main(int argc, char** argv) {
     const int whiteChildren = argc >= 10 ? std::stoi(argv[9]) : 0;
     return runExploitPlay(argv[2], size, games, depth, seed, fixedWhite, beam, whiteChildren);
   }
+  if (cmd == "playoutplay" && argc >= 6) {
+    const int size = std::stoi(argv[3]);
+    const int games = std::stoi(argv[4]);
+    const long playouts = std::stol(argv[5]);
+    const uint64_t seed = argc >= 7 ? std::stoull(argv[6]) : 1u;
+    const int threads = argc >= 8 ? std::stoi(argv[7]) : 0;
+    return runPlayoutPlay(argv[2], size, games, playouts, seed, threads, false);
+  }
+  if (cmd == "baselineplay" && argc >= 6) {
+    // The reference playout player, run through the same harness so the two are comparable move
+    // for move and game for game.
+    const int size = std::stoi(argv[3]);
+    const int games = std::stoi(argv[4]);
+    const long playouts = std::stol(argv[5]);
+    const uint64_t seed = argc >= 7 ? std::stoull(argv[6]) : 1u;
+    const int threads = argc >= 8 ? std::stoi(argv[7]) : 0;
+    return runPlayoutPlay(argv[2], size, games, playouts, seed, threads, true);
+  }
   if (cmd == "bench") {
     BenchOptions options;
     std::vector<std::string> pos;
@@ -2764,6 +3175,8 @@ int main(int argc, char** argv) {
       }
       options.carry = config.value("carry", false);
       options.dynamicRoot = config.value("dynamicRoot", false);
+      options.playoutEngine = config.value("engine", std::string("exploit")) == "playout" ||
+                              config.value("engine", std::string("exploit")) == "playouts";
       // Verify each played move against the whole reply model (first White ply only).
       options.verifyRootReplies = config.value("verifyRootReplies", false);
       // One global switch for cheat moves, plus the player inputs the success roll needs.

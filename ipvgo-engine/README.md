@@ -23,15 +23,17 @@ Then open **http://localhost:3010/bench** for the benchmark GUI.
 
 ## Engine modes
 
-There is one engine binary, `ipvgo_game`, and the server runs it in one of two modes:
+There is one engine binary, `ipvgo_game`, and the server runs it in one of three modes:
 
 1. **Exploit** - policy expectimax against the faction AI (default)
 2. **MCGS** - Monte Carlo graph search
+3. **Playout** - playout graph search (see "Playout engine" below)
 
-`IPVGO_ENGINE=mcgs` selects the second; anything else, including unset, runs the
-exploiter. The legacy heuristic MCTS engine that used to build as `ipvgo_engine` (and
-`IPVGO_ENGINE=native`) is gone: it contained no exploiter, nothing served it, and a tree
-built with only that target looked built while having no engine at all.
+`IPVGO_ENGINE=mcgs` and `IPVGO_ENGINE=playout` select the second and third; anything
+else, including unset, runs the exploiter. The legacy heuristic MCTS engine that used to
+build as `ipvgo_engine` (and `IPVGO_ENGINE=native`) is gone: it contained no exploiter,
+nothing served it, and a tree built with only that target looked built while having no
+engine at all.
 ## Prerequisites
 
 - CMake 3.18+
@@ -233,7 +235,7 @@ actual weaknesses.
   pool picks are uniform, as `floorIndex()` makes them. The leading `isSmart`
   draw is mixed in with its known probability (Netburners 0, Slum Snakes 0.3,
   Black Hand 0.8, rest 1).
-- `nn/exploiter.cpp`: Black maximises, White nodes average over that
+- `search/exploiter.cpp`: Black maximises, White nodes average over that
   distribution. Single-candidate replies make the line **forced**, which is how
   Black builds deep "drag the AI" sequences; the beam applies only to Black and
   the leaf eval carries faction-specific liberty weights (a faction that never
@@ -279,6 +281,161 @@ actual weaknesses.
   `IPVGO_CONCENTRATED_REPLIES=3` loosens the test: that reaches +34 on Illuminati
   and +13 on Daedalus but costs SlumSnakes 13 games, so the strict test ships.
 
+## Playout engine (Monte Carlo graph search)
+
+`cpp/search/playout/` is a second search engine, kept beside the exploiter as an alternative
+rather than a replacement. Where the exploiter evaluates a position statically at a depth
+horizon, this one plays games out to a finished board and keeps what it counted: a move is good
+because the games through it won.
+
+**It plays 5x5 boards only.** Its board is a flat 25-entry array and its opponent model is tuned
+for that board; a larger subnet is refused with a clear error and belongs to the exploiter, which
+covers every board.
+
+The engine is selected with `IPVGO_ENGINE=playout` for the server, `--engine=playout` for
+`bench`/`benchjson` (or the **Playout engine** checkbox in the web bench), and
+`playoutplay`/`playoutmove` on the command line:
+
+```bash
+./out/build/x64-Release/bin/ipvgo_game playoutplay "Slum Snakes" 5 12 10000 1
+# -> playoutplay: Slum Snakes 5x5 wins=... playouts/move=10000 avgBlackThinkMs=...
+#                  avgMargin=... passes=... avgPlayoutsPerMove=... avgNodesPerMove=...
+```
+
+The web bench's checkbox and `--engine=playout` only apply to a 5x5 run: `server.js` rejects any
+other size with a message, and the checkbox disables itself when the board size is not 5.
+
+### Where the engine comes from
+
+The engine is a from-scratch reimplementation of the 5x5 playout player the community has used for
+years, and it started as a **1:1** reproduction of that algorithm on purpose: a baseline you cannot
+match is a baseline you cannot improve against. `baselineplay` runs the frozen reference so that
+number stays fixed while `playoutplay` evolves.
+
+```bash
+./out/build/x64-Release/bin/ipvgo_game baselineplay "Slum Snakes" 5 12 10000 1
+```
+
+Both commands take the same arguments and run the same harness, so the two lines are directly
+comparable. They agree exactly - same wins, same margin, same passes, same node count - which
+proves the two entry points share one implementation, and nothing more than that.
+
+### Checking the port against the original
+
+`tools/refparity.mjs` runs the original script and dumps everything deterministic about a corpus of
+positions; `ipvgo_game refparity` recomputes the same corpus and reports every difference. The search
+itself cannot be compared move for move - both sides draw random numbers - but everything the search
+is built from can be:
+
+```bash
+node ipvgo-engine/tools/refparity.mjs <reference.js> out/refparity.json 400
+./out/build/x64-Release/bin/ipvgo_game refparity out/refparity.json
+```
+
+The corpus is 812 positions: named shapes plus seeded random boards, both sides to move. Current
+state:
+
+| What | Result |
+|------|--------|
+| Liberty counts | 812 / 812 exact |
+| Influence map (territory) | 812 / 812 exact |
+| Terminal score, influence mode | 812 / 812 exact |
+| Terminal score, immediate mode | 812 / 812 exact |
+| White's eye count | 812 / 812 exact |
+| Children and their weights | 812 / 812 exact |
+
+**REFPARITY PASSED.** Every deterministic part of the port is bit-for-bit the original: the board
+primitives, the influence map, both scoring modes, White's eye count, and every child and weight of
+every position in the corpus.
+
+Getting there meant reproducing three reference quirks rather than correcting them, each commented
+where it lives:
+
+1. **The "move inside Black's area" penalty is dead code.** It is written
+   `territory[BOARD_SIZE * x + y == 1]`; `+` binds tighter than `==`, so the subscript is a boolean,
+   and indexing an `Int8Array` with a boolean gives `undefined`, so `undefined == 1` is false. It
+   never fires for any board or move.
+2. **The big-atari flood does not mark its seed stone.** Reaching the group through its other stones
+   pushes the seed a second time, so the group counts one too large and a two-stone group passes the
+   "large group" test.
+3. **The playout's self-atari test reads a stale board.** Stone colours come from the board the
+   playout started from, while liberties come from the current board.
+
+Reproducing them is what makes the A/B honest: an engine that quietly "fixes" the reference is
+comparing itself to something that never existed. Correcting them is the first thing to try in the
+improvement phase, where each one gets measured against `baselineplay` like anything else.
+
+### How it works
+
+| Piece | What it is |
+|-------|-----------|
+| Board | A flat 25-entry array of small integers: `-1` offline, `0` empty, `1` black, `2` white. Every kernel - liberties, capture, legality, influence - walks it with a constant stride, so a move costs a few array reads and no allocation. |
+| Identity | A Zobrist hash of the stones plus the side to move. Flipping the turn key turns a position's hash into its child's, so a successor needs no rehash. |
+| Value | A playout played to a finished board, scored from an influence map rather than a hand-written evaluation. The finished board is the result; nothing is estimated. |
+| Selection | PUCT with a standard-deviation prior: a barely-visited child is scored by how uncertain its parent is, so a position the search knows little about is explored before one whose value is already nailed down. |
+| Graph | Positions are identified by hash, so the search is a graph, not a tree. Every node on the line is rebuilt as the visit-weighted mean of its children, which is what lets two move orders reaching one position share their evidence. |
+| Opponent | White is scripted, not adversarial, so its edges are the replies its faction policy actually plays, weighted by how likely it is to play them, and the tail of that distribution is culled. |
+| Backup | `own` playout plus the visits each child earned, with the double-pass pseudo-child folded in, and a descent that stops when an edge has contributed less than its child already holds. |
+
+### The playout policy is where the strength is
+
+Three rules turn a random game into a game that says something about the position:
+
+1. **Do not fill your own eye.** A point with no empty neighbour, no friendly stone beside it and
+   nothing to capture removes one of your own liberties and tells the playout nothing.
+2. **Do not walk a healthy chain into atari.** Sacrificing a lone stone, or extending from one
+   already in atari, is how eye destruction works - so self-atari is allowed there and rejected
+   everywhere else.
+3. **Do not repeat a board already on the line.** Superko, checked against the game's own history
+   plus the line being played.
+
+The opponent model is the fourth. White's moves are ranked - capture, then defend, then an
+eye-making nobi, then atari - and only the top of that ladder is kept, with a marker that stops
+White passing while it still has a priority move left. Without it White drifts through replies it
+would never play and the search spends its playouts on lines that cannot happen.
+
+### What it measures, and where it stands
+
+10000 playouts per move - the reference's own budget - 6 games per faction, seed 11, one thread:
+
+| Faction | Wins | Avg margin | ms/move |
+|---------|------|-----------|---------|
+| Netburners | 4/6 | +4.0 | 60 |
+| Slum Snakes | 4/6 | +12.0 | 83 |
+| The Black Hand | 5/6 | +14.2 | 73 |
+| Tetrads | 6/6 | +16.8 | 81 |
+| Daedalus | 6/6 | +15.8 | 69 |
+| Illuminati | 5/6 | +11.7 | 70 |
+
+**30 of 36 games.** This is the number to beat.
+
+An earlier round of this port scored 34 of 36 with the same harness and budget. That engine was not
+the reference: it had fixed two of the three quirks listed above. Reverting to bit-for-bit parity
+cost four games, which is a useful thing to know before touching any of them again - the quirks are
+not obviously harmless, and they are not obviously harmful either. Each one gets measured.
+
+`baselineplay` reports the same numbers to four decimal places, on every faction and every budget
+tried, which is the point of keeping it: the engine is a 1:1 reproduction until a change is turned
+on deliberately, and the A/B says so.
+
+Cost is dominated by node creation, and node creation is dominated by the opponent model: the
+White weight ladder calls an eye count and an influence map per candidate reply. That is the first
+place an improvement will pay, and it is also the first place a change can quietly make the engine
+weaker, which is why the baseline exists.
+
+### What would move it
+
+The obvious levers, in the order they look worth trying:
+
+- **Threads.** The search is single-threaded. Playouts are independent until they meet at a node,
+  so this is the largest untouched gain - and the largest source of subtle bugs.
+- **Reuse across moves.** The graph is rebuilt per move; the subtree below White's actual reply is
+  already correct and is thrown away. Keeping it is the "frontier" idea, and the transposition
+  table almost supports it already.
+- **Node creation.** The influence map and the eye count are recomputed per candidate. Both are
+  position-level facts that could be computed once per node.
+- **Playout length.** A playout currently runs to a finished board. Late in a game the board is
+  decided long before that, and the influence map knows it.
 ## Bench GUI (browser)
 
 ```bash
@@ -677,7 +834,7 @@ The remaining time is still `buildPolicyModel` / `getEyeCreationMoves` inside
 
 ### The reply model can be checked against the live game
 
-`checkWhiteReply()` (`nn/exploiter`) answers "was this move one the model gives any
+`checkWhiteReply()` (`search/exploiter`) answers "was this move one the model gives any
 probability to, and would the search have kept it" for a real position. It is reachable over the
 move API by sending `"whiteReplyCheck": {"x": .., "y": ..}` (or `{"pass": true}`) with `board`
 set to the position White moved in and `playAs: "O"`; the answer comes back as

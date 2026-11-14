@@ -59,7 +59,7 @@ find_package(Threads REQUIRED)
 # bench / optbench / tune / prof. The legacy heuristic MCTS engine that used to build
 # alongside it as `ipvgo_engine` is gone: it had no exploiter, nothing served it, and a
 # tree built with only that target looked built while having no engine at all.
-add_executable(ipvgo_game cpp/game/game_cli.cpp cpp/search/mcgs.cpp cpp/search/exploiter.cpp cpp/search/bench_tui.cpp cpp/search/optbench.cpp cpp/search/profiler.cpp cpp/search/fast_alloc.cpp)
+add_executable(ipvgo_game cpp/game/game_cli.cpp cpp/search/mcgs.cpp cpp/search/exploiter.cpp cpp/search/bench_tui.cpp cpp/search/optbench.cpp cpp/search/profiler.cpp cpp/search/fast_alloc.cpp cpp/search/playout/autokroos.cpp cpp/search/playout/playout_search.cpp)
 target_include_directories(ipvgo_game PRIVATE cpp/game cpp/search)
 target_link_libraries(ipvgo_game PRIVATE ipvgo_game_core nlohmann_json::nlohmann_json Threads::Threads)
 # The built-in `prof` subcommand (allocation counts + in-process stack sampling)

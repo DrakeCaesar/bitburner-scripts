@@ -18,6 +18,13 @@ From the repository root in PowerShell:
 .\cmake\Build-Native.ps1 -BuildType Release -Target ipvgo_game
 .\out\build\x64-Release\bin\ipvgo_game.exe optbench --size=9 --positions=4 --depth=2 --threads=1 --reps=3
 .\out\build\x64-Release\bin\ipvgo_game.exe exploitplay "Slum Snakes" 7 4 3 5
+
+# The second engine, for the same position set. A playout budget replaces the node budget.
+# playoutplay and baselineplay share one harness, so their lines are directly comparable:
+# baselineplay is the frozen reference the engine was reimplemented from, and the two must
+# agree exactly until an improvement is deliberately turned on.
+.\out\build\x64-Release\bin\ipvgo_game.exe playoutplay "Slum Snakes" 7 4 10000 1
+.\out\build\x64-Release\bin\ipvgo_game.exe baselineplay "Slum Snakes" 7 4 10000 1
 ```
 
 The profile build disables inlining by default; use its samples to find hot
@@ -34,6 +41,7 @@ again after the change. Older README figures and hotspot claims may be stale.
 ## Correctness and caveats
 
 - Check `selftest`, `fuzz 60 11`, and `policycheck "The Black Hand" 5 800`;
+- For the playout engine, check parity against the original: `node ipvgo-engine/tools/refparity.mjs <reference.js> out/refparity.json 400` then `ipvgo_game refparity out/refparity.json`. It must report zero mismatches in every category.
   compare deterministic single-thread fixed-depth moves, values and node counts.
   Add targeted tests for the refactor and explain intentional differences.
 - Carry memo is enabled by default for live server requests (`IPVGO_CARRY=0`
