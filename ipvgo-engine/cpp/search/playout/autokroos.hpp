@@ -43,6 +43,8 @@
 #include <string>
 #include <vector>
 
+#include <ankerl/unordered_dense.h>
+
 #include "go_game.hpp"
 
 namespace ipvgo::search::playout::autokroos {
@@ -112,8 +114,10 @@ double terminalScore(const Board& board, bool immediate);
 // How many separate eyes White has. Used by the opponent model to notice eye-making moves.
 int whiteEyeCount(const Board& board);
 
-// One playout. `history` is the superko set and is extended as the playout proceeds.
-double playout(Board board, bool blackToPlay, std::vector<uint32_t>& history, double komi);
+// One playout. `history` is the superko set for the line this playout starts from, and is extended
+// as the playout proceeds.
+double playout(Board board, bool blackToPlay, const ankerl::unordered_dense::set<uint32_t>& history,
+               double komi);
 
 // ---- The search ----
 

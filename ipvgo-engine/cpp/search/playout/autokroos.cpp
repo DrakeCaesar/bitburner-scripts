@@ -3,8 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <unordered_map>
-#include <unordered_set>
+
+#include <ankerl/unordered_dense.h>
 
 namespace ipvgo::search::playout::autokroos {
 namespace {
@@ -482,7 +482,8 @@ bool fillsOwnEye(const Board& board, const int8_t* liberties, int pos, bool blac
 
 }  // namespace
 
-double playout(Board board, bool blackToPlay, std::vector<uint32_t>& history, double komi) {
+double playout(Board board, bool blackToPlay, const ankerl::unordered_dense::set<uint32_t>& history,
+               double komi) {
   (void)komi;  // the reference scores the finished board on Black's share of it, not on komi
   // The reference reads stone colours for its self-atari test from the board the playout *started*
   // from, while the liberty counts come from the board as it stands. It is a stale read - after the
@@ -497,7 +498,15 @@ double playout(Board board, bool blackToPlay, std::vector<uint32_t>& history, do
 
   bool lastPassed = false;
   const int maxIterations = static_cast<int>(1.5 * kPoints) + 1;
-  std::unordered_set<uint32_t> seen(history.begin(), history.end());
+
+  // A playout needs a fresh superko set every time, and there are 10000 playouts per move. Keeping
+  // one set per thread and refilling it - `clear()` keeps the bucket array and the value buffer -
+  // turns 10000 set allocations into one per thread. This is the single largest piece of overhead
+  // in the search, and it does not change what any playout computes: the set is empty and then
+  // filled with exactly the same hashes it would have been constructed with.
+  static thread_local ankerl::unordered_dense::set<uint32_t> seen;
+  seen.clear();
+  seen.insert(history.begin(), history.end());
 
   for (int iteration = 0; iteration < maxIterations; ++iteration) {
     int moves[kPoints];
@@ -625,7 +634,7 @@ struct Node {
 
 struct Graph {
   std::vector<Node> nodes;
-  std::unordered_map<uint32_t, int> table;
+  ankerl::unordered_dense::map<uint32_t, int> table;
 };
 
 // Builds the children of a node: the pass edge, then one edge per legal move. White's edges carry
@@ -812,17 +821,16 @@ void buildChildren(Node& node, const Config& cfg) {
 }
 
 int createNode(Graph& graph, const Board& board, bool blackToPlay, const Config& cfg,
-               const std::unordered_set<uint32_t>& history) {
+               const ankerl::unordered_dense::set<uint32_t>& history) {
   Node node;
   node.board = board;
   node.blackToPlay = blackToPlay;
   node.hash = hashBoard(board, blackToPlay);
   buildChildren(node, cfg);
 
-  // The playout that gives the node its first value runs with the superko of the line that
-  // reached it, so it cannot walk back into a board already on that line.
-  std::vector<uint32_t> playoutHistory(history.begin(), history.end());
-  node.own = playout(board, blackToPlay, playoutHistory, cfg.komi);
+  // The playout that gives the node its first value runs with the superko of the line that reached
+  // it, so it cannot walk back into a board already on that line.
+  node.own = playout(board, blackToPlay, history, cfg.komi);
   node.n = 1;
   node.s = node.own;
   node.ss = node.own * node.own;
@@ -843,7 +851,7 @@ Result search(const Board& root, bool whitePassedLast, const std::vector<uint32_
   graph.nodes.reserve(static_cast<size_t>(std::min(cfg.maxNodes, 65536)));
   graph.table.reserve(1 << 14);
 
-  const int rootIndex = createNode(graph, root, true, cfg, std::unordered_set<uint32_t>{});
+  const int rootIndex = createNode(graph, root, true, cfg, ankerl::unordered_dense::set<uint32_t>{});
 
   std::vector<int> path;
   path.reserve(128);
@@ -854,7 +862,12 @@ Result search(const Board& root, bool whitePassedLast, const std::vector<uint32_
       break;
     }
 
-    std::unordered_set<uint32_t> seen(seenHashes.begin(), seenHashes.end());
+    // Same trick as in `playout`: the descent's superko set is refilled, not reallocated. It is a
+    // separate scratch from the playout's, because a node created during the descent runs its own
+    // playout and must not clobber the line being descended.
+    static thread_local ankerl::unordered_dense::set<uint32_t> seen;
+    seen.clear();
+    seen.insert(seenHashes.begin(), seenHashes.end());
     seen.insert(hashBoard(root, false));
     bool lastPassed = whitePassedLast;
 

@@ -400,12 +400,19 @@ would never play and the search spends its playouts on lines that cannot happen.
 
 | Faction | Wins | Avg margin | ms/move |
 |---------|------|-----------|---------|
-| Netburners | 4/6 | +4.0 | 60 |
-| Slum Snakes | 4/6 | +12.0 | 83 |
-| The Black Hand | 5/6 | +14.2 | 73 |
-| Tetrads | 6/6 | +16.8 | 81 |
-| Daedalus | 6/6 | +15.8 | 69 |
-| Illuminati | 5/6 | +11.7 | 70 |
+| Netburners | 4/6 | +4.0 | 51 |
+| Slum Snakes | 4/6 | +12.0 | 72 |
+| The Black Hand | 5/6 | +14.2 | 64 |
+| Tetrads | 6/6 | +16.8 | 71 |
+| Daedalus | 6/6 | +15.8 | 60 |
+| Illuminati | 5/6 | +11.7 | 59 |
+
+Cost is ~13% lower than the first measurement of this engine, with identical results, from two
+changes that do not touch what the search computes: the transposition table and the superko sets now
+use `ankerl::unordered_dense` (the same library the exploiter already uses), and the superko set is
+refilled per playout rather than reallocated. The second is the one that mattered - the container
+swap alone measured neutral - because it removes 15 000 set allocations per move. Repeat runs agree
+to within 0.2%.
 
 **30 of 36 games.** This is the number to beat.
 
