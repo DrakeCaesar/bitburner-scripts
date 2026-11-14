@@ -1,5 +1,4 @@
 /* eslint-env node */
-import { defineConfig } from "viteburner"
 import { resolve, dirname } from "path"
 import { fileURLToPath } from "node:url"
 import { createRequire } from "node:module"
@@ -7,6 +6,18 @@ import type { Plugin, ViteDevServer } from "vite"
 
 const repoRoot = dirname(fileURLToPath(import.meta.url))
 const nodeRequire = createRequire(import.meta.url)
+
+// viteburner is CommonJS at heart: its ESM entry re-exports from a chunk that does
+// `import { isMatch, match } from "micromatch"`, and micromatch is a CommonJS module whose
+// names are attached to a function object, which Node cannot see as named exports. Vite
+// loads this config as ESM and imports bare specifiers natively, so `import ... from
+// "viteburner"` dies with "does not provide an export named 'isMatch'". Requiring the
+// package's CommonJS entry (`exports.require`) takes the path that works, and it is the very
+// same module instance build/dev.cjs patched, because Node caches it by resolved filename.
+const { defineConfig } = nodeRequire("viteburner") as {
+  defineConfig: typeof import("viteburner").defineConfig
+}
+
 const { bundleSolverWorker } = nodeRequire("./build/bundleSolverWorker.cjs") as {
   bundleSolverWorker: () => string
 }

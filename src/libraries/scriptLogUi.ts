@@ -886,6 +886,8 @@ export interface ReactTableConfig extends TableConfig {
   layout?: Partial<TableLayout>
   selectedRowIndex?: number
   highlightCells?: ReadonlySet<string>
+  /** Per-cell text colours, keyed `"row,col"` like highlightCells. */
+  cellColors?: Readonly<Record<string, string>>
   activeHeaderColumns?: ReadonlySet<number>
   /** Row click handler; store selection in script state and re-render from the main loop. */
   onRowClick?: (rowIndex: number) => void
@@ -915,6 +917,10 @@ export function buildReactTable(config: ReactTableConfig): ReactNode {
     const cells = row.map((cell, colIdx) => {
       const highlight = config.highlightCells?.has(`${rowIdx},${colIdx}`) ?? false
       const style = cellStyle(layout, { highlight, selectedRow }, alignments[colIdx])
+      const color = config.cellColors?.[`${rowIdx},${colIdx}`]
+      if (color) {
+        style.color = color
+      }
       if (hasSeparator) {
         style.borderBottom = `2px solid ${HEADER_BORDER}`
       }

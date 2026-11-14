@@ -1,14 +1,5 @@
-import { NS } from "@ns"
-import type { IpvgoBoard, IpvgoValidMoves } from "./types.js"
-
-export type CheatKind = "repair" | "remove"
-
-export type CheatAction = {
-  kind: CheatKind
-  x: number
-  y: number
-  score: number
-}
+import type { NS } from "@ns"
+import type { IpvgoBoard, IpvgoCheatProposal } from "./types.js"
 
 export type CheatStats = {
   available: boolean
@@ -16,45 +7,31 @@ export type CheatStats = {
   successChance: number
 }
 
-const MIN_CHEAT_CHANCE_FIRST = 0.55
-const MIN_CHEAT_CHANCE_REPEAT = 0.75
-
-function neighbors(size: number, x: number, y: number): Array<[number, number]> {
-  const out: Array<[number, number]> = []
-  if (y > 0) out.push([x, y - 1])
-  if (x < size - 1) out.push([x + 1, y])
-  if (y < size - 1) out.push([x, y + 1])
-  if (x > 0) out.push([x - 1, y])
-  return out
+/** The engine's cheat kinds (exploiter.hpp CheatKind), in the order it numbers them. */
+export const CHEAT_KIND_NAMES: Record<number, string> = {
+  1: "remove router",
+  2: "two moves",
+  3: "destroy node",
+  4: "repair node",
 }
 
-function collectChain(board: IpvgoBoard, x: number, y: number, color: "X" | "O"): Array<[number, number]> {
-  const chain: Array<[number, number]> = []
-  const stack: Array<[number, number]> = [[x, y]]
-  const seen = new Set<string>()
-
-  while (stack.length > 0) {
-    const [cx, cy] = stack.pop()!
-    const key = `${cx},${cy}`
-    if (seen.has(key) || board[cx][cy] !== color) continue
-    seen.add(key)
-    chain.push([cx, cy])
-    for (const [nx, ny] of neighbors(board.length, cx, cy)) {
-      if (!seen.has(`${nx},${ny}`) && board[nx][ny] === color) stack.push([nx, ny])
-    }
-  }
-
-  return chain
+export type CheatContext = {
+  /** Attempts already spent this game. */
+  count: number
+  /** Player.mults.crime_success, part of the success chance. */
+  crimeSuccessMult: number
+  /** Source-File 14 level; 3 adds the flat +25 points. */
+  sourceFile14Level: number
 }
 
-function chainLiberties(board: IpvgoBoard, chain: Array<[number, number]>): Set<string> {
-  const liberties = new Set<string>()
-  for (const [x, y] of chain) {
-    for (const [nx, ny] of neighbors(board.length, x, y)) {
-      if (board[nx][ny] === ".") liberties.add(`${nx},${ny}`)
-    }
-  }
-  return liberties
+export type CheatOutcome = "succeeded" | "skipped" | "ejected" | "invalid"
+
+export type CheatPlay = {
+  outcome: CheatOutcome
+  /** Row label for the move log, e.g. "remove router 2,3 succeeded". */
+  label: string
+  /** White's response, when the call produced one. */
+  result: Awaited<ReturnType<NS["go"]["makeMove"]>> | null
 }
 
 export function readCheatStats(ns: NS): CheatStats {
@@ -70,74 +47,128 @@ export function readCheatStats(ns: NS): CheatStats {
   }
 }
 
-export function shouldAttemptCheat(stats: CheatStats): boolean {
-  if (!stats.available) return false
-  const threshold = stats.count > 0 ? MIN_CHEAT_CHANCE_REPEAT : MIN_CHEAT_CHANCE_FIRST
-  return stats.successChance >= threshold
+/**
+ * The player inputs the engine's cheat pricing needs. The Source-File 14 level comes from
+ * `getResetInfo()` (1 GB) rather than `getOwnedSourceFiles()` (5 GB) for the same number.
+ */
+export function readCheatContext(ns: NS): CheatContext {
+  let count = 0
+  let chance = 0
+  try {
+    count = ns.go.cheat.getCheatCount()
+    chance = ns.go.cheat.getCheatSuccessChance(count)
+  } catch {
+    /* Source-File 14 not owned; the engine will not be asked to cheat */
+  }
+
+  let crimeSuccessMult = 1
+  try {
+    crimeSuccessMult = ns.getPlayer().mults.crime_success
+  } catch {
+    /* keep the neutral value */
+  }
+
+  return { count, crimeSuccessMult, sourceFile14Level: readSourceFile14Level(ns, count, chance, crimeSuccessMult) }
 }
 
 /**
- * Prefer removing an opponent stone in atari, then repairing offline nodes next to our stones.
+ * Source-File 14 level, 0 or 3 (3 is the only level that pays, a flat +0.25).
+ *
+ * `getResetInfo()` reports the owned source files directly. When it is unavailable, fall back
+ * to inferring the bonus from the game's own chance: the base is
+ * `0.6 * (0.7 - 0.02n)^n * crime_success` and whatever the game adds on top is the bonus. That
+ * inference only works below the clamp - once the chance saturates at 1.0 there is nothing left
+ * to measure, and it used to report "no Source-File" in exactly the games where the cheat was
+ * certain (crime_success above ~3.4 with two attempts spent).
  */
-export function findCheatAction(board: IpvgoBoard, _validMoves: IpvgoValidMoves): CheatAction | null {
-  const size = board.length
-  let bestRemove: CheatAction | null = null
-  let bestRepair: CheatAction | null = null
-
-  for (let x = 0; x < size; x++) {
-    for (let y = 0; y < size; y++) {
-      const cell = board[x][y]
-
-      if (cell === "O") {
-        const chain = collectChain(board, x, y, "O")
-        const liberties = chainLiberties(board, chain)
-        if (liberties.size === 1) {
-          const score = 100 + chain.length
-          if (!bestRemove || score > bestRemove.score) {
-            bestRemove = { kind: "remove", x, y, score }
-          }
-        }
-      }
-
-      if (cell === "#") {
-        let friendlyNeighbors = 0
-        let openNeighbors = 0
-        for (const [nx, ny] of neighbors(size, x, y)) {
-          const neighbor = board[nx][ny]
-          if (neighbor === "X") friendlyNeighbors++
-          if (neighbor === ".") openNeighbors++
-        }
-        if (friendlyNeighbors > 0) {
-          const score = friendlyNeighbors * 3 + openNeighbors
-          if (!bestRepair || score > bestRepair.score) {
-            bestRepair = { kind: "repair", x, y, score }
-          }
-        }
-      }
-    }
+function readSourceFile14Level(ns: NS, count: number, chance: number, crimeSuccessMult: number): 0 | 3 {
+  try {
+    const owned = ns.getResetInfo()?.ownedSF
+    const level = owned instanceof Map ? owned.get(14) : (owned as Record<number, number> | undefined)?.[14]
+    if (typeof level === "number") return level === 3 ? 3 : 0
+  } catch {
+    /* older build without getResetInfo: infer it below */
   }
-
-  if (bestRemove) return bestRemove
-  return bestRepair
+  const base = 0.6 * Math.pow(0.7 - 0.02 * count, count) * crimeSuccessMult
+  // Only meaningful while the game's chance is not clamped.
+  if (chance >= 0.999) return 0
+  return chance - base > 0.12 ? 3 : 0
 }
 
-export async function executeCheat(
+function cellAt(board: IpvgoBoard, x: number, y: number): string | undefined {
+  return board[x]?.[y]
+}
+
+/**
+ * The points the proposal touches, or null when the board no longer allows it. The game
+ * throws on an offline target, so the target is checked here instead.
+ */
+function cheatTargets(
+  proposal: IpvgoCheatProposal,
+  board: IpvgoBoard,
+  kind: number
+): Array<[number, number]> | null {
+  const first: [number, number] = [proposal.x1, proposal.y1]
+  const firstCell = cellAt(board, first[0], first[1])
+  if (firstCell === undefined) return null
+
+  if (kind === 1) return firstCell === "O" ? [first] : null
+  if (kind === 2) {
+    const second: [number, number] = [proposal.x2, proposal.y2]
+    if (cellAt(board, second[0], second[1]) !== ".") return null
+    return firstCell === "." ? [first, second] : null
+  }
+  if (kind === 3) return firstCell === "." ? [first] : null
+  if (kind === 4) return firstCell === "#" ? [first] : null
+  return null
+}
+
+/** Whether the board after the attempt shows the cheat landed, per kind. */
+function cheatApplied(kind: number, targets: Array<[number, number]>, board: IpvgoBoard): boolean {
+  const cell = ([x, y]: [number, number]): string | undefined => cellAt(board, x, y)
+  if (kind === 1) return cell(targets[0]) === "."
+  if (kind === 2) return cell(targets[0]) === "X" && cell(targets[1]) === "X"
+  if (kind === 3) return cell(targets[0]) === "#"
+  if (kind === 4) return cell(targets[0]) === "."
+  return false
+}
+
+function describeTargets(targets: Array<[number, number]>): string {
+  return targets.map(([x, y]) => `${x},${y}`).join(" + ")
+}
+
+/**
+ * Plays the cheat the engine preferred and reports what the game did with it.
+ *
+ * A failed attempt skips our turn, and past the first attempt it also ejects us 10% of the
+ * time - the only way a failed cheat ends a game - so the outcome is read back from the
+ * board rather than assumed: the effect is visible on the target point.
+ */
+export async function playEngineCheat(
   ns: NS,
-  action: CheatAction,
+  proposal: IpvgoCheatProposal,
   boardBefore: IpvgoBoard
-): Promise<{ result: Awaited<ReturnType<NS["go"]["makeMove"]>>; succeeded: boolean }> {
-  const beforeCell = boardBefore[action.x][action.y]
+): Promise<CheatPlay> {
+  const targets = cheatTargets(proposal, boardBefore, proposal.kind)
+  const name = CHEAT_KIND_NAMES[proposal.kind] ?? `cheat ${proposal.kind}`
+  if (!targets) {
+    return { outcome: "invalid", label: `${name} unavailable`, result: null }
+  }
 
+  const [first, second] = targets
   const result =
-    action.kind === "repair"
-      ? await ns.go.cheat.repairOfflineNode(action.x, action.y)
-      : await ns.go.cheat.removeRouter(action.x, action.y)
+    proposal.kind === 1
+      ? await ns.go.cheat.removeRouter(first[0], first[1])
+      : proposal.kind === 2
+        ? await ns.go.cheat.playTwoMoves(first[0], first[1], second[0], second[1])
+        : proposal.kind === 3
+          ? await ns.go.cheat.destroyNode(first[0], first[1])
+          : await ns.go.cheat.repairOfflineNode(first[0], first[1])
 
-  const afterCell = ns.go.getBoardState()[action.x][action.y]
-  const succeeded =
-    afterCell !== beforeCell &&
-    ((action.kind === "repair" && beforeCell === "#" && afterCell === ".") ||
-      (action.kind === "remove" && beforeCell === "O" && afterCell === "."))
+  const after = ns.go.getBoardState() as IpvgoBoard
+  let outcome: CheatOutcome = "skipped"
+  if (cheatApplied(proposal.kind, targets, after)) outcome = "succeeded"
+  else if (result.type === "gameOver") outcome = "ejected"
 
-  return { result, succeeded }
+  return { outcome, label: `${name} ${describeTargets(targets)} ${outcome}`, result }
 }

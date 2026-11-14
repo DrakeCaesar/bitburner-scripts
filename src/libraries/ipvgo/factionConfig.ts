@@ -1,11 +1,18 @@
 import type { NS } from "@ns"
 import type { GoOpponent } from "@ns"
-import { IPVGO_OPPONENTS } from "./types.js"
+import { IPVGO_OPPONENTS, IPVGO_HIDDEN_OPPONENT } from "./types.js"
 
 export const IPVGO_SETTINGS_FILE = "ipvgo-settings.json"
-export const IPVGO_DEFAULT_SIMS = 1000
-export const IPVGO_SIMS_LOSS_BUMP = 500
-export const IPVGO_SIMS_MAX = 4000
+/** Nodes per move, matching the bench Run pane's node budget for 5x5. */
+export const IPVGO_DEFAULT_SIMS = 10000
+export const IPVGO_SIMS_MAX = 20000
+/**
+ * Bumped when the default budget changes meaningfully. A file written by an older script
+ * stores the old default (1 000 nodes) for every faction, which would otherwise pin the
+ * search to a tenth of what the bench was tuned with; the sims are re-defaulted once and
+ * which factions are enabled is kept.
+ */
+export const IPVGO_SETTINGS_VERSION = 2
 
 /** Matches opponentDetails[].bonusPower in bitburner-src Go/Constants.ts */
 export const IPVGO_BONUS_POWER: Record<GoOpponent, number> = {
@@ -23,6 +30,8 @@ export type IpvgoFactionConfig = {
   factionSims: Partial<Record<GoOpponent, number>>
   /** When false, faction is skipped by auto-rotation (default true). */
   factionEnabled: Partial<Record<GoOpponent, boolean>>
+  /** Written by saveFactionConfig; an older file is migrated by loadFactionConfig. */
+  settingsVersion?: number
 }
 
 function defaultFactionConfig(): IpvgoFactionConfig {
@@ -131,8 +140,12 @@ export function pickLowestNodePowerFaction(
   nodePowerByFaction: Partial<Record<GoOpponent, number>>,
   config: IpvgoFactionConfig
 ): GoOpponent {
-  const pool = IPVGO_OPPONENTS.filter((faction) => isFactionEnabled(config, faction))
-  const candidates = pool.length > 0 ? pool : IPVGO_OPPONENTS
+  // The hidden faction is not in the rotation: its subnet is a fixed 19x19 board, and the
+  // rotation only knows the 5x5-13x13 sizes the faction table can start.
+  const pool = IPVGO_OPPONENTS.filter(
+    (faction) => faction !== IPVGO_HIDDEN_OPPONENT && isFactionEnabled(config, faction)
+  )
+  const candidates = pool.length > 0 ? pool : IPVGO_OPPONENTS.filter((f) => f !== IPVGO_HIDDEN_OPPONENT)
   let best = candidates[0]
   let bestPower = nodePowerByFaction[best] ?? 0
   for (const faction of candidates) {
@@ -153,11 +166,13 @@ export function loadFactionConfig(ns: NS): IpvgoFactionConfig {
     const parsed = JSON.parse(raw) as Partial<IpvgoFactionConfig>
     const factionSims = { ...defaults.factionSims }
     const factionEnabled = { ...defaults.factionEnabled }
-    if (parsed.factionSims && typeof parsed.factionSims === "object") {
-      for (const faction of IPVGO_OPPONENTS) {
-        const value = parsed.factionSims[faction]
-        if (typeof value === "number" && Number.isFinite(value)) {
-          factionSims[faction] = clampSims(value)
+    if (parsed.settingsVersion === IPVGO_SETTINGS_VERSION) {
+      if (parsed.factionSims && typeof parsed.factionSims === "object") {
+        for (const faction of IPVGO_OPPONENTS) {
+          const value = parsed.factionSims[faction]
+          if (typeof value === "number" && Number.isFinite(value)) {
+            factionSims[faction] = clampSims(value)
+          }
         }
       }
     }
@@ -184,7 +199,7 @@ export function saveFactionConfig(ns: NS, config: IpvgoFactionConfig): void {
   }
   ns.write(
     IPVGO_SETTINGS_FILE,
-    JSON.stringify({ factionSims, factionEnabled }, null, 2),
+    JSON.stringify({ settingsVersion: IPVGO_SETTINGS_VERSION, factionSims, factionEnabled }, null, 2),
     "w"
   )
 }
@@ -193,24 +208,3 @@ export function getFactionSims(config: IpvgoFactionConfig, faction: GoOpponent):
   return clampSims(config.factionSims[faction] ?? IPVGO_DEFAULT_SIMS)
 }
 
-export function setFactionSims(
-  config: IpvgoFactionConfig,
-  faction: GoOpponent,
-  sims: number
-): IpvgoFactionConfig {
-  return {
-    ...config,
-    factionSims: {
-      ...config.factionSims,
-      [faction]: clampSims(sims),
-    },
-  }
-}
-
-export function bumpFactionSimsOnLoss(
-  config: IpvgoFactionConfig,
-  faction: GoOpponent
-): IpvgoFactionConfig {
-  const current = getFactionSims(config, faction)
-  return setFactionSims(config, faction, current + IPVGO_SIMS_LOSS_BUMP)
-}

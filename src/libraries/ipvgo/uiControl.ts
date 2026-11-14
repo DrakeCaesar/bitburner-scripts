@@ -12,11 +12,7 @@ export type IpvgoSetupSelection = {
 
 let deferredSetup: IpvgoSetupSelection | null = null
 let pendingImmediate: IpvgoSetupSelection | null = null
-let pendingFactionSims: { faction: GoOpponent; iterations: number } | null = null
 let pendingFactionEnabledToggle: GoOpponent | null = null
-let simEditFaction: GoOpponent | null = null
-/** When false, sim presets target the current match opponent. */
-let simEditPinned = false
 let pendingDeferUi = false
 
 export function setupCellKey(opponent: GoOpponent, boardSize: IpvgoBoardSize): string {
@@ -45,28 +41,6 @@ export function queueSetupBoardClick(
   pendingDeferUi = true
 }
 
-/** Select which faction row receives sim preset clicks. */
-export function queueSimEditFaction(faction: GoOpponent): void {
-  simEditFaction = faction
-  simEditPinned = true
-  pendingDeferUi = true
-}
-
-export function getSimEditFaction(): GoOpponent | null {
-  return simEditFaction
-}
-
-/** Follow the active match opponent for sim presets until a faction row is clicked. */
-export function clearSimEditFactionPin(): void {
-  simEditPinned = false
-  simEditFaction = null
-}
-
-export function resolveSimEditFaction(currentOpponent: GoOpponent): GoOpponent {
-  if (!simEditPinned) return currentOpponent
-  return simEditFaction ?? currentOpponent
-}
-
 /** Toggle whether a faction is included in auto-rotation. */
 export function queueFactionEnabledToggle(faction: GoOpponent): void {
   pendingFactionEnabledToggle = faction
@@ -79,23 +53,6 @@ export function consumeFactionEnabledToggle(): GoOpponent | null {
   return next
 }
 
-/** Sims preset click: overwrite stored sims for the selected faction. */
-export function queueFactionSimsChange(faction: GoOpponent, iterations: number): void {
-  pendingFactionSims = { faction, iterations }
-  if (deferredSetup && deferredSetup.opponent === faction) {
-    deferredSetup = { ...deferredSetup, iterations }
-  }
-}
-
-/** @deprecated Use queueFactionSimsChange */
-export function queueSetupSimsChange(
-  opponent: GoOpponent,
-  boardSize: IpvgoBoardSize,
-  iterations: number
-): void {
-  queueFactionSimsChange(opponent, iterations)
-}
-
 export function getDeferredSetup(): IpvgoSetupSelection | null {
   return deferredSetup
 }
@@ -106,33 +63,15 @@ export function takeDeferredSetup(): IpvgoSetupSelection | null {
   return next
 }
 
-export function clearDeferredSetup(): void {
-  deferredSetup = null
-}
-
 export function consumeImmediateSetup(): IpvgoSetupSelection | null {
   const next = pendingImmediate
   pendingImmediate = null
   return next
 }
 
-export function consumeFactionSimsChange(): { faction: GoOpponent; iterations: number } | null {
-  const next = pendingFactionSims
-  pendingFactionSims = null
-  return next
-}
-
-/** @deprecated Use consumeFactionSimsChange */
-export function consumeSimsSetup(): IpvgoSetupSelection | null {
-  const sims = consumeFactionSimsChange()
-  if (!sims) return null
-  return { opponent: sims.faction, boardSize: 7, iterations: sims.iterations }
-}
-
 export function hasIpvgoSetupPending(): boolean {
   return (
     pendingImmediate != null ||
-    pendingFactionSims != null ||
     pendingFactionEnabledToggle != null
   )
 }
@@ -146,20 +85,6 @@ export function consumeDeferUiWake(): boolean {
 /** Wake sleep loops for defer UI sync without aborting engine think. */
 export function hasIpvgoUiWake(): boolean {
   return hasIpvgoSetupPending() || pendingDeferUi
-}
-
-/** @deprecated Use queueSetupSimsChange / hasIpvgoSetupPending */
-export function markIpvgoSetupPending(
-  opponent: GoOpponent,
-  boardSize: IpvgoBoardSize,
-  iterations: number
-): void {
-  queueSetupSimsChange(opponent, boardSize, iterations)
-}
-
-/** @deprecated Use consumeImmediateSetup / consumeSimsSetup */
-export function consumeIpvgoSetupPending(): IpvgoSetupSelection | null {
-  return consumeImmediateSetup() ?? consumeSimsSetup()
 }
 
 /** Wake early when the user changes setup in the tail UI. */

@@ -282,16 +282,7 @@ export function buildBoardCell(
   return svgRoot(BOARD_CELL_PX, key, layers)
 }
 
-/** @deprecated Use buildBoardCell */
-export function buildStoneCell(kind: BoardStoneKind, highlight?: CellHighlight, key?: string): ReactNode {
-  const layers: ReactNode[] = []
-  if (kind !== "empty") {
-    layers.push(...stoneLayers(kind))
-    if (highlight) layers.push(highlightCircle(highlight))
-  }
-  return svgRoot(BOARD_CELL_PX, key, layers)
-}
-
+/** Pixel bounds of the drawn board. */
 export function boardGridSizePx(size: number): { widthPx: number; heightPx: number } {
   const grid = (size + 1) * BOARD_CELL_PX
   return { widthPx: grid + 8, heightPx: grid + 8 }
