@@ -885,11 +885,43 @@ int pickExploitAction(const ExploitResult& result, int N, const json& req) {
   return ipvgo::nn::passAction(N);
 }
 
+// Parity check for the live game: was White's actual reply one of the moves the search's model
+// gives probability to? The caller sends the position White moved in (playAs "O") and the
+// move, and nothing is searched - one policy build, no deepening.
+json checkWhiteReplyJson(const json& req) {
+  const GameState state = stateFromRequest(req);
+  if (whoseTurn(state) != Color::White) {
+    return json{{"error", "whiteReplyCheck needs a position where White is to move"}};
+  }
+  const json& played = req.at("whiteReplyCheck");
+  const bool pass = played.value("pass", false);
+  const int x = played.value("x", -1);
+  const int y = played.value("y", -1);
+
+  ExploitConfig cfg;
+  cfg.whiteChildren = req.value("whiteChildren", 6);
+  cfg.whiteMass = req.value("whiteMass", 0.9);
+  cfg.verifyRootReplies = req.value("verifyRootReplies", false);
+  const ipvgo::nn::WhiteReplyReport report = ipvgo::nn::checkWhiteReply(state, x, y, pass, cfg);
+
+  return json{{"whiteReply", json{{"modelled", report.modelled},
+                                  {"prob", report.prob},
+                                  {"rank", report.rank},
+                                  {"modelledCount", report.modelledCount},
+                                  {"kept", report.kept},
+                                  {"keptCount", report.keptCount},
+                                  {"coveredMass", report.coveredMass},
+                                  {"pass", pass},
+                                  {"x", x},
+                                  {"y", y}}}};
+}
+
 // Computes one Black move from a game request. Shared by `exploitmove` (one
 // process per move) and `serve` (one process for a whole game or session, which
 // is what lets the search reuse positions from earlier moves).
 json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session,
                             const std::atomic<bool>* cancel = nullptr) {
+  if (req.contains("whiteReplyCheck")) return checkWhiteReplyJson(req);
   // A new game restarts the move history, so a history that shrank since the last
   // request means the cached positions belong to a game that is over. Speculative
   // (cancellable) searches must not move that marker.
@@ -1119,7 +1151,8 @@ class Ponderer {
       }
 
       json next = req;
-      for (const char* field : {"ponder", "ourMove", "validMoves", "passCount", "requestId"}) next.erase(field);
+      for (const char* field : {"ponder", "ourMove", "validMoves", "passCount", "requestId", "whiteReplyCheck"})
+        next.erase(field);
       next["board"] = boardToJson(afterWhite.board);
       next["history"] = std::move(history);
 

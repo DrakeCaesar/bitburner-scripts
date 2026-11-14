@@ -675,7 +675,38 @@ The remaining time is still `buildPolicyModel` / `getEyeCreationMoves` inside
 `opponentReplyDistribution` (eye analysis, not pattern matching - see
 "Known limits").
 
-### The reply-reuse pass
+### The reply model can be checked against the live game
+
+`checkWhiteReply()` (`nn/exploiter`) answers "was this move one the model gives any
+probability to, and would the search have kept it" for a real position. It is reachable over the
+move API by sending `"whiteReplyCheck": {"x": .., "y": ..}` (or `{"pass": true}`) with `board`
+set to the position White moved in and `playAs: "O"`; the answer comes back as
+
+```
+{"whiteReply": {"modelled": true, "prob": 0.42, "rank": 1, "modelledCount": 6,
+                "kept": true, "keptCount": 6, "coveredMass": 1.0, "pass": false, "x": 3, "y": 2}}
+```
+
+The keep rule is shared with the search (`keepReplies`, used by both `planReplies` and this
+check), so `kept` says whether the move was inside what the search actually searched, and
+`modelled` whether the ported White policy has it at all. The in-game script calls this after
+every White reply and stops with an error when the answer is `modelled: false`.
+
+Measured over real White replies from the 5x5 bench games (Netburners, 10 000 nodes): 400 of 400
+were modelled, mean probability 0.47. **The check has to send the game's move history.** Without
+it, 8 of those 400 came back as "not modelled", all in decided positions where the model returned
+a capture at p=1 and White had actually passed: a move's legality depends on the boards played
+before it (superko), so a model fed an empty history invents moves the game does not allow. With
+`"history": [...]` set to the boards before each earlier move (newest first, exactly
+`getMoveHistory()`), the same position answers `pass, p=1.0` and the mismatch disappears.
+
+One residual case on the big board: 1 of 305 replies at 13x13, a decided game (77:71.5) where the
+model offers two moves at 0.5 each and White passed. `policycheck` puts the same gap on the model
+side - at 300 samples per position the sampler/model TV distance is ~0.15 at 5x5 and ~0.46 at
+13x13, so the model is measurably looser on a big board (the tool's number is sample-limited, so
+read it as a signal: agreement degrades with board size).
+
+
 
 Profiled with `prof "Slum Snakes" 7 10 4000` (the in-game configuration: 7x7,
 `nodeLimit=4000`, one thread). The profile build is not a speed measurement, only
@@ -1707,6 +1738,17 @@ parallel):
 The worst games went from 15 frozen moves to 1 (e.g. game 309: 24 moves -> 10). Wins and every
 single final margin are identical with the pass rule alone, so it only removes moves that could
 not change anything.
+
+The rule needs to be told that White passed. The board alone cannot show it - a pass leaves no
+trace - so `passCount` is a request field and the caller has to send it; `stateFromRequest`
+defaults it to 0. The in-game script derives it from `getGameState().previousMove === null`
+(the game reports a pass that way, and it is also null before the first move, hence the
+`getMoveHistory().length > 0` guard) and sends it with every request, including the White-reply
+parity check. Replaying a decided position from the 1000-game run shows why it matters: with
+`passCount: 0` the answer is still a pass but only because the search prefers it - 507 nodes,
+4 ms - and with `passCount: 1` it is the 0-node rule. 609 of that run's moves are decided passes
+like this one, so a caller that omits the field pays a full endgame solve for each of them and
+can play a stone where the pass wins.
 
 The score matters because it is what the game pays out: `endGoGame` adds
 `score[black].sum * difficultyMultiplier * winstreakMultiplier` to that opponent's `nodePower`,
