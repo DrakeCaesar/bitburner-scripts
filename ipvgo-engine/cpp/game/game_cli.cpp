@@ -69,18 +69,18 @@
 #include "setup.hpp"
 
 using namespace ipvgo::game;
-using ipvgo::nn::BenchOptions;
-using ipvgo::nn::ExploitConfig;
-using ipvgo::nn::ExploitResult;
-using ipvgo::nn::reportedValue;
-using ipvgo::nn::McgsConfig;
-using ipvgo::nn::McgsResult;
-using ipvgo::nn::OptBenchOptions;
-using ipvgo::nn::runExploitBench;
-using ipvgo::nn::runExploitBenchJson;
-using ipvgo::nn::runExploiter;
-using ipvgo::nn::runMcgs;
-using ipvgo::nn::runOptBench;
+using ipvgo::search::BenchOptions;
+using ipvgo::search::ExploitConfig;
+using ipvgo::search::ExploitResult;
+using ipvgo::search::reportedValue;
+using ipvgo::search::McgsConfig;
+using ipvgo::search::McgsResult;
+using ipvgo::search::OptBenchOptions;
+using ipvgo::search::runExploitBench;
+using ipvgo::search::runExploitBenchJson;
+using ipvgo::search::runExploiter;
+using ipvgo::search::runMcgs;
+using ipvgo::search::runOptBench;
 using json = nlohmann::json;
 
 namespace {
@@ -736,7 +736,7 @@ int runAiMove(const std::string& inPath, const std::string& outPath) {
 bool actionAllowed(const json& req, int N, int action) {
   if (!req.contains("validMoves") || req.at("validMoves").is_null()) return true;
   const json& vm = req.at("validMoves");
-  if (action == ipvgo::nn::passAction(N)) return true;
+  if (action == ipvgo::search::passAction(N)) return true;
   const int x = action / N;
   const int y = action % N;
   if (x < 0 || y < 0 || x >= N || y >= N) return false;
@@ -744,7 +744,7 @@ bool actionAllowed(const json& req, int N, int action) {
 }
 
 json actionToMoveJson(int N, int action) {
-  if (action == ipvgo::nn::passAction(N)) return json{{"type", "pass"}};
+  if (action == ipvgo::search::passAction(N)) return json{{"type", "pass"}};
   return json{{"type", "move"}, {"x", action / N}, {"y", action % N}};
 }
 
@@ -758,7 +758,7 @@ int pickMcgsAction(const McgsResult& result, int N, const json& req) {
     if (!actionAllowed(req, N, action)) continue;
     ranked.emplace_back(result.visitPolicy[i], action);
   }
-  if (ranked.empty()) return ipvgo::nn::passAction(N);
+  if (ranked.empty()) return ipvgo::search::passAction(N);
   std::sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
   return ranked[0].second;
 }
@@ -843,7 +843,7 @@ int runMcgsPlay(const std::string& opponentName, int size, int games, int playou
       totalBlackMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 
       const int action = search.bestAction;
-      if (action == ipvgo::nn::passAction(size)) {
+      if (action == ipvgo::search::passAction(size)) {
         passTurn(state, Color::Black);
       } else {
         const int x = action / size;
@@ -882,7 +882,7 @@ int pickExploitAction(const ExploitResult& result, int N, const json& req) {
     (void)value;
     if (actionAllowed(req, N, action)) return action;
   }
-  return ipvgo::nn::passAction(N);
+  return ipvgo::search::passAction(N);
 }
 
 // Parity check for the live game: was White's actual reply one of the moves the search's model
@@ -902,7 +902,7 @@ json checkWhiteReplyJson(const json& req) {
   cfg.whiteChildren = req.value("whiteChildren", 6);
   cfg.whiteMass = req.value("whiteMass", 0.9);
   cfg.verifyRootReplies = req.value("verifyRootReplies", false);
-  const ipvgo::nn::WhiteReplyReport report = ipvgo::nn::checkWhiteReply(state, x, y, pass, cfg);
+  const ipvgo::search::WhiteReplyReport report = ipvgo::search::checkWhiteReply(state, x, y, pass, cfg);
 
   return json{{"whiteReply", json{{"modelled", report.modelled},
                                   {"prob", report.prob},
@@ -919,7 +919,7 @@ json checkWhiteReplyJson(const json& req) {
 // Computes one Black move from a game request. Shared by `exploitmove` (one
 // process per move) and `serve` (one process for a whole game or session, which
 // is what lets the search reuse positions from earlier moves).
-json computeExploitMoveJson(const json& req, ipvgo::nn::SearchSession* session,
+json computeExploitMoveJson(const json& req, ipvgo::search::SearchSession* session,
                             const std::atomic<bool>* cancel = nullptr) {
   if (req.contains("whiteReplyCheck")) return checkWhiteReplyJson(req);
   // A new game restarts the move history, so a history that shrank since the last
@@ -1075,7 +1075,7 @@ std::string searchConfigKey(const json& req) {
 
 uint64_t ponderKey(const json& req) {
   const GameState state = stateFromRequest(req);
-  return ipvgo::nn::fnv1a64(ipvgo::nn::positionKey(state),
+  return ipvgo::search::fnv1a64(ipvgo::search::positionKey(state),
                             static_cast<uint64_t>(std::hash<std::string>{}(searchConfigKey(req))));
 }
 
@@ -1088,7 +1088,7 @@ bool servedMoveAllowed(const json& req, const json& served) {
 
 class Ponderer {
  public:
-  explicit Ponderer(ipvgo::nn::SearchSession* session) : session_(session) {}
+  explicit Ponderer(ipvgo::search::SearchSession* session) : session_(session) {}
   ~Ponderer() { stop(); }
 
   // Results are only touched by the worker while it runs, so they are read after stop().
@@ -1165,7 +1165,7 @@ class Ponderer {
     }
   }
 
-  ipvgo::nn::SearchSession* session_;
+  ipvgo::search::SearchSession* session_;
   std::atomic<bool> cancel_{false};
   std::thread worker_;
 };
@@ -1176,7 +1176,7 @@ class Ponderer {
 // with "ponder": true is acknowledged at once and searched in the background
 // until the next request arrives.
 int runEngineServer() {
-  ipvgo::nn::SearchSession session;
+  ipvgo::search::SearchSession session;
   Ponderer ponderer(&session);
   std::ios::sync_with_stdio(false);
   std::string line;
@@ -1238,7 +1238,7 @@ int runSafety(const std::string& inPath) {
   const ChainSet cs = computeChains(state.board);
   const ipvgo::game::SafetyResult black = ipvgo::game::analyzeSafety(state.board, cs, Color::Black, true);
   const ipvgo::game::SafetyResult white = ipvgo::game::analyzeSafety(state.board, cs, Color::White, true);
-  const ipvgo::nn::EvalReport report = ipvgo::nn::explainEval(state);
+  const ipvgo::search::EvalReport report = ipvgo::search::explainEval(state);
 
   auto label = [](ipvgo::game::SafetyLevel l) {
     switch (l) {
@@ -1320,7 +1320,7 @@ class SimPonder {
   ~SimPonder() { stop(); }
   std::unordered_map<uint64_t, ExploitResult> answers;
 
-  void start(const GameState& afterBlack, ExploitConfig cfg, ipvgo::nn::SearchSession* session, int maxReplies,
+  void start(const GameState& afterBlack, ExploitConfig cfg, ipvgo::search::SearchSession* session, int maxReplies,
              bool deep) {
     stop();
     answers.clear();
@@ -1337,7 +1337,7 @@ class SimPonder {
         if (!makeMove(next, reply.x, reply.y, Color::White)) continue;
         const ExploitResult result = runExploiter(next, cfg, nullptr, session);
         if (result.cancelled) return;
-        answers[ipvgo::nn::positionKey(next)] = result;
+        answers[ipvgo::search::positionKey(next)] = result;
         predicted.push_back(next);
       }
       if (!deep) return;
@@ -1350,7 +1350,7 @@ class SimPonder {
         for (const GameState& next : predicted) {
           const ExploitResult result = runExploiter(next, bigger, nullptr, session);
           if (result.cancelled) return;
-          answers[ipvgo::nn::positionKey(next)] = result;
+          answers[ipvgo::search::positionKey(next)] = result;
         }
       }
     });
@@ -1415,7 +1415,7 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
 
   // One session for the whole run: a position solved for one move is not solved
   // again, and a new game drops it the same way the server does.
-  ipvgo::nn::SearchSession session;
+  ipvgo::search::SearchSession session;
   const bool useSession = std::getenv("IPVGO_NO_SESSION") == nullptr;
   // A long game set is otherwise a silent black box: report each game as it ends,
   // with a running total and an ETA, so a slow configuration is obvious while it
@@ -1445,7 +1445,7 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
 
       const auto t0 = std::chrono::steady_clock::now();
       ExploitResult search;
-      const auto hit = ponder.answers.find(ipvgo::nn::positionKey(state));
+      const auto hit = ponder.answers.find(ipvgo::search::positionKey(state));
       if (ponderMs > 0 && hit != ponder.answers.end()) {
         search = hit->second;
         search.nodes = 0;
@@ -1472,7 +1472,7 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
       ipvgo::game::ReplyDist afterBlack;
       if (explain) {
         std::cout << "  g" << g << " m" << m << " BLACK played ";
-        if (action == ipvgo::nn::passAction(size)) std::cout << "pass";
+        if (action == ipvgo::search::passAction(size)) std::cout << "pass";
         else std::cout << (action / size) << "," << (action % size);
         const Score probe = getScore(state);
         std::cout << "  p(win)=" << reportedValue(search.value) << "  lead=" << (probe.blackSum - probe.whiteSum)
@@ -1482,13 +1482,13 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
         for (const auto& [alt, value] : search.rootScores) {
           if (shown++ >= 4) break;
           std::cout << "      considered ";
-          if (alt == ipvgo::nn::passAction(size)) std::cout << "  pass";
+          if (alt == ipvgo::search::passAction(size)) std::cout << "  pass";
           else std::cout << (alt / size) << "," << (alt % size);
           std::cout << "  p(win)=" << value << "\n";
         }
 
         GameState after = state;
-        if (action == ipvgo::nn::passAction(size)) passTurn(after, Color::Black);
+        if (action == ipvgo::search::passAction(size)) passTurn(after, Color::Black);
         else if (!makeMove(after, action / size, action % size, Color::Black)) passTurn(after, Color::Black);
         if (!after.gameOver) afterBlack = ipvgo::game::opponentReplyDistribution(after, Color::White, ai);
         shown = 0;
@@ -1507,7 +1507,7 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
           for (int y = 0; y < state.size; ++y) empties += state.board[x][y] == '.' ? 1 : 0;
         }
         std::cout << "  g" << g << " m" << m << " B ";
-        if (action == ipvgo::nn::passAction(size)) std::cout << "pass";
+        if (action == ipvgo::search::passAction(size)) std::cout << "pass";
         else std::cout << (action / size) << "," << (action % size);
         std::cout << " v=" << reportedValue(search.value) << " nodes=" << search.nodes << " score=" << probe.blackSum << ":"
                   << probe.whiteSum << " e=" << empties << "\n";
@@ -1519,7 +1519,7 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
           std::cout << "]\n";
         }
       }
-      if (action == ipvgo::nn::passAction(size)) {
+      if (action == ipvgo::search::passAction(size)) {
         passTurn(state, Color::Black);
       } else if (!makeMove(state, action / size, action % size, Color::Black)) {
         passTurn(state, Color::Black);
@@ -2040,7 +2040,7 @@ TuneTally tunePlayGame(int size, Opponent ai, const TuneGenome& genome, long nod
   // `deterministic` is set for clarity rather than to choose a path.
   cfg.threads = 1;
   cfg.deterministic = true;
-  ipvgo::nn::SearchSession session;
+  ipvgo::search::SearchSession session;
 
   double tallyMs = 0.0;
   long tallyMoves = 0;
@@ -2050,8 +2050,8 @@ TuneTally tunePlayGame(int size, Opponent ai, const TuneGenome& genome, long nod
     if (whoseTurn(state) != Color::Black) break;
     session.noteRequest(static_cast<size_t>(state.previousBoards.size()));
     const auto searchStart = std::chrono::steady_clock::now();
-    const ipvgo::nn::ExploitResult r =
-        ipvgo::nn::runExploiter(state, cfg, nullptr, carry ? &session : nullptr);
+    const ipvgo::search::ExploitResult r =
+        ipvgo::search::runExploiter(state, cfg, nullptr, carry ? &session : nullptr);
     tallyMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - searchStart).count();
     ++tallyMoves;
     // A cheat the search preferred replaces the normal move for this turn. The search
@@ -2059,10 +2059,10 @@ TuneTally tunePlayGame(int size, Opponent ai, const TuneGenome& genome, long nod
     bool cheated = false;
     if (search.cheats && r.cheatPreferred && r.cheat.kind != 0) {
       ipvgo::game::CheatType type = ipvgo::game::CheatType::RemoveRouter;
-      switch (static_cast<ipvgo::nn::CheatKind>(r.cheat.kind)) {
-        case ipvgo::nn::CheatKind::PlayTwoMoves: type = ipvgo::game::CheatType::PlayTwoMoves; break;
-        case ipvgo::nn::CheatKind::DestroyNode: type = ipvgo::game::CheatType::DestroyNode; break;
-        case ipvgo::nn::CheatKind::RepairOfflineNode: type = ipvgo::game::CheatType::RepairOfflineNode; break;
+      switch (static_cast<ipvgo::search::CheatKind>(r.cheat.kind)) {
+        case ipvgo::search::CheatKind::PlayTwoMoves: type = ipvgo::game::CheatType::PlayTwoMoves; break;
+        case ipvgo::search::CheatKind::DestroyNode: type = ipvgo::game::CheatType::DestroyNode; break;
+        case ipvgo::search::CheatKind::RepairOfflineNode: type = ipvgo::game::CheatType::RepairOfflineNode; break;
         default: break;
       }
       std::vector<std::pair<int, int>> points{{r.cheat.x1, r.cheat.y1}};
@@ -2080,7 +2080,7 @@ TuneTally tunePlayGame(int size, Opponent ai, const TuneGenome& genome, long nod
     }
     if (cheated) {
       // The board already holds the outcome: the effect, a skipped turn, or the end.
-    } else if (r.bestAction == ipvgo::nn::passAction(size)) {
+    } else if (r.bestAction == ipvgo::search::passAction(size)) {
       passTurn(state, Color::Black);
     } else if (!makeMove(state, r.bestAction / size, r.bestAction % size, Color::Black)) {
       passTurn(state, Color::Black);

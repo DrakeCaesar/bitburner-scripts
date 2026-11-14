@@ -221,7 +221,7 @@ moves, so every engine simply treats them as non-playable points.
 
 ## Exploiter engine (policy expectimax)
 
-`cpp/nn/exploiter.cpp` plays Black against a **model of the scripted opponent**
+`cpp/search/exploiter.cpp` plays Black against a **model of the scripted opponent**
 instead of an idealised one. MCGS treats White as adversarial (it assumes White
 picks the best move out of the faction's candidate set); the exploiter instead
 samples White from the exact policy distribution and so plays into the faction's
@@ -886,7 +886,7 @@ Also in this pass, and measured as **not** worth anything:
   hands each eye to a callback, and `getEyeCreationMoves` fills four fields
   (first point, first point that creates life, and the two counts) instead of
   building and sorting a vector. Wall clock did not move, because
-  `ipvgo-engine/cpp/nn/fast_alloc.cpp` already replaces `operator new` with a
+  `ipvgo-engine/cpp/search/fast_alloc.cpp` already replaces `operator new` with a
   per-thread free list: small blocks cost about as much as a stack bump. Worth
   keeping for the memory traffic, but do not expect a timing win from removing
   allocations in this binary.
