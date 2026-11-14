@@ -2579,3 +2579,40 @@ cached: on 13x13, keeping them cost 872 MB of `WeightedReply` payload - 98% of
 the session - for 89 hits in a whole game. Dropping them took peak RSS from
 1 007 MB to 31 MB with identical node counts (524 086) and no measurable change
 in think time.
+
+
+### Every board bigger than 13x13 crashed the search
+
+Symptom: any request for a board larger than 13x13 killed the engine process - `exploitmove`
+exited `0xC0000005`, `benchjson --size 19` died mid-game, the tuning server got a 500 and the
+in-game script sat waiting. Nothing about it was faction-specific: 15x15, 17x17 and 19x19 all
+died with any settings, including `beam`/`replies`/`mass` at 0. 13x13 and below were fine, at
+every depth.
+
+Cause, found with a temporary `SetUnhandledExceptionFilter` handler that walks the stack with
+DbgHelp (the Release build has no frame pointers to inspect otherwise): `getAllValidMoves`
+patches the packed board to ask the superko question, and its scratch copy was sized for a
+*bit plane*:
+
+```cpp
+uint64_t probe[kBitWords];                 // 6 words = 384 points, one bit each
+for (int w = 0; w < kBitWords; ++w) probe[w] = packed[w];
+probe[word] = ...;                         // word = point * 2 / 64: up to 11 at 19x19
+```
+
+A packed board is 2 bits per point, so 19x19 needs 12 words, not 6. `probe[6..11]` therefore
+wrote past the array into the neighbouring stack slots, which is what corrupted the
+`BitPlanes*` the caller passed down (the crash showed a valid stack address with one extra bit
+set) and, in other runs, tripped the `/GS` cookie (`0xC0000409`). `BoardHistory::contains` had
+the same shape but its buffer was hard-coded to 12, exactly the maximum - one board-size bump
+away from the same bug.
+
+The fix is a shared constant for the real bound and a copy of the words the board actually
+uses: `kMaxPackedWords = (kMaxSize * kMaxSize * 2 + 63) / 64` in `go_game.hpp`, used by both
+`probe` buffers, with the copy loop bounded by `stride` instead of `kBitWords`.
+
+Verified: `selftest` passes; `exploitmove` answers a 19x19 request in ~100 ms (depth 4, 7 932
+nodes at a 10 000-node budget) on both an empty board and the real World Daemon board with its
+obstacles; three 19x19 World Daemon bench games play out to 125-190 moves with no crash; and the
+same seeded bench at 5x5, 9x9 and 13x13 produces byte-identical output before and after the fix
+(threads=1, timing fields stripped), so nothing below the failure threshold moved.

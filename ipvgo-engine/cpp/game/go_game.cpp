@@ -571,8 +571,8 @@ std::vector<std::pair<int, int>> getAllValidMoves(const GameState& state, Color 
       }
       uint64_t captured[kBitWords] = {0, 0, 0, 0, 0, 0};
       if (!placeStone(*planesPtr, N, point, player == Color::Black, captured)) continue;  // suicide
-      uint64_t probe[kBitWords];
-      for (int w = 0; w < kBitWords; ++w) probe[w] = packed[w];
+      uint64_t probe[kMaxPackedWords];
+      for (int w = 0; w < stride; ++w) probe[w] = packed[w];
       probe[word] = (probe[word] & ~(3ULL << shift)) | (stoneCode << shift);
       for (int w = 0; w < kBitWords; ++w) {
         uint64_t dead = captured[w];

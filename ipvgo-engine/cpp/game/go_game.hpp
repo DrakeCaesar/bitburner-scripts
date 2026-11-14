@@ -131,6 +131,11 @@ class SimpleBoard {
   int size_ = 0;
 };
 
+// A packed board is 2 bits per point, so it needs twice the words a bit plane does: 12 at
+// 19x19 against the 6 that BitPlanes/PointMask/BitLayout need. Scratch that holds a packed
+// board has to be sized to this, not to kBitWords.
+constexpr int kMaxPackedWords = (SimpleBoard::kMaxSize * SimpleBoard::kMaxSize * 2 + 63) / 64;
+
 // Packs a board at 2 bits per cell in the game's column-major order:
 // '.' = 0, 'X' = 1, 'O' = 2, '#' = 3. Unused high bits of the last word are 0.
 inline void packBoard(const SimpleBoard& board, uint64_t* out, int stride) {
@@ -226,7 +231,7 @@ class BoardHistory {
     if (count_ == 0) return false;
     const int n = board.size();
     if (strideFor(n) != stride_) return false;
-    uint64_t probe[12];
+    uint64_t probe[kMaxPackedWords];
     packBoard(board, probe, stride_);
     return containsPacked(probe, hashWords(probe, stride_));
   }
