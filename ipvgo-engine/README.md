@@ -1714,6 +1714,38 @@ Game 300 is the gate doing exactly what it is for: it never spends an attempt in
 is winning, so the ejection that lost that game cannot happen. Game 703 is the one the second
 attempt costs, and 789 is what a second attempt can still cost when it misses.
 
+**The targets the engine considers were narrower than the game allows.** The game only
+pre-checks two of the four cheats: `removeRouter` and `playTwoMoves` reject a point that is
+already offline (`#`), and `destroyNode` / `repairOfflineNode` take any point at all. Anything
+non-offline is fair game, and `playTwoMoves` *overwrites* what is on the two points - white's
+stones included - so overwriting two white stones is an immediate double capture and
+overwriting one member of a short-liberty chain can kill the rest once the captures resolve.
+The generator used to offer `destroyNode` only on empty points with two white neighbours and
+`playTwoMoves` only over legal points, which left a white stone untouchable by three of the
+four cheats. It now generates:
+
+| cheat | targets generated |
+|---|---|
+| `RemoveRouter` | every white stone |
+| `DestroyNode` | every white stone, plus empty points with 2+ white neighbours |
+| `PlayTwoMoves` | pairs over the best legal points **and** the white stones with the fewest liberties, largest chain first |
+| `RepairOfflineNode` | offline points with a black neighbour (unchanged) |
+
+Measured with two builds of the same source, `threads: 1`, 100 000 iterations per move and
+`benchjson` against Netburners (timings only - win counts are the signal):
+
+| board | crime | wins, narrow targets | wins, wide targets | mean margin | mean ms/move |
+|---|---|---|---|---|---|
+| 5×5 | 0.35 / 0.6 / 1.0 | 60/60 in all three | 60/60 in all three | 16.6 both | 554 -> 615 |
+| 9×9 | 0.35 | 19/20 (margin 9.85) | **20/20 (margin 14.55)** | +48% | 241 -> 276 |
+| 9×9 | 1.0 | 19/20 (margin 10.75) | **20/20 (margin 13.80)** | +28% | 222 -> 275 |
+| 13×13 | 0.35 | 10/10 (margin 29.4) | 10/10 (margin 29.4) | - | 559 -> 629 |
+
+The 5×5 arm is saturated, so it only shows the cost; 9×9 is where the extra targets pay, both
+in games and in the score the game is paid on. The `cheatTargets` / `cheatApplied` guards in the
+in-game script (`src/libraries/ipvgo/cheats.ts`) mirror the same rules, so a target the engine
+proposes is a target the game will accept.
+
 
 ### A decided game ends on a pass, not on fifteen more solves
 
@@ -1785,8 +1817,6 @@ score too, the same reason to bank points in games it is losing (`endGoGame` pay
 the final score either way). Over the same 1000 games that is 967 wins instead of 966 and
 13 165 total margin instead of 13 077, for the same nodes. Every reported value is clamped back
 to a probability, so `p(win)` in the GUI still reads 1.000 at the top of the scale.
-
-
 
 ### The growth estimate that capped depth at 2 on 9x9
 

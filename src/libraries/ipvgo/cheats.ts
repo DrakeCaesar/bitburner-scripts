@@ -101,7 +101,8 @@ function cellAt(board: IpvgoBoard, x: number, y: number): string | undefined {
 
 /**
  * The points the proposal touches, or null when the board no longer allows it. The game
- * throws on an offline target, so the target is checked here instead.
+ * rejects an offline target for the two placement cheats, and takes any point for the two
+ * board-editing ones, so the same rules are mirrored here.
  */
 function cheatTargets(
   proposal: IpvgoCheatProposal,
@@ -112,14 +113,15 @@ function cheatTargets(
   const firstCell = cellAt(board, first[0], first[1])
   if (firstCell === undefined) return null
 
-  if (kind === 1) return firstCell === "O" ? [first] : null
+  if (kind === 1) return firstCell === "#" ? null : [first]
   if (kind === 2) {
     const second: [number, number] = [proposal.x2, proposal.y2]
-    if (cellAt(board, second[0], second[1]) !== ".") return null
-    return firstCell === "." ? [first, second] : null
+    const secondCell = cellAt(board, second[0], second[1])
+    if (firstCell === "#" || secondCell === undefined || secondCell === "#") return null
+    return [first, second]
   }
-  if (kind === 3) return firstCell === "." ? [first] : null
-  if (kind === 4) return firstCell === "#" ? [first] : null
+  if (kind === 3) return [first]
+  if (kind === 4) return [first]
   return null
 }
 
