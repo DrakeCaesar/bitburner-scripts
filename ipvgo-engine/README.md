@@ -1818,6 +1818,33 @@ the final score either way). Over the same 1000 games that is 967 wins instead o
 13 165 total margin instead of 13 077, for the same nodes. Every reported value is clamped back
 to a probability, so `p(win)` in the GUI still reads 1.000 at the top of the scale.
 
+### What the auto rotation aims at
+
+The engine maximises the *margin*, because that is what the game pays; the script has the
+other half of that problem - which faction and board to play next. It used to pick the faction
+with the **lowest** node power, which is only correct if a point of node power is worth the
+same everywhere. It is not, for two reasons the game makes explicit:
+
+- `CalculateEffect` is concave: the *n*-th point of node power is worth
+  `0.002 * power * GoPower * SF14 * (n+1)^-0.7 * (0.3 ln(n+1) + 1)` of multiplier, so a
+  faction already sitting on a large total gains very little from another win.
+- `getDifficultyMultiplier(komi, size)` pays `(komi + 0.5) * 0.25` per point of final score -
+  0.5× against the Netburners (komi 1.5) up to 2.5× against the hidden faction (9.5) - and the
+  5×5 board against the Illuminati is a special case worth **8×**. `getWinstreakMultiplier`
+  then multiplies by up to 3× on a streak, or up to 5× when it breaks a losing streak.
+
+So the rotation scores each enabled faction by the expected node power of one more win:
+`p(win) * bonusPower * slope(nodePower) * difficulty(5x5) * streak(next win)`, where `p(win)` is
+the faction's own W/L record smoothed towards an even split, and picks the largest. With no
+games played that ordering starts at Illuminati 5×5 (8 × 0.7), Daedalus, Slum Snakes, Tetrads,
+The Black Hand, Netburners; once Illuminati is at 20 000 node power its slope has fallen 240×
+and Daedalus takes over. The dashboard's Setup table shows that product in a **Pay** column, so
+the auto target's `A` marker can be checked against the numbers beside it. The mirrors live in
+`src/libraries/ipvgo/factionConfig.ts` (`getDifficultyMultiplier`,
+`getNextWinStreakMultiplier`, `estimateFactionGain`).
+
+
+
 ### The growth estimate that capped depth at 2 on 9x9
 
 The deepening loop decides whether the next ply is affordable by scaling the last

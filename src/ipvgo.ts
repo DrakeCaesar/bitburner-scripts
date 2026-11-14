@@ -22,7 +22,7 @@ import {
   estimateNodePowerByFaction,
   getFactionSims,
   loadFactionConfig,
-  pickLowestNodePowerFaction,
+  pickHighestGainFaction,
   saveFactionConfig,
   toggleFactionEnabled,
   type IpvgoFactionConfig,
@@ -145,10 +145,16 @@ function buildAutoSetup(
   config: IpvgoFactionConfig,
 ) {
   const nodePowerByFaction = estimateNodePowerByFaction(ns, snapshot.opponentStats)
-  const opponent = pickLowestNodePowerFaction(nodePowerByFaction, config)
   // The auto rotation plays the smallest board: a 5x5 game is a fraction of the moves and
-  // searches of a 13x13 one for the same nodePower per win.
+  // searches of a 13x13 one, and 5x5 against the Illuminati pays eight times the node power
+  // of any other board, so the target is chosen for that board.
   const smallestBoardSize = Math.min(...IPVGO_BOARD_SIZES) as IpvgoBoardSize
+  const opponent = pickHighestGainFaction(
+    nodePowerByFaction,
+    snapshot.opponentStats,
+    config,
+    smallestBoardSize,
+  )
   return {
     opponent,
     boardSize: smallestBoardSize,

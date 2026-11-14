@@ -1,6 +1,6 @@
 import type { NS } from "@ns"
 import type { GoOpponent } from "@ns"
-import { IPVGO_OPPONENTS, IPVGO_HIDDEN_OPPONENT } from "./types.js"
+import { IPVGO_OPPONENTS, IPVGO_HIDDEN_OPPONENT, IPVGO_KOMI_BY_OPPONENT } from "./types.js"
 
 export const IPVGO_SETTINGS_FILE = "ipvgo-settings.json"
 /** Nodes per move, matching the bench Run pane's node budget for 5x5. */
@@ -136,9 +136,79 @@ export function toggleFactionEnabled(
   }
 }
 
-export function pickLowestNodePowerFaction(
+/** Mirror of getDifficultyMultiplier in bitburner-src Go/effects/effect.ts */
+export function getDifficultyMultiplier(komi: number, boardSize: number): number {
+  const tinyBoardVsIlluminati = boardSize === 5 && komi === IPVGO_KOMI_BY_OPPONENT.Illuminati
+  return tinyBoardVsIlluminati ? 8 : (komi + 0.5) * 0.25
+}
+
+/**
+ * Mirror of getWinstreakMultiplier in bitburner-src Go/effects/effect.ts, applied to the win
+ * that has not happened yet: the multiplier of the next win given the current streak.
+ */
+export function getNextWinStreakMultiplier(winStreak: number): number {
+  return winStreak < 0
+    ? 1 + 0.5 * Math.min(-winStreak, 8)
+    : 1 + 0.25 * Math.min(winStreak + 1, 8)
+}
+
+export type IpvgoFactionGain = {
+  faction: GoOpponent
+  /** Expected node power from one more win: slope x faction power x difficulty x streak x p(win). */
+  score: number
+  /** d(CalculateEffect)/d(nodePower): what one more point of node power is worth right now. */
+  slope: number
+  /** Komi-based board multiplier the win would be paid at. */
+  difficulty: number
+  /** Streak multiplier the win would be paid at. */
+  streak: number
+  /** Share of past games against this faction we won, smoothed towards an even record. */
+  winProbability: number
+}
+
+/**
+ * What one more win against this faction is worth in node power, ignoring the
+ * faction-independent constants in CalculateEffect (GoPower, Source-File 14), which cancel
+ * out when factions are compared. The score is therefore a ranking, not a node count.
+ */
+export function estimateFactionGain(
+  faction: GoOpponent,
+  nodePower: number,
+  stats: { wins?: number; losses?: number; winStreak?: number } | undefined,
+  boardSize: number
+): IpvgoFactionGain {
+  const power = IPVGO_BONUS_POWER[faction] ?? 1
+  const nodes = Math.max(0, nodePower)
+  const slope = Math.pow(nodes + 1, -0.7) * (1 + 0.3 * Math.log(nodes + 1))
+  const difficulty = getDifficultyMultiplier(IPVGO_KOMI_BY_OPPONENT[faction] ?? 5.5, boardSize)
+  const streak = getNextWinStreakMultiplier(stats?.winStreak ?? 0)
+  // Laplace-smoothed record, so a faction we have never played is not assumed to be a win.
+  const wins = Math.max(0, Math.round(stats?.wins ?? 0))
+  const losses = Math.max(0, Math.round(stats?.losses ?? 0))
+  const winProbability = (wins + 1) / (wins + losses + 2)
+  return {
+    faction,
+    score: winProbability * power * slope * difficulty * streak,
+    slope,
+    difficulty,
+    streak,
+    winProbability,
+  }
+}
+
+/**
+ * Ranks the factions the rotation may start by the node power one more win would pay, and
+ * picks the best. Node power alone is a poor target: a faction sitting on a large power
+ * total is worth less per win (the effect curve flattens) and some boards pay eight times
+ * what others do, so the rotation aims at the largest expected gain instead.
+ */
+export function pickHighestGainFaction(
   nodePowerByFaction: Partial<Record<GoOpponent, number>>,
-  config: IpvgoFactionConfig
+  opponentStats: Partial<
+    Record<GoOpponent, { wins?: number; losses?: number; winStreak?: number }>
+  >,
+  config: IpvgoFactionConfig,
+  boardSize: number
 ): GoOpponent {
   // The hidden faction is not in the rotation: its subnet is a fixed 19x19 board, and the
   // rotation only knows the 5x5-13x13 sizes the faction table can start.
@@ -147,15 +217,40 @@ export function pickLowestNodePowerFaction(
   )
   const candidates = pool.length > 0 ? pool : IPVGO_OPPONENTS.filter((f) => f !== IPVGO_HIDDEN_OPPONENT)
   let best = candidates[0]
-  let bestPower = nodePowerByFaction[best] ?? 0
+  let bestScore = -Infinity
   for (const faction of candidates) {
-    const power = nodePowerByFaction[faction] ?? 0
-    if (power < bestPower) {
+    const gain = estimateFactionGain(
+      faction,
+      nodePowerByFaction[faction] ?? 0,
+      opponentStats[faction],
+      boardSize
+    )
+    if (gain.score > bestScore) {
       best = faction
-      bestPower = power
+      bestScore = gain.score
     }
   }
   return best
+}
+
+/** The expected-gain score of each rotation candidate, for the dashboard. */
+export function estimateFactionGains(
+  nodePowerByFaction: Partial<Record<GoOpponent, number>>,
+  opponentStats: Partial<
+    Record<GoOpponent, { wins?: number; losses?: number; winStreak?: number }>
+  >,
+  boardSize: number
+): Partial<Record<GoOpponent, IpvgoFactionGain>> {
+  const out: Partial<Record<GoOpponent, IpvgoFactionGain>> = {}
+  for (const faction of IPVGO_OPPONENTS) {
+    out[faction] = estimateFactionGain(
+      faction,
+      nodePowerByFaction[faction] ?? 0,
+      opponentStats[faction],
+      boardSize
+    )
+  }
+  return out
 }
 
 export function loadFactionConfig(ns: NS): IpvgoFactionConfig {

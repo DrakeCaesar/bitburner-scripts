@@ -23,9 +23,11 @@ import { IPVGO_BOARD_SIZES, IPVGO_BONUS_LABEL, IPVGO_HIDDEN_OPPONENT, IPVGO_OPPO
 import {
   getFactionSims,
   isFactionEnabled,
+  estimateFactionGains,
   estimateNodePowerByFaction,
-  pickLowestNodePowerFaction,
+  pickHighestGainFaction,
   type IpvgoFactionConfig,
+  type IpvgoFactionGain,
 } from "./factionConfig.js"
 import {
   getDeferredSetup,
@@ -94,7 +96,9 @@ export type IpvgoDashboardSnapshot = {
   factionEnabled: Partial<Record<GoOpponent, boolean>>
   /** Estimated node power used to pick the auto opponent. */
   nodePowerByFaction: Partial<Record<GoOpponent, number>>
-  /** Faction with lowest node power (auto target for next game). */
+  /** Expected node power per win against each faction; drives the auto-rotation. */
+  factionGains: Partial<Record<GoOpponent, IpvgoFactionGain>>
+  /** Faction with the largest expected gain (auto target for next game). */
   autoOpponent: GoOpponent
 }
 
@@ -127,6 +131,7 @@ export function createIpvgoSnapshot(
     factionSims: {},
     factionEnabled: {},
     nodePowerByFaction: {},
+    factionGains: {},
     autoOpponent: opponent,
   }
 }
@@ -251,6 +256,18 @@ function formatNodePower(snapshot: IpvgoDashboardSnapshot, faction: GoOpponent):
   return np >= 1000 ? `${(np / 1000).toFixed(1)}k` : String(Math.round(np))
 }
 
+/**
+ * The node-power multiplier a win against this faction pays: the board's difficulty
+ * multiplier, the win-streak multiplier the win would land on, and the share of past games
+ * we won. That product is what makes 5x5 Illuminati (8x) worth farming over a 13x13 board.
+ */
+function factionPayLabel(snapshot: IpvgoDashboardSnapshot, faction: GoOpponent): string {
+  const gain = snapshot.factionGains[faction]
+  if (!gain) return "-"
+  const pay = gain.difficulty * gain.streak * gain.winProbability
+  return pay >= 100 ? Math.round(pay).toString() : pay.toFixed(1)
+}
+
 function factionRewardLabel(opponent: GoOpponent, snapshot: IpvgoDashboardSnapshot): string {
   const stats = snapshot.opponentStats[opponent]
   const reward = stats?.bonusDescription || IPVGO_BONUS_LABEL[opponent] || "-"
@@ -269,9 +286,10 @@ function buildSetupTableConfig(snapshot: IpvgoDashboardSnapshot): ReactTableConf
     columns: [
       col("On", "center", 3),
       col("Faction", "left", 22),
-      col("Reward", "left", 28),
+      col("Reward", "left", 26),
       col("Sims", "right", 5),
       col("NP", "right", 5),
+      col("Pay", "right", 4),
       ...IPVGO_BOARD_SIZES.map((size) => col(String(size), "center", 3)),
     ],
     rows: IPVGO_OPPONENTS.map((faction) => [
@@ -282,6 +300,7 @@ function buildSetupTableConfig(snapshot: IpvgoDashboardSnapshot): ReactTableConf
       factionRewardLabel(faction, snapshot),
       String(snapshot.factionSims[faction] ?? "-"),
       formatNodePower(snapshot, faction),
+      factionPayLabel(snapshot, faction),
       ...IPVGO_BOARD_SIZES.map((size) => {
         // The hidden faction's subnet is always 19x19, so there is no size to choose.
         if (faction === IPVGO_HIDDEN_OPPONENT) return "-"
@@ -383,6 +402,17 @@ function IpvgoSetupPicker(props: { snapshot: IpvgoDashboardSnapshot }): ReactNod
         },
         formatNodePower(snapshot, faction)
       ),
+      React.createElement(
+        "td",
+        {
+          key: "pay",
+          style: {
+            ...cellStyle(layout, { selectedRow: snapshot.opponent === faction }, "right"),
+            opacity: enabled ? "1" : "0.45",
+          },
+        },
+        factionPayLabel(snapshot, faction)
+      ),
       ...IPVGO_BOARD_SIZES.map((size) => {
         // The hidden faction's subnet is always 19x19, so there is no size to start.
         if (faction === IPVGO_HIDDEN_OPPONENT) {
@@ -483,7 +513,7 @@ function buildStatusTable(snapshot: IpvgoDashboardSnapshot): ReactTableConfig {
     ],
     rows: [
       ["Match", `${snapshot.opponent} ${snapshot.boardSize}x${snapshot.boardSize} / ${snapshot.iterations} sims`],
-      ["Auto", `${snapshot.autoOpponent} (lowest NP)`],
+      ["Auto", `${snapshot.autoOpponent} (x${factionPayLabel(snapshot, snapshot.autoOpponent)})`],
       ["Turn", snapshot.currentPlayer],
       ["Score", `B ${snapshot.blackScore.toFixed(1)} / W ${snapshot.whiteScore.toFixed(1)} (${scoreLeadText(snapshot.blackScore, snapshot.whiteScore)})`],
       ["Move", String(snapshot.moveNumber)],
@@ -720,7 +750,14 @@ export function enrichSnapshotWithFactionConfig(
   config: IpvgoFactionConfig
 ): IpvgoDashboardSnapshot {
   const nodePowerByFaction = estimateNodePowerByFaction(ns, snapshot.opponentStats)
-  const autoOpponent = pickLowestNodePowerFaction(nodePowerByFaction, config)
+  const boardSize = Math.min(...IPVGO_BOARD_SIZES)
+  const autoOpponent = pickHighestGainFaction(
+    nodePowerByFaction,
+    snapshot.opponentStats,
+    config,
+    boardSize
+  )
+  const factionGains = estimateFactionGains(nodePowerByFaction, snapshot.opponentStats, boardSize)
   const factionSims: Partial<Record<GoOpponent, number>> = {}
   const factionEnabled: Partial<Record<GoOpponent, boolean>> = {}
   for (const faction of IPVGO_OPPONENTS) {
@@ -732,6 +769,7 @@ export function enrichSnapshotWithFactionConfig(
     factionSims,
     factionEnabled,
     nodePowerByFaction,
+    factionGains,
     autoOpponent,
     iterations: getFactionSims(config, snapshot.opponent),
   }
