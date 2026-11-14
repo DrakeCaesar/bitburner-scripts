@@ -5,7 +5,7 @@
 
 #include "go_game.hpp"
 
-namespace ipvgo::nn {
+namespace ipvgo::search {
 
 // Action index convention: 0..N*N-1 are board points (x = a / N, y = a % N);
 // action N*N is "pass".
@@ -55,4 +55,4 @@ inline uint64_t boardPositionKey(const ipvgo::game::GameState& state) {
   return h;
 }
 
-}  // namespace ipvgo::nn
+}  // namespace ipvgo::search

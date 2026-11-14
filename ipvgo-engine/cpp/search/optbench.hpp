@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace ipvgo::nn {
+namespace ipvgo::search {
 
 struct OptBenchOptions {
   int size = 5;
@@ -24,4 +24,4 @@ struct OptBenchOptions {
 // each search are printed so two builds can be compared for parity.
 int runOptBench(const OptBenchOptions& options);
 
-}  // namespace ipvgo::nn
+}  // namespace ipvgo::search

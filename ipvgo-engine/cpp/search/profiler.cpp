@@ -318,7 +318,7 @@ int runProfiler(int argc, char** argv) {
   const Opponent ai = parseOpponent(faction).value_or(Opponent::Netburners);
   std::mt19937_64 rng(1);
 
-  ipvgo::nn::ExploitConfig cfg;
+  ipvgo::search::ExploitConfig cfg;
   cfg.depth = 2;
   cfg.threads = 1;          // one thread so the samples are not split across cores
   cfg.deterministic = true;  // and so the same workload is profiled every run
@@ -338,11 +338,11 @@ int runProfiler(int argc, char** argv) {
     MathRandom mathRng(rng());
     GameState state = newBoardState(boardSize, ai, true, clockMs, mathRng);
     // A fresh session per game, exactly like the server.
-    ipvgo::nn::SearchSession session;
+    ipvgo::search::SearchSession session;
     for (int m = 0; m < boardSize * boardSize * 4 && !state.gameOver; ++m) {
       if (whoseTurn(state) != Color::Black) break;
       session.noteRequest(static_cast<size_t>(state.previousBoards.size()));
-      const ipvgo::nn::ExploitResult r = ipvgo::nn::runExploiter(state, cfg, nullptr, &session);
+      const ipvgo::search::ExploitResult r = ipvgo::search::runExploiter(state, cfg, nullptr, &session);
       allocNodes += r.nodes;
       ++totalMoves;
       if (r.bestAction == (boardSize * boardSize)) passTurn(state, Color::Black);
@@ -402,11 +402,11 @@ int runProfiler(int argc, char** argv) {
     const double clockMs = static_cast<double>(rng() % 30000000u);
     MathRandom mathRng(rng());
     GameState state = newBoardState(boardSize, ai, true, clockMs, mathRng);
-    ipvgo::nn::SearchSession session;
+    ipvgo::search::SearchSession session;
     for (int m = 0; m < boardSize * boardSize * 4 && !state.gameOver; ++m) {
       if (whoseTurn(state) != Color::Black) break;
       session.noteRequest(static_cast<size_t>(state.previousBoards.size()));
-      const ipvgo::nn::ExploitResult r = ipvgo::nn::runExploiter(state, cfg, nullptr, &session);
+      const ipvgo::search::ExploitResult r = ipvgo::search::runExploiter(state, cfg, nullptr, &session);
       sampledNodes += r.nodes;
       ++sampledMoves;
       if (r.bestAction == (boardSize * boardSize)) passTurn(state, Color::Black);

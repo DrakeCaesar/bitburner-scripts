@@ -25,6 +25,7 @@
 #include "game_engine.hpp"
 #include "go_game.hpp"
 #include "opponents.hpp"
+#include "playout/playout_search.hpp"
 #include "rng.hpp"
 #include "setup.hpp"
 
@@ -36,7 +37,7 @@
 #include <unistd.h>
 #endif
 
-namespace ipvgo::nn {
+namespace ipvgo::search {
 
 using namespace ipvgo::game;
 using json = nlohmann::json;
@@ -331,12 +332,12 @@ struct BenchGameResult {
 // The engine's cheat kinds and the game's CheatType are declared in different orders, so
 // map them explicitly rather than casting.
 ipvgo::game::CheatType cheatTypeFor(int kind) {
-  switch (static_cast<ipvgo::nn::CheatKind>(kind)) {
-    case ipvgo::nn::CheatKind::PlayTwoMoves: return ipvgo::game::CheatType::PlayTwoMoves;
-    case ipvgo::nn::CheatKind::DestroyNode: return ipvgo::game::CheatType::DestroyNode;
-    case ipvgo::nn::CheatKind::RepairOfflineNode: return ipvgo::game::CheatType::RepairOfflineNode;
-    case ipvgo::nn::CheatKind::RemoveRouter:
-    case ipvgo::nn::CheatKind::None: break;
+  switch (static_cast<ipvgo::search::CheatKind>(kind)) {
+    case ipvgo::search::CheatKind::PlayTwoMoves: return ipvgo::game::CheatType::PlayTwoMoves;
+    case ipvgo::search::CheatKind::DestroyNode: return ipvgo::game::CheatType::DestroyNode;
+    case ipvgo::search::CheatKind::RepairOfflineNode: return ipvgo::game::CheatType::RepairOfflineNode;
+    case ipvgo::search::CheatKind::RemoveRouter:
+    case ipvgo::search::CheatKind::None: break;
   }
   return ipvgo::game::CheatType::RemoveRouter;
 }
@@ -386,6 +387,7 @@ BenchGameResult playBenchGame(const BenchOptions& options, const ExploitConfig& 
 
   BenchGameResult result;
   SearchSession session;
+  playout::PlayoutSession playoutSession;
   // IPVGO_MOVECAP overrides the built-in size*size*4 cap; a game that reaches it is
   // scored as if it had ended there.
   const char* capEnv = std::getenv("IPVGO_MOVECAP");
@@ -395,7 +397,23 @@ BenchGameResult playBenchGame(const BenchOptions& options, const ExploitConfig& 
 
     observer.onThinking(factionIndex, state, gameNumber, m + 1);
     const auto t0 = std::chrono::steady_clock::now();
-    const ExploitResult search = runExploiter(state, cfg, nullptr, options.carry ? &session : nullptr);
+    ExploitResult search;
+    if (options.playoutEngine) {
+      // The playout engine answers in its own terms: a counted value over playouts. The bench and
+      // its observer speak ExploitResult, so map the handful of fields they read.
+      playout::PlayoutConfig playoutCfg;
+      playoutCfg.playoutsPerMove = options.iterations > 0 ? options.iterations : 10000;
+      playoutCfg.komi = getKomi(state);
+      playoutCfg.timeLimitMs = options.budgetMs;
+      const playout::PlayoutResult played = playout::runPlayoutSearch(state, playoutCfg, &playoutSession);
+      search.bestAction = played.bestAction;
+      search.value = played.value;
+      search.nodes = played.nodes;
+      search.rootScores = played.rootScores;
+      search.rootVisits = played.rootVisits;
+    } else {
+      search = runExploiter(state, cfg, nullptr, options.carry ? &session : nullptr);
+    }
     const double elapsedMs =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 
@@ -723,8 +741,8 @@ class JsonObserver : public BenchObserver {
   // `out` is where the NDJSON goes. Games played side by side are given one observer each
   // writing to its own buffer, because this class keeps the state of the game it is
   // describing; the buffers are flushed whole so a game's events stay contiguous.
-  JsonObserver(size_t factionCount, bool audit, std::ostream& out)
-      : factionCount_(factionCount), audit_(audit), out_(out) {}
+  JsonObserver(size_t factionCount, bool audit, bool playoutEngine, std::ostream& out)
+      : factionCount_(factionCount), audit_(audit), playoutEngine_(playoutEngine), out_(out) {}
 
   void onGameStart(size_t index, const std::string& faction, int game, int games, uint64_t seed) override {
     faction_ = faction;
@@ -772,12 +790,26 @@ class JsonObserver : public BenchObserver {
                                    : json{{"x", search.bestAction / n}, {"y", search.bestAction % n}}},
                   {"pass", passed},
                   {"value", reportedValue(search.value)},
+                  // 0 for the playout engine, whose budget is playouts rather than depth.
                   {"depth", search.depth},
                   {"nodes", search.nodes},
+                  {"engine", playoutEngine_ ? "playout" : "exploit"},
                   {"ms", elapsedMs},
                   {"board", boardJson(state.board)},
                   {"blackScore", score.blackSum},
                   {"whiteScore", score.whiteSum}};
+    if (playoutEngine_) {
+      // How many playouts stand behind the value, and how many of them went through the move that
+      // was played. A mean without its count cannot be read: 2/3 and 2000/3000 print the same.
+      for (size_t i = 0; i < search.rootScores.size() && i < search.rootVisits.size(); ++i) {
+        if (search.rootScores[i].first != search.bestAction) continue;
+        event["playouts"] = search.rootVisits[i];
+        break;
+      }
+      long total = 0;
+      for (const long visits : search.rootVisits) total += visits;
+      event["playoutsTotal"] = total;
+    }
     if (audit_) event["audit"] = moveAudit(state, score, search);
     // When the search preferred a cheat, the move above is the cheat's own target and
     // these fields say what was attempted and what it was worth.
@@ -945,6 +977,7 @@ class JsonObserver : public BenchObserver {
 
   size_t factionCount_ = 0;
   bool audit_ = true;
+  bool playoutEngine_ = false;
   std::ostream& out_;
   std::string faction_;
   int game_ = 0;
@@ -959,7 +992,30 @@ class JsonObserver : public BenchObserver {
 
 }  // namespace
 
-int runExploitBench(const BenchOptions& options) {
+// The playout engine is a 5x5 player by construction: its board is a flat 25-entry array and its
+// opponent model is tuned for that board. Refusing here rather than searching anyway matters: a
+// playout on a board the engine cannot represent still returns a legal-looking move and a score,
+// so the run would report plausible nonsense under the playout label.
+static bool playoutEngineSupports(const BenchOptions& options) {
+  if (!options.playoutEngine) return true;
+  if (options.size != playout::kSize) {
+    std::fprintf(stderr,
+                 "bench: the playout engine plays 5x5 boards only (this run is %dx%d); "
+                 "run the exploiter instead or pick a 5x5 board\n",
+                 options.size, options.size);
+    return false;
+  }
+  return true;
+}
+
+int runExploitBench(const BenchOptions& optionsIn) {
+  if (!playoutEngineSupports(optionsIn)) return 2;
+  // The audit columns (flat one-ply value, leaf-eval report, modelled reply probability)
+  // describe the exploiter's evaluator and reply model. None of it runs under the playout
+  // engine, so computing it would both waste a policy build per move and print numbers
+  // that have nothing to do with the search that played the move.
+  BenchOptions options = optionsIn;
+  if (options.playoutEngine) options.audit = false;
   const std::vector<std::string> factions =
       options.factions.empty() ? defaultFactions(options.size) : options.factions;
   if (factions.empty()) return 0;
@@ -974,7 +1030,11 @@ int runExploitBench(const BenchOptions& options) {
   return runBenchGames(options, observer);
 }
 
-int runExploitBenchJson(const BenchOptions& options) {
+int runExploitBenchJson(const BenchOptions& optionsIn) {
+  if (!playoutEngineSupports(optionsIn)) return 2;
+  // See runExploitBench: the audit is the exploiter's evaluator, not the playout engine's.
+  BenchOptions options = optionsIn;
+  if (options.playoutEngine) options.audit = false;
   const bool parallel = options.gamesInParallel > 1;
   BenchRun run = prepareBenchRun(options, parallel);
   if (run.factions.empty()) return 0;
@@ -985,14 +1045,14 @@ int runExploitBenchJson(const BenchOptions& options) {
                                                  static_cast<unsigned>(run.jobs.size())))
                : 1u;
   if (workers <= 1) {
-    JsonObserver observer(factionCount, options.audit, std::cout);
+    JsonObserver observer(factionCount, options.audit, options.playoutEngine, std::cout);
     observer.onRows(run.rows);
     for (const BenchJob& job : run.jobs) playBenchJob(options, run, job, observer);
     return finishBenchRun(run.rows, observer);
   }
 
   {
-    JsonObserver observer(factionCount, options.audit, std::cout);
+    JsonObserver observer(factionCount, options.audit, options.playoutEngine, std::cout);
     observer.onRows(run.rows);
   }
   // Games run side by side, each on one search thread. The rows they feed are shared, and
@@ -1010,7 +1070,7 @@ int runExploitBenchJson(const BenchOptions& options) {
         if (index >= run.jobs.size()) break;
         const BenchJob& job = run.jobs[index];
         std::ostringstream buffer;
-        JsonObserver observer(factionCount, options.audit, buffer);
+        JsonObserver observer(factionCount, options.audit, options.playoutEngine, buffer);
         // The game itself runs outside the lock: only the row it feeds is shared.
         const BenchGameResult result =
             playBenchGame(options, run.configs[job.faction], job.faction, run.factions[job.faction], job.game,
@@ -1028,8 +1088,8 @@ int runExploitBenchJson(const BenchOptions& options) {
     });
   }
   for (std::thread& thread : pool) thread.join();
-  JsonObserver observer(factionCount, options.audit, std::cout);
+  JsonObserver observer(factionCount, options.audit, options.playoutEngine, std::cout);
   return finishBenchRun(run.rows, observer);
 }
 
-}  // namespace ipvgo::nn
+}  // namespace ipvgo::search

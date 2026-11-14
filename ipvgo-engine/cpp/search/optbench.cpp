@@ -26,7 +26,7 @@
 #include "opponents.hpp"
 #include "setup.hpp"
 
-namespace ipvgo::nn {
+namespace ipvgo::search {
 namespace {
 
 using Clock = std::chrono::steady_clock;
@@ -195,4 +195,4 @@ int runOptBench(const OptBenchOptions& options) {
   return 0;
 }
 
-}  // namespace ipvgo::nn
+}  // namespace ipvgo::search

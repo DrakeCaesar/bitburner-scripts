@@ -6,7 +6,7 @@
 #include "go_game.hpp"
 #include "rng.hpp"
 
-namespace ipvgo::nn {
+namespace ipvgo::search {
 
 struct McgsConfig {
   int playouts = 10000;
@@ -30,4 +30,4 @@ struct McgsResult {
 McgsResult runMcgs(const ipvgo::game::GameState& root, const McgsConfig& cfg, uint64_t seed,
                    uint64_t mathSeed = 0, int whiteMovesCompleted = 0);
 
-}  // namespace ipvgo::nn
+}  // namespace ipvgo::search

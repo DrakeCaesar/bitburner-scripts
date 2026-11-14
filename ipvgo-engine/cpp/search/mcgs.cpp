@@ -16,7 +16,7 @@
 #include <utility>
 #include <vector>
 
-namespace ipvgo::nn {
+namespace ipvgo::search {
 
 using namespace ipvgo::game;
 
@@ -592,4 +592,4 @@ McgsResult runMcgs(const GameState& rootState, const McgsConfig& cfg, uint64_t s
   return mergeMcgsResults(parts, rootState.size);
 }
 
-}  // namespace ipvgo::nn
+}  // namespace ipvgo::search

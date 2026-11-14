@@ -5,7 +5,7 @@
 #include <utility>
 #include <vector>
 
-namespace ipvgo::nn {
+namespace ipvgo::search {
 
 struct BenchOptions {
   // A game to replay instead of generating one: exactly the game a previous run played.
@@ -40,6 +40,12 @@ struct BenchOptions {
   long nodeBudget = 30000;
   int threads = 0;
   bool carry = false;  // share a depth-aware memo across the moves of a game
+  // Run the playout engine instead of the expectimax exploiter. The playout budget
+  // reuses `iterations` (playouts per move) and `budgetMs` (wall-clock limit), so the
+  // two engines can be compared under the same bench settings. A small `iterations` - a
+  // leftover node budget from an exploiter form - is below what a playout search can use,
+  // so the engine falls back to its default and reports the budget it actually spent.
+  bool playoutEngine = false;
   // Root scheduler. Off = the deterministic round-robin split: every worker gets a
   // fixed 1/threads slice of the node budget up front, which repeats exactly but
   // discards a ply as soon as one expensive root move outgrows its slice. On = the
@@ -119,4 +125,4 @@ int runExploitBench(const BenchOptions& options);
 // bench UI (see server.js and web/bench.html).
 int runExploitBenchJson(const BenchOptions& options);
 
-}  // namespace ipvgo::nn
+}  // namespace ipvgo::search
