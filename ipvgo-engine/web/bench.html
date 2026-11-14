@@ -724,6 +724,9 @@
 
     <script>
       const ALL_FACTIONS = ["Netburners", "Slum Snakes", "The Black Hand", "Tetrads", "Daedalus", "Illuminati"]
+      // Everything the widths grid can tune. The hidden faction's subnet is only reachable on
+      // 19x19, so it is never a chip, but its widths still need a place to live.
+      const TUNING_FACTIONS = [...ALL_FACTIONS, "WorldDaemon"]
       const selected = new Set(ALL_FACTIONS)
       // The chips, the run order and the Results table all follow ALL_FACTIONS. `selected`
       // is a Set, so a faction that is clicked off and back on moves to the end of it;
@@ -2016,7 +2019,12 @@
         el(id).addEventListener("input", renderTuneInherited)
       }
 
-      el("size").addEventListener("change", renderFactionChips)
+      el("size").addEventListener("change", () => {
+        renderFactionChips()
+        // 19x19 swaps the whole faction list for the hidden faction, so the widths grid has
+        // to follow or it would keep editing factions the run does not play.
+        renderPlayTuning()
+      })
 
       el("budgetMode").addEventListener("change", () => {
         const mode = el("budgetMode").value
@@ -2892,10 +2900,15 @@
         return applied ? { ...applied } : { ...PLAY_TUNING_DEFAULTS }
       }
 
-      // What Start sends: an explicit width triple for every faction selected.
+      // What Start sends: the factions this run will play. 19x19 is the hidden faction's
+      // fixed subnet, so it is the only one it plays; every other size plays the chips.
+      function runFactions() {
+        return Number(el("size").value) === 19 ? ["WorldDaemon"] : inListOrder(Array.from(selected))
+      }
+
       function readPlayTuning() {
         const out = {}
-        for (const faction of inListOrder(Array.from(selected))) out[faction] = playTuningFor(faction)
+        for (const faction of runFactions()) out[faction] = playTuningFor(faction)
         return out
       }
 
@@ -2914,11 +2927,18 @@
           cell.textContent = label
           grid.appendChild(cell)
         }
-        for (const faction of ALL_FACTIONS) {
+        // Every tunable faction gets a row: the grid is where widths are stored, not only
+        // where the current run reads them. A faction this board size will not play is
+        // dimmed so the run's own list stays obvious.
+        const playing = new Set(runFactions())
+        for (const faction of TUNING_FACTIONS) {
           const name = document.createElement("span")
           name.className = "name"
           name.textContent = shortName(faction)
-          name.title = faction
+          name.title = playing.has(faction)
+            ? faction
+            : `${faction} - not played at this board size, widths are stored for later`
+          if (!playing.has(faction)) name.style.color = "var(--dim)"
           grid.appendChild(name)
           for (const gene of ["beam", "whiteChildren", "whiteMass"]) {
             const input = document.createElement("input")
