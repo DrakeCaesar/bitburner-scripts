@@ -1,4 +1,4 @@
-import type { IpvgoMoveRequest, IpvgoMoveResponse } from "./types.js"
+import type { IpvgoMove, IpvgoMoveRequest, IpvgoMoveResponse, IpvgoWhiteReplyReport } from "./types.js"
 
 const DEFAULT_ENGINE_URL = "http://localhost:3010"
 const SETUP_POLL_MS = 100
@@ -18,15 +18,38 @@ function createRequestId(): string {
   return `bb-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
+/**
+ * Only the C++ exploiter is supported: its reply model is what the script's requests are
+ * written against, and the older TS/MCGS paths are gone.
+ */
 export async function isIpvgoEngineAvailable(baseUrl = getIpvgoEngineUrl()): Promise<boolean> {
   try {
     const res = await fetch(`${baseUrl}/health`, { method: "GET" })
     if (!res.ok) return false
     const body = (await res.json()) as { engine?: string }
-    return body.engine === "katago" || body.engine === "native"
+    return body.engine === "exploit"
   } catch {
     return false
   }
+}
+
+/**
+ * Asks the engine whether White's actual reply was one the search's model contains. The
+ * request must be built with `playAs: "O"`, `board` set to the position White moved in and
+ * `whiteReplyCheck` describing the move. Returns null when the engine cannot answer.
+ */
+export async function checkIpvgoWhiteReply(
+  request: IpvgoMoveRequest,
+  baseUrl = getIpvgoEngineUrl()
+): Promise<IpvgoWhiteReplyReport | null> {
+  const res = await fetch(`${baseUrl}/api/ipvgo/move`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  })
+  if (!res.ok) return null
+  const body = (await res.json()) as { whiteReply?: IpvgoWhiteReplyReport; error?: string }
+  return body.whiteReply ?? null
 }
 
 export async function cancelIpvgoEngineRequest(
@@ -42,6 +65,26 @@ export async function cancelIpvgoEngineRequest(
   } catch {
     /* best effort */
   }
+}
+
+/**
+ * Tells the engine which move we are about to play so it can search the likely
+ * replies while the game is still computing (and delaying) the opponent's move.
+ * Fire and forget: the request must match the next real request apart from the
+ * position, and the engine drops the work the moment that request arrives.
+ */
+export function ponderIpvgoEngine(
+  request: IpvgoMoveRequest,
+  ourMove: IpvgoMove,
+  baseUrl = getIpvgoEngineUrl()
+): void {
+  fetch(`${baseUrl}/api/ipvgo/move`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...request, ourMove, ponder: true }),
+  }).catch(() => {
+    /* best effort */
+  })
 }
 
 export async function requestIpvgoEngineMove(

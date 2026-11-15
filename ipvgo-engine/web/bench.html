@@ -1,0 +1,3133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>IPvGO exploiter bench</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      /* Matches the in-game tail UI (src/libraries/scriptLogUi.ts): monospace 12px,
+         #141414 background, 1px translucent-white cell borders, no rounded corners. */
+      :root {
+        --bg: #141414;
+        --panel: transparent;
+        --panel-2: rgba(255, 255, 255, 0.06);
+        --line: rgba(255, 255, 255, 0.15);
+        --line-soft: rgba(255, 255, 255, 0.08);
+        --header-bg: rgba(255, 255, 255, 0.04);
+        --selected-bg: rgba(255, 255, 255, 0.06);
+        --active-bg: rgba(0, 255, 0, 0.12);
+        --highlight-bg: rgba(0, 255, 0, 0.18);
+        --text: #cccccc;
+        --dim: #888888;
+        --accent: #43bf43;
+        --accent-2: #893bc8;
+        --warn: #e0b040;
+        --bad: #e05555;
+      }
+      * { box-sizing: border-box; }
+      html { color-scheme: dark; }
+      * { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.25) transparent; }
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 0; }
+      ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.35); }
+      ::-webkit-scrollbar-corner { background: transparent; }
+      input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
+      input[type="number"]::-webkit-inner-spin-button,
+      input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+      select {
+        appearance: none;
+        -webkit-appearance: none;
+        cursor: pointer;
+        padding-right: 2.5ch;
+        background-image: linear-gradient(45deg, transparent 50%, #888 50%), linear-gradient(135deg, #888 50%, transparent 50%);
+        background-position: calc(100% - 9px) 9px, calc(100% - 5px) 9px;
+        background-size: 4px 4px, 4px 4px;
+        background-repeat: no-repeat;
+      }
+      select option { background: #141414; color: #cccccc; }
+      /* Solid equivalent of --active-bg (rgba(0,255,0,0.12)) over #141414; popups cannot use alpha. */
+      select option:checked,
+      select option:hover,
+      select option:focus { background: #113011 linear-gradient(#113011, #113011); color: #cccccc; }
+      .dd { position: relative; width: 150px; flex: 0 0 150px; }
+      .ddButton {
+        display: block;
+        width: 100%;
+        height: 22px;
+        padding: 0 2.5ch 0 0.5ch;
+        text-align: left;
+        font-weight: normal;
+        background: transparent;
+        border: 1px solid var(--line-soft);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .ddButton::after {
+        content: "";
+        position: absolute;
+        right: 6px;
+        top: 5px;
+        width: 5px;
+        height: 5px;
+        border-right: 1px solid #888;
+        border-bottom: 1px solid #888;
+        transform: rotate(45deg);
+      }
+      .dd.open .ddButton::after { top: 8px; transform: rotate(-135deg); }
+      .dd.open .ddButton { border-color: var(--line); background-color: var(--selected-bg); }
+      .ddList {
+        display: none;
+        position: absolute;
+        z-index: 10;
+        left: 0;
+        min-width: 100%;
+        top: 100%;
+        background: #141414;
+        border: 1px solid var(--line);
+        max-height: 240px;
+        overflow-y: auto;
+      }
+      .dd.open .ddList { display: block; }
+      .ddItem { padding: 0 0.5ch; line-height: 22px; white-space: nowrap; cursor: pointer; }
+      .ddItem:hover { background: var(--selected-bg); }
+      .ddItem.on { background: var(--active-bg); font-weight: bold; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: monospace;
+        font-size: 12px;
+        font-variant-emoji: text;
+      }
+      header {
+        display: flex;
+        align-items: baseline;
+        gap: 14px;
+        padding: 8px;
+        border-bottom: 1px solid var(--line);
+      }
+      header h1 { font-size: 12px; margin: 0; font-weight: bold; }
+      /* Which compiler built the engine the server spawns: it applies to every run on
+         the page, so it sits in the header rather than in a per-run form. */
+      .enginePick { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dim); }
+      .enginePick select { width: auto; flex: 0 0 auto; padding-right: 1.5ch; }
+      .enginePick select:disabled { opacity: 0.55; }
+      .pill {
+        margin-left: auto;
+        padding: 4px 8px;
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        font-size: 12px;
+      }
+      .pill.running { background: var(--active-bg); font-weight: bold; }
+      .pill.finished { background: var(--active-bg); }
+      .pill.failed { border-color: var(--bad); color: var(--bad); }
+      main {
+        display: grid;
+        /* The third column holds the results and the move table, which now carries cheat
+           tags per move: give it a floor and let it take the extra width first. */
+        grid-template-columns: 360px minmax(300px, 1fr) minmax(520px, 34%);
+        gap: 8px;
+        padding: 8px;
+        align-items: start;
+      }
+      section {
+        background: var(--panel);
+        padding: 0;
+        min-width: 0;
+      }
+      section h2 {
+        font-size: 12px;
+        line-height: 16px;
+        margin: 0 0 4px;
+        font-weight: bold;
+        color: var(--text);
+      }
+      section h2::before { content: "=== "; }
+      section h2::after { content: " ==="; }
+      section h2 .dim { font-weight: normal; }
+      label.field { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+      label.field span { color: var(--dim); }
+      /* Keeps a bare checkbox in the same column as the 150px inputs next to it. */
+      label.field .fieldToggle { flex: 0 0 150px; display: flex; align-items: center; }
+      /* A labelled block of related switches inside Search tuning. */
+      .switchGroup { border-top: 1px solid var(--line-soft); margin-top: 6px; padding-top: 4px; }
+      .switchHead { color: var(--dim); font-size: 12px; margin-bottom: 4px; cursor: help; }
+      input, select {
+        background: transparent;
+        color: var(--text);
+        border: 1px solid var(--line-soft);
+        border-radius: 0;
+        padding: 0 0.5ch;
+        height: 22px;
+        font-family: monospace;
+        font-size: 12px;
+        width: 150px;
+        flex: 0 0 150px;
+      }
+      input::placeholder { color: #666666; opacity: 1; }
+      input:focus, select:focus { outline: none; border-color: var(--line); background: var(--selected-bg); }
+      /* Checkbox drawn like the other controls: a square with the same 1px border
+         that fills with the active colour. The mark is an X corner to corner, as an
+         inline SVG so it renders on a replaced element without relying on ::after. */
+      input[type="checkbox"] {
+        appearance: none;
+        -webkit-appearance: none;
+        width: 14px;
+        height: 14px;
+        flex: 0 0 14px;
+        padding: 0;
+        margin: 0;
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        cursor: pointer;
+      }
+      input[type="checkbox"]:hover { border-color: var(--dim); }
+      input[type="checkbox"]:focus-visible { outline: 1px solid var(--line); outline-offset: 1px; }
+      input[type="checkbox"]:checked {
+        border-color: var(--accent);
+        background: var(--active-bg)
+          url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M2.8 2.8 L7.2 7.2 M7.2 2.8 L2.8 7.2' fill='none' stroke='%2343bf43' stroke-width='1.3'/%3E%3C/svg%3E")
+          center / 10px 10px no-repeat;
+      }
+      input[type="checkbox"]:disabled { opacity: 0.4; cursor: default; }
+      .chips { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 8px; }
+      details#tuning { margin: 2px 0 8px; }
+      details#tuning > summary {
+        cursor: pointer;
+        color: var(--dim);
+        font-size: 12px;
+        padding: 4px 0;
+        user-select: none;
+      }
+      details#tuning[open] > summary { color: var(--text); margin-bottom: 4px; }
+      details#tuning input:not([type="checkbox"]) { width: 150px; }
+      .chip {
+        cursor: pointer;
+        user-select: none;
+        padding: 4px 8px;
+        line-height: 16px;
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        color: var(--text);
+        font-size: 12px;
+        opacity: 0.45;
+      }
+      .chip.on { background: var(--active-bg); font-weight: bold; opacity: 1; }
+      .buttons { display: flex; gap: 2px; margin-top: 4px; }
+      button {
+        flex: 1;
+        cursor: pointer;
+        border-radius: 0;
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        color: var(--text);
+        padding: 4px 8px;
+        line-height: 16px;
+        font-family: monospace;
+        font-size: 12px;
+      }
+      button.primary { background: var(--active-bg); font-weight: bold; }
+      button.ghost {
+        margin-left: 8px;
+        padding: 4px 8px;
+        font-weight: normal;
+        flex: 0 0 auto;
+      }
+      button:disabled { opacity: 0.4; cursor: default; }
+      #boardWrap { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; width: 100%; }
+      #board { display: inline-block; line-height: 0; overflow-x: auto; max-width: 100%; }
+      .boardRow { display: flex; flex-direction: row; }
+      .tableScroll { overflow-x: auto; }
+      .info { display: flex; flex-wrap: wrap; gap: 0 16px; line-height: 16px; color: var(--dim); font-size: 12px; }
+      .info b { color: var(--text); font-weight: bold; }
+      table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      /* Fixed layout so the results table never resizes as numbers change. */
+      table:not(.moves) { table-layout: fixed; }
+      /* Column widths belong to the results table only. Left unscoped they applied to
+         every table on the page, which is what made the newer ones look wrong. */
+      table.resultsTable th:nth-child(1) { width: 15ch; }
+      table.resultsTable th:nth-child(2) { width: 7ch; }
+      table.resultsTable th:nth-child(3), table.resultsTable th:nth-child(4) { width: 5ch; }
+      table.resultsTable th:nth-child(5) { width: 8ch; }
+      table.resultsTable th:nth-child(6) { width: 8ch; }
+      /* The tuning results sit in the narrow left column, so they are a compact list
+         rather than a table: seven or eight columns cannot fit beside the board. */
+      .tuneList { font-size: 12px; margin-top: 8px; }
+      .tuneRow {
+        display: grid;
+        grid-template-columns: 4ch minmax(0, 1fr) auto;
+        gap: 0 6px;
+        padding: 3px 0;
+        border-bottom: 1px solid var(--line-soft);
+        align-items: baseline;
+      }
+      .tuneRow.wide { grid-template-columns: 7ch minmax(0, 1fr) auto; }
+      .tuneRow.best { color: var(--accent); }
+      .tuneId { color: var(--dim); }
+      .tuneRow.best .tuneId { color: inherit; }
+      .tuneWin { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .tuneMeta { grid-column: 2 / -1; color: var(--dim); font-size: 11px; }
+      .tuneTiming { color: var(--dim); font-size: 12px; margin-top: 6px; min-height: 16px; }
+      .tuneTiming b { color: var(--text); font-weight: normal; }
+      .tuneAllOption { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-top: 6px; cursor: pointer; }
+      .tuneAllOption input { flex: 0 0 14px; }
+      .tuneCaption { color: var(--dim); font-size: 12px; margin-top: 12px; }
+      .tuneTools { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+      .tuneTools button.ghost { margin-left: 0; }
+      /* One column per faction: every tuned value at a glance, so a faction that was
+         never tuned is as obvious as the one that was. */
+      table.factionTable th:nth-child(n + 2),
+      table.factionTable td:nth-child(n + 2) { text-align: right; }
+      table.factionTable td.untuned { color: #555555; }
+      /* Per-faction widths as ONE grid: the header cells and every input are siblings
+         in the same grid context, so a value can never drift from its heading. Before,
+         the header and the rows were separate grids and any width difference between
+         them shifted the columns. */
+      .playTuneGrid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 46px 46px 52px;
+        align-items: center;
+        column-gap: 8px;
+        row-gap: 2px;
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+        margin: 6px 0 10px;
+      }
+      .playTuneGrid > * { min-width: 0; }
+      .playTuneGrid > .head {
+        color: var(--dim);
+        padding-bottom: 3px;
+        border-bottom: 1px solid var(--line);
+      }
+      .playTuneGrid > .num { text-align: right; }
+      .playTuneGrid > .name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .playTuneGrid input {
+        /* An <input> carries an intrinsic width (from its default size attribute) and
+           grid items default to min-width: auto, so without this the field is painted
+           wider than its 46px track and overlaps the next column. */
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+        box-sizing: border-box;
+        height: 18px;
+        padding: 0 3px;
+        text-align: right;
+      }
+      /* The spinner is a second bordered box inside a box at this width. */
+      .playTuneGrid input::-webkit-outer-spin-button,
+      .playTuneGrid input::-webkit-inner-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+      }
+      .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+      .tab {
+        background: transparent;
+        border: 1px solid var(--line);
+        color: var(--dim);
+        padding: 4px 12px;
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .tab.on { color: var(--accent); border-color: var(--accent); }
+      /* The tuning tables are not the results table: no per-cell boxes, fixed layout so
+         they cannot grow past their column, and a single rule between rows. */
+      table.gridTable,
+      table.factionTable { table-layout: fixed; }
+      table.gridTable th,
+      table.gridTable td,
+      table.factionTable th,
+      table.factionTable td {
+        border: 0;
+        border-bottom: 1px solid var(--line-soft);
+        padding: 0 0.5ch;
+        height: 20px;
+      }
+      table.gridTable th,
+      table.factionTable th { border-bottom-color: var(--line); }
+      table.gridTable th:first-child { width: 10ch; }
+      table.factionTable th:first-child { width: 10ch; }
+      /* Numbers line up when every value column is the same width; the first column
+         takes whatever is left. */
+      table.factionTable th:nth-child(n + 2) { width: 62px; }
+      table.gridTable { margin-top: 6px; }
+      table.gridTable th { text-align: left; color: var(--dim); font-weight: normal; }
+      table.gridTable th:nth-child(n + 2), table.gridTable td:nth-child(n + 2) { text-align: right; }
+      table.gridTable tr.best td { color: var(--accent); }
+      /* The unfinished column exists to expose games cut off by the move cap. When a
+         run has none, a wall of zeros is noise, so the whole column is hidden. */
+      table.gridTable.hideUnfinished th:last-child,
+      table.gridTable.hideUnfinished td:last-child { display: none; }
+      table.resultsTable th:nth-child(7) { width: 8ch; }
+      table.resultsTable td:first-child { overflow: hidden; text-overflow: ellipsis; }
+      th, td {
+        height: 22px;
+        padding: 0 0.5ch;
+        text-align: right;
+        white-space: nowrap;
+        border: 1px solid var(--line-soft);
+      }
+      th {
+        height: 26px;
+        color: var(--text);
+        font-weight: bold;
+        background: var(--header-bg);
+        border-color: var(--line);
+      }
+      th:first-child, td:first-child { text-align: left; }
+      tr.total td { background: var(--selected-bg); font-weight: bold; }
+      .win { color: var(--accent); }
+      .loss { color: var(--bad); }
+      .warn { color: var(--warn); }
+      .capped { text-decoration: underline dotted; text-underline-offset: 2px; }
+      #history { list-style: none; margin: 0; padding: 0; }
+      #history li { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--line-soft); }
+      #history li span:first-child { color: var(--dim); }
+      /* Expandable game records: the header is the summary, the body the moves. */
+      #history li.open { display: block; }
+      .gameHead { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 3px 0; }
+      .gameHead:hover { background: var(--selected-bg); }
+      .gameHead .caret { color: var(--dim); width: 10px; }
+      .gameHead .dim { color: var(--dim); }
+      .gameHead span:last-child { margin-left: auto; }
+      .gameBody { padding: 4px 0 8px 18px; }
+      .gameBody .small, .small { font-size: 12px; }
+      .gameBody .dim, .dim { color: var(--dim); }
+      table.moves { width: 100%; font-size: 12px; }
+      table.moves th { text-align: left; }
+      table.moves td { white-space: nowrap; }
+      table.moves tr.hasBoard { cursor: pointer; }
+      table.moves tr.hasBoard:hover td { background: var(--selected-bg); }
+      .err { color: var(--bad); font-size: 12px; white-space: pre-wrap; margin-top: 8px; }
+      .gameOptions { display: flex; align-items: center; gap: 14px; font-size: 12px; margin: 2px 0 6px; }
+      .gameOptions .check { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+      .gameOptions button { flex: 0 0 auto; margin-left: auto; }
+      .lockBar { display: flex; align-items: center; gap: 8px; font-size: 12px; margin: 0 0 6px; }
+      /* The tuning form is a grid of short numbers, so each field keeps its label and
+         a narrow input on one line. Items fill down a column and then start the next
+         one, which keeps the related pair (faction, board size) together at the top of
+         the first column instead of spreading left to right. The inputs are
+         deliberately small: at the panel's default 150px they were mostly empty space
+         around a two-digit value. */
+      .tuneFields {
+        display: grid;
+        grid-auto-flow: column;
+        grid-template-rows: repeat(4, auto);
+        grid-auto-columns: minmax(184px, max-content);
+        justify-content: start;
+        gap: 4px 22px;
+        margin: 8px 0 12px;
+      }
+      .tuneFields label.field { margin-bottom: 0; }
+      .tuneFields input { width: 64px; flex: 0 0 64px; }
+      /* .dd is the element drawn in place of a <select>; it carries its own
+         flex-basis, so it is sized here instead of being left at the 150px default. */
+      .tuneFields .dd { width: 104px; flex: 0 0 104px; }
+      #tuneFaction + .dd { width: 130px; flex: 0 0 130px; }
+      .tuneFields label.field span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .rangeCell { display: flex; align-items: center; gap: 6px; }
+      .rangeCell input { width: 58px; flex: 0 0 58px; text-align: right; }
+      .rangeCell span { color: var(--dim); font-size: 11px; }
+      .lockBar .small { color: var(--dim); margin-right: auto; }
+      .lockBar button { flex: 0 0 auto; }
+      .gameTools { display: flex; gap: 6px; align-items: center; margin: 6px 0; }
+      .gameTools button { flex: 0 0 auto; }
+      /* Coloured by what the roll did, not by what was attempted: green kept the stone,
+         red lost the attempt (and maybe the game). Amber is "outcome not recorded". */
+      .cheatTag {
+        display: inline-block;
+        margin-left: 4px;
+        padding: 0 4px;
+        border-radius: 3px;
+        background: #4a2d12;
+        color: #ffb861;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        white-space: nowrap;
+      }
+      .cheatTag.ok { background: #14361a; color: #7fdc8b; }
+      .cheatTag.fail { background: #3d1717; color: #ff8f8f; }
+      pre.explain {
+        font-family: monospace;
+        font-size: 12px;
+        line-height: 15px;
+        margin: 6px 0 0;
+        padding: 8px;
+        border: 1px solid var(--line-soft);
+        background: var(--panel-2);
+        overflow-x: auto;
+        max-height: 640px;
+        overflow-y: auto;
+      }
+      @media (max-width: 1440px) {
+        main { grid-template-columns: 340px minmax(0, 1fr); }
+        main > section:last-child { grid-column: 1 / -1; }
+      }
+      @media (max-width: 860px) {
+        main { grid-template-columns: minmax(0, 1fr); }
+        main > section:last-child { grid-column: auto; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>IPvGO exploiter bench</h1>
+      <label class="enginePick">
+        <span>Build</span>
+        <select id="engineBuild" title="Which compiler built the engine the server spawns">
+          <option value="clang">clang-cl</option>
+          <option value="msvc">cl.exe</option>
+        </select>
+      </label>
+      <span id="status" class="pill">idle</span>
+      <span class="small dim" id="pageVersion" title="Bumped whenever this page's request logic changes. If this does not match the version in the README, the browser is running a cached copy - hard-reload with Ctrl+Shift+R."></span>
+      <button id="restartServer" class="ghost" title="Restart the engine server (needs pnpm run server:dev)">Restart server</button>
+    </header>
+
+    <main>
+      <section>
+        <h2>Run</h2>
+        <div class="chips" id="factions"></div>
+        <label class="field"><span>Board size</span>
+          <select id="size">
+            <option>5</option><option>7</option><option>9</option><option>13</option><option>19</option>
+          </select>
+        </label>
+        <label class="field"><span>Budget type</span>
+          <select id="budgetMode">
+            <option value="time">Time</option>
+            <option value="iterations">Nodes</option>
+            <option value="depth">Depth</option>
+          </select>
+        </label>
+        <label class="field"><span id="budgetLabel">Think budget (ms)</span><input id="budget" type="number" min="1" step="50" placeholder="200" /></label>
+        <label class="field" id="depthField" style="display: none"><span title="Black moves deep; each Black move also expands White's replies">Depth</span><input id="depth" type="number" min="1" max="24" placeholder="2" /></label>
+        <label class="field" id="nodeCapField" style="display: none"><span title="Optional cap. The search runs iterative deepening up to Depth and stops at this many nodes, so a deep run cannot balloon.">Node cap (0 = none)</span><input id="nodeCap" type="number" min="0" step="10000" placeholder="0" /></label>
+        <label class="field"><span>Games per faction</span><input id="games" type="number" min="1" placeholder="20" /></label>
+        <label class="field"><span>Seed</span><input id="seed" type="number" min="1" placeholder="1" /></label>
+        <details id="tuning">
+          <summary>Search tuning</summary>
+          <div class="playTuneGrid" id="playTuningRows"></div>
+          <div class="tuneTools">
+            <button id="tuneImport" class="ghost" title="Replace the whole per-faction tuning store from a file">Import file...</button>
+            <button id="tuneExport" class="ghost" title="Save the whole per-faction tuning store to a dated file">Export file</button>
+            <button id="tuneReset" class="ghost" title="Clear the tuning stored for every faction">Reset all</button>
+            <span id="tuneFileNote" class="small dim"></span>
+            <input type="file" id="tuneImportFile" accept=".json,application/json" style="display: none" />
+          </div>
+          <label class="field"><span title="Empty points at which the endgame is solved exactly">Endgame empties</span><input id="endgameEmpties" type="number" min="0" max="20" placeholder="6" /></label>
+          <label class="field"><span title="Node cap for the endgame solve">Endgame node cap</span><input id="nodeBudget" type="number" min="1000" step="1000" placeholder="30000" /></label>
+          <label class="field"><span title="Ceiling for iterative deepening. Blank or 0 uses the default of 10. With Auto depth on this only caps the derived ceiling.">Max depth (0 = default)</span><input id="maxDepth" type="number" min="0" max="64" placeholder="10" /></label>
+          <label class="field"><span title="Search threads (0 = all cores)">Threads</span><input id="threads" type="number" min="0" max="64" placeholder="0" /></label>
+          <label class="field"><span title="Play several games at once, one search thread each, instead of one game with many threads. Independent games scale with the core count where parallel search inside one game does not, and every game is seeded from (seed, faction, game number) - so the results are identical either way; only the wall clock changes.">Parallel games (1 thread each)</span><span class="fieldToggle"><input id="parallelGames" type="checkbox" /></span></label>
+          <label class="field"><span title="Reuse exact search results across the moves of a game. Same answers as a fresh search, with less work.">Carry memo</span><span class="fieldToggle"><input id="carry" type="checkbox" /></span></label>
+          <label class="field"><span title="Run the playout engine instead of the policy exploiter. It reads the budget the other way round: iterations becomes playouts per move, and the time budget stays a wall-clock cap. It is a Monte Carlo graph search: every move plays games out to a finished board and keeps what it counted. 5x5 boards only.">Playout engine</span><span class="fieldToggle"><input id="playoutEngine" type="checkbox" /></span></label>
+          <div class="small dim" id="runEngine" title="The search engine the current or last run was started with, as the server recorded it. A playout run reports depth 0 on every move; the exploiter reports the depth it reached.">search: -</div>
+          <label class="field"><span title="Off: every worker gets a fixed slice of the node budget (repeatable, but a ply is discarded the moment one root move outgrows its slice). On: workers claim the next root move as they finish and split what is left, which is what play uses - stronger at high thread counts, but a run does not repeat exactly.">Dynamic scheduler</span><span class="fieldToggle"><input id="dynamicRoot" type="checkbox" /></span></label>
+          <label class="field"><span title="Evaluate the ns.go.cheat moves too, and play one when it beats the best legal move by the margin, every legal move makes the position worse and the game is being lost (best move still under 50%), at most twice per game. The search prices it as an expectation over the success roll (0.6*(0.7-0.02n)^n*crimeSuccess, +0.25 at Source-File 14.3); the game rolls once, so a failed attempt skips our turn and, after a prior attempt, ejects us 10% of the time. Off by default.">Cheats (ns.go.cheat)</span><span class="fieldToggle"><input id="cheats" type="checkbox" /></span></label>
+          <label class="field"><span title="Adds a flat +25 percentage points to every cheat attempt: the game's Source-File 14 bonus, which only applies at level 3. Only affects anything with Cheats on.">SF14.3 cheat bonus</span><span class="fieldToggle"><input id="sf14Bonus" type="checkbox" /></span></label>
+          <label class="field"><span title="How many cheat attempts one game may spend. Each attempt after the first also rolls a 10% ejection on a miss, so a cap bounds what a lost game can cost: 0 never cheats, 99 is effectively uncapped. Measured on 1000 5x5 games: 2 attempts 966 wins, 3 attempts 973, uncapped 979.">Cheat attempts per game</span><input id="cheatAttempts" type="number" min="0" max="99" step="1" placeholder="2" /></label>
+          <label class="field"><span title="How much better than the best legal move a cheat has to be, in search-value units (roughly win probability). Higher means fewer, better-timed attempts: 0.1 is the default, 0.3 measured the same win rate with 30% fewer attempts.">Cheat margin</span><input id="cheatMargin" type="number" min="0" max="1" step="0.05" placeholder="0.1" /></label>
+          <label class="field"><span title="On: an attempt also requires the game to be lost on the numbers (the best legal move under 50%), so a cheat is never spent while a move holds the game. Off: the old rule, which will spend attempts in won positions - it cheated in 208 of 1000 games instead of 87 for the same score, and a lost ejection on a winning position is how a 4.5-point lead becomes a loss.">Cheat only when losing</span><span class="fieldToggle"><input id="cheatLosing" type="checkbox" /></span></label>
+          <div class="switchGroup">
+            <div class="switchHead" title="Changes to the deepening loop that arrived on 11-12 Nov. All off, because they measured slightly worse than what they replaced: 1 080 games on 5x5 at a 1 000-node budget came out 2.3 points behind, spending 14% fewer nodes per move. Turn one on to measure it.">Deepening switches (off = pre-11-Nov behaviour)</div>
+            <label class="field"><span title="Derive the depth ceiling from the position (two half-moves per empty point) instead of using Max depth. With it off, Max depth is the ceiling and 0 means 10.">Auto depth</span><span class="fieldToggle"><input id="autoDepth" type="checkbox" /></span></label>
+            <label class="field"><span title="Enforce the node and time budget per move instead of per depth iteration, and stop before starting an iteration the remaining budget cannot afford. Note that this makes the same Iterations value mean less search.">Per-move budget</span><span class="fieldToggle"><input id="perMoveBudget" type="checkbox" /></span></label>
+            <label class="field"><span title="After deepening ends, retry the completed depth with a wider beam and more replies while budget remains, keeping the better answer.">Widen at the root</span><span class="fieldToggle"><input id="widen" type="checkbox" /></span></label>
+            <label class="field"><span title="At the first White ply, keep every reply in the model instead of the top `Replies kept` covering `Reply mass cap`, so a move cannot be chosen because the reply that refutes it fell outside the mass. Deeper plies are unchanged. Costs roughly (replies kept -> all) more nodes at that ply, which is what depth then loses.">Verify all replies at the root</span><span class="fieldToggle"><input id="verifyRootReplies" type="checkbox" /></span></label>
+          </div>
+        </details>
+        <div class="buttons">
+          <button id="start" class="primary">Start</button>
+          <div class="small dim" id="startHint" title="Exactly what the Start button will ask the server for, read the same way the request reads it.">Start will ask for: -</div>
+          <button id="stop">Stop</button>
+        </div>
+        <div class="tuneTiming" id="runEta"></div>
+      </section>
+
+      <section>
+        <div class="tabs">
+          <button id="tabBoard" class="tab on">Board</button>
+          <button id="tabTune" class="tab">Tuning</button>
+        </div>
+        <div id="boardPane">
+          <div id="boardWrap">
+            <div id="board"></div>
+            <div class="info" id="info"></div>
+          </div>
+        </div>
+        <div id="tunePane" style="display: none">
+          <p class="dim small">
+            Genetic search over beam, replies kept and the reply mass cap for one faction. Every genome in a
+            generation plays the same games, games run in parallel, and the winner is re-measured against the
+            defaults on seeds the search never saw. Starting again continues from the best genome found so far.
+            The search itself - carry memo, endgame, max depth and the deepening switches - is whatever the
+            Run pane holds, so a genome is measured with the search that will play with it. Each game searches
+            on one thread, so Run's Threads and Dynamic scheduler do not apply here.
+          </p>
+          <div class="tuneFields">
+            <label class="field"><span>Faction</span>
+              <select id="tuneFaction">
+                <option>Netburners</option>
+                <option>Slum Snakes</option>
+                <option>The Black Hand</option>
+                <option>Tetrads</option>
+                <option>Daedalus</option>
+                <option selected>Illuminati</option>
+              </select>
+            </label>
+            <label class="field"><span>Board size</span>
+              <select id="tuneSize"><option>5</option><option>7</option><option>9</option></select>
+            </label>
+            <label class="field"><span>Generations</span><input id="tuneGenerations" type="number" min="1" max="60" value="6" /></label>
+            <label class="field"><span>Population</span><input id="tunePopulation" type="number" min="2" max="40" value="10" /></label>
+            <label class="field"><span title="Games each genome plays on the shared training seeds">Games per genome</span><input id="tuneGames" type="number" min="4" max="100000" value="24" /></label>
+            <label class="field"><span title="Per-move node budget for the tuning games. Max depth and the endgame node cap come from the Run pane.">Node limit</span><input id="tuneNodeLimit" type="number" min="100" max="5000000" step="100" value="1000" /></label>
+            <label class="field"><span title="Games in flight at once. Each one searches on a single thread.">Parallel games</span><input id="tuneThreads" type="number" min="1" max="64" value="8" /></label>
+            <label class="field"><span>Seed</span><input id="tuneSeed" type="number" min="1" value="1" /></label>
+          </div>
+          <div class="small dim" id="tuneInherited"></div>
+          <div class="buttons">
+            <button id="tuneStart" class="primary">Start tuning</button>
+            <button id="tuneRestart" class="ghost" title="Ignore the stored best and search from the shipped defaults again.">
+              Start from defaults
+            </button>
+            <button id="tuneAll" class="ghost" title="Run every faction in turn with these settings and store each winner for play. Runs on the server, so the page can be closed.">
+              Tune all factions
+            </button>
+            <button id="tuneStop">Stop</button>
+          </div>
+          <label class="check tuneAllOption" title="Store each faction's winner as its play setting when its run finishes.">
+            <input id="tuneAllApply" type="checkbox" checked /> store each result for play when it finishes
+          </label>
+          <label class="check tuneAllOption" title="Each faction continues from its own stored best. Uncheck to search every faction from a fresh random population instead.">
+            <input id="tuneAllResume" type="checkbox" checked /> continue from each faction's best
+          </label>
+          <div class="tuneTiming" id="tuneTiming"></div>
+          <div class="small" id="tuneStatus">idle</div>
+          <div class="tuneTiming" id="tuneProgress"></div>
+          <div class="tuneTiming" id="tuneEta"></div>
+          <div class="small dim" id="tuneRunFile"></div>
+          <div class="err" id="tuneError"></div>
+
+          <table class="gridTable" id="tuneGeneTable">
+            <thead>
+              <tr><th>gene</th><th>range</th><th>best found</th><th>stored for play</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>beam</td>
+                <td class="rangeCell">
+                  <input id="boxBeamMin" type="number" min="1" max="64" value="2" />
+                  <span>to</span>
+                  <input id="boxBeamMax" type="number" min="1" max="64" value="24" />
+                </td>
+                <td id="bestBeam">-</td>
+                <td id="storedBeam">-</td>
+              </tr>
+              <tr>
+                <td>replies</td>
+                <td class="rangeCell">
+                  <input id="boxRepliesMin" type="number" min="1" max="64" value="1" />
+                  <span>to</span>
+                  <input id="boxRepliesMax" type="number" min="1" max="64" value="16" />
+                </td>
+                <td id="bestReplies">-</td>
+                <td id="storedReplies">-</td>
+              </tr>
+              <tr>
+                <td>mass cap</td>
+                <td class="rangeCell">
+                  <input id="boxMassMin" type="number" min="0.01" max="1" step="0.01" value="0.05" />
+                  <span>to</span>
+                  <input id="boxMassMax" type="number" min="0.01" max="1" step="0.01" value="1" />
+                </td>
+                <td id="bestMass">-</td>
+                <td id="storedMass">-</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="small dim" id="tuneBestNote" style="margin-top: 4px"></div>
+
+          <div class="tuneCaption" id="tuneRowsCaption" style="display: none">newest generation</div>
+          <table class="gridTable">
+            <thead>
+              <tr><th>#</th><th>beam</th><th>replies</th><th>mass</th><th>win %</th><th>margin</th><th>unfinished</th></tr>
+            </thead>
+            <tbody id="tuneRows"></tbody>
+          </table>
+
+          <div class="tuneCaption" id="tuneValidationCaption" style="display: none">held-back validation</div>
+          <table class="gridTable">
+            <thead>
+              <tr><th>set</th><th>beam</th><th>replies</th><th>mass</th><th>win %</th><th>margin</th><th>unfinished</th></tr>
+            </thead>
+            <tbody id="tuneValidation"></tbody>
+          </table>
+          <button id="tuneApply" class="ghost" style="margin-top: 10px" disabled>Store as current setting for play</button>
+          <button id="tuneClear" class="ghost" style="margin-top: 10px">Clear stored setting</button>
+
+          <div class="tuneCaption">stored for play, one column per faction</div>
+          <table class="gridTable factionTable">
+            <thead id="storedHead"></thead>
+            <tbody id="storedBody"></tbody>
+          </table>
+
+          <div class="tuneCaption">best found so far (the next "Continue" resumes from this)</div>
+          <table class="gridTable factionTable">
+            <thead id="bestHead"></thead>
+            <tbody id="bestBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <h2>Results</h2>
+        <div class="tableScroll">
+          <table class="resultsTable">
+            <thead>
+              <tr><th>faction</th><th>games</th><th>W</th><th>L</th><th>win %</th><th>margin</th><th>ms</th></tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+        <h2 style="margin-top: 14px">Games</h2>
+        <div class="gameOptions">
+          <label class="check" title="Hide games Black won."><input id="onlyLosses" type="checkbox" /> only losses</label>
+          <label class="check" title="Write a text explanation of every loss to ipvgo-engine/temp/lost-games/.">
+            <input id="writeLosses" type="checkbox" /> write loss files
+          </label>
+          <span class="dim small" id="gameCount"></span>
+          <button
+            id="lockLosses"
+            class="ghost"
+            title="Keep this batch's losses as a fixed set, to re-run under other search settings."
+          >
+            Lock losses
+          </button>
+        </div>
+        <div class="lockBar" id="lockBar">
+          <span id="lockInfo" class="small"></span>
+          <button id="replayLocked" class="ghost" title="Play exactly the locked games with the settings above.">
+            Replay locked
+          </button>
+          <button id="clearLock" class="ghost" title="Forget the locked set.">Clear lock</button>
+        </div>
+        <ul id="history"></ul>
+        <div class="err" id="error"></div>
+      </section>
+    </main>
+
+    <script>
+      const ALL_FACTIONS = ["Netburners", "Slum Snakes", "The Black Hand", "Tetrads", "Daedalus", "Illuminati"]
+      // Everything the widths grid can tune. The hidden faction's subnet is only reachable on
+      // 19x19, so it is never a chip, but its widths still need a place to live.
+      const TUNING_FACTIONS = [...ALL_FACTIONS, "WorldDaemon"]
+      const selected = new Set(ALL_FACTIONS)
+      // The chips, the run order and the Results table all follow ALL_FACTIONS. `selected`
+      // is a Set, so a faction that is clicked off and back on moves to the end of it;
+      // sending that order made the results disagree with the list above them. Unknown
+      // names (WorldDaemon on 19x19) sort last, and the sort is stable, so they keep
+      // their relative order.
+      const factionRank = (name) => {
+        const at = ALL_FACTIONS.indexOf(name)
+        return at < 0 ? ALL_FACTIONS.length : at
+      }
+      const inListOrder = (names) => names.slice().sort((a, b) => factionRank(a) - factionRank(b))
+      // Built with fromCharCode so the source stays ASCII: the glyphs are only
+      // presentation and a stray backslash in a template literal renders literally.
+      const CARET_OPEN = String.fromCharCode(0x25be)
+      const CARET_CLOSED = String.fromCharCode(0x25b8)
+
+      // The server pushes half-moves over SSE; the page queues them and plays
+      // one per FRAME_MS so both sides stay visible without falling behind.
+      const FRAME_MS = 80
+      const FRAME_MAX_BACKLOG = 60
+      let lastFrameSeq = 0
+      let frameQueue = []
+      let displayed = null
+      let nextFrameAt = 0
+      let stream = null
+      let pollTimer = null
+      let serverId = null
+      let restartWatchdog = null
+      const dirty = { status: true, rows: true, history: true, info: true, board: true }
+      let state = { running: false, finished: false, rows: [], history: [], current: null, options: null }
+      // The budget box means different units per mode, so each mode keeps its own
+      // value and switching back and forth restores what was typed there.
+      let budgetMemory = { time: "", iterations: "" }
+      let previousBudgetMode = null
+
+      // The page is served by the engine server, but it still works when opened
+      // straight from disk as long as the server runs on its default port.
+      const API_BASE =
+        location.protocol === "file:" ? "http://localhost:3010" : ""
+
+      const STORAGE_KEY = "ipvgo-bench-form-v1"
+      // What a playout run gets when the form's budget is not a playout count. Kept in step with
+      // PlayoutConfig::playoutsPerMove in the engine, so the number in the box is the number that
+      // runs.
+      const PLAYOUT_DEFAULT_PLAYOUTS = 10000
+      // Bumped whenever the request logic in this page changes: a stale cached page is
+      // otherwise indistinguishable from a control that does not work, because both look
+      // like "I set it and the server did something else".
+      const PAGE_VERSION = "2026-11-14-playout-4"
+      const TUNING_IDS = [
+        "endgameEmpties",
+        "nodeBudget",
+        "maxDepth",
+        "threads",
+      ]
+      // The three width settings are per faction, so they live in their own inputs
+      // rather than in the shared tuning fields above.
+      const PLAY_TUNING_DEFAULTS = { beam: 12, whiteChildren: 6, whiteMass: 0.9 }
+      const PLAY_TUNING_KEY = "ipvgo-play-tuning-v1"
+      let playTuning = {}
+      const DEFAULT_FORM = {
+        size: "5",
+        budgetMode: "time",
+        budget: "",
+        budgetByMode: { time: "", iterations: "" },
+        depth: "",
+        nodeCap: "",
+        games: "",
+        seed: "",
+        factions: ALL_FACTIONS.slice(),
+        tuning: {},
+        tuningOpen: false,
+        carry: false,
+        playoutEngine: false,
+        dynamicRoot: false,
+        autoDepth: false,
+        perMoveBudget: false,
+        widen: false,
+        verifyRootReplies: false,
+        cheats: false,
+        sf14Bonus: false,
+        cheatAttempts: "",
+        cheatMargin: "",
+        cheatLosing: true,
+        parallelGames: false,
+      }
+
+      const el = (id) => document.getElementById(id)
+
+      function readForm() {
+        const tuning = {}
+        for (const id of TUNING_IDS) tuning[id] = el(id).value
+        return {
+          size: el("size").value,
+          budgetMode: el("budgetMode").value,
+          budget: el("budget").value,
+          budgetByMode: { ...budgetMemory },
+          depth: el("depth").value,
+          nodeCap: el("nodeCap").value,
+          games: el("games").value,
+          seed: el("seed").value,
+          factions: inListOrder(Array.from(selected)),
+          tuning,
+          tuningOpen: el("tuning").open,
+          carry: el("carry").checked,
+          playoutEngine: el("playoutEngine").checked,
+          dynamicRoot: el("dynamicRoot").checked,
+          autoDepth: el("autoDepth").checked,
+          perMoveBudget: el("perMoveBudget").checked,
+          widen: el("widen").checked,
+          verifyRootReplies: el("verifyRootReplies").checked,
+          cheats: el("cheats").checked,
+          sf14Bonus: el("sf14Bonus").checked,
+          cheatAttempts: el("cheatAttempts").value,
+          cheatMargin: el("cheatMargin").value,
+          cheatLosing: el("cheatLosing").checked,
+          parallelGames: el("parallelGames").checked,
+        }
+      }
+
+      function saveForm() {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(readForm()))
+        } catch {
+          /* storage disabled */
+        }
+      }
+
+      // Empty inputs show their default as a grey placeholder; this reads the
+      // typed value or falls back to that placeholder.
+      function numberOf(id) {
+        const raw = el(id).value.trim()
+        return Number(raw === "" ? el(id).placeholder : raw)
+      }
+
+      function orDefault(value) {
+        return value === undefined || value === null ? "" : String(value)
+      }
+
+      function loadForm() {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY)
+          if (!raw) return { ...DEFAULT_FORM }
+          const stored = JSON.parse(raw)
+          const budgetMode =
+            stored.budgetMode === "iterations" || stored.budgetMode === "depth" ? stored.budgetMode : "time"
+          const factions = Array.isArray(stored.factions)
+            ? stored.factions.filter((f) => ALL_FACTIONS.includes(f))
+            : DEFAULT_FORM.factions.slice()
+          const tuning = {}
+          for (const id of TUNING_IDS) {
+            const value = stored.tuning?.[id]
+            tuning[id] = orDefault(value)
+          }
+          return {
+            size: String(stored.size ?? DEFAULT_FORM.size),
+            budgetMode,
+            budget: orDefault(stored.budget),
+            budgetByMode: {
+              time: orDefault(stored.budgetByMode?.time),
+              iterations: orDefault(stored.budgetByMode?.iterations),
+            },
+            depth: orDefault(stored.depth),
+            nodeCap: orDefault(stored.nodeCap),
+            games: orDefault(stored.games),
+            seed: orDefault(stored.seed),
+            factions: factions.length > 0 ? factions : DEFAULT_FORM.factions.slice(),
+            tuning,
+            tuningOpen: stored.tuningOpen === true,
+            carry: stored.carry === true,
+            playoutEngine: stored.playoutEngine === true,
+            dynamicRoot: stored.dynamicRoot === true,
+            autoDepth: stored.autoDepth === true,
+            perMoveBudget: stored.perMoveBudget === true,
+            widen: stored.widen === true,
+            verifyRootReplies: stored.verifyRootReplies === true,
+            cheats: stored.cheats === true,
+            sf14Bonus: stored.sf14Bonus === true,
+            cheatAttempts: orDefault(stored.cheatAttempts),
+            cheatMargin: orDefault(stored.cheatMargin),
+            cheatLosing: stored.cheatLosing !== false,
+            parallelGames: stored.parallelGames === true,
+          }
+        } catch {
+          return { ...DEFAULT_FORM }
+        }
+      }
+
+      function applyForm(form) {
+        el("size").value = form.size
+        el("budgetMode").value = form.budgetMode
+        el("budget").value = form.budget
+        el("depth").value = form.depth ?? ""
+        el("nodeCap").value = form.nodeCap ?? ""
+        budgetMemory = { ...DEFAULT_FORM.budgetByMode, ...(form.budgetByMode ?? {}) }
+        previousBudgetMode = form.budgetMode
+        el("games").value = form.games
+        el("seed").value = form.seed
+        for (const id of TUNING_IDS) el(id).value = form.tuning?.[id] ?? ""
+        el("tuning").open = form.tuningOpen === true
+        el("carry").checked = form.carry === true
+        el("playoutEngine").checked = form.playoutEngine === true
+        el("dynamicRoot").checked = form.dynamicRoot === true
+        el("autoDepth").checked = form.autoDepth === true
+        el("perMoveBudget").checked = form.perMoveBudget === true
+        el("widen").checked = form.widen === true
+        el("verifyRootReplies").checked = form.verifyRootReplies === true
+        el("cheats").checked = form.cheats === true
+        el("sf14Bonus").checked = form.sf14Bonus === true
+        el("cheatAttempts").value = form.cheatAttempts ?? ""
+        el("cheatMargin").value = form.cheatMargin ?? ""
+        el("cheatLosing").checked = form.cheatLosing !== false
+        el("parallelGames").checked = form.parallelGames === true
+        selected.clear()
+        for (const faction of form.factions) selected.add(faction)
+        updateBudgetLabel()
+      }
+
+      function updateBudgetLabel() {
+        const mode = el("budgetMode").value
+        const iterations = mode === "iterations"
+        const depth = mode === "depth"
+        el("budgetLabel").style.display = depth ? "none" : ""
+        el("budget").style.display = depth ? "none" : ""
+        el("depthField").style.display = depth ? "" : "none"
+        el("nodeCapField").style.display = depth ? "" : "none"
+        el("budgetLabel").textContent = iterations ? "Node budget" : "Think budget (ms)"
+        el("budget").step = iterations ? "1000" : "50"
+        el("budget").placeholder = iterations ? "50000" : "200"
+      }
+
+      // View options, stored apart from the run form because they only change how
+      // the archive is shown, not what is sent to the engine.
+      const VIEW_KEY = "ipvgo-bench-view-v1"
+
+      function loadViewOptions() {
+        try {
+          const stored = JSON.parse(localStorage.getItem(VIEW_KEY) ?? "{}")
+          el("onlyLosses").checked = stored.onlyLosses === true
+          el("writeLosses").checked = stored.writeLosses === true
+        } catch {
+          /* storage disabled */
+        }
+      }
+
+      function saveViewOptions() {
+        try {
+          localStorage.setItem(
+            VIEW_KEY,
+            JSON.stringify({ onlyLosses: el("onlyLosses").checked, writeLosses: el("writeLosses").checked })
+          )
+        } catch {
+          /* storage disabled */
+        }
+      }
+
+      for (const id of ["onlyLosses", "writeLosses"]) {
+        el(id).addEventListener("change", () => {
+          saveViewOptions()
+          markDirty("history")
+        })
+      }
+
+      // ---- locked game sets -------------------------------------------------
+      // A game is fully determined by the batch seed, its faction and its number, so
+      // locking only has to remember those. Replaying then puts the engine back on
+      // exactly the same
+      // board with the same White replies and plays it under new search settings:
+      // that is what makes a locked set a tuning regression test.
+      const LOCK_KEY = "ipvgo-bench-lock-v1"
+      let locked = null
+
+      const gameKey = (game) => `${game.faction}#${game.game}`
+
+      function lockedGame(game) {
+        if (!locked) return null
+        return locked.games.find((entry) => gameKey(entry) === gameKey(game)) ?? null
+      }
+
+      function loadLock() {
+        try {
+          const stored = JSON.parse(localStorage.getItem(LOCK_KEY) ?? "null")
+          locked = stored && Array.isArray(stored.games) && stored.games.length > 0 ? stored : null
+        } catch {
+          locked = null
+        }
+        renderLock()
+      }
+
+      function saveLock() {
+        try {
+          if (locked) localStorage.setItem(LOCK_KEY, JSON.stringify(locked))
+          else localStorage.removeItem(LOCK_KEY)
+        } catch {
+          /* storage disabled */
+        }
+      }
+
+      function lockLosses() {
+        const losses = (state.archive ?? []).filter((game) => !game.win)
+        if (losses.length === 0) return
+        const options = state.options ?? {}
+        locked = {
+          size: options.size ?? Number(el("size").value),
+          seed: options.seed ?? Number(el("seed").value),
+          savedAt: new Date().toISOString(),
+          games: losses.map((game) => ({
+            faction: game.faction,
+            game: game.game,
+            seed: game.seed ?? 0,
+            win: game.win,
+            margin: game.margin,
+          })),
+        }
+        saveLock()
+        renderLock()
+        markDirty("history")
+      }
+
+      // The bar says what is locked and, once a batch has replayed it, how that
+      // batch did on those games.
+      function renderLock() {
+        const archive = state.archive ?? []
+        const losses = archive.filter((game) => !game.win)
+        const lockButton = el("lockLosses")
+        lockButton.disabled = losses.length === 0
+        lockButton.textContent = losses.length ? `Lock losses (${losses.length})` : "Lock losses"
+        const bar = el("lockBar")
+        if (!locked) {
+          bar.style.display = "none"
+          el("lockInfo").textContent = ""
+          return
+        }
+        bar.style.display = ""
+        const replayed = archive.filter((game) => lockedGame(game))
+        const stillLost = replayed.filter((game) => !game.win).length
+        el("lockInfo").textContent =
+          `locked: ${locked.games.length} games from seed ${locked.seed} (${locked.size}x${locked.size})` +
+          (replayed.length > 0 ? ` - this batch: ${replayed.length - stillLost} won, ${stillLost} still lost` : "")
+      }
+
+      el("lockLosses").addEventListener("click", lockLosses)
+      el("clearLock").addEventListener("click", () => {
+        locked = null
+        saveLock()
+        renderLock()
+        markDirty("history")
+      })
+      el("replayLocked").addEventListener("click", () => void startBench(replayBody()))
+
+      // A replay keeps the locked board size and seed - those define the games -
+      // and takes every other setting, the budget included, from the form.
+      function replayBody() {
+        if (!locked) return null
+        return {
+          size: locked.size,
+          seed: locked.seed,
+          replay: locked.games.map((game) => ({
+            faction: game.faction,
+            game: game.game,
+            seed: game.seed ?? 0,
+          })),
+        }
+      }
+
+      function renderFactionChips() {
+        const size = Number(el("size").value)
+        const worldDaemon = size === 19
+        const wrap = el("factions")
+        wrap.innerHTML = ""
+        const list = worldDaemon ? ["WorldDaemon"] : ALL_FACTIONS
+        for (const faction of list) {
+          const chip = document.createElement("div")
+          chip.className = "chip" + (selected.has(faction) || worldDaemon ? " on" : "")
+          chip.textContent = faction
+          chip.addEventListener("click", () => {
+            if (worldDaemon) return
+            if (selected.has(faction)) selected.delete(faction)
+            else selected.add(faction)
+            renderFactionChips()
+            saveForm()
+          })
+          wrap.appendChild(chip)
+        }
+      }
+
+      // The board is drawn the way the in-game tail draws it (src/libraries/ipvgo/
+      // boardSvgs.ts + display.ts): 48px cells, a coordinate row and column,
+      // liberty arms in the owner's colour, and a ring on each side's last move.
+      const CELL_PX = 48
+      const VIEW = 24
+      const CENTER = VIEW / 2
+      const STONE_R = 7
+      const LIBERTY_WHITE = "#893BC8"
+      const LIBERTY_BLACK = "#43BF43"
+      const COLUMN_LETTERS = "ABCDEFGHJKLMNOPQRSTUVWXYZ"
+
+      function cellSvg(children) {
+        return `<svg width="${CELL_PX}" height="${CELL_PX}" viewBox="0 0 ${VIEW} ${VIEW}" style="display:block;flex-shrink:0;overflow:visible">${children.join("")}</svg>`
+      }
+
+      function coordCell(label) {
+        const fontSize = label.length >= 2 ? 9 : 11
+        return cellSvg([
+          `<text x="${CENTER}" y="${CENTER}" text-anchor="middle" dominant-baseline="middle" fill="#888888" font-size="${fontSize}" font-family="monospace">${label}</text>`,
+        ])
+      }
+
+      function boardCellSvg(board, x, y, highlight) {
+        const n = board.length
+        const at = (cx, cy) => (cx >= 0 && cy >= 0 && cx < n && cy < n ? (board[cx][cy] === "X" || board[cx][cy] === "O" || board[cx][cy] === "#" ? board[cx][cy] : ".") : null)
+        // north = y + 1, south = y - 1, as in the game's findNeighbors.
+        const north = at(x, y + 1)
+        const east = at(x + 1, y)
+        const south = at(x, y - 1)
+        const west = at(x - 1, y)
+        const rawCell = board[x]?.[y]
+        const raw = rawCell === "X" || rawCell === "O" || rawCell === "#" ? rawCell : "."
+        const layers = []
+        const line = (x1, y1, x2, y2, color) =>
+          `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="1.2" stroke-linecap="butt" />`
+
+        if (raw === "X" || raw === "O") {
+          const color = raw === "O" ? LIBERTY_WHITE : LIBERTY_BLACK
+          const connects = (cell) => cell === "." || cell === raw
+          const ally = (cell) => cell === raw
+          if (connects(north) && !ally(north)) layers.push(line(CENTER, CENTER, CENTER, 0, color))
+          if (connects(south)) layers.push(line(CENTER, CENTER, CENTER, ally(south) ? CENTER + VIEW : VIEW, color))
+          if (connects(east)) layers.push(line(CENTER, CENTER, ally(east) ? CENTER + VIEW : VIEW, CENTER, color))
+          if (connects(west) && !ally(west)) layers.push(line(CENTER, CENTER, 0, CENTER, color))
+        } else if (raw === ".") {
+          const near = [north, east, south, west]
+          const hasWhite = near.includes("O")
+          const hasBlack = near.includes("X")
+          const color = hasWhite && !hasBlack ? LIBERTY_WHITE : hasBlack && !hasWhite ? LIBERTY_BLACK : "#555555"
+          layers.push(`<circle cx="${CENTER}" cy="${CENTER}" r="1.2" fill="${color}" />`)
+        }
+
+        if (raw === "X") {
+          layers.push(`<circle cx="${CENTER}" cy="${CENTER}" r="${STONE_R}" fill="#1c1c1c" />`)
+          layers.push(`<circle cx="${CENTER - 2.8}" cy="${CENTER - 2.8}" r="1.5" fill="rgba(255,255,255,0.12)" />`)
+        } else if (raw === "O") {
+          layers.push(`<circle cx="${CENTER}" cy="${CENTER}" r="${STONE_R}" fill="#D1D1D1" stroke="#555555" stroke-width="1.2" />`)
+          layers.push(`<circle cx="${CENTER - 2.8}" cy="${CENTER - 2.8}" r="1.5" fill="#E8E8E8" />`)
+        } else if (raw === "#") {
+          layers.push(`<rect x="5" y="5" width="14" height="14" fill="#2a2a2a" rx="1.5" />`)
+          layers.push(`<line x1="7" y1="7" x2="17" y2="17" stroke="#555" stroke-width="1.2" />`)
+          layers.push(`<line x1="17" y1="7" x2="7" y2="17" stroke="#555" stroke-width="1.2" />`)
+        }
+        if (highlight && (raw === "X" || raw === "O")) {
+          const stroke = highlight === "our" ? "#ffffff" : "#bbbbbb"
+          layers.push(`<circle cx="${CENTER}" cy="${CENTER}" r="${STONE_R + 2.5}" fill="none" stroke="${stroke}" stroke-width="1" />`)
+        }
+        return cellSvg(layers)
+      }
+
+      function drawBoard(board, current, size) {
+        const root = el("board")
+        if (!board || board.length === 0) {
+          root.innerHTML = ""
+          return
+        }
+        const n = board.length
+        const parse = (value) => (value && value !== "pass" ? value.split(",").map(Number) : null)
+        const lastBlack = current ? parse(current.lastBlack) : null
+        const lastWhite = current ? parse(current.lastWhite) : null
+        const highlightAt = (x, y) =>
+          lastBlack && lastBlack[0] === x && lastBlack[1] === y
+            ? "our"
+            : lastWhite && lastWhite[0] === x && lastWhite[1] === y
+              ? "opp"
+              : null
+        const rows = [`<div class="boardRow">${cellSvg([])}${Array.from({ length: n }, (_, x) => coordCell(COLUMN_LETTERS[x] ?? String(x))).join("")}</div>`]
+        // y = 0 is the bottom row, so the top row is y = n - 1 (A.5 top-left on 5x5).
+        for (let row = 0; row < n; row++) {
+          const y = n - 1 - row
+          const cells = Array.from({ length: n }, (_, x) => boardCellSvg(board, x, y, highlightAt(x, y)))
+          rows.push(`<div class="boardRow">${coordCell(String(y + 1))}${cells.join("")}</div>`)
+        }
+        root.innerHTML = rows.join("")
+      }
+
+      function renderInfo(s) {
+        const cur = displayed ?? s.current
+        if (!cur) {
+          // Nothing to show until the first game starts; "starting..." is only a
+          // nudge while a batch is spinning up.
+          el("info").innerHTML = s.running ? "<span>starting...</span>" : ""
+          return
+        }
+        const bits = []
+        bits.push(`<span><b>${cur.faction}</b> (${cur.factionIndex + 1}/${cur.factionCount})</span>`)
+        bits.push(`<span>game <b>${cur.game}</b>/${cur.games}</span>`)
+        bits.push(`<span>move <b>${cur.move}</b></span>`)
+        if (cur.depth != null) bits.push(`<span>depth <b>${cur.depth}</b></span>`)
+        if (cur.nodes != null) bits.push(`<span>nodes <b>${cur.nodes}</b></span>`)
+        if (cur.ms != null) bits.push(`<span>think <b>${Math.round(cur.ms)}</b> ms</span>`)
+        bits.push(
+          `<span>score <b>${(cur.blackScore ?? 0).toFixed(1)}</b> / <b>${(cur.whiteScore ?? 0).toFixed(1)}</b></span>`
+        )
+        if (cur.lastBlack) bits.push(`<span>B <b>${cur.lastBlack}</b></span>`)
+        if (cur.lastWhite) bits.push(`<span>W <b>${cur.lastWhite}</b></span>`)
+        el("info").innerHTML = bits.join("")
+      }
+
+      function renderRows(s) {
+        const body = el("rows")
+        body.innerHTML = ""
+        let games = 0
+        let wins = 0
+        // The run reports rows in the order it was asked for; sort them back into the
+        // order of the faction list so the table always matches the chips, including
+        // for a snapshot produced by an older page.
+        const rows = s.rows.slice().sort((a, b) => factionRank(a.faction) - factionRank(b.faction))
+        for (const row of rows) {
+          games += row.games
+          wins += row.wins
+          const pct = row.winRate
+          const tr = document.createElement("tr")
+          tr.innerHTML =
+            `<td>${row.faction}</td>` +
+            `<td>${row.games}</td>` +
+            `<td class="${row.losses === 0 && row.games > 0 ? "win" : ""}">${row.wins}</td>` +
+            `<td class="${row.losses > 0 ? "loss" : ""}">${row.losses}</td>` +
+            `<td>${pct.toFixed(1)}</td>` +
+            `<td>${row.avgMargin >= 0 ? "+" : ""}${row.avgMargin.toFixed(1)}</td>` +
+            `<td>${row.avgMs > 0 ? Math.round(row.avgMs) : "-"}</td>`
+          body.appendChild(tr)
+        }
+        const tr = document.createElement("tr")
+        tr.className = "total"
+        tr.innerHTML =
+          `<td>all factions</td><td>${games}</td><td>${wins}</td><td>${games - wins}</td>` +
+          `<td>${games > 0 ? ((100 * wins) / games).toFixed(1) : "0.0"}</td><td></td><td></td>`
+        body.appendChild(tr)
+      }
+
+      // The list is updated in place while a run is going. Rebuilding it on every finished
+      // game replaced the rows under the pointer (so clicks were lost), threw away an open
+      // game's move table and put "loading..." back, and reset the scroll position - with
+      // games finishing quickly the pane was unusable. Rows are keyed by archive index and
+      // only ever appended; the list is rebuilt when the *set* changes: a new run, the loss
+      // filter, the locked set, or the server trimming old games out of the archive.
+      let historyKey = null
+      let historyRows = new Map()
+
+      function historySignature(s) {
+        const games = s.archive ?? []
+        const first = games[0] ? `${games[0].faction}#${games[0].game}` : "-"
+        return [
+          s.serverId ?? "",
+          s.startedAt ?? 0,
+          el("onlyLosses").checked ? "losses" : "all",
+          locked ? locked.seed ?? "locked" : "-",
+          first,
+        ].join("|")
+      }
+
+      function renderHistory(s) {
+        const list = el("history")
+        const games = s.archive && s.archive.length ? s.archive : null
+        const count = el("gameCount")
+        if (!games) {
+          // Legacy history (a server that predates the archive): a short list, no detail.
+          list.innerHTML = ""
+          historyRows.clear()
+          historyKey = null
+          if (count) count.textContent = ""
+          for (const item of (s.history ?? []).slice(0, 12)) {
+            const li = document.createElement("li")
+            const margin = item.margin >= 0 ? `+${item.margin.toFixed(1)}` : item.margin.toFixed(1)
+            li.innerHTML =
+              `<span>${item.faction} #${item.game}</span>` +
+              `<span class="${item.win ? "win" : "loss"}">${item.win ? "WIN" : "LOSS"} ${margin}</span>`
+            list.appendChild(li)
+          }
+          return
+        }
+
+        const signature = historySignature(s)
+        if (signature !== historyKey) {
+          list.innerHTML = ""
+          historyRows.clear()
+          historyKey = signature
+        }
+
+        // Only the list is filtered: the faction table above stays complete.
+        const shown = el("onlyLosses").checked ? games.filter((game) => !game.win) : games
+        if (count) count.textContent = `${shown.length} of ${games.length} shown`
+
+        // Anything no longer shown goes; everything else keeps its element, its open state
+        // and its loaded move table.
+        const keep = new Set(shown.map((game) => game.index))
+        for (const [index, row] of [...historyRows]) {
+          if (keep.has(index)) continue
+          row.remove()
+          historyRows.delete(index)
+        }
+        // Archive order is oldest first, so the new games belong at the end: append them,
+        // and the rows above are never touched.
+        for (const game of shown) {
+          if (historyRows.has(game.index)) continue
+          const row = gameRow(game, false)
+          list.appendChild(row)
+          historyRows.set(game.index, row)
+        }
+      }
+
+      function gameRow(game, expanded) {
+        const li = document.createElement("li")
+        li.dataset.index = String(game.index)
+        if (expanded) li.classList.add("open")
+        const margin = game.margin >= 0 ? `+${game.margin.toFixed(1)}` : game.margin.toFixed(1)
+        // A game from the locked set says how it went in the batch it was locked from.
+        const before = lockedGame(game)
+        const beforeText = before
+          ? `<span class="dim">was ${before.win ? "WIN" : "LOSS"} ${
+              before.margin >= 0 ? `+${before.margin.toFixed(1)}` : before.margin.toFixed(1)
+            }</span>`
+          : ""
+        const head = document.createElement("div")
+        head.className = "gameHead"
+        head.innerHTML =
+          `<span class="caret"></span>` +
+          `<span>${game.faction} #${game.game}</span>` +
+          `<span class="dim">${game.moveCount} moves</span>` +
+          beforeText +
+          `<span class="${game.win ? "win" : "loss"}">${game.win ? "WIN" : "LOSS"} ${margin}</span>`
+        head.querySelector(".caret").textContent = expanded ? CARET_OPEN : CARET_CLOSED
+        head.addEventListener("click", () => toggleGame(game, li))
+        li.appendChild(head)
+        if (expanded) {
+          const body = document.createElement("div")
+          body.className = "gameBody"
+          body.textContent = "loading..."
+          li.appendChild(body)
+          void loadGameDetail(game.index, body)
+        }
+        return li
+      }
+
+      function toggleGame(game, li) {
+        const nowOpen = !li.classList.contains("open")
+        li.classList.toggle("open", nowOpen)
+        const caret = li.querySelector(".caret")
+        if (caret) caret.textContent = nowOpen ? CARET_OPEN : CARET_CLOSED
+        const existing = li.querySelector(".gameBody")
+        if (!nowOpen) {
+          if (existing) existing.remove()
+          return
+        }
+        if (existing) return
+        const body = document.createElement("div")
+        body.className = "gameBody"
+        body.textContent = "loading..."
+        li.appendChild(body)
+        void loadGameDetail(game.index, body)
+      }
+
+      // Full decision sequence for one archived game: what Black played and what it
+      // was worth, what White answered, and the score after each half-move.
+      async function loadGameDetail(index, target) {
+        try {
+          const res = await fetch(`${API_BASE}/api/bench/game?index=${index}`)
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          const game = await res.json()
+          target.innerHTML = ""
+          target.appendChild(gameTools(index))
+          target.appendChild(detailTable(game))
+        } catch (err) {
+          target.textContent = `could not load the game: ${err.message}`
+        }
+      }
+
+      // Explain renders the replay as text in the page; Write file asks the server
+      // to save the same text under temp/lost-games and reports where it went.
+      function gameTools(index) {
+        const wrap = document.createElement("div")
+        wrap.className = "gameTools"
+        const explain = document.createElement("button")
+        explain.textContent = "Explain"
+        explain.title = "Plain-text replay: per-move values, the drop each move caused, and a board per blunder"
+        const write = document.createElement("button")
+        write.textContent = "Write file"
+        write.title = "Save the same text under ipvgo-engine/temp/lost-games/"
+        const copy = document.createElement("button")
+        copy.textContent = "Copy"
+        copy.title = "Copy the explanation to the clipboard"
+        copy.disabled = true
+        const status = document.createElement("span")
+        status.className = "dim small"
+        const pre = document.createElement("pre")
+        pre.className = "explain"
+        pre.style.display = "none"
+        const box = document.createElement("div")
+        box.append(wrap, pre)
+
+        const run = async (writeFile) => {
+          explain.disabled = true
+          write.disabled = true
+          status.textContent = writeFile ? "writing..." : "explaining..."
+          try {
+            const res = await fetch(`${API_BASE}/api/bench/explain`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ index, write: writeFile }),
+            })
+            const body = await res.json()
+            if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`)
+            pre.textContent = body.text ?? ""
+            pre.style.display = ""
+            copy.disabled = false
+            status.textContent = body.path ? `wrote ${body.path}` : ""
+          } catch (err) {
+            status.textContent = `failed: ${err.message}`
+          } finally {
+            explain.disabled = false
+            write.disabled = false
+          }
+        }
+        explain.addEventListener("click", () => void run(false))
+        write.addEventListener("click", () => void run(true))
+        copy.addEventListener("click", () => {
+          const text = pre.textContent ?? ""
+          if (navigator.clipboard?.writeText) {
+            navigator.clipboard.writeText(text).then(
+              () => (status.textContent = "copied"),
+              () => (status.textContent = "copy failed")
+            )
+          } else {
+            status.textContent = "clipboard unavailable"
+          }
+        })
+        wrap.append(explain, write, copy, status)
+        return box
+      }
+
+      function fmtPoint(p, isPass) {
+        if (isPass) return "pass"
+        if (!p) return "-"
+        return `${p.x},${p.y}`
+      }
+
+      // Cheat moves are not ordinary stones, so the move column says which one was tried
+      // rather than leaving a bare coordinate that looks like a normal play.
+      const CHEAT_NAMES = { 1: "remove router", 2: "two moves", 3: "destroy node", 4: "repair node" }
+      const cheatName = (kind) => CHEAT_NAMES[kind] ?? `cheat ${kind}`
+      // 1 = succeeded, 2 = failed and the turn was skipped, 3 = failed and ejected.
+      const CHEAT_OUTCOMES = { 1: "succeeded", 2: "failed, turn skipped", 3: "failed, ejected" }
+      function cheatTag(cheat) {
+        if (!cheat || !cheat.kind) return ""
+        const cls =
+          cheat.outcome === 1 ? "cheatTag ok" : cheat.outcome === 2 || cheat.outcome === 3 ? "cheatTag fail" : "cheatTag"
+        return ` <span class="${cls}">${cheatName(cheat.kind)}</span>`
+      }
+
+      function detailTable(game) {
+        const wrap = document.createElement("div")
+        wrap.className = "tableScroll"
+        const table = document.createElement("table")
+        table.className = "moves"
+        // The `flat` column and the BLUNDER/SWING marks are the exploiter's evaluator: a
+        // fixed one-ply leaf value to tell "the position got worse" apart from "the search
+        // happened to look shallower". None of that exists under the playout engine, whose value
+        // comes from games played to a finished board, so the column is dropped rather than
+        // filled with numbers from a search that did not run.
+        const playoutRun = state.options?.engine === "playout"
+        table.innerHTML = playoutRun
+          ? "<thead><tr><th>#</th><th>Black</th><th title=\"Black's share of the board from the playouts through this move. Higher is better; it is a counted mean over finished games, not the exploiter's leaf estimate. Hover a value for the number of playouts behind it.\">value</th><th>depth</th>" +
+            "<th>nodes</th><th>ms</th><th>White</th><th>score B:W</th></tr></thead>"
+          : "<thead><tr><th>#</th><th>Black</th><th>p(win)</th><th>flat</th><th>depth</th>" +
+            "<th>nodes</th><th>ms</th><th>White</th><th>score B:W</th></tr></thead>"
+        const body = document.createElement("tbody")
+        const moves = game.moves ?? []
+        // p(win) moves with the depth the budget happened to reach, so a drop in it
+        // is not by itself a blunder. `flat` is the same value from a fixed one-ply
+        // search: a drop there is the position getting worse.
+        const flatDrop = (i) => {
+          const a = moves[i]?.audit?.flat
+          const b = moves[i + 1]?.audit?.flat
+          return typeof a === "number" && typeof b === "number" ? a - b : null
+        }
+        for (let i = 0; i < moves.length; i++) {
+          const mv = moves[i]
+          const value = typeof mv.value === "number" ? mv.value.toFixed(3) : "-"
+          const tr = document.createElement("tr")
+          const swing = flatDrop(i)
+          const searchDrop =
+            typeof mv.value === "number" && typeof moves[i + 1]?.value === "number"
+              ? mv.value - moves[i + 1].value
+              : null
+          const mark = playoutRun
+            ? searchDrop !== null && searchDrop > 0.15
+              ? "warn"
+              : ""
+            : swing !== null && swing > 0.15
+              ? "loss"
+              : searchDrop !== null && searchDrop > 0.15
+                ? "warn"
+                : ""
+          const flat = typeof mv.audit?.flat === "number" ? mv.audit.flat.toFixed(3) : "-"
+          // A heuristic leaf cannot mean "certain"; say so rather than printing 1.000.
+          const capped = !playoutRun && typeof mv.value === "number" && mv.value >= 0.999
+          const root = mv.audit?.root
+          const title = []
+          if (capped) title.push("capped: 1.000 is the top of the leaf eval's scale, not certainty")
+          if (root && typeof root.win === "number" && typeof root.rulesLead === "number") {
+            title.push(`eval p(win) ${root.win.toFixed(3)}, rules lead ${root.rulesLead.toFixed(1)}`)
+          }
+          if (mv.whiteAudit?.model?.found) title.push(`modelled p=${mv.whiteAudit.model.prob.toFixed(2)}`)
+          // The value is a mean taken over playouts, so name the count: 2/3 and 2000/3000 print the
+          // same number and are not the same claim.
+          if (playoutRun && typeof mv.playouts === "number") {
+            title.push(`${mv.playouts} playouts through this move`)
+          }
+          if (mv.cheat) {
+            title.push(
+              `cheat ${cheatName(mv.cheat.kind)}: value ${Number(mv.cheat.value).toFixed(3)} at ` +
+                `p(success) ${(100 * Number(mv.cheat.successChance)).toFixed(0)}%, best move ${Number(mv.cheat.bestMoveValue).toFixed(3)}, ` +
+                `position ${Number(mv.cheat.currentValue).toFixed(3)} (${mv.cheat.reason})`,
+            )
+            if (CHEAT_OUTCOMES[mv.cheat.outcome]) title.push(`outcome: ${CHEAT_OUTCOMES[mv.cheat.outcome]}`)
+          }
+          if (mv.board && mv.board.length) title.push(mv.board.join("\n"))
+          tr.innerHTML =
+            `<td class="dim">${mv.move}</td>` +
+            `<td>${fmtPoint(mv.black, mv.blackPass)}${cheatTag(mv.cheat)}</td>` +
+            `<td class="${mark}${capped ? " capped" : ""}">${value}</td>` +
+            (playoutRun ? "" : `<td class="dim">${flat}</td>`) +
+            `<td class="dim">${mv.depth ?? "-"}</td>` +
+            `<td class="dim">${mv.nodes ?? "-"}</td>` +
+            `<td class="dim">${mv.ms == null ? "-" : Math.round(mv.ms)}</td>` +
+            `<td>${mv.white === null && !mv.whitePass ? "-" : fmtPoint(mv.white, mv.whitePass)}</td>` +
+            `<td class="dim">${Math.round(mv.blackScore)}:${Math.round(mv.whiteScore)}</td>`
+          if (title.length) tr.title = title.join("\n")
+          if (mv.board && mv.board.length) {
+            tr.classList.add("hasBoard")
+            tr.addEventListener("click", () => showPosition(mv.board, game, mv))
+          }
+          body.appendChild(tr)
+        }
+        table.appendChild(body)
+        wrap.appendChild(table)
+        const hint = document.createElement("div")
+        hint.className = "dim small"
+        hint.textContent =
+          "click a row to show that position; p(win) in red drops with the position, in amber only with the search depth"
+        wrap.appendChild(hint)
+        return wrap
+      }
+
+      function showPosition(board, game, mv) {
+        displayed = {
+          board,
+          faction: game.faction,
+          game: game.game,
+          move: mv.move,
+          blackScore: mv.blackScore,
+          whiteScore: mv.whiteScore,
+          lastBlack: fmtPoint(mv.black, mv.blackPass),
+          lastWhite: mv.white === null && !mv.whitePass ? "-" : fmtPoint(mv.white, mv.whitePass),
+          value: mv.value,
+          depth: mv.depth,
+          nodes: mv.nodes,
+          ms: mv.ms,
+        }
+        markDirty("board", "info")
+      }
+
+      function renderStatus(s) {
+        const pill = el("status")
+        pill.className = "pill"
+        if (s.running) {
+          pill.classList.add("running")
+          const cur = s.current
+          pill.textContent = cur ? `running - ${cur.faction} ${cur.game}/${cur.games}` : "running"
+        } else if (s.finished) {
+          const ok = s.failures === 0
+          pill.classList.add(ok ? "finished" : "failed")
+          pill.textContent = ok ? "finished - 100% everywhere" : `finished - ${s.failures} faction(s) below 100%`
+        } else {
+          pill.textContent = "idle"
+        }
+        el("error").textContent = s.error || ""
+        renderRunEta(s)
+      }
+
+      // Games the batch was started with. `options.factions` is the resolved list and a
+      // replay names its own games, so this needs nothing but what was started.
+      function plannedGames(s) {
+        const options = s.options ?? {}
+        if (Array.isArray(options.replay)) return options.replay.length
+        const factions = Array.isArray(options.factions) ? options.factions.length : 0
+        const games = Number(options.games ?? 0)
+        return factions > 0 && games > 0 ? factions * games : 0
+      }
+
+      // Progress and time left for the run in flight, from the games that actually
+      // finished: a batch is a fixed number of games, so the rate observed so far is a
+      // better estimate than the per-move budget would give.
+      function renderRunEta(s) {
+        const host = el("runEta")
+        if (!host) return
+        const planned = plannedGames(s)
+        const done = (s.rows ?? []).reduce((sum, row) => sum + (Number(row.games) || 0), 0)
+        const startedAt = Number(s.startedAt ?? 0)
+        const endedAt = Number(s.endedAt ?? 0)
+        if (!startedAt || done === 0) {
+          host.textContent = ""
+          return
+        }
+        const elapsedMs = Math.max(0, (endedAt || Date.now()) - startedAt)
+        if (!s.running) {
+          host.textContent =
+            planned > 0
+              ? `${done}/${planned} games in ${formatDuration(elapsedMs)}`
+              : `${done} games in ${formatDuration(elapsedMs)}`
+          return
+        }
+        const remaining = Math.max(0, planned - done)
+        const perGameMs = elapsedMs / done
+        // One or two games say nothing about the batch - a single long game would set the
+        // rate - so the estimate waits until a few have landed.
+        const warm = done >= Math.min(4, Math.max(2, Math.ceil(planned / 10)))
+        const parts = [`${formatDuration(elapsedMs)} elapsed`, `${done}${planned > 0 ? `/${planned}` : ""} games`]
+        if (planned > 0) parts.push(`${((100 * done) / planned).toFixed(0)}%`)
+        if (remaining > 0) parts.push(`${remaining} left`)
+        if (warm) {
+          parts.push(`${(60000 / perGameMs).toFixed(1)} games/min`)
+          // Never say "0s left": a rounding to zero reads as "done" while a game is still
+          // running.
+          if (remaining > 0) parts.push(`about ${formatDuration(Math.max(1000, perGameMs * remaining))} left`)
+        } else {
+          parts.push("timing the first games")
+        }
+        host.textContent = parts.join("   ")
+      }
+
+      function markDirty(...parts) {
+        for (const part of parts) dirty[part] = true
+      }
+
+      function renderIfDirty() {
+        if (dirty.status) {
+          renderStatus(state)
+          el("start").disabled = state.running
+          el("stop").disabled = !state.running
+          dirty.status = false
+        }
+        if (dirty.rows) {
+          renderRows(state)
+          dirty.rows = false
+        }
+        if (dirty.history) {
+          renderHistory(state)
+          renderLock()
+          dirty.history = false
+        }
+        if (dirty.info) {
+          renderInfo(state)
+          dirty.info = false
+        }
+        if (dirty.board) {
+          const size = state.options?.size ?? Number(el("size").value)
+          const view = displayed ?? state.current
+          drawBoard(view?.board ?? null, view, size)
+          dirty.board = false
+        }
+      }
+
+      // One animation frame loop: advance the half-move queue when its slot is
+      // due, then repaint only the parts that changed. No polling, no timers.
+      let lastRunEtaAt = 0
+      function frameLoop(now) {
+        if (frameQueue.length > 0 && now >= nextFrameAt) {
+          if (frameQueue.length > FRAME_MAX_BACKLOG) frameQueue = frameQueue.slice(-4)
+          displayed = frameQueue.shift()
+          if (displayed) markDirty("board", "info")
+          // Backlog costs latency, so shorten the slot to catch up.
+          nextFrameAt = now + (frameQueue.length > 3 ? 25 : FRAME_MS)
+        }
+        // The ETA moves with the wall clock, not with events: one long game should still
+        // count down. Once a second is plenty for a number shown to the second.
+        if (state.running && now - lastRunEtaAt >= 1000) {
+          lastRunEtaAt = now
+          renderRunEta(state)
+        }
+        renderIfDirty()
+        requestAnimationFrame(frameLoop)
+      }
+
+      function applySnapshot(data) {
+        // A different serverId means the server restarted (a rebuilt server.js or
+        // the GUI restart button): reload so the page picks up new assets.
+        if (data.serverId) {
+          const isNewServer = serverId !== null && data.serverId !== serverId
+          serverId = data.serverId
+          if (isNewServer) {
+            location.reload()
+            return
+          }
+        }
+        if (restartWatchdog !== null) {
+          clearTimeout(restartWatchdog)
+          restartWatchdog = null
+        }
+        state = { ...state, ...data }
+        // What the current (or last) run was started with, as the server recorded it. The
+        // header pill next to the build selector only ever said which compiler built the
+        // binary, which is easy to read as "the search engine" - this says the other half.
+        const runEngine = el("runEngine")
+        if (runEngine) {
+          const ran = data?.options?.engine === "playout" ? "playout" : data?.options ? "exploit" : null
+          let budgetText = ""
+          if (ran === "playout" && data.options) {
+            // Say what the search actually spent: a playout count means nothing without it,
+            // and a count the engine had to raise is exactly what used to go unnoticed.
+            const asked = Number(data.options.iterations || 0)
+            const ms = Number(data.options.budgetMs || 0)
+            if (ms > 0) budgetText = `, ${ms} ms/move`
+            else if (asked > 0 && asked < 100) budgetText = `, ${PLAYOUT_DEFAULT_PLAYOUTS} playouts/move (asked ${asked})`
+            else if (asked > 0) budgetText = `, ${asked} playouts/move`
+            else budgetText = `, ${PLAYOUT_DEFAULT_PLAYOUTS} playouts/move (default)`
+          }
+          runEngine.textContent = ran
+            ? `search: ${ran} (${data.options.size}x${data.options.size}${budgetText})`
+            : "search: -"
+        }
+        const restartButton = el("restartServer")
+        restartButton.disabled = !data.supervised
+        restartButton.textContent = "Restart server"
+        restartButton.title = data.supervised
+          ? "Restart the engine server (supervised)"
+          : "Start the server with `pnpm run server:dev` to enable this"
+        updateEngineBuild()
+        frameQueue = []
+        displayed = null
+        lastFrameSeq = data.frameSeq ?? 0
+        markDirty("status", "rows", "history", "info", "board")
+      }
+
+      function connectStream() {
+        if (typeof EventSource === "undefined") return startPolling()
+        const source = new EventSource(`${API_BASE}/api/bench/events`)
+        stream = source
+        source.addEventListener("snapshot", (e) => {
+          applySnapshot(JSON.parse(e.data))
+        })
+        source.addEventListener("game", (e) => {
+          state.current = JSON.parse(e.data)
+          // Keep the previous board on screen; the first thinking/frame event of
+          // the new game replaces it a moment later (avoids a blank flash).
+          markDirty("status", "info")
+        })
+        source.addEventListener("thinking", (e) => {
+          const data = JSON.parse(e.data)
+          state.current = { ...(state.current ?? {}), ...data, thinking: true }
+          // The live board is authoritative again once a new search starts.
+          frameQueue = []
+          displayed = null
+          markDirty("status", "info", "board")
+        })
+        source.addEventListener("frame", (e) => {
+          const frame = JSON.parse(e.data)
+          if (frame.seq <= lastFrameSeq) return
+          lastFrameSeq = frame.seq
+          if (frameQueue.length > FRAME_MAX_BACKLOG * 2) frameQueue = frameQueue.slice(-4)
+          frameQueue.push(frame)
+        })
+        source.addEventListener("rows", (e) => {
+          state.rows = JSON.parse(e.data).rows
+          markDirty("rows")
+        })
+        source.addEventListener("result", (e) => {
+          const result = JSON.parse(e.data)
+          state.lastResult = result
+          state.history = [result, ...(state.history ?? [])].slice(0, 40)
+          // The archive is the authoritative list; add the summary here so a new
+          // game is expandable immediately rather than after the next snapshot.
+          if (typeof result.archiveIndex === "number") {
+            state.archive = [
+              ...(state.archive ?? []),
+              {
+                index: result.archiveIndex,
+                faction: result.faction,
+                game: result.game,
+                win: result.win,
+                margin: result.margin,
+                movesPlayed: result.moves,
+                moveCount: result.moveCount ?? result.moves,
+                seed: result.seed ?? 0,
+              },
+            ]
+          }
+          markDirty("history")
+          // Ticked "write loss files" means every loss leaves an explanation under
+          // temp/lost-games; unticked means a long run writes nothing.
+          if (!result.win && el("writeLosses").checked && typeof result.archiveIndex === "number") {
+            void fetch(`${API_BASE}/api/bench/explain`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ index: result.archiveIndex, write: true }),
+            }).catch(() => {
+              /* the run must not stop because a file could not be written */
+            })
+          }
+        })
+        source.addEventListener("done", (e) => {
+          state.finished = true
+          state.failures = JSON.parse(e.data).failures
+          markDirty("status")
+        })
+        source.addEventListener("error", (e) => {
+          if (e.data) {
+            state.error = JSON.parse(e.data).error
+            markDirty("status")
+          }
+        })
+        source.onerror = () => {
+          // Dropped connection: fall back to polling so the view keeps working.
+          if (source.readyState === EventSource.CLOSED) {
+            stream = null
+            startPolling()
+          }
+        }
+      }
+
+      function startPolling() {
+        if (pollTimer !== null) return
+        pollTimer = setInterval(poll, 500)
+        poll()
+      }
+
+      async function poll() {
+        try {
+          const res = await fetch(`${API_BASE}/api/bench/state?since=${lastFrameSeq}`)
+          const data = await res.json()
+          const frames = data.frames ?? []
+          delete data.frames
+          const firstLoad = !state.running && !state.current
+          state = { ...state, ...data }
+          if (firstLoad) markDirty("board")
+          if (frames.length > 0) {
+            for (const frame of frames) {
+              if (frame.seq > lastFrameSeq) {
+                frameQueue.push(frame)
+                lastFrameSeq = frame.seq
+              }
+            }
+          }
+          markDirty("status", "rows", "history", "info")
+          el("error").textContent = state.error || ""
+        } catch {
+          el("status").textContent = "server offline"
+          el("status").className = "pill failed"
+          el("error").textContent =
+            "Cannot reach the engine server. Run `pnpm run server` at the repo root, " +
+            "then open http://localhost:3010/bench"
+        }
+      }
+
+      // The run form, as a start request. A replay replaces the parts that define
+      // which games are played (size, seed, and the game list) and keeps the rest.
+      function startBody() {
+        const size = Number(el("size").value)
+        const mode = el("budgetMode").value
+        const budget = Math.max(1, Math.floor(numberOf("budget") || 1))
+        const body = {
+          size,
+          games: numberOf("games"),
+          seed: numberOf("seed"),
+          budgetMode: mode,
+          budgetMs: mode === "time" ? budget : 0,
+          iterations: mode === "depth" ? Math.max(0, Math.floor(numberOf("nodeCap") || 0)) : mode === "iterations" ? budget : 0,
+          depth: mode === "depth" ? Math.max(1, Math.floor(numberOf("depth") || 2)) : undefined,
+          factions: size === 19 ? ["WorldDaemon"] : inListOrder(Array.from(selected)),
+        }
+        for (const id of TUNING_IDS) {
+          const raw = el(id).value
+          if (raw === "") continue
+          const value = Number(raw)
+          if (Number.isFinite(value)) body[id] = value
+        }
+        if (el("carry").checked) body.carry = true
+        if (el("playoutEngine").checked) body.engine = "playout"
+        if (el("dynamicRoot").checked) body.dynamicRoot = true
+        if (el("autoDepth").checked) body.autoDepth = true
+        if (el("perMoveBudget").checked) body.perMoveBudget = true
+        if (el("widen").checked) body.widen = true
+        if (el("verifyRootReplies").checked) body.verifyRootReplies = true
+        // One global switch: the engine evaluates the cheats and the games play the one it
+        // prefers, with the game's own success roll.
+        if (el("cheats").checked) body.cheats = true
+        // The game's Source-File 14 bonus: a flat +25 points, and only at level 3.
+        if (el("cheats").checked && el("sf14Bonus").checked) body.sourceFile14Level = 3
+        // The cheat levers: how many attempts a game may spend, how much better than the
+        // best legal move one has to be, and whether it also needs a lost position.
+        if (el("cheats").checked) {
+          const attempts = Math.floor(numberOf("cheatAttempts"))
+          if (Number.isFinite(attempts) && attempts >= 0) body.cheatMaxAttempts = Math.min(99, attempts)
+          const margin = Number(el("cheatMargin").value.trim() || el("cheatMargin").placeholder)
+          if (Number.isFinite(margin) && margin >= 0 && margin <= 1) body.cheatMargin = margin
+          body.cheatLosingGate = el("cheatLosing").checked
+        }
+        // Several games at once, one search thread each: same results, more cores used.
+        if (el("parallelGames").checked) body.parallelGames = navigator.hardwareConcurrency || 8
+        if (body.factions.length === 0) body.factions = null
+        // Explicit per-faction widths: the server uses these instead of the store, so
+        // what the Run table shows is exactly what the engine gets.
+        body.tuningByFaction = readPlayTuning()
+        return body
+      }
+
+      async function startBench(overrides = null) {
+        const body = startBody()
+        if (overrides) {
+          Object.assign(body, overrides)
+          // The engine derives the faction list from the replay entries.
+          delete body.factions
+        }
+        saveForm()
+        el("start").disabled = true
+        await fetch(`${API_BASE}/api/bench/start`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        })
+        await poll()
+      }
+
+      el("start").addEventListener("click", () => void startBench())
+
+      // Pre-flight: the exact engine and budget the next Start will ask for, read the same
+      // way the request reads them. A control that looks set but whose value never reaches
+      // the server is invisible otherwise, so the page says what it is about to send.
+      function updateStartHint() {
+        const hint = el("startHint")
+        if (!hint) return
+        const engine = el("playoutEngine").checked ? "playout" : "exploit"
+        const mode = el("budgetMode").value
+        const budget = Number(el("budget").value)
+        let budgetText
+        if (mode === "time") budgetText = `${budget || 1} ms per move`
+        else if (engine === "playout") {
+          budgetText =
+            Number.isFinite(budget) && budget >= 100
+              ? `${Math.floor(budget)} playouts per move`
+              : `${PLAYOUT_DEFAULT_PLAYOUTS} playouts per move (budget too small for playouts)`
+        } else budgetText = `${Math.max(0, Math.floor(budget || 0))} node budget`
+        hint.textContent = `Start will ask for: ${engine}, ${Number(el("size").value)}x${Number(el("size").value)}, ${budgetText}`
+      }
+      for (const id of ["playoutEngine", "budgetMode", "budget", "size", "nodeCap", "depth"]) {
+        const node = el(id)
+        if (node) node.addEventListener("change", updateStartHint)
+      }
+      el("budget").addEventListener("input", updateStartHint)
+      updateStartHint()
+      const pageVersion = el("pageVersion")
+      if (pageVersion) pageVersion.textContent = PAGE_VERSION
+      el("stop").addEventListener("click", async () => {
+        await fetch(`${API_BASE}/api/bench/stop`, { method: "POST" })
+        await poll()
+      })
+
+      // Which compiler built the engine. The choice lives on the server (it is what the
+      // next spawn resolves), so the select mirrors the snapshot and writes back through
+      // the API; a rebuild is not needed to switch, and a run in progress is left alone.
+      const engineBuildLabels = { clang: "clang-cl", msvc: "cl.exe" }
+      const engineBuildHints = { clang: "pnpm run ipvgo:build", msvc: "pnpm run ipvgo:build:msvc" }
+
+      function updateEngineBuild() {
+        const select = el("engineBuild")
+        if (!select) return
+        const current = state.engineBuild
+        if (!current) return
+        if (select.value !== current) select.value = current
+        const builds = state.engineBuilds ?? {}
+        const option = builds[current]
+        const forced = state.engineBuildSource === "env"
+        const running = state.running === true
+        select.disabled = forced || running
+        const missing = Object.entries(builds)
+          .filter(([, info]) => info && info.built === false)
+          .map(([build]) => `${engineBuildLabels[build] ?? build} (${engineBuildHints[build] ?? "not built"})`)
+        const parts = []
+        if (forced) parts.push("forced by IPVGO_ENGINE_BUILD")
+        if (running) parts.push("stop the run to switch")
+        if (missing.length > 0) parts.push(`not built: ${missing.join(", ")}`)
+        if (option?.path) parts.push(option.path)
+        select.title = parts.join(" - ")
+        for (const choice of select.options ?? []) {
+          const info = builds[choice.value]
+          choice.disabled = Boolean(info && info.built === false)
+        }
+      }
+
+      el("engineBuild").addEventListener("change", async () => {
+        const select = el("engineBuild")
+        const wanted = select.value
+        select.disabled = true
+        try {
+          const res = await fetch(`${API_BASE}/api/engine/build`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ build: wanted }),
+          })
+          const payload = await res.json().catch(() => ({}))
+          if (!res.ok) throw new Error(payload.error ?? `could not switch the engine build (${res.status})`)
+          state.engineBuild = payload.build
+          state.engineBuildSource = payload.source
+          state.engineBuilds = payload.builds
+          el("status").textContent = `build: ${engineBuildLabels[payload.build] ?? payload.build}`
+          el("status").className = "pill"
+        } catch (err) {
+          // Put the select back on whatever the server is still serving.
+          state.error = err.message
+          markDirty("status")
+        } finally {
+          updateEngineBuild()
+        }
+      })
+
+      el("restartServer").addEventListener("click", async () => {
+        const button = el("restartServer")
+        button.disabled = true
+        button.textContent = "restarting..."
+        el("status").textContent = "restarting server..."
+        el("status").className = "pill running"
+        try {
+          const res = await fetch(`${API_BASE}/api/server/restart`, { method: "POST" })
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}))
+            state.error = body.error ?? `restart failed (${res.status})`
+            markDirty("status")
+            button.disabled = false
+            button.textContent = "Restart server"
+            return
+          }
+        } catch {
+          // Server already exited; the supervisor is bringing a new one up.
+        }
+        // If nothing comes back, say so instead of hanging on "restarting".
+        restartWatchdog = setTimeout(() => {
+          restartWatchdog = null
+          if (stream && stream.readyState !== EventSource.CLOSED) return
+          button.disabled = false
+          button.textContent = "Restart server"
+          el("status").textContent = "server down"
+          el("status").className = "pill failed"
+          state.error = "The server did not come back. Start it with `pnpm run server:dev` so it restarts automatically."
+          markDirty("status")
+          startPolling()
+        }, 8000)
+      })
+
+      for (const id of ["size", "games", "seed", "budget", ...TUNING_IDS]) {
+        el(id).addEventListener("change", saveForm)
+        el(id).addEventListener("input", saveForm)
+      }
+
+      el("tuning").addEventListener("toggle", saveForm)
+      el("carry").addEventListener("change", saveForm)
+      el("playoutEngine").addEventListener("change", saveForm)
+      el("dynamicRoot").addEventListener("change", saveForm)
+      for (const id of ["autoDepth", "perMoveBudget", "widen", "verifyRootReplies", "cheats", "sf14Bonus", "parallelGames", "cheatAttempts", "cheatMargin", "cheatLosing"]) {
+        el(id).addEventListener("change", saveForm)
+        if (el(id).type !== "checkbox") el(id).addEventListener("input", saveForm)
+      }
+
+      // The tuning pane shows these, so it has to be redrawn when one of them moves.
+      for (const id of [...TUNING_IDS, "carry", "playoutEngine", "dynamicRoot", "autoDepth", "perMoveBudget", "widen", "verifyRootReplies", "cheats", "sf14Bonus", "cheatAttempts", "cheatMargin", "cheatLosing"]) {
+        el(id).addEventListener("change", renderTuneInherited)
+        el(id).addEventListener("input", renderTuneInherited)
+      }
+
+      el("size").addEventListener("change", () => {
+        renderFactionChips()
+        // 19x19 swaps the whole faction list for the hidden faction, so the widths grid has
+        // to follow or it would keep editing factions the run does not play.
+        renderPlayTuning()
+        syncPlayoutEngine()
+      })
+
+      // The playout engine is a 5x5 player by construction - its board is a flat 25-entry array
+      // and its opponent model is tuned for that board - so its switch follows the board size: on
+      // another size it is disabled and unticked rather than silently ignored, and the run would
+      // otherwise report exploit numbers under a playout label.
+      //
+      // It also takes its budget in playouts, not nodes, and has no depth: the Run form's budget
+      // fields mean the exploiter's node count and depth. Ticking the box therefore puts the form
+      // in Nodes mode with a playout count, because a leftover node budget (1, 10, 400) would be
+      // one playout per move, which is a coin flip and reads as "the engine is not running".
+      function syncPlayoutEngine() {
+        const supported = Number(el("size").value) === 5
+        const box = el("playoutEngine")
+        box.disabled = !supported
+        if (!supported && box.checked) {
+          box.checked = false
+          saveForm()
+        }
+        if (supported && box.checked) {
+          const mode = el("budgetMode").value
+          const budget = Number(el("budget").value)
+          const tooSmall = !Number.isFinite(budget) || budget < 100
+          if (mode !== "time" && (mode === "depth" || tooSmall)) {
+            el("budgetMode").value = "iterations"
+            el("budget").value = String(PLAYOUT_DEFAULT_PLAYOUTS)
+            saveForm()
+          }
+        }
+        const label = box.closest("label")
+        if (label) label.classList.toggle("dim", !supported)
+        box.title = supported
+          ? "Run the playout engine instead of the policy exploiter. The budget becomes playouts per move (depth and node counts do not apply), and a time budget stays a wall-clock cap."
+          : "The playout engine plays 5x5 boards only."
+      }
+
+      el("budgetMode").addEventListener("change", () => {
+        const mode = el("budgetMode").value
+        // Remember what was typed for the mode being left, and restore what was
+        // typed for the mode being entered: the units are not comparable, so one
+        // shared box would keep swapping a node count for a millisecond count.
+        if (previousBudgetMode && previousBudgetMode !== mode) {
+          budgetMemory[previousBudgetMode] = el("budget").value
+        }
+        if (mode !== "depth") el("budget").value = budgetMemory[mode] ?? el("budget").value
+        previousBudgetMode = mode
+        updateBudgetLabel()
+        saveForm()
+      })
+
+      // Native select popups are drawn by the browser and ignore our colours,
+      // so each select is hidden and mirrored by a styled dropdown.
+      function enhanceSelect(select) {
+        const nativeValue = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")
+        const wrap = document.createElement("div")
+        wrap.className = "dd"
+        const button = document.createElement("button")
+        button.type = "button"
+        button.className = "ddButton"
+        const list = document.createElement("div")
+        list.className = "ddList"
+        wrap.append(button, list)
+        select.style.display = "none"
+        select.after(wrap)
+
+        const refresh = () => {
+          const current = select.options[select.selectedIndex]
+          button.textContent = current ? current.textContent : ""
+          for (const item of list.children) item.classList.toggle("on", item.dataset.value === select.value)
+        }
+        for (const option of select.options) {
+          const item = document.createElement("div")
+          item.className = "ddItem"
+          item.dataset.value = option.value
+          item.textContent = option.textContent
+          item.addEventListener("click", () => {
+            wrap.classList.remove("open")
+            if (select.value === option.value) return
+            select.value = option.value
+            select.dispatchEvent(new Event("change", { bubbles: true }))
+          })
+          list.appendChild(item)
+        }
+        Object.defineProperty(select, "value", {
+          get() {
+            return nativeValue.get.call(this)
+          },
+          set(v) {
+            nativeValue.set.call(this, v)
+            refresh()
+          },
+        })
+        button.addEventListener("click", () => wrap.classList.toggle("open"))
+        document.addEventListener("click", (e) => {
+          if (!wrap.contains(e.target)) wrap.classList.remove("open")
+        })
+        refresh()
+      }
+      for (const select of document.querySelectorAll("select")) enhanceSelect(select)
+
+      // ---- Tuning view -----------------------------------------------------
+      // The engine owns the search; the page submits a job and renders what comes
+      // back. Stored settings live on the server (temp/tuning.json) so the CLI, the
+      // play path and this page all read the same numbers.
+      const TUNE_FIELDS = ["tuneFaction", "tuneSize", "tuneGenerations", "tunePopulation", "tuneGames", "tuneNodeLimit", "tuneThreads", "tuneSeed"]
+      const TUNE_STORAGE_KEY = "ipvgo-tune-form-v1"
+      // The server clamps every tuner number to the range it accepts. Clamping here too
+      // means the fields show what will actually run. The bounds are wide on purpose -
+      // games per genome only stops a typo, it does not cap the workload you asked for.
+      const TUNE_LIMITS = {
+        tuneGenerations: [1, 60],
+        tunePopulation: [2, 40],
+        tuneGames: [4, 100000],
+        tuneNodeLimit: [100, 5000000],
+        tuneThreads: [1, 64],
+        tuneSeed: [1, Number.MAX_SAFE_INTEGER],
+      }
+
+      function tuneValue(id) {
+        const input = el(id)
+        const limits = TUNE_LIMITS[id]
+        if (!limits) return Number(input.value)
+        const parsed = Math.floor(Number(input.value))
+        const value = Number.isFinite(parsed) ? Math.min(limits[1], Math.max(limits[0], parsed)) : limits[0]
+        if (String(value) !== input.value.trim()) input.value = String(value)
+        return value
+      }
+
+      const tunePct = (value) => `${(100 * Number(value ?? 0)).toFixed(1)}%`
+      const tuneSigned = (value) => {
+        const number = Number(value ?? 0)
+        return `${number >= 0 ? "+" : ""}${number.toFixed(1)}`
+      }
+
+      // "1h 05m", "12m 30s", "45s" - coarse on purpose: an estimate good to the second
+      // invites reading precision that the measurement does not have.
+      function formatDuration(ms) {
+        const total = Math.max(0, Math.round(Number(ms) / 1000))
+        const hours = Math.floor(total / 3600)
+        const minutes = Math.floor((total % 3600) / 60)
+        const seconds = total % 60
+        const pad = (n) => String(n).padStart(2, "0")
+        if (hours > 0) return `${hours}h ${pad(minutes)}m`
+        if (minutes > 0) return `${minutes}m ${pad(seconds)}s`
+        return `${seconds}s`
+      }
+
+      function renderTuneEta(source) {
+        const host = el("tuneEta")
+        if (!host) return
+        host.textContent = ""
+        if (!source) return
+        const parts = []
+        // The faction ETA is recomputed from the counters the progress line is showing,
+        // so the two lines can never belong to different moments. The server's number is
+        // the fallback for an event that carries no counts of its own.
+        const p = tuneLastProgress
+        const played = Number(p?.gamesPlayed ?? 0)
+        const planned = Number(p?.gamesPlanned ?? 0)
+        const perGameMs = played > 0 ? Number(p.elapsedMs ?? 0) / played : 0
+        // One slow first game says nothing about the run, so wait until a couple of
+        // rounds of games have landed before quoting a time.
+        const inFlight = Math.max(1, Number(el("tuneThreads").value) || 1)
+        const warm = played >= Math.min(24, 2 * inFlight)
+        const etaMs = warm && perGameMs > 0 ? perGameMs * Math.max(0, planned - played) : 0
+        const queueEtaMs = Number(source.queueEtaMs ?? 0)
+        if (etaMs > 0) parts.push(`this faction about ${formatDuration(etaMs)} left`)
+        else if (!warm && Number(source.etaMs) > 0) parts.push("timing the first games")
+        if (queueEtaMs > etaMs) parts.push(`whole queue about ${formatDuration(queueEtaMs)} left`)
+        if (Number(source.elapsedMs) > 0) parts.unshift(`${formatDuration(source.elapsedMs)} elapsed`)
+        host.textContent = parts.join("   ")
+      }
+
+      // The tuner reports after every finished game, so these counters move during a
+      // generation rather than once per generation. The faction total is an upper bound:
+      // a genome already measured is not replayed.
+      function renderTuneProgress(source) {
+        const host = el("tuneProgress")
+        if (!host) return
+        const p = source?.progress
+        if (!p) {
+          host.textContent = ""
+          return
+        }
+        const validation = p.phase === "validation"
+        const played = Number(p.gamesPlayed ?? 0)
+        const planned = Number(p.gamesPlanned ?? 0)
+        const done = Number(p.gamesDone ?? 0)
+        const total = Number(p.games ?? 0)
+        const genomes = Number(p.genomes ?? 0)
+        // Games are claimed in genome order, so the genome being measured is the one the
+        // batch is currently inside - which is the honest reading of a parallel batch
+        // where 12 games of the same genome can be running at once.
+        const perGenome = genomes > 0 && total > 0 ? total / genomes : 0
+        const current = perGenome > 0 ? Math.min(genomes, Math.floor(done / perGenome) + 1) : 0
+        const finished = total > 0 && done >= total
+        const genomePart = finished
+          ? validation
+            ? "both finalists measured"
+            : `all ${genomes} genomes measured`
+          : current > 0
+            ? `${validation ? "finalist" : "genome"} ${current}/${genomes} in progress`
+            : ""
+        const parts = [
+          validation ? "held-back validation" : `generation ${p.gen}/${p.generations}`,
+          `games ${done}/${total} in this ${validation ? "phase" : "generation"}`,
+          genomePart,
+          planned > 0 ? `${played}/${planned} games for this faction, ${Math.max(0, planned - played)} left` : "",
+        ]
+        host.textContent = parts.filter(Boolean).join("   ")
+      }
+
+      let tuneRanges = null
+      let tuneStore = {}
+      let tuneDone = null
+      let tuneRunning = false
+      // Latest per-game counters, so the ETA line and the counters line always describe
+      // the same moment even when they are redrawn by a different event.
+      let tuneLastProgress = null
+
+      const PANE_KEY = "ipvgo-bench-pane-v1"
+
+      function showPane(which) {
+        const tuning = which === "tune"
+        el("boardPane").style.display = tuning ? "none" : ""
+        el("tunePane").style.display = tuning ? "" : "none"
+        el("tabBoard").classList.toggle("on", !tuning)
+        el("tabTune").classList.toggle("on", tuning)
+        if (tuning) renderTuneInherited()
+        try {
+          localStorage.setItem(PANE_KEY, tuning ? "tune" : "board")
+        } catch {
+          /* private mode */
+        }
+      }
+
+      function savedPane() {
+        try {
+          return localStorage.getItem(PANE_KEY) === "tune" ? "tune" : "board"
+        } catch {
+          return "board"
+        }
+      }
+
+      function tableRow(cells, className) {
+        const tr = document.createElement("tr")
+        if (className) tr.className = className
+        for (const text of cells) {
+          const td = document.createElement("td")
+          td.textContent = text
+          tr.appendChild(td)
+        }
+        return tr
+      }
+
+      const genomeCells = (genome) => [
+        String(genome.beam),
+        String(genome.whiteChildren),
+        Number(genome.whiteMass).toFixed(2),
+      ]
+
+      // The ms reference is the point of the panel next to the node limit: it turns
+      // "how many nodes can I afford" into a measurement.
+      function renderTuneTiming(event) {
+        const ms = Number(event?.msPerMove ?? 0)
+        const games = Number(event?.recentGames ?? 0)
+        const host = el("tuneTiming")
+        host.innerHTML = ""
+        if (!(ms > 0)) return
+        const strong = document.createElement("b")
+        strong.textContent = `${ms.toFixed(2)} ms`
+        host.append(
+          "reference: ",
+          strong,
+          ` per Black move, averaged over the last ${games} games at node limit ${event?.nodeLimit ?? el("tuneNodeLimit").value}`,
+        )
+      }
+
+      function renderTuneRows(events) {
+        const body = el("tuneRows")
+        body.innerHTML = ""
+        const latest = events[events.length - 1]
+        el("tuneRowsCaption").style.display = latest ? "" : "none"
+        if (!latest) return
+        if (latest.ranges) tuneRanges = latest.ranges
+        renderTuneTiming(latest)
+        el("tuneRowsCaption").textContent = `generation ${latest.gen}/${latest.generations} - ranked by training win rate on the shared seeds`
+        for (const row of latest.rows ?? []) {
+          body.appendChild(
+            tableRow(
+              [
+                `#${row.rank}`,
+                ...genomeCells(row.genome),
+                `${tunePct(row.winRate)} +-${tunePct(row.se)}`,
+                tuneSigned(row.avgMargin),
+                String(row.unfinished ?? 0),
+              ],
+              row.rank === 1 ? "best" : "",
+            ),
+          )
+        }
+        setUnfinishedVisible(
+          "tuneRows",
+          (latest.rows ?? []).some((row) => (row.unfinished ?? 0) > 0),
+        )
+        renderTuneGenes()
+      }
+
+      // 0 means every game in view reached a real result; only then is the column
+      // worth the width.
+      function setUnfinishedVisible(tbodyId, anyUnfinished) {
+        const table = el(tbodyId).closest("table")
+        if (table) table.classList.toggle("hideUnfinished", !anyUnfinished)
+      }
+
+      function renderTuneValidation(done) {
+        tuneDone = done
+        if (done?.ranges) tuneRanges = done.ranges
+        renderTuneTiming(done)
+        const body = el("tuneValidation")
+        body.innerHTML = ""
+        el("tuneValidationCaption").style.display = done ? "" : "none"
+        for (const entry of done?.validation ?? []) {
+          body.appendChild(
+            tableRow(
+              [
+                entry.label,
+                ...genomeCells(entry.genome),
+                `${tunePct(entry.winRate)} +-${tunePct(entry.se)}`,
+                tuneSigned(entry.avgMargin),
+                String(entry.unfinished ?? 0),
+              ],
+              entry.label === "tuned" ? "best" : "",
+            ),
+          )
+        }
+        setUnfinishedVisible(
+          "tuneValidation",
+          (done?.validation ?? []).some((entry) => (entry.unfinished ?? 0) > 0),
+        )
+        refreshTuneApply()
+        renderTuneGenes()
+      }
+
+      // Where the search can go and how far it has got. The range cells are inputs, so
+      // a faction whose optimum is plainly at one end of a gene can be searched there
+      // instead of spending games on values already known to be worse.
+      const TUNE_BOX_IDS = ["boxBeamMin", "boxBeamMax", "boxRepliesMin", "boxRepliesMax", "boxMassMin", "boxMassMax"]
+      const TUNE_BOX_DEFAULTS = { beam: [2, 24], whiteChildren: [1, 16], whiteMass: [0.05, 1] }
+      const TUNE_BOX_STORAGE_KEY = "ipvgo-tune-boxes-v1"
+      let tuneBoxes = {}
+
+      function loadTuneBoxes() {
+        try {
+          tuneBoxes = JSON.parse(localStorage.getItem(TUNE_BOX_STORAGE_KEY) ?? "{}") ?? {}
+        } catch {
+          tuneBoxes = {}
+        }
+      }
+
+      function saveTuneBoxes() {
+        try {
+          localStorage.setItem(TUNE_BOX_STORAGE_KEY, JSON.stringify(tuneBoxes))
+        } catch {
+          /* private mode */
+        }
+      }
+
+      // The box for a faction: what was last typed for it, else the defaults.
+      function tuneBoxFor(faction) {
+        const saved = tuneBoxes[faction]
+        const box = {}
+        for (const [key, fallback] of Object.entries(TUNE_BOX_DEFAULTS)) {
+          const pair = saved?.[key]
+          box[key] = pair?.length === 2 ? [Number(pair[0]), Number(pair[1])] : [...fallback]
+        }
+        return box
+      }
+
+      function applyBoxToInputs(box) {
+        el("boxBeamMin").value = box.beam[0]
+        el("boxBeamMax").value = box.beam[1]
+        el("boxRepliesMin").value = box.whiteChildren[0]
+        el("boxRepliesMax").value = box.whiteChildren[1]
+        el("boxMassMin").value = box.whiteMass[0]
+        el("boxMassMax").value = box.whiteMass[1]
+      }
+
+      function readBoxFromInputs() {
+        const pair = (lo, hi, floor, ceiling) => {
+          const a = Math.min(ceiling, Math.max(floor, Number(el(lo).value)))
+          const b = Math.min(ceiling, Math.max(floor, Number(el(hi).value)))
+          return Number.isFinite(a) && Number.isFinite(b) ? [Math.min(a, b), Math.max(a, b)] : null
+        }
+        return {
+          beam: pair("boxBeamMin", "boxBeamMax", 1, 64),
+          whiteChildren: pair("boxRepliesMin", "boxRepliesMax", 1, 64),
+          whiteMass: pair("boxMassMin", "boxMassMax", 0.01, 1),
+        }
+      }
+
+      function renderTuneGenes() {
+        const faction = el("tuneFaction").value
+        const entry = tuneStore[faction] ?? {}
+        const best = entry.best
+        const applied = entry.applied
+        const value = (source, key, digits) => (source ? Number(source[key]).toFixed(digits) : "-")
+        el("bestBeam").textContent = value(best, "beam", 0)
+        el("bestReplies").textContent = value(best, "whiteChildren", 0)
+        el("bestMass").textContent = value(best, "whiteMass", 2)
+        el("storedBeam").textContent = value(applied, "beam", 0)
+        el("storedReplies").textContent = value(applied, "whiteChildren", 0)
+        el("storedMass").textContent = value(applied, "whiteMass", 2)
+
+        el("tuneBestNote").textContent = best
+          ? `best found for ${el("tuneFaction").value}: ${best.gen ? `generation ${best.gen}, ` : ""}${tunePct(best.winRate)} +-${tunePct(best.se)} (${
+              best.source === "validation" ? "held-back seeds" : "training seeds"
+            })`
+          : "no best found yet - the next search starts from the shipped defaults"
+        // The two start buttons differ only in whether the stored best is reused, so
+        // the difference is spelled out on the buttons instead of hidden in a checkbox.
+        const continueLabel = best
+          ? `Continue from best (b${best.beam} r${best.whiteChildren} m${Number(best.whiteMass).toFixed(2)})`
+          : "Start tuning"
+        el("tuneStart").textContent = continueLabel
+        el("tuneStart").title = best
+          ? `Resume the search around the best genome found so far; use "Start from defaults" to ignore it.`
+          : "No stored best for this faction yet, so this is a fresh search."
+        el("tuneRestart").disabled = Boolean(tuneRunning)
+        refreshTuneApply()
+        renderFactionTables()
+      }
+
+      // Both matrices share a shape: a row per gene, a column per faction.
+      function renderFactionTables() {
+        const factions = [...new Set([...ALL_FACTIONS, ...Object.keys(tuneStore)])]
+        const genes = [
+          ["beam", (s) => Number(s.beam).toFixed(0)],
+          ["replies", (s) => Number(s.whiteChildren).toFixed(0)],
+          ["mass cap", (s) => Number(s.whiteMass).toFixed(2)],
+        ]
+        const fill = (headId, bodyId, pick) => {
+          const head = el(headId)
+          const body = el(bodyId)
+          head.innerHTML = ""
+          body.innerHTML = ""
+          const headerRow = document.createElement("tr")
+          headerRow.appendChild(cell("th", "gene"))
+          for (const faction of factions) {
+            const th = cell("th", shortName(faction))
+            th.title = faction
+            headerRow.appendChild(th)
+          }
+          head.appendChild(headerRow)
+          for (const [label, format] of genes) {
+            const row = document.createElement("tr")
+            row.appendChild(cell("td", label))
+            for (const faction of factions) {
+              const source = pick(tuneStore[faction] ?? {})
+              const td = cell("td", source ? format(source) : "-")
+              if (!source) td.className = "untuned"
+              row.appendChild(td)
+            }
+            body.appendChild(row)
+          }
+        }
+        const cell = (tag, text) => {
+          const element = document.createElement(tag)
+          element.textContent = text
+          return element
+        }
+        fill("storedHead", "storedBody", (entry) => entry.applied)
+        fill("bestHead", "bestBody", (entry) => entry.best)
+      }
+
+      // Store is available as soon as there is a best genome for the faction, which the
+      // server records after every generation - so a run stopped early can still be
+      // stored, using the best found so far rather than a validated winner.
+      function refreshTuneApply() {
+        const genome = tuneDone?.validation?.[0]?.genome ?? tuneStore[el("tuneFaction").value]?.best
+        el("tuneApply").disabled = !genome
+        el("tuneApply").title = genome
+          ? `Store ${el("tuneFaction").value} b${genome.beam} r${genome.whiteChildren} m${Number(genome.whiteMass).toFixed(2)} for play`
+          : "Run a search first (or tune for this faction at least one generation)"
+      }
+
+      // What the run in flight was started with: the Run pane can be edited while a
+      // tune runs, so the summary must not drift away from the search actually in use.
+      let tuneRunSearch = null
+
+      // The search shape belongs to the Run pane: the tuner reports what it will use
+      // rather than keeping a second copy that can drift out of step with what play uses.
+      // Threads and the root scheduler are absent because every tuning game searches on
+      // one worker - with a single worker the dynamic scheduler is never reached - so
+      // neither setting can change a tuning result.
+      function inheritedSearch() {
+        return {
+          endgameEmpties: numberOf("endgameEmpties"),
+          nodeBudget: numberOf("nodeBudget"),
+          maxDepth: numberOf("maxDepth"),
+          carry: el("carry").checked,
+          autoDepth: el("autoDepth").checked,
+          perMoveBudget: el("perMoveBudget").checked,
+          widen: el("widen").checked,
+          verifyRootReplies: el("verifyRootReplies").checked,
+          cheats: el("cheats").checked,
+          sourceFile14Level: el("cheats").checked && el("sf14Bonus").checked ? 3 : 0,
+          cheatMaxAttempts: Math.max(0, Math.floor(numberOf("cheatAttempts")) || 0),
+          cheatMargin: Number(el("cheatMargin").value.trim() || el("cheatMargin").placeholder),
+          cheatLosingGate: el("cheatLosing").checked,
+        }
+      }
+
+      function renderTuneInherited() {
+        const host = el("tuneInherited")
+        if (!host) return
+        const inFlight = tuneRunning && tuneRunSearch ? tuneRunSearch : null
+        const search = inFlight ?? inheritedSearch()
+        const onOff = (value) => (value ? "on" : "off")
+        const games = Math.max(1, Math.floor(Number(el("tuneThreads").value) || 1))
+        const gamesLabel = games === 1 ? "1 game in flight" : `${games} games in flight`
+        const threadsValue = numberOf("threads")
+        const runThreads = threadsValue === 0 ? "0 = all cores" : String(threadsValue)
+        host.textContent =
+          `${inFlight ? "search this run uses" : "search inherited from Run"}: ` +
+          `endgame ${search.endgameEmpties} empties / ${search.nodeBudget} nodes, ` +
+          `max depth ${search.maxDepth === 0 ? "default" : search.maxDepth}, ` +
+          `carry ${onOff(search.carry)}, auto depth ${onOff(search.autoDepth)}, ` +
+          `per-move budget ${onOff(search.perMoveBudget)}, widen ${onOff(search.widen)}, ` +
+          `verify replies ${onOff(search.verifyRootReplies)}, cheats ${onOff(search.cheats)}` +
+          `${search.cheats ? ` (SF14 bonus ${onOff(search.sourceFile14Level >= 3)}, ${search.cheatMaxAttempts} tries, margin ${search.cheatMargin}, only when losing ${onOff(search.cheatLosingGate)})` : ""}; ` +
+          `${gamesLabel}, one search thread each - Run's Threads (${runThreads}) and ` +
+          `Dynamic scheduler (${onOff(el("dynamicRoot").checked)}) do not apply to a single-threaded search`
+      }
+
+      function setTuneRunning(running) {
+        tuneRunning = running
+        el("tuneStart").disabled = running
+        el("tuneStop").disabled = !running
+        el("tuneRestart").disabled = running
+        el("tuneAll").disabled = running
+        for (const id of TUNE_FIELDS) el(id).disabled = running
+        for (const id of TUNE_BOX_IDS) el(id).disabled = running
+        el("tuneAllResume").disabled = running
+        renderTuneInherited()
+      }
+
+      function saveTuneForm() {
+        const form = {}
+        for (const id of TUNE_FIELDS) form[id] = el(id).value
+        // Checkboxes are part of the tuning setup, so they persist with it.
+        form.autoApply = el("tuneAllApply").checked
+        form.resume = el("tuneAllResume").checked
+        try {
+          localStorage.setItem(TUNE_STORAGE_KEY, JSON.stringify(form))
+        } catch {
+          /* private mode */
+        }
+      }
+
+      function loadTuneForm() {
+        try {
+          const form = JSON.parse(localStorage.getItem(TUNE_STORAGE_KEY) ?? "null")
+          if (!form) return
+          for (const id of TUNE_FIELDS) if (form[id] !== undefined) el(id).value = form[id]
+          el("tuneAllApply").checked = form.autoApply !== false
+          el("tuneAllResume").checked = form.resume !== false
+        } catch {
+          /* corrupt entry */
+        }
+      }
+
+      async function postTune(path, body) {
+        const res = await fetch(`${API_BASE}${path}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body ?? {}),
+        })
+        const payload = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(payload.error ?? `HTTP ${res.status}`)
+        return payload
+      }
+
+      function initAutoTune() {
+        loadTuneForm()
+        loadTuneBoxes()
+        applyBoxToInputs(tuneBoxFor(el("tuneFaction").value))
+        setTuneRunning(false)
+        for (const id of TUNE_FIELDS) {
+          el(id).addEventListener("change", () => {
+            tuneValue(id)
+            saveTuneForm()
+            if (id === "tuneFaction") applyBoxToInputs(tuneBoxFor(el("tuneFaction").value))
+            if (id === "tuneThreads") renderTuneInherited()
+            renderTuneGenes()
+          })
+        }
+        // The ranges belong to a faction: they are remembered per faction and restored
+        // when the selection changes.
+        for (const id of ["tuneAllApply", "tuneAllResume"]) el(id).addEventListener("change", saveTuneForm)
+        for (const id of TUNE_BOX_IDS) {
+          el(id).addEventListener("change", () => {
+            const faction = el("tuneFaction").value
+            tuneBoxes[faction] = readBoxFromInputs()
+            saveTuneBoxes()
+          })
+        }
+        el("tabBoard").addEventListener("click", () => showPane("board"))
+        el("tabTune").addEventListener("click", () => showPane("tune"))
+        showPane(savedPane())
+
+        const refreshSettings = (payload) => {
+          tuneStore = payload?.store ?? {}
+          renderTuneGenes()
+          // Adopt stored values for factions the user has not overridden locally, but
+          // never redraw a field that is being edited.
+          const focused = document.activeElement
+          if (!focused || !el("playTuningRows")?.contains(focused)) renderPlayTuning()
+        }
+        fetch(`${API_BASE}/api/tune/settings`)
+          .then((res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`)
+            return res.json()
+          })
+          .then(refreshSettings)
+          .catch(() => {
+            // A server started before the store existed answers 404 and never sends
+            // settings events. That silently disabled resume, which looked like the
+            // resume option simply not working.
+            const message =
+              "this server predates the tuning store - restart the engine server. Until then every run starts from scratch and nothing is remembered."
+            el("tuneBestNote").textContent = message
+            el("tuneError").textContent = message
+            // Still draw the (empty) per-faction tables so the Run column is not blank.
+            renderFactionTables()
+          })
+
+        const source = new EventSource(`${API_BASE}/api/tune/events`)
+        const generations = []
+        source.addEventListener("snapshot", (event) => {
+          const snapshot = JSON.parse(event.data)
+          generations.length = 0
+          for (const item of snapshot.generations ?? []) generations.push(item)
+          renderTuneRows(generations)
+          renderTuneValidation(snapshot.done)
+          tuneLastProgress = snapshot.progress ?? null
+          renderTuneEta(snapshot)
+          renderTuneProgress(snapshot)
+          el("tuneRunFile").textContent = snapshot.runFile ? `final generation saved to ${snapshot.runFile}` : ""
+          tuneRunSearch =
+            snapshot.running && snapshot.options?.search
+              ? { ...snapshot.options.search, carry: snapshot.options.carry !== false }
+              : null
+          setTuneRunning(Boolean(snapshot.running))
+          if (snapshot.error) el("tuneError").textContent = snapshot.error
+          const queue = snapshot.queue
+          const where = queue ? ` (${queue.index}/${queue.total} in queue)` : ""
+          if (snapshot.running && snapshot.options) {
+            const from = snapshot.options.resumeFrom
+            el("tuneStatus").textContent =
+              (from
+                ? `tuning ${snapshot.faction} from b${from.beam} r${from.whiteChildren} m${Number(from.whiteMass).toFixed(2)}`
+                : `tuning ${snapshot.faction} - new search`) + where
+          } else if (snapshot.done) {
+            el("tuneStatus").textContent = "finished - compare the two validation rows"
+          } else {
+            el("tuneStatus").textContent = "idle"
+          }
+        })
+        source.addEventListener("progress", (event) => {
+          const data = JSON.parse(event.data)
+          tuneLastProgress = data
+          renderTuneProgress({ progress: data })
+          renderTuneEta(data)
+        })
+        source.addEventListener("generation", (event) => {
+          const data = JSON.parse(event.data)
+          generations.push(data)
+          renderTuneRows(generations)
+          renderTuneEta(data)
+          el("tuneStatus").textContent = `generation ${data.gen}/${data.generations} - ${data.faction}`
+        })
+        source.addEventListener("done", (event) => {
+          const data = JSON.parse(event.data)
+          renderTuneValidation(data)
+          setTuneRunning(false)
+          el("tuneStatus").textContent = "finished - compare the two validation rows"
+          // The server keeps the whole final generation in a file; say where.
+          if (data.file) el("tuneRunFile").textContent = `final generation saved to ${data.file}`
+        })
+        source.addEventListener("settings", (event) => refreshSettings(JSON.parse(event.data)))
+        source.addEventListener("error", (event) => {
+          if (event.data) el("tuneError").textContent = JSON.parse(event.data).error ?? ""
+        })
+
+        const startTuning = async (resume) => {
+          el("tuneError").textContent = ""
+          renderTuneValidation(null)
+          const body = {
+            faction: el("tuneFaction").value,
+            size: Number(el("tuneSize").value),
+            generations: tuneValue("tuneGenerations"),
+            population: tuneValue("tunePopulation"),
+            games: tuneValue("tuneGames"),
+            nodeLimit: tuneValue("tuneNodeLimit"),
+            threads: tuneValue("tuneThreads"),
+            seed: tuneValue("tuneSeed"),
+            resume,
+            search: inheritedSearch(),
+            ranges: readBoxFromInputs(),
+          }
+          saveTuneForm()
+          showPane("tune")
+          setTuneRunning(true)
+          el("tuneStatus").textContent = resume ? "starting from the best found so far..." : "starting from the defaults..."
+          try {
+            await postTune("/api/tune/start", body)
+          } catch (err) {
+            el("tuneError").textContent = err.message
+            setTuneRunning(false)
+            el("tuneStatus").textContent = "idle"
+          }
+        }
+        el("tuneStart").addEventListener("click", () => startTuning(true))
+        el("tuneRestart").addEventListener("click", () => startTuning(false))
+
+        // One run per faction, back to back, on the server. Each faction uses its own
+        // range box, and the queue survives closing this page.
+        el("tuneAll").addEventListener("click", async () => {
+          el("tuneError").textContent = ""
+          renderTuneValidation(null)
+          const rangesByFaction = {}
+          for (const faction of ALL_FACTIONS) {
+            const saved = tuneBoxes[faction]
+            rangesByFaction[faction] = saved ?? tuneBoxFor(el("tuneFaction").value)
+          }
+          const body = {
+            factions: ALL_FACTIONS,
+            size: Number(el("tuneSize").value),
+            generations: tuneValue("tuneGenerations"),
+            population: tuneValue("tunePopulation"),
+            games: tuneValue("tuneGames"),
+            nodeLimit: tuneValue("tuneNodeLimit"),
+            threads: tuneValue("tuneThreads"),
+            seed: tuneValue("tuneSeed"),
+            resume: el("tuneAllResume").checked,
+            autoApply: el("tuneAllApply").checked,
+            search: inheritedSearch(),
+            rangesByFaction,
+          }
+          saveTuneForm()
+          showPane("tune")
+          setTuneRunning(true)
+          el("tuneStatus").textContent = `queueing ${ALL_FACTIONS.length} factions...`
+          try {
+            await postTune("/api/tune/start-all", body)
+          } catch (err) {
+            el("tuneError").textContent = err.message
+            setTuneRunning(false)
+            el("tuneStatus").textContent = "idle"
+          }
+        })
+
+        el("tuneStop").addEventListener("click", async () => {
+          await fetch(`${API_BASE}/api/tune/stop`, { method: "POST" }).catch(() => {})
+          setTuneRunning(false)
+          // The best found so far is still storable after a stop.
+          refreshTuneApply()
+          el("tuneStatus").textContent = "stopped - starting again continues from the best found so far"
+        })
+
+        el("tuneApply").addEventListener("click", async () => {
+          const genome = tuneDone?.validation?.[0]?.genome ?? tuneStore[el("tuneFaction").value]?.best
+          if (!genome) return
+          const faction = tuneDone?.faction ?? el("tuneFaction").value
+          try {
+            refreshSettings(await postTune("/api/tune/apply", { faction, genome, action: "apply" }))
+            // The Run table is the authority for play, so mirror the stored value there.
+            playTuning[faction] = {
+              beam: Number(genome.beam),
+              whiteChildren: Number(genome.whiteChildren),
+              whiteMass: Number(genome.whiteMass),
+            }
+            savePlayTuning()
+            renderPlayTuning()
+          } catch (err) {
+            el("tuneError").textContent = err.message
+          }
+        })
+
+        el("tuneClear").addEventListener("click", async () => {
+          const faction = el("tuneFaction").value
+          try {
+            refreshSettings(await postTune("/api/tune/apply", { faction, action: "clear" }))
+            // With nothing stored, play goes back to the engine defaults.
+            delete playTuning[faction]
+            savePlayTuning()
+            renderPlayTuning()
+          } catch (err) {
+            el("tuneError").textContent = err.message
+          }
+        })
+
+        // ---- Tuning store file: import / export / reset ------------------
+        // The store is the whole per-faction table, so all three act on every faction at
+        // once. Local Run-column overrides shadow the store, so they are dropped whenever
+        // the store is replaced - otherwise the imported numbers would not be the ones
+        // play uses.
+        const tuneFileNote = (text) => {
+          el("tuneFileNote").textContent = text
+        }
+
+        const adoptStore = (payload) => {
+          playTuning = {}
+          savePlayTuning()
+          refreshSettings(payload)
+          renderPlayTuning()
+        }
+
+        el("tuneExport").addEventListener("click", async () => {
+          try {
+            const res = await fetch(`${API_BASE}/api/tune/export?inline=1`)
+            const payload = await res.json().catch(() => ({}))
+            if (!res.ok) throw new Error(payload.error ?? `HTTP ${res.status}`)
+            const blob = new Blob([JSON.stringify(payload.store ?? {}, null, 2) + "\n"], { type: "application/json" })
+            const link = document.createElement("a")
+            const href = URL.createObjectURL(blob)
+            link.href = href
+            link.download = payload.filename ?? "tuning.json"
+            document.body.appendChild(link)
+            link.click()
+            link.remove()
+            // Revoked on a timer: revoking straight away can cancel the download.
+            setTimeout(() => URL.revokeObjectURL(href), 10000)
+            tuneFileNote(`exported ${payload.filename}`)
+          } catch (err) {
+            el("tuneError").textContent = err.message
+          }
+        })
+
+        el("tuneImport").addEventListener("click", () => el("tuneImportFile").click())
+
+        el("tuneImportFile").addEventListener("change", async () => {
+          const file = el("tuneImportFile").files?.[0]
+          if (!file) return
+          try {
+            const text = await file.text()
+            let parsed
+            try {
+              parsed = JSON.parse(text)
+            } catch {
+              throw new Error(`${file.name} is not JSON`)
+            }
+            // Replacing, not merging: an export is a snapshot of the whole store, and a
+            // merge would silently keep factions the file does not have.
+            const payload = await postTune("/api/tune/import", { store: parsed })
+            adoptStore(payload)
+            const kept = `${payload.imported} faction${payload.imported === 1 ? "" : "s"}`
+            tuneFileNote(`imported ${kept}${payload.skipped ? `, skipped ${payload.skipped}` : ""}`)
+          } catch (err) {
+            el("tuneError").textContent = err.message
+          } finally {
+            // Clearing the value allows picking the same file again.
+            el("tuneImportFile").value = ""
+          }
+        })
+
+        el("tuneReset").addEventListener("click", async () => {
+          const count = Object.keys(tuneStore).length
+          const question = count
+            ? `Clear the tuning stored for all ${count} faction${count === 1 ? "" : "s"}?\n\nThis cannot be undone.`
+            : "Nothing is stored for any faction.\n\nClear the store anyway?"
+          if (!confirm(question)) return
+          try {
+            adoptStore(await postTune("/api/tune/reset"))
+            tuneFileNote("store cleared")
+          } catch (err) {
+            el("tuneError").textContent = err.message
+          }
+        })
+      }
+
+      // ---- Per-faction width inputs (Run column) ---------------------------
+      // The values play actually uses, one row per faction. They start from the tuning
+      // store, are remembered locally, and are written back to the store so the tuning
+      // pane and the CLI see the same numbers.
+      function loadPlayTuning() {
+        try {
+          const saved = JSON.parse(localStorage.getItem(PLAY_TUNING_KEY) ?? "null")
+          if (saved && typeof saved === "object") playTuning = saved
+        } catch {
+          playTuning = {}
+        }
+      }
+
+      function savePlayTuning() {
+        try {
+          localStorage.setItem(PLAY_TUNING_KEY, JSON.stringify(playTuning))
+        } catch {
+          /* private mode */
+        }
+      }
+
+      function playTuningFor(faction) {
+        const saved = playTuning[faction]
+        if (saved) return { ...PLAY_TUNING_DEFAULTS, ...saved }
+        const applied = tuneStore[faction]?.applied
+        return applied ? { ...applied } : { ...PLAY_TUNING_DEFAULTS }
+      }
+
+      // What Start sends: the factions this run will play. 19x19 is the hidden faction's
+      // fixed subnet, so it is the only one it plays; every other size plays the chips.
+      function runFactions() {
+        return Number(el("size").value) === 19 ? ["WorldDaemon"] : inListOrder(Array.from(selected))
+      }
+
+      function readPlayTuning() {
+        const out = {}
+        for (const faction of runFactions()) out[faction] = playTuningFor(faction)
+        return out
+      }
+
+      // The narrow tables (Run column, faction matrices) cannot afford "The Black Hand",
+      // so headers and row labels drop the article.
+      const shortName = (name) => String(name).replace(/^The /, "")
+
+      function renderPlayTuning() {
+        const grid = el("playTuningRows")
+        if (!grid) return
+        grid.innerHTML = ""
+        // Header cells and data cells share this one grid, so they cannot misalign.
+        for (const [label, align] of [["faction", ""], ["beam", "num"], ["replies", "num"], ["mass", "num"]]) {
+          const cell = document.createElement("span")
+          cell.className = `head ${align}`.trim()
+          cell.textContent = label
+          grid.appendChild(cell)
+        }
+        // Every tunable faction gets a row: the grid is where widths are stored, not only
+        // where the current run reads them. A faction this board size will not play is
+        // dimmed so the run's own list stays obvious.
+        const playing = new Set(runFactions())
+        for (const faction of TUNING_FACTIONS) {
+          const name = document.createElement("span")
+          name.className = "name"
+          name.textContent = shortName(faction)
+          name.title = playing.has(faction)
+            ? faction
+            : `${faction} - not played at this board size, widths are stored for later`
+          if (!playing.has(faction)) name.style.color = "var(--dim)"
+          grid.appendChild(name)
+          for (const gene of ["beam", "whiteChildren", "whiteMass"]) {
+            const input = document.createElement("input")
+            input.type = "number"
+            if (gene === "whiteMass") {
+              input.min = "0.05"
+              input.max = "1"
+              input.step = "0.01"
+              input.value = Number(playTuningFor(faction)[gene]).toFixed(2)
+            } else {
+              input.min = "1"
+              input.max = "64"
+              input.value = String(playTuningFor(faction)[gene])
+            }
+            input.addEventListener("change", () => {
+              const raw = Number(input.value)
+              if (!Number.isFinite(raw)) return
+              const clamped =
+                gene === "whiteMass" ? Math.min(1, Math.max(0.05, raw)) : Math.min(64, Math.max(1, Math.round(raw)))
+              input.value = gene === "whiteMass" ? clamped.toFixed(2) : String(clamped)
+              playTuning[faction] = { ...playTuningFor(faction), [gene]: clamped }
+              savePlayTuning()
+              // Keep the store, and so the tuning pane, in step with what play will use.
+              fetch(`${API_BASE}/api/tune/apply`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ faction, genome: playTuning[faction], action: "apply" }),
+              })
+                .then((res) => (res.ok ? res.json() : null))
+                .then((payload) => {
+                  if (payload) tuneStore = payload.store ?? tuneStore
+                  renderFactionTablesSafe()                })
+                .catch(() => {})
+            })
+            grid.appendChild(input)
+          }
+        }
+      }
+
+      // The matrices live in the tuning block; guard so the Run column can be drawn
+      // before the store has ever loaded.
+      function renderFactionTablesSafe() {
+        try {
+          renderFactionTables()
+        } catch {
+          /* tuning pane not ready */
+        }
+      }
+
+      applyForm(loadForm())
+      // A URL override, so the engine can be forced without depending on the form's saved
+      // state or on the browser having a current copy of this page: ?engine=playout.
+      const urlEngine = new URLSearchParams(location.search).get("engine")
+      if (urlEngine === "playout" || urlEngine === "exploit") {
+        el("playoutEngine").checked = urlEngine === "playout"
+        saveForm()
+      }
+      loadViewOptions()
+      loadLock()
+      initAutoTune()
+      loadPlayTuning()
+      renderPlayTuning()
+      renderFactionChips()
+      syncPlayoutEngine()
+      el("stop").disabled = true
+      requestAnimationFrame(frameLoop)
+      connectStream()
+    </script>
+  </body>
+</html>

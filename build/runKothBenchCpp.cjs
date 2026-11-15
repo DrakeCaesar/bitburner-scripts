@@ -4,14 +4,17 @@ const fs = require("node:fs")
 
 const ROOT = path.join(__dirname, "..")
 const SRC_DIR = path.join(ROOT, "tests/koth_tune")
-const BUILD_DIR = path.join(SRC_DIR, "build")
-const PRESET = "koth-tune-release"
+const BUILD_DIR = path.join(ROOT, "out", "build", "x64-Release")
 
 const EXE_CANDIDATES = [
-  path.join(BUILD_DIR, "Release", "koth_bench.exe"),
-  path.join(BUILD_DIR, "Release", "koth_bench"),
-  path.join(BUILD_DIR, "koth_bench.exe"),
-  path.join(BUILD_DIR, "koth_bench"),
+  path.join(BUILD_DIR, "bin", "Release", "koth_bench.exe"),
+  path.join(BUILD_DIR, "bin", "Release", "koth_bench"),
+  path.join(BUILD_DIR, "bin", "koth_bench.exe"),
+  path.join(BUILD_DIR, "bin", "koth_bench"),
+  path.join(SRC_DIR, "build", "Release", "koth_bench.exe"),
+  path.join(SRC_DIR, "build", "Release", "koth_bench"),
+  path.join(SRC_DIR, "build", "koth_bench.exe"),
+  path.join(SRC_DIR, "build", "koth_bench"),
 ]
 
 function findExe() {
@@ -49,28 +52,32 @@ function needsRebuild(exe, args) {
   const sources = [
     ...collectSourceFiles(path.join(SRC_DIR, "src")),
     path.join(SRC_DIR, "CMakeLists.txt"),
-    path.join(SRC_DIR, "CMakePresets.json"),
+    path.join(ROOT, "CMakeLists.txt"),
+    path.join(ROOT, "CMakeSettings.json"),
+    path.join(ROOT, "cmake", "BuildTypes.cmake"),
   ]
   const srcMtime = newestMtime(sources)
   const exeMtime = fs.statSync(exe).mtimeMs
   return srcMtime > exeMtime
 }
 
-function configureIfNeeded() {
-  if (!fs.existsSync(path.join(BUILD_DIR, "CMakeCache.txt"))) {
-    execFileSync("cmake", ["--preset", PRESET, "-S", SRC_DIR], {
-      stdio: "inherit",
-      cwd: ROOT,
-    })
-  }
-}
-
+// The native build needs the MSVC environment (Ninja calls cl.exe directly), so
+// delegate to the shared PowerShell wrapper instead of invoking cmake here.
 function buildBench() {
-  configureIfNeeded()
-  execFileSync("cmake", ["--build", BUILD_DIR, "--config", "Release", "--target", "koth_bench"], {
-    stdio: "inherit",
-    cwd: ROOT,
-  })
+  execFileSync(
+    "powershell",
+    [
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      path.join(ROOT, "cmake", "Build-Native.ps1"),
+      "-Configure",
+      "-Target",
+      "koth_bench",
+    ],
+    { stdio: "inherit", cwd: ROOT },
+  )
 }
 
 function main() {

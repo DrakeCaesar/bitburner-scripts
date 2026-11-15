@@ -2,20 +2,26 @@
 
 # IDE
 .idea/
+.vs/
 .vscode/
+
+# CMakeSettings.json build roots (x64-Release, x64-Profile, ...)
+/out/
 
 # Distributable
 /dist/
 /playground/dist/
 /src/dnet/solvers/solverWorker.js
 
-# IPvGO native / WASM engine build artifacts
+# Unified native build (root CMakeLists.txt + CMakePresets.json)
+/cmake-build/
+/cmake-build-debug/
+/cmake-build-prof/
+/cmake-build-*/
+
+# IPvGO native engine build artifacts (standalone per-component builds)
 ipvgo-engine/build/
 ipvgo-engine/temp/
-ipvgo-engine/cpp/*.wasm
-ipvgo-engine/cpp/ipvgo.wasm.js
-ipvgo-engine/katago/
-
 # KingOfTheHill Python benchmark (tests/koth_tune/python/)
 tests/koth_tune/build/
 tests/koth_tune/python/__pycache__/
@@ -180,3 +186,4 @@ dist
 Trace-*.json
 *.pyc
 __pycache__/
+ipvgo-engine/build-game/

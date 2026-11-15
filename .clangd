@@ -1,0 +1,9 @@
+# clangd configuration.
+#
+# The native engine is built with CMake (see cmake/Build-Native.ps1), which writes a
+# compile database into the build tree. Without this, clangd parses these files with no
+# include paths at all and reports vendored headers such as
+# third_party/ankerl/unordered_dense.h as "file not found", along with every symbol
+# that header declares.
+CompileFlags:
+  CompilationDatabase: out/build/x64-Release

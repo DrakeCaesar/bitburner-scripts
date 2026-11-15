@@ -1,13 +1,15 @@
-# IPvGO engine (native + WASM + KataGo)
+# IPvGO engine (exploiter + MCGS)
 
-C++ MCTS engine for Bitburner IPvGO. The server prefers **KataGo** (GPU neural net) when installed, with C++ MCTS as fallback.
+C++ engine for Bitburner IPvGO. Play is driven by a **policy exploiter** that
+models the scripted faction AI, with Monte Carlo graph search and a legacy
+heuristic MCTS engine as alternatives.
 
 ## Quick start
 
 From the **repo root**:
 
 ```bash
-pnpm run ipvgo:setup   # download KataGo CUDA binary + neural nets (~200MB)
+pnpm run ipvgo:build   # Build-Native.ps1: configure + build ipvgo_game
 pnpm run server        # http://localhost:3010
 ```
 
@@ -17,50 +19,185 @@ In Bitburner:
 run ipvgo.js
 ```
 
-`ipvgo:setup` downloads:
-- KataGo v1.16.5 (CUDA Windows/Linux, OpenCL fallback if CUDA zip fails)
-- Main b18 net (5/7/13 boards)
-- 9x9 finetuned net (9x9 only)
+Then open **http://localhost:3010/bench** for the benchmark GUI.
 
-**First KataGo launch:** OpenCL/CUDA may GPU-autotune for several minutes (cached under `katago/KataGoData/`). The server pre-warms KataGo on startup so tuning finishes before your first in-game move.
+## Engine modes
 
-Optional native C++ fallback:
+There is one engine binary, `ipvgo_game`, and the server runs it in one of three modes:
 
-```bash
-pnpm run ipvgo:build
-```
+1. **Exploit** - policy expectimax against the faction AI (default)
+2. **MCGS** - Monte Carlo graph search
+3. **Playout** - playout graph search (see "Playout engine" below)
 
-## Engine priority
-
-1. **KataGo** (`ipvgo-engine/katago/`) — GPU analysis engine with pretrained nets
-2. **Native** (`ipvgo_engine.exe`) — CPU MCTS if KataGo missing or errors
-
-Force native only: `IPVGO_FORCE_NATIVE=1 pnpm run server`
-
+`IPVGO_ENGINE=mcgs` and `IPVGO_ENGINE=playout` select the second and third; anything
+else, including unset, runs the exploiter. The legacy heuristic MCTS engine that used to
+build as `ipvgo_engine` (and `IPVGO_ENGINE=native`) is gone: it contained no exploiter,
+nothing served it, and a tree built with only that target looked built while having no
+engine at all.
 ## Prerequisites
 
-- CMake 3.10+ (native fallback only)
-- C++17 compiler (native fallback only)
-- NVIDIA GPU + drivers for CUDA KataGo build (RTX series); setup falls back to OpenCL
+- CMake 3.18+
+- C++17 compiler
+- **clang-cl** (the "C++ Clang tools for Windows" component of Visual Studio)
 
 `nlohmann/json` is fetched automatically via CMake if not installed.
 
 ## Native server
 
-VS Code CMake uses **`ipvgo-engine/build`** only.
+Native targets are built from the **repo root** into one tree, shared with the
+other native components (`tests/koth_tune`):
+
+```bash
+./cmake/Build-Native.ps1 -Configure              # configure + build everything (Release)
+./cmake/Build-Native.ps1 -Target ipvgo_game      # one target, after configuring
+# or just the engine, through the package script:
+pnpm run ipvgo:build
+```
+
+Ninja invokes the compiler directly, so it needs the variables the Visual Studio
+developer environment sets up (`INCLUDE`, `LIB`, `PATH`); without them a compile
+fails with `C1083: Cannot open include file: 'array'`. `Build-Native.ps1` finds
+Visual Studio with `vswhere`, imports that environment, and then runs CMake, so
+it works from any shell. Running bare `cmake --build ...` only works inside a
+*Developer PowerShell for VS*.
+
+Executables land in **`out/build/x64-Release/bin/`** (`ipvgo_game`,
+`ipvgo_game`, `koth_bench`, `koth_tune`). The helper scripts also accept the
+older per-component `ipvgo-engine/build` layout, which still works for a
+standalone `cmake -S ipvgo-engine -B ipvgo-engine/build`.
+
+`CMakeSettings.json` defines the same tree for the IDE: `x64-Release` for
+performance work, `x64-Profile` (`RelWithDebInfo`) for profiling, plus `x64-Debug`
+and `Linux-*`. Each configuration builds into `out/build/<name>`, and all three
+x64 ones inherit `clang_cl_x64_x64`. It also carries `x64-Release-Msvc`, the
+cl.exe cross-check described below.
+
+`CMakePresets.json` (repo root, tracked) declares the *generator* and the *compiler*
+for every entry point: `x64-Release`, `x64-Debug`, `x64-Profile` and the two
+`x64-Pgo-*` passes, all Ninja, all `clang-cl`, and all pointing at the same
+`out/build/<name>` directories that `CMakeSettings.json` and `Build-Native.ps1` use,
+plus `x64-Release-Msvc`. Use it directly when the compiler environment is already
+loaded:
+
+```powershell
+cmake --preset x64-Release        # configure
+cmake --build --preset x64-Release
+```
+
+**On macOS** use `macos-Release` instead. It configures the same
+`out/build/x64-Release` tree - the one `server.js` serves - with Apple clang
+(`/usr/bin/clang++`) rather than clang-cl, which additionally would pull the Windows
+flag set (`/arch:AVX2`, `-fuse-ld=lld`) onto an arm64 target where it does not apply.
+`BuildTypes.cmake` takes its Unix branch there (`-O3 -march=native -flto`):
+
+```bash
+cmake --preset macos-Release
+cmake --build --preset macos-Release
+```
+
+**Building from the VS Code GUI.** CMake Tools builds *the selected target*, and the
+engine is one target (`ipvgo_game`), so pick it - or `all` - in the target picker in the
+status bar ("CMake: Set Build Target"); the selection is remembered per folder. The build
+presets name it explicitly, so driving builds through the preset works too.
+
+### clang-cl, not cl.exe
+
+Visual Studio ships two C++ compilers; this project builds with the LLVM one,
+`clang-cl` (component "C++ Clang tools for Windows", `VC\Tools\Llvm\x64\bin`, on
+`PATH` inside the developer shell that `Build-Native.ps1` enters). Configure a tree
+with `cl.exe` without asking for it and CMake stops with a message saying so, because
+the difference is large enough that a silent fallback would be a trap:
+
+| `optbench`, single-threaded, 12 runs per arm interleaved | MSVC (cl) | clang-cl | delta |
+|---|---|---|---|
+| depth 3, best of 5 | 415.3 ms | **348.1 ms** | **-16.2%** |
+| depth 4, best of 2 | 7 321.2 ms | **6 028.6 ms** | **-17.7%** |
+
+Node counts are identical in every run (51 818 at depth 3, 985 794 at depth 4) and
+`selftest` passes in both, so the search makes exactly the same decisions and only the
+speed changes. About two points of that is link-time optimisation (clang without
+`-flto` lands at 358.6 ms, -13.7%); the rest is codegen. The flags are in
+`cmake/BuildTypes.cmake`: `/O2 /arch:AVX2 -DNDEBUG` plus `-flto=full`, and
+`-flto=full -fuse-ld=lld` at link time, because lld-link is the only linker that
+consumes the bitcode.
+
+Nothing further is left in the flags. Each of these was built and measured against the
+clang-cl binary, all inside the run-to-run noise, and is recorded so it is not tried
+again:
+
+- `-march=native` (clang can target `znver3` here): 350.3 ms, no better than
+  `/arch:AVX2`.
+- `-O3`: not even a lever - clang-cl's `/O2` already emits cc1 `"-O3"` (`clang-cl -###`
+  shows the same for `/Ox`), so the build is at clang's top optimisation level.
+- `-GS-` / `-fno-stack-protector`: 340.1 ms against 341.9.
+- `-flto=thin` instead of `-flto=full`: 341.6 ms.
+- **PGO**: `-fprofile-generate`, trained on `profileworkload` plus `exploitplay` at
+  5x5/7x7/9x9/13x13 (111 s, 11.1 billion dynamic counts over 1229 functions), merged
+  with `llvm-profdata`, then `-fprofile-use` with `-flto=full`. Image 1.64 MB -> 1.24 MB
+  and node counts unchanged, but 342.3 ms at depth 3 / 5 902 ms at depth 4 against
+  341.9 / 5 936. The instrumentation works - `cmake/Build-Pgo.ps1` keeps the two passes
+  runnable - the profile simply has nothing to add here.
+
+**Which build the game uses**: `nativeExecutableCandidates` in
+[server.js](../ipvgo-engine/server.js) resolves `out/build/x64-Release/bin/ipvgo_game.exe`
+by default, so the clang-cl Release tree is the served engine. The bench page carries a
+**Engine** dropdown in its header (`clang-cl` / `cl.exe`) that switches it at runtime -
+`POST /api/engine/build` - and the choice is saved in `ipvgo-engine/temp/engine-build`, so
+it survives a restart:
+
+- the switch is refused while a bench or tune run is in flight, because the engine is
+  spawned per move and per game and mixing two binaries in one result set would be silent
+  nonsense;
+- an option whose tree is not built is disabled in the dropdown (the server reports both
+  paths and whether each exists in the snapshot, so it is never a guess);
+- `IPVGO_ENGINE_BUILD=clang|msvc` in the environment is an operator override: it wins over
+  the saved choice and the dropdown then shows itself as locked with `forced by
+  IPVGO_ENGINE_BUILD`.
+
+Whatever is active is visible three ways: the startup banner prints
+`Engine binary: out/build/<tree>/bin/ipvgo_game.exe`, the header dropdown names it, and
+`/health` reports `gamePath`. Both trees answer identically - same node counts, `selftest`
+passes - so flipping is for measuring one against the other, not for changing behaviour.
+Note that `IPVGO_ENGINE` is a different knob: it picks the *engine kind* (`exploit`,
+`mcgs` or `native`), not a binary path.
+
+#### The cl.exe cross-check build
+
+`x64-Release-Msvc` builds the same Release configuration with `cl.exe`, into its own
+tree so the two compilers cannot share a cache:
+
+```powershell
+.\cmake\Build-Native.ps1 -Compiler msvc -Configure -Target ipvgo_game
+# -> out/build/x64-Release-Msvc/bin/ipvgo_game.exe
+```
+
+It exists to re-measure the table above, not to run the engine by default: the flags are
+the ones the clang-cl numbers were taken against (`/O2 /GL /arch:AVX2 /DNDEBUG` with
+`/LTCG`), and it is opt-in - the preset (or `-DIPVGO_ALLOW_MSVC=ON`) is what lets an MSVC
+configure past the error above. To play or bench against it anyway, serve it with
+`IPVGO_ENGINE_BUILD=msvc` (see "Which build the game uses"). PGO is clang-cl only,
+because the instrumentation is `-fprofile-generate` / `-fprofile-use` merged by
+`llvm-profdata`.
+
+A build tree is bound to the generator and the compiler that created it, so every entry
+point has to agree on both. CMake Tools gets them from the preset (enable presets in the
+editor; the `.vscode/` folder is gitignored, so nothing there can protect another
+checkout), and `Build-Native.ps1` configures through the same preset. Configure the same
+folder with two generators, or with a different compiler - including every tree built
+before this project switched to clang-cl - and CMake aborts with `generator ... does not
+match` or `CMAKE_CXX_COMPILER` mismatch. `Build-Native.ps1 -Configure` detects both and
+resets that tree, which is safe because everything under `out/build` is generated output.
+
+The profiling build keeps inlining off by default (`x64-Profile`). For profile
+numbers that match Release, override the cache variable on either entry point:
+`cmake --preset x64-Profile -DIPVGO_PROFILE_INLINING=ON`, or
+`Build-Native.ps1 -BuildType RelWithDebInfo -ProfileInlining`. It is the same tree
+either way - the flag only changes what the compile step does.
 
 Server listens on **http://localhost:3010** (`IPVGO_PORT` to override).
 
-- `GET /health` — `{ engine: "katago" | "native" | "missing", ... }`
+- `GET /health` — `{ engine: "exploit" | "mcgs" | "missing", benchEngine, ... }`
 - `POST /api/ipvgo/move` — JSON body from `ns.go`, returns `{ move, iterations, elapsedMs, engine? }`
-
-## WASM
-
-```bash
-pnpm run build:wasm
-```
-
-Outputs `cpp/ipvgo.wasm.js` and `cpp/ipvgo.wasm.wasm`.
 
 ## Request JSON
 
@@ -76,13 +213,2741 @@ Outputs `cpp/ipvgo.wasm.js` and `cpp/ipvgo.wasm.wasm`.
 }
 ```
 
-`threads`: `0` = all CPU cores (default), or set an explicit count.
+`threads`: `0` = all CPU cores (default), or set an explicit count. Both engines honour it.
+With the exploiter engine, `iterations` is used as a node budget (see below); with the playout
+engine it is a playout budget for the whole move, so more workers make the move faster rather than
+more thorough - scale the budget up to spend the time.
 
 ## Blocked nodes (`#`)
 
-IPvGO boards can include blocked intersections (`#`). KataGo queries apply move restrictions from `validMoves`:
+IPvGO boards can include blocked intersections (`#`). They are never legal
+moves, so every engine simply treats them as non-playable points.
 
-- **No blocked nodes:** `allowMoves` whitelists legal IPvGO points (+ pass) at the root.
-- **With blocked nodes:** `avoidMoves` bans `#` for both players through the search tree, and bans other illegal points for the current player at the root. When `PHANTOM_ON_BLOCKED` is enabled in `katagoConvert.js`, `#` cells are sent as alternating B/W phantom stones in `initialStones` (per-cell color avoids false liberties and false chain merges through walls).
+## Exploiter engine (policy expectimax)
 
-`pickMoveFromAnalysis` still filters through `validMoves` as a final safety check.
+`cpp/search/exploiter.cpp` plays Black against a **model of the scripted opponent**
+instead of an idealised one. MCGS treats White as adversarial (it assumes White
+picks the best move out of the faction's candidate set); the exploiter instead
+samples White from the exact policy distribution and so plays into the faction's
+actual weaknesses.
+
+- `game/opponents.cpp` → `opponentReplyDistribution()`: every faction table is
+  re-expressed as "faction-rng interval → action", so branch masses are exact
+  (Netburners' 20/20/20/15 split, Black Hand's surround priorities, ...) and
+  pool picks are uniform, as `floorIndex()` makes them. The leading `isSmart`
+  draw is mixed in with its known probability (Netburners 0, Slum Snakes 0.3,
+  Black Hand 0.8, rest 1).
+- `search/exploiter.cpp`: Black maximises, White nodes average over that
+  distribution. Single-candidate replies make the line **forced**, which is how
+  Black builds deep "drag the AI" sequences; the beam applies only to Black and
+  the leaf eval carries faction-specific liberty weights (a faction that never
+  answers threats makes white groups in atari worth more, and one that captures
+  at every opportunity makes black groups in atari worth less).
+- The objective is the **probability that Black wins**, not the score. A finished
+  game is worth exactly 1 or 0 - winning by one point counts as much as winning
+  by fifty - and every leaf is `logistic(lead / (3.4 + 1.45*sqrt(empties)))`, so
+  a lead is worth what it is actually worth: almost nothing with the board open,
+  nearly everything with two points left. The constants are a maximum-likelihood
+  fit on 2,577 positions, and the atari weights above are expressed in points
+  (0.6 points of lead per unit) so a weight means the same thing on every board
+  size. Measured against the old margin objective at the in-game budget on 5x5,
+  180 games per arm on two unseen seeds: 139 wins for margin, 148 for win
+  probability. On one of those seeds the average margin fell (5.74 -> 2.39) while
+  wins rose, which is what trading points for wins looks like.
+- Few empty points left (≤ `endgameEmpties`) switch on an endgame solve that
+  plays the rest of the game out, so won games are not thrown away by the
+  horizon. Captures stay captures there: invading dead white space is scored as
+  the loss it is.
+- Under a node budget the search trades **width for depth** when White's policy
+  allows it. A per-ply branching factor `b` costs about `r * b^depth` nodes, so
+  with `r` root moves it sets `b = (budget / r)^(1/depth)` and splits that between
+  the Black beam and White's reply count, only ever narrowing. The result is that
+  a 100k budget reaches depth 10 in 2.9k nodes instead of depth 4 in 69k.
+
+  Narrowing White's replies is only sound when White is **effectively forced**:
+  then one line is the real continuation. When White picks from a wide pool, a
+  single line is one of many equally likely moves and the deep search chases a
+  fiction. So the trade is enabled only when, in every one of six spread-out
+  positions Black could reach, a single White reply covers 90% of the mass. It has
+  to be measured in the positions White replies *from* - at the root, even
+  Netburners looks concentrated. 7x7, 20k budget, 60 games per faction:
+
+  | | Netburners | SlumSnakes | BlackHand | Tetrads | Daedalus | Illuminati |
+  |---|---|---|---|---|---|---|
+  | fixed width | 53 | 51 | 59 | 46 | 45 | 19 |
+  | adaptive | 55 | 48 | 56 | 49 | 48 | 38 |
+
+  273 -> 294 wins of 360. The gain is not board-specific: 5x5 goes 99 -> 108 of 120
+  and 9x9 84 -> 101 of 120 on the same 20-game-per-faction comparison.
+  `IPVGO_FIXED_WIDTH=1` restores the fixed width, and
+  `IPVGO_CONCENTRATED_REPLIES=3` loosens the test: that reaches +34 on Illuminati
+  and +13 on Daedalus but costs SlumSnakes 13 games, so the strict test ships.
+
+## Playout engine (Monte Carlo graph search)
+
+`cpp/search/playout/` is a second search engine, kept beside the exploiter as an alternative
+rather than a replacement. Where the exploiter evaluates a position statically at a depth
+horizon, this one plays games out to a finished board and keeps what it counted: a move is good
+because the games through it won.
+
+**It plays 5x5 boards only.** Its board is a flat 25-entry array and its opponent model is tuned
+for that board; a larger subnet is refused with a clear error and belongs to the exploiter, which
+covers every board.
+
+The engine is selected with `IPVGO_ENGINE=playout` for the server, `--engine=playout` for
+`bench`/`benchjson` (or the **Playout engine** checkbox in the web bench), and
+`playoutplay`/`playoutmove` on the command line:
+
+```bash
+./out/build/x64-Release/bin/ipvgo_game playoutplay "Slum Snakes" 5 12 10000 1
+# -> playoutplay: Slum Snakes 5x5 wins=... playouts/move=10000 avgBlackThinkMs=...
+#                  avgMargin=... passes=... avgPlayoutsPerMove=... avgNodesPerMove=...
+```
+
+The sixth argument is a thread count, and it defaults to **1**: a single tree is the only
+configuration that reproduces exactly, which is what makes `playoutplay` and `baselineplay`
+comparable line for line. Pass a count (or `0` for all cores) to measure how it scales.
+
+The web bench's checkbox and `--engine=playout` only apply to a 5x5 run: `server.js` rejects any
+other size with a message, and the checkbox disables itself when the board size is not 5.
+
+### Where the engine comes from
+
+The engine is a from-scratch reimplementation of the 5x5 playout player the community has used for
+years, and it started as a **1:1** reproduction of that algorithm on purpose: a baseline you cannot
+match is a baseline you cannot improve against. `baselineplay` runs the frozen reference so that
+number stays fixed while `playoutplay` evolves.
+
+```bash
+./out/build/x64-Release/bin/ipvgo_game baselineplay "Slum Snakes" 5 12 10000 1
+```
+
+Both commands take the same arguments and run the same harness, so the two lines are directly
+comparable. They agree exactly - same wins, same margin, same passes, same node count - which
+proves the two entry points share one implementation, and nothing more than that.
+
+### Checking the port against the original
+
+`tools/refparity.mjs` runs the original script and dumps everything deterministic about a corpus of
+positions; `ipvgo_game refparity` recomputes the same corpus and reports every difference. The search
+itself cannot be compared move for move - both sides draw random numbers - but everything the search
+is built from can be:
+
+```bash
+node ipvgo-engine/tools/refparity.mjs <reference.js> out/refparity.json 400
+./out/build/x64-Release/bin/ipvgo_game refparity out/refparity.json
+```
+
+The corpus is 812 positions: named shapes plus seeded random boards, both sides to move. Current
+state:
+
+| What | Result |
+|------|--------|
+| Liberty counts | 812 / 812 exact |
+| Influence map (territory) | 812 / 812 exact |
+| Terminal score, influence mode | 812 / 812 exact |
+| Terminal score, immediate mode | 812 / 812 exact |
+| White's eye count | 812 / 812 exact |
+| Children and their weights | 812 / 812 exact |
+
+**REFPARITY PASSED.** Every deterministic part of the port is bit-for-bit the original: the board
+primitives, the influence map, both scoring modes, White's eye count, and every child and weight of
+every position in the corpus.
+
+Getting there meant reproducing three reference quirks rather than correcting them, each commented
+where it lives:
+
+1. **The "move inside Black's area" penalty is dead code.** It is written
+   `territory[BOARD_SIZE * x + y == 1]`; `+` binds tighter than `==`, so the subscript is a boolean,
+   and indexing an `Int8Array` with a boolean gives `undefined`, so `undefined == 1` is false. It
+   never fires for any board or move.
+2. **The big-atari flood does not mark its seed stone.** Reaching the group through its other stones
+   pushes the seed a second time, so the group counts one too large and a two-stone group passes the
+   "large group" test.
+3. **The playout's self-atari test reads a stale board.** Stone colours come from the board the
+   playout started from, while liberties come from the current board.
+
+Reproducing them is what makes the A/B honest: an engine that quietly "fixes" the reference is
+comparing itself to something that never existed. Correcting them is the first thing to try in the
+improvement phase, where each one gets measured against `baselineplay` like anything else.
+
+### How it works
+
+| Piece | What it is |
+|-------|-----------|
+| Board | A flat 25-entry array of small integers: `-1` offline, `0` empty, `1` black, `2` white. Every kernel - liberties, capture, legality, influence - walks it with a constant stride, so a move costs a few array reads and no allocation. |
+| Identity | A Zobrist hash of the stones plus the side to move. Flipping the turn key turns a position's hash into its child's, so a successor needs no rehash. |
+| Value | A playout played to a finished board, scored from an influence map rather than a hand-written evaluation. The finished board is the result; nothing is estimated. |
+| Selection | PUCT with a standard-deviation prior: a barely-visited child is scored by how uncertain its parent is, so a position the search knows little about is explored before one whose value is already nailed down. |
+| Graph | Positions are identified by hash, so the search is a graph, not a tree. Every node on the line is rebuilt as the visit-weighted mean of its children, which is what lets two move orders reaching one position share their evidence. |
+| Opponent | White is scripted, not adversarial, so its edges are the replies its faction policy actually plays, weighted by how likely it is to play them, and the tail of that distribution is culled. |
+| Backup | `own` playout plus the visits each child earned, with the double-pass pseudo-child folded in, and a descent that stops when an edge has contributed less than its child already holds. |
+
+### The playout policy is where the strength is
+
+Three rules turn a random game into a game that says something about the position:
+
+1. **Do not fill your own eye.** A point with no empty neighbour, no friendly stone beside it and
+   nothing to capture removes one of your own liberties and tells the playout nothing.
+2. **Do not walk a healthy chain into atari.** Sacrificing a lone stone, or extending from one
+   already in atari, is how eye destruction works - so self-atari is allowed there and rejected
+   everywhere else.
+3. **Do not repeat a board already on the line.** Superko, checked against the game's own history
+   plus the line being played.
+
+The opponent model is the fourth. White's moves are ranked - capture, then defend, then an
+eye-making nobi, then atari - and only the top of that ladder is kept, with a marker that stops
+White passing while it still has a priority move left. Without it White drifts through replies it
+would never play and the search spends its playouts on lines that cannot happen.
+
+### Threads: one tree per worker
+
+The playout search runs on every core by default. What is shared between cores is the root and
+nothing else:
+
+| Piece | Per worker or shared | Why |
+|-------|----------------------|-----|
+| The graph, the transposition table, the descent scratch, the superko set | per worker | The alternative - one graph, atomics on every visit counter, a lock around node creation - puts synchronisation in the hottest loop in the engine, because node creation is most of the work. |
+| The root position, the game history, the config | shared | Read-only. |
+| The result | merged at the root | Each worker's root children are summed: a move's total is the visits every tree gave it, and its value is their visit-weighted mean. |
+
+Workers **claim batches of playouts from one counter** rather than being handed a fixed share. What
+a playout costs depends on how deep it lands and whether it expands a White node, which the
+scheduler cannot know in advance, so a fixed share leaves every worker alive waiting on the
+slowest draw. The batch is `playouts / (workers * 16)` clamped to 1..256, which keeps the counter
+off the hot path and the imbalance under a couple of percent. The calling thread is a worker too.
+
+Two things this design does not do, both deliberate:
+
+- **No worker pool.** The exploiter keeps workers parked because its round is a depth iteration and
+  a round can be 60 us. Here the round is the *whole move*, so thread creation is a fraction of a
+  percent, and a pool would only add a process-lifetime thread set to reason about.
+- **No shared transposition table.** That is the strength cost, and it is measured below.
+
+`maxNodes` is a cap for the search, not per tree: it is divided between the workers, or an
+eight-worker search would hold eight times the memory the cap promises.
+
+**Scaling**, 5x5 Illuminati, 6 games, 10000 playouts, seed 11, on a 6-core / 12-thread CPU, two
+interleaved passes:
+
+| Workers | ms/move | Speedup |
+|---------|---------|---------|
+| 1 | 41.2 | 1.00x |
+| 2 | 25.2 | 1.63x |
+| 4 | 13.3 | 3.09x |
+| 6 | 9.0 | 4.57x |
+| 12 | 7.6 | 5.40x |
+
+4.57x on 6 cores is 76% of ideal; the rest is what SMT is worth here. The block below was measured
+before the optimisation passes, so its one-worker column is slower than the table above; the win
+rates are the point of it.
+
+**Strength.** 20 games per faction, six factions, seed 11 (120 games), same playout budget:
+
+| Workers | Playouts/move | Wins | ms/move |
+|---------|---------------|------|---------|
+| 1 | 10 000 | 99/120 (82.5%) | 63.0 |
+| 12 | 10 000 | 91/120 (75.8%) | 11.0 |
+| 12 | 60 000 | 102/120 (85.0%) | 55.8 |
+
+The middle row is the honest cost: splitting a fixed budget N ways gives each tree N times less
+evidence, and the trees cannot pool their transpositions, so the same 10000 playouts buy a weaker
+search - about six points here. It is the same trap the exploiter's fixed-slice scheduler has.
+What threading buys is *time*, and the last row spends it: 60000 playouts in the same 56 ms as
+10000 on one worker, and a win rate that is level with (or slightly ahead of) the single tree
+within 120-game noise.
+
+So: **do not compare thread counts at equal playouts, compare them at equal milliseconds.** The
+in-game knob for that is `budgetMs`, and it is handled differently on purpose: it is converted to a
+playout count per worker, so every tree gets exactly the evidence a single tree would have been
+given, and the workers only make the move cheaper. `playoutsPerMove` stays a budget for the whole
+move, which is what makes the table above reproducible on any machine. Whoever wires this into the
+client should raise the playout budget to spend the seconds threading saves.
+
+### What it measures, and where it stands
+
+10000 playouts per move - the reference's own budget - 6 games per faction, seed 11, one thread:
+
+| Faction | Wins | Avg margin | ms/move |
+|---------|------|-----------|---------|
+| Netburners | 4/6 | +4.0 | 36 |
+| Slum Snakes | 4/6 | +12.0 | 47 |
+| The Black Hand | 5/6 | +14.2 | 43 |
+| Tetrads | 6/6 | +16.8 | 48 |
+| Daedalus | 6/6 | +15.8 | 41 |
+| Illuminati | 5/6 | +11.7 | 41 |
+
+**30 of 36 games.** This is the number to beat. Cost has fallen from 373 ms to 254 ms per six-game
+block (**-32 %**) and the page of results is byte-identical at every step - same wins, margins,
+passes, playout and node counts. Repeat runs agree to within 0.3 %.
+
+An earlier round of this port scored 34 of 36 with the same harness and budget. That engine was not
+the reference: it had fixed two of the three quirks listed above. Reverting to bit-for-bit parity
+cost four games, which is a useful thing to know before touching any of them again - the quirks are
+not obviously harmless, and they are not obviously harmful either. Each one gets measured.
+
+`baselineplay` reports the same numbers to four decimal places, on every faction and every budget
+tried, which is the point of keeping it: the engine is a 1:1 reproduction until a change is turned
+on deliberately, and the A/B says so.
+
+### The optimisation passes, and what each one was worth
+
+All of these are output-identical, so the harness above is the only test that matters: a change
+either keeps the six lines byte-identical (bar the clock) or it is wrong. `prof --playout` supplied
+the ranking, and each number is the whole six-faction block.
+
+| Change | Cost |
+|--------|------|
+| Before | 373 ms |
+| Neighbour table and a bitmask flood in the liberty pass; every kernel stopped deriving x and y | 363 ms |
+| Superko as a fixed open-addressed table; the game history inserted once per move, not once per playout (it had been 29 % of the search) | 294 ms |
+| Children hashed from the parent instead of rescanning 25 points each | 283 ms |
+| Liberties updated incrementally: only chains beside a point that changed are recounted | 273 ms |
+| The candidate list walked from an empty-point mask instead of testing all 25 points | 254 ms |
+
+Two of those were wrong first and the harness caught both. The incremental hash XORed duplicate
+entries from the capture work list, and the incremental liberty pass marked every *visited* point as
+recounted - including the enemy stones its flood stepped over - so an adjacent chain could be skipped
+and keep a stale count. That second one was found by putting a full rescan beside the incremental
+one and aborting on the first disagreement.
+
+The profile also settled where not to spend effort. `nextRandom() % moveCount` is a real 32-bit
+division on every candidate draw, but changing it would change which moves the playouts explore, so
+it stays. Node::prior costs ~4 % and caching it would mean invalidating on every backup for roughly
+the same traffic. The remaining allocation is one 1456-byte edge vector per node. The profile puts
+3 % inside the allocator and 1 % in the tree's destructor, but those figures come from the profiling
+build, which instruments `operator new` with an atomic counter and a call-site lookup, so the real
+cost is smaller than that. Shrinking it means storing children in a graph-level array rather than a
+vector per node, which is a layout change rather than a fix.
+
+### What would move it
+
+The obvious levers, in the order they look worth trying:
+
+- **Spend the cores.** Threading is in and makes a move ~5.4x cheaper on this 6-core/12-thread CPU;
+  the win rate only follows if the playout budget grows with it (see "Threads: one tree per
+  worker"). Whoever wires this into the client should raise the budget, not just enjoy the latency.
+- **Reuse across moves.** The graph is rebuilt per move; the subtree below White's actual reply is
+  already correct and is thrown away. Keeping it is the "frontier" idea, and the transposition
+  table almost supports it already.
+- **Node storage.** Children are a heap vector per node. A graph-level edge array with an offset per
+  node would remove the last 4 % of allocator time and shrink the selection scan, which touches one
+  cache line per child today.
+- **Playout length.** A playout currently runs to a finished board. Late in a game the board is
+  decided long before that, and the influence map knows it.
+## Bench GUI (browser)
+
+```bash
+pnpm run server:dev    # dev server: auto-restarts on server/web changes
+pnpm run server        # plain server, no restarts
+```
+
+Open **http://localhost:3010/bench**.
+
+The page **cannot start or restart the server by itself** — a page served over
+http has no process access — so the cycles it can save are handled elsewhere:
+
+- `server:dev` (scripts/dev-server.mjs) watches `server.js`, `lib/`, `web/` and
+  `scripts/`, restarts the server on any change, and revives it if it crashes.
+- The workspace task **Server: dev (auto-restart)** runs on folder open, so the
+  server is already up when you sit down.
+- The GUI's **Restart server** button calls `POST /api/server/restart`, which is
+  enabled only under the supervisor (it exits and the supervisor respawns).
+- The page tracks the server's `serverId`; when it changes (any restart or
+  rebuild) the page reloads itself, picking up new HTML/JS without a manual
+  refresh. The form state and settings survive because they live in
+  `localStorage`.
+- if a restart never comes back (for example the server was started without the
+  supervisor), the button clears itself after 8 s and says so instead of
+  spinning forever. The server exits with code 75 when a restart is requested,
+  which is how the supervisor tells a planned restart from a crash (crashes back
+  off exponentially, planned restarts are immediate).
+
+### Expanding a past game
+
+Every game of the current batch is archived with its full move list, so the
+decision sequence behind a result can be inspected instead of just its win/loss.
+Under **Games**, click a game to open it: one row per Black move with the move it
+played, the win probability it assigned, the fixed-depth value (see below), the
+search depth and node count, the wall time, White's actual reply, and the score
+after the half-move. Clicking a row shows that position on the board above, which
+is how "why did it play there" gets answered without re-running anything. Hovering
+a row shows the leaf evaluator's own numbers for it.
+
+Two switches sit above the list:
+
+- **only losses** filters the list to the games Black lost, and reports how many
+  of the archive are shown ("12 of 20 shown"). The faction table above stays
+  complete; only the list is filtered, and expanded rows stay expanded.
+- **write loss files** writes an explanation for every loss as the run goes, to
+  `ipvgo-engine/temp/lost-games/<faction>-<game>-<timestamp>.txt`. Off by default,
+  so a long batch does not leave hundreds of files nobody opens.
+
+Both are remembered across reloads, separately from the run form.
+
+#### Locking losses to tune against them
+
+**Lock losses (N)** keeps this batch's losses as a fixed set. **Replay locked** then
+plays exactly those games again with whatever settings the form holds at that moment
+- budget, beam, replies, endgame knobs - so a tuning change is measured on the same
+boards instead of on a fresh random batch. The bar shows the set's seed and board
+size and, once a batch has replayed it, how that batch did: "this batch: 3 won, 9
+still lost". Games that came from the locked set are tagged `was LOSS` in the list.
+
+This is exact rather than approximate. A game is fully determined by the batch seed,
+its faction and its game number: `benchjson` reports the derived `seed` in its
+`gameStart` event, and a replay names the faction and the game so the engine derives
+the same seed again. The board, the clock and every one of White's replies are then
+identical and only the search differs. Checked by replaying a locked set with
+unchanged settings: same winners, same margins, same move sequences, same seeds.
+
+Before this, the whole batch shared one rng stream and each game consumed a variable
+number of draws, so game N's opening depended on how long games 1..N-1 had run - which
+also meant two engine builds were never compared on the same openings. That is fixed
+here, and it is why a bench recorded before the change is not comparable with one
+recorded after it: the games themselves differ.
+
+The set survives a reload (`localStorage`), but it belongs to the seed and engine
+build it was recorded from - lock again after changing either. Locking from a
+replay batch works the same way.
+
+#### Explain (the loss replay)
+
+**Explain** renders the game as plain ASCII in the page; **Write file** saves the
+same text and reports the path; **Copy** puts it on the clipboard. Either button
+works on any game, not just losses.
+
+The text is one line per Black move — `n  Black  p(win)  delta  flat  swing
+d/nodes/ms  White  B:W  evalW  rules  mdl p  flag` — followed by a block for every
+blunder: the position before the move, the boards, what the evaluator said at each
+step, the alternatives the search ranked, and how likely the reply that broke it
+was. Flags are:
+
+| flag | meaning |
+|---|---|
+| `BLUNDER` | `p(win)` of this move minus the next one is above the threshold (0.15) |
+| `SWING` | the same drop on the **fixed-depth** series, i.e. the position really got worse |
+| `CAPPED` | the value is 1.000 from a heuristic leaf: a cap, not a certainty |
+
+`flat` is the value of a fixed one-ply search (Black's move, then the modelled
+White replies, then the leaf), so it means the same thing on every move. The
+search value does not: it depends on how deep the node budget happened to get, and
+that is what most `BLUNDER` rows turn out to be. The per-blunder verdict line says
+which of the two it is; the measurement behind that is in "Known limits".
+
+The move lists are not shipped over the event stream: the snapshot carries
+summaries only, and `GET /api/bench/game?index=N` returns one game's full record on
+demand. The archive is capped at 2000 games, and keeps the most recent ones;
+**Games per faction** has no upper limit, so a long run is bounded by its own
+wall time rather than by a number in the form.
+
+Each move record also carries an `audit` object (what the leaf evaluator said at
+the root and after the move, the top three root alternatives, White's modelled
+replies with their probabilities) and each reply carries `whiteAudit` (the eval
+after it and the modelled probability of the move White actually played). That is
+the data the explanation is built from, so it is on unless the start request sends
+`"audit": false`. It costs a fixed one-ply search plus one policy build per move:
+under 10% on 5x5 and 7x7, about 13% at 13x13, and about 50% at 19x19 with a
+3000-node budget (where that fixed cost is the same size as the search).
+
+The page picks factions, board size (5/7/9/13/19), the thinking budget, games per
+faction and seed, then streams `ipvgo_game benchjson` events through the server:
+
+- live board (stones, obstacles, last Black/White move markers, star points),
+- per-move search numbers (depth, nodes, think ms, score),
+- per-faction table with W/L, win %, average margin, ms/move and progress bar,
+- recent game results and a PASS/FAIL pill when the run finishes,
+- a game list that only ever grows: rows are keyed by archive index and appended, so an open
+  game's move table stays put and the scroll position survives games finishing under it,
+- a live progress line under the buttons: `2m 14s elapsed   38/120 games   32%   82 left
+  5.9 games/min   about 14m 02s left`, and the batch's total time once it ends. It is
+  derived from the games that actually finished (`done / elapsed`), not from the per-move
+  budget, so it accounts for whatever the search settings and the parallel-game setting do
+  to throughput, and it waits for a couple of games before quoting a number so one slow
+  opening cannot set the rate. A replay batch counts its own games instead of
+  factions x games.
+
+The thinking budget comes in two flavours, chosen with **Budget type**:
+
+- **Time (ms)** — wall-clock per move; iterative deepening keeps the last depth
+  that finished in time.
+- **Iterations (nodes)** — a node budget per move (shared across search threads),
+  so runs are reproducible on any machine or CPU load.
+
+Everything on the form (factions, board size, budget type and value, games, seed)
+is stored in `localStorage` and restored on reload, so a refresh keeps your setup.
+
+**Search tuning** (collapsible panel, also persisted) exposes the exploiter knobs:
+
+| Dial | Meaning | Default |
+|---|---|---|
+| Beam (our moves) | Black candidates kept per node (0 = all) | 12 |
+| Replies kept | opponent replies kept per node (0 = all) | 6 |
+| Reply mass cap | stop expanding replies past this probability mass | 0.9 |
+| Endgame empties | empty points at which the endgame is solved exactly | 6 |
+| Endgame node cap | node cap for that endgame solve | 30000 |
+| Max depth | iterative-deepening ceiling | 10 |
+| Threads | search threads (0 = all cores) | 0 |
+| Parallel games | play N games at once, one search thread each (N = core count; results unchanged) | off |
+
+Blank fields keep the engine default. Bigger beam/replies search more of the
+tree and cost roughly linearly in think time.
+
+**Parallel games** moves the parallelism out of one game's search and into the batch:
+each game searches on a single thread and several games play at once. It is worth
+more than it sounds, because independent games scale with the core count where
+parallel search inside one game does not, and it keeps the single-threaded answer:
+at 20 000 nodes, 8 games against each of three factions came out **1 700 ms with
+12 games in flight (1 thread each) against 2 324 ms with 12 search threads and one
+game at a time**, and identical to the single-threaded run (9 780 ms) game for game -
+24 of 24 move streams, same winners and margins. The one-game-at-a-time path with
+many search threads is still there (uncheck the box) and is what measures the
+per-worker budget split; it is just weaker and slower.
+
+Endpoints: `GET /bench`, `GET /api/bench/state?since=<seq>`,
+`POST /api/bench/start`, `POST /api/bench/stop`. Stopping the server also stops
+a running bench.
+
+Two more serve the loss explanation:
+
+| endpoint | returns |
+|---|---|
+| `GET /api/bench/game?index=N` | one archived game with its full move list and audit |
+| `GET /api/bench/game?index=N&format=text` | `{index, text, path: null}` — the replay, not written |
+| `POST /api/bench/explain` `{index, threshold?, write?}` | `{index, path, text}` — writes under `temp/lost-games/` unless `write` is `false` |
+
+`threshold` defaults to 0.15 (the `BLUNDER` marker).
+
+`POST /api/bench/start` also accepts `replay: [{faction, game}, ...]` (the games a
+previous run reported), which plays exactly those games instead of generating a batch;
+`size` and `seed` must be the ones the set was recorded with, and every other field -
+the budget included - is the tuning to test. It also accepts
+`parallelGames: N` to play N games at once with one search thread each. The engine's
+`benchjson` config takes the same `replay` array and the same `parallelGames` key.
+
+The state endpoint returns a short log of half-moves (`frames`, each with a
+monotonic `seq`, whose side moved, and the resulting board). Black's move and
+White's reply land milliseconds apart, far faster than any polling loop, so the
+server **pushes** them instead:
+
+- `GET /api/bench/events` is a Server-Sent Events stream: a `snapshot` on
+  connect, then `game`, `thinking`, `frame`, `rows`, `result`, `done` as they
+  happen. Polling is only a fallback if the stream cannot be opened.
+- the page plays the queued frames one per ~80 ms (25 ms while catching up), so
+  both sides are visible; it repaints only the parts that changed, once per
+  animation frame.
+
+Verify the whole path with the bundled client:
+
+```bash
+node ipvgo-engine/tools/check-bench-stream.mjs 3010 4000
+# connected: 200 text/event-stream
+# events received: snapshot=2 rows=3 game=1 thinking=7 frame=13 result=1 done=1
+# frames=13 ... avgGap=113.2ms alternations=12
+```
+
+Helper tools:
+
+| Tool | Purpose |
+|---|---|
+| `tools/check-bench-stream.mjs <port> <ms>` | drives the SSE stream like the page and reports event counts, frame gaps, and every distinct `serverId` |
+| `tools/check-encoding.mjs <files...>` | flags non-ASCII (and mojibake) in text files |
+| `tools/fix-encoding.mjs <files...>` | repairs double-encoded text |
+
+## CLI benchmark
+
+```bash
+# Live terminal UI: board, spinner, per-faction win table
+./scripts/mcgs.sh bench 200 20 1 5
+
+# Node budget instead of milliseconds ("i" suffix)
+./scripts/mcgs.sh bench 20000i 20 1 5
+
+# Search tuning as --key=value flags (same knobs as the GUI panel)
+./scripts/mcgs.sh bench 20000i 20 1 5 --beam=20 --white-children=4 --white-mass=0.8 \
+  --endgame-empties=10 --node-budget=90000 --max-depth=14 --threads=4 Netburners
+
+# One faction only
+./scripts/mcgs.sh bench 200 20 1 5 Illuminati
+
+# Streaming NDJSON (what the web GUI consumes); accepts a JSON string or a path.
+# Use either "budgetMs" or "iterations" (nodes), not both.
+./build/Release/ipvgo_game benchjson '{"size":5,"budgetMs":200,"games":20}'
+./build/Release/ipvgo_game benchjson '{"size":5,"iterations":50000,"games":20}'
+
+# Black vs one faction at a fixed depth, plus the policy-model check
+./scripts/mcgs.sh exploitplay Netburners 5 20 2 1
+./scripts/mcgs.sh policycheck "The Black Hand" 5 3000
+
+# Fixed-depth search benchmark on one reproducible position set, sized to
+# ~20 s; prints per-search lines live and a summary.
+./scripts/mcgs.sh optbench
+./scripts/mcgs.sh optbench --seconds=40 --positions=6 --depth=3
+```
+
+`IPVGO_TUI=1` forces the terminal view, `IPVGO_TUI=0` prints one line per game,
+`IPVGO_TRACE=1` prints every move, and `IPVGO_TRACE_BOARD=1` also dumps each
+position as JSON so it can be fed straight back to `exploitmove` for deeper
+analysis:
+
+```bash
+IPVGO_TRACE=1 IPVGO_TRACE_BOARD=1 ./out/build/x64-Release/bin/ipvgo_game exploitplay "Slum Snakes" 9 1 2 1
+```
+
+`IPVGO_EXPLAIN=1` answers "why did it play that": for every move it prints the
+win probability of the chosen move, the next few root alternatives with their
+values, the top of the opponent reply distribution White faced, and then what
+White actually played with the probability the model gave it:
+
+```bash
+IPVGO_EXPLAIN=1 IPVGO_NODE_LIMIT=4000 ./out/build/x64-Release/bin/ipvgo_game exploitplay "Netburners" 7 1 2 2
+```
+
+The static life analysis has its own command, and three switches (all off by
+default because none of them measured a win-rate gain - see "Known limits"):
+
+```bash
+./out/build/x64-Release/bin/ipvgo_game safety position.json   # per-chain pass-alive verdict
+IPVGO_SETTLE=0.5 IPVGO_VITAL=1 ...  # discount unsettled territory, use the Vital level
+IPVGO_EYE_FILTER=1 ...              # never play inside our own pass-alive eye
+```
+
+`exploitplay` also takes two cache switches:
+
+- `IPVGO_NO_SESSION=1` - disable the session cache, giving the A/B baseline.
+- `IPVGO_CACHE_STATS=1` - report nodes, memo hits, how many of those came from an
+  earlier move, reply-cache hits, endgame budget cuts, session size and how many
+  times the session was dropped because a new game started.
+
+```bash
+# Same binary, both modes, so the comparison is fair
+IPVGO_CACHE_STATS=1 ./out/build/x64-Release/bin/ipvgo_game exploitplay "Netburners" 5 4 2 1
+IPVGO_CACHE_STATS=1 IPVGO_NO_SESSION=1 ./out/build/x64-Release/bin/ipvgo_game exploitplay "Netburners" 5 4 2 1
+```
+
+## Profiling
+
+For a repeatable CPU-profile workload, open the repository root in Visual
+Studio, select the **`x64-Profile`** configuration (`RelWithDebInfo`) and the
+`ipvgo_game` target, then launch it with `profileworkload` as its command-line
+argument. `x64-Release` is tuned for throughput (`/O2 /arch:AVX2 -flto=full` with
+lld-link) and is the wrong build to read a profile from; `x64-Profile` keeps the
+same optimisation class but adds `/Zi` (debug info), `/Oy-` (frame pointers) and
+`/Ob0` (inlining off), plus a `/DEBUG:FULL` link, so every sample resolves to the
+line that did the work. Rebuild after changing the CMake configuration:
+
+```powershell
+.\cmake\Build-Native.ps1 -BuildType RelWithDebInfo -Configure -Target ipvgo_game
+.\out\build\x64-Profile\bin\ipvgo_game.exe profileworkload
+```
+
+Both configurations use Ninja and clang-cl, so on Windows they need the Visual
+Studio developer environment for the headers, libraries and the compiler itself.
+Visual Studio supplies it automatically and VS Code passes it through
+`"cmake.useVsDeveloperEnvironment": "always"`; in a plain terminal use
+`Build-Native.ps1`, which sets the environment up itself.
+
+This plays 25 seeded 9x9 games against Illuminati through the same search and
+simulated-opponent path as gameplay, with a 5,000-node cap per Black move and a
+persistent search session for each game. It prints progress after each game and
+took about one minute in a Release run; actual time depends on hardware. Pass a
+smaller game count for a shorter profile, for example `profileworkload 5`. An
+optional second argument changes the seed.
+
+To see where time and allocations go without an external tool, the profile build
+also has a built-in `prof` subcommand (not present in Release: it replaces
+`operator new`, which the performance build must not pay for). It counts
+allocations per calling function, then samples every thread's stack with
+`RtlVirtualUnwind` over the same games, and prints the top allocation sites plus
+exclusive/inclusive cost per function, hottest source lines and caller->callee
+edges. It needs the PDB next to the exe and no elevation:
+
+```powershell
+# ipvgo_game prof [faction] [boardSize] [games] [nodeLimit]
+.\out\build\x64-Profile\bin\ipvgo_game.exe prof "Slum Snakes" 7 3 4000
+```
+
+The playout engine gets its own workload, which swaps `runExploiter` for
+`runPlayoutSearch` and defaults the board to the 5x5 it plays:
+
+```powershell
+# ipvgo_game prof --playout [--playouts=N] [--threads=N] [faction] [boardSize] [games]
+.\out\build\x64-Profile\bin\ipvgo_game.exe prof --playout --playouts=10000 Illuminati 5 4
+```
+
+`--threads` defaults to 1 there, so a sample lands on the line that did the work
+rather than on whichever worker happened to hold a core. Shares are what to read:
+one run of the command above is 64 896 samples over 60 moves, which resolves a
+line at about ±0.2 points.
+
+Two notes on reading it. The sampler walks the stack itself, and a leaf function
+has no unwind data - the only way past one is to treat the top of the stack as its
+return address, which yields a garbage RIP for any frame that is not really a leaf.
+The walk validates every address with `VirtualQuery`, refuses to move the stack
+pointer backwards, and stops at the first frame above the engine; without those
+checks it faulted inside `RtlVirtualUnwind` about one run in two. Output is
+unbuffered and a handler prints the faulting frames, so a crash still leaves the
+run's output and its stack behind.
+
+The default profile configuration disables inlining (`/Ob0`) so that every sample
+resolves to the line that did the work, which makes absolute times several times
+slower than Release; read the shares, and confirm any speedup with `optbench` on
+Release. Configure once with `-ProfileInlining`
+(`.\cmake\Build-Native.ps1 -BuildType RelWithDebInfo -Configure -ProfileInlining`) to
+keep `/Ob2` instead: the numbers stay closer to Release (about 1.2x) at the cost of
+some leaf frames collapsing into their callers.
+
+The sampler suspends the other threads to read their stacks, so it must not allocate
+inside that window: a suspended thread can hold the heap lock, and the first version of
+this tool deadlocked roughly one run in three. Samples now live in a preallocated
+fixed-size array (`SampleStack`), and nothing on the sampling path touches the heap.
+
+To profile from the command line instead of Visual Studio, use the ETW
+profiler from an elevated prompt:
+
+```powershell
+xperf -on PROC_THREAD+LOADER+PROFILE -stackwalk PROFILE
+ipvgo_game.exe optbench --positions=2
+xperf -d trace.etl
+xperf -i trace.etl -o trace.csv -a dumper   # then pivot the Stack column
+```
+
+## Performance baseline
+
+Reference point for optimisation work: the **reply-reuse pass** (below), measured
+on top of the earlier search-optimisation pass that followed `68813bf` (chain and
+liberty caches, narrowed bit kernels, local bit-plane legality, shared legal-move
+scan, allocation-free liberty counts, inline neighbour lists). The old A/B flags
+are gone; these paths are the only ones. Measure against these numbers, not
+against older commits.
+
+Reproduce, from a Release build:
+
+```bash
+# Fixed-depth search cost; threads=1 keeps it deterministic
+./out/build/x64-Release/bin/ipvgo_game optbench --positions=2 --depth=3 --threads=1 --reps=3
+./out/build/x64-Release/bin/ipvgo_game optbench --size=9 --positions=4 --depth=2 --threads=1 --reps=3
+
+# The configuration the game actually runs: a node budget, one thread so the
+# node counts stay deterministic.
+IPVGO_THREADS=1 IPVGO_NODE_LIMIT=4000 IPVGO_CACHE_STATS=1 \
+  ./out/build/x64-Release/bin/ipvgo_game exploitplay "Slum Snakes" 7 4 2 1
+```
+
+| measurement | current baseline |
+|---|---|
+| `optbench` per search (2 positions, depth 3) | ~185 ms (was ~192 ms before the move-generation pass, ~230 ms before the legality pass; wall clock is noisy, the node counts are the stable part), 39 012 nodes |
+| `optbench` position 1 / 2 | 11 181 nodes / 27 831 nodes (deterministic; values are win probabilities) |
+| `optbench --size=9 --positions=4 --depth=2 --threads=1 --reps=3` | ~77 ms/search (was ~78 ms before the move-generation pass, ~102 ms before the legality pass), 11 537 nodes |
+| `exploitplay Netburners 5 8 2 1` @4000, 1 thread | 668 ms think for 8 games (was 699 ms), same results |
+| `exploitplay Netburners 5 24 2 1` (fixed depth) | ~3.3 ms/move |
+| `exploitplay "Slum Snakes" 7 4 2 1` @4000, 1 thread | 2.79 s think (was 2.98 s), same nodes and moves |
+| `exploitplay Illuminati 9 2 2 1` @4000, 1 thread | 2.91 s think (was 3.66 s), same nodes and moves |
+| `exploitplay Illuminati 13 1 2 1` @4000, 1 thread | 16.0 s think (was 16.9 s), same nodes and moves; peak RSS 61.6 MB |
+| `exploitplay <faction> 19 1 2 1` @4000, 1 thread | works. Before the move-generation pass every 19x19 run died with `0xC0000409` (see that section) |
+| `profileworkload 5` (Illuminati 9x9) | ~13.9 ms/move before the reply-reuse pass |
+
+Nodes, memo hits, chosen moves and values are identical before and after the
+pass at every configuration above except where noted; only the wall clock moved.
+The remaining time is still `buildPolicyModel` / `getEyeCreationMoves` inside
+`opponentReplyDistribution` (eye analysis, not pattern matching - see
+"Known limits").
+
+### The reply model can be checked against the live game
+
+`checkWhiteReply()` (`search/exploiter`) answers "was this move one the model gives any
+probability to, and would the search have kept it" for a real position. It is reachable over the
+move API by sending `"whiteReplyCheck": {"x": .., "y": ..}` (or `{"pass": true}`) with `board`
+set to the position White moved in and `playAs: "O"`; the answer comes back as
+
+```
+{"whiteReply": {"modelled": true, "prob": 0.42, "rank": 1, "modelledCount": 6,
+                "kept": true, "keptCount": 6, "coveredMass": 1.0, "pass": false, "x": 3, "y": 2}}
+```
+
+The keep rule is shared with the search (`keepReplies`, used by both `planReplies` and this
+check), so `kept` says whether the move was inside what the search actually searched, and
+`modelled` whether the ported White policy has it at all. The in-game script calls this after
+every White reply and stops with an error when the answer is `modelled: false`.
+
+Measured over real White replies from the 5x5 bench games (Netburners, 10 000 nodes): 400 of 400
+were modelled, mean probability 0.47. **The check has to send the game's move history.** Without
+it, 8 of those 400 came back as "not modelled", all in decided positions where the model returned
+a capture at p=1 and White had actually passed: a move's legality depends on the boards played
+before it (superko), so a model fed an empty history invents moves the game does not allow. With
+`"history": [...]` set to the boards before each earlier move (newest first, exactly
+`getMoveHistory()`), the same position answers `pass, p=1.0` and the mismatch disappears.
+
+One residual case on the big board: 1 of 305 replies at 13x13, a decided game (77:71.5) where the
+model offers two moves at 0.5 each and White passed. `policycheck` puts the same gap on the model
+side - at 300 samples per position the sampler/model TV distance is ~0.15 at 5x5 and ~0.46 at
+13x13, so the model is measurably looser on a big board (the tool's number is sample-limited, so
+read it as a signal: agreement degrades with board size).
+
+
+
+Profiled with `prof "Slum Snakes" 7 10 4000` (the in-game configuration: 7x7,
+`nodeLimit=4000`, one thread). The profile build is not a speed measurement, only
+a share measurement, because it disables inlining.
+
+What it showed, per move: 169 k allocations, 60 bytes each; 77% of the time
+inside `opponentReplyDistribution`, of which `buildPolicyModel` was 54% and the
+eye work inside it (`getEyeCreationMoves` 26%, `getEyeBlockingMove` 11%) most of
+that; `matchesAnyPattern` was 3.1% of exclusive samples (the 58% figure in the
+older notes predates the bitset rewrite).
+
+Three changes, each verified to keep node counts, memo hits, chosen moves and
+values bit-identical:
+
+- **A reply-distribution table owned by the search.** Iterative deepening revisits
+  every White node of the previous iteration at a different remaining depth, and
+  the memo cannot answer those (it is keyed by depth), so the policy model - the
+  single largest cost - used to be rebuilt once per node per iteration. The
+  distribution is a pure function of the position, so a search-owned
+  `ReplyCache` keyed by `positionKey()` is exact. It lives only for one
+  `runExploiter` call, which sidesteps the memory problem that keeps
+  distributions out of the cross-move session (872 MB on 13x13). This is where
+  the 9x9 gain comes from: 39 246 hits per 203 moves, 6.47 s down to 4.05 s. On a
+  13x13 game at the same budget it is 47 656 hits and 5.93 s down to 3.27 s, for
+  3.7 MB of extra peak RSS (57.9 -> 61.6 MB); the table is capped at 200 000
+  entries, past which a miss simply recomputes, so a very large budget cannot
+  grow it without bound.
+- **One pass over the chain set in the leaf eval.** `evaluatedLead` counted stones
+  with its own board scan and `leafValue` counted empties with another; both now
+  come from the chain set that is already in hand, and the empty-space loop reads
+  the neighbour table instead of rebuilding `onBoardNeighbors` per point.
+- **Membership test before the pattern match** in `patternPoints`. The available set
+  is a small subset of the board and both tests are pure, so the points and their
+  order do not change.
+
+Two ideas were tried and rejected:
+
+- **Hashing `positionKey()` from the packed 2-bit board** instead of cell by cell
+  (81 FNV steps for a 9x9). It looked safe - packing is injective, so the keys
+  should be interchangeable - but it changed the node counts of the budgeted,
+  session-reusing play by 0.4% and flipped one 9x9 game. Single searches at a
+  fixed depth were identical, so the divergence is confined to the cross-move
+  memo, which is exactly the path `IPVGO_CARRY` already warns about. Rejected
+  until the cause is understood.
+- **Memoising `getAllEyesByChainId` per (board, colour) in a small per-thread
+  ring.** One distribution asks for the same pair up to four times, but the ring
+  is evicted by the candidate boards analysed in between, and the hits that do
+  land cost a `ChainSet` copy. Measured inside the noise (7x7 3.62 s -> 3.67 s,
+  9x9 4.06 s -> 3.99 s), so it is not in the tree.
+
+The next targets, from the profile taken after the chain-pass round (9x9 Slum Snakes, 2
+games, 4 000-node budget, one thread, 89.0 ms/move instrumented against 23 ms in Release -
+the instrumented build pays the `operator new` hooks and the sampler, so read shares, not
+absolute times): `computeChainsInto` 19.7% (it now owns the liberty work; the fused inner
+loop at `go_game.cpp:163-169` is 10% of the run), `eyeTotalsAfterMove` 13.6%,
+`matchesAnyPattern` 6.0%, `placeStoneBits` 4.9%, `neighborChainsOfChain` 3.4%,
+`getAllValidMoves` 3.1%, `getEyeCreationMoves` 2.8%, `chainEffectiveLibertiesWords` 2.7%,
+`summarizeEyes` 2.1%, `bits::flood` 1.9%, `opponentReplyDistribution` 1.9%,
+`validateMove` 1.7%. Inclusive: `opponentReplyDistribution` 71% -> `buildPolicyModel` 46%
+-> `getEyeCreationMoves` 29% (`eyeMove` 18% + `eyeBlock` 11%), and `leafValue` 17%.
+
+What that leaves:
+
+- **`leafValue` builds its own `ChainSet`** - the largest single flow in the profile. A
+  leaf needs stone counts, the empty regions' border colours and the chains at two
+  liberties; all three are reachable from the bit planes with word operations, which would
+  take the leaf evaluation off the chain set entirely. The safety and moyo knobs need the
+  chain set, so the bit-plane path would be the default-knobs path only.
+- **`matchesAnyPattern` is evaluated per point**, nine cell classes at a time, when the
+  same question can be asked for the whole board at once: for each of the nine
+  pattern offsets and each cell class, one shifted mask, then each pattern is an AND of
+  nine masks. That is ~20 patterns x 9 word-ops per board instead of per point.
+- **The eye increment is the other half.** `eyeTotalsAfterMove` is still 11.7% on its own
+  on top of `summarizeEyes`, and the eye generators together are 29.4% of the run.
+- **The chain pass visits every neighbour twice.** Fusing the liberty collection into the
+  flood fill would halve that, but it changes the order liberties are stored in, so the
+  liberty oracle would have to be re-run against every consumer (see "The bit-plane
+  pass"). Doing it with the bit planes instead - flood the chain as words, collect
+  `neighbours & empty` - keeps the order and is the cheaper version of the same idea.
+
+Allocation churn is still large and now measurable per site: 162 673 allocations per
+move (12.5 M over the two profiled games, 1.56 GB of traffic). The biggest sites are
+`getAllValidMoves`' `vector<pair<int,int>>` (1.4 M allocations from `reserve` plus
+copy), `getLibertyGrowthMoves` (1.69 M), `getExpansionMoveArray` (1.61 M),
+`EyeCandidate` vectors (0.89 M) and `ReplyDist` copies (173 k at 828 bytes each). The
+per-thread free list makes these cheap in Release, but they are the reason the
+instrumented build reads 4x slower than Release.
+
+### The incremental eye pass
+
+`getEyeCreationMoves` decides whether playing at a point creates an eye or a
+living group, and it used to answer that per candidate by rebuilding the board:
+`evaluateMoveResult` (a board copy plus the bitwise capture sweep), a chain flood
+fill, then the whole eye map - for every liberty of every friendly chain.
+
+One stone cannot change anything outside the empty region it lands in and the
+chains it joins, so the totals after the move follow from the analysis of the
+board before it (`summarizeEyes` builds that in fixed storage: one count per
+stone chain and one owner list per empty region, no map, no vector, no `ChainSet`
+copy). `eyeTotalsAfterMove` then:
+
+- drops the contribution of the regions that are touched - the one the stone
+  lands in, which is cut into connected components by the stone, and every region
+  touching a chain the stone joins,
+- re-derives those components' verdicts on the board after the move, with the
+  joined chain folded into one id,
+- and reports the totals as a delta from the chains whose count actually changed.
+
+It refuses, and the caller falls back to the board-wide analysis, when the
+position is outside what that reasoning covers:
+
+- the move captures, because stones then disappear wherever the captured chain
+  reaches;
+- a region's verdict came from `chainsThatFullyEncircle` (a region with several
+  borders of one colour, which only counts as an eye if one of them wraps it) and
+  the move disturbs it: joining a chain that borders it changes both the border and
+  the bounding box the test compares, and joining two chains can collapse two of
+  the chains around an expanded region into one;
+- a re-derived component turns out to have several borders of one colour.
+
+`ipvgo_game eyetest [games] [seed]` is the oracle: it walks seeded games and, for
+every legal point and both colours, compares the incremental totals with the full
+analysis of the board after the move. 49 041 candidate points over mixed board
+sizes and factions: 0 mismatches, 79% answered incrementally.
+
+Two integer overflows inside the region walk cost a day of debugging and are worth
+remembering: the "visited" marks are generation-stamped and reused across calls, so
+the generations for a call have to be reserved *before* the first mark is written -
+an early refusal that left marks behind made the next call treat parts of a region
+as already visited, which shows up as an eye that does not exist.
+
+Gain in Release, identical node counts and moves throughout: ~6% on the fixed-depth
+`optbench` searches (which have no reply reuse to confound it) and 3-5% on the
+budgeted in-game path. That is less than the profile's shares promised, and the
+reason is the profile build: it disables inlining, which inflates code that is
+mostly small calls (the old eye pass was chains of `ChainSet::members`,
+`SimpleBoard::operator[]` and allocator traffic). Rebuilding the profile
+configuration with `-ProfileInlining` gives 29 ms/move against a Release 26 ms/move,
+and the shares from *that* build are the ones to plan with.
+
+### The bit-plane pass
+
+`fast_queries.cpp` answered "how many liberties would this stone have" and "how
+weak is the chain next to this point" by walking the chain stone by stone with a
+per-thread stamp array. Those questions are asked for every liberty of every
+chain, for both colours, twice per reply distribution, and `walkChain` alone was
+8.5% of the time in the inlining profile - with `computeChainsInto` (13.3%) the
+two were the largest items.
+
+`BoardBits` loads the position's bit planes once and answers the same questions
+with word floods (`bits::flood` / `bits::neighbours` over `uint64_t[6]`, which the
+capture sweep already used):
+
+- `effectiveLibertyCount` - flood the friendly stones the new stone would join,
+  then count `neighbours(chain) & empty` and drop the point itself;
+- `minAdjacentLibertyCount` - the same per adjacent chain, minimum over them;
+- `weakestAdjacent` - first-minimum chain in N/E/S/W order, its stone count, its
+  liberty count, and how many distinct chains its liberties belong to (that last
+  one from the caller's chain set, as before).
+
+`selftest` now checks all three against the chain-based reference implementations
+(`findEffectiveLibertiesOfNewMove`, `findMinLibertyCountOfAdjacentChains`,
+`findEnemyNeighborChainWithFewestLiberties`) over 160 random boards from 5x5 to
+19x19: 11 832 queries, 0 mismatches.
+
+Release, identical node counts and moves throughout: `optbench` fixed depth
+226 -> 204 ms/search (-11%), 7x7 at the in-game budget 3.35 -> 3.02 s (-9%), 9x9
+3.88 -> 3.71 s (-4.5%), 13x13 16.9 -> 16.0 s (-5%). The gain shrinks with board
+size because a flood costs more words per iteration, while the stone walk costs
+the same per stone.
+
+Also in this pass, and measured as **not** worth anything:
+
+- **Fewer allocations.** The eye analysis was the largest allocation site in the
+  engine (`std::vector<EyeCandidate>` per reply distribution, plus the `AiMove` list
+  the eye moves were built into and sorted). Both are gone - the candidate scan now
+  hands each eye to a callback, and `getEyeCreationMoves` fills four fields
+  (first point, first point that creates life, and the two counts) instead of
+  building and sorting a vector. Wall clock did not move, because
+  `ipvgo-engine/cpp/search/fast_alloc.cpp` already replaces `operator new` with a
+  per-thread free list: small blocks cost about as much as a stack bump. Worth
+  keeping for the memory traffic, but do not expect a timing win from removing
+  allocations in this binary.
+- **A dedicated chain slot for the leaf evaluator**, so those one-shot boards would
+  stop evicting the position the move generators keep asking about. It made things
+  ~3% slower: leaves revisit the same boards across siblings, so the shared ring was
+  serving real transposition hits. Reverted.
+- **Narrowing `ChainSet` to 16-bit offsets.** Not attempted: a flood over a 7x7
+  board touches 49 points, so the arrays are already inside one cache line's worth of
+  traffic per chain, and the change would touch every reader of `memberData` /
+  `libertyData` for an unmeasurable gain.
+
+### What belongs in the memo entry
+
+The entry is the table's unit of memory, and the table holds 68 000 entries for a
+7x7 game and 480 000 for a 13x13 one, so what goes in it decides whether a probe
+fits in cache. It used to be 32 bytes and is now 16 (`double value`, `uint32_t
+epoch`, `bool exact`): `depth` was written on every store and never read, and the
+shared carry table keeps its own 16-byte entry (`value`, `history`) instead of
+carrying an epoch and a flag it never consults.
+
+The other half of the same waste was the key. Both tables - the memo and the reply
+distribution cache - are keyed by the position, and both computed it: the memo as
+`fnv1a64(positionKey(state), depth)`, the reply cache as `positionKey(state)`, so
+every White node hashed the board twice. `memoBase()` now returns that position
+half once and the reply cache takes it. Both changes are exact by construction and
+leave node counts, memo hits and moves identical; together they are worth about
+0.5% and half the table's memory (7.7 MB on a 13x13 game).
+
+What is deliberately **not** packed in:
+
+- **The reply distribution** (100-600 bytes). The memo is keyed by position *and*
+  remaining depth, so a distribution hung off it would be duplicated once per depth,
+  and bulk in the entry destroys the density that makes the probe cheap. It stays in
+  its own position-keyed table: the experiment that kept distributions in the
+  session is recorded above at 872 MB for 89 hits.
+- **The chain set** (7.6 KB) or the **eye summary** (6.5 KB). At 180 000-480 000
+  entries that is hundreds of megabytes to gigabytes. Entry density is the whole
+  value of the table; anything kilobyte-sized has to be cached at its own
+  granularity or recomputed.
+- **Facts that are cheap to derive**: stone and empty counts are `popcount` over the
+  bit planes, and a leaf value is already cached by the (position, depth) key that
+  the table holds.
+
+A position-keyed table with a small per-depth value array - one probe for every depth
+of a position, and room to hang a distribution handle off it - is the structural
+alternative to the current depth-keyed entries. It was built and measured, not just
+argued about: one entry per position holding twelve slots (value, epoch and flags per
+remaining depth), with the endgame's history-free key in its own tagged space.
+
+It is exact - node counts, memo hits, moves and values came out identical, and the
+entry count fell by 16% on 7x7 and 56% on 9x9 (68 702 -> 57 471, 180 009 -> 79 225)
+because one entry now covers every depth a position is searched at. It is also
+slower: an entry is 160 bytes instead of 16, so the table grows 2.9 MB -> 12.7 MB on
+a 9x9 game, and a probe touches two or three cache lines instead of one. Interleaved,
+three rounds each:
+
+| | per-depth entries (16 B) | position-keyed (160 B) |
+|---|---|---|
+| `optbench --size=9 --depth=2` | 101.84 / 101.72 / 102.08 ms | 103.42 / 103.66 / 103.47 ms |
+| 7x7 @4000 | 2969 / 2980 / 3048 ms | 3007 / 3062 / 3036 ms |
+
+1-2% slower and 4x the memory, so the depth-keyed entries stay. The table is not
+lookup-bound: it is density-bound, which is the same reason the payload that would
+have gone in it (distributions, chain sets) stays out.
+
+### The legality pass
+
+`getAllValidMoves` is called for every reply distribution and validates every empty
+point (13.5% of the time with the bit-plane queries in place: `validateMove` 7.7%,
+the capture sweep 3.2%, and the bit-plane load behind them). Almost none of those
+points can be affected by the rules that make a move illegal:
+
+- a point with an **empty neighbour** cannot be suicide, because the new stone has a
+  liberty;
+- a point with **no enemy stone next to it** cannot capture, so the board after it is
+  the board with one stone added.
+
+For those two cases together - most points on a board that is not a knife fight - the
+only remaining question is superko, and superko compares boards. Instead of building
+the board after the move and packing it (a 361-byte copy plus a per-cell pack per
+point), the scan packs the current board **once** and flips the point's two bits in
+the packed probe. `BoardHistory::containsPacked()` takes the probe as it is.
+
+Contact points, where a capture is possible, keep the bitwise capture sweep to find
+the captured stones - but they patch those stones out of a scratch copy of the packed
+probe instead of building and packing the whole board. `validateMove` is left for the
+one-shot API (`evaluateIfMoveIsValid`, `makeMove`), which needs the resulting board
+anyway.
+
+Exact by construction, and verified: `selftest`, `fuzz 60 11` (6874 moves, 0
+anomalies), `policycheck` identical on three factions, `eyetest` 0 mismatches, and
+identical node counts, memo hits and moves everywhere. Interleaved against the
+previous build:
+
+| | before | after |
+|---|---|---|
+| `optbench --size=9 --depth=2` | 102.22 / 101.93 ms | 79.22 / 79.48 ms |
+| 9x9 @4000, 2 games | 3645 / 3681 ms | 2920 / 2898 ms |
+| 7x7 @4000, 4 games | 3000 / 2955 ms | 2749 / 2836 ms |
+| 5x5 @4000, 8 games | 698 / 700 ms | 669 / 667 ms |
+
+**-22% at 9x9, -6% at 7x7, -4.5% at 5x5.** The gain scales with how many empty points
+a board has, because that is how many times the old path copied and packed a board.
+
+### The move-generation pass
+
+The next profile (10 games, 30.3 ms/move instrumented) put the policy model's own
+generators on top: `eyeTotalsAfterMove` 7.7%, `matchesAnyPattern` 6.4%,
+`getEyeCreationMoves` 4.4%, `neighborChainsOfChain` 3.9%, `summarizeEyes` 3.6%,
+`BitPlanes::load` 2.9%. Three structurally cheap wins came out of it, each measured
+on its own with interleaved `optbench` runs (same node counts, 39 012 and 11 537).
+
+**Pattern scan, once per position.** The pattern generator used to walk the whole
+board to test `matchesAnyPattern` in two separate functions, one returning the first
+matching point and one returning the list; `patternPoints()` did the same walk again
+for the caller that only wants the point list. The list is now cached
+(`patternCache_`, `patternCacheReady_`) and both entry points read it. -1% on a
+10-game 9x9 workload (7100 vs 7176 ms).
+
+**Bit planes loaded once.** `getSurroundMove`, `getLibertyGrowthMoves`,
+`getDefendMove` and `patternPoints()` each built their own `BoardBits` from the
+board, so the same position was packed three or four times per node. `MoveGen` now
+owns one `bits_` member and passes it down. With the pattern cache above: -2.5% on
+the 2-position depth-3 bench (193.4 -> 188.5 ms) and -2.1% on the 9x9 bench
+(79.0 -> 77.4 ms).
+
+**16-bit chain arrays (and a real buffer overflow).** `ChainSet`'s five index arrays
+held `int` where every element is a point index (0..360) or a small count. Narrowing
+`id`, `memberOffsets`, `memberData`, `libertyOffsets` and `libertyData` to
+`int16_t`/`uint16_t` halves the bytes the chain pass touches on every node, and
+`ChainSpan` yields `int` so readers did not change. Timing: -1.5% on one bench,
++1.4% on the other, i.e. **neutral** - the chain pass is arithmetic-bound, not
+bandwidth-bound.
+
+The narrowing did expose something that matters more than the timing. `libertyData`
+was sized `kMaxPoints` (361) but holds one entry per (chain, empty point) pair, and
+an empty point can touch four chains. A temporary counter showed 19x19 positions
+reaching **368 pairs** - a seven-element write past the end of the last member of
+`ChainSet`. Every 19x19 `exploitplay` on the old binary dies with exit code
+`0xC0000409` (`STATUS_STACK_BUFFER_OVERRUN`); the same run on the new one finishes and
+wins. The array is now `kMaxPoints * 4` (1444), the true bound, and `selftest` builds a
+19x19 checkerboard - the worst case, 684 pairs - to check that every listed liberty is
+really an empty neighbour and that the total fits.
+
+**No temporary vectors in the generators.** `getSurroundMove` flattened the enemy
+liberties into one vector and then filled three more (`captureMoves`, `atariMoves`,
+`surroundMoves`) only to return element `[0]` of one of them; `getGrowthMove` and
+`getDefendMove` built lists of ties only to pick one of them. All five are gone: the
+surround scan iterates chains and liberties directly (the order the flattened list
+had) and remembers the first move of each kind, and the tie-breaks count matches on a
+first pass and index into a second, drawing from the same RNG with the same count.
+`getDefendMove` also reuses the cached growth list instead of rebuilding it. This was
+expected to be allocation hygiene only - `fast_alloc.cpp` gives `operator new` a
+per-thread free list - but the vectors were per node, not per search: **-3.4%** on the
+2-position bench (192.2 -> 185.6 ms) and **-4.1%** on the 9x9 bench (80.7 -> 77.4 ms).
+
+Cumulative, measured directly against the build that started the pass (4 interleaved
+rounds on the 2-position bench, 8 on the 9x9 one): **-3.9%** (192.5 -> 185.0 ms) and
+**-1.6%** (78.3 -> 77.1 ms). The per-step percentages above are larger than these and
+do not add up, because each step's "after" binary became the next step's "before" and
+the wall clock drifts a few percent between sessions; the direct comparison is the one
+to trust. Node counts, memo hits, chosen moves, margins, `policycheck` values and
+`eyetest` counters are identical throughout (`eyetest` still 49 041 candidate points,
+38 652 on the incremental path, 0 mismatches).
+
+### The chain-query pass
+
+The fresh profile above put the bit-plane liberty queries second on the list: 15.7% of all
+samples, with one line (`floodChainInto`, the word-level flood) at 11.3%. That was the
+cost of answering, per candidate point, a question the cached `ChainSet` had already
+answered: a stone placed on an empty point joins the (at most four) chains of its colour
+around it, so the liberties of the merged chain are the known liberty lists of those
+chains - a flood is not needed.
+
+`analysis.cpp` now answers all three questions the move generators ask:
+
+- `chainEffectiveLiberties`: a `uint64_t` mask of the liberties of the adjacent friendly
+  chains, plus the empty neighbours of the point itself, minus the point; the mask width
+  is dispatched on the board size exactly like the bit-plane code, so a 9x9 position
+  touches two words and not six.
+- `chainMinAdjacentLiberties`: `min(libertyCount(chain))` over the adjacent friendly
+  chains, 99 when there are none - O(1) per adjacent chain.
+- `chainWeakestAdjacent`: the adjacent enemy chain with the fewest liberties (first in
+  N/E/S/W order on ties), its size, and the number of distinct empty regions its
+  liberties belong to (capped at 8, as before).
+
+`BoardBits` is no longer used by the search. It is kept because it is the only
+*independent* implementation of these answers - the reference in `analysis.cpp` walks the
+same chain set, so it cannot catch a chain-set error, while the bit planes re-derive
+everything from the board. `selftest` now checks all three side by side over 11 832
+queries, and it caught a real mistake on the first run: the point's own empty neighbours
+are liberties of the stone being placed even when no friendly chain reaches them, so the
+union has to include them (the first version dropped them and read one too low at 19x19).
+
+Measured on Release, interleaved, identical node counts and identical `exploitplay`
+results at 5x5/7x7/9x9/13x13/19x19: **-10.4%** on the 9x9 bench (86.4 -> 77.5 ms per
+search) and **-3.3%** on the 2-position depth-3 bench (203.0 -> 196.4 ms). The profiled
+workload dropped from 102.7 to 88.6 ms/move, and the flood disappeared from the profile:
+`chainEffectiveLibertiesWords` is 2.7%, against 15.7% for the queries it replaced.
+
+Two ideas from the same profile were tried and rejected:
+
+- **Reusing one scratch vector for `growthMaxDeltaPoints()` / `jumpOptions()`** instead of
+  returning a fresh one (they were top allocation sites at 700 k and 743 k allocations).
+  Measured 3.3% *slower* on the 9x9 bench, consistently over eight interleaved rounds, and
+  a shared buffer invites aliasing bugs if a caller ever holds two lists at once. Reverted.
+- **Growing the chain-cache ring from 6 to 12 slots** to cut the flood at leaf nodes:
+  +0.2%, i.e. nothing. The misses are per leaf position, not evictions.
+
+### The threading pass
+
+The engine runs threaded by default (`threads = 0` means `hardware_concurrency()`; the
+client never overrides it), so this was worth measuring. With a temporary instrumented
+build (9x9 Illuminati, 4 000-node budget, 12 threads on a 6-core/12-thread CPU):
+
+- **Sync.** Root candidates are split among workers, one `std::async` future each, and
+  the parent joins them all - a barrier per depth iteration, with no work stealing and no
+  partial results. (The futures have since been replaced by a persistent worker pool; see
+  "The worker pool" below for what that changed.)
+- **Split.** Contiguous blocks of `ceil(children / threads)` children, and the node
+  budget divided as `nodeLimit / threads` per worker regardless of how many children that
+  worker actually got. With the 29 candidates of a typical 9x9 root and 12 workers that
+  is blocks of three, so 10 workers got work and 2 got none - **17% of the node budget
+  was allocated to workers that never ran** - and the slowest block took 1.3-1.5x the
+  mean block, which the barrier then waited for. Measured occupancy
+  (worker-time / wall / threads): **63%** at both 6 and 12 threads.
+- **Redundant work.** The reply cache is the only cross-thread reuse (memos are per
+  worker). It had one mutex for the whole table: at 12 threads that was **3.6% of all
+  thread time** waiting (0.4% at 6), and the `get -> unlock -> compute -> lock -> insert`
+  pattern let two workers compute the same distribution concurrently - **5.3% of all
+  reply computations were duplicates** at 12 threads (2.8% at 6).
+
+Two changes went in, and the root split now has two modes:
+
+- **Round-robin children** instead of contiguous blocks: worker `t` takes child `t`,
+  `t + threads`, `t + 2*threads`, ... . Every worker now gets `floor` or `ceil` of
+  `children / threads` of them, so no worker sits out with an unspent share.
+- **Sharded reply cache**, 64 shards keyed like the carry memo, with the entry cap split
+  per shard. The lock wait falls from 3.6% of thread time to 0.2%.
+- **Two schedulers, chosen by `ExploitConfig::deterministic`.** The deterministic one is
+  the round-robin split above: fixed subset per worker, fixed budget share, so the same
+  seeds and thread count pick the same moves on every run. The faster one is dynamic
+  child claiming: a worker takes the next root move when it finishes the previous one and
+  each move gets an equal share of what is left of the node budget. It recovers the
+  imbalance the barrier would otherwise wait for (74-90% occupancy against 63%), but
+  which worker evaluates a move decides what its session memo ends up holding, so the
+  play varies a little run to run. **Play uses the dynamic scheduler; the tools use the
+  deterministic one** - `optbench`, `bench` and `prof` set it themselves so their numbers
+  are comparable, `IPVGO_DETERMINISTIC=1` forces it for `exploitplay`/`serve`, and
+  `IPVGO_DYNAMIC=1` forces the dynamic one in the tools when its speed is what is being
+  measured. The bench GUI's **Dynamic scheduler** checkbox and `benchjson`'s
+  `"dynamicRoot": true` do the same per run, without the environment variable.
+
+Interleaved, 5 rounds, 12 threads, identical node counts:
+
+| benchmark | before | round robin | dynamic |
+|---|---|---|---|
+| `optbench --positions=2 --depth=3 --threads=12` | 53.7 ms | 45.3 ms (-16%) | 44.8 ms (**-17%**) |
+| `optbench --size=9 --positions=4 --depth=2 --threads=12` | 13.9 ms | 13.3 ms (-5%) | 12.5 ms (**-10%**) |
+| `exploitplay Illuminati 9 6 2 1` @4000, default threads | 4.7 ms/move | 3.9-4.3 | 3.7-4.5 |
+
+Strength is unchanged within noise: Illuminati 9x9 @4000, 6 seeds x 10 games, three runs
+of the shipping (dynamic) build gave 45/60, 43/60 and 41/60 with margins -13.1, -16.3 and
+-18.9, against 43/60 and -15.5 twice for the build before this pass (the round-robin mode
+reproduces exactly: 42/60, margin -16.6, twice).
+
+Most of the win came from the two structural changes rather than from dynamic claiming:
+round robin removes the idle workers, and the sharded cache removes the lock wait, which
+is why the deterministic mode is already 16% faster on the 2-position bench even though
+it still waits on its slowest worker. The dynamic scheduler is worth the last 1-6% in
+play, where the run-to-run variation does not matter.
+
+### The worker pool
+
+`std::async(std::launch::async, ...)` is not a thread creation on MSVC: it constructs a
+`_Task_async_state`, which is `Concurrency::create_task`, so the C++ runtime hands the
+task to its own pool. Measured here: 2 400 calls ran on **7 distinct thread ids** at
+**3.2 us** each, against 48.7 us and 2 400 ids for a real `std::thread`. So dispatch was
+already cheap. What it was not, was free: every round routes each task through the
+runtime's queue, so the last worker starts later than it would if it were already parked
+and directly signalled.
+
+`exploiter.cpp` now keeps its own workers alive for the life of the process (`RoundPool`)
+and wakes worker `t` for session slot `t`. The slot index, not the OS thread, is what the
+memo is keyed by, so `deterministic` mode and per-worker memo ownership are unchanged -
+verified by diffing `exploitplay` output line for line (moves, values, node counts,
+scores) before and after, at 12 and 6 threads and at 4 000 and 1 000 nodes.
+
+Round shape (N workers x W of work, one depth iteration, joined per round), medians of
+paired interleaved trials on a 6-core/12-thread CPU:
+
+| round | `std::async` | persistent pool |
+|---|---|---|
+| 6 x 60 us | 0.089 ms | 0.073 ms (-18%) |
+| 12 x 60 us | 0.123 ms | 0.102 ms (-17%) |
+| 6 x 2.5 ms | 2.538 ms | 2.516 ms (-1%) |
+| 12 x 2.5 ms | 3.72 ms | 3.77 ms (parity: another run had the pool 4% ahead) |
+| 12 x no work | 0.016 ms | 0.020 ms (**slower**) |
+
+The last row is the honest shape of the trade, and the reason not to reach for a pool on
+principle: a round that dispatches but does no work is still faster through `std::async`,
+because the runtime can complete trivial tasks without parking and waking twelve threads.
+The pool only pays once a round does real work, and it pays more the shorter the round is.
+
+In the engine, paired against the build before it (deterministic mode, so node counts and
+moves are identical - diffed line for line on three configurations), median of the paired
+per-move think time:
+
+| benchmark | before | after |
+|---|---|---|
+| `exploitplay Illuminati 9 4 2 1` @1000 nodes, 12 threads | 1.85 ms/move | 1.76 ms/move (**-4.8%**, faster in 8 of 11 pairs) |
+| `exploitplay Illuminati 9 4 2 1` @4000 nodes, 12 threads | 3.13 ms/move | 3.08 ms/move (-1.1%, faster in 6 of 9) |
+| `optbench --positions=2 --depth=3 --threads=12` | - | noise: runs came out 5.7% faster and 3.0% slower |
+
+The `optbench` row is a warning rather than a result. `optbench --depth=N` runs a
+**single** `searchRoot` per measurement, so it has one round and cannot amortise a
+per-round cost at all; the gain only accumulates where iterative deepening runs several
+rounds per move (`exploitplay`, `bench`). Do not screen this change on `optbench`.
+
+So the gain lives where the round is short - many workers, or a small node budget - and it
+shrinks as the search lengthens (4.8% at 1 000 nodes, 1.1% at 4 000, nothing measurable on
+a 45 ms fixed-depth search at 6 threads). It is worth keeping because it is free and
+behaviour-preserving, not because it is large. A side effect worth knowing: the workers now
+live as long as the process, so each keeps one `fast_alloc` pool instead of runtime-pool
+threads being created and retired (see the allocator handover below), and the engine no
+longer depends on `std::async`'s platform behaviour - on libstdc++ and libc++ the same call
+really does start a thread (measured 48.7 us here for `std::thread`), which would have
+turned every round into twelve thread creations.
+
+`mcts.cpp` and `mcgs.cpp` still use `std::async`; their rounds are one synchronous
+split-and-merge per move, so the same change is available there if it is ever wanted.
+
+### The superko hash and the hoisted plane load
+
+A mutation used to spend almost none of its time on Go and almost all of it on
+re-encoding. Measured on a 9x9 position with 40 moves of history, `applyMove` +
+`undoMove` cost **0.397 us**, split as:
+
+| step | us | share |
+|---|---|---|
+| `previousBoards.contains` - linear scan of every history entry | 0.122 | 31% |
+| `packBoard` - once for the probe, once for the append | 0.168 | 42% |
+| `BitPlanes::load` - chars -> 5 planes, per candidate | 0.070 | 18% |
+| `SimpleBoard` copy (368 bytes) | 0.005 | 1% |
+| `placeStone` floods, by difference | ~0.00 | ~0% |
+
+Two changes, both behaviour-preserving:
+
+- **One 64-bit hash per history entry** (`BoardHistory::hashWords`), so a superko
+  question is a hash compare per historical board instead of a word-by-word
+  comparison of all of them. A hash match is still confirmed on the words, so a
+  collision cannot answer wrongly. This also stops the cost from growing with the
+  length of the game.
+- **`applyMove` takes an optional `const BitPlanes*`**, and the two search loops
+  (`blackToMove`, `expectOverReplies`) load the planes once per position instead of
+  once per candidate move. Every candidate is tried on the same position and undone,
+  so one load is valid for all of them.
+
+Paired, interleaved, deterministic mode so the node counts are identical - and the
+`exploitplay` traces are byte-identical before and after (moves, values, node counts,
+scores) at 5x5/9x9/13x13 and at 12/1/4 threads:
+
+| benchmark | before | after |
+|---|---|---|
+| `exploitplay Netburners 5 12 2 1` @1000 nodes, 1 thread | 4.149 ms/move | 4.067 (**-2.0%**, faster in 8/9) |
+| `exploitplay "Slum Snakes" 9 6 2 1` @1000 nodes, 1 thread | 20.787 ms/move | 19.803 (**-4.7%**, 8/9) |
+| `exploitplay "Slum Snakes" 9 4 2 1` @4000 nodes, 1 thread | 63.937 ms/move | 61.986 (**-3.1%**, 9/9) |
+
+**Negative result, worth recording.** The remaining per-node cost is dominated by
+full-board chain floods (19.7% of samples), and the obvious guess is that the same
+board is being flooded repeatedly. It is not. Growing the `chainsCached` ring from 6
+to 32 slots measured **-0.1% on 9x9 and +0.4% on 13x13** (coin-flip ordering): the
+floods are one per *candidate position the policy model evaluates*, not repeats of
+one board, so no cache size can remove them. The only way is to analyse positions
+incrementally - play, analyse, undo on one mutable state - which is a rewrite of the
+policy model, not a cache.
+
+Three other "obvious redundancy" ideas were checked and are already done, so the
+ground should not be re-covered:
+
+- `MoveGen`'s accessors are already memoised per position (`cached(kEyeMove, ...)`,
+  `patternPoints()`, `growthList()`), even though several call sites call `eyeMove()`
+  twice in one expression.
+- `getEyeCreationMoves` already deduplicates repeated candidate points and already
+  uses the incremental `eyeTotalsAfterMove` in preference to a board-wide
+  `summarizeEyes`.
+- The reply cache is not under-used because it is per move: measured with
+  `IPVGO_CACHE_STATS=1` on 9x9 Slum Snakes @4000, **8318 reply hits over 100 446
+  nodes (8.3%)** and 784 memo hits (0.8%, 155 of them across moves). The positions
+  really are distinct, so a longer-lived cache would not repay its memory.
+
+The one piece of real waste left in that path was a **6.5 KB `ChainSet` copy per policy
+build** in `getEyeCreationMoves`, taken only to protect the ring reference from the
+candidate fallback. The fallback now uses its own local chain set, so the reference is
+safe and the copy is gone. Nothing reachable from that loop calls `chainsCached()`, which
+is what makes the reference valid - worth re-checking if that loop ever grows a new call.
+
+### Cumulative effect of the three exact-output changes
+
+Paired, interleaved, `IPVGO_DETERMINISTIC=1` so the node counts are identical, 9 pairs
+each, median of the paired per-move think time; the `exploitplay` traces are
+byte-identical at 5x5/7x7/9x9/13x13 and at 1/4/12 threads:
+
+| benchmark | HEAD | after | |
+|---|---|---|---|
+| `exploitplay Netburners 5 12 2 1` @1000 nodes, 1 thread | 4.093 ms/move | 3.936 | **-3.8%**, faster in 9/9 |
+| `exploitplay "Slum Snakes" 9 6 2 1` @1000 nodes, 1 thread | 20.212 ms/move | 19.887 | -1.6%, 8/9 |
+| `exploitplay "Slum Snakes" 9 4 2 1` @4000 nodes, 1 thread | 63.141 ms/move | 60.832 | **-3.7%**, 9/9 |
+| `exploitplay Daedalus 13 1 2 1` @4000 nodes, 1 thread | 111.463 ms/move | 108.075 | **-3.0%**, 8/9 |
+
+### The scheduler changes strength, not just speed
+
+`ExploitConfig::deterministic` is not only a reproducibility switch: at 12 threads it
+measurably weakens the engine. 5x5, in-game budget (1000 nodes), 40 games x 6
+factions x seeds, pooled:
+
+| scheduler | 1 thread | 12 threads |
+|---|---|---|
+| deterministic (fixed subset + fixed budget share per worker) | 86.3% (1243/1440) | **81.3%** (1171/1440) |
+| dynamic (each worker claims the next root move) - **what play uses** | 86.0% (1652/1920) | 86.6% (1663/1920) |
+
+The deterministic split gives every worker a fixed slice of the node budget, so at 12
+threads each root move gets ~83 nodes and nothing is searched deeply
+(avgDepth 4.22 against 4.59 at one thread); the dynamic scheduler recovers all of it.
+Consequences:
+
+- **Never compare strength across thread counts in deterministic mode.** A first pass
+  through this comparison used `IPVGO_DETERMINISTIC=1` and "found" a 5-point penalty
+  for 12 threads; in the play path the difference is 0.6 points, i.e. noise.
+- Thread count makes **no measurable difference to strength** in play (86.0% vs
+  86.6% over 1920 games each, sign flips between seed sets), so the client's default
+  of "all cores" costs nothing and buys 3x the wall clock.
+- Use deterministic mode for timing and A/B of node counts, dynamic for anything
+  that asks "is this stronger".
+
+The bench GUI exposes this as **Dynamic scheduler** (Search tuning), off by default so a
+benchmark repeats; turn it on to measure what play actually does. The same fixed-slice
+behaviour bites the *budget*, not only the strength, and it is easy to misread as a
+depth cap. Same position, round-robin, 5x5, 12 threads, beam 12 / replies 6, with a
+per-worker `[worker]` trace under `IPVGO_DEBUG_DEPTH=1`:
+
+| node budget | per-worker slice | depth-3 iteration | result |
+|---|---|---|---|
+| 50 000 | 4 086 | 43 971 nodes - 5 of 12 workers hit the slice | discarded, plays depth 2 |
+| 100 000 | 8 333 | 45 693 nodes - every worker finishes | kept, plays depth 3 |
+
+Depth 3 needed 45 693 nodes, so 50 000 was enough; it failed because the round-robin
+split assigns children by *count* (3 or 2 of the 29 root moves each) and not by cost.
+Five workers needed more than their 4 086 and one `timedOut` discards the whole ply, so
+43 971 nodes (96% of the tree) were thrown away **and** 5 066 nodes of budget were left
+unallocated. The dynamic scheduler on the same 50 000 reaches depth 3 at the identical
+45 693 nodes. Over 10 games at a 50 000 budget this cost 63 of 506 depth iterations and
+left 51 of 126 moves at depth 2 or less - which reads like the budget being ignored.
+
+### The leaf evaluator without a chain set
+
+`leafValue` is the hottest single consumer of the chain pass, and it needs far less than
+`computeChains` builds: stones per colour, the empty count, each **stone chain's size and
+liberty count** (for the atari term) and each **empty region's size and border colours**
+(for the territory term). It never reads a member list or a liberty list - the counts are
+the whole interface.
+
+`leafLeadBits<W>` computes exactly those from the bit planes, with `bits::flood` and
+`__popcnt64`, and builds no `ChainSet` at all. Standalone, on real in-game positions:
+
+| board | chains avg | full `ChainSet` | counts only | speedup |
+|---|---|---|---|---|
+| 7x7 | 12.9 | 1.394 us | 0.334 us | **4.2x** |
+| 9x9 | 18.1 | 1.567 us | 1.021 us | 1.5x |
+| 13x13 | 38.2 | 2.506 us | 0.929 us | **2.7x** |
+
+**Why the values stay bit-identical.** `evaluatedLead` accumulates floats in chain order,
+so a faster traversal is only equivalent if it visits chains in the same order. The scalar
+pass discovers chains by sweeping `x`, then `y`, i.e. ascending flat index; the bit-plane
+pass always takes the *lowest* unseen point, which is the same order. `black` and `white`
+are separate accumulators, so interleaving stones with regions cannot reorder either sum,
+and the atari term is still one accumulation in stone-chain order. Same order, same
+additions, same bits - verified by diffing `exploitplay` traces (moves, values, node
+counts, scores) at 5x5/7x7/9x9/13x13, which differ in no line.
+
+Two options still need the chain structure and are guarded, falling back to the old path:
+the safety discount (`IPVGO_SETTLE` != 1, which calls `analyzeSafety`) and the influence
+moyo (`IPVGO_MOYO` > 0). `selftest` passes with both set.
+
+Paired, interleaved, deterministic mode, 9 samples each, 11 of 11 pairs faster:
+
+| benchmark | before | after |
+|---|---|---|
+| `exploitplay Netburners 5 12 2 1` @1000 nodes, 1 thread | 4.080 ms/move | 3.544 (**-13.1%**) |
+| `exploitplay Tetrads 7 4 2 1` @4000 nodes, 1 thread | 7.295 | 6.901 (-5.4%) |
+| `exploitplay "Slum Snakes" 9 6 2 1` @1000 nodes, 1 thread | 19.895 | 18.646 (-6.3%) |
+| `exploitplay "Slum Snakes" 9 4 2 1` @4000 nodes, 1 thread | 61.015 | 56.789 (**-6.9%**) |
+| `exploitplay Daedalus 13 1 2 1` @4000 nodes, 1 thread | 108.059 | 104.884 (-2.9%) |
+| 5x5 @1000 / 9x9 @1000 / 9x9 @4000, **12 threads** | 0.901 / 3.188 / 11.850 | 0.771 (**-14.4%**) / 2.916 (-8.5%) / 10.650 (**-10.1%**) |
+
+The 5x5 win is the largest because 25 points fit in one 64-bit word, so every flood is a
+single-word loop; the 13x13 win is the smallest because the per-chain flood iterations
+multiply.
+
+### Reserve the vectors the generators fill
+
+The two largest allocation sites in the search were push_back loops without a `reserve`:
+`getExpansionMoveArray` and `getLibertyGrowthMoves` each grew their result 1, 2, 4, ... 32
+entries per call, and between them that was 3.3 million allocations per two games
+(~17 per node). `contactPoints` had the same shape. Reserving the known upper bound
+turns each into one allocation. Output is unchanged - `reserve` cannot alter contents -
+confirmed by the same trace diff at 5x5/7x7/9x9/13x13.
+
+Paired, interleaved, deterministic, 9 samples: **-2.3%** at 5x5 @1000 (8/9 pairs),
+-0.1% at 9x9 @4000 single-threaded, **-2.9%** at 9x9 @4000 on 12 threads (6/9).
+Small, because the allocator is the per-thread `fast_alloc` free list, but it is free
+and it removes the pointer-chasing the growth caused.
+
+### The capture-race experiment (IPVGO_RACE, off by default)
+
+The README's own diagnosis of the losses is that the eval has no term for the thing that
+decides them: *a capturing race between a big group with few liberties and the scattered
+groups around it*. The flat atari bonus prices a group in atari at 0.6 points per stone
+capped at five, while capturing it is worth **two points per stone** in area scoring. But
+simply paying the full value for every group in atari measured as noise earlier, because a
+two-liberty group in the opening is not capturable.
+
+`leafLeadBits` now has an optional term that pays the full value **only when the race is
+actually won**: the best liberty count among the stones surrounding the target exceeds the
+target's own, so it cannot run and the attacker can afford to fill. It replaces the atari
+bonus for those chains rather than adding to it, so nothing is double counted.
+
+```powershell
+IPVGO_RACE=0.5 ./out/build/x64-Release/bin/ipvgo_game.exe exploitplay Netburners 5 80 2 1
+```
+
+Off by default (`IPVGO_RACE` unset or 0 skips the term entirely), so the default path is
+byte-identical to before - confirmed by the same trace diff at 5x5/9x9/13x13.
+
+Measured on 5x5 with 1 thread. Screening at a **low node budget on purpose**: the real
+budget saturates at 86% wins, which compresses differences, while 200 nodes gives 70% and
+games that run 3x faster, so many more can be played in the same time.
+
+| budget | games per arm | baseline | `IPVGO_RACE=0.5` | delta | sigma |
+|---|---|---|---|---|---|
+| 200 | 1 920 | 69.4% | 71.9% | **+2.5** | 1.7 |
+| 200 | 5 760 | 70.2% | 72.3% | **+2.1** | **2.4** |
+| 100 | 4 320 | 66.1% | 67.2% | +1.1 | 1.2 |
+| 1000 (in game) | 1 920 | 86.0% | 87.4% | +1.4 | 1.3 |
+
+Paired per faction-and-seed cell, same seeds for both arms. Weights 0.25 and 1.0 at
+budget 200 gave +2.0 and +2.0. **Every arm of every run is positive** - six arms, four
+independent experiments, ~14 000 games - which is unlikely to be chance, but no single run
+reaches 3 sigma, so treat it as a probable ~1.5-2 point gain rather than a measured one.
+It is kept behind the environment variable, off, until a full 240-games-per-arm campaign
+confirms it at the budget the game actually uses.
+
+### Auto-tuning the widths per faction (`tune`)
+
+`beam`, `whiteChildren` and `whiteMass` interact per faction and per board size, so the
+right combination is a per-opponent question. `ipvgo_game tune` searches it with a genetic
+algorithm and prints the winner together with the shipped defaults re-measured on
+held-back seeds:
+
+```powershell
+# tune <faction> [generations] [population] [games] [nodeLimit] [size] [gamesInFlight] [seed] [json|text]
+#      [resumeBeam resumeChildren resumeMass] [rangeJson] [carry|nocarry] [searchJson]
+./out/build/x64-Release/bin/ipvgo_game.exe tune Illuminati 3 6 12 1000 5 8 1 text
+```
+
+The same search is wired into the bench GUI under **Auto-tune widths for one faction**,
+which streams every finished game over SSE - so the pane's counters (generation, games in
+this generation, genomes measured, games left for the faction) and its ETA move inside a
+generation rather than once per generation - and shows the validation pair when the run
+finishes. The ETA is derived from the games actually played since the faction started, and
+`gamesPlanned` is an upper bound: a genome that was measured in an earlier generation is
+not replayed, so the estimate only gets more accurate as a run proceeds.
+
+**The GUI inherits the search settings.** The tuning pane owns only the workload - faction,
+board size, generations, population, games per genome, node limit, games in flight, seed.
+Everything that shapes a single-threaded search - **Carry memo**, **Endgame empties**,
+**Endgame node cap**, **Max depth**, **Auto depth**, **Per-move budget**, **Widen at the
+root** - is read from the Run pane's **Search tuning** block when the run starts and travels
+to the engine as one JSON argument, and the pane prints the inherited values above its own
+fields. A genome is therefore measured with the search that will play with it.
+
+Two switches are deliberately *not* inherited, because a tuning game searches on one worker
+(see the next section): **Threads** and **Dynamic scheduler**. With one worker
+`resolveThreads` returns 1, the whole per-move node budget belongs to that worker instead of
+being sliced by the thread count, and `runExploiter` takes `evaluateRange(0, 0, 1)` before it
+ever looks at `deterministic`, so the dynamic scheduler is unreachable. Inheriting them could
+not change a tuning result; it would only have run 8 games x 12 threads on 12 cores. The pane
+says so on the inherited line, with the values it is ignoring.
+
+Two design points that matter more than the GA itself:
+
+- **Evaluation is game-parallel, not search-parallel.** Every worker plays whole games
+  with `threads = 1`. At a node budget search threads buy no strength and only scale ~4.8x
+  on 12 threads, while independent games scale with the core count and stay reproducible
+  per seed because nothing is shared. Measured: **~5.5 ms per 5x5 game against ~33 ms
+  serially**, so a 1800-game generation set finishes in seconds. It is also why the tuning
+  pane does not inherit the Run pane's **Threads** or **Dynamic scheduler**.
+- **Common random numbers.** Every individual in a generation plays the *same* seed set,
+  so differences between genomes are not confused with differences between openings, and
+  the winner is then re-measured on seeds never used during the search. With 12-30 games
+  per genome the training fitness is very noisy; the validation pass is what stops the
+  reported winner from being pure noise.
+
+A game that reaches the move cap is counted as `unfinished` and excluded from the win rate
+rather than scored, because a position cut off mid-play is not a result (see the note on
+the move cap above).
+
+**Repeated genomes are measured once.** Within one run, fitness is a pure function of the
+genome: the training seeds are drawn once, the search is bounded by nodes rather than wall
+clock, and the tuner pins threads to 1. So a genome that appeared in an earlier generation
+already has an exact score, and replaying it plays the same games to the same result.
+Elitism alone guarantees at least one such genome per generation, and convergence produces
+several. The tuner keys a cache on `(beam, replies, mass)` and only plays the genomes it has
+not seen; validation always runs fresh, because it uses the held-back seeds. Because the
+cache does not consume the GA's random stream, the sequence of populations is unchanged:
+measured over 8 generations x 10 genomes, **60 evaluations instead of 80 (-25%) and 31.0 s
+instead of 40.7 s**, with every generation's genomes, win rates and margins identical and
+the same champion. `IPVGO_TUNE_NOCACHE=1` disables the reuse, which is how that equivalence
+was checked.
+
+**What it found.** Six generations, population 10, 30 games per genome, 5x5 at 1000 nodes,
+validated on 60 held-back seeds:
+
+| faction | tuned (beam / replies / mass) | tuned | default | delta |
+|---|---|---|---|---|
+| Illuminati | 16 / 7 / 0.30 | 73.3% | 78.9% | **-5.6** |
+| Tetrads | 3 / 8 / 1.00 | 80.0% | 81.1% | **-1.1** |
+| Slum Snakes | 11 / 5 / 0.85 | 87.8% | 85.6% | +2.2 |
+
+Only one of three survived validation, which is the headline result: **these three knobs
+are close to flat around the defaults**, and a search that picks purely on training games
+will happily report a winner that is worse. Treat the tuned numbers as a hypothesis to
+re-test with the bench (paired, several hundred games), not as a config to ship. The
+mechanism earns its place as a way to ask the question cheaply, not as an optimiser that
+is expected to return a better genome than the defaults.
+
+**Every finished faction also leaves its measurements on disk.**
+`ipvgo-engine/temp/tuning-runs/<date>-<faction>-<n>x<n>.json` holds the whole final
+generation - rank, beam, replies kept, mass cap, win rate, standard error, margin and
+finished/unfinished for **every genome in it** - together with the champion's training
+tally, the two held-back validation rows, and the settings that produced them (generations,
+population, games per genome, node limit, games in flight, seed, carry memo, the inherited
+search block, and the range box), plus the engine build and binary path. The pane prints the
+path when the faction finishes. The store only remembers the winner; this is the evidence
+behind it, and because it is written per run rather than per faction, two runs of the same
+faction do not overwrite each other.
+
+**The store is a file, and it is portable.** Everything the tuner and the GUI commit lands
+in `ipvgo-engine/temp/tuning.json` as `{faction: {applied, best}}`, and that file is what
+play and the bench read at start. The Run pane's **Search tuning** block, directly under the
+per-faction width rows, has three buttons: **Import file...** replaces the whole store from
+a snapshot, **Export file** downloads the current one, and **Reset all** clears it after a
+confirmation. An export is named `yyyy-mm-dd-hh-mm-<hash>.json`
+(`2026-11-12-22-11-12e5569.json`): the timestamp of the export and the commit the server is
+running, so two snapshots from different builds cannot be confused. Import replaces rather
+than merges, and it validates: a faction whose genome is missing, out of range or not an
+object is dropped and counted in the reply instead of rejecting the file, and a file with
+nothing usable in it is refused so a bad pick cannot wipe the store. Anything imported also
+clears the page's local width overrides, which would otherwise shadow the new numbers.
+
+### Depth is derived, not configured (Auto depth)
+
+`maxDepth` used to be a number you had to choose, and that made it a trap: deeper looks
+strictly better, but with a bounded search it is really a cap on *time*. Measured on 5x5
+against Tetrads + Daedalus at a 50k node budget, ceilings of 4 / 6 / 8 / 100 all reached
+median depth 4-5 and scored 36-40 of 40 games, while costing 8.9 s / 17.8 s / 21.6 s /
+30.5 s. The ceiling never changed strength; it only changed how long the answer took.
+
+**This is off by default.** It shipped on, and re-measuring the whole change (auto depth +
+per-move budget + root widening, all of which arrived together) against the previous
+commit over 1 080 games put it 3.2 points behind (2.0 sigma), with 14% fewer nodes spent
+per move. So the ceiling is `maxDepth` again, and this behaviour needs the **Auto depth**
+switch (or `IPVGO_AUTODEPTH=1`). When it is on, `maxDepth = 0` means automatic and three
+separate stops decide where the search ends:
+
+1. **What the position can use.** Depth is capped at two half-moves per empty point - the
+   game cannot outlast that, so a deeper iteration can only re-derive a known result.
+   This is also what bounds the endgame, where `childDepth` is never decremented: with a
+   ceiling of 100 the same endgame tree was re-searched 100 times, 17 s on one move, and
+   the last iteration replaced the answer with an equally settled one.
+2. **What the budget can afford** (**Per-move budget**, or `IPVGO_PERMOVE_BUDGET`). The
+   loop predicts the next iteration's cost before starting it - nodes times the measured
+   growth for a node budget, and the same estimate scaled by the measured milliseconds per
+   node for a time budget. A timed search that cannot predict spends its clock on
+   iterations it then throws away: measured 8 740 median nodes per move against 2 927 for
+   a node budget that reached the same depth. With the prediction a move that completes
+   depth 5 in 65 ms stops there instead of starting a depth-6 attempt that would blow a
+   200 ms deadline.
+3. **Whether it is still learning** (also **Per-move budget**). In the endgame, an
+   iteration that searches no more nodes than the previous one did not add a ply, so the
+   loop stops.
+
+A node budget can also be enforced per **move** rather than per depth iteration, under the
+same switch. It used to be per iteration, so a `maxDepth` of 100 with a 1e6 budget could
+spend 100 x that on a single move - which is how the reported 200 ms average ended up
+hiding 17-second moves. Off by default, so every iteration still gets the full configured
+budget; turning it on makes `iterations` mean "per move", which is a different (smaller)
+amount of search for the same number.
+
+| config (5x5, Tetrads + Daedalus, 20 games each) | won | time | p50 ms | max ms | median depth |
+|---|---|---|---|---|---|
+| auto, nodes 50k | 40/40 | 29.4 s | 13.2 | 294 | 4 |
+| maxDepth 100, nodes 50k | 40/40 | 30.8 s | 14.7 | 321 | 4 |
+| auto, nodes 200k | 40/40 | 104.5 s | 32.1 | 1017 | 6 |
+| auto, time 200 ms | 40/40 | 25.0 s | 22.3 | 201 | 4 |
+
+With the switch on, auto costs nothing against the best explicit ceiling and does not
+depend on picking one. With it off, none of the above applies. **Widen at the root**
+(`IPVGO_WIDEN=1` or `"widen": true`) adds the separate root-widening retry described below.
+
+### Measuring the search switches
+
+All three are per-run settings, exposed as checkboxes in the bench GUI's **Search tuning**
+panel (**Auto depth**, **Per-move budget**, **Widen at the root**), as keys in a
+`benchjson` config, and over `POST /api/bench/start`. Each also reads an environment
+variable so a CLI run can set it without a config:
+
+| GUI / config key | environment variable | effect |
+|---|---|---|
+| `autoDepth` | `IPVGO_AUTODEPTH=1` | derive the depth ceiling from the position instead of `maxDepth` |
+| `perMoveBudget` | `IPVGO_PERMOVE_BUDGET=1` | per-move node/time budget, cost prediction, endgame saturation stop |
+| `widen` | `IPVGO_WIDEN=1` | after deepening, retry the completed depth wider while budget remains |
+| `verifyRootReplies` | — | at the first White ply keep every reply in the model, not just the likely ones |
+
+With all three of the older switches unset the engine reproduces the 11 Nov behaviour
+exactly: 240 games of `benchjson` on 5x5 at a 1 000-node budget compare line-for-line
+identical to a binary built from commit `9bd3bd1`, and setting all three reproduces the
+12 Nov binary line for line. That is the check to run after touching any of them.
+
+**What the root actually searches.** Every legal Black move: measured on a blank board the
+root holds 26 / 50 / 82 / 170 candidates on 5×5 / 7×7 / 9×9 / 13×13, i.e. every empty point
+plus passing, and `beam` does not apply there - it prunes Black's moves *inside* the tree.
+The reply pruning is the asymmetry: `whiteChildren` (6) and `whiteMass` (0.9) apply at every
+node, including the children of the move we are about to play, and the dropped tail is priced
+at the position's static eval rather than searched. On one 9×9 position the same root came out
+**0.546** at the default pruning, **0.587** with 16 replies and mass 1.0, and **0.488** on the
+worst of the kept replies: a real effect, in the direction of optimism.
+
+`verifyRootReplies` closes that hole for the played move only: the first White ply keeps the
+whole reply distribution (deeper plies are unchanged). Measured on a mid-game 9×9 at 20 000
+nodes it cannot afford its first real ply and falls back to a leaf-only depth 1 (59 nodes), so
+it needs roughly 60 000 nodes to reach the same depth 2 - 43 791 nodes, the same move, and a
+value of **0.620** instead of 0.546 (the old number prices the unsearched tail at the static
+eval). On 5×5 at 8 000 nodes it costs **-39%** wall clock for the same depth and the margins
+went 14.8/15.0 to 17.5/15.0 over 6 games each. Off by default.
+
+### Cheats: when the engine spends one
+
+`ns.go.cheat` is priced like any other move - each candidate is applied to a copy of the
+board, the resulting position is searched like an ordinary child, and the value is an
+expectation over the game's own roll: `chance * V1 + (1 - chance) * (1 - ejection) * pass`,
+where `chance` is the game formula `0.6 * (0.7 - 0.02n)^n * crime_success` plus the flat
++0.25 at Source-File 14 level 3, and a failed attempt skips our turn (the pass child, already
+evaluated). A cheat is played only when all three hold:
+
+1. its risk-adjusted value beats the best legal move by `cheatMargin` (0.1),
+2. every legal move makes the position worse - the best of them is below the position's own
+   static eval,
+3. the position is lost on the numbers - the best legal move is still under an even game.
+
+Conditions 2 and 3 are what stop the engine from spending an attempt while a move holds the
+game, and a game spends at most two attempts (see below). The move list tags each attempt with
+what was tried - `REMOVE ROUTER`, `TWO MOVES`, `DESTROY NODE`, `REPAIR NODE` - coloured by the
+roll: green when it landed, red when it failed, with the ejection case in the row tooltip. Measured with the switch on, a 10-game 5x5
+batch at margin 0 made 21 attempts: 7 succeeded, 13 skipped our turn and 1 got us ejected,
+which is what a 60% chance per attempt looks like. The **SF14.3 cheat bonus** toggle beside it
+adds the game's flat +25 points (only at Source-File 14 level 3).
+
+**Two attempts per game, and the gate is what recovered the lost games.** A loss that shows
+cheat attempts is mostly the gate working - the engine cheats because it is already losing -
+but the gate as it stood still spent attempts in positions it was *winning*, and that is where
+the catastrophic losses came from. Measured on the live configuration (5×5, 10 000 iterations,
+12 games in parallel, Netburners, 1000 games, seed 1):
+
+| rule | wins | games with cheats | attempts | worst game |
+|---|---|---|---|---|
+| cheats off (500-game arm) | 472/500 (94.4%) | 0 | 0 | - |
+| **losing gate, 2 attempts (default)** | 966 (96.6%) | 87 | 143 | 2 |
+| losing gate, uncapped attempts | 979 (97.9%) | 87 | 224 | 8 |
+| losing gate, 3 attempts | 973 | 87 | 176 | 3 |
+| losing gate, margin 0.3 | 981 | 84 | 156 | 5 |
+| no losing gate, uncapped (the old rule) | 978 | **208** | 374 | 8 |
+
+Cheating is worth **+3.4 points** here, paired on the same 500 games: 17 lost without cheats
+and won with them, 2 the other way. The gate then removes 58% of the cheating games for
+nothing - 208 games down to 87 at the same 978/979 wins. The attempt cap is the one thing that
+costs: uncapped scores 13 games higher than two, and on 9×9 (280 games, 6 000 iterations,
+12 in parallel) the cap is worth 12 games and a paired 19 losses against 7 wins
+(McNemar p ≈ 0.04), with a monotone cap sweep on the 160-game arm: 1 attempt 127 wins,
+2 → 132, 3 → 133, uncapped 140. It is shipped anyway because it bounds how many tries a lost
+game can spend, which is a decision about how the engine behaves rather than about the score.
+
+**The three levers are per-run settings**, all in the Run pane beside the Cheats switch and
+all carried by a tuning run:
+
+| Run pane | config / API key | default | what it does |
+|---|---|---|---|
+| Cheat attempts per game | `cheatMaxAttempts` | 2 | attempts a game may spend; 0 never cheats, 99 is uncapped |
+| Cheat margin | `cheatMargin` | 0.1 | how much better than the best legal move it has to be |
+| Cheat only when losing | `cheatLosingGate` | on | require the best legal move to be under 50% |
+
+`cheatMaxAttempts` / `cheatLosingGate` / `cheatMargin` are read by `benchjson`, by the `bench`
+CLI (`--cheat-cap=`, `--cheat-losing=`), by `POST /api/bench/start` and by
+`POST /api/tune/start` (as part of `search`), and the values a run used are echoed back in
+`/api/bench/state` options and in the tuner's inherited-search line.
+
+**Replayed against a real 1000-game run.** A finished 5×5 run (Netburners, 100 000 iterations,
+12 games in parallel, cheats on at SF14.3, the run archive served by `/api/bench/state`) lost
+six games: 162, 300, 703, 720, 747 and 789. Replaying exactly those six with the pre-change
+binary reproduces them margin for margin (-25.5, +4.5, -25.5, -3.5, -20.5, -0.5), so the replay
+is faithful; game 300 is the ejection loss - it ends with Black ahead by 4.5 and is still a
+loss. With the shipped rule three of the six are won:
+
+| game | no gate | **2 attempts + losing gate** | 1 attempt + losing gate |
+|---|---|---|---|
+| 162 | loss -25.5 | **win +22.5** | **win +22.5** |
+| 300 | loss +4.5 (ejected) | **win +1.5** | **win +1.5** |
+| 703 | loss -25.5 | loss -25.5 | **win +0.5** |
+| 720 | loss -3.5 | loss -3.5 | loss -3.5 |
+| 747 | loss -20.5 | **win +17.5** | **win +17.5** |
+| 789 | loss -0.5 | loss -0.5 | loss -19.5 |
+
+Game 300 is the gate doing exactly what it is for: it never spends an attempt in a position it
+is winning, so the ejection that lost that game cannot happen. Game 703 is the one the second
+attempt costs, and 789 is what a second attempt can still cost when it misses.
+
+**The targets the engine considers were narrower than the game allows.** The game only
+pre-checks two of the four cheats: `removeRouter` and `playTwoMoves` reject a point that is
+already offline (`#`), and `destroyNode` / `repairOfflineNode` take any point at all. Anything
+non-offline is fair game, and `playTwoMoves` *overwrites* what is on the two points - white's
+stones included - so overwriting two white stones is an immediate double capture and
+overwriting one member of a short-liberty chain can kill the rest once the captures resolve.
+The generator used to offer `destroyNode` only on empty points with two white neighbours and
+`playTwoMoves` only over legal points, which left a white stone untouchable by three of the
+four cheats. It now generates:
+
+| cheat | targets generated |
+|---|---|
+| `RemoveRouter` | every white stone |
+| `DestroyNode` | every white stone, plus empty points with 2+ white neighbours |
+| `PlayTwoMoves` | pairs over the best legal points **and** the white stones with the fewest liberties, largest chain first |
+| `RepairOfflineNode` | offline points with a black neighbour (unchanged) |
+
+Measured with two builds of the same source, `threads: 1`, 100 000 iterations per move and
+`benchjson` against Netburners (timings only - win counts are the signal):
+
+| board | crime | wins, narrow targets | wins, wide targets | mean margin | mean ms/move |
+|---|---|---|---|---|---|
+| 5×5 | 0.35 / 0.6 / 1.0 | 60/60 in all three | 60/60 in all three | 16.6 both | 554 -> 615 |
+| 9×9 | 0.35 | 19/20 (margin 9.85) | **20/20 (margin 14.55)** | +48% | 241 -> 276 |
+| 9×9 | 1.0 | 19/20 (margin 10.75) | **20/20 (margin 13.80)** | +28% | 222 -> 275 |
+| 13×13 | 0.35 | 10/10 (margin 29.4) | 10/10 (margin 29.4) | - | 559 -> 629 |
+
+The 5×5 arm is saturated, so it only shows the cost; 9×9 is where the extra targets pay, both
+in games and in the score the game is paid on. The `cheatTargets` / `cheatApplied` guards in the
+in-game script (`src/libraries/ipvgo/cheats.ts`) mirror the same rules, so a target the engine
+proposes is a target the game will accept.
+
+
+### A decided game ends on a pass, not on fifteen more solves
+
+Two consecutive passes end a game and the score decides it, so when White has just passed in
+a position we are not behind in, passing wins by the rules. Playing on is only worth anything
+if a stone can still raise the final score - and in area scoring a stone inside our own
+territory turns one territory point into one stone, leaving `pieces + territory` unchanged.
+That is exactly what the tail of a won 5x5 game looks like: the engine used to spend an
+endgame solve per move filling its own area, fifteen times in the worst games, gaining nothing.
+
+The root now checks the score before searching: if White has passed, we are not behind and no
+legal move raises `blackSum`, it returns the pass immediately (0 nodes, 0 ms) and the game
+ends. Measured over the same 1000 5x5 games at 10 000 iterations (`benchjson`, 12 in
+parallel):
+
+| | wins | mean nodes/game | mean ms/game | black moves | frozen tail moves |
+|---|---|---|---|---|---|
+| before | 966 | 21 594 | 582 | 16 346 | 4 830 |
+| pass rule | 966 | 17 837 | 530 | 12 661 | 1 106 |
+| pass rule + score pick | 966 | 16 515 | 405 | 11 421 | 1 106 |
+
+The worst games went from 15 frozen moves to 1 (e.g. game 309: 24 moves -> 10). Wins and every
+single final margin are identical with the pass rule alone, so it only removes moves that could
+not change anything.
+
+The rule needs to be told that White passed. The board alone cannot show it - a pass leaves no
+trace - so `passCount` is a request field and the caller has to send it; `stateFromRequest`
+defaults it to 0. The in-game script derives it from `getGameState().previousMove === null`
+(the game reports a pass that way, and it is also null before the first move, hence the
+`getMoveHistory().length > 0` guard) and sends it with every request, including the White-reply
+parity check. Replaying a decided position from the 1000-game run shows why it matters: with
+`passCount: 0` the answer is still a pass but only because the search prefers it - 507 nodes,
+4 ms - and with `passCount: 1` it is the 0-node rule. 609 of that run's moves are decided passes
+like this one, so a caller that omits the field pays a full endgame solve for each of them and
+can play a stone where the pass wins.
+
+The score matters because it is what the game pays out: `endGoGame` adds
+`score[black].sum * difficultyMultiplier * winstreakMultiplier` to that opponent's `nodePower`,
+and `nodePower` is the stat-multiplier effect of the Go node. So among moves that keep a
+*certain* win (value 1.0, the same as the pass), the engine now prefers one that raises the
+score - over the same 1000 games that is +293 total margin (24 games higher, 2 lower, wins
+unchanged) and a further 24% off the nodes, because decisive moves finish games sooner.
+
+That tail is not cheap, and making it cheaper was measured and rejected. The last one or two
+moves of a won game are the exact play-out - 70 000-85 000 nodes, 400-600 ms each at a
+100 000-node budget - and they are what turns 15:9 into 23:2. With `IPVGO_DEBUG_DEPTH=1` on
+one of those positions (9 empty points left) the cost is legible:
+
+```
+[iter] depth=1 nodes=10      ms=0.9                       one leaf eval per root move
+[child] i=0 nodes=6403       ... i=1..8 all ~6 400 nodes  a play-out of the 8-empty board
+[iter] depth=2 nodes=51890   ms=11.5
+[iter] depth=3 nodes=130436 timedOut=1                    aborted at the budget
+```
+
+~6 400 nodes per candidate is 3^8: every way of filling the remaining 8 points. It is not
+looking ten moves ahead through the reply model, it is enumerating the rest of the board once
+per candidate move. On 200 games at that budget, capping those moves at an 8 000-node budget
+saved **3% of the time for 11% of the score** (3282 -> 2929 total margin), restricting the root
+to moves that raise the score saved 3.6% of the nodes with **no** time change and 3% less score
+(3282 -> 3186), and pushing the root itself into the endgame path (`endgameEmpties = 9`) costs
+**131 987 nodes** at the next depth instead of 51 890. The enumeration is the cost; there is no
+cheaper exact answer, so the lever for a faster game is the per-move node budget.
+
+What the score term does buy is inside the tree: a finished game is now valued
+`1 + score * 1/4096` when won and `score * 1/4096` when lost, so the search has a reason to
+prefer the line that ends 23:2 over the one that ends 15:8.5 - and, because losses carry their
+score too, the same reason to bank points in games it is losing (`endGoGame` pays nodePower for
+the final score either way). Over the same 1000 games that is 967 wins instead of 966 and
+13 165 total margin instead of 13 077, for the same nodes. Every reported value is clamped back
+to a probability, so `p(win)` in the GUI still reads 1.000 at the top of the scale.
+
+### What the auto rotation aims at
+
+The engine maximises the *margin*, because that is what the game pays; the script has the
+other half of that problem - which faction and board to play next. It used to pick the faction
+with the **lowest** node power, which is only correct if a point of node power is worth the
+same everywhere. It is not, for two reasons the game makes explicit:
+
+- `CalculateEffect` is concave: the *n*-th point of node power is worth
+  `0.002 * power * GoPower * SF14 * (n+1)^-0.7 * (0.3 ln(n+1) + 1)` of multiplier, so a
+  faction already sitting on a large total gains very little from another win.
+- `getDifficultyMultiplier(komi, size)` pays `(komi + 0.5) * 0.25` per point of final score -
+  0.5× against the Netburners (komi 1.5) up to 2.5× against the hidden faction (9.5) - and the
+  5×5 board against the Illuminati is a special case worth **8×**. `getWinstreakMultiplier`
+  then multiplies by up to 3× on a streak, or up to 5× when it breaks a losing streak.
+
+So the rotation scores each enabled faction by the expected node power of one more win:
+`p(win) * bonusPower * slope(nodePower) * difficulty(5x5) * streak(next win)`, where `p(win)` is
+the faction's own W/L record smoothed towards an even split, and picks the largest. With no
+games played that ordering starts at Illuminati 5×5 (8 × 0.7), Daedalus, Slum Snakes, Tetrads,
+The Black Hand, Netburners; once Illuminati is at 20 000 node power its slope has fallen 240×
+and Daedalus takes over. The dashboard's Setup table shows that product in a **Pay** column, so
+the auto target's `A` marker can be checked against the numbers beside it. The mirrors live in
+`src/libraries/ipvgo/factionConfig.ts` (`getDifficultyMultiplier`,
+`getNextWinStreakMultiplier`, `estimateFactionGain`).
+
+
+
+### The growth estimate that capped depth at 2 on 9x9
+
+The deepening loop decides whether the next ply is affordable by scaling the last
+iteration's cost by the *measured* growth. It used to measure that growth against the
+depth-1 iteration, which evaluates every root move straight at the leaf - no White ply at all
+- so its node count is a fraction of a real one: on 9×9 the pair was 59 -> 4 661 nodes,
+reported as **79× growth**, and the resulting "prediction" of 368 000 against a 200 000 budget
+refused depth 3 at *every* budget. The same arithmetic is why `Replies kept = 0` collapsed to a
+leaf-only depth 1: the only affordable iteration was the stub one.
+
+Growth is now measured between two **real** plies (depth >= 2), and until two of those exist
+the fallback is the nominal branching, `beam x replies`, rather than 1. Both halves matter: with
+only the first change the loop stopped refusing depth 3 but then *ran* an iteration it could not
+finish, and 9×9 at 200 000 nodes went from 36 ms to 583 ms for the identical answer. With both,
+9×9 returns depth 2 in 34 ms at every budget, 5×5 keeps its depth (6.14 -> 6.16 measured over
+12 games, same margins), and repeated runs are still bit-identical apart from wall clock.
+
+### Root width is worth more than root completeness (IPVGO_ROOTW)
+
+
+
+A diagnostic first: play the same opening at 1 000 and at 20 000 nodes and compare the
+first move. **Seven of nine differ.** The move the engine picks at the in-game budget is
+not a converged answer, so the search is the binding constraint, not only the leaf.
+
+That reframes the root. It is searched at full width on purpose - "dropping a big
+territory move there costs whole games, and the cost is one level of branching" - but with
+a *node budget* the width divides everything else. 5x5 has ~20 legal points, so 1 000
+nodes is ~50 nodes per child, which is one or two plies per child. 9x9 is ~60 points, so
+**~16 nodes per child**, which is not a search at all.
+
+`IPVGO_ROOTW=n` keeps the `n` root moves the existing beam prior likes most (the same
+`blackCandidatePrior` the beam already trusts - nothing new is being believed) and searches
+only those, so each surviving child is actually evaluated rather than all of them being
+guessed at. Note `avgDepth` barely moves (4.63 -> 4.62 at 5x5): this is not buying depth,
+it is buying a *reliable comparison* between the moves that matter.
+
+Paired per faction-and-seed cell, 1 thread, **in-game budget (1 000 nodes)**, children kept
+in the generator's order so pruning is the only thing that changes:
+
+| board | full width | cap | delta | sigma |
+|---|---|---|---|---|
+| 5x5, 48 cells x 40 games | 86.0% | **12 -> 88.7%** | **+2.7** | **2.9** |
+| 5x5, same | 86.0% | 8 -> 87.4% | +1.4 | 1.4 |
+| 5x5 | 86.3% | 6 -> 87.2% | +0.9 | 0.6 |
+
+**Correction.** The first version of this cap re-sorted the surviving moves by `y`
+coordinate instead of restoring the generator's order, so it pruned *and* reordered - and
+reordering changes which move wins a tie and the order the scheduler hands children out.
+That version measured +3.3 at cap 8 and +6.3 on 9x9; with the order restored, cap 8 gives
++1.4 and **cap 12** is the better setting. The 9x9 figure has not been re-measured and
+should be treated as unconfirmed.
+
+Off by default (`IPVGO_ROOTW` unset = full width, and every measurement elsewhere in this
+file that predates this section used full width). Making it the default needs the same
+de-ordered campaign at 7x7, 9x9 and 13x13 to fix the cap per size.
+
+### Aggregation and selection rules (all rejected)
+
+The search combines numbers in exactly two ways: White's node is the probability-weighted
+**average** over its replies, Black's node is the **max** over its candidates, and the root
+takes the argmax. Four alternatives were measured at the in-game budget, 5x5, paired,
+1 440 games per arm:
+
+| rule | knob | result |
+|---|---|---|
+| worst case instead of average | `IPVGO_WHITE_WORST` | -1.7 pts, -1.7 sigma |
+| 25% blend of mean and worst | `IPVGO_AGG=0.25` | -0.6 sigma |
+| sharpen White's probabilities (`p^2`) | `IPVGO_PGAMMA=2` | -0.2 sigma |
+| root ties broken by prior, not order | `IPVGO_TIEB` | -0.3 sigma |
+
+So the expectation is the right aggregation even though it lets one rare killing reply be
+paid for with many comfortable ones, and the root argmax does not need help breaking ties.
+That closes off the aggregation question: what is left is *which* positions get evaluated
+(root width, above) and *how well* the leaf prices them.
+
+
+
+Four more eval terms were measured with the same paired-cell method. Two are still in the
+code behind environment variables (off), two were removed.
+
+- **Worst-case White aggregation** (`IPVGO_WHITE_WORST`, already existing):
+  70.2% -> 68.5%, **-1.7 points / -1.7 sigma**. Treating White as adversarial when it
+  actually follows a policy loses, which is what the exploit model is for.
+- **Concentration of force** (`IPVGO_CONC`): the stone-weighted average chain size,
+  `sum(size^2)/sum(size)`, i.e. 23 stones in one chain scores 23 and the same stones
+  scattered score 1. Positive weight (reward *our* concentration) was +1.0 at 200 nodes;
+  **negative weight (reward White's, i.e. make Black spread out) was +2.7 games per
+  40-game cell at 3.6 sigma**, and replicated on fresh seeds at 3.2 / 2.9 / 1.8 sigma.
+- **Room to live** (`IPVGO_REGS`): regions bordered per side, +1.1 sigma. Weak.
+- **Race at a 3-liberty horizon** (`IPVGO_RACE_LIBS=3`): +1.5 points at the in-game
+  budget, 1.4 sigma. Slightly better than the 2-liberty version and not yet resolved.
+
+**The warning.** The concentration term looked like the best result of the session at the
+screening budget and then evaporated:
+
+| 5x5 | budget 200 | budget 1000 (in game) |
+|---|---|---|
+| `IPVGO_CONC=-0.05` | +2.4 games/cell (3.2 sigma) | **-0.04 games/cell (0.0 sigma)** |
+| `IPVGO_CONC=-0.1` | +2.5 games/cell (2.9 sigma) | - |
+
+Screening at a low node budget is fast and sensitive, and the reasoning for it was sound -
+more games, more headroom - but it answers "does this help a *shallow* search", which is
+not the question. A term that supplies information the search cannot reach at depth 1-2 is
+worthless once depth 4 finds it. **A low-budget result has to be confirmed at the in-game
+budget before it means anything**, and the two can disagree in both magnitude and sign.
+The same caveat applies to the older 5x5 screens recorded earlier in this file.
+
+Pooled, the capture-race term is the only eval change that has been positive in every run
+at *both* budgets: at 200 nodes +2.1 to +2.5 points (2.4 sigma at 5 760 games per arm), at
+1000 nodes +1.2 to +1.5 points (1.0-1.4 sigma). Ten runs, ~17 000 games, always positive,
+never individually above 2.4 sigma. Treat it as a probable ~1.3 point gain at the in-game
+budget and keep it off until a campaign resolves it.
+
+Since the remaining eval terms are at the horizon's edge, the next lever is the **search**,
+not the leaf: a quiescence extension that keeps searching forcing moves (captures, atari
+replies) past the depth limit, instead of evaluating statically exactly where the losses
+are decided.
+
+### Two ideas measured and rejected
+
+- **Cache-line padding.** `SearchSession::Impl::Slot` is exactly 64 bytes but a
+  `std::vector` only guarantees 16-byte alignment, so neighbouring slots shared a line;
+  `Shard {mutex, map}` is 144 bytes, so nearly every adjacent pair did. Both look like
+  textbook false sharing. Padding `Slot`, both shard arrays and `RoundPool::Worker` to
+  64 bytes measured **+1.2%, +1.7%, -0.6%, -0.5%, +0.8%** against a ~1% noise floor -
+  nothing. Coherence traffic is not the bottleneck; the per-node working set is L1
+  resident, so there is no line pressure to relieve.
+- **The shared carry table as a cross-worker cache** (the substrate a lazy-SMP search
+  would need). `IPVGO_CARRY=1` gives every worker and every search of the session one
+  sharded, mutex-guarded memo. It is **not** free: at 9x9 @4000 on 12 threads it is
+  **3.2% slower** (the lock traffic costs more than the hits save) and at 9x9 @1000 it
+  is 8.2% faster. It also changes the search - `avgDepth` 3.547 -> 3.595 at the same
+  budget - because a hit does not consume nodes, so the budget stretches further. True
+  lazy SMP (every worker on one tree, shared table, divergent ordering) is therefore a
+  strength change that needs the full 240-games-per-arm campaign, not a free win.
+
+### The allocator handover
+
+Long bench runs grew until the machine swapped: 100 games per faction on 5x5 at a 200 ms
+think budget ended with the engine holding 24 GB, against a few hundred MB for the same
+run a day earlier. It is not the search or the memo - it is the small-object pool behind
+`operator new` (`fast_alloc.hpp`), and the trigger is the threading pass above: a fresh
+set of worker threads is created for **every move** and joined at the end of it.
+
+Each thread carved its own 256 KB chunks and kept its own free lists, and when the thread
+exited, both were dropped on the floor: the chunks are never returned to the OS by
+design, and nothing else could reach the freed blocks. Measured on the 40-game 5x5 bench,
+memory grew ~240 MB per game (9.6 GB in total, ~370 bytes per node); with `optbench`
+it grew 7.4 MB per search at 12 threads and stayed flat at one thread, because the main
+thread's pool survives.
+
+Two designs failed before the third worked, and both are worth remembering:
+
+- Draining the shared lists **block by block under the lock** put a global mutex on every
+  allocation that missed the local list and serialised all twelve workers; a 20-repetition
+  bench that normally takes 1.7 s did not finish in ten minutes.
+- Draining **whole class chains** per thread fixed the contention but not the growth: a
+  thread that took every block of a size class held them while its neighbours carved
+  fresh chunks, so the pool still grew by a peak working set per move (25 000 blocks per
+  12-thread round in a standalone reproduction).
+- `new Globals()` for the shared pool deadlocked the process in `--threads=1`: that `new`
+  goes through the very `operator new` being defined, re-enters `allocate()`, and waits on
+  the initialisation guard of the same static. The pool now lives in static storage via
+  placement new.
+
+What shipped: a thread keeps at most 256 blocks per size class, takes up to 128 from a
+process-wide pool at a time, hands its surplus back when a list exceeds that ceiling, and
+donates its lists and its spare chunk tail when it exits. Memory is then bounded by the
+peak working set of one move rather than by the length of the run:
+
+| workload | before | after |
+|---|---|---|
+| `optbench --positions=2 --depth=3 --reps=200` (12 threads) | 1466 MB and climbing | 36 MB flat |
+| `benchjson` 40 games, 5x5, 200 ms budget | 9639 MB and climbing | 346 MB, plateau |
+| standalone: 60 rounds x 12 threads x 20 000 allocations | +3 MB per round | 11 -> 13 MB total |
+
+Node counts (39 012 and 11 537) and `selftest`, `fuzz 60 11`, `eyetest` are unchanged, and
+per-search time is unchanged or slightly better (39.3 ms against 38.5 ms at 12 threads,
+172.2 ms against 172.3 ms single-threaded).
+
+The pool is the one part of this that does not port to Apple platforms: there only the
+explicit `ipvgo::fastalloc` entry points are built, not the global `operator new`/`delete`
+replacements. Part of `libc++.dylib`'s non-template state is allocated and freed by the
+dylib's own malloc-backed routines, and dyld's two-level namespace keeps those calls bound
+to the dylib, so the two allocators cross: a pool block reaches `free()` from libc++'s
+thread-exit cleanup, and a malloc block reaches `release()`. libmalloc aborts on both.
+Windows and ELF builds keep the replacements.
+
+The worker threads are the second Apple difference, and a purely environmental one:
+the endgame solve recurses roughly five frames per ply for up to `kMaxPly` (80) plies, a
+few hundred kilobytes of stack. Darwin hands a `std::thread` 512 KiB, which is not enough
+- a 5x5 `benchjson` run died with `SIGBUS` on the stack guard in game 2 - while the 1 MiB
+Windows default fits. `SearchThread` therefore creates the round workers through
+`pthread_create` with an 8 MiB stack on Apple and stays a plain `std::thread` everywhere
+else, so no search result changes.
+
+The remaining per-move cost this exposes is the thread churn itself: 12 threads created
+and destroyed for every move is ~150 000 thread creations over a 600-game bench. A small
+persistent worker pool would remove both that and the allocator's dependence on exit
+handover, at the price of a dispatch barrier to reimplement; it is the next thing worth
+measuring here, not another micro-optimisation of the search.
+
+### The chain-pass round
+
+Two changes to `computeChainsInto`, which is the largest single cost and now does all of
+the work in one sweep:
+
+- **Liberties are collected as each stone is discovered**, not in a second pass over the
+  chain. Discovery order *is* the stored member order and each stone's neighbours are
+  visited in the same N/E/S/W order either way, so the liberty lists come out identical -
+  checkable: single-thread `exploitplay` results and node counts are unchanged - while
+  every point's neighbours are visited once per chain build instead of twice. Those two
+  scans were the first and third hottest lines in the profile. **-2.5% / -1.7%**
+  (2-position depth-3 bench / 9x9 depth-2 bench, single thread, interleaved).
+- **Empty regions record which colours border them** (`ChainSet::border`, two bits,
+  filled during the same neighbour scan). The leaf evaluation asks "is this region
+  bordered by exactly one colour" for every region on every leaf, and it was walking the
+  region's members again to answer it; with the flags it is two bit tests.
+  **-1.3% / -4.5%**, and `evaluatedLead` drops out of the exclusive top list.
+
+The selftest oracle for the border flags - compare the recorded flags against a member
+scan on 120 random boards - caught a real bug in the first version: offline nodes (`#`)
+were being counted as White borders, which would have mis-valued every region touching an
+obstacle. That is exactly the kind of silent error the flags introduce, so the check
+stays.
+
+**3. The eye delta finds its regions from the liberty lists (kept, -1.7% / -2.4%).**
+`eyeTotalsAfterMove` runs once per eye *candidate point*, and it used to walk every stone
+of the chains the move joins, plus all their neighbours, to discover which empty regions
+those chains border. Those regions are exactly the ones the chains' liberty lists live in,
+and the chain pass already keeps those lists - so the walk is now the chain's perimeter
+instead of its area. `eyetest` is unchanged bit for bit (49 041 candidate points, 38 652
+on the incremental path, same declines), which is the check that matters here.
+
+Rejected after measuring: **reordering the nine pattern-mask tests** to try the centre and
+orthogonal neighbours first (+0.3%, noise). The early exit already prunes most points in
+the first few cells.
+
+Also rejected, and instructive: **skipping the re-derivation of regions that cannot
+change.** A region bordered by one merged piece and credited to that piece looked like it
+had nothing to re-derive - merging pieces of one colour keeps its verdict, and its eye
+moves to the merged chain, which is already in the starting total. That version produced
+2 000-3 000 `eyetest` mismatches, even after restricting it to boards with no
+encirclement-credited regions. The reason is the encirclement test itself: it compares the
+*bounding box* of the bordering chain with the region's, and a chain's box changes when
+unrelated cells join it, so a region whose own cells are untouched can still flip verdict.
+The skip is out; the profile line `analysis.cpp:655` (the component flood) stays.
+
+Profile after this round (same workload as above): `computeChainsInto` 19.7% (it now
+contains the liberty work, so its share rose while the total fell), `eyeTotalsAfterMove`
+13.6%, `matchesAnyPattern` 6.0%, `placeStoneBits` 4.9%, `neighborChainsOfChain` 3.4%,
+`getAllValidMoves` 3.1%, `getEyeCreationMoves` 2.8%, `chainEffectiveLibertiesWords` 2.7%,
+`summarizeEyes` 2.1%, `bits::flood` 1.9%, `opponentReplyDistribution` 1.9%,
+`validateMove` 1.7%; the hottest lines are now the fused inner loop
+(`go_game.cpp:163-169`, 10% between them) and `analysis.cpp:655` in the eye delta.
+
+### The cleanup pass
+
+Everything the passes above added is now the only path. No switch selects a slower
+implementation, and the code that existed only to reproduce one is gone.
+
+Removed because nothing called them any more (each verified with a repo-wide search
+after the pass that obsoleted it):
+
+- `boardEqualsFlat`, `simpleBoardFromString`, `getEmptySpaces` - leftovers from the
+  board-equality superko check and from test scaffolding.
+- `neighborChainIndices` - a vector-returning view of `neighborChainsOfChain`, whose
+  callers moved to the fixed-storage version.
+- `getPatternMove` - superseded by the cached `patternPoints()`; the generator now
+  has one board walk instead of two.
+- `enumerateFactionMoves` - wrapper over `enumerateFactionMovesImpl`; only
+  `enumerateOpponentMoves` is used.
+- The four chain-walk liberty queries in `fast_queries.cpp`
+  (`effectiveLibertyCountFast`, `findEffectiveLibertiesOfNewMoveFast`,
+  `findWeakestAdjacentChainFast`, `findMinLibertyCountOfAdjacentChainsFast`) plus the
+  `Scratch`/`walkChain` scratch machinery only they used. Every caller reads the bit
+  planes now; the stone-walk implementations that remain are the *reference* ones in
+  `analysis.cpp`, which `mcgs` still uses and `selftest` compares against.
+- `blackPlayoutLegal`, `playToMove`, `findOrAddChild`, `findChildIndex` in `mcgs.cpp`.
+- `EndgameInfo::whiteCaptures` and the per-point work that filled it: only the
+  removed endgame approximation read it, so `analyzeEndgame` now answers just the two
+  questions its remaining caller asks. `ChainList::toVector()` went the same way with
+  `neighborChainIndices`.
+
+Removed because they were legacy behaviour behind a comparison switch:
+
+- `IPVGO_ENDGAME_APPROX` and the approximation body of the endgame White model,
+  together with `endgameCaptureChance()` and `ExploitConfig::endgameExactWhite`. The
+  endgame always uses the real reply distribution; the measurements are kept under
+  "Known limits and open questions".
+- `IPVGO_NO_MEMO`, the transposition-table off switch. Its numbers are kept in
+  "Known limits" so the table's cost does not have to be re-derived.
+- `IPVGO_ADAPTIVE_DEBUG`, a `fprintf` left in the iterative-deepening setup.
+
+Switches that stay are configuration, not alternatives: `IPVGO_NODE_LIMIT`,
+`IPVGO_THREADS`, `IPVGO_CARRY`, `IPVGO_NO_SESSION`, `IPVGO_PONDER_*`, `IPVGO_TRACE*`,
+`IPVGO_EXPLAIN`, `IPVGO_CACHE_STATS`, `IPVGO_FIXED_WIDTH`, `IPVGO_WHITE_WORST`,
+`IPVGO_DETERMINISTIC` / `IPVGO_DYNAMIC` (see "The threading pass") and the evaluation
+knobs (`IPVGO_SETTLE`, `IPVGO_VITAL`, `IPVGO_EYE_FILTER`, `IPVGO_MOYO*`).
+
+Verified after the removal, with the usual suite: `selftest`, `fuzz 60 11` (6874
+moves, 0 anomalies), `policycheck` identical on three factions, `eyetest` unchanged
+(49 041 / 38 652 / 0 mismatches), `optbench` node counts 39 012 and 11 537, and
+identical `exploitplay` results at 5x5, 7x7, 9x9, 13x13 and 19x19 (wins, margin,
+depth, ponder hits). Interleaved against a build of the pre-pass commit, 5 rounds:
+-3.6% on the 2-position bench (199.2 -> 192.0 ms) and -2.2% on the 9x9 bench
+(82.2 -> 80.3 ms), the same place the move-generation pass left off.
+
+### The profile-guided optimisation experiment
+
+The last cheap idea was to let the compiler see where the engine really spends its
+time instead of guessing: profile-guided optimisation, trained on the search itself.
+It does not pay here, and the reason matters for future work, so both the plumbing and
+the numbers stay.
+
+```powershell
+.\cmake\Build-Pgo.ps1           # instrument, train on play, relink optimised
+.\cmake\Build-Pgo.ps1 -Games 8  # more training games
+```
+
+`IPVGO_PGO` (OFF / GENERATE / OPTIMIZE) in `cmake/BuildTypes.cmake` holds the flags;
+`cmake/Build-Pgo.ps1` drives the two passes over `out/build/x64-Pgo`. The training
+workload is what the game asks for - a 4 000-node budget per move, deterministic,
+across 5x5 to 19x19 and several factions - so the profile is reproducible and matches
+the distribution the engine is optimised for.
+
+It was tried on both compilers, and both are neutral. First with cl.exe and MSVC's
+profile-guided linker:
+
+- `/GENPROFILE` and `/USEPROFILE` are **linker** options. Passed to `cl.exe` they only
+  earn D9002 ("ignoring unknown option"), the binary stays uninstrumented and the
+  profile arrives with zero counts. Instrumenting needed `/LTCG:PGINSTRUMENT /PGD:<path>`
+  and `/LTCG:PGOPTIMIZE /PGD:<path>`; both imply `/LTCG`, so the plain flag had to be
+  dropped to avoid D9025.
+- The instrumented binary needed `pgort140.dll`, which ships in the toolset's `bin`
+  directory and is not part of the redistributable. Off `PATH` it exited with
+  0xC0000135 (STATUS_DLL_NOT_FOUND) before recording anything - and because the
+  training loop pipes its output, that looked exactly like a successful run.
+- The counters landed as `ipvgo!N.pgc` **next to the executable**, not in the working
+  directory.
+
+Measured against the MSVC Release build from a profile of 2.9e12 dynamic instructions,
+interleaved, six rounds on the benches and three on the play rows:
+
+| workload | Release | PGO | delta |
+|----------|---------|-----|-------|
+| 2-position bench, depth 3 (39 012 nodes) | 172.3 ms | 175.2 ms | +1.7% |
+| 9x9 bench (11 537 nodes) | 64.7 ms | 66.0 ms | +1.9% |
+| play, 40 000 nodes per move, 1 thread, Slum Snakes 9x9 | 108.3 ms | 108.8 ms | +0.5% |
+| play, same budget, Netburners 7x7 | 73.1 ms | 72.7 ms | -0.6% |
+
+Node counts are identical (39 012 and 11 537) and `selftest`, `fuzz 60 11` and
+`eyetest` give the same results as Release, so the profile only changes code layout.
+It does shrink the image: 567 KB of code becomes 425 KB.
+
+Then again with clang, whose instrument is stronger (real edge counts plus indirect
+call profiling) and whose pipeline is now the only one in the tree:
+`-fprofile-generate`, 111 s of training over 5x5/7x7/9x9/13x13 and the 9x9
+`profileworkload`, 11.1 billion dynamic counts over 1229 functions merged by
+`llvm-profdata`, then `-fprofile-use` with `-flto=full`. Node counts unchanged,
+`selftest` and `fuzz` pass, image 1.64 MB -> 1.24 MB, and **342.3 ms at depth 3 /
+5 902 ms at depth 4 against 341.9 / 5 936** for the same build without a profile. Also
+neutral.
+
+The clang pass has three quiet failure modes of its own, all handled in
+`Build-Pgo.ps1`: without `LLVM_PROFILE_FILE` containing `%p` every training run
+overwrites the same counter file and only the last one survives; a run that exits
+without flushing leaves a **zero-length** `.profraw` that makes `llvm-profdata merge`
+refuse the whole set; and `-fprofile-use` against a missing `.profdata` fails at
+compile time, so the merge has to be verified before the second pass (`llvm-profdata
+show` reporting `Maximum function count` above zero).
+
+The regression on the fixed-depth benches is the interesting part. Play never reaches
+those deeper search paths under a 4 000-node budget, so the profile tells the compiler
+they are cold and it stops inlining into them. Training on the benches instead would
+invert that, but then the numbers would only measure the fit to their own training
+set. On the workload the game actually runs, PGO is neutral under both compilers:
+these inner loops are branch-light and dominated by code that LTO already inlines
+across translation units, which is the case profile data has least to add to. Worth
+repeating only after a large structural change, not after another tuned
+micro-optimisation.
+
+### Third-party code
+
+`third_party/ankerl/` holds [ankerl::unordered_dense](https://github.com/martinus/unordered_dense)
+v4.8.1 (MIT), vendored as headers so the build needs no network access.
+
+### Parity checks
+
+Changes to the rules, the board representation or the caches must keep these
+identical, not merely similar:
+
+```bash
+./out/build/x64-Release/bin/ipvgo_game selftest          # bitwise-capture and make/unmake oracles
+./out/build/x64-Release/bin/ipvgo_game fuzz 60 11        # expect 6874 moves, 0 anomalies
+./out/build/x64-Release/bin/ipvgo_game policycheck "The Black Hand" 5 800
+./out/build/x64-Release/bin/ipvgo_game eyetest 8 7       # incremental eye totals vs the full analysis
+# per-move trace, including values and node counts:
+IPVGO_NO_SESSION=1 IPVGO_TRACE=1 ./out/build/x64-Release/bin/ipvgo_game exploitplay "Slum Snakes" 5 2 2 1
+```
+
+`eyetest` prints how many candidate points the incremental path answered and how
+many it declined, so a change that quietly turns the fast path off is visible.
+
+`selftest` also covers the chain arrays themselves: a 19x19 checkerboard is the worst
+case for the liberty storage, and the check fails if a listed liberty is not an empty
+neighbour or if the totals outgrow the fixed arrays.
+
+`optbench` runs the deterministic scheduler, so its node counts repeat exactly at any
+thread count (the count itself differs a little between thread counts, because the
+workers' memo partitions differ - `--threads=1` gives the reference 39 012 / 11 537).
+Compare like with like: same `--threads`, same configuration. The search has no
+value-based pruning, so node counts do not depend on the eval - only the reported
+`value` and the chosen move do.
+
+`IPVGO_NODE_LIMIT` makes `exploitplay` search the way the server does (the client
+sends `iterations`, which becomes a node budget and switches on iterative
+deepening, so the `depth` argument stops applying):
+
+```bash
+# the configuration the game actually runs, at 5x5 and 9x9
+IPVGO_NODE_LIMIT=4000 ./out/build/x64-Release/bin/ipvgo_game exploitplay "Illuminati" 5 25 2 1
+IPVGO_NODE_LIMIT=4000 ./out/build/x64-Release/bin/ipvgo_game exploitplay "Illuminati" 9 4 2 1
+```
+
+Two knobs genuinely change which moves are played, and are therefore not
+regression-tested:
+
+- **`nodeBudget`** caps the endgame solve using a per-search node counter, so a
+  position's value depends on how many nodes the search visited before reaching
+  it. Changing the budget (or the thread count, since each worker gets its own
+  counter and a partition of the root moves) can change the chosen move. The default
+  scheduler claims root moves dynamically, so even at a fixed budget and thread count
+  the play varies slightly run to run; set `IPVGO_DETERMINISTIC=1` (or build a tool,
+  which sets it) to pin the round-robin split and get the same moves every time. The
+  bench GUI's **Dynamic scheduler** toggle selects the same thing per run, and
+  `benchjson` takes `"dynamicRoot": true`.
+- **The session cache** reuses positions across moves. It only reuses values with
+  no endgame cut in their subtree, so reuse cannot lower accuracy, but it does
+  change which nodes get evaluated and therefore the play.
+
+A third does too, though deliberately: **`adaptiveWidth`** decides the beam and
+the reply count from the budget and the measured concentration of White's policy,
+so the depth actually reached depends on both.
+
+### Known limits and open questions
+
+Recorded so they are not rediscovered from scratch. Every number here was
+measured, not estimated.
+
+**The reported `p(win)` collapse is mostly the value not being one series
+(measured: 5x5, 240 games).** Setup: `benchjson` with the in-game node budget
+(`iterations=1000`, what `src/ipvgo.ts` sends), seed 1, 40 games per faction,
+deterministic round-robin threads: 208/240 = 86.7% wins, 2921 Black moves. The
+bench now records, per half-move, what the leaf evaluator thought (`audit.root`,
+`audit.after`, `whiteAudit.after`), the top three root alternatives, the modelled
+probability of the reply White actually played, and `audit.flat` — the same value
+from a fixed one-ply search, which therefore means the same thing on every move.
+
+- **The reply model is not the cause.** 119 moves dropped more than 0.15 against
+  the next one. All 119 had White's actual reply inside the modelled set, at a
+  median modelled probability of 1.000 (minimum 0.042).
+- **Nor is there one cause per drop.** 47 of the 119 are the leaf itself flipping
+  (the next value is within 0.1 of the leaf after White's reply), 40 are the next
+  search coming out below that leaf — it found a refutation — and 32 are above it.
+- **The value is a depth-varying quantity.** Mean reported value by the depth the
+  search actually reached: 0.55 at depth 1, 0.54 at 2, 0.69 at 3, 0.77 at 4, 0.71
+  at 5, 0.60 at 6, 0.52 at 7, then 0.05, 0.03 and 0.002 at depths 8-10 (those are
+  the exact endgame solve, which is a different, much more accurate estimator).
+  A move searched to depth 4 and the next one to depth 1 differ by about 0.2 for
+  no reason but the budget, which is why consecutive numbers are not comparable.
+- **On a comparable series the blunders mostly disappear.** The same threshold on
+  `flat` flags 41 drops, and only 6 of them are among the 119: 113 of the 119 are
+  not the position getting worse. Mean absolute change between moves is 0.0755 on
+  the search value and 0.0697 on the fixed-depth one, but the *large* changes are
+  concentrated in the first.
+- **Losses do have real swings.** 20 of the 32 losses contain at least one
+  fixed-depth drop above 0.15; the other 12 lose without a single jump ("the slow
+  bleed").
+- **A White pass does not move the value by itself.** 8 of the 119 drops follow a
+  pass: 4 are `depth 3 -> 1`, where the next value returns to the leaf, and 4 are
+  the endgame solve firing (depth 5-8 in a handful of nodes, and those games were
+  all lost). The pass is the occasion, not the cause.
+- **`p(win) = 1.000` is a cap.** 249 of 2921 moves (8.5%) reported exactly 1.000
+  and 137 (4.7%) at or below 0.001. None of the 1.000s was in a game Black lost in
+  this capture, but the eval lead of those roots ran from -9.4 to +22.5 and the
+  rules lead from -7.5 to +22.5 — a position the game's own score calls lost can
+  still be reported as certain, because the atari terms and the face-value region
+  credit saturate the logistic.
+
+The two mechanisms behind those numbers are the ones already on this page: the
+search is at depth 1-2 for most in-game moves, so `value` is close to the leaf,
+and the leaf credits empty space bordered by one colour at face value, so its
+verdict flips when White walks into that space (ten measured variants, none
+better — see below). Neither is a term that can be fixed by editing one
+coefficient, so the eval was left alone and the *reporting* was fixed instead:
+`flat` is emitted next to `value`, the GUI marks `BLUNDER` (search series) apart
+from `SWING` (fixed-depth series) and `CAPPED`, and the explanation says which of
+the two a drop is. Re-running this capture on the instrumented build reproduced
+all 240 results and all 2921 moves exactly, so none of that changes play.
+
+For the record, the calibration of the eval's own `p(win)` over the same 3161
+half-moves (bucket -> actual win rate of the game): 0.0-0.2 -> 8.7% (368 moves),
+0.2-0.4 -> 75.2% (876), 0.4-0.5 -> 90.9% (832), 0.5-0.6 -> 88.5% (471),
+0.6-0.7 -> 94.6% (186), 0.7 and up -> 100% (188). It is deliberately
+*under*-confident in the middle band — the logistic's centre sits at a zero lead
+so that "we are stronger than this faction" is not baked in — and that is the
+design decision recorded in the source, not a bug to fit away.
+
+**The dominant loss signature on small boards is a total wipe-out, and the eval
+cannot see it coming.** Traced Netburners 7x7 at the in-game budget (`IPVGO_EXPLAIN=1`,
+seed 2): every loss ends with Black at 0 points after 46-59 moves, against 16-26
+moves in the games Black wins. In one such game Black's groups stayed at 1-5
+stones while White's single group grew monotonically 3 -> 23 stones; the eval
+reported a rising win probability throughout, because a stone is worth the same
+wherever it is played. By the time White's group was in atari at 22 stones Black
+had no surrounding stones left to fill the last two liberties, and the eval
+credited that threat 2.1 points when a capture that size is worth about 40.
+
+Three things measured from the same trace:
+
+- **The eval is almost flat across Black's options.** For the first 22 moves the
+  gap between the chosen move and the runner-up was +0.000 to +0.005 in win
+  probability, so selection is effectively decided by action order. A search
+  cannot fix a leaf that will not rank.
+- **Raising the atari weight cap does not fix it.** Crediting a 20-stone group at
+  full size instead of capping at 5 stones: 7x7 Netburners 164/180 vs 161/180,
+  and 5x5 all factions 192/240 vs 196/240 - both inside the noise. The
+  misvaluation is real but it is not the binding constraint.
+- **The reply model is not the problem.** White's actual move had modelled
+  probability 0.87-1.00 in the endgame and 0.92 on the key midgame moves; the
+  worst miss in a whole game was a 0.4% move. We knew what White would do.
+
+What the eval has no term for is the thing that decides these games: a capturing
+race between a big group with few liberties and the scattered groups surrounding
+it. Without it, more depth does not help either - at 7x7 the search already
+reaches depth 2 inside the budget.
+
+**Static safety analysis is implemented and correct, but none of its uses paid.**
+`cpp/game/safety.{hpp,cpp}` implements Benson's pass-alive algorithm for both
+colours (Benson, Information Sciences 10:17-29, 1976) plus a Vital level - "alive
+if the defender answers in its own region" - computed exactly by letting the
+defender play a point and re-running Benson, rather than with Fuego's static
+predicate, whose exact form could not be verified from a primary source. Six
+selftest cases cover two real eyes (pass-alive), one eye (not), a 2x2 eye space
+(a false eye, correctly not alive) and scattered stones (neither colour).
+`ipvgo_game safety <req.json>` prints the per-chain verdict, the rules score and
+the safety-discounted eval.
+
+Three uses were measured on 7x7 Netburners, 120 games per arm, baseline
+109/120 = 90.8%:
+
+| use | result | cost |
+|---|---|---|
+| credit only secured regions, unsettled space at 0.5 | 106/120 (88.3%) | +35% |
+| same at 0.0, so only proved territory counts | 106/120 (88.3%) | +77% |
+| the Vital level instead of Benson alone | 102/120 (85.0%) | +70% |
+| never play inside our own pass-alive eye | 105/120 (87.5%) | +6% |
+
+All within about 1.5 sigma of each other and all pointing the same way, so all
+three ship off and the evaluator is unchanged by default. The diagnosis behind
+them is still right - the old eval read +9.1 where the game was lost by 46, and on
+the exact failing board the discounted eval moves from +9.14 to +3.64. But knowing
+a point is unsettled does not tell the search which move to play, and it costs a
+gradient the eval was using to tell moves apart. What is still missing is
+influence: Black scatters stones while White builds one group, and no life/death
+term prices that.
+
+**The evaluator is a local optimum: ten variants, none better.** Measured on 7x7
+Netburners, 120 games per arm, baseline 109/120 = 90.8%. Everything tried either
+matched it within noise or lost:
+
+| change | wins | ms/move |
+|---|---|---|
+| baseline (area score + atari terms) | **109** | 96 |
+| discount unsettled territory to 0.5 | 106 | 130 |
+| discount it to 0.0 | 106 | 170 |
+| Vital level instead of Benson alone | 102 | 165 |
+| skip moves inside our own eye | 105 | 106 |
+| influence moyo points, weight 0.5 | 106 | 98 |
+| influence moyo points, weight 1.0 | 96 | 95 |
+| influence moyo, 9 iterations | 105 | 103 |
+| (earlier) territory discount by region size | 192/240 vs 196/240 on 5x5 | - |
+| (earlier) full size atari weighting | 164/180 vs 161/180 | - |
+
+The reason is worth recording: **the game's own score is area scoring**, so
+`getScore` is literally the win condition, and "what would the score be if the game
+ended now" correlates with the result better than any story we can tell about the
+future. Every attempt to correct it replaces a direct measurement of the objective
+with a judgement about it, and our judgements measured worse. Note this is not an
+argument that the eval is right - it demonstrably reads +9 where the game is lost
+by 46 - only that nothing tried so far beats it.
+
+That shifts the remaining 9% of losses from the evaluator to the search: at depth 1
+in game, no eval can see a group being captured two moves later. The measurable
+lever is per-node cost (pattern matching is ~58% of exclusive time), which buys
+depth without a win-rate experiment.
+
+**The endgame used a stand-in for White's policy, and it was wrong.** Positions with
+fewer than endgameEmpties empty points took a different branch that never called
+opponentReplyDistribution: it assumed White captures at the faction's capture rate
+and spreads the rest uniformly over the remaining points. That is an approximation
+of a policy we model exactly, applied in the phase where games are decided.
+
+Measured on one losing position (Netburners 7x7, 4 empty points): the exact
+distribution gave White a 0.9-probability reply whose child was worth 0.01, the
+stand-in returned 0.46 for the same node, and the game went on to lose by 46. With
+the exact model the same node reads 0.10 in 168 nodes instead of 0.46 in 603 -
+more accurate and cheaper, because the endgame has few legal replies.
+
+Over games, 7x7 Netburners at depth 2, 40 games per arm: 31/40 with the stand-in,
+35/40 with the exact model, and 32 ms/move down to 18. 9x9 showed the same
+direction (9/12 vs 10/12). The stand-in and the switch that could bring it back
+have since been removed.
+
+**Bouzy's dilation measures reach, not strength.** `cpp/game/influence.cpp`
+implements the numeric dilation `Dz` (IJPRAI 17(2):257-268, 2003) and is tested,
+but it does not distinguish a connected group from the same stones scattered: both
+reach about as far and peak at the same value. The hypothesis that influence would
+price "Black scatters while White connects" was wrong, and the weight-1.0 arm above
+(80.0%, 2.6 sigma worse) is what that costs. It is kept because the map is useful
+for inspecting positions (`IPVGO_INFLUENCE_MAP=1` with `ipvgo_game safety`), not
+because it helps the eval.
+
+**Win rate at 9x9 cannot resolve small changes, so do not screen there.** The
+same binary won 54.2% of one 24-game set and 79.2% of another (different seeds),
+so the standard error on a 9x9 arm of that size is about 10 percentage points.
+Roughly 250 games per arm are needed to detect a 5-point change, which is about
+an hour of search per arm. Screen on 5x5, where 240 games gives +/- 2.6 points,
+and treat 9x9 as confirmation only. `tools/sweep.ps1` runs a set and pools seeds,
+and prints the standard error so an effect can be compared against it.
+
+**Four eval/search ideas were tried and none survived that bar.** With the
+in-game node budget and 5x5 x 240 games per arm (baseline 81.9% +/- 1.4 over 720
+games, stable across seeds: 81.7 / 81.7 / 82.5):
+
+| change | result | verdict |
+|---|---|---|
+| discount open regions by size (invasion risk) | 80.0% at 0.10, 75.4% at 0.20 | 0.20 is a real regression (~2.4 sigma); 0.10 is neutral |
+| prioritise moves that save a 2-4 liberty group | identical to baseline | no effect: on 5x5 the 12-move beam rarely binds, so the ordering is never used |
+| rank all root moves by leaf, search the top N deeply | 8x fewer nodes at 9x9 depth 2 (4 891 -> 611) | no strength change (32/48 vs 32/48 pooled); cannot reach depth 3 in budget |
+| higher beam / more replies | not pursued | cost grows as the branching factor per ply |
+
+A discount fitted on 9x9 alone looked like +20.8 points and reversed sign on the
+next seed, which is the trap the power note above is about.
+
+**Full-width search is not an alternative to the beam - at the affordable depth
+it is already what happens.** At depth 1 the root is every legal move already:
+forcing the interior and the root to full width changed the node count by
+exactly zero and picked the same move on 5x5, 9x9 and 13x13 (20 / 68 / 129
+nodes). The search is at depth 1 in game, so "search all moves to a depth" is
+what it already does; what it lacks is a second ply.
+
+Beyond depth 1 full width costs board area squared per ply and is out of reach.
+Measured on one 9x9 position, threads=1:
+
+| | depth 1 | depth 2 | depth 3 |
+|---|---|---|---|
+| beam 12 / 6 replies | 68 nodes, 37 ms | 4 891 nodes, 1.8 s | 179 796 nodes, 70 s |
+| full width | 68 nodes, 38 ms | 262 170 nodes, 144 s | not reachable |
+
+Extra depth costs ~3 855x per ply at full width and ~72x with the beam, so the
+beam is not a heuristic that loses moves: it converts the same node budget into
+two more plies, and two more plies is what flipped the 9x9 loss analysed in
+`IPVGO_TRACE_BOARD` (depth 1 and 2 lost it by -81.5 with identical moves, depth 3
+won it by +8.5). The legitimate worry about the candidate set is *interior*
+moves, which are contact points only, so a distant vital point is never
+evaluated - that argues for widening the beam or always including forcing and
+defensive moves, not for removing the beam.
+
+**The endgame node budget is load-bearing.** `nodeBudget` (30 000) stops the
+exact endgame solve once a search has visited that many nodes. It looks like a
+safety valve that could be replaced by a structural bound; it is not that simple.
+Setting it out of reach took a 4-game Netburners match from 592 880 to
+2 797 516 nodes (4.7x). The reason a "≤ 6 empty points, so it ends in 6 moves"
+argument fails: **captures re-open points**, so the play-out can run far longer
+than the empty count suggests. Any replacement bound has to cope with that.
+
+**Budgets are per search, not per branch.** `nodes_` is cumulative for a whole
+`searchRoot` call, and each worker thread gets its own counter over a partition
+of the root moves. So the effective budget - and occasionally the chosen move -
+depends on the thread count. Budgeting per root branch would make the adaptivity
+measure a branch's own difficulty instead of the order it happened to be visited
+in. Not done; it is a small change but it moves the accepted baseline again.
+
+**Most cross-move reuse is still blocked by the memo key.** Cross-move hits were
+only 1.5-5% of memo lookups, because `positionKey()` hashes
+`previousBoards.size()`, which changes every move - the same board at move N and
+move N+1 can never share a key. Keying on the board plus the single previous
+board (enough for the ko rule) would unlock a lot more, but raises a soundness
+question wherever superko actually binds.
+
+**The transposition table is a hash map, not a tree, and it is not free.**
+A temporary switch that turned the table off in the same binary separated its cost
+from its value; it was removed with the rest of the legacy branches (see "The
+cleanup pass"), and these are the numbers it produced. In-game budget, one thread:
+
+| board | with the table | table off |
+|---|---|---|
+| 5x5 Netburners, 8 games | 71 849 nodes, 731 ms | 72 828 nodes, 947 ms |
+| 7x7 Slum Snakes, 4 games | 129 595 nodes, 3 030 ms | 142 133 nodes, 2 983 ms |
+| 9x9 Illuminati, 2 games | 169 705 nodes, 3 731 ms | 141 562 nodes, 3 211 ms |
+| 13x13 Illuminati, 1 game | 152 856 nodes, 15 463 ms | 150 661 nodes, 13 856 ms |
+
+Where it pays, it pays for transpositions: at 5x5 the endgame play-out reaches the
+same position through many move orders, the hit rate is 5.8% and the table is worth
+23%. At 9x9 and 13x13 it *costs*, for an indirect reason - an iteration that hits
+the memo visits fewer nodes, and the iterative-deepening heuristic reads the node
+counts to predict the next depth, so cheaper iterations talk it into attempting a
+depth that then overshoots the budget and is discarded. That work is spent without
+being kept. The hit rate itself is only 1.3-3% there, so the key hashing (one FNV
+step per board cell plus up to four history boards, on every node) is not repaid.
+
+A pointer tree - a node per move with parent/child links - is the wrong fix for
+this. It cannot serve a transposition at all: the same position reached by two move
+orders becomes two nodes, where the hash gives it one entry, so it would *increase*
+both memory (roughly 48-64 bytes per node against 32 per memo entry, and a node per
+distinct path rather than per distinct position) and search time. What a tree could
+do that the hash cannot is keep the subtree under the opponent's actual reply, which
+is path-based reuse; the session memo already provides that by key, and strictly
+more of it. The idea worth pursuing instead is a cheaper key - one hash of the
+packed 2-bit board rather than a per-cell loop - so the cost side of the trade
+above shrinks. An earlier attempt did that and changed budgeted node counts, which
+is still unexplained, so it has to be resolved before it can ship.
+
+**Reuse has no strength measurement.** The 24-game comparison plays *different*
+games in each mode, so the win counts are not comparable (18/24 vs 19/24 is
+noise, not a regression). Whether reuse helps or hurts win rate needs a fixed
+configuration and roughly 100+ games per faction.
+
+**The policy model is the search, and its cost is now spread out.** On a 7x7 game
+at the in-game budget `opponentReplyDistribution` is 75% of the search and
+`buildPolicyModel` 46% of that, but inside it no single item dominates:
+`getEyeCreationMoves` is 26%, the liberty queries behind `surround` and `growth`
+about 10%, and the eye-blocking pass 13%. Read those shares from a profile built
+with `-ProfileInlining`; the default profile configuration disables inlining, which
+inflates exactly this kind of call-heavy code and made the eye pass look twice as
+expensive as it is in Release.
+
+`matchesAnyPattern` is 4.8% of exclusive samples in that build, and 1.5% in the
+no-inlining one. The ~58% figure in the older notes predates the bitset rewrite.
+
+Reply distributions are reused within one search (see "The reply-reuse pass")
+but not across moves: on 13x13 keeping them for a whole game cost 872 MB for 89
+hits, and cross-move memo hits are only 1.5-9% because `positionKey()` hashes the
+history size.
+
+The HTTP server also exposes the exploiter for real games with
+`IPVGO_ENGINE=exploit` (POST `/api/ipvgo/move`, engine reported as `exploit`,
+native MCTS as fallback). `exploitmove` accepts `depth`, `beam`,
+`whiteChildren`, `whiteMass`, `endgameEmpties`, `nodeBudget`, `threads`,
+`budgetMs` (wall-clock iterative deepening) and `iterations`/`nodeLimit` (node
+budget; the in-game client's `iterations` field is used as the node budget).
+
+### Persistent engine (`serve`)
+
+`exploitmove` starts a fresh process per move, so the search state - and every
+position already solved - is thrown away each move. `ipvgo_game serve` keeps one
+process alive and speaks newline-delimited JSON: one request per stdin line, one
+response per stdout line. The response echoes an `id` if the request carried one,
+and reports `memoHits` / `reusedHits`.
+
+```bash
+echo '{"id":1,"board":[".....",".XO..",".XO..",".XO..","....."],"playAs":"X","opponent":"Netburners","depth":2}' \
+  | ./out/build/x64-Release/bin/ipvgo_game serve
+```
+
+`server.js` uses this for in-game moves: it keeps the engine alive while the same
+game (opponent + board size) is being played, recycles it when the game changes,
+and falls back to one-shot `exploitmove` if the engine dies.
+
+Reuse is bounded by an accuracy invariant: a memo entry is only kept across
+requests when no endgame node-budget cut fired anywhere in its subtree, so a
+reused value is always at least as accurate as solving that position again.
+
+The session is one game deep. Every request reports the game's move history
+(`ns.go.getMoveHistory()`, which the client already sends so superko can be
+checked), and a new game starts that history over, so a request whose history is
+shorter than the last one drops the whole cache. That is what keeps memory
+bounded - no size ceiling is needed, because nothing survives the end of a game:
+measured on the largest board a 13x13 game leaves ~524 000 memo entries (~19 MB),
+a 9x9 game ~150 000, a 5x5 game ~12 000. `sessionResets` in the `serve` response
+and `resets=` in the stats line report it. The only thing given up is reuse
+between games, which is worth little: a different game is a different tree.
+
+The session stores only the memo. Reply distributions are recomputed rather than
+cached: on 13x13, keeping them cost 872 MB of `WeightedReply` payload - 98% of
+the session - for 89 hits in a whole game. Dropping them took peak RSS from
+1 007 MB to 31 MB with identical node counts (524 086) and no measurable change
+in think time.
+
+
+### Every board bigger than 13x13 crashed the search
+
+Symptom: any request for a board larger than 13x13 killed the engine process - `exploitmove`
+exited `0xC0000005`, `benchjson --size 19` died mid-game, the tuning server got a 500 and the
+in-game script sat waiting. Nothing about it was faction-specific: 15x15, 17x17 and 19x19 all
+died with any settings, including `beam`/`replies`/`mass` at 0. 13x13 and below were fine, at
+every depth.
+
+Cause, found with a temporary `SetUnhandledExceptionFilter` handler that walks the stack with
+DbgHelp (the Release build has no frame pointers to inspect otherwise): `getAllValidMoves`
+patches the packed board to ask the superko question, and its scratch copy was sized for a
+*bit plane*:
+
+```cpp
+uint64_t probe[kBitWords];                 // 6 words = 384 points, one bit each
+for (int w = 0; w < kBitWords; ++w) probe[w] = packed[w];
+probe[word] = ...;                         // word = point * 2 / 64: up to 11 at 19x19
+```
+
+A packed board is 2 bits per point, so 19x19 needs 12 words, not 6. `probe[6..11]` therefore
+wrote past the array into the neighbouring stack slots, which is what corrupted the
+`BitPlanes*` the caller passed down (the crash showed a valid stack address with one extra bit
+set) and, in other runs, tripped the `/GS` cookie (`0xC0000409`). `BoardHistory::contains` had
+the same shape but its buffer was hard-coded to 12, exactly the maximum - one board-size bump
+away from the same bug.
+
+The fix is a shared constant for the real bound and a copy of the words the board actually
+uses: `kMaxPackedWords = (kMaxSize * kMaxSize * 2 + 63) / 64` in `go_game.hpp`, used by both
+`probe` buffers, with the copy loop bounded by `stride` instead of `kBitWords`.
+
+Verified: `selftest` passes; `exploitmove` answers a 19x19 request in ~100 ms (depth 4, 7 932
+nodes at a 10 000-node budget) on both an empty board and the real World Daemon board with its
+obstacles; three 19x19 World Daemon bench games play out to 125-190 moves with no crash; and the
+same seeded bench at 5x5, 9x9 and 13x13 produces byte-identical output before and after the fix
+(threads=1, timing fields stripped), so nothing below the failure threshold moved.
