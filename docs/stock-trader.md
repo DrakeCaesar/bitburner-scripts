@@ -284,24 +284,140 @@ Then, on the following ticks, the two diverge further:
 | how many | up to ~8, forced equal weight, trimmed when big | 4, equal weight, never trimmed |
 | when to sell | forecast < 0.50 | expected move ≤ 0 |
 | switching | none | only when a new company is 1.5× better |
-| trades per 5h run | 26,334 | 597 |
-| commission paid | $2.63b | $60m |
-| $10b start, 25 seeds | +923% | **+6415%** |
-| worst drawdown | −1.6% | −3.3% (worst seed −11.5%) |
+| trades per 5h run | 26,307 | 584 |
+| commission paid | $2.63b | $58m |
+| $10b start, 100 seeds | +881% | **+5738%** |
+| same-seed ratio (paired) | — | **5.79×** (95% 5.44×–6.17×) |
+| worst drawdown | −1.4% | −3.2% (worst seed −9.1%) |
 
-Fewer, bigger, longer positions in the jumpiest favourable names; ~44× fewer fees; ~7× the return, for
-roughly twice the drawdown.
+Fewer, bigger, longer positions in the jumpiest favourable names; ~45× fewer fees; ~6.5× the return,
+for roughly twice the drawdown.
 
-## 8. How to watch it happen
+## 8. How long you run it changes the answer
+
+The comparison in section 7 is measured over **3000 updates** (5 hours). Keep running and it stops
+meaning the same thing, because the market has a *fixed size* and your money does not.
+
+Two hard limits:
+
+- **`getMaxShares`** — you may never own more than 20% of a company's shares, and that share count
+  never grows.
+- **`maxWeightPerSymbol`** — the strategy aims for at most 34% of net worth in one name.
+
+Starting with $10b, a 34% target is a few billion dollars, far below those caps, so the rules decide
+everything. Start compounding and the target grows past the caps instead: every position becomes
+"all the shares there are", the strategy turns away new ideas because its 4 slots are full of shares
+it cannot sell without giving up a good name, and the cash pile grows faster than anything can be
+bought with it.
+
+`capital ... % of net worth in positions` (the new line in the aggregate report) is how you see it:
+
+| updates | game time | v1 capital deployed | current capital deployed | current vs v1 |
+|---|---|---|---|---|
+| 3000 | 5h | 95% | 91% | **5.79×** (100 seeds, 100/100 better) |
+| 10000 | 17h | — | — | 6.0× (one seed) |
+| 20000 | 33h | — | — | 2.3× (one seed) |
+| 30000 | 50h | 32% | 22% | **3.14×** (100 seeds, 84/100 better) |
+
+The last row is why you have to average over many seeds. At 30,000 updates roughly three quarters of
+both portfolios is idle cash, so which names happened to be at their cap during a price run is most of
+the outcome. One seed therefore proves nothing:
+
+- seed 1337 — v1 wins, $105.9t vs $51.9t
+- seed 11310 — current wins, $101.1t vs $29.7t
+- seed 21283 — current wins, $268.8t vs $59.5t
+- **100 seeds** — current wins on 84 of them; geometric mean ratio 3.14×, 95% interval
+  2.45×–4.03×. The spread is so wide that the standard deviation of the mean return (±6,649,063%)
+  is *larger than the mean itself* (+4,321,255%). Even the losing seeds lose big: seed 1337 alone
+  suggests v1 is twice as good, which is not true on average.
+
+One knob moves that number further than the gap between the strategies (30k updates, 3 seeds):
+
+| change | mean net worth |
+|---|---|
+| `entryEdge` 0.0025 → 0.006 (fewer, pickier entries) | $186t |
+| `maxPositions` 4 → 1 | $320t |
+| `maxShareFraction` 1.0 → 0.25 | $287t |
+| nothing (defaults) | $141t |
+
+Smaller positions are *easier to roll over*: a capped-out $50t holding cannot be rotated into the
+next winner, but a $12t one can. None of this is reachable in the game — a BitNode run ends long
+before $10b turns into $100t — so 30,000 updates is a stress test of the model, not a target.
+
+**Use 3000 updates for judging strategy changes.** Watch `capital` stay above ~60%: below that, extra
+time can no longer compound and you are measuring luck.
+
+### What counts as a valid number of updates
+
+One update is one 6-second stock tick *and* one strategy decision, so the number is "how many
+decisions, and how much time". Requirements, from strict to advisory:
+
+| rule | why |
+|---|---|
+| whole number, **1 or more** | The CLI rejects anything else (`--ticks 0` is an error); the GUI clamps to 1. Fractional values are truncated. |
+| **4 or more** for the no-4S estimate | The estimator needs at least 3 log returns, i.e. 4 recorded prices before it can make its first decision. Under that the run never trades and ends flat. |
+| **41 or more** for the no-4S estimate to be at full strength | `historyTicks` defaults to 40, so the window only fills at update 41. Shorter runs trade on a partial window and behave more erratically. |
+| **2 or more** to draw a chart | A single point has no line. |
+| multiples of 75 if you care about cycle boundaries | The game's forecast drift runs in 75-update cycles; the model wraps them, so nothing breaks, but a run that stops mid-cycle ends on an arbitrary forecast state. |
+| **~20,000 or less** for a meaningful comparison | Past that the market's share caps bind and the score turns into a draw from a wide distribution (section 8's table). |
+
+In 4S mode there is no warm-up at all: one update already buys four names, which is why `--ticks 1`
+shows a real (fee-dominated) loss rather than nothing.
+
+### How many seeds is enough
+
+One seed cannot separate two strategies whose results differ by 5× on average, because the spread
+between seeds is comparable to the mean. The benchmark therefore reports a **paired** comparison: both
+strategies are run on the *same* seeds, so each seed contributes one ratio (current net worth ÷ v1 net
+worth) instead of two independent noisy numbers.
+
+```
+paired  net worth ratio current/v1, same seed: 100/100 seeds better | geometric mean 5.79x (95% 5.44x - 6.17x) | median 5.83x
+verdict current is better on average (95% interval excludes 1x)
+```
+
+Read it as: on a typical seed the current strategy ends with ~5.8× more money, and the interval says
+that even in the worst case for the measurement it is above 5.4×. The interval is 95% by the usual
+normal approximation on the log ratios, so it is a guide to how much is noise, not a guarantee.
+
+At the default 3000 updates, 20–25 seeds is already plenty (the interval is narrow). Use 100 seeds
+when you want to check something subtle, or when comparing at a long horizon where a single seed can
+lie. The GUI always runs seeds `1..n`, so its *Seeds* box is exactly the range, and it matches
+`--seed-range 1-n` on the command line.
+
+### How the chart averages several seeds
+
+The graph plots **net worth on a logarithmic axis**: money compounds, so equal vertical distance is an
+equal multiple ($10b → $100b is the same height as $100b → $1t). On the old linear "% return" axis a
+5,000% and a 10,000% run were plotted wildly far apart, which made the band unreadable.
+
+Per strategy it draws two things:
+
+- **the median seed** (solid line) — the middle of the pack, i.e. what a typical run looks like. The
+  *mean* is not used for the line because compounding has a long right tail: at 30,000 updates the
+  mean return (+4,321,255%) is almost 3× the median (+1,472,872%), so a mean line would be dragged up
+  by a handful of explosive runs and would not describe anything you would actually experience.
+- **a p10–p90 band** (shaded) — the middle 80% of seeds. Its width *is* the result: a band that fans
+  out over time means the outcome is mostly luck, and two strategies whose bands overlap heavily are
+  not meaningfully different. A single run (the buy-and-hold baselines) has no band.
+
+Both are the `aggregateCurves()` helpers in `bench/stock/stockBenchCore.ts`, so the CLI and the page
+compute them identically. The exact end-of-run numbers stay in the cards above the chart (mean,
+median, worst seed, std dev) for those who want the tail as well as the middle.
+
+## 9. How to watch it happen
 
 - `pnpm run stock:viz` → open `bench/stock/stockTraderViz.html`. **Strategy → edge (current)** with
-  **compare with v1** ticked draws both equity curves on one chart and shows the ratio between them.
-- `pnpm run test:stock -- --compare --seeds 25` prints the same comparison in the terminal.
+  **compare with v1** ticked draws both strategies on one chart as the median seed plus a p10–p90 band
+  (log axis), and fills in the same paired ratio and win count as the CLI. *Seeds* is the range `1..n`;
+  the default 25 finishes in under a second, 100 in about two.
+- `pnpm run test:stock -- --compare --seed-range 1-100` prints the paired comparison in the terminal.
+- `pnpm run test:stock -- --compare --seeds 25` does the same with 25 seeds spaced 9,973 apart.
 - `pnpm run test:stock -- --strategy v1` runs the frozen baseline on its own.
 - In game, the trader's Positions tab now shows an **Edge** column next to Forecast and Vol, so you can
   see the exact ranking the script is acting on.
 
-## 9. When there is no 4S data
+## 10. When there is no 4S data
 
 The 4S Market Data TIX API (25b) is what publishes the forecast. Without it the game does not merely
 hide the number — `ns.stock.getForecast()` and `ns.stock.getVolatility()` **throw**

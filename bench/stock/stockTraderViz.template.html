@@ -28,13 +28,12 @@
       <section>
         <h2>Market</h2>
         <div class="fields">
-          <label class="field"><span>Capital ($)</span><input id="capital" type="number" step="1000000000" min="0" /></label>
-          <label class="field"><span>Updates (6s each)</span><input id="ticks" type="number" step="100" min="1" /></label>
-          <label class="field"><span>Seed</span><input id="seed" type="number" step="1" /></label>
-          <label class="field"><span>Seeds</span><input id="seeds" type="number" step="1" min="1" max="50" /></label>
-          <label class="field"><span>BitNode</span><input id="node" type="number" step="1" min="1" /></label>
-          <label class="field"><span>SF8 level</span><input id="sf8" type="number" step="1" min="0" /></label>
-          <label class="field"><span>Workers</span><input id="workers" type="number" step="1" min="1" max="12" /></label>
+          <label class="field"><span>Capital ($)</span><input id="capital" type="text" inputmode="numeric" data-group="1" /></label>
+          <label class="field"><span>Updates (6s each)</span><input id="ticks" type="text" inputmode="numeric" data-group="1" /></label>
+          <label class="field"><span>Seeds (from 1)</span><input id="seeds" type="text" inputmode="numeric" data-group="1" /></label>
+          <label class="field"><span>BitNode</span><input id="node" type="text" inputmode="numeric" data-group="1" /></label>
+          <label class="field"><span>SF8 level</span><input id="sf8" type="text" inputmode="numeric" data-group="1" /></label>
+          <label class="field"><span>Workers</span><input id="workers" type="text" inputmode="numeric" data-group="1" /></label>
           <label class="field">
             <span>Baseline</span>
             <select id="baseline" data-value="filtered">
@@ -59,6 +58,7 @@
             <span class="fieldToggle"><input id="compareV1" type="checkbox" data-checked="1" checked /></span>
           </label>
         </div>
+        <div class="hint" id="seedHint"></div>
       </section>
 
       <section>
@@ -119,11 +119,13 @@
         DEFAULT_STOCK_TRADER_CONFIG,
         NUMERIC_CONFIG_KEYS,
         cartesianConfigs,
-        seedsFor,
+        seedRange,
         runTraderScenario,
         runHoldBaseline,
         runSelfTest,
         aggregate,
+        aggregateCurves,
+        pairResults,
       } = StockBench
 
       const LABELS = {
@@ -154,7 +156,7 @@
       }
       const SERIES_COLORS = ["#43bf43", "#893bc8", "#e0b040", "#e05555"]
       const STORAGE_KEY = "toolui.stockBench.v1"
-      const MARKET_DEFAULTS = { capital: 1e10, ticks: 3000, seed: 1337, seeds: 3, node: 8, sf8: 3 }
+      const MARKET_DEFAULTS = { capital: 1e10, ticks: 3000, seeds: 25, node: 8, sf8: 3 }
       const MAX_WORKERS = 12
 
       const $ = (id) => document.getElementById(id)
@@ -170,7 +172,11 @@
 
       function prepareNumber(input, value) {
         input.value = ""
-        input.placeholder = String(value)
+        input.type = "text"
+        input.inputMode = "numeric"
+        input.dataset.group = "1"
+        input.dataset.default = String(value)
+        input.placeholder = Number.isInteger(value) ? ToolUi.format.grouped(value, 0) : String(value)
       }
 
       for (const [id, value] of Object.entries(MARKET_DEFAULTS)) prepareNumber($(id), value)
@@ -182,9 +188,7 @@
         const caption = document.createElement("span")
         caption.textContent = LABELS[key] ?? key
         const input = document.createElement("input")
-        input.type = "number"
         input.id = `cfg_${key}`
-        input.step = key === "moneyKeep" || key === "minShares" || key === "maxPositions" ? "1" : "0.005"
         prepareNumber(input, DEFAULT_STOCK_TRADER_CONFIG[key])
         label.append(caption, input)
         $("configFields").appendChild(label)
@@ -234,7 +238,15 @@
       }
 
       const readSeedCount = () => Math.max(1, Math.floor(ToolUi.numberOf("seeds") || 1))
-      const readSeeds = () => seedsFor(Math.floor(ToolUi.numberOf("seed") || 0), readSeedCount())
+      /** Seeds always start at 1, so the "Seeds" number is exactly the range 1..n. */
+      const readSeeds = () => seedRange(1, readSeedCount())
+
+      function renderSeedHint() {
+        const seeds = readSeeds()
+        $("seedHint").textContent =
+          `runs seeds ${seeds[0]}-${seeds[seeds.length - 1]}` +
+          ` - ${seeds.length} run${seeds.length === 1 ? "" : "s"} per strategy, charted as median with a p10-p90 band`
+      }
       const readWorkerCount = () =>
         Math.max(1, Math.min(MAX_WORKERS, Math.floor(ToolUi.numberOf("workers") || ToolUi.coreCount())))
 
@@ -335,87 +347,101 @@ self.onmessage = function (event) {
       }
 
       // ---- chart -----------------------------------------------------------
+      // The axis is logarithmic in net worth: compounding multiplies, so equal vertical distance is
+      // an equal multiple. Each series is the median seed with a p10-p90 band, so a single lucky
+      // seed cannot dominate the picture and the spread is visible.
       function drawChart(series) {
         const canvas = $("chart")
         const dpr = window.devicePixelRatio || 1
         const width = canvas.clientWidth || 1200
-        const height = 260
+        const height = 300
         canvas.width = Math.floor(width * dpr)
         canvas.height = Math.floor(height * dpr)
         const ctx = canvas.getContext("2d")
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         ctx.clearRect(0, 0, width, height)
 
-        const usable = series.filter((s) => s.values.length > 1)
+        const usable = series.filter((s) => s.median.length > 1)
         $("legend").innerHTML = ""
         if (usable.length === 0) return
 
-        const padL = 58
-        const padR = 12
+        const padL = 68
+        const padR = 14
         const padT = 12
         const padB = 22
         const plotW = width - padL - padR
         const plotH = height - padT - padB
 
+        const positive = (value) => (Number.isFinite(value) && value > 0 ? value : Number.MIN_VALUE)
         let min = Infinity
-        let max = -Infinity
+        let max = 0
         for (const s of usable) {
-          const base = s.values[0] || 1
-          for (const v of s.values) {
-            const p = (v / base - 1) * 100
-            if (p < min) min = p
-            if (p > max) max = p
+          for (const v of [...s.median, ...s.low, ...s.high]) {
+            min = Math.min(min, positive(v))
+            max = Math.max(max, positive(v))
           }
         }
-        if (min === max) {
-          min -= 1
-          max += 1
-        }
-        const span = max - min
-        min -= span * 0.06
-        max += span * 0.06
+        const logMin = Math.floor(Math.log10(min))
+        const logMax = Math.ceil(Math.log10(max))
+        const decades = Math.max(1, logMax - logMin)
 
         const x = (i, n) => padL + (n <= 1 ? 0 : (i / (n - 1)) * plotW)
-        const y = (p) => padT + plotH - ((p - min) / (max - min)) * plotH
+        const y = (value) => padT + plotH - ((Math.log10(positive(value)) - logMin) / decades) * plotH
 
         ctx.font = "10px monospace"
-        ctx.strokeStyle = "rgba(255,255,255,0.08)"
-        ctx.fillStyle = "#888"
         ctx.lineWidth = 1
+        ctx.fillStyle = "#888"
         ctx.textAlign = "right"
-        for (let i = 0; i <= 4; i++) {
-          const value = min + ((max - min) * i) / 4
+        for (let exponent = logMin; exponent <= logMax; exponent++) {
+          const value = Math.pow(10, exponent)
           const py = y(value)
+          ctx.strokeStyle = "rgba(255,255,255,0.08)"
           ctx.beginPath()
           ctx.moveTo(padL, py)
           ctx.lineTo(padL + plotW, py)
           ctx.stroke()
-          ctx.fillText(`${value >= 0 ? "+" : ""}${value.toFixed(1)}%`, padL - 6, py + 3)
+          ctx.fillText(`$${ToolUi.format.number(value)}`, padL - 6, py + 3)
         }
 
-        const longest = Math.max(...usable.map((s) => s.values.length))
+        const longest = Math.max(...usable.map((s) => s.median.length))
         ctx.textAlign = "center"
         for (let i = 0; i <= 4; i++) {
           const tick = Math.round(((longest - 1) * i) / 4)
           ctx.fillText(`${(((tick + 1) * 6) / 3600).toFixed(0)}h`, x(tick, longest), height - 6)
         }
 
-        if (min <= 0 && max >= 0) {
+        const start = usable[0].median[0]
+        if (start > 0 && y(start) >= padT && y(start) <= padT + plotH) {
           ctx.strokeStyle = "rgba(255,255,255,0.25)"
+          ctx.setLineDash([3, 3])
           ctx.beginPath()
-          ctx.moveTo(padL, y(0))
-          ctx.lineTo(padL + plotW, y(0))
+          ctx.moveTo(padL, y(start))
+          ctx.lineTo(padL + plotW, y(start))
           ctx.stroke()
+          ctx.setLineDash([])
         }
 
         usable.forEach((s, index) => {
-          const base = s.values[0] || 1
+          const color = SERIES_COLORS[index % SERIES_COLORS.length]
+          if (s.low.some((v, i) => v !== s.high[i])) {
+            ctx.beginPath()
+            s.high.forEach((v, i) => {
+              const px = x(i, s.high.length)
+              const py = y(v)
+              if (i === 0) ctx.moveTo(px, py)
+              else ctx.lineTo(px, py)
+            })
+            for (let i = s.low.length - 1; i >= 0; i--) ctx.lineTo(x(i, s.low.length), y(s.low[i]))
+            ctx.closePath()
+            ctx.fillStyle = `${color}22`
+            ctx.fill()
+          }
           ctx.beginPath()
-          ctx.strokeStyle = SERIES_COLORS[index % SERIES_COLORS.length]
+          ctx.strokeStyle = color
           ctx.lineWidth = 1.5
-          s.values.forEach((v, i) => {
-            const px = x(i, s.values.length)
-            const py = y((v / base - 1) * 100)
+          s.median.forEach((v, i) => {
+            const px = x(i, s.median.length)
+            const py = y(v)
             if (i === 0) ctx.moveTo(px, py)
             else ctx.lineTo(px, py)
           })
@@ -425,21 +451,27 @@ self.onmessage = function (event) {
         $("legend").innerHTML = usable
           .map((s, i) => {
             const color = SERIES_COLORS[i % SERIES_COLORS.length]
-            const total = s.values[s.values.length - 1] / (s.values[0] || 1) - 1
-            return `<span><i style="background:${color}"></i>${s.label} ${signedPct(total)}</span>`
+            const base = s.median[0] || 1
+            const middle = s.median[s.median.length - 1] / base - 1
+            const bottom = s.low[s.low.length - 1] / base - 1
+            const top = s.high[s.high.length - 1] / base - 1
+            const band =
+              bottom === top ? "" : ` <span class="dim">p10 ${signedPct(bottom)} .. p90 ${signedPct(top)}</span>`
+            return `<span><i style="background:${color}"></i>${s.label} ${signedPct(middle)}${band}</span>`
           })
           .join("")
       }
 
       // ---- results ---------------------------------------------------------
-      function renderCards(stats, holdFiltered, holdAll, v1Stats) {
+      function renderCards(stats, holdFiltered, holdAll, v1Stats, paired) {
         const cards = [
           { k: "mean return", v: signedPct(stats.meanReturnPct), tone: cls(stats.meanReturnPct) },
           { k: "median return", v: signedPct(stats.medianReturnPct), tone: cls(stats.medianReturnPct) },
           { k: "std dev", v: pct(stats.stdReturnPct) },
           { k: "worst seed", v: signedPct(stats.minReturnPct), tone: cls(stats.minReturnPct) },
           { k: "mean max DD", v: `-${pct(stats.meanMaxDrawdownPct)}`, tone: "neg" },
-          { k: "mean trades", v: stats.meanTrades.toFixed(0) },
+          { k: "capital deployed", v: pct(stats.meanExposurePct), tone: stats.meanExposurePct < 0.5 ? "err" : undefined },
+          { k: "mean trades", v: ToolUi.format.count(stats.meanTrades) },
           { k: "mean commission", v: money(stats.meanCommission) },
           { k: "mean net worth", v: money(stats.meanNetWorth) },
         ]
@@ -447,7 +479,17 @@ self.onmessage = function (event) {
           const ratio = v1Stats.meanReturnPct !== 0 ? stats.meanReturnPct / v1Stats.meanReturnPct : NaN
           cards.push({ k: "vs v1 baseline", v: ToolUi.format.ratio(ratio), tone: cls(stats.meanReturnPct - v1Stats.meanReturnPct) })
           cards.push({ k: "v1 mean return", v: signedPct(v1Stats.meanReturnPct), tone: cls(v1Stats.meanReturnPct) })
-          cards.push({ k: "v1 mean trades", v: v1Stats.meanTrades.toFixed(0) })
+          cards.push({ k: "v1 mean trades", v: ToolUi.format.count(v1Stats.meanTrades) })
+        }
+        if (paired) {
+          const verdict = paired.lowRatio > 1 ? "pos" : paired.highRatio < 1 ? "neg" : "dim"
+          const fmt = (value) => (value >= 100 ? ToolUi.format.grouped(Math.round(value), 0) : value.toFixed(2))
+          cards.push({
+            k: "vs v1 same seed",
+            v: `${fmt(paired.geometricRatio)}x (95% ${fmt(paired.lowRatio)}-${fmt(paired.highRatio)}x)`,
+            tone: verdict,
+          })
+          cards.push({ k: "seeds current wins", v: `${paired.wins}/${paired.runs}`, tone: verdict })
         }
         if (holdFiltered) {
           const delta = stats.meanReturnPct - holdFiltered.returnPct
@@ -465,7 +507,11 @@ self.onmessage = function (event) {
           .filter((s) => s.trades > 0)
           .map((row) => {
             const position =
-              row.openShares > 0 ? `L ${row.openShares}` : row.openShortShares > 0 ? `S ${row.openShortShares}` : "-"
+              row.openShares > 0
+                ? `L ${ToolUi.format.count(row.openShares)}`
+                : row.openShortShares > 0
+                  ? `S ${ToolUi.format.count(row.openShortShares)}`
+                  : "-"
             return (
               `<tr><td>${row.symbol}</td><td>${row.trades}</td>` +
               `<td class="${cls(row.profit)}">${signedMoney(row.profit)}</td><td>${position}</td></tr>`
@@ -509,13 +555,22 @@ self.onmessage = function (event) {
 
           const stats = aggregate(strategyResults)
           const v1Stats = v1Results ? aggregate(v1Results) : null
-          renderCards(stats, holdFiltered, holdAll, v1Stats)
+          const paired = v1Results ? pairResults(strategyResults, v1Results) : null
+          renderCards(stats, holdFiltered, holdAll, v1Stats, paired)
           renderSymbols(strategyResults[0].perSymbol)
 
-          const series = [{ label: `${strategy} seed ${strategyResults[0].seed}`, values: strategyResults[0].equityCurve }]
-          if (v1Results) series.push({ label: "v1 baseline (4S)", values: v1Results[0].equityCurve })
-          if (holdFiltered) series.push({ label: "hold (filtered)", values: holdFiltered.equityCurve })
-          if (holdAll) series.push({ label: "hold (all)", values: holdAll.equityCurve })
+          const curveSeries = (label, runs) => {
+            if (!runs || runs.length === 0) return null
+            const curve = aggregateCurves(runs)
+            if (!curve) return null
+            return { label: `${label} ${curve.runs} seed${curve.runs === 1 ? "" : "s"}`, ...curve }
+          }
+          const series = [
+            curveSeries(strategy === "v1" ? "v1 baseline" : "edge (current)", strategyResults),
+            curveSeries("v1 baseline", v1Results),
+            curveSeries("hold (filtered)", holdFiltered ? [holdFiltered] : null),
+            curveSeries("hold (all)", holdAll ? [holdAll] : null),
+          ].filter(Boolean)
           drawChart(series)
 
           $("results").classList.remove("hidden")
@@ -593,7 +648,7 @@ self.onmessage = function (event) {
               `<td class="${cls(row.stats.medianReturnPct)}">${signedPct(row.stats.medianReturnPct)}</td>` +
               `<td>${pct(row.stats.stdReturnPct)}</td>` +
               `<td class="neg">-${pct(row.stats.meanMaxDrawdownPct)}</td>` +
-              `<td>${row.stats.meanTrades.toFixed(0)}</td>` +
+              `<td>${ToolUi.format.count(row.stats.meanTrades)}</td>` +
               `<td>${money(row.stats.meanCommission)}</td>` +
               `<td>${money(row.stats.meanNetWorth)}</td></tr>`
             )
@@ -634,9 +689,12 @@ self.onmessage = function (event) {
       })
 
       for (const input of Object.values(gridInputs)) input.addEventListener("input", updateGridCount)
-      for (const id of ["capital", "ticks", "seed", "seeds", "node", "sf8", "workers", "strategy", "baseline", "compareV1"]) {
+      for (const id of ["capital", "ticks", "seeds", "node", "sf8", "workers", "strategy", "baseline", "compareV1"]) {
         $(id).addEventListener("input", updateGridCount)
       }
+      $("seeds").addEventListener("input", renderSeedHint)
+      $("seeds").addEventListener("change", renderSeedHint)
+      renderSeedHint()
       updateGridCount()
       ensurePool()
       setStatus("ready")

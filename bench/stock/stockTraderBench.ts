@@ -6,6 +6,7 @@
  *   pnpm run test:stock
  *   pnpm run test:stock -- --capital 10b --ticks 3000 --seeds 5
  *   pnpm run test:stock -- --compare                   (current strategy vs the frozen v1 baseline)
+ *   pnpm run test:stock -- --compare --seed-range 1-100 (paired, same-seed comparison)
  *   pnpm run test:stock -- --strategy v1 --seeds 5     (baseline on its own)
  *   pnpm run test:stock -- --grid entry-edge=0.002,0.003 --grid max-positions=3,4
  *   pnpm run test:stock -- --selftest
@@ -18,7 +19,7 @@ import { pathToFileURL } from "node:url"
 import { mergeStockTraderConfig, type StockTraderConfig } from "@/libraries/stock/config.js"
 import { buildConfigSummary } from "@/libraries/stock/trader.js"
 
-import { MS_PER_STOCK_UPDATE, STOCK_MARKET_COMMISSION, StockMarketSim, createNsStub, formatNumber } from "./stockMarketModel.js"
+import { MS_PER_STOCK_UPDATE, STOCK_MARKET_COMMISSION, StockMarketSim, createNsStub } from "./stockMarketModel.js"
 import {
   DEFAULT_CAPITAL,
   DEFAULT_SEED,
@@ -26,11 +27,13 @@ import {
   SEED_STRIDE,
   aggregate,
   cartesianConfigs,
+  pairResults,
   runHoldBaseline,
   runSelfTest,
   runTraderScenario,
   type Aggregate,
   type BenchResult,
+  type PairedStats,
   type StrategyId,
 } from "./stockBenchCore.js"
 
@@ -65,6 +68,8 @@ interface CliOptions {
   ticks: number
   seed: number
   seeds: number
+  /** When set, seeds are exactly from..to inclusive instead of `seed + i * SEED_STRIDE`. */
+  seedRange: { from: number; to: number } | null
   bitNode: number
   ownedSf8: number
   config: Partial<StockTraderConfig>
@@ -108,6 +113,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
     ticks: DEFAULT_TICKS,
     seed: DEFAULT_SEED,
     seeds: 1,
+    seedRange: null,
     bitNode: 8,
     ownedSf8: 3,
     config: {},
@@ -141,15 +147,30 @@ function parseArgs(argv: readonly string[]): CliOptions {
       case "capital":
         options.capital = requireNumber(flag, nextValue())
         break
-      case "ticks":
-        options.ticks = Math.floor(requireNumber(flag, nextValue()))
+      case "ticks": {
+        const text = nextValue()
+        const ticks = Math.floor(requireNumber(flag, text))
+        if (!(ticks >= 1)) throw new Error(`--ticks expects at least 1 update, got '${text}'`)
+        options.ticks = ticks
         break
+      }
       case "seed":
         options.seed = Math.floor(requireNumber(flag, nextValue()))
         break
       case "seeds":
         options.seeds = Math.max(1, Math.floor(requireNumber(flag, nextValue())))
         break
+      case "seed-range": {
+        const text = nextValue()
+        const match = /^(\d+)\s*[-:.]\s*(\d+)$/.exec(text.trim())
+        if (!match) throw new Error(`--seed-range expects <first>-<last>, got '${text}'`)
+        const from = Number(match[1])
+        const to = Number(match[2])
+        if (to < from) throw new Error(`--seed-range ${from}-${to}: last seed is below the first`)
+        options.seedRange = { from, to }
+        options.seeds = to - from + 1
+        break
+      }
       case "node":
         options.bitNode = Math.floor(requireNumber(flag, nextValue()))
         break
@@ -234,13 +255,14 @@ Usage: pnpm run test:stock -- [options]
 
 Market
   --capital <n>        Starting home cash (suffixes k/m/b/t/q, default 10b)
-  --ticks <n>          Stock updates to simulate, 6s each (default 3000)
+  --ticks <n>          Stock updates to simulate, 6s each, 1 or more (default 3000)
   --node <n>           BitNode number (default 8 so shorts are unlocked)
   --sf8 <level>        Source-File 8 level when not in BitNode 8 (default 3)
 
 Seeds
   --seed <n>           First seed (default 1337)
-  --seeds <n>          Number of seeds to run, same config (default 1)
+  --seeds <n>          Number of seeds to run, same config (default 1); spaced by 9973
+  --seed-range <a-b>   Run exactly seeds a..b inclusive, e.g. --seed-range 1-100
 
 Config overrides (defaults come from src/libraries/stock/config.ts)
   --entry-edge <f>        Min |(2*forecast-1)*volatility| to open (default 0.0025)
@@ -258,7 +280,8 @@ Config overrides (defaults come from src/libraries/stock/config.ts)
 
 Strategy
   --strategy <id>      current | v1 (frozen baseline from traderV1.ts, default current)
-  --compare            Also run v1 on the same seeds and print the difference
+  --compare            Also run v1 on the same seeds and print the difference, plus the
+                       same-seed (paired) ratio and its 95% interval
   --no-4s              Model a player without 4S Market Data: no forecasts or volatilities,
                        so the edge is estimated from the last --history-ticks prices
 
@@ -276,30 +299,44 @@ Grid sweeps (runs every combination across all seeds)
 GUI: pnpm run stock:viz  ->  open bench/stock/stockTraderViz.html
 `
 
-function runSeeds(options: CliOptions, config: Partial<StockTraderConfig>, strategy: StrategyId): BenchResult[] {
-  const results: BenchResult[] = []
-  for (let i = 0; i < options.seeds; i++) {
-    results.push(
-      runTraderScenario(
-        {
-          seed: options.seed + i * SEED_STRIDE,
-          capital: options.capital,
-          ticks: options.ticks,
-          config,
-          bitNode: options.bitNode,
-          ownedSf8: options.ownedSf8,
-          marketData: options.marketData,
-        },
-        strategy,
-      ),
-    )
-  }
-  return results
+function seedList(options: CliOptions): number[] {
+  if (!options.seedRange) return Array.from({ length: options.seeds }, (_, i) => options.seed + i * SEED_STRIDE)
+  const seeds: number[] = []
+  for (let seed = options.seedRange.from; seed <= options.seedRange.to; seed++) seeds.push(seed)
+  return seeds
 }
 
-const money = (value: number): string => `$${formatNumber(value)}`
-const pct = (value: number): string => `${(value * 100).toFixed(2)}%`
-const signedPct = (value: number): string => `${value >= 0 ? "+" : "-"}${(Math.abs(value) * 100).toFixed(2)}%`
+function runSeeds(options: CliOptions, config: Partial<StockTraderConfig>, strategy: StrategyId): BenchResult[] {
+  return seedList(options).map((seed) =>
+    runTraderScenario(
+      {
+        seed,
+        capital: options.capital,
+        ticks: options.ticks,
+        config,
+        bitNode: options.bitNode,
+        ownedSf8: options.ownedSf8,
+        marketData: options.marketData,
+      },
+      strategy,
+    ),
+  )
+}
+
+/** Space-grouped digits: 12502852 -> "12 502 852". Used for every exact number the CLI prints. */
+function groupDigits(value: number, digits = 0): string {
+  if (!Number.isFinite(value)) return "n/a"
+  const [whole, fraction] = value.toFixed(digits).split(".")
+  const grouped = whole.replace(/\B(?=(\d{3})+$)/g, " ")
+  return fraction === undefined ? grouped : `${grouped}.${fraction}`
+}
+
+const moneyDigits = (value: number): number => (Math.abs(value) < 100 && value % 1 !== 0 ? 2 : 0)
+const money = (value: number, digits?: number): string =>
+  `${value < 0 ? "-" : ""}$${groupDigits(Math.abs(value), digits ?? moneyDigits(value))}`
+const count = (value: number): string => groupDigits(value, 0)
+const pct = (value: number): string => `${groupDigits(value * 100, 2)}%`
+const signedPct = (value: number): string => `${value >= 0 ? "+" : "-"}${groupDigits(Math.abs(value) * 100, 2)}%`
 const signedMoney = (value: number): string => `${value >= 0 ? "+" : "-"}${money(Math.abs(value))}`
 const pad = (text: string, width: number, align: "left" | "right" = "right"): string =>
   align === "right" ? text.padStart(width) : text.padEnd(width)
@@ -308,6 +345,12 @@ const tableRow = (cells: readonly (string | number)[], widths: readonly number[]
 
 function gameHours(ticks: number): number {
   return (ticks * MS_PER_STOCK_UPDATE) / 3_600_000
+}
+
+function seedLabel(options: CliOptions): string {
+  const count = `${options.seeds} seed${options.seeds === 1 ? "" : "s"}`
+  if (options.seedRange) return `seeds ${options.seedRange.from}-${options.seedRange.to} (${count})`
+  return `seed ${options.seed} (${count})`
 }
 
 function printHeader(options: CliOptions, config: Partial<StockTraderConfig>): void {
@@ -324,8 +367,8 @@ function printHeader(options: CliOptions, config: Partial<StockTraderConfig>): v
       `commission ${money(STOCK_MARKET_COMMISSION)}`,
   )
   console.log(
-    `run      seed ${options.seed} (${options.seeds} seed${options.seeds === 1 ? "" : "s"}) | capital ${money(options.capital)} | ` +
-      `${options.ticks} updates (${gameHours(options.ticks).toFixed(1)}h) | BitNode ${options.bitNode}`,
+    `run      ${seedLabel(options)} | capital ${money(options.capital)} | ` +
+      `${count(options.ticks)} updates (${gameHours(options.ticks).toFixed(1)}h) | BitNode ${options.bitNode}`,
   )
   if (options.strategy === "v1") {
     console.log("strategy v1 baseline (frozen in bench/stock/traderV1.ts): long fcst 0.6/0.5, short 0.35/0.5, port 12%/sym")
@@ -335,12 +378,27 @@ function printHeader(options: CliOptions, config: Partial<StockTraderConfig>): v
   } else {
     console.log(`strategy ${buildConfigSummary(ns as never, merged)}`)
   }
-  const investable = options.capital - merged.moneyKeep
-  if (investable <= 0) {
+}
+
+/** Guards that explain a run which cannot mean anything. Printed in every mode, including --quiet. */
+function printWarnings(options: CliOptions, merged: StockTraderConfig): void {
+  if (options.capital <= merged.moneyKeep) {
     console.log(
       `warning  capital (${money(options.capital)}) is at or below money-keep (${money(merged.moneyKeep)}); ` +
         `the strategy cannot open positions. Raise --capital or lower --money-keep.`,
     )
+  }
+  if (!options.marketData && options.strategy === "current" && options.ticks <= merged.historyTicks) {
+    console.log(
+      `warning  the price-history estimate needs ${merged.historyTicks + 1} prices to fill its window; ` +
+        (options.ticks < 4
+          ? `with ${options.ticks} update(s) it never collects enough samples, so the run stays entirely in cash.`
+          : `with ${options.ticks} updates it only trades on a partial window ` +
+            `(full window reached at update ${merged.historyTicks + 1}).`),
+    )
+  }
+  if (options.ticks < 2) {
+    console.log("warning  1 update is a single decision; there is nothing to chart and the result is one draw")
   }
 }
 
@@ -353,7 +411,8 @@ function printRun(result: BenchResult, options: CliOptions): void {
   )
   console.log(`cash / positions ${money(result.finalCash)} / ${money(result.finalPositionsValue)}`)
   console.log(
-    `trades           ${result.trades} (${result.buys} buy, ${result.sells} sell, ${result.shorts} short, ${result.covers} cover)`,
+    `trades           ${count(result.trades)} (${count(result.buys)} buy, ${count(result.sells)} sell, ` +
+      `${count(result.shorts)} short, ${count(result.covers)} cover)`,
   )
   console.log(`commission       ${money(result.commissionPaid)}`)
   console.log(
@@ -375,11 +434,11 @@ function printRun(result: BenchResult, options: CliOptions): void {
     for (const row of [...rows, ...worst]) {
       const position =
         row.openShares > 0
-          ? `L ${row.openShares}`
+          ? `L ${count(row.openShares)}`
           : row.openShortShares > 0
-            ? `S ${row.openShortShares}`
+            ? `S ${count(row.openShortShares)}`
             : "-"
-      console.log(`${pad(row.symbol, 6, "left")} ${pad(String(row.trades), 7)} ${pad(signedMoney(row.profit), 11)}  ${position}`)
+      console.log(`${pad(row.symbol, 6, "left")} ${pad(count(row.trades), 7)} ${pad(signedMoney(row.profit), 16)}  ${position}`)
     }
   }
 }
@@ -395,12 +454,34 @@ function printAggregate(results: readonly BenchResult[], label: string): void {
     `risk    mean max drawdown -${pct(stats.meanMaxDrawdownPct)} | worst -${pct(stats.worstMaxDrawdownPct)}`,
   )
   console.log(
-    `churn   ${stats.meanTrades.toFixed(0)} trades avg | ${money(stats.meanCommission)} commission avg | net worth ${money(stats.meanNetWorth)} avg`,
+    `capital ${pct(stats.meanExposurePct)} of net worth in positions | ${pct(stats.meanFlatTickPct)} of ticks flat` +
+      (stats.meanTrades > 0 && stats.meanExposurePct < 0.5
+        ? "  <- share caps bind: extra time cannot compound"
+        : ""),
+  )
+  console.log(
+    `churn   ${count(stats.meanTrades)} trades avg | ${money(stats.meanCommission)} commission avg | net worth ${money(stats.meanNetWorth)} avg`,
   )
 }
 
+function printPaired(stats: PairedStats): void {
+  const ratio = (value: number): string => `${value >= 100 ? groupDigits(Math.round(value)) : value.toFixed(2)}x`
+  const verdict =
+    stats.lowRatio > 1
+      ? "current is better on average (95% interval excludes 1x)"
+      : stats.highRatio < 1
+        ? "v1 is better on average (95% interval excludes 1x)"
+        : "no measurable difference at this horizon"
+  console.log(
+    `\npaired  net worth ratio current/v1, same seed: ${stats.wins}/${stats.runs} seeds better | ` +
+      `geometric mean ${ratio(stats.geometricRatio)} (95% ${ratio(stats.lowRatio)} - ${ratio(stats.highRatio)}) | ` +
+      `median ${ratio(stats.medianRatio)}`,
+  )
+  console.log(`verdict ${verdict}`)
+}
+
 function printSeedTable(results: readonly BenchResult[]): void {
-  console.log("\n   seed    return     maxDD   trades   commission     net worth")
+  console.log("\n    seed          return    maxDD    trades        commission             net worth")
   for (const result of results) {
     console.log(
       tableRow(
@@ -408,11 +489,11 @@ function printSeedTable(results: readonly BenchResult[]): void {
           result.seed,
           signedPct(result.returnPct),
           `-${pct(result.maxDrawdownPct)}`,
-          result.trades,
+          count(result.trades),
           money(result.commissionPaid),
           money(result.finalNetWorth),
         ],
-        [7, 9, 9, 8, 12, 13],
+        [8, 16, 9, 9, 18, 21],
         ["right", "right", "right", "right", "right", "right"],
       ),
     )
@@ -428,22 +509,23 @@ function printGrid(rows: readonly GridRow[], options: CliOptions): void {
   console.log(`\n--- grid sweep: ${rows.length} configs x ${options.seeds} seeds, ranked by mean return ---`)
   const headers = [...options.grid.map((g) => g.flag), "mean", "median", "std", "meanDD", "trades", "commission"]
   const aligns: ("left" | "right")[] = headers.map(() => "right")
-  const widths = headers.map((h) => Math.max(h.length, 10))
+  const configText = (value: number): string => (Number.isInteger(value) ? groupDigits(value) : String(value))
+  const body = rows.map((row) => [
+    ...options.grid.map((g) => configText(Number(row.config[g.key]))),
+    signedPct(row.stats.meanReturnPct),
+    signedPct(row.stats.medianReturnPct),
+    pct(row.stats.stdReturnPct),
+    `-${pct(row.stats.meanMaxDrawdownPct)}`,
+    count(row.stats.meanTrades),
+    money(row.stats.meanCommission),
+  ])
+  const widths = headers.map((header, i) =>
+    Math.max(header.length, 10, ...body.map((cells) => (cells[i] ?? "").length)),
+  )
   console.log(tableRow(headers, widths, aligns))
   console.log("-".repeat(widths.reduce((a, b) => a + b, 0) + 2 * (widths.length - 1)))
 
-  rows.forEach((row) => {
-    const cells = [
-      ...options.grid.map((g) => formatNumber(Number(row.config[g.key]))),
-      signedPct(row.stats.meanReturnPct),
-      signedPct(row.stats.medianReturnPct),
-      pct(row.stats.stdReturnPct),
-      `-${pct(row.stats.meanMaxDrawdownPct)}`,
-      row.stats.meanTrades.toFixed(0),
-      money(row.stats.meanCommission),
-    ]
-    console.log(tableRow(cells, widths, aligns))
-  })
+  for (const cells of body) console.log(tableRow(cells, widths, aligns))
 }
 
 // ---------------------------------------------------------------------------
@@ -521,6 +603,7 @@ function main(): number {
             aggregate: aggregate(results),
             runs: results.map(stripCurve),
             v1: v1Results ? { aggregate: aggregate(v1Results), runs: v1Results.map(stripCurve) } : null,
+            paired: v1Results && results.length > 1 ? pairResults(results, v1Results) : null,
             baselines: {
               holdFiltered: baselineFiltered ? stripCurve(baselineFiltered) : null,
               holdAll: baselineAll ? stripCurve(baselineAll) : null,
@@ -534,12 +617,13 @@ function main(): number {
     }
 
     if (!options.quiet) printHeader(options, options.config)
+    printWarnings(options, mergeStockTraderConfig(options.config))
 
     if (options.quiet) {
       for (const result of results) {
         console.log(
-          `seed ${String(result.seed).padStart(6)}  ${signedPct(result.returnPct).padStart(9)}  ` +
-            `dd -${pct(result.maxDrawdownPct)}  trades ${String(result.trades).padStart(5)}  ${money(result.finalNetWorth)}`,
+          `seed ${String(result.seed).padStart(6)}  ${signedPct(result.returnPct).padStart(16)}  ` +
+            `dd -${pct(result.maxDrawdownPct)}  trades ${count(result.trades).padStart(9)}  ${money(result.finalNetWorth)}`,
         )
       }
     } else if (results.length === 1) {
@@ -557,20 +641,24 @@ function main(): number {
       console.log(
         `\nv1 -> current: mean ${signedPct(v1.meanReturnPct)} -> ${signedPct(current.meanReturnPct)} ` +
           `(${v1.meanReturnPct !== 0 ? `${(current.meanReturnPct / v1.meanReturnPct).toFixed(2)}x` : "n/a"}), ` +
-          `trades ${v1.meanTrades.toFixed(0)} -> ${current.meanTrades.toFixed(0)}`,
+          `trades ${count(v1.meanTrades)} -> ${count(current.meanTrades)}`,
       )
+      if (results.length > 1) {
+        const paired = pairResults(results, v1Results)
+        if (paired) printPaired(paired)
+      }
     }
 
     if (baselineFiltered) {
       console.log(
         `\nbaseline hold (filtered)  ${signedPct(baselineFiltered.returnPct)}  ` +
-          `max dd -${pct(baselineFiltered.maxDrawdownPct)}  trades ${baselineFiltered.trades}`,
+          `max dd -${pct(baselineFiltered.maxDrawdownPct)}  trades ${count(baselineFiltered.trades)}`,
       )
     }
     if (baselineAll) {
       console.log(
         `baseline hold (all)       ${signedPct(baselineAll.returnPct)}  ` +
-          `max dd -${pct(baselineAll.maxDrawdownPct)}  trades ${baselineAll.trades}`,
+          `max dd -${pct(baselineAll.maxDrawdownPct)}  trades ${count(baselineAll.trades)}`,
       )
     }
 

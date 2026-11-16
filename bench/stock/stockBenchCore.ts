@@ -93,6 +93,10 @@ export interface Aggregate {
   meanTrades: number
   meanCommission: number
   meanNetWorth: number
+  /** Average share of net worth actually invested. Low values mean the share caps, not the rules, bound us. */
+  meanExposurePct: number
+  /** Average share of ticks holding nothing at all. */
+  meanFlatTickPct: number
 }
 
 export interface StrategyHooks {
@@ -298,6 +302,13 @@ export function seedsFor(seed: number, count: number): number[] {
   return seeds
 }
 
+/** Contiguous seeds from..from+count-1, i.e. the range a person expects from "first seed" + count. */
+export function seedRange(from: number, count: number): number[] {
+  const seeds: number[] = []
+  for (let i = 0; i < count; i++) seeds.push(from + i)
+  return seeds
+}
+
 export function aggregate(results: readonly BenchResult[]): Aggregate {
   const returns = results.map((r) => r.returnPct)
   const drawdowns = results.map((r) => r.maxDrawdownPct)
@@ -313,7 +324,91 @@ export function aggregate(results: readonly BenchResult[]): Aggregate {
     meanTrades: average(results.map((r) => r.trades)),
     meanCommission: average(results.map((r) => r.commissionPaid)),
     meanNetWorth: average(results.map((r) => r.finalNetWorth)),
+    meanExposurePct: average(results.map((r) => r.exposureAvgPct)),
+    meanFlatTickPct: average(results.map((r) => r.flatTickPct)),
   }
+}
+
+export interface PairedStats {
+  runs: number
+  wins: number
+  geometricRatio: number
+  lowRatio: number
+  highRatio: number
+  medianRatio: number
+}
+
+/**
+ * Compare two strategies seed by seed. Both see the identical market on a given seed, so the
+ * per-seed net-worth ratio is much less noisy than the difference between two means. Net worth is
+ * multiplicative, so the summary is the geometric mean ratio with a 95% interval derived from the
+ * spread of the log ratios.
+ */
+export function pairResults(current: readonly BenchResult[], baseline: readonly BenchResult[]): PairedStats | null {
+  const bySeed = new Map(baseline.map((result) => [result.seed, result]))
+  const ratios: number[] = []
+  for (const result of current) {
+    const other = bySeed.get(result.seed)
+    if (!other || !(other.finalNetWorth > 0) || !(result.finalNetWorth > 0)) continue
+    ratios.push(result.finalNetWorth / other.finalNetWorth)
+  }
+  if (ratios.length === 0) return null
+
+  const logs = ratios.map((ratio) => Math.log(ratio))
+  const meanLog = average(logs)
+  const spread = logs.reduce((sum, value) => sum + (value - meanLog) ** 2, 0) / Math.max(1, logs.length - 1)
+  const halfWidth = 1.96 * Math.sqrt(spread / logs.length)
+
+  return {
+    runs: ratios.length,
+    wins: ratios.filter((ratio) => ratio > 1).length,
+    geometricRatio: Math.exp(meanLog),
+    lowRatio: Math.exp(meanLog - halfWidth),
+    highRatio: Math.exp(meanLog + halfWidth),
+    medianRatio: median(ratios),
+  }
+}
+
+export interface CurveStats {
+  runs: number
+  /** Net worth per tick across seeds: the typical (median) run and its p10/p90 spread. */
+  median: number[]
+  low: number[]
+  high: number[]
+}
+
+/**
+ * Collapse several seeds' equity curves into one plottable shape. Wealth compounds, so the
+ * median seed is the honest "typical" line: the arithmetic mean is dragged upward by a few
+ * explosive runs (at 30k updates the mean return is 3x the median), and drawing seed 1 alone
+ * says nothing about the other seeds. The p10/p90 band shows how much that spread matters.
+ */
+export function aggregateCurves(results: readonly BenchResult[]): CurveStats | null {
+  const curves = results.map((result) => result.equityCurve).filter((curve) => curve.length > 0)
+  if (curves.length === 0) return null
+  const length = Math.min(...curves.map((curve) => curve.length))
+  const medianCurve: number[] = []
+  const low: number[] = []
+  const high: number[] = []
+  const column: number[] = []
+  for (let i = 0; i < length; i++) {
+    column.length = 0
+    for (const curve of curves) column.push(curve[i])
+    column.sort((a, b) => a - b)
+    medianCurve.push(quantile(column, 0.5))
+    low.push(quantile(column, 0.1))
+    high.push(quantile(column, 0.9))
+  }
+  return { runs: curves.length, median: medianCurve, low, high }
+}
+
+/** Quantile of an already-sorted array, linearly interpolated between neighbours. */
+function quantile(sorted: readonly number[], q: number): number {
+  if (sorted.length === 1) return sorted[0]
+  const position = (sorted.length - 1) * q
+  const lower = Math.floor(position)
+  const upper = Math.ceil(position)
+  return lower === upper ? sorted[lower] : sorted[lower] + (sorted[upper] - sorted[lower]) * (position - lower)
 }
 
 /** Config keys that hold numbers, i.e. everything a grid sweep can vary. */

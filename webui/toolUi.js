@@ -55,9 +55,10 @@
     const input = element(inputOrId)
     if (!input) return NaN
     const raw = String(input.value ?? "").trim()
-    if (raw !== "") return Number(raw)
+    if (raw !== "") return Number(raw.replace(SPACES, ""))
     const fallback = input.dataset ? input.dataset.default : undefined
-    return Number(fallback !== undefined && fallback !== "" ? fallback : input.placeholder)
+    const text = String(fallback !== undefined && fallback !== "" ? fallback : input.placeholder ?? "")
+    return Number(text.replace(SPACES, ""))
   }
 
   /** Text value of an input, falling back to the placeholder. */
@@ -76,6 +77,30 @@
     if (input.tagName === "SELECT") return input.value === (input.dataset.value ?? input.value)
     return String(input.value ?? "").trim() === ""
   }
+
+  /**
+   * Rewrite an input in the spaced form when it loses focus, e.g. "10000000000" -> "10 000 000 000".
+   * Typing the default back in empties the field instead, so "empty means default" still holds and
+   * the value is grey rather than looking like an override.
+   */
+  ToolUi.groupedInput = (inputOrId) => {
+    const input = element(inputOrId)
+    if (!input) return
+    const value = ToolUi.numberOf(input)
+    if (!Number.isFinite(value)) return
+    const fallbackText = String(input.dataset.default ?? input.placeholder ?? "").replace(SPACES, "")
+    const fallback = Number(fallbackText)
+    if (fallbackText !== "" && Number.isFinite(fallback) && value === fallback) {
+      input.value = ""
+      return
+    }
+    input.value = Number.isInteger(value) ? ToolUi.format.grouped(value, 0) : String(value)
+  }
+
+  document.addEventListener("focusout", (event) => {
+    const input = event.target
+    if (input instanceof HTMLInputElement && input.dataset.group !== undefined) ToolUi.groupedInput(input)
+  })
 
   /**
    * Persist every control with an id inside `scope` (default: document).
@@ -125,14 +150,33 @@
   }
 
   // ---- number formatting ---------------------------------------------------
+  // Large values are written out in full with a space every three digits ("10 000 000") rather
+  // than the k/m/b/t suffix form: at the scales this game reaches, "$1.25q" hides the magnitude.
+  // Suffixes survive only where width is scarce, i.e. chart axis ticks ("$10b").
+
+  const NBSP = "\u00a0"
 
   function trimZeros(text) {
     return text.includes(".") ? text.replace(/\.?0+$/, "") : text
   }
 
+  /** Group the integer part: "12502852.61" -> "12 502 852.61". */
+  function groupDigits(text) {
+    const [whole, fraction] = text.split(".")
+    const grouped = whole.replace(/\B(?=(\d{3})+$)/g, NBSP)
+    return fraction === undefined ? grouped : `${grouped}.${fraction}`
+  }
+
+  const SPACES = /[\s\u00a0\u202f]/g
+
   const SUFFIXES = ["", "k", "m", "b", "t", "q"]
 
-  /** Compact money/number text, e.g. 124068000000 -> "124.068b". */
+  /** Compact digits for a maybe-fractional budget: whole numbers unless it is small and has cents. */
+  function moneyDigits(value) {
+    return Math.abs(value) < 100 && value % 1 !== 0 ? 2 : 0
+  }
+
+  /** Compact money/number text, e.g. 124068000000 -> "124.068b". Width-constrained spots only. */
   ToolUi.format = {
     number(value, digits) {
       if (!Number.isFinite(value)) return "n/a"
@@ -146,18 +190,29 @@
       const precision = digits === undefined ? 3 : digits
       return `${negative ? "-" : ""}${trimZeros(scaled.toFixed(precision))}${SUFFIXES[suffix]}`
     },
+    /** Full number with spaced thousands, e.g. 124068000000 -> "124 068 000 000". */
+    grouped(value, digits) {
+      if (!Number.isFinite(value)) return "n/a"
+      return groupDigits(value.toFixed(digits === undefined ? 0 : digits))
+    },
+    /** Whole count with spaced thousands, e.g. 3241 -> "3 241". */
+    count(value) {
+      return ToolUi.format.grouped(value, 0)
+    },
     money(value, digits) {
-      return `${value < 0 ? "-" : ""}$${ToolUi.format.number(Math.abs(value), digits)}`
+      const precision = digits === undefined ? moneyDigits(value) : digits
+      return `${value < 0 ? "-" : ""}$${ToolUi.format.grouped(Math.abs(value), precision)}`
     },
     signedMoney(value, digits) {
-      return `${value >= 0 ? "+" : "-"}$${ToolUi.format.number(Math.abs(value), digits)}`
+      const precision = digits === undefined ? moneyDigits(value) : digits
+      return `${value >= 0 ? "+" : "-"}$${ToolUi.format.grouped(Math.abs(value), precision)}`
     },
     pct(value, digits) {
-      return `${(value * 100).toFixed(digits === undefined ? 1 : digits)}%`
+      return `${ToolUi.format.grouped(value * 100, digits === undefined ? 1 : digits)}%`
     },
     signedPct(value, digits) {
       const d = digits === undefined ? 2 : digits
-      return `${value >= 0 ? "+" : "-"}${(Math.abs(value) * 100).toFixed(d)}%`
+      return `${value >= 0 ? "+" : "-"}${ToolUi.format.grouped(Math.abs(value) * 100, d)}%`
     },
     ratio(value, digits) {
       return Number.isFinite(value) ? `${value.toFixed(digits === undefined ? 2 : digits)}x` : "n/a"
