@@ -8,6 +8,8 @@ export interface StockSymbolSnapshot {
   bidPrice: number
   forecast: number
   volatility: number
+  /** Expected move per market update: (2 * forecast - 1) * volatility. */
+  edge: number
   maxShares: number
   longShares: number
   avgLongPrice: number

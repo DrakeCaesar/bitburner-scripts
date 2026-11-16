@@ -5,7 +5,9 @@
  * Bundle + run:
  *   pnpm run test:stock
  *   pnpm run test:stock -- --capital 10b --ticks 3000 --seeds 5
- *   pnpm run test:stock -- --grid long-buy-forecast=0.55,0.6,0.65 --seeds 3
+ *   pnpm run test:stock -- --compare                   (current strategy vs the frozen v1 baseline)
+ *   pnpm run test:stock -- --strategy v1 --seeds 5     (baseline on its own)
+ *   pnpm run test:stock -- --grid entry-edge=0.002,0.003 --grid max-positions=3,4
  *   pnpm run test:stock -- --selftest
  *
  * GUI: pnpm run stock:viz  ->  open bench/stock/stockTraderViz.html
@@ -29,6 +31,7 @@ import {
   runTraderScenario,
   type Aggregate,
   type BenchResult,
+  type StrategyId,
 } from "./stockBenchCore.js"
 
 // ---------------------------------------------------------------------------
@@ -44,16 +47,13 @@ interface ConfigFlagSpec {
 
 const CONFIG_FLAGS: Record<string, ConfigFlagSpec> = {
   "money-keep": { key: "moneyKeep", kind: "number" },
+  "entry-edge": { key: "entryEdge", kind: "number" },
+  "exit-edge": { key: "exitEdge", kind: "number" },
+  "max-positions": { key: "maxPositions", kind: "number" },
+  "max-weight": { key: "maxWeightPerSymbol", kind: "number" },
   "max-share-fraction": { key: "maxShareFraction", kind: "number" },
-  "portfolio-fraction": { key: "portfolioFractionPerSymbol", kind: "number" },
-  "trim-fraction": { key: "trimFractionPerTick", kind: "number" },
-  "budget-fraction": { key: "budgetFractionPerSymbol", kind: "number" },
+  "rotate-margin": { key: "rotateMargin", kind: "number" },
   "min-shares": { key: "minShares", kind: "number" },
-  "long-buy-forecast": { key: "longBuyForecast", kind: "number" },
-  "long-sell-forecast": { key: "longSellForecast", kind: "number" },
-  "short-buy-forecast": { key: "shortBuyForecast", kind: "number" },
-  "short-sell-forecast": { key: "shortSellForecast", kind: "number" },
-  "max-volatility": { key: "maxVolatility", kind: "number" },
   shorts: { key: "enableShorts", kind: "boolean" },
 }
 
@@ -65,6 +65,8 @@ interface CliOptions {
   bitNode: number
   ownedSf8: number
   config: Partial<StockTraderConfig>
+  strategy: StrategyId
+  compare: boolean
   baseline: "none" | "filtered" | "all"
   grid: { flag: string; key: ConfigKey; values: number[] }[]
   json: boolean
@@ -105,6 +107,8 @@ function parseArgs(argv: readonly string[]): CliOptions {
     bitNode: 8,
     ownedSf8: 3,
     config: {},
+    strategy: "current",
+    compare: false,
     baseline: "filtered",
     grid: [],
     json: false,
@@ -157,6 +161,17 @@ function parseArgs(argv: readonly string[]): CliOptions {
       }
       case "symbols":
         options.symbols = Math.max(0, Math.floor(requireNumber(flag, nextValue())))
+        break
+      case "strategy": {
+        const value = nextValue().toLowerCase()
+        if (value !== "current" && value !== "v1") {
+          throw new Error(`--strategy expects current|v1, got '${value}'`)
+        }
+        options.strategy = value
+        break
+      }
+      case "compare":
+        options.compare = true
         break
       case "grid": {
         const spec = nextValue()
@@ -220,12 +235,19 @@ Seeds
   --seeds <n>          Number of seeds to run, same config (default 1)
 
 Config overrides (defaults come from src/libraries/stock/config.ts)
-  --money-keep <n>              --max-share-fraction <f>
-  --portfolio-fraction <f>      --trim-fraction <f>
-  --budget-fraction <f>         --min-shares <n>
-  --long-buy-forecast <f>       --long-sell-forecast <f>
-  --short-buy-forecast <f>      --short-sell-forecast <f>
-  --max-volatility <f>          --shorts <0|1>
+  --entry-edge <f>        Min |(2*forecast-1)*volatility| to open (default 0.0025)
+  --exit-edge <f>         Close when the edge falls to this (default 0)
+  --max-positions <n>     Symbols held at once (default 4)
+  --max-weight <f>        Cap on one symbol's share of net worth (default 0.34)
+  --max-share-fraction <f>  Fraction of getMaxShares() per symbol (default 1)
+  --rotate-margin <f>     Swap the weakest holding at this edge ratio (default 1.5)
+  --min-shares <n>        Skip orders below this size (default 50)
+  --money-keep <n>        Cash left untouched (default 1b)
+  --shorts <0|1>          Enable short positions
+
+Strategy
+  --strategy <id>      current | v1 (frozen baseline from traderV1.ts, default current)
+  --compare            Also run v1 on the same seeds and print the difference
 
 Reporting
   --baseline <mode>    none | filtered | all (buy-and-hold reference, default filtered)
@@ -236,23 +258,26 @@ Reporting
   --help               Show this help
 
 Grid sweeps (runs every combination across all seeds)
-  --grid long-buy-forecast=0.55,0.60,0.65 --grid max-volatility=0.03,0.05
+  --grid entry-edge=0.002,0.0025,0.003 --grid max-positions=3,4,5
 
 GUI: pnpm run stock:viz  ->  open bench/stock/stockTraderViz.html
 `
 
-function runSeeds(options: CliOptions, config: Partial<StockTraderConfig>): BenchResult[] {
+function runSeeds(options: CliOptions, config: Partial<StockTraderConfig>, strategy: StrategyId): BenchResult[] {
   const results: BenchResult[] = []
   for (let i = 0; i < options.seeds; i++) {
     results.push(
-      runTraderScenario({
-        seed: options.seed + i * SEED_STRIDE,
-        capital: options.capital,
-        ticks: options.ticks,
-        config,
-        bitNode: options.bitNode,
-        ownedSf8: options.ownedSf8,
-      }),
+      runTraderScenario(
+        {
+          seed: options.seed + i * SEED_STRIDE,
+          capital: options.capital,
+          ticks: options.ticks,
+          config,
+          bitNode: options.bitNode,
+          ownedSf8: options.ownedSf8,
+        },
+        strategy,
+      ),
     )
   }
   return results
@@ -284,7 +309,11 @@ function printHeader(options: CliOptions, config: Partial<StockTraderConfig>): v
     `run      seed ${options.seed} (${options.seeds} seed${options.seeds === 1 ? "" : "s"}) | capital ${money(options.capital)} | ` +
       `${options.ticks} updates (${gameHours(options.ticks).toFixed(1)}h) | BitNode ${options.bitNode}`,
   )
-  console.log(`strategy ${buildConfigSummary(ns as never, merged)}`)
+  if (options.strategy === "v1") {
+    console.log("strategy v1 baseline (frozen in bench/stock/traderV1.ts): long fcst 0.6/0.5, short 0.35/0.5, port 12%/sym")
+  } else {
+    console.log(`strategy ${buildConfigSummary(ns as never, merged)}`)
+  }
   const investable = options.capital - merged.moneyKeep
   if (investable <= 0) {
     console.log(
@@ -439,7 +468,7 @@ function main(): number {
       )
       const rows: GridRow[] = configs.map((config) => ({
         config,
-        stats: aggregate(runSeeds(options, config)),
+        stats: aggregate(runSeeds(options, config, options.strategy)),
       }))
       rows.sort((a, b) => b.stats.meanReturnPct - a.stats.meanReturnPct)
 
@@ -453,7 +482,9 @@ function main(): number {
       return 0
     }
 
-    const results = runSeeds(options, options.config)
+    const results = runSeeds(options, options.config, options.strategy)
+    const v1Results =
+      options.compare && options.strategy === "current" ? runSeeds(options, options.config, "v1") : null
     const baselineFiltered =
       options.baseline === "none" ? null : runHoldBaseline({ ...options, seed: options.seed, config: options.config }, true)
     const baselineAll =
@@ -468,6 +499,7 @@ function main(): number {
             config: mergeStockTraderConfig(options.config),
             aggregate: aggregate(results),
             runs: results.map(stripCurve),
+            v1: v1Results ? { aggregate: aggregate(v1Results), runs: v1Results.map(stripCurve) } : null,
             baselines: {
               holdFiltered: baselineFiltered ? stripCurve(baselineFiltered) : null,
               holdAll: baselineAll ? stripCurve(baselineAll) : null,
@@ -496,6 +528,17 @@ function main(): number {
     }
 
     if (results.length > 1) printAggregate(results, "all seeds")
+
+    if (v1Results) {
+      printAggregate(v1Results, "v1 baseline")
+      const current = aggregate(results)
+      const v1 = aggregate(v1Results)
+      console.log(
+        `\nv1 -> current: mean ${signedPct(v1.meanReturnPct)} -> ${signedPct(current.meanReturnPct)} ` +
+          `(${v1.meanReturnPct !== 0 ? `${(current.meanReturnPct / v1.meanReturnPct).toFixed(2)}x` : "n/a"}), ` +
+          `trades ${v1.meanTrades.toFixed(0)} -> ${current.meanTrades.toFixed(0)}`,
+      )
+    }
 
     if (baselineFiltered) {
       console.log(

@@ -4,103 +4,25 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>KingOfTheHill altitude profiles</title>
+  <link rel="stylesheet" href="../../webui/toolUi.css" />
   <style>
+    /* Page-specific layout only; the shared kit (webui/toolUi.css) carries the shell,
+       controls, tables and text tones. */
     :root {
-      color-scheme: dark;
-      --bg: #0d0d0d;
-      --panel: #161616;
-      --border: rgba(255, 255, 255, 0.12);
-      --text: #d4d4d4;
-      --muted: #888;
-      --curve: #4fc3f7;
-      --curve-near: #e57373;
-      --password: #f9a825;
-      --probe: rgba(255, 183, 77, 0.65);
-      --side-hill: rgba(229, 115, 115, 0.55);
-      --main-peak: rgba(129, 199, 132, 0.45);
+      --curve: #43bf43;
+      --curve-near: #e05555;
+      --password: #e0b040;
+      --probe: rgba(224, 176, 64, 0.65);
+      --side-hill: rgba(224, 85, 85, 0.55);
+      --main-peak: rgba(67, 191, 67, 0.45);
     }
-
-    * { box-sizing: border-box; }
-
-    body {
-      margin: 0;
-      padding: 16px 20px 32px;
-      font-family: Consolas, "Courier New", monospace;
-      background: var(--bg);
-      color: var(--text);
-      font-size: 12px;
-      line-height: 1.4;
-    }
-
-    h1 {
-      margin: 0 0 4px;
-      font-size: 16px;
-      font-weight: 600;
-    }
-
-    .controls {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 12px 20px;
-      align-items: end;
-      padding: 12px 14px;
-      margin-bottom: 16px;
-      border: 1px solid var(--border);
-      background: var(--panel);
-    }
-
-    label {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      color: var(--muted);
-      font-size: 11px;
-    }
-
-    input[type="number"],
-    select {
-      font: inherit;
-      color: var(--text);
-      background: #111;
-      border: 1px solid var(--border);
-      padding: 4px 6px;
-    }
-
-    select {
-      min-width: 160px;
-    }
-
-    input[type="range"] {
-      font: inherit;
-      color: var(--text);
-      background: #111;
-      border: 1px solid var(--border);
-      width: 160px;
-      padding: 0;
-    }
-
-    input[type="number"]:disabled,
-    select:disabled {
-      opacity: 0.55;
-    }
-
-    button {
-      font: inherit;
-      color: #000;
-      background: var(--password);
-      border: none;
-      padding: 6px 12px;
-      cursor: pointer;
-    }
-
-    button:hover { filter: brightness(1.08); }
 
     .legend {
       display: flex;
       flex-wrap: wrap;
       gap: 10px 18px;
-      margin-bottom: 16px;
-      color: var(--muted);
+      margin-bottom: 10px;
+      color: var(--dim);
       font-size: 11px;
     }
 
@@ -115,24 +37,24 @@
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(460px, 1fr));
-      gap: 14px;
+      gap: 8px;
     }
 
-    .card {
-      border: 1px solid var(--border);
-      background: var(--panel);
-      padding: 10px 12px 12px;
+    .plot {
+      border: 1px solid var(--line-soft);
+      background: var(--panel-2);
+      padding: 6px 8px 8px;
     }
 
-    .card h2 {
-      margin: 0 0 6px;
+    .plot h2 {
+      margin: 0 0 4px;
       font-size: 12px;
-      font-weight: 600;
+      font-weight: bold;
     }
 
     .meta {
-      color: var(--muted);
-      margin-bottom: 8px;
+      color: var(--dim);
+      margin-bottom: 6px;
       font-size: 11px;
     }
 
@@ -140,30 +62,22 @@
       display: block;
       width: 100%;
       height: 180px;
-      background: #0a0a0a;
-      border: 1px solid rgba(255, 255, 255, 0.06);
-    }
-
-    .note {
-      margin-top: 14px;
-      color: var(--muted);
-      font-size: 11px;
+      background: #0f0f0f;
+      border: 1px solid var(--line-soft);
     }
 
     .summary {
       display: flex;
       flex-wrap: wrap;
-      gap: 10px 24px;
-      padding: 10px 14px;
-      margin-bottom: 16px;
-      border: 1px solid var(--border);
-      background: var(--panel);
+      gap: 8px 24px;
+      padding: 6px 8px;
+      margin-bottom: 10px;
+      border: 1px solid var(--line-soft);
+      background: var(--panel-2);
       font-size: 11px;
     }
 
-    .summary strong { color: var(--text); font-weight: 600; }
-    .summary .good { color: #81c784; }
-    .summary .bad { color: #e57373; }
+    .summary strong { color: var(--text); font-weight: bold; }
 
     .progress-wrap {
       flex: 1 1 100%;
@@ -171,10 +85,10 @@
     }
 
     .progress-bar {
-      margin-top: 8px;
+      margin-top: 6px;
       height: 6px;
-      background: #111;
-      border: 1px solid var(--border);
+      background: #0f0f0f;
+      border: 1px solid var(--line-soft);
     }
 
     .progress-fill {
@@ -184,7 +98,7 @@
     }
 
     .progress-meta {
-      color: var(--muted);
+      color: var(--dim);
       margin-top: 4px;
     }
 
@@ -196,32 +110,36 @@
       font-size: 11px;
     }
 
-    .meta-row span { color: var(--muted); }
-    .meta-row .label { color: #aaa; min-width: 58px; }
-    .meta-row .good { color: #81c784; }
-    .meta-row .bad { color: #e57373; }
-
-    code { color: #ccc; }
+    .meta-row span { color: var(--dim); }
+    .meta-row .label { color: var(--text); min-width: 58px; }
+    code { color: var(--text); }
   </style>
 </head>
 <body>
-  <h1>KingOfTheHill altitude profiles</h1>
+  <header>
+    <h1>KingOfTheHill altitude profiles</h1>
+    <span class="sub">Altitude profile of each solver assignment, with the probes the search took.</span>
+  </header>
 
-  <div class="controls">
-    <label>Seed<input id="seed" type="number" value="1265595496" /></label>
-    <label>Difficulty<input id="difficulty" type="number" value="60" min="1" max="60" /></label>
-    <label>Tests<input id="count" type="number" value="1000" min="1" max="1000000" step="1" /></label>
-    <label>Sort
-      <select id="sort">
+  <main>
+  <div class="fields">
+    <label class="field"><span>Seed</span><input id="seed" type="number" /></label>
+    <label class="field"><span>Difficulty</span><input id="difficulty" type="number" min="1" max="60" /></label>
+    <label class="field"><span>Tests</span><input id="count" type="number" min="1" max="1000000" step="1" /></label>
+    <label class="field">
+      <span>Sort</span>
+      <select id="sort" data-value="guesses-desc">
         <option value="index">assignment #</option>
         <option value="guesses-desc" selected>guesses worst first</option>
         <option value="guesses-asc">guesses best first</option>
         <option value="failed-first">failed first</option>
       </select>
     </label>
-    <label>Charts shown<input id="chartLimit" type="number" value="24" min="0" max="500" step="1" /></label>
-    <label>Sample points<input id="points" type="number" value="1200" min="200" max="4000" step="100" /></label>
-    <button id="render" type="button">Redraw</button>
+    <label class="field"><span>Charts shown</span><input id="chartLimit" type="number" min="0" max="500" step="1" /></label>
+    <label class="field"><span>Sample points</span><input id="points" type="number" min="200" max="4000" step="100" /></label>
+  </div>
+  <div class="buttons">
+    <button id="render" type="button" class="primary">Redraw</button>
   </div>
 
   <div id="summary" class="summary"></div>
@@ -237,12 +155,14 @@
 
   <div id="grid" class="grid"></div>
 
-  <p class="note">
+  <p class="hint" style="margin-top: 10px">
     Regenerate the browser bundle after solver changes (<code>pnpm run test:koth:bundle</code>).
-    Open via a local static server (<code>pnpm dlx serve tests</code> then visit
-    <code>/kingOfTheHillViz.html</code>).
+    Needs an http origin for its module imports: <code>pnpm run tools</code>, then
+    <code>http://localhost:8123/bench/koth/kingOfTheHillViz.html</code>.
   </p>
+  </main>
 
+  <script src="../../webui/toolUi.js"></script>
   <script type="module">
     import {
       DEFAULT_SEED,
@@ -263,60 +183,21 @@
     const pointsInput = document.getElementById("points")
     const renderBtn = document.getElementById("render")
 
-    const STORAGE_KEY = "kingOfTheHillViz.settings"
+    const STORAGE_KEY = "toolui.kothViz.v1"
     const MAX_TEST_COUNT = 1_000_000
 
-    function parseTestCount(raw = countInput.value) {
+    // Defaults are shown grey as placeholders, so a white value means "changed".
+    seedInput.placeholder = String(DEFAULT_SEED)
+    difficultyInput.placeholder = String(DEFAULT_DIFFICULTY)
+    countInput.placeholder = "1000"
+    chartLimitInput.placeholder = "24"
+    pointsInput.placeholder = "1200"
+
+    const form = ToolUi.persist(STORAGE_KEY, document)
+    form.restore()
+
+    function parseTestCount(raw = ToolUi.numberOf(countInput)) {
       return Math.max(1, Math.min(MAX_TEST_COUNT, Math.floor(Number(raw) || 1000)))
-    }
-
-    function loadSettings() {
-      try {
-        const raw = localStorage.getItem(STORAGE_KEY)
-        if (!raw) return null
-        return JSON.parse(raw)
-      } catch {
-        return null
-      }
-    }
-
-    function saveSettings() {
-      try {
-        const prev = loadSettings() ?? {}
-        const settings = {
-          ...prev,
-          sort: sortInput.value,
-          chartLimit: chartLimitInput.value,
-          points: pointsInput.value,
-          seed: seedInput.value,
-          difficulty: difficultyInput.value,
-          count: countInput.value,
-        }
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
-      } catch {
-        // ignore quota / private mode
-      }
-    }
-
-    function applySettings(settings) {
-      if (!settings) return
-      if (settings.seed != null && settings.seed !== "") seedInput.value = String(settings.seed)
-      if (settings.difficulty != null && settings.difficulty !== "") difficultyInput.value = String(settings.difficulty)
-      if (settings.count != null && settings.count !== "") countInput.value = String(settings.count)
-      if (settings.sort) sortInput.value = settings.sort
-      if (settings.chartLimit != null && settings.chartLimit !== "") chartLimitInput.value = String(settings.chartLimit)
-      if (settings.points != null && settings.points !== "") pointsInput.value = String(settings.points)
-    }
-
-    const savedSettings = loadSettings()
-    if (savedSettings) applySettings(savedSettings)
-    else {
-      seedInput.value = String(DEFAULT_SEED)
-      difficultyInput.value = String(DEFAULT_DIFFICULTY)
-    }
-
-    for (const el of [seedInput, difficultyInput, countInput, sortInput, chartLimitInput, pointsInput]) {
-      el.addEventListener("change", saveSettings)
     }
 
     sortInput.addEventListener("change", () => {
@@ -334,8 +215,8 @@
     let cachedResults = null
 
     function resultsCacheKey() {
-      const seed = Number(seedInput.value) || DEFAULT_SEED
-      const difficulty = Number(difficultyInput.value) || DEFAULT_DIFFICULTY
+      const seed = ToolUi.numberOf(seedInput) || DEFAULT_SEED
+      const difficulty = ToolUi.numberOf(difficultyInput) || DEFAULT_DIFFICULTY
       const testCount = parseTestCount()
       return `seq:${seed}:${difficulty}:${testCount}`
     }
@@ -671,7 +552,7 @@
       const failed = rows.filter((r) => !r.result.solved).length
       const sortLabel = sortInput.options[sortInput.selectedIndex].text
       summaryEl.innerHTML = [
-        `<div><strong>${summary.label}</strong> ${summary.solved}/${rows.length} solved${failed ? `, <span class="bad">${failed} failed</span>` : ""}, avg ${summary.avg.toFixed(1)} (${summary.min}-${summary.max}), total ${summary.total}</div>`,
+        `<div><strong>${summary.label}</strong> ${summary.solved}/${rows.length} solved${failed ? `, <span class="neg">${failed} failed</span>` : ""}, avg ${summary.avg.toFixed(1)} (${summary.min}-${summary.max}), total ${summary.total}</div>`,
         `<div><strong>source</strong> ${sourceLabel}</div>`,
         `<div><strong>charts</strong> showing ${chartCount}/${rows.length} (${sortLabel})</div>`,
       ].join("")
@@ -694,7 +575,7 @@
         const profile = sampleAltitudeProfile(assignment, { pointCount })
 
         const card = document.createElement("article")
-        card.className = "card"
+        card.className = "plot"
 
         const h2 = document.createElement("h2")
         h2.textContent = `#${index}  password ${assignment.password}`
@@ -705,7 +586,7 @@
 
         const solverRow = document.createElement("div")
         solverRow.className = "meta-row"
-        const guessClass = result.solved ? "" : " bad"
+        const guessClass = result.solved ? "" : " neg"
         solverRow.innerHTML = `<span class="label">solver</span><span class="${guessClass.trim()}">${solverLine("", result).slice(2)}</span>`
         meta.appendChild(solverRow)
 
@@ -730,16 +611,13 @@
     }
 
     async function renderAll({ rerunTests = true } = {}) {
-      saveSettings()
-      const seed = Number(seedInput.value) || DEFAULT_SEED
-      const difficulty = Number(difficultyInput.value) || DEFAULT_DIFFICULTY
+      form.save()
+      const seed = ToolUi.numberOf(seedInput) || DEFAULT_SEED
+      const difficulty = ToolUi.numberOf(difficultyInput) || DEFAULT_DIFFICULTY
       const testCount = parseTestCount()
-      const pointCount = Number(pointsInput.value) || 1200
+      const pointCount = ToolUi.numberOf(pointsInput) || 1200
       const sortMode = sortInput.value
-      const chartLimit = Math.max(0, Math.min(500, Math.floor(Number(chartLimitInput.value) || 0)))
-
-      countInput.value = String(testCount)
-      chartLimitInput.value = String(chartLimit)
+      const chartLimit = Math.max(0, Math.min(500, Math.floor(ToolUi.numberOf(chartLimitInput) || 0)))
 
       const runId = ++renderRunId
       renderBtn.disabled = true

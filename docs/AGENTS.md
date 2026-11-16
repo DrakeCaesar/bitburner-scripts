@@ -33,6 +33,7 @@ This repository contains scripts for the Bitburner programming game. Scripts run
   - `bench/scratch/` — one-off sims and coding-contract solvers, not wired to any script
 - `build/` — Bundlers and watch/sync tooling
 - `docs/` — Markdown documentation, including this guide
+- `webui/` — Shared UI kit (`toolUi.css`, `toolUi.js`) linked by every browser tool
 - `index.html` — landing page for the local HTML tools
 - `ipvgo-engine/` — standalone IPvGO engine (native C++ plus its own Node server and web UI)
 - `ideas/discarded/` — Old experiments; not part of the active workflow
@@ -178,11 +179,25 @@ Useful paths for infiltration automation in this repo:
 
 | Tool | Path | Needs |
 |------|------|-------|
-| Stock trader benchmark | `bench/stock/stockTraderViz.html` | nothing (self-contained) |
+| Stock trader benchmark | `bench/stock/stockTraderViz.html` | nothing (self-contained page) |
 | KingOfTheHill profiles | `bench/koth/kingOfTheHillViz.html` | http origin, `pnpm run test:koth:bundle` |
 | IPvGO engine bench | `ipvgo-engine/web/bench.html` | `pnpm run server` (port 3010) |
 
 Add a card to `index.html` when adding a new HTML tool.
+
+#### Shared UI kit (`webui/`)
+
+All three pages link `webui/toolUi.css` (before their own `<style>`, so a page can override anything) and `webui/toolUi.js`:
+
+- **`toolUi.css`** — the in-game tail look: `#141414` background, monospace 12px, 1px translucent borders, square corners. Carries the tokens (`--text`, `--dim`, `--line`, `--accent`, `--bad`, …), the shell (`header`/`main`/`section h2` with `=== ` prefixes), form controls (`label.field`, 150px inputs, drawn checkboxes, `button.primary`/`.ghost`), tables, `.cards`/`.card` stat cards, `.tabs`/`.tab`, and the text tones (`.pos`/`.neg`, `.dim`, `.hint`, `.err`).
+- **`toolUi.js`** — `ToolUi.el`, `ToolUi.store` (guarded localStorage JSON), `ToolUi.numberOf`/`textOf`, `ToolUi.persist(key, scope)` (save/restore/clear every control with an id; opt out with `data-nopersist`), `ToolUi.format` (`money`/`pct`/`signedPct`/`ratio`), `ToolUi.setCards`, `ToolUi.setStatus`, and `ToolUi.pool(source, size)` (blob-URL worker pool).
+
+Conventions both bench pages follow:
+
+- **Defaults are grey, overrides are white.** An input starts empty and shows its default as its grey `placeholder`; `ToolUi.numberOf` reads the typed value or falls back to `data-default`/the placeholder. Nothing else tracks "is this default?".
+- **Settings survive reloads.** `ToolUi.persist("toolui.<tool>.v1", document)` on load, and it saves on every `input`/`change`.
+- **Workers come from the page text.** A page that needs threads keeps its bundle in `<script id="…">` and builds the worker script from `thatScript.textContent`, so there is one copy of the code and it still works from `file://` (blob workers are allowed there; ES module imports are not). The stock page caps at 12 workers (measured on a 12-thread CPU: 1 worker 960 ms, 6 → 310 ms, 8 → 285 ms, 12 → 335 ms for 25 seeds × 3000 updates, so mid single digits is the sweet spot).
+- The shared colours replace the older ad-hoc palettes; the KingOfTheHill plot colours are remapped to the same accent/red/warn tokens.
 
 #### Stock market benchmark
 
@@ -193,17 +208,21 @@ Everything lives in `bench/stock/`:
 | `stockMarketModel.ts` | Local port of the game's market (`../bitburner-src` `stable`: `Stock.ts`, `processStockPrices`/`stockMarketCycle`, `BuyingAndSelling.tsx`, `StockMarketHelpers.ts`, `InitStockMetadata.ts`) |
 | `stockBenchCore.ts` | Shared, environment-free benchmark logic (pure; no CLI/DOM) |
 | `stockTraderBench.ts` | CLI front end |
+| `traderV1.ts` | Frozen copy of the original strategy, kept as the baseline the current one is measured against |
 | `stockTraderViz.template.html` | GUI front end (source) |
 | `stockTraderBench.mjs`, `stockTraderViz.html` | Generated artifacts (gitignored; do not edit) |
 
 The model uses a seeded RNG, so a seed fully determines the market. Both front ends run the real strategy from `src/libraries/stock/trader.ts` via a fake `NS`, one `runStockTradingTick` per 6s stock update.
 
+The strategy ranks symbols by **edge** = `(2 * forecast - 1) * volatility`, the expected price move per update. The forecast is the game's published up-move probability, so edge is the expected return; `bench/stock/traderV1.ts` is the previous forecast-threshold strategy, frozen as a comparison point.
+
 - `pnpm run test:stock` — bundles `stockTraderBench.ts` (`build/bundleStockTraderBench.cjs`) and runs it. Defaults: `$10b` capital, 3000 updates (~5h of game time), seed 1337, BitNode 8 (shorts unlocked).
 - `pnpm run test:stock -- --selftest` — verify the port: buy/sell/short formulas, commission and spread, share caps, forecast influence, determinism, up-move rate vs. published forecast, P/L identity.
-- `pnpm run stock:viz` — builds `stockTraderViz.html` from the template, inlining the core into one self-contained page. Open the file directly (VS Code browser or any browser); no server, no module imports, no workers.
+- `pnpm run stock:viz` — builds `stockTraderViz.html` from the template, inlining the core into the page. Open the file directly (VS Code browser or any browser): the page links `webui/toolUi.css` + `toolUi.js` and spawns its seeds as blob workers, both of which work from `file://`.
 - `--capital <k|m|b|t>`, `--ticks <n>`, `--seed <n>`, `--seeds <n>` (seed `n + i * 9973`).
-- Config overrides mirror `src/libraries/stock/config.ts`: `--money-keep`, `--max-share-fraction`, `--portfolio-fraction`, `--trim-fraction`, `--budget-fraction`, `--min-shares`, `--long-buy-forecast`, `--long-sell-forecast`, `--short-buy-forecast`, `--short-sell-forecast`, `--max-volatility`, `--shorts 0|1`.
-- `--grid long-buy-forecast=0.55,0.6 --grid max-volatility=0.03,0.05 --seeds 5` ranks every combination by mean return.
+- Config overrides mirror `src/libraries/stock/config.ts`: `--entry-edge`, `--exit-edge`, `--max-positions`, `--max-weight`, `--max-share-fraction`, `--rotate-margin`, `--min-shares`, `--money-keep`, `--shorts 0|1`.
+- `--compare` runs the frozen v1 strategy on the same seeds and prints the difference; `--strategy v1` runs only the baseline.
+- `--grid entry-edge=0.002,0.0025,0.003 --grid max-positions=3,4 --seeds 5` ranks every combination by mean return.
 - `--baseline none|filtered|all` adds a buy-and-hold reference; `--json` emits machine-readable output.
 - Edits to `src/libraries/stock/*` take effect on the next run because the bundle is rebuilt first.
 - To benchmark a different strategy, import `runScenario`/`createNsStub`, or point `build/bundleStockTraderBench.cjs` at a new entry file.

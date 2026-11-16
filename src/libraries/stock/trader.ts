@@ -20,48 +20,24 @@ function portfolioValue(ns: NS, symbols: string[]): number {
   return total
 }
 
+/**
+ * Expected price move per market update: how far the forecast leans times how big the move is.
+ * Positive means the price is expected to rise, negative that it is expected to fall.
+ */
+export function stockEdge(forecast: number, volatility: number): number {
+  return (2 * forecast - 1) * volatility
+}
+
 function signalForSnapshot(
-  snap: Pick<
-    StockSymbolSnapshot,
-    "longShares" | "shortShares" | "forecast" | "volatility" | "price"
-  >,
+  snap: Pick<StockSymbolSnapshot, "longShares" | "shortShares" | "edge">,
   config: StockTraderConfig,
-  totalNetWorth: number,
   allowShorts: boolean
 ): string {
-  const volOk = snap.volatility <= config.maxVolatility
   const parts: string[] = []
-  const longValue = snap.longShares * snap.price
-  const longOverweight =
-    snap.longShares > 0 && longValue > totalNetWorth * config.portfolioFractionPerSymbol
-
-  if (snap.longShares > 0) {
-    if (snap.forecast < config.longSellForecast) {
-      parts.push("sell long")
-    } else if (longOverweight) {
-      parts.push("trim long")
-    } else {
-      parts.push("hold long")
-    }
-  } else if (volOk && snap.forecast >= config.longBuyForecast) {
-    parts.push("buy long")
-  }
-  if (allowShorts) {
-    const shortValue = snap.shortShares * snap.price
-    const shortOverweight =
-      snap.shortShares > 0 && shortValue > totalNetWorth * config.portfolioFractionPerSymbol
-    if (snap.shortShares > 0) {
-      if (snap.forecast > config.shortSellForecast) {
-        parts.push("cover short")
-      } else if (shortOverweight) {
-        parts.push("trim short")
-      } else {
-        parts.push("hold short")
-      }
-    } else if (volOk && snap.forecast <= config.shortBuyForecast) {
-      parts.push("short")
-    }
-  }
+  if (snap.longShares > 0) parts.push(snap.edge <= config.exitEdge ? "sell long" : "hold long")
+  else if (snap.edge >= config.entryEdge) parts.push("buy long")
+  if (snap.shortShares > 0) parts.push(-snap.edge <= config.exitEdge ? "cover short" : "hold short")
+  else if (allowShorts && -snap.edge >= config.entryEdge) parts.push("short")
   return parts.length > 0 ? parts.join(", ") : "wait"
 }
 
@@ -69,8 +45,6 @@ function collectSymbolSnapshot(
   ns: NS,
   symbol: string,
   config: StockTraderConfig,
-  portfolioValue: number,
-  totalNetWorth: number,
   allowShorts: boolean
 ): StockSymbolSnapshot {
   const [longShares, avgLongPrice, shortShares, avgShortPrice] = ns.stock.getPosition(symbol)
@@ -83,6 +57,7 @@ function collectSymbolSnapshot(
     bidPrice: ns.stock.getBidPrice(symbol),
     forecast,
     volatility,
+    edge: stockEdge(forecast, volatility),
     maxShares: ns.stock.getMaxShares(symbol),
     longShares,
     avgLongPrice,
@@ -92,7 +67,7 @@ function collectSymbolSnapshot(
     shortUnrealized: shortShares > 0 ? ns.stock.getSaleGain(symbol, shortShares, POS_SHORT) : 0,
     signal: "",
   }
-  snap.signal = signalForSnapshot(snap, config, totalNetWorth, allowShorts)
+  snap.signal = signalForSnapshot(snap, config, allowShorts)
   return snap
 }
 
@@ -122,10 +97,9 @@ export function buildConfigSummary(ns: NS, config: StockTraderConfig): string {
     shortLabel = "on"
   }
   return (
-    `long ${cfg.longBuyForecast}/${cfg.longSellForecast}, ` +
-    `short ${cfg.shortBuyForecast}/${cfg.shortSellForecast}, ` +
-    `vol<=${cfg.maxVolatility}, max ${(cfg.maxShareFraction * 100).toFixed(0)}% sh, ` +
-    `port ${(cfg.portfolioFractionPerSymbol * 100).toFixed(0)}%/sym, shorts ${shortLabel}`
+    `edge>=${(cfg.entryEdge * 100).toFixed(2)}%/tick, exit at ${(cfg.exitEdge * 100).toFixed(2)}%, ` +
+    `${cfg.maxPositions} pos, ${(cfg.maxWeightPerSymbol * 100).toFixed(0)}%/sym, ` +
+    `${(cfg.maxShareFraction * 100).toFixed(0)}% of max shares, rotate x${cfg.rotateMargin}, shorts ${shortLabel}`
   )
 }
 
@@ -142,9 +116,7 @@ export function collectTraderSnapshot(
   const homeCash = ns.getServerMoneyAvailable("home")
   const portfolio = portfolioValue(ns, symbolNames)
   const totalNetWorth = homeCash + portfolio
-  const symbols = symbolNames.map((sym) =>
-    collectSymbolSnapshot(ns, sym, cfg, portfolio, totalNetWorth, allowShorts)
-  )
+  const symbols = symbolNames.map((sym) => collectSymbolSnapshot(ns, sym, cfg, allowShorts))
 
   return {
     symbols,
@@ -212,7 +184,7 @@ function sellPartial(
   shares: number,
   side: StockPositionSide,
   actions: string[],
-  label: "SELL" | "COVER" | "TRIM"
+  label: "SELL" | "COVER"
 ): void {
   if (shares < 1) return
   if (side === POS_LONG) {
@@ -224,74 +196,17 @@ function sellPartial(
   }
 }
 
-function trimOverweightLong(
-  ns: NS,
-  symbol: string,
-  config: StockTraderConfig,
-  totalNetWorth: number,
-  actions: string[]
-): void {
-  const [longShares] = ns.stock.getPosition(symbol)
-  if (longShares < config.minShares) return
-
-  const price = ns.stock.getPrice(symbol)
-  const positionValue = longShares * price
-  const maxValue = totalNetWorth * config.portfolioFractionPerSymbol
-  if (positionValue <= maxValue) return
-
-  const targetShares = Math.floor(maxValue / price)
-  const sharesToTarget = longShares - targetShares
-  const maxTrim = Math.max(config.minShares, Math.floor(longShares * config.trimFractionPerTick))
-  const sellShares = Math.min(sharesToTarget, maxTrim)
-  if (sellShares >= config.minShares) {
-    sellPartial(ns, symbol, sellShares, POS_LONG, actions, "TRIM")
-  }
-}
-
-function trimOverweightShort(
-  ns: NS,
-  symbol: string,
-  config: StockTraderConfig,
-  totalNetWorth: number,
-  actions: string[]
-): void {
-  const [, , shortShares] = ns.stock.getPosition(symbol)
-  if (shortShares < config.minShares) return
-
-  const price = ns.stock.getPrice(symbol)
-  const positionValue = shortShares * price
-  const maxValue = totalNetWorth * config.portfolioFractionPerSymbol
-  if (positionValue <= maxValue) return
-
-  const targetShares = Math.floor(maxValue / price)
-  const sharesToTarget = shortShares - targetShares
-  const maxTrim = Math.max(config.minShares, Math.floor(shortShares * config.trimFractionPerTick))
-  const coverShares = Math.min(sharesToTarget, maxTrim)
-  if (coverShares >= config.minShares) {
-    sellPartial(ns, symbol, coverShares, POS_SHORT, actions, "TRIM")
-  }
-}
-
-interface TradeCandidate {
+interface Candidate {
   symbol: string
-  forecast: number
+  edge: number
   side: StockPositionSide
-  held: number
 }
 
-function budgetCapForSymbol(totalBudget: number, remainingBudget: number, fraction: number): number {
-  return Math.min(remainingBudget, Math.max(0, totalBudget * fraction))
-}
-
-function maxBuyableShares(
-  ns: NS,
-  symbol: string,
-  _side: StockPositionSide,
-  maxShareFraction: number,
-  currentHeld: number
-): number {
-  const cap = Math.floor(ns.stock.getMaxShares(symbol) * maxShareFraction) - currentHeld
-  return Math.max(0, cap)
+/** Shares we may still add before hitting our own share cap (long + short count together). */
+function shareRoom(ns: NS, symbol: string, maxShareFraction: number): number {
+  const [longShares, , shortShares] = ns.stock.getPosition(symbol)
+  const cap = Math.floor(ns.stock.getMaxShares(symbol) * maxShareFraction)
+  return Math.max(0, cap - longShares - shortShares)
 }
 
 function sharesAffordable(
@@ -314,37 +229,44 @@ function sharesAffordable(
   return 0
 }
 
-function tryBuyCandidate(
+interface Budget {
+  remaining: number
+}
+
+/** Adds to a position up to `targetShares`, capped by our share allowance and the remaining budget. */
+function growPosition(
   ns: NS,
-  candidate: TradeCandidate,
+  candidate: Candidate,
   config: StockTraderConfig,
-  budget: { total: number; remaining: number },
+  targetShares: number,
+  budget: Budget,
   actions: string[]
-): void {
-  const symbolBudget = budgetCapForSymbol(budget.total, budget.remaining, config.budgetFractionPerSymbol)
-  const maxShares = maxBuyableShares(
-    ns,
-    candidate.symbol,
-    candidate.side,
-    config.maxShareFraction,
-    candidate.held
-  )
+): boolean {
+  if (budget.remaining <= 0) return false
+  const [longShares, , shortShares] = ns.stock.getPosition(candidate.symbol)
+  const held = candidate.side === POS_LONG ? longShares : shortShares
+  const wanted = Math.min(targetShares - held, shareRoom(ns, candidate.symbol, config.maxShareFraction))
   const shares = sharesAffordable(
     ns,
     candidate.symbol,
     candidate.side,
-    symbolBudget,
+    budget.remaining,
     config.minShares,
-    maxShares
+    wanted
   )
-  if (shares <= 0) return
+  if (shares <= 0) return false
 
   const before = ns.getServerMoneyAvailable("home")
   buyShares(ns, candidate.symbol, shares, candidate.side, actions)
   budget.remaining -= before - ns.getServerMoneyAvailable("home")
+  return true
 }
 
-/** One market tick: exit weak positions, trim overweight, then enter strong ones. */
+/**
+ * One market tick. Ranks every symbol by edge, closes positions whose edge has turned,
+ * fills open slots with the strongest candidates, rotates capital out of the weakest holding
+ * when something much better appears, then tops the remaining holdings up to target weight.
+ */
 export function runStockTradingTick(
   ns: NS,
   config: StockTraderConfig = DEFAULT_STOCK_TRADER_CONFIG
@@ -353,74 +275,91 @@ export function runStockTradingTick(
   const allowShorts = shortsActive(ns, cfg)
   const actions: string[] = []
   const symbols = ns.stock.getSymbols()
-  const homeCash = ns.getServerMoneyAvailable("home")
-  const portfolio = portfolioValue(ns, symbols)
-  const totalNetWorth = homeCash + portfolio
 
+  const edges = new Map<string, number>()
+  for (const sym of symbols) {
+    edges.set(sym, stockEdge(ns.stock.getForecast(sym), ns.stock.getVolatility(sym)))
+  }
+
+  const held = new Set<string>()
   for (const sym of symbols) {
     const [longShares, , shortShares] = ns.stock.getPosition(sym)
-    const forecast = ns.stock.getForecast(sym)
-
-    if (longShares > 0 && forecast < cfg.longSellForecast) {
+    const edge = edges.get(sym) ?? 0
+    let longLeft = longShares
+    let shortLeft = shortShares
+    if (longShares > 0 && edge <= cfg.exitEdge) {
       sellPartial(ns, sym, longShares, POS_LONG, actions, "SELL")
-    } else if (longShares > 0 && forecast >= cfg.longSellForecast) {
-      trimOverweightLong(ns, sym, cfg, totalNetWorth, actions)
+      longLeft = 0
     }
-
-    if (allowShorts && shortShares > 0 && forecast > cfg.shortSellForecast) {
+    if (allowShorts && shortShares > 0 && -edge <= cfg.exitEdge) {
       sellPartial(ns, sym, shortShares, POS_SHORT, actions, "COVER")
-    } else if (allowShorts && shortShares > 0 && forecast <= cfg.shortSellForecast) {
-      trimOverweightShort(ns, sym, cfg, totalNetWorth, actions)
+      shortLeft = 0
     }
+    if (longLeft > 0 || shortLeft > 0) held.add(sym)
   }
 
-  const budget = { total: Math.max(0, ns.getServerMoneyAvailable("home") - cfg.moneyKeep), remaining: 0 }
-  budget.remaining = budget.total
-
-  const longCandidates: TradeCandidate[] = []
-  const shortCandidates: TradeCandidate[] = []
-
+  const candidates: Candidate[] = []
   for (const sym of symbols) {
-    const [longShares, , shortShares] = ns.stock.getPosition(sym)
-    const forecast = ns.stock.getForecast(sym)
-    const vol = ns.stock.getVolatility(sym)
-    if (vol > cfg.maxVolatility) continue
+    const edge = edges.get(sym) ?? 0
+    if (edge >= cfg.entryEdge) candidates.push({ symbol: sym, edge, side: POS_LONG })
+    else if (allowShorts && -edge >= cfg.entryEdge) candidates.push({ symbol: sym, edge, side: POS_SHORT })
+  }
+  candidates.sort((a, b) => Math.abs(b.edge) - Math.abs(a.edge))
 
-    if (forecast >= cfg.longBuyForecast) {
-      const maxShares = maxBuyableShares(ns, sym, POS_LONG, cfg.maxShareFraction, longShares)
-      if (maxShares >= cfg.minShares) {
-        longCandidates.push({ symbol: sym, forecast, side: POS_LONG, held: longShares })
-      }
-    }
+  const netWorth = ns.getServerMoneyAvailable("home") + portfolioValue(ns, symbols)
+  const weight = Math.min(cfg.maxWeightPerSymbol, 1 / Math.max(1, Math.min(cfg.maxPositions, candidates.length)))
+  const targetShares = (candidate: Candidate): number => {
+    const price = ns.stock.getPrice(candidate.symbol)
+    return price > 0 ? Math.floor((netWorth * weight) / price) : 0
+  }
+  const budget: Budget = { remaining: Math.max(0, ns.getServerMoneyAvailable("home") - cfg.moneyKeep) }
 
-    if (allowShorts && forecast <= cfg.shortBuyForecast) {
-      const maxShares = maxBuyableShares(ns, sym, POS_SHORT, cfg.maxShareFraction, shortShares)
-      if (maxShares >= cfg.minShares) {
-        shortCandidates.push({ symbol: sym, forecast, side: POS_SHORT, held: shortShares })
-      }
+  for (const candidate of candidates) {
+    if (held.size >= cfg.maxPositions || budget.remaining <= 0) break
+    if (held.has(candidate.symbol)) continue
+    if (growPosition(ns, candidate, cfg, targetShares(candidate), budget, actions)) {
+      held.add(candidate.symbol)
     }
   }
 
-  longCandidates.sort((a, b) => b.forecast - a.forecast)
-  shortCandidates.sort((a, b) => a.forecast - b.forecast)
+  for (const candidate of candidates) {
+    if (held.size < cfg.maxPositions) break
+    if (held.has(candidate.symbol)) continue
 
-  for (const candidate of longCandidates) {
-    if (budget.remaining <= 0) break
-    tryBuyCandidate(ns, candidate, cfg, budget, actions)
+    let weakest: string | null = null
+    let weakestEdge = Infinity
+    for (const sym of held) {
+      const magnitude = Math.abs(edges.get(sym) ?? 0)
+      if (magnitude < weakestEdge) {
+        weakestEdge = magnitude
+        weakest = sym
+      }
+    }
+    if (weakest === null || Math.abs(candidate.edge) <= weakestEdge * cfg.rotateMargin) continue
+
+    const [weakLong, , weakShort] = ns.stock.getPosition(weakest)
+    if (weakLong > 0) sellPartial(ns, weakest, weakLong, POS_LONG, actions, "SELL")
+    if (weakShort > 0) sellPartial(ns, weakest, weakShort, POS_SHORT, actions, "COVER")
+    held.delete(weakest)
+    budget.remaining = Math.max(0, ns.getServerMoneyAvailable("home") - cfg.moneyKeep)
+    if (growPosition(ns, candidate, cfg, targetShares(candidate), budget, actions)) {
+      held.add(candidate.symbol)
+    }
   }
 
-  for (const candidate of shortCandidates) {
+  for (const candidate of candidates) {
     if (budget.remaining <= 0) break
-    tryBuyCandidate(ns, candidate, cfg, budget, actions)
+    if (!held.has(candidate.symbol)) continue
+    growPosition(ns, candidate, cfg, targetShares(candidate), budget, actions)
   }
 
   if (actions.length === 0) {
-    if (budget.total <= 0) {
+    if (budget.remaining <= 0) {
       actions.push("(no trades: no investable cash above reserve)")
-    } else if (longCandidates.length === 0 && shortCandidates.length === 0) {
-      actions.push("(no trades: no symbols pass forecast/vol filters)")
+    } else if (candidates.length === 0) {
+      actions.push(`(no trades: no symbol reaches edge ${(cfg.entryEdge * 100).toFixed(2)}%)`)
     } else {
-      actions.push("(no trades: budget or share caps blocked all orders)")
+      actions.push("(no trades: positions already at target weight)")
     }
   }
 

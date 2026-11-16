@@ -4,179 +4,117 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Stock trader benchmark</title>
+    <link rel="stylesheet" href="../../webui/toolUi.css" />
     <style>
-      :root {
-        color-scheme: dark;
-        --bg: #0d0d0d;
-        --panel: #161616;
-        --panel-alt: #1c1c1c;
-        --border: rgba(255, 255, 255, 0.12);
-        --text: #d4d4d4;
-        --muted: #888;
-        --good: #81c784;
-        --bad: #e57373;
-        --warn: #f9a825;
-      }
-
-      * { box-sizing: border-box; }
-
-      body {
-        margin: 0;
-        padding: 16px 20px 40px;
-        font-family: Consolas, "Courier New", monospace;
-        background: var(--bg);
-        color: var(--text);
-        font-size: 12px;
-        line-height: 1.45;
-      }
-
-      h1 { margin: 0 0 2px; font-size: 16px; font-weight: 600; }
-      h2 { margin: 0 0 8px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
-      .sub { color: var(--muted); margin-bottom: 14px; }
-
-      section { border: 1px solid var(--border); background: var(--panel); padding: 12px 14px; margin-bottom: 14px; }
-
-      .row { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: end; }
-
-      label { display: flex; flex-direction: column; gap: 3px; color: var(--muted); font-size: 11px; }
-
-      input, select, button { font: inherit; }
-
-      input[type="number"], input[type="text"], select {
-        color: var(--text);
-        background: #111;
-        border: 1px solid var(--border);
-        padding: 4px 6px;
-        width: 104px;
-      }
-
-      input[type="text"] { width: 170px; }
-      input[type="checkbox"] { accent-color: var(--warn); width: 14px; height: 14px; }
-
-      button {
-        color: #000;
-        background: var(--warn);
-        border: 1px solid transparent;
-        padding: 5px 12px;
-        cursor: pointer;
-        font-weight: 600;
-      }
-
-      button.secondary { background: #2a2a2a; color: var(--text); border-color: var(--border); }
-      button:disabled { opacity: 0.5; cursor: default; }
-
-      #status { min-height: 18px; color: var(--muted); margin-bottom: 14px; }
-      #status.error { color: var(--bad); }
-
-      .cards { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
-      .card { flex: 1 1 132px; border: 1px solid var(--border); background: var(--panel-alt); padding: 8px 10px; }
-      .card .k { color: var(--muted); font-size: 11px; }
-      .card .v { font-size: 15px; font-weight: 600; margin-top: 2px; }
-
-      .pos { color: var(--good); }
-      .neg { color: var(--bad); }
-
-      canvas { width: 100%; height: 260px; display: block; background: #101010; border: 1px solid var(--border); }
-
-      .legend { display: flex; gap: 16px; color: var(--muted); margin-top: 6px; font-size: 11px; }
+      /* Page-specific layout only; the shared kit (webui/toolUi.css) carries the rest. */
+      #chart { width: 100%; height: 260px; display: block; background: #101010; border: 1px solid var(--line-soft); }
+      .legend { display: flex; flex-wrap: wrap; gap: 16px; color: var(--dim); margin-top: 6px; font-size: 11px; }
       .legend i { display: inline-block; width: 14px; height: 2px; margin-right: 6px; vertical-align: middle; }
-
-      table { border-collapse: collapse; width: 100%; font-size: 11px; }
-      th, td { padding: 3px 8px; text-align: right; border-bottom: 1px solid rgba(255, 255, 255, 0.06); white-space: nowrap; }
-      th:first-child, td:first-child { text-align: left; }
-      th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
-      tbody tr:hover { background: rgba(79, 195, 247, 0.08); }
-      tbody tr.pickable { cursor: pointer; }
-
-      .scroll { max-height: 360px; overflow: auto; border: 1px solid var(--border); }
-      .grid-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px 16px; margin-bottom: 12px; }
       .hidden { display: none; }
-      .hint { color: var(--muted); font-size: 11px; margin-bottom: 10px; }
+      section { margin-bottom: 10px; }
     </style>
   </head>
   <body>
-    <h1>Stock trader benchmark</h1>
-    <div class="sub">
-      Local Bitburner market model (bitburner-src, stable) driving the real strategy from
-      src/libraries/stock/trader.ts. Seeded, so a seed fully determines the market.
-    </div>
+    <header>
+      <h1>Stock trader benchmark</h1>
+      <span class="sub">
+        Seeded Bitburner market model (bitburner-src, stable) driving src/libraries/stock/trader.ts.
+        Symbols are ranked by edge = (2 * forecast - 1) * volatility, the expected move per 6s update.
+      </span>
+      <span id="status" class="pill dim">ready</span>
+    </header>
 
-    <section>
-      <h2>Market</h2>
-      <div class="row">
-        <label>Capital<input id="capital" type="number" value="10000000000" step="1000000000" min="0" /></label>
-        <label>Updates (6s each)<input id="ticks" type="number" value="3000" step="100" min="1" /></label>
-        <label>Seed<input id="seed" type="number" value="1337" step="1" /></label>
-        <label>Seeds<input id="seeds" type="number" value="3" step="1" min="1" max="50" /></label>
-        <label>BitNode<input id="node" type="number" value="8" step="1" min="1" /></label>
-        <label>SF8 level<input id="sf8" type="number" value="3" step="1" min="0" /></label>
-        <label>
-          Baseline
-          <select id="baseline">
-            <option value="filtered" selected>hold (filtered)</option>
-            <option value="all">hold (all)</option>
-            <option value="none">none</option>
-          </select>
-        </label>
-      </div>
-    </section>
-
-    <section>
-      <h2>Strategy config</h2>
-      <div class="row" id="configFields"></div>
-      <div class="row" style="margin-top: 12px">
-        <label style="flex-direction: row; align-items: center; gap: 6px">
-          <input id="enableShorts" type="checkbox" checked />
-          enable shorts
-        </label>
-        <button id="runBtn">Run benchmark</button>
-        <button id="resetBtn" class="secondary">Reset config</button>
-        <button id="selftestBtn" class="secondary">Self-test model</button>
-      </div>
-    </section>
-
-    <div id="status">loading...</div>
-
-    <section id="results" class="hidden">
-      <h2>Results</h2>
-      <div class="cards" id="cards"></div>
-      <canvas id="chart" width="1200" height="260"></canvas>
-      <div class="legend" id="legend"></div>
-      <div style="margin-top: 14px" class="scroll">
-        <table id="symbolTable">
-          <thead>
-            <tr><th>Symbol</th><th>Trades</th><th>P/L</th><th>Position</th></tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
-
-    <section>
-      <h2>Grid sweep</h2>
-      <div class="hint">
-        Comma-separated values per field; blank keeps the current value. Every combination runs against
-        every seed, ranked by mean return. Click a result row to load that config into the form.
-      </div>
-      <div class="grid-fields" id="gridFields"></div>
-      <div class="row">
-        <button id="gridBtn">Run grid</button>
-        <span id="gridCount" class="hint" style="margin: 0"></span>
-      </div>
-      <div id="gridResults" class="hidden" style="margin-top: 12px">
-        <div class="scroll">
-          <table id="gridTable"><thead></thead><tbody></tbody></table>
+    <main>
+      <section>
+        <h2>Market</h2>
+        <div class="fields">
+          <label class="field"><span>Capital ($)</span><input id="capital" type="number" step="1000000000" min="0" /></label>
+          <label class="field"><span>Updates (6s each)</span><input id="ticks" type="number" step="100" min="1" /></label>
+          <label class="field"><span>Seed</span><input id="seed" type="number" step="1" /></label>
+          <label class="field"><span>Seeds</span><input id="seeds" type="number" step="1" min="1" max="50" /></label>
+          <label class="field"><span>BitNode</span><input id="node" type="number" step="1" min="1" /></label>
+          <label class="field"><span>SF8 level</span><input id="sf8" type="number" step="1" min="0" /></label>
+          <label class="field"><span>Workers</span><input id="workers" type="number" step="1" min="1" max="12" /></label>
+          <label class="field">
+            <span>Baseline</span>
+            <select id="baseline" data-value="filtered">
+              <option value="filtered">hold (filtered)</option>
+              <option value="all">hold (all)</option>
+              <option value="none">none</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Strategy</span>
+            <select id="strategy" data-value="current">
+              <option value="current">edge (current)</option>
+              <option value="v1">v1 (frozen baseline)</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Compare with v1</span>
+            <span class="fieldToggle"><input id="compareV1" type="checkbox" data-checked="1" checked /></span>
+          </label>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <script>/*__BENCH_CORE__*/</script>
+      <section>
+        <h2>Strategy config</h2>
+        <div class="fields" id="configFields"></div>
+        <div class="fields" style="margin-top: 4px">
+          <label class="field">
+            <span>Enable shorts</span>
+            <span class="fieldToggle"><input id="enableShorts" type="checkbox" data-checked="1" checked /></span>
+          </label>
+        </div>
+        <div class="buttons">
+          <button id="runBtn" class="primary">Run benchmark</button>
+          <button id="resetBtn" class="ghost">Reset to defaults</button>
+          <button id="selftestBtn" class="ghost">Self-test model</button>
+          <span id="workersNote" class="hint"></span>
+        </div>
+      </section>
+
+      <section id="results" class="hidden">
+        <h2>Results</h2>
+        <div class="cards" id="cards"></div>
+        <canvas id="chart" width="1200" height="260"></canvas>
+        <div class="legend" id="legend"></div>
+        <div class="scrollFrame" style="margin-top: 10px">
+          <table id="symbolTable">
+            <thead>
+              <tr><th>Symbol</th><th>Trades</th><th>P/L</th><th>Position</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <h2>Grid sweep</h2>
+        <div class="hint">
+          Comma-separated values per field; blank keeps the current value. Every combination runs against
+          every seed, ranked by mean return. Click a result row to load that config into the form.
+        </div>
+        <div class="fields" id="gridFields"></div>
+        <div class="buttons">
+          <button id="gridBtn" class="primary">Run grid</button>
+          <span id="gridCount" class="hint"></span>
+        </div>
+        <div id="gridResults" class="hidden" style="margin-top: 8px">
+          <div class="scrollFrame">
+            <table id="gridTable"><thead></thead><tbody></tbody></table>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script id="benchCore">/*__BENCH_CORE__*/</script>
+    <script src="../../webui/toolUi.js"></script>
     <script>
       const {
         DEFAULT_STOCK_TRADER_CONFIG,
         NUMERIC_CONFIG_KEYS,
         cartesianConfigs,
-        formatNumber,
         seedsFor,
         runTraderScenario,
         runHoldBaseline,
@@ -186,48 +124,59 @@
 
       const LABELS = {
         moneyKeep: "money keep ($)",
+        entryEdge: "entry edge",
+        exitEdge: "exit edge",
+        maxPositions: "max positions",
+        maxWeightPerSymbol: "max weight/symbol",
         maxShareFraction: "max share fraction",
-        portfolioFractionPerSymbol: "portfolio %/symbol",
-        trimFractionPerTick: "trim fraction/tick",
-        budgetFractionPerSymbol: "budget %/symbol",
+        rotateMargin: "rotate margin",
         minShares: "min shares",
-        longBuyForecast: "long buy forecast",
-        longSellForecast: "long sell forecast",
-        shortBuyForecast: "short buy forecast",
-        shortSellForecast: "short sell forecast",
-        maxVolatility: "max volatility",
       }
       const COLS = {
         moneyKeep: "keep",
+        entryEdge: "entry",
+        exitEdge: "exit",
+        maxPositions: "pos",
+        maxWeightPerSymbol: "wt",
         maxShareFraction: "maxSh",
-        portfolioFractionPerSymbol: "port",
-        trimFractionPerTick: "trim",
-        budgetFractionPerSymbol: "budget",
+        rotateMargin: "rot",
         minShares: "minSh",
-        longBuyForecast: "longBuy",
-        longSellForecast: "longSell",
-        shortBuyForecast: "shortBuy",
-        shortSellForecast: "shortSell",
-        maxVolatility: "maxVol",
       }
-      const SERIES_COLORS = ["#4fc3f7", "#81c784", "#e57373", "#ffb74d"]
+      const SERIES_COLORS = ["#43bf43", "#893bc8", "#e0b040", "#e05555"]
+      const STORAGE_KEY = "toolui.stockBench.v1"
+      const MARKET_DEFAULTS = { capital: 1e10, ticks: 3000, seed: 1337, seeds: 3, node: 8, sf8: 3 }
+      const MAX_WORKERS = 12
 
       const $ = (id) => document.getElementById(id)
-      const money = (v) => `$${formatNumber(v)}`
-      const pct = (v) => `${(v * 100).toFixed(2)}%`
-      const signedPct = (v) => `${v >= 0 ? "+" : "-"}${(Math.abs(v) * 100).toFixed(2)}%`
-      const signedMoney = (v) => `${v >= 0 ? "+" : "-"}${money(Math.abs(v))}`
-      const cls = (v) => (v >= 0 ? "pos" : "neg")
+      const money = (value) => ToolUi.format.money(value)
+      const pct = (value) => ToolUi.format.pct(value)
+      const signedPct = (value) => ToolUi.format.signedPct(value)
+      const signedMoney = (value) => ToolUi.format.signedMoney(value)
+      const cls = (value) => ToolUi.tone(value)
+
+      // ---- form ------------------------------------------------------------
+      // Empty inputs show their default as a grey placeholder, so a white value always
+      // means "changed from the default".
+
+      function prepareNumber(input, value) {
+        input.value = ""
+        input.placeholder = String(value)
+      }
+
+      for (const [id, value] of Object.entries(MARKET_DEFAULTS)) prepareNumber($(id), value)
 
       const configInputs = {}
       for (const key of NUMERIC_CONFIG_KEYS) {
         const label = document.createElement("label")
-        label.textContent = LABELS[key] ?? key
+        label.className = "field"
+        const caption = document.createElement("span")
+        caption.textContent = LABELS[key] ?? key
         const input = document.createElement("input")
         input.type = "number"
-        input.step = key === "moneyKeep" || key === "minShares" ? "1" : "0.005"
-        input.value = String(DEFAULT_STOCK_TRADER_CONFIG[key])
-        label.appendChild(input)
+        input.id = `cfg_${key}`
+        input.step = key === "moneyKeep" || key === "minShares" || key === "maxPositions" ? "1" : "0.005"
+        prepareNumber(input, DEFAULT_STOCK_TRADER_CONFIG[key])
+        label.append(caption, input)
         $("configFields").appendChild(label)
         configInputs[key] = input
       }
@@ -235,21 +184,30 @@
       const gridInputs = {}
       for (const key of NUMERIC_CONFIG_KEYS) {
         const label = document.createElement("label")
-        label.textContent = `${LABELS[key] ?? key} [grid]`
+        label.className = "field"
+        const caption = document.createElement("span")
+        caption.textContent = `${LABELS[key] ?? key} [grid]`
         const input = document.createElement("input")
         input.type = "text"
+        input.id = `grid_${key}`
         input.placeholder = "blank = fixed"
-        label.appendChild(input)
+        label.append(caption, input)
         $("gridFields").appendChild(label)
         gridInputs[key] = input
       }
 
+      // The worker count defaults to the core count (grey placeholder), capped at 12.
+      prepareNumber($("workers"), ToolUi.coreCount())
+      $("workers").max = String(MAX_WORKERS)
+
+      const form = ToolUi.persist(STORAGE_KEY, document)
+      form.restore()
+
       function readConfig() {
         const config = {}
         for (const key of NUMERIC_CONFIG_KEYS) {
-          const raw = configInputs[key].value.trim()
-          const n = Number(raw)
-          if (raw !== "" && Number.isFinite(n)) config[key] = n
+          const value = ToolUi.numberOf(configInputs[key])
+          if (Number.isFinite(value)) config[key] = value
         }
         config.enableShorts = $("enableShorts").checked
         return config
@@ -257,15 +215,17 @@
 
       function readMarket() {
         return {
-          capital: Math.max(0, Number($("capital").value) || 0),
-          ticks: Math.max(1, Math.floor(Number($("ticks").value) || 1)),
-          bitNode: Math.max(1, Math.floor(Number($("node").value) || 1)),
-          ownedSf8: Math.max(0, Math.floor(Number($("sf8").value) || 0)),
+          capital: Math.max(0, ToolUi.numberOf("capital") || 0),
+          ticks: Math.max(1, Math.floor(ToolUi.numberOf("ticks") || 1)),
+          bitNode: Math.max(1, Math.floor(ToolUi.numberOf("node") || 1)),
+          ownedSf8: Math.max(0, Math.floor(ToolUi.numberOf("sf8") || 0)),
         }
       }
 
-      const readSeedCount = () => Math.max(1, Math.floor(Number($("seeds").value) || 1))
-      const readSeeds = () => seedsFor(Number($("seed").value) || 0, readSeedCount())
+      const readSeedCount = () => Math.max(1, Math.floor(ToolUi.numberOf("seeds") || 1))
+      const readSeeds = () => seedsFor(Math.floor(ToolUi.numberOf("seed") || 0), readSeedCount())
+      const readWorkerCount = () =>
+        Math.max(1, Math.min(MAX_WORKERS, Math.floor(ToolUi.numberOf("workers") || ToolUi.coreCount())))
 
       function readGrid() {
         const grid = {}
@@ -281,9 +241,8 @@
         return grid
       }
 
-      function setStatus(kind, text) {
-        $("status").className = kind
-        $("status").textContent = text
+      function setStatus(text, kind) {
+        ToolUi.setStatus($("status"), text, kind)
       }
 
       function setBusy(busy) {
@@ -293,16 +252,75 @@
       }
 
       function updateGridCount() {
-        const grid = readGrid()
         try {
-          const configs = cartesianConfigs(readConfig(), grid)
-          const swept = Object.keys(grid)
+          const configs = cartesianConfigs(readConfig(), readGrid())
+          const swept = Object.keys(readGrid())
           $("gridCount").textContent = swept.length
             ? `${configs.length} configs x ${readSeedCount()} seeds = ${configs.length * readSeedCount()} runs`
             : "no field filled in yet"
         } catch (error) {
           $("gridCount").textContent = String(error.message ?? error)
         }
+      }
+
+      // ---- workers ---------------------------------------------------------
+      // The core is already in the page as a script tag, so its own text is all a worker
+      // needs: no second copy of the bundle, and it works from file:// as well as http://.
+
+      const WORKER_SOURCE = `${$("benchCore").textContent}
+function runBenchJob(job) {
+  if (job.kind === "hold") return StockBench.runHoldBaseline(job.options, job.filtered)
+  return StockBench.runTraderScenario(job.options, job.strategy)
+}
+self.onmessage = function (event) {
+  const data = event.data || {}
+  try {
+    self.postMessage({ index: data.index, result: runBenchJob(data.job) })
+  } catch (error) {
+    self.postMessage({ index: data.index, error: String((error && error.stack) || error) })
+  }
+}
+`
+
+      let pool = null
+      let poolSize = 0
+
+      function ensurePool() {
+        const wanted = readWorkerCount()
+        if (pool && poolSize === wanted) return pool
+        if (pool) pool.terminate()
+        pool = ToolUi.pool(WORKER_SOURCE, wanted)
+        poolSize = pool ? pool.size : 0
+        $("workersNote").textContent = pool
+          ? `${pool.size} worker${pool.size === 1 ? "" : "s"}`
+          : "single-threaded (workers unavailable here)"
+        return pool
+      }
+
+      /** Run jobs across the pool, falling back to this thread when workers are unusable. */
+      async function runJobs(jobs, onProgress) {
+        const active = ensurePool()
+        if (active) {
+          try {
+            return await active.map(jobs, onProgress)
+          } catch (error) {
+            active.terminate()
+            pool = null
+            poolSize = 0
+            $("workersNote").textContent = "single-threaded (worker failed, see console)"
+            console.error("worker run failed, falling back to the main thread", error)
+          }
+        }
+        const results = []
+        for (const job of jobs) {
+          results.push(
+            job.kind === "hold"
+              ? runHoldBaseline(job.options, job.filtered)
+              : runTraderScenario(job.options, job.strategy),
+          )
+          if (onProgress) onProgress(results.length, jobs.length)
+        }
+        return results
       }
 
       // ---- chart -----------------------------------------------------------
@@ -349,7 +367,7 @@
         const x = (i, n) => padL + (n <= 1 ? 0 : (i / (n - 1)) * plotW)
         const y = (p) => padT + plotH - ((p - min) / (max - min)) * plotH
 
-        ctx.font = "10px Consolas, monospace"
+        ctx.font = "10px monospace"
         ctx.strokeStyle = "rgba(255,255,255,0.08)"
         ctx.fillStyle = "#888"
         ctx.lineWidth = 1
@@ -403,28 +421,32 @@
       }
 
       // ---- results ---------------------------------------------------------
-      function renderCards(stats, holdFiltered, holdAll) {
+      function renderCards(stats, holdFiltered, holdAll, v1Stats) {
         const cards = [
-          { k: "mean return", v: signedPct(stats.meanReturnPct), c: cls(stats.meanReturnPct) },
-          { k: "median return", v: signedPct(stats.medianReturnPct), c: cls(stats.medianReturnPct) },
-          { k: "std dev", v: pct(stats.stdReturnPct), c: "" },
-          { k: "worst seed", v: signedPct(stats.minReturnPct), c: cls(stats.minReturnPct) },
-          { k: "mean max DD", v: `-${pct(stats.meanMaxDrawdownPct)}`, c: "neg" },
-          { k: "mean trades", v: stats.meanTrades.toFixed(0), c: "" },
-          { k: "mean commission", v: money(stats.meanCommission), c: "" },
-          { k: "mean net worth", v: money(stats.meanNetWorth), c: "" },
+          { k: "mean return", v: signedPct(stats.meanReturnPct), tone: cls(stats.meanReturnPct) },
+          { k: "median return", v: signedPct(stats.medianReturnPct), tone: cls(stats.medianReturnPct) },
+          { k: "std dev", v: pct(stats.stdReturnPct) },
+          { k: "worst seed", v: signedPct(stats.minReturnPct), tone: cls(stats.minReturnPct) },
+          { k: "mean max DD", v: `-${pct(stats.meanMaxDrawdownPct)}`, tone: "neg" },
+          { k: "mean trades", v: stats.meanTrades.toFixed(0) },
+          { k: "mean commission", v: money(stats.meanCommission) },
+          { k: "mean net worth", v: money(stats.meanNetWorth) },
         ]
+        if (v1Stats) {
+          const ratio = v1Stats.meanReturnPct !== 0 ? stats.meanReturnPct / v1Stats.meanReturnPct : NaN
+          cards.push({ k: "vs v1 baseline", v: ToolUi.format.ratio(ratio), tone: cls(stats.meanReturnPct - v1Stats.meanReturnPct) })
+          cards.push({ k: "v1 mean return", v: signedPct(v1Stats.meanReturnPct), tone: cls(v1Stats.meanReturnPct) })
+          cards.push({ k: "v1 mean trades", v: v1Stats.meanTrades.toFixed(0) })
+        }
         if (holdFiltered) {
           const delta = stats.meanReturnPct - holdFiltered.returnPct
-          cards.push({ k: "vs hold (filtered)", v: signedPct(delta), c: cls(delta) })
+          cards.push({ k: "vs hold (filtered)", v: signedPct(delta), tone: cls(delta) })
         }
         if (holdAll) {
           const delta = stats.meanReturnPct - holdAll.returnPct
-          cards.push({ k: "vs hold (all)", v: signedPct(delta), c: cls(delta) })
+          cards.push({ k: "vs hold (all)", v: signedPct(delta), tone: cls(delta) })
         }
-        $("cards").innerHTML = cards
-          .map((card) => `<div class="card"><div class="k">${card.k}</div><div class="v ${card.c}">${card.v}</div></div>`)
-          .join("")
+        ToolUi.setCards($("cards"), cards)
       }
 
       function renderSymbols(perSymbol) {
@@ -441,38 +463,50 @@
           .join("")
       }
 
-      function runBenchmark() {
+      async function runBenchmark() {
         const market = readMarket()
         const seeds = readSeeds()
         const options = { ...market, config: readConfig() }
         const baseline = $("baseline").value
+        const strategy = $("strategy").value
+        const compare = $("compareV1").checked && strategy === "current"
 
         setBusy(true)
-        setStatus("", `running ${seeds.length} seed${seeds.length === 1 ? "" : "s"}...`)
         const started = performance.now()
+        const progress = (done, total) => setStatus(`running ${done}/${total}...`)
+        progress(0, 1)
         try {
-          const results = seeds.map((seed) => runTraderScenario({ ...options, seed }))
-          const stats = aggregate(results)
-          const holdFiltered = baseline === "none" ? null : runHoldBaseline({ ...options, seed: seeds[0] }, true)
-          const holdAll = baseline === "all" ? runHoldBaseline({ ...options, seed: seeds[0] }, false) : null
+          const jobs = seeds.map((seed) => ({ kind: "strategy", strategy, options: { ...options, seed } }))
+          if (compare) {
+            for (const seed of seeds) jobs.push({ kind: "strategy", strategy: "v1", options: { ...options, seed } })
+          }
+          if (baseline !== "none") jobs.push({ kind: "hold", filtered: true, options: { ...options, seed: seeds[0] } })
+          if (baseline === "all") jobs.push({ kind: "hold", filtered: false, options: { ...options, seed: seeds[0] } })
 
-          renderCards(stats, holdFiltered, holdAll)
-          renderSymbols(results[0].perSymbol)
+          const results = await runJobs(jobs, progress)
+          const strategyResults = results.slice(0, seeds.length)
+          const v1Results = compare ? results.slice(seeds.length, seeds.length * 2) : null
+          const base = seeds.length * (compare ? 2 : 1)
+          const holdFiltered = baseline === "none" ? null : results[base]
+          const holdAll = baseline === "all" ? results[base + 1] : null
 
-          const series = [{ label: `strategy seed ${results[0].seed}`, values: results[0].equityCurve }]
+          const stats = aggregate(strategyResults)
+          const v1Stats = v1Results ? aggregate(v1Results) : null
+          renderCards(stats, holdFiltered, holdAll, v1Stats)
+          renderSymbols(strategyResults[0].perSymbol)
+
+          const series = [{ label: `${strategy} seed ${strategyResults[0].seed}`, values: strategyResults[0].equityCurve }]
+          if (v1Results) series.push({ label: "v1 baseline", values: v1Results[0].equityCurve })
           if (holdFiltered) series.push({ label: "hold (filtered)", values: holdFiltered.equityCurve })
           if (holdAll) series.push({ label: "hold (all)", values: holdAll.equityCurve })
           drawChart(series)
 
           $("results").classList.remove("hidden")
           const seconds = ((performance.now() - started) / 1000).toFixed(2)
-          setStatus(
-            "",
-            `done in ${seconds}s - ${seeds.length} seed${seeds.length === 1 ? "" : "s"}, ` +
-              `${stats.meanTrades.toFixed(0)} trades avg`,
-          )
+          const note = strategy === "v1" ? " (v1 ignores the config form)" : ""
+          setStatus(`done in ${seconds}s - ${seeds.length} seed${seeds.length === 1 ? "" : "s"}${note}`)
         } catch (error) {
-          setStatus("error", String(error?.stack ?? error))
+          setStatus(String(error?.stack ?? error), "error")
         } finally {
           setBusy(false)
         }
@@ -481,7 +515,7 @@
       // ---- grid ------------------------------------------------------------
       let lastGrid = []
 
-      function runGrid() {
+      async function runGrid() {
         const market = readMarket()
         const grid = readGrid()
         const seeds = readSeeds()
@@ -491,7 +525,7 @@
         try {
           configs = cartesianConfigs(base, grid)
         } catch (error) {
-          setStatus("error", String(error.message ?? error))
+          setStatus(String(error.message ?? error), "error")
           return
         }
 
@@ -499,19 +533,27 @@
         setBusy(true)
         const started = performance.now()
         try {
+          const jobs = []
+          for (const config of configs) {
+            for (const seed of seeds) {
+              jobs.push({ kind: "strategy", strategy: "current", options: { ...market, config, seed } })
+            }
+          }
+          const results = await runJobs(jobs, (done, total) => setStatus(`grid ${done}/${total}...`))
+
           lastGrid = configs
-            .map((config) => {
-              const results = seeds.map((seed) => runTraderScenario({ ...market, config, seed }))
-              return { config, stats: aggregate(results) }
-            })
+            .map((config, index) => ({
+              config,
+              stats: aggregate(results.slice(index * seeds.length, (index + 1) * seeds.length)),
+            }))
             .sort((a, b) => b.stats.meanReturnPct - a.stats.meanReturnPct)
 
           renderGridTable(swept)
           $("gridResults").classList.remove("hidden")
           const seconds = ((performance.now() - started) / 1000).toFixed(2)
-          setStatus("", `grid done in ${seconds}s - ${lastGrid.length} configs x ${seeds.length} seeds`)
+          setStatus(`grid done in ${seconds}s - ${lastGrid.length} configs x ${seeds.length} seeds`)
         } catch (error) {
-          setStatus("error", String(error?.stack ?? error))
+          setStatus(String(error?.stack ?? error), "error")
         } finally {
           setBusy(false)
         }
@@ -548,7 +590,8 @@
               if (row.config[key] !== undefined) configInputs[key].value = String(row.config[key])
             }
             if (row.config.enableShorts !== undefined) $("enableShorts").checked = row.config.enableShorts
-            setStatus("", `loaded grid result #${Number(tr.dataset.index) + 1} into the form`)
+            form.save()
+            setStatus(`loaded grid result #${Number(tr.dataset.index) + 1} into the form`)
           })
         })
       }
@@ -557,27 +600,29 @@
       $("runBtn").addEventListener("click", runBenchmark)
       $("gridBtn").addEventListener("click", runGrid)
       $("resetBtn").addEventListener("click", () => {
-        for (const key of NUMERIC_CONFIG_KEYS) configInputs[key].value = String(DEFAULT_STOCK_TRADER_CONFIG[key])
-        $("enableShorts").checked = DEFAULT_STOCK_TRADER_CONFIG.enableShorts
-        setStatus("", "config reset to src/libraries/stock/config.ts defaults")
+        form.clear()
+        setStatus("config reset to src/libraries/stock/config.ts defaults")
       })
       $("selftestBtn").addEventListener("click", () => {
         setBusy(true)
         try {
           const failures = runSelfTest()
-          if (failures.length === 0) setStatus("", "self-test OK - model matches the game formulas")
-          else setStatus("error", `self-test FAILED (${failures.length}): ${failures.join("; ")}`)
+          if (failures.length === 0) setStatus("self-test OK - model matches the game formulas")
+          else setStatus(`self-test FAILED (${failures.length}): ${failures.join("; ")}`, "error")
         } catch (error) {
-          setStatus("error", String(error?.stack ?? error))
+          setStatus(String(error?.stack ?? error), "error")
         } finally {
           setBusy(false)
         }
       })
 
       for (const input of Object.values(gridInputs)) input.addEventListener("input", updateGridCount)
-      for (const id of ["capital", "ticks", "seed", "seeds", "node", "sf8"]) $(id).addEventListener("input", updateGridCount)
+      for (const id of ["capital", "ticks", "seed", "seeds", "node", "sf8", "workers", "strategy", "baseline", "compareV1"]) {
+        $(id).addEventListener("input", updateGridCount)
+      }
       updateGridCount()
-      setStatus("", "ready")
+      ensurePool()
+      setStatus("ready")
       if (new URLSearchParams(location.search).has("autorun")) runBenchmark()
     </script>
   </body>

@@ -1,0 +1,437 @@
+/*
+ * Shared UI kit for the browser tools in this repo (ipvgo-engine/web/bench.html,
+ * bench/stock/stockTraderViz.html, bench/koth/kingOfTheHillViz.html).
+ *
+ * Matches the in-game tail UI (src/libraries/scriptLogUi.ts): monospace 12px, #141414
+ * background, 1px translucent-white cell borders, no rounded corners.
+ *
+ * Rules here are the ones every tool page needs. Page-specific layout stays in the page.
+ * Load this first, then the page's own <style>, so a page can still override anything.
+ */
+
+:root {
+  --bg: #141414;
+  --panel: transparent;
+  --panel-2: rgba(255, 255, 255, 0.06);
+  --line: rgba(255, 255, 255, 0.15);
+  --line-soft: rgba(255, 255, 255, 0.08);
+  --header-bg: rgba(255, 255, 255, 0.04);
+  --selected-bg: rgba(255, 255, 255, 0.06);
+  --active-bg: rgba(0, 255, 0, 0.12);
+  --highlight-bg: rgba(0, 255, 0, 0.18);
+  --text: #cccccc;
+  --dim: #888888;
+  --accent: #43bf43;
+  --accent-2: #893bc8;
+  --warn: #e0b040;
+  --bad: #e05555;
+}
+
+* {
+  box-sizing: border-box;
+}
+html {
+  color-scheme: dark;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+}
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 0;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.35);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ---- page shell ---------------------------------------------------------- */
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: monospace;
+  font-size: 12px;
+  font-variant-emoji: text;
+}
+
+main {
+  padding: 8px;
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+}
+header h1 {
+  font-size: 12px;
+  margin: 0;
+  font-weight: bold;
+  white-space: nowrap;
+}
+header .sub,
+.sub {
+  color: var(--dim);
+  font-size: 12px;
+}
+/* The description absorbs the free space so the title stays on one line. */
+header > .sub {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+section {
+  background: var(--panel);
+  padding: 0;
+  min-width: 0;
+}
+section h2 {
+  font-size: 12px;
+  line-height: 16px;
+  margin: 0 0 4px;
+  font-weight: bold;
+  color: var(--text);
+}
+section h2::before {
+  content: "=== ";
+}
+section h2::after {
+  content: " ===";
+}
+section h2 .dim {
+  font-weight: normal;
+}
+
+.pill {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  font-size: 12px;
+}
+.pill.running {
+  background: var(--active-bg);
+  font-weight: bold;
+}
+.pill.finished {
+  background: var(--active-bg);
+}
+.pill.failed {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+header .pill {
+  margin-left: auto;
+}
+
+/* ---- form controls ------------------------------------------------------- */
+
+.fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0 18px;
+}
+
+label.field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+label.field span {
+  color: var(--dim);
+}
+/* Keeps a bare checkbox in the same column as the 150px inputs next to it. */
+label.field .fieldToggle {
+  flex: 0 0 150px;
+  display: flex;
+  align-items: center;
+}
+
+.switchGroup {
+  border-top: 1px solid var(--line-soft);
+  margin-top: 6px;
+  padding-top: 4px;
+}
+.switchHead {
+  color: var(--dim);
+  font-size: 12px;
+  margin-bottom: 4px;
+  cursor: help;
+}
+
+/* An empty input shows its default as a grey placeholder; a typed value is white. */
+input,
+select {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line-soft);
+  border-radius: 0;
+  padding: 0 0.5ch;
+  height: 22px;
+  font-family: monospace;
+  font-size: 12px;
+  width: 150px;
+  flex: 0 0 150px;
+}
+input::placeholder {
+  color: #666666;
+  opacity: 1;
+}
+input:focus,
+select:focus {
+  outline: none;
+  border-color: var(--line);
+  background: var(--selected-bg);
+}
+input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  padding-right: 2.5ch;
+  background-image:
+    linear-gradient(45deg, transparent 50%, #888 50%), linear-gradient(135deg, #888 50%, transparent 50%);
+  background-position:
+    calc(100% - 9px) 9px,
+    calc(100% - 5px) 9px;
+  background-size:
+    4px 4px,
+    4px 4px;
+  background-repeat: no-repeat;
+}
+select option {
+  background: #141414;
+  color: #cccccc;
+}
+/* Solid equivalent of --active-bg (rgba(0,255,0,0.12)) over #141414; popups cannot use alpha. */
+select option:checked,
+select option:hover,
+select option:focus {
+  background: #113011 linear-gradient(#113011, #113011);
+  color: #cccccc;
+}
+
+/* Checkbox drawn like the other controls: a square with the same 1px border that fills
+   with the active colour. The mark is an X corner to corner, as an inline SVG so it
+   renders on a replaced element without relying on ::after. */
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  cursor: pointer;
+}
+input[type="checkbox"]:hover {
+  border-color: var(--dim);
+}
+input[type="checkbox"]:focus-visible {
+  outline: 1px solid var(--line);
+  outline-offset: 1px;
+}
+input[type="checkbox"]:checked {
+  border-color: var(--accent);
+  background: var(--active-bg)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M2.8 2.8 L7.2 7.2 M7.2 2.8 L2.8 7.2' fill='none' stroke='%2343bf43' stroke-width='1.3'/%3E%3C/svg%3E")
+    center / 10px 10px no-repeat;
+}
+input[type="checkbox"]:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.buttons {
+  display: flex;
+  gap: 2px;
+  margin-top: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+button {
+  flex: 0 0 auto;
+  cursor: pointer;
+  border-radius: 0;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  padding: 4px 8px;
+  line-height: 16px;
+  font-family: monospace;
+  font-size: 12px;
+}
+/* Opt in when the buttons should share the row (a narrow pane, or a pair that must match). */
+.buttons.fill > button {
+  flex: 1 1 0;
+}
+button.primary {
+  background: var(--active-bg);
+  font-weight: bold;
+}
+button.ghost {
+  margin-left: 8px;
+  padding: 4px 8px;
+  font-weight: normal;
+  flex: 0 0 auto;
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.tab {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--dim);
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.tab.on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ---- text tones ---------------------------------------------------------- */
+
+.small {
+  font-size: 12px;
+}
+.dim {
+  color: var(--dim);
+}
+.hint {
+  color: var(--dim);
+  font-size: 11px;
+}
+.win,
+.pos {
+  color: var(--accent);
+}
+.loss,
+.neg {
+  color: var(--bad);
+}
+.warn {
+  color: var(--warn);
+}
+.err {
+  color: var(--bad);
+  font-size: 12px;
+  white-space: pre-wrap;
+  margin-top: 8px;
+}
+.info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 16px;
+  line-height: 16px;
+  color: var(--dim);
+  font-size: 12px;
+}
+.info b {
+  color: var(--text);
+  font-weight: bold;
+}
+
+/* ---- tables -------------------------------------------------------------- */
+
+.tableScroll {
+  overflow-x: auto;
+}
+.scrollFrame {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--line-soft);
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+th,
+td {
+  height: 22px;
+  padding: 0 0.5ch;
+  text-align: right;
+  white-space: nowrap;
+  border: 1px solid var(--line-soft);
+}
+th {
+  height: 26px;
+  color: var(--text);
+  font-weight: bold;
+  background: var(--header-bg);
+  border-color: var(--line);
+}
+th:first-child,
+td:first-child {
+  text-align: left;
+}
+tr.total td {
+  background: var(--selected-bg);
+  font-weight: bold;
+}
+tbody tr:hover {
+  background: var(--selected-bg);
+}
+tr.pickable {
+  cursor: pointer;
+}
+
+/* ---- stat cards ---------------------------------------------------------- */
+
+.cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 10px;
+}
+.card {
+  flex: 1 1 132px;
+  border: 1px solid var(--line-soft);
+  background: var(--panel-2);
+  padding: 4px 6px;
+}
+.card .k {
+  color: var(--dim);
+  font-size: 11px;
+}
+.card .v {
+  font-size: 14px;
+  font-weight: bold;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}

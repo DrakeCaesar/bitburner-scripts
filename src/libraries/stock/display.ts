@@ -13,6 +13,11 @@ function pct(value: number): string {
   return `${(value * 100).toFixed(1)}%`
 }
 
+function edgePct(value: number): string {
+  const sign = value >= 0 ? "+" : "-"
+  return `${sign}${(Math.abs(value) * 100).toFixed(3)}%`
+}
+
 function formatPosition(snap: StockSymbolSnapshot): string {
   const parts: string[] = []
   if (snap.longShares > 0) parts.push(`L ${snap.longShares}`)
@@ -49,7 +54,7 @@ function populatePositionsTab(ns: NS, tabbedLog: TabbedScriptLogBuilder, snapsho
     const hasPosition = snap.longShares > 0 || snap.shortShares > 0
     const actionable = snap.signal !== "wait"
     if (hasPosition || actionable) {
-      for (let col = 0; col < 7; col++) highlightCells.add(`${rowIdx},${col}`)
+      for (let col = 0; col < 8; col++) highlightCells.add(`${rowIdx},${col}`)
     }
 
     const unrealized = snap.longUnrealized + snap.shortUnrealized
@@ -58,6 +63,7 @@ function populatePositionsTab(ns: NS, tabbedLog: TabbedScriptLogBuilder, snapsho
       formatSnapshotMoney(ns, snap.price),
       pct(snap.forecast),
       pct(snap.volatility),
+      edgePct(snap.edge),
       formatPosition(snap),
       snap.signal,
       formatSnapshotMoney(ns, unrealized),
@@ -71,6 +77,7 @@ function populatePositionsTab(ns: NS, tabbedLog: TabbedScriptLogBuilder, snapsho
       col("Price", "right", W.money),
       col("Fcst", "right", W.rep),
       col("Vol", "right", W.rep),
+      col("Edge", "right", W.rep),
       col("Pos", "left", W.rate),
       col("Signal", "left", W.signal),
       col("Unreal P/L", "right", W.pl),

@@ -1570,6 +1570,26 @@ function handleBenchPage(req, res) {
   res.end(fs.readFileSync(file))
 }
 
+// The bench page links the shared UI kit from the repo root ( ../../webui/... ), which the
+// page's own route cannot express, so serve it explicitly. Only these asset kinds, and only
+// by base name, so a crafted path cannot reach anything else.
+const WEBUI_DIR = path.join(__dirname, "..", "webui")
+const WEBUI_TYPES = {
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+}
+
+function handleWebUiAsset(req, res, pathname) {
+  const name = path.basename(pathname)
+  const type = WEBUI_TYPES[path.extname(name)]
+  const file = path.join(WEBUI_DIR, name)
+  if (!type || !fs.existsSync(file)) {
+    return sendJson(res, 404, { error: `unknown shared UI asset: ${name}` })
+  }
+  res.writeHead(200, { "Content-Type": type, "Cache-Control": "no-store" })
+  res.end(fs.readFileSync(file))
+}
+
 function activeEngine() {
   if (!fs.existsSync(mcgsExecutablePath())) return "missing"
   // IPVGO_ENGINE chooses between the modes of the one engine binary: the policy
@@ -2011,6 +2031,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/bench") {
     handleBenchPage(req, res)
+    return
+  }
+
+  if (req.method === "GET" && url.pathname.startsWith("/webui/")) {
+    handleWebUiAsset(req, res, url.pathname)
     return
   }
 

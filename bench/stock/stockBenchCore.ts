@@ -21,6 +21,7 @@ import {
   mulberry32,
   type SimTrade,
 } from "./stockMarketModel.js"
+import { TRADER_V1_CONFIG, runStockTradingTickV1 } from "./traderV1.js"
 
 // Re-exported so the GUI bundle gets the config defaults and money formatter.
 export { DEFAULT_STOCK_TRADER_CONFIG } from "@/libraries/stock/config.js"
@@ -233,18 +234,24 @@ export function runScenario(
   }
 }
 
+/** Which strategy implementation a scenario runs. `v1` is the frozen baseline in traderV1.ts. */
+export type StrategyId = "current" | "v1"
+
 /** Runs src/libraries/stock/trader.ts against the market model, one call per stock update. */
-export function runTraderScenario(options: BenchOptions): BenchResult {
-  const config = mergeStockTraderConfig(options.config)
+export function runTraderScenario(options: BenchOptions, strategy: StrategyId = "current"): BenchResult {
   return runScenario(options, (sim) => {
     const ns = createNsStub(sim, { bitNode: options.bitNode, ownedSf8: options.ownedSf8 })
+    if (strategy === "v1") {
+      return { tick: () => runStockTradingTickV1(ns as unknown as NS, TRADER_V1_CONFIG) }
+    }
+    const config = mergeStockTraderConfig(options.config)
     return { tick: () => runStockTradingTick(ns as unknown as NS, config) }
   })
 }
 
 /**
  * Buy-and-hold baseline: equal-weight long positions taken at the first update, then held.
- * `filtered` restricts picks to symbols the strategy config would consider buyable.
+ * `filtered` restricts picks to symbols the strategy would consider buyable (same edge threshold).
  */
 export function runHoldBaseline(options: BenchOptions, filtered: boolean): BenchResult {
   const config = mergeStockTraderConfig(options.config)
@@ -255,7 +262,7 @@ export function runHoldBaseline(options: BenchOptions, filtered: boolean): Bench
       if (filtered) {
         picks = picks.filter((symbol) => {
           const stock = sim.getStock(symbol)
-          return stock.getVolatility() <= config.maxVolatility && stock.getForecast() >= config.longBuyForecast
+          return (2 * stock.getForecast() - 1) * stock.getVolatility() >= config.entryEdge
         })
         if (picks.length === 0) picks = sim.getSymbols()
       }
@@ -303,16 +310,13 @@ export function aggregate(results: readonly BenchResult[]): Aggregate {
 /** Config keys that hold numbers, i.e. everything a grid sweep can vary. */
 export const NUMERIC_CONFIG_KEYS = [
   "moneyKeep",
+  "entryEdge",
+  "exitEdge",
+  "maxPositions",
+  "maxWeightPerSymbol",
   "maxShareFraction",
-  "portfolioFractionPerSymbol",
-  "trimFractionPerTick",
-  "budgetFractionPerSymbol",
+  "rotateMargin",
   "minShares",
-  "longBuyForecast",
-  "longSellForecast",
-  "shortBuyForecast",
-  "shortSellForecast",
-  "maxVolatility",
 ] as const satisfies readonly (keyof StockTraderConfig)[]
 
 /** Every combination of the numeric overrides, base config included. */
@@ -477,6 +481,41 @@ export function runSelfTest(): string[] {
     const symbolSum = result.perSymbol.reduce((sum, s) => sum + s.profit, 0)
     check(close(symbolSum, result.profit, 1e-9), "self-test: per-symbol P/L should sum to total profit")
     check(close(result.finalCash + result.finalPositionsValue, result.finalNetWorth), "self-test: net worth identity")
+  }
+
+  // Strategy invariants: never more than maxPositions open, and an unreachable edge gate blocks all trading.
+  {
+    const base: BenchOptions = {
+      seed: 11,
+      capital: 1e10,
+      ticks: 300,
+      config: DEFAULT_STOCK_TRADER_CONFIG,
+      bitNode: 8,
+      ownedSf8: 3,
+    }
+    const config = mergeStockTraderConfig(base.config)
+    let maxOpen = 0
+    const result = runScenario(base, (sim) => {
+      const ns = createNsStub(sim, { bitNode: base.bitNode, ownedSf8: base.ownedSf8 })
+      return {
+        tick: () => {
+          runStockTradingTick(ns as unknown as NS, config)
+          const open = sim.stocks.filter((s) => s.playerShares > 0 || s.playerShortShares > 0).length
+          if (open > maxOpen) maxOpen = open
+        },
+      }
+    })
+    check(result.trades > 0, "self-test: the strategy should trade at $10b")
+    check(
+      maxOpen <= config.maxPositions,
+      `self-test: strategy held ${maxOpen} symbols, above maxPositions ${config.maxPositions}`,
+    )
+
+    const blocked = runTraderScenario({
+      ...base,
+      config: { ...DEFAULT_STOCK_TRADER_CONFIG, entryEdge: 1 },
+    })
+    check(blocked.trades === 0, "self-test: an unreachable entry edge should block every trade")
   }
 
   // Seeded RNG sanity: the market is always initialized and deterministic.

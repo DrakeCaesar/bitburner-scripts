@@ -8,8 +8,9 @@ const TEMPLATE = path.join(ROOT, "bench/stock/stockTraderViz.template.html")
 const OUT = path.join(ROOT, "bench/stock/stockTraderViz.html")
 
 /**
- * Inline the benchmark core into one self-contained HTML page.
- * No server, no module imports, no workers: open the file directly.
+ * Inline the benchmark core into the tool page. The page links the shared UI kit
+ * (webui/toolUi.css + toolUi.js), and rebuilds its worker script from this same core text,
+ * so there is one copy of the model on disk and the page still opens straight from file://.
  */
 function bundleStockViz() {
   const built = buildSync({
@@ -28,6 +29,9 @@ function bundleStockViz() {
   const template = fs.readFileSync(TEMPLATE, "utf8")
   if (!template.includes("/*__BENCH_CORE__*/")) {
     throw new Error(`${TEMPLATE} is missing the /*__BENCH_CORE__*/ placeholder`)
+  }
+  if (!template.includes('id="benchCore"')) {
+    throw new Error(`${TEMPLATE} needs the core in a <script id="benchCore"> block so workers can reuse it`)
   }
   const html =
     "<!-- Auto-generated from bench/stock/stockTraderViz.template.html; run pnpm run stock:viz -->\n" +
