@@ -15,6 +15,10 @@ export interface StockTraderConfig {
   entryEdge: number
   /** Close a position once its |edge| falls to this (0 = when the expected move turns negative). */
   exitEdge: number
+  /** Entry threshold used instead of entryEdge when there is no 4S data. */
+  no4sEntryEdge: number
+  /** Rotation margin used instead of rotateMargin when there is no 4S data. */
+  no4sRotateMargin: number
   /** Maximum number of symbols held at the same time. */
   maxPositions: number
   /** Cap on one symbol's share of net worth (only binds when few candidates qualify). */
@@ -23,6 +27,8 @@ export interface StockTraderConfig {
   maxShareFraction: number
   /** Swap the weakest holding for a candidate when its edge is this many times larger. */
   rotateMargin: number
+  /** Updates of price history averaged to estimate the edge when there is no 4S data. */
+  historyTicks: number
   /** Skip orders smaller than this (commission is $100k per transaction). */
   minShares: number
   enableShorts: boolean
@@ -32,10 +38,17 @@ export const DEFAULT_STOCK_TRADER_CONFIG: StockTraderConfig = {
   moneyKeep: 1e9,
   entryEdge: 0.0025,
   exitEdge: 0,
+  // Without 4S the edge is estimated from price history: it correlates ~0.55 with the real edge,
+  // so a higher bar is needed to clear the same cost, and swapping positions on that estimate
+  // mostly trades noise. Measured on the model (15 seeds, 3000 updates, $10b):
+  // entryEdge 0.004 + no rotation 555% mean return, versus 50% at the 4S defaults.
+  no4sEntryEdge: 0.004,
+  no4sRotateMargin: 100,
   maxPositions: 4,
   maxWeightPerSymbol: 0.34,
   maxShareFraction: 1,
   rotateMargin: 1.5,
+  historyTicks: 40,
   minShares: 50,
   enableShorts: true,
 }
@@ -53,10 +66,13 @@ export function mergeStockTraderConfig(partial?: Partial<StockTraderConfig>): St
     moneyKeep: finiteOrDefault(merged.moneyKeep, d.moneyKeep),
     entryEdge: finiteOrDefault(merged.entryEdge, d.entryEdge),
     exitEdge: finiteOrDefault(merged.exitEdge, d.exitEdge),
+    no4sEntryEdge: finiteOrDefault(merged.no4sEntryEdge, d.no4sEntryEdge),
+    no4sRotateMargin: finiteOrDefault(merged.no4sRotateMargin, d.no4sRotateMargin),
     maxPositions: Math.max(1, Math.round(finiteOrDefault(merged.maxPositions, d.maxPositions))),
     maxWeightPerSymbol: finiteOrDefault(merged.maxWeightPerSymbol, d.maxWeightPerSymbol),
     maxShareFraction: finiteOrDefault(merged.maxShareFraction, d.maxShareFraction),
     rotateMargin: finiteOrDefault(merged.rotateMargin, d.rotateMargin),
+    historyTicks: Math.max(3, Math.round(finiteOrDefault(merged.historyTicks, d.historyTicks))),
     minShares: Math.max(0, Math.round(finiteOrDefault(merged.minShares, d.minShares))),
     enableShorts: merged.enableShorts ?? d.enableShorts,
   }

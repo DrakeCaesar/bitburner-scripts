@@ -582,12 +582,19 @@ export interface NsStubOptions {
   bitNode?: number
   ownedSf8?: number
   args?: unknown[]
+  /** False models a player without the 4S Market Data TIX API: forecast and volatility throw. */
+  marketData?: boolean
 }
 
 /** Fake NS backed by the simulation. Cast to NS when calling in-game strategy code. */
 export function createNsStub(sim: StockMarketSim, options: NsStubOptions = {}): StockTraderNsStub {
   const bitNode = options.bitNode ?? 8
   const ownedSf8 = options.ownedSf8 ?? 3
+  const marketData = options.marketData ?? true
+  const requireMarketData = (name: string): void => {
+    // The game throws rather than returning a placeholder, so the strategy must never call these.
+    if (!marketData) throw new Error(`You don't have 4S Market Data TIX API Access! (${name})`)
+  }
   const constants = {
     msPerStockUpdate: MS_PER_STOCK_UPDATE,
     msPerStockUpdateMin: 4e3,
@@ -606,8 +613,14 @@ export function createNsStub(sim: StockMarketSim, options: NsStubOptions = {}): 
       getPrice: (symbol) => sim.getStock(symbol).price,
       getAskPrice: (symbol) => sim.getStock(symbol).getAskPrice(),
       getBidPrice: (symbol) => sim.getStock(symbol).getBidPrice(),
-      getForecast: (symbol) => sim.getStock(symbol).getForecast(),
-      getVolatility: (symbol) => sim.getStock(symbol).getVolatility(),
+      getForecast: (symbol) => {
+        requireMarketData("getForecast")
+        return sim.getStock(symbol).getForecast()
+      },
+      getVolatility: (symbol) => {
+        requireMarketData("getVolatility")
+        return sim.getStock(symbol).getVolatility()
+      },
       getMaxShares: (symbol) => sim.getStock(symbol).maxShares,
       getPosition: (symbol) => {
         const stock = sim.getStock(symbol)
@@ -617,7 +630,7 @@ export function createNsStub(sim: StockMarketSim, options: NsStubOptions = {}): 
       getSaleGain: (symbol, shares, side) => sim.getSaleGain(symbol, shares, side),
       getConstants: () => ({ ...constants }),
       hasTixApiAccess: () => true,
-      has4SDataTixApi: () => true,
+      has4SDataTixApi: () => marketData,
       buyStock: (symbol, shares) => sim.buyLong(symbol, shares),
       sellStock: (symbol, shares) => sim.sellLong(symbol, shares),
       buyShort: (symbol, shares) => sim.openShort(symbol, shares),

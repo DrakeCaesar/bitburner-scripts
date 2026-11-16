@@ -51,6 +51,10 @@
             </select>
           </label>
           <label class="field">
+            <span>4S market data</span>
+            <span class="fieldToggle"><input id="has4s" type="checkbox" data-checked="1" checked /></span>
+          </label>
+          <label class="field">
             <span>Compare with v1</span>
             <span class="fieldToggle"><input id="compareV1" type="checkbox" data-checked="1" checked /></span>
           </label>
@@ -126,20 +130,26 @@
         moneyKeep: "money keep ($)",
         entryEdge: "entry edge",
         exitEdge: "exit edge",
+        no4sEntryEdge: "entry edge (no 4S)",
+        no4sRotateMargin: "rotate margin (no 4S)",
         maxPositions: "max positions",
         maxWeightPerSymbol: "max weight/symbol",
         maxShareFraction: "max share fraction",
         rotateMargin: "rotate margin",
+        historyTicks: "history updates",
         minShares: "min shares",
       }
       const COLS = {
         moneyKeep: "keep",
         entryEdge: "entry",
         exitEdge: "exit",
+        no4sEntryEdge: "entry4s",
+        no4sRotateMargin: "rot4s",
         maxPositions: "pos",
         maxWeightPerSymbol: "wt",
         maxShareFraction: "maxSh",
         rotateMargin: "rot",
+        historyTicks: "hist",
         minShares: "minSh",
       }
       const SERIES_COLORS = ["#43bf43", "#893bc8", "#e0b040", "#e05555"]
@@ -219,6 +229,7 @@
           ticks: Math.max(1, Math.floor(ToolUi.numberOf("ticks") || 1)),
           bitNode: Math.max(1, Math.floor(ToolUi.numberOf("node") || 1)),
           ownedSf8: Math.max(0, Math.floor(ToolUi.numberOf("sf8") || 0)),
+          marketData: $("has4s").checked,
         }
       }
 
@@ -470,15 +481,21 @@ self.onmessage = function (event) {
         const baseline = $("baseline").value
         const strategy = $("strategy").value
         const compare = $("compareV1").checked && strategy === "current"
+        // v1 reads forecast/volatility directly, so it can only run with 4S data.
+        const v1Options = { ...options, marketData: true }
 
         setBusy(true)
         const started = performance.now()
         const progress = (done, total) => setStatus(`running ${done}/${total}...`)
         progress(0, 1)
         try {
-          const jobs = seeds.map((seed) => ({ kind: "strategy", strategy, options: { ...options, seed } }))
+          const jobs = seeds.map((seed) => ({
+            kind: "strategy",
+            strategy,
+            options: strategy === "v1" ? { ...v1Options, seed } : { ...options, seed },
+          }))
           if (compare) {
-            for (const seed of seeds) jobs.push({ kind: "strategy", strategy: "v1", options: { ...options, seed } })
+            for (const seed of seeds) jobs.push({ kind: "strategy", strategy: "v1", options: { ...v1Options, seed } })
           }
           if (baseline !== "none") jobs.push({ kind: "hold", filtered: true, options: { ...options, seed: seeds[0] } })
           if (baseline === "all") jobs.push({ kind: "hold", filtered: false, options: { ...options, seed: seeds[0] } })
@@ -496,7 +513,7 @@ self.onmessage = function (event) {
           renderSymbols(strategyResults[0].perSymbol)
 
           const series = [{ label: `${strategy} seed ${strategyResults[0].seed}`, values: strategyResults[0].equityCurve }]
-          if (v1Results) series.push({ label: "v1 baseline", values: v1Results[0].equityCurve })
+          if (v1Results) series.push({ label: "v1 baseline (4S)", values: v1Results[0].equityCurve })
           if (holdFiltered) series.push({ label: "hold (filtered)", values: holdFiltered.equityCurve })
           if (holdAll) series.push({ label: "hold (all)", values: holdAll.equityCurve })
           drawChart(series)

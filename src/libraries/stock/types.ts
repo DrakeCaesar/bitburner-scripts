@@ -8,8 +8,10 @@ export interface StockSymbolSnapshot {
   bidPrice: number
   forecast: number
   volatility: number
-  /** Expected move per market update: (2 * forecast - 1) * volatility. */
+  /** Expected move per market update: (2 * forecast - 1) * volatility. NaN while unknown. */
   edge: number
+  /** True when the edge was estimated from price history because there is no 4S data. */
+  edgeFromPrices: boolean
   maxShares: number
   longShares: number
   avgLongPrice: number

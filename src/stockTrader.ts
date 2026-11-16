@@ -5,7 +5,9 @@ import { mergeStockTraderConfig } from "@/libraries/stock/config.js"
 import { STOCK_TABS, renderStockTraderDashboard } from "@/libraries/stock/display.js"
 import {
   collectTraderSnapshot,
+  createStockTraderState,
   hasAnyStockPosition,
+  hasMarketData,
   hasRequiredStockAccess,
   liquidateAllPositions,
   runStockTradingTick,
@@ -64,6 +66,7 @@ async function runTradeMode(ns: NS): Promise<void> {
   const { config } = parseStockTraderArgs(ns)
   openTailLog(ns, "WSE Trader")
   const tabbedLog = createTabbedTailLog(STOCK_TABS)
+  const state = createStockTraderState()
 
   let sessionStartNetWorth = 0
   let tickCount = 0
@@ -83,10 +86,10 @@ async function runTradeMode(ns: NS): Promise<void> {
           }, 0)
       }
 
-      const actions = runStockTradingTick(ns, config)
+      const actions = runStockTradingTick(ns, config, state)
       tickCount++
 
-      const snapshot = collectTraderSnapshot(ns, config, sessionStartNetWorth, tickCount, actions)
+      const snapshot = collectTraderSnapshot(ns, config, sessionStartNetWorth, tickCount, actions, state)
       await renderStockTraderDashboard(ns, tabbedLog, snapshot)
     } catch (err) {
       ns.clearLog()
@@ -100,8 +103,17 @@ export async function main(ns: NS): Promise<void> {
   await killOtherInstances(ns)
 
   if (!hasRequiredStockAccess(ns)) {
-    ns.tprint("Need TIX API and 4S Market Data TIX API. Run: run stockTrader.js")
+    ns.tprint("Need TIX API access. Buy it from the WSE (5b) and run: run stockTrader.js")
     return
+  }
+
+  if (!hasMarketData(ns)) {
+    const config = mergeStockTraderConfig({})
+    ns.tprint(
+      `No 4S Market Data TIX API: forecasts and volatilities are unavailable, ` +
+        `so the edge is estimated from the last ${config.historyTicks} price updates instead. ` +
+        `Expect fewer, noisier trades than with 4S.`,
+    )
   }
 
   const { mode } = parseStockTraderArgs(ns)

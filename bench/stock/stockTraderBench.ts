@@ -49,10 +49,13 @@ const CONFIG_FLAGS: Record<string, ConfigFlagSpec> = {
   "money-keep": { key: "moneyKeep", kind: "number" },
   "entry-edge": { key: "entryEdge", kind: "number" },
   "exit-edge": { key: "exitEdge", kind: "number" },
+  "no4s-entry-edge": { key: "no4sEntryEdge", kind: "number" },
+  "no4s-rotate-margin": { key: "no4sRotateMargin", kind: "number" },
   "max-positions": { key: "maxPositions", kind: "number" },
   "max-weight": { key: "maxWeightPerSymbol", kind: "number" },
   "max-share-fraction": { key: "maxShareFraction", kind: "number" },
   "rotate-margin": { key: "rotateMargin", kind: "number" },
+  "history-ticks": { key: "historyTicks", kind: "number" },
   "min-shares": { key: "minShares", kind: "number" },
   shorts: { key: "enableShorts", kind: "boolean" },
 }
@@ -67,6 +70,7 @@ interface CliOptions {
   config: Partial<StockTraderConfig>
   strategy: StrategyId
   compare: boolean
+  marketData: boolean
   baseline: "none" | "filtered" | "all"
   grid: { flag: string; key: ConfigKey; values: number[] }[]
   json: boolean
@@ -109,6 +113,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
     config: {},
     strategy: "current",
     compare: false,
+    marketData: true,
     baseline: "filtered",
     grid: [],
     json: false,
@@ -172,6 +177,9 @@ function parseArgs(argv: readonly string[]): CliOptions {
       }
       case "compare":
         options.compare = true
+        break
+      case "no-4s":
+        options.marketData = false
         break
       case "grid": {
         const spec = nextValue()
@@ -237,10 +245,13 @@ Seeds
 Config overrides (defaults come from src/libraries/stock/config.ts)
   --entry-edge <f>        Min |(2*forecast-1)*volatility| to open (default 0.0025)
   --exit-edge <f>         Close when the edge falls to this (default 0)
+  --no4s-entry-edge <f>   Entry threshold when there is no 4S data (default 0.004)
+  --no4s-rotate-margin <f>  Rotation margin when there is no 4S data (default 100 = never)
   --max-positions <n>     Symbols held at once (default 4)
   --max-weight <f>        Cap on one symbol's share of net worth (default 0.34)
   --max-share-fraction <f>  Fraction of getMaxShares() per symbol (default 1)
   --rotate-margin <f>     Swap the weakest holding at this edge ratio (default 1.5)
+  --history-ticks <n>     Updates averaged to estimate the edge without 4S (default 40)
   --min-shares <n>        Skip orders below this size (default 50)
   --money-keep <n>        Cash left untouched (default 1b)
   --shorts <0|1>          Enable short positions
@@ -248,6 +259,8 @@ Config overrides (defaults come from src/libraries/stock/config.ts)
 Strategy
   --strategy <id>      current | v1 (frozen baseline from traderV1.ts, default current)
   --compare            Also run v1 on the same seeds and print the difference
+  --no-4s              Model a player without 4S Market Data: no forecasts or volatilities,
+                       so the edge is estimated from the last --history-ticks prices
 
 Reporting
   --baseline <mode>    none | filtered | all (buy-and-hold reference, default filtered)
@@ -275,6 +288,7 @@ function runSeeds(options: CliOptions, config: Partial<StockTraderConfig>, strat
           config,
           bitNode: options.bitNode,
           ownedSf8: options.ownedSf8,
+          marketData: options.marketData,
         },
         strategy,
       ),
@@ -298,7 +312,11 @@ function gameHours(ticks: number): number {
 
 function printHeader(options: CliOptions, config: Partial<StockTraderConfig>): void {
   const sim = new StockMarketSim({ seed: options.seed, cash: options.capital })
-  const ns = createNsStub(sim, { bitNode: options.bitNode, ownedSf8: options.ownedSf8 })
+  const ns = createNsStub(sim, {
+    bitNode: options.bitNode,
+    ownedSf8: options.ownedSf8,
+    marketData: options.marketData,
+  })
   const merged = mergeStockTraderConfig(config)
   console.log("=== stock trader benchmark (bitburner-src market model) ===")
   console.log(
@@ -311,6 +329,9 @@ function printHeader(options: CliOptions, config: Partial<StockTraderConfig>): v
   )
   if (options.strategy === "v1") {
     console.log("strategy v1 baseline (frozen in bench/stock/traderV1.ts): long fcst 0.6/0.5, short 0.35/0.5, port 12%/sym")
+    if (!options.marketData) {
+      console.log("warning  v1 reads forecast/volatility directly and cannot run without 4S data")
+    }
   } else {
     console.log(`strategy ${buildConfigSummary(ns as never, merged)}`)
   }

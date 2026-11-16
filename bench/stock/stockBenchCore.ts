@@ -12,7 +12,7 @@ import {
   mergeStockTraderConfig,
   type StockTraderConfig,
 } from "@/libraries/stock/config.js"
-import { runStockTradingTick } from "@/libraries/stock/trader.js"
+import { createStockTraderState, runStockTradingTick } from "@/libraries/stock/trader.js"
 
 import {
   STOCK_MARKET_COMMISSION,
@@ -40,6 +40,8 @@ export interface BenchOptions {
   config: Partial<StockTraderConfig>
   bitNode: number
   ownedSf8: number
+  /** Set false to model a player without the 4S Market Data TIX API (no forecasts, no volatilities). */
+  marketData?: boolean
 }
 
 export interface SymbolStats {
@@ -240,12 +242,18 @@ export type StrategyId = "current" | "v1"
 /** Runs src/libraries/stock/trader.ts against the market model, one call per stock update. */
 export function runTraderScenario(options: BenchOptions, strategy: StrategyId = "current"): BenchResult {
   return runScenario(options, (sim) => {
-    const ns = createNsStub(sim, { bitNode: options.bitNode, ownedSf8: options.ownedSf8 })
+    const ns = createNsStub(sim, {
+      bitNode: options.bitNode,
+      ownedSf8: options.ownedSf8,
+      marketData: options.marketData,
+    })
     if (strategy === "v1") {
       return { tick: () => runStockTradingTickV1(ns as unknown as NS, TRADER_V1_CONFIG) }
     }
     const config = mergeStockTraderConfig(options.config)
-    return { tick: () => runStockTradingTick(ns as unknown as NS, config) }
+    // Fresh history per run: without 4S the strategy learns from prices it has seen itself.
+    const state = createStockTraderState()
+    return { tick: () => runStockTradingTick(ns as unknown as NS, config, state) }
   })
 }
 
@@ -259,7 +267,8 @@ export function runHoldBaseline(options: BenchOptions, filtered: boolean): Bench
   return runScenario(options, (sim) => ({
     setup: () => {
       let picks = sim.getSymbols()
-      if (filtered) {
+      // With no 4S data there is no forecast to filter on, so this degrades to "hold all".
+      if (filtered && options.marketData !== false) {
         picks = picks.filter((symbol) => {
           const stock = sim.getStock(symbol)
           return (2 * stock.getForecast() - 1) * stock.getVolatility() >= config.entryEdge
@@ -312,10 +321,13 @@ export const NUMERIC_CONFIG_KEYS = [
   "moneyKeep",
   "entryEdge",
   "exitEdge",
+  "no4sEntryEdge",
+  "no4sRotateMargin",
   "maxPositions",
   "maxWeightPerSymbol",
   "maxShareFraction",
   "rotateMargin",
+  "historyTicks",
   "minShares",
 ] as const satisfies readonly (keyof StockTraderConfig)[]
 
@@ -495,11 +507,12 @@ export function runSelfTest(): string[] {
     }
     const config = mergeStockTraderConfig(base.config)
     let maxOpen = 0
+    const state = createStockTraderState()
     const result = runScenario(base, (sim) => {
       const ns = createNsStub(sim, { bitNode: base.bitNode, ownedSf8: base.ownedSf8 })
       return {
         tick: () => {
-          runStockTradingTick(ns as unknown as NS, config)
+          runStockTradingTick(ns as unknown as NS, config, state)
           const open = sim.stocks.filter((s) => s.playerShares > 0 || s.playerShortShares > 0).length
           if (open > maxOpen) maxOpen = open
         },
@@ -516,6 +529,12 @@ export function runSelfTest(): string[] {
       config: { ...DEFAULT_STOCK_TRADER_CONFIG, entryEdge: 1 },
     })
     check(blocked.trades === 0, "self-test: an unreachable entry edge should block every trade")
+
+    // Without 4S the strategy must work from price history alone and never touch the gated calls.
+    const blind = runTraderScenario({ ...base, ticks: 600, marketData: false })
+    check(blind.trades > 0, "self-test: the strategy should still trade without 4S data")
+    const blindAgain = runTraderScenario({ ...base, ticks: 600, marketData: false })
+    check(blind.finalNetWorth === blindAgain.finalNetWorth, "self-test: price-history estimation must be deterministic")
   }
 
   // Seeded RNG sanity: the market is always initialized and deterministic.

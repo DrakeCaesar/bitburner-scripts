@@ -10,10 +10,11 @@ export const STOCK_TABS: TabDefinition[] = [
 ]
 
 function pct(value: number): string {
-  return `${(value * 100).toFixed(1)}%`
+  return Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : "-"
 }
 
 function edgePct(value: number): string {
+  if (!Number.isFinite(value)) return "-"
   const sign = value >= 0 ? "+" : "-"
   return `${sign}${(Math.abs(value) * 100).toFixed(3)}%`
 }
@@ -77,7 +78,7 @@ function populatePositionsTab(ns: NS, tabbedLog: TabbedScriptLogBuilder, snapsho
       col("Price", "right", W.money),
       col("Fcst", "right", W.rep),
       col("Vol", "right", W.rep),
-      col("Edge", "right", W.rep),
+      col(snapshot.symbols.some((s) => s.edgeFromPrices) ? "Edge est" : "Edge", "right", W.rep),
       col("Pos", "left", W.rate),
       col("Signal", "left", W.signal),
       col("Unreal P/L", "right", W.pl),

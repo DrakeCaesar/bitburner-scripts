@@ -214,13 +214,14 @@ Everything lives in `bench/stock/`:
 
 The model uses a seeded RNG, so a seed fully determines the market. Both front ends run the real strategy from `src/libraries/stock/trader.ts` via a fake `NS`, one `runStockTradingTick` per 6s stock update.
 
-The strategy ranks symbols by **edge** = `(2 * forecast - 1) * volatility`, the expected price move per update. The forecast is the game's published up-move probability, so edge is the expected return; `bench/stock/traderV1.ts` is the previous forecast-threshold strategy, frozen as a comparison point.
+The strategy ranks symbols by **edge** = `(2 * forecast - 1) * volatility`, the expected price move per update. The forecast is the game's published up-move probability, so edge is the expected return; `bench/stock/traderV1.ts` is the previous forecast-threshold strategy, frozen as a comparison point. For a from-scratch explanation of the market, the metric, and both strategies with pseudocode, see [stock-trader.md](./stock-trader.md).
 
 - `pnpm run test:stock` — bundles `stockTraderBench.ts` (`build/bundleStockTraderBench.cjs`) and runs it. Defaults: `$10b` capital, 3000 updates (~5h of game time), seed 1337, BitNode 8 (shorts unlocked).
 - `pnpm run test:stock -- --selftest` — verify the port: buy/sell/short formulas, commission and spread, share caps, forecast influence, determinism, up-move rate vs. published forecast, P/L identity.
 - `pnpm run stock:viz` — builds `stockTraderViz.html` from the template, inlining the core into the page. Open the file directly (VS Code browser or any browser): the page links `webui/toolUi.css` + `toolUi.js` and spawns its seeds as blob workers, both of which work from `file://`.
 - `--capital <k|m|b|t>`, `--ticks <n>`, `--seed <n>`, `--seeds <n>` (seed `n + i * 9973`).
-- Config overrides mirror `src/libraries/stock/config.ts`: `--entry-edge`, `--exit-edge`, `--max-positions`, `--max-weight`, `--max-share-fraction`, `--rotate-margin`, `--min-shares`, `--money-keep`, `--shorts 0|1`.
+- Config overrides mirror `src/libraries/stock/config.ts`: `--entry-edge`, `--exit-edge`, `--no4s-entry-edge`, `--no4s-rotate-margin`, `--max-positions`, `--max-weight`, `--max-share-fraction`, `--rotate-margin`, `--history-ticks`, `--min-shares`, `--money-keep`, `--shorts 0|1`.
+- `--no-4s` models a player without the 4S Market Data TIX API. The game throws from `getForecast`/`getVolatility` in that case, so the strategy estimates the edge as `2 x mean log return` over the last `--history-ticks` prices and switches to the stricter `no4sEntryEdge` / `no4sRotateMargin` defaults. Measured at 15 seeds / 3000 updates: +555% versus +6,689% with 4S; see [stock-trader.md](./stock-trader.md).
 - `--compare` runs the frozen v1 strategy on the same seeds and prints the difference; `--strategy v1` runs only the baseline.
 - `--grid entry-edge=0.002,0.0025,0.003 --grid max-positions=3,4 --seeds 5` ranks every combination by mean return.
 - `--baseline none|filtered|all` adds a buy-and-hold reference; `--json` emits machine-readable output.
