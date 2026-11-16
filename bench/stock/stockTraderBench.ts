@@ -18,6 +18,7 @@ import { pathToFileURL } from "node:url"
 
 import { mergeStockTraderConfig, type StockTraderConfig } from "@/libraries/stock/config.js"
 import { buildConfigSummary } from "@/libraries/stock/trader.js"
+import { buildConfigSummaryV3, type StockTraderV3Config } from "@/libraries/stock/traderV3.js"
 
 import { MS_PER_STOCK_UPDATE, STOCK_MARKET_COMMISSION, StockMarketSim, createNsStub } from "./stockMarketModel.js"
 import {
@@ -30,8 +31,12 @@ import {
   cartesianConfigs,
   defaultsGenome,
   genomeKey,
+  genomeV3Config,
+  logGrowth,
+  measureHeadroom,
   pairResults,
   pairedGain,
+  randomSeeds,
   runHoldBaseline,
   runSelfTest,
   runTraderScenario,
@@ -81,6 +86,8 @@ interface CliOptions {
   seeds: number
   /** When set, seeds are exactly from..to inclusive instead of `seed + i * SEED_STRIDE`. */
   seedRange: { from: number; to: number } | null
+  /** Draw the seeds from a deterministic pseudo-random stream instead of a fixed stride. */
+  seedStream: number | null
   bitNode: number
   ownedSf8: number
   config: Partial<StockTraderConfig>
@@ -98,6 +105,10 @@ interface CliOptions {
   generations: number
   population: number
   tuneSeed: number
+  /** Print the ideal-frictionless ceiling next to the run and say how much of it the run captured. */
+  headroom: boolean
+  /** v3 sizing knobs; empty means the v3 defaults. */
+  v3: Partial<StockTraderV3Config>
 }
 
 const SUFFIX_MULTIPLIERS: Record<string, number> = {
@@ -129,6 +140,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
     seed: DEFAULT_SEED,
     seeds: 1,
     seedRange: null,
+    seedStream: null,
     bitNode: 8,
     ownedSf8: 3,
     config: {},
@@ -146,6 +158,8 @@ function parseArgs(argv: readonly string[]): CliOptions {
     generations: 6,
     population: 6,
     tuneSeed: 1,
+    headroom: false,
+    v3: {},
   }
 
   for (let i = 0; i < argv.length; i++) {
@@ -179,6 +193,9 @@ function parseArgs(argv: readonly string[]): CliOptions {
       case "seeds":
         options.seeds = Math.max(1, Math.floor(requireNumber(flag, nextValue())))
         break
+      case "seed-stream":
+        options.seedStream = Math.max(1, Math.floor(requireNumber(flag, nextValue())))
+        break
       case "seed-range": {
         const text = nextValue()
         const match = /^(\d+)\s*[-:.]\s*(\d+)$/.exec(text.trim())
@@ -208,13 +225,30 @@ function parseArgs(argv: readonly string[]): CliOptions {
         options.symbols = Math.max(0, Math.floor(requireNumber(flag, nextValue())))
         break
       case "strategy": {
-        const value = nextValue().toLowerCase()
-        if (value !== "current" && value !== "v1") {
-          throw new Error(`--strategy expects current|v1, got '${value}'`)
+        const raw = nextValue().toLowerCase()
+        // "v2" is the name used everywhere in the docs and the GUI; "current" is the old spelling.
+        const value = raw === "v2" ? "current" : raw
+        if (value !== "current" && value !== "v1" && value !== "v3") {
+          throw new Error(`--strategy expects v2|current|v1|v3, got '${raw}'`)
         }
         options.strategy = value
         break
       }
+      case "v3-kelly":
+        options.v3.tilt = requireNumber(flag, nextValue())
+        break
+      case "v3-band":
+        options.v3.rebalanceBand = requireNumber(flag, nextValue())
+        break
+      case "v3-gross":
+        options.v3.maxGrossWeight = requireNumber(flag, nextValue())
+        break
+      case "v3-reserve":
+        options.v3.reserveFraction = requireNumber(flag, nextValue())
+        break
+      case "v3-select":
+        nextValue()
+        break
       case "compare":
         options.compare = true
         break
@@ -251,6 +285,9 @@ function parseArgs(argv: readonly string[]): CliOptions {
         options.grid.push({ flag: gridFlag, key: configFlag.key, values })
         break
       }
+      case "headroom":
+        options.headroom = true
+        break
       case "json":
         options.json = true
         break
@@ -293,6 +330,9 @@ Market
 Seeds
   --seed <n>           First seed (default 1337)
   --seeds <n>          Number of seeds to run, same config (default 1); spaced by 9973
+  --seed-stream <n>    Draw the seeds from deterministic pseudo-random stream n instead of the
+                       fixed stride. Same stream and count always give the same seeds, a shorter
+                       run is a prefix of a longer one, and this is what the GUI uses
   --seed-range <a-b>   Run exactly seeds a..b inclusive, e.g. --seed-range 1-100
 
 Config overrides (defaults come from src/libraries/stock/config.ts)
@@ -310,22 +350,32 @@ Config overrides (defaults come from src/libraries/stock/config.ts)
   --shorts <0|1>          Enable short positions
 
 Strategy
-  --strategy <id>      current | v1 (frozen baseline from traderV1.ts, default current)
-  --compare            Also run v1 on the same seeds and print the difference, plus the
-                       same-seed (paired) ratio and its 95% interval
+  --strategy <id>      v2 (alias current) | v1 (frozen baseline from traderV1.ts) | v3 (conviction sizing)
+  --compare            Also run the earlier versions on the same seeds and print the difference,
+                       plus the same-seed (paired) ratio and its 95% interval. v3 compares
+                       against v2 and v1; v2 against v1
+  --v3-kelly <f>       v3: weight tilt, 0 = equal weight, 1 = in proportion to edge (default 0)
+  --v3-band <f>        v3: rebalance dead band as a share of net worth (default 0)
+  --v3-gross <f>       v3: cap on the sum of position weights (default 1)
+  --v3-reserve <f>     v3: cash reserve as a share of net worth (default 0.01)
   --no-4s              Model a player without 4S Market Data: no forecasts or volatilities,
                        so the edge is estimated from the last --history-ticks prices
 
 Genetic tuning (searches the config for you, on the seeds given above)
-  --tune               Run the search instead of a single config. Trains on the seeds from
-                       --seed-range/--seeds, then checks the winner against the shipped
-                       defaults on held-back seeds the search never saw
+  --tune               Run the search instead of a single config, for --strategy v2 (default) or
+                       v3. Trains on the seeds from --seed-range/--seed-stream/--seeds, then
+                       checks the winner against the shipped defaults on held-back seeds the
+                       search never saw. v1 is frozen and has no genes
   --generations <n>    Generations to breed (default 6)
   --population <n>     Genomes per generation, at least 2 (default 6)
   --tune-seed <n>      Seed for the search's own random stream (default 1)
 
 Reporting
   --baseline <mode>    none | filtered | all (buy-and-hold reference, default filtered)
+  --headroom           Print the ideal frictionless ceiling for this horizon next to the run, and
+                       how much of it the run captured. The ceiling is not reachable: tracking the
+                       strongest edges means following a set that changes every few updates, and
+                       the printout prices that turnover
   --symbols <n>        Per-symbol rows in single-seed output (default 10)
   --json               Machine-readable output
   --quiet              One line per run, no tables
@@ -339,10 +389,14 @@ GUI: pnpm run stock:viz  ->  open bench/stock/stockTraderViz.html
 `
 
 function seedList(options: CliOptions): number[] {
-  if (!options.seedRange) return Array.from({ length: options.seeds }, (_, i) => options.seed + i * SEED_STRIDE)
-  const seeds: number[] = []
-  for (let seed = options.seedRange.from; seed <= options.seedRange.to; seed++) seeds.push(seed)
-  return seeds
+  if (options.seedRange) {
+    const seeds: number[] = []
+    for (let seed = options.seedRange.from; seed <= options.seedRange.to; seed++) seeds.push(seed)
+    return seeds
+  }
+  // A stream draws the same seeds the GUI uses for the same stream and count.
+  if (options.seedStream !== null) return randomSeeds(options.seedStream, options.seeds)
+  return Array.from({ length: options.seeds }, (_, i) => options.seed + i * SEED_STRIDE)
 }
 
 function runSeeds(options: CliOptions, config: Partial<StockTraderConfig>, strategy: StrategyId): BenchResult[] {
@@ -356,6 +410,7 @@ function runSeeds(options: CliOptions, config: Partial<StockTraderConfig>, strat
         bitNode: options.bitNode,
         ownedSf8: options.ownedSf8,
         marketData: options.marketData,
+        v3: options.v3,
       },
       strategy,
     ),
@@ -386,9 +441,15 @@ function gameHours(ticks: number): number {
   return (ticks * MS_PER_STOCK_UPDATE) / 3_600_000
 }
 
+/** Human name for a strategy id, used in the comparison lines. */
+function strategyLabel(strategy: StrategyId): string {
+  return strategy === "v3" ? "v3" : strategy === "v1" ? "v1 baseline" : "v2 (current)"
+}
+
 function seedLabel(options: CliOptions): string {
   const count = `${options.seeds} seed${options.seeds === 1 ? "" : "s"}`
   if (options.seedRange) return `seeds ${options.seedRange.from}-${options.seedRange.to} (${count})`
+  if (options.seedStream !== null) return `seed stream ${options.seedStream} (${count})`
   return `seed ${options.seed} (${count})`
 }
 
@@ -414,6 +475,8 @@ function printHeader(options: CliOptions, config: Partial<StockTraderConfig>): v
     if (!options.marketData) {
       console.log("warning  v1 reads forecast/volatility directly and cannot run without 4S data")
     }
+  } else if (options.strategy === "v3") {
+    console.log(`strategy v3 ${buildConfigSummaryV3(ns as never, merged, options.v3)}`)
   } else {
     console.log(`strategy ${buildConfigSummary(ns as never, merged)}`)
   }
@@ -503,16 +566,17 @@ function printAggregate(results: readonly BenchResult[], label: string): void {
   )
 }
 
-function printPaired(stats: PairedStats): void {
+/** Labels matter here: v3 is compared against v2 as well as v1, so the ratio cannot say "current/v1". */
+function printPaired(stats: PairedStats, better: string, baseline: string): void {
   const ratio = (value: number): string => `${value >= 100 ? groupDigits(Math.round(value)) : value.toFixed(2)}x`
   const verdict =
     stats.lowRatio > 1
-      ? "current is better on average (95% interval excludes 1x)"
+      ? `${better} is better on average (95% interval excludes 1x)`
       : stats.highRatio < 1
-        ? "v1 is better on average (95% interval excludes 1x)"
-        : "no measurable difference at this horizon"
+        ? `${baseline} is better on average (95% interval excludes 1x)`
+        : `no measurable difference at this horizon (interval spans 1x)`
   console.log(
-    `\npaired  net worth ratio current/v1, same seed: ${stats.wins}/${stats.runs} seeds better | ` +
+    `\npaired  net worth ratio ${better} / ${baseline}, same seed: ${stats.wins}/${stats.runs} seeds better | ` +
       `geometric mean ${ratio(stats.geometricRatio)} (95% ${ratio(stats.lowRatio)} - ${ratio(stats.highRatio)}) | ` +
       `median ${ratio(stats.medianRatio)}`,
   )
@@ -520,7 +584,7 @@ function printPaired(stats: PairedStats): void {
 }
 
 function printSeedTable(results: readonly BenchResult[]): void {
-  console.log("\n    seed          return    maxDD    trades        commission             net worth")
+  console.log("\n      seed          return    maxDD    trades        commission             net worth")
   for (const result of results) {
     console.log(
       tableRow(
@@ -532,7 +596,7 @@ function printSeedTable(results: readonly BenchResult[]): void {
           money(result.commissionPaid),
           money(result.finalNetWorth),
         ],
-        [8, 16, 9, 9, 18, 21],
+        [10, 16, 9, 9, 18, 21],
         ["right", "right", "right", "right", "right", "right"],
       ),
     )
@@ -623,7 +687,11 @@ function printTuneRows(report: TuneGeneration, specs: readonly StockGeneSpec[], 
 }
 
 function runTune(options: CliOptions): number {
-  const specs = stockGeneSpecs(options.marketData)
+  if (options.strategy === "v1") {
+    throw new Error("--tune searches v2 or v3; v1 is frozen in bench/stock/traderV1.ts and has no genes")
+  }
+  const family = options.strategy === "v3" ? "v3" : "v2"
+  const specs = stockGeneSpecs(options.marketData, family)
   // Tuning on one seed is meaningless: the fitness would be a single market's opinion. When
   // the caller did not ask for a seed set, use a contiguous block so a run is still a search.
   const requested = seedList(options)
@@ -652,6 +720,7 @@ function runTune(options: CliOptions): number {
       `${trainSeeds.length} training seed${trainSeeds.length === 1 ? "" : "s"}, ` +
       `${tuner.validationSeeds.length} held back | search seed ${options.tuneSeed}`,
   )
+  console.log(`strategy ${strategyLabel(options.strategy)}`)
   console.log(`genes    ${specs.map((spec) => `${spec.label} ${spec.min}-${spec.max}`).join(", ")}`)
   console.log(`fitness  mean log growth over the training seeds (geometric mean return), tie-break lower drawdown`)
   console.log(`mode     ${options.marketData ? "4S forecast" : "no 4S, edge from price history"}`)
@@ -659,6 +728,7 @@ function runTune(options: CliOptions): number {
 
   const runGenome = (genome: StockGenome, seeds: readonly number[]): GenomeScore => {
     const config = tuner.config(genome, options.config)
+    const v3 = family === "v3" ? tuner.v3Config(genome, options.v3) : undefined
     const results = seeds.map((seed) =>
       runTraderScenario(
         {
@@ -669,8 +739,9 @@ function runTune(options: CliOptions): number {
           bitNode: options.bitNode,
           ownedSf8: options.ownedSf8,
           marketData: options.marketData,
+          ...(v3 ? { v3 } : {}),
         },
-        "current",
+        family === "v3" ? "v3" : "current",
       ),
     )
     return scoreGenome(genomeKey(genome, specs), results)
@@ -772,8 +843,21 @@ function main(): number {
     }
 
     const results = runSeeds(options, options.config, options.strategy)
-    const v1Results =
-      options.compare && options.strategy === "current" ? runSeeds(options, options.config, "v1") : null
+    // v3 is judged against both earlier versions; v2 against v1; nothing compares to itself.
+    const opponents: { label: string; strategy: StrategyId }[] =
+      options.compare && options.strategy === "v3"
+        ? [
+            { label: "v2 (current)", strategy: "current" },
+            { label: "v1 baseline", strategy: "v1" },
+          ]
+        : options.compare && options.strategy === "current"
+          ? [{ label: "v1 baseline", strategy: "v1" }]
+          : []
+    const comparisons = opponents.map((opponent) => ({
+      label: opponent.label,
+      results: runSeeds(options, options.config, opponent.strategy),
+    }))
+    const v1Results = comparisons.find((entry) => entry.label === "v1 baseline")?.results ?? null
     const baselineFiltered =
       options.baseline === "none" ? null : runHoldBaseline({ ...options, seed: options.seed, config: options.config }, true)
     const baselineAll =
@@ -790,6 +874,11 @@ function main(): number {
             runs: results.map(stripCurve),
             v1: v1Results ? { aggregate: aggregate(v1Results), runs: v1Results.map(stripCurve) } : null,
             paired: v1Results && results.length > 1 ? pairResults(results, v1Results) : null,
+            comparisons: comparisons.map((entry) => ({
+              label: entry.label,
+              aggregate: aggregate(entry.results),
+              paired: results.length > 1 ? pairResults(results, entry.results) : null,
+            })),
             baselines: {
               holdFiltered: baselineFiltered ? stripCurve(baselineFiltered) : null,
               holdAll: baselineAll ? stripCurve(baselineAll) : null,
@@ -808,7 +897,7 @@ function main(): number {
     if (options.quiet) {
       for (const result of results) {
         console.log(
-          `seed ${String(result.seed).padStart(6)}  ${signedPct(result.returnPct).padStart(16)}  ` +
+          `seed ${String(result.seed).padStart(10)}  ${signedPct(result.returnPct).padStart(16)}  ` +
             `dd -${pct(result.maxDrawdownPct)}  trades ${count(result.trades).padStart(9)}  ${money(result.finalNetWorth)}`,
         )
       }
@@ -820,18 +909,18 @@ function main(): number {
 
     if (results.length > 1) printAggregate(results, "all seeds")
 
-    if (v1Results) {
-      printAggregate(v1Results, "v1 baseline")
-      const current = aggregate(results)
-      const v1 = aggregate(v1Results)
+    for (const comparison of comparisons) {
+      printAggregate(comparison.results, comparison.label)
+      const mine = aggregate(results)
+      const theirs = aggregate(comparison.results)
       console.log(
-        `\nv1 -> current: mean ${signedPct(v1.meanReturnPct)} -> ${signedPct(current.meanReturnPct)} ` +
-          `(${v1.meanReturnPct !== 0 ? `${(current.meanReturnPct / v1.meanReturnPct).toFixed(2)}x` : "n/a"}), ` +
-          `trades ${count(v1.meanTrades)} -> ${count(current.meanTrades)}`,
+        `\n${comparison.label} -> ${options.strategy}: mean ${signedPct(theirs.meanReturnPct)} -> ${signedPct(mine.meanReturnPct)} ` +
+          `(${theirs.meanReturnPct !== 0 ? `${(mine.meanReturnPct / theirs.meanReturnPct).toFixed(2)}x` : "n/a"}), ` +
+          `trades ${count(theirs.meanTrades)} -> ${count(mine.meanTrades)}`,
       )
       if (results.length > 1) {
-        const paired = pairResults(results, v1Results)
-        if (paired) printPaired(paired)
+        const paired = pairResults(results, comparison.results)
+        if (paired) printPaired(paired, strategyLabel(options.strategy), comparison.label)
       }
     }
 
@@ -846,6 +935,38 @@ function main(): number {
         `baseline hold (all)       ${signedPct(baselineAll.returnPct)}  ` +
           `max dd -${pct(baselineAll.maxDrawdownPct)}  trades ${count(baselineAll.trades)}`,
       )
+    }
+
+    if (options.headroom) {
+      const slots = mergeStockTraderConfig(options.config).maxPositions
+      const report = measureHeadroom(
+        {
+          seed: options.seed,
+          ticks: options.ticks,
+          capital: options.capital,
+          bitNode: options.bitNode,
+          ownedSf8: options.ownedSf8,
+        },
+        slots,
+      )
+      const achieved = logGrowth(results)
+      console.log(
+        `\nheadroom  ideal ${slots}-slot trader with no costs: ${signedPct(Math.expm1(report.top4Log))}` +
+          `   ideal 1-slot: ${signedPct(Math.expm1(report.top1Log))}`,
+      )
+      console.log(
+        `          this run got ${signedPct(Math.expm1(achieved))}, ` +
+          `${((achieved / report.top4Log) * 100).toFixed(1)}% of the ideal in log terms`,
+      )
+      console.log(
+        `          mean strongest edge ${pct(report.meanMaxEdge)}/update, mean top-${slots} sum ` +
+          `${pct(report.meanTop4Edge)}/update, mean spread ${pct(report.meanSpread)}/side`,
+      )
+      console.log(
+        `          tracking the ideal needs ${count(report.top4Changes)} swaps at that spread, ` +
+          `costing ${pct(-Math.expm1(report.trackingCostLog))} of the portfolio`,
+      )
+      if (options.json) console.log(JSON.stringify({ headroom: report, achievedLogGrowth: achieved }, null, 2))
     }
 
     console.log(`\nelapsed ${((performance.now() - started) / 1000).toFixed(2)}s`)

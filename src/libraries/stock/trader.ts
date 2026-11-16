@@ -342,7 +342,12 @@ function growPosition(
 }
 
 /** Edge per symbol: from 4S when available, otherwise estimated from the prices we have seen. */
-function estimateEdges(
+/**
+ * Edge for every symbol, from the 4S forecast when it is available and from the price history
+ * we have recorded ourselves when it is not. Shared with v3 so both strategies act on the same
+ * signal and a comparison measures the decision rules, not the input.
+ */
+export function estimateEdges(
   ns: NS,
   config: StockTraderConfig,
   state: StockTraderState,

@@ -13,6 +13,7 @@ import {
   type StockTraderConfig,
 } from "@/libraries/stock/config.js"
 import { createStockTraderState, runStockTradingTick } from "@/libraries/stock/trader.js"
+import { DEFAULT_STOCK_TRADER_V3_CONFIG, runStockTradingTickV3, type StockTraderV3Config } from "@/libraries/stock/traderV3.js"
 
 import {
   STOCK_MARKET_COMMISSION,
@@ -42,6 +43,8 @@ export interface BenchOptions {
   ownedSf8: number
   /** Set false to model a player without the 4S Market Data TIX API (no forecasts, no volatilities). */
   marketData?: boolean
+  /** v3-only sizing knobs (Kelly fraction, rebalance dead band, gross cap). */
+  v3?: Partial<StockTraderV3Config>
 }
 
 export interface SymbolStats {
@@ -240,8 +243,8 @@ export function runScenario(
   }
 }
 
-/** Which strategy implementation a scenario runs. `v1` is the frozen baseline in traderV1.ts. */
-export type StrategyId = "current" | "v1"
+/** Which strategy implementation a scenario runs. `v1` is frozen in traderV1.ts, `current` is v2. */
+export type StrategyId = "current" | "v1" | "v3"
 
 /** Runs src/libraries/stock/trader.ts against the market model, one call per stock update. */
 export function runTraderScenario(options: BenchOptions, strategy: StrategyId = "current"): BenchResult {
@@ -257,6 +260,12 @@ export function runTraderScenario(options: BenchOptions, strategy: StrategyId = 
     const config = mergeStockTraderConfig(options.config)
     // Fresh history per run: without 4S the strategy learns from prices it has seen itself.
     const state = createStockTraderState()
+    if (strategy === "v3") {
+      return {
+        tick: () =>
+          runStockTradingTickV3(ns as unknown as NS, config, state, options.v3 ?? DEFAULT_STOCK_TRADER_V3_CONFIG),
+      }
+    }
     return { tick: () => runStockTradingTick(ns as unknown as NS, config, state) }
   })
 }
@@ -295,6 +304,97 @@ export function runHoldBaseline(options: BenchOptions, filtered: boolean): Bench
   }))
 }
 
+/**
+ * How much of the market's available edge a run could in principle capture.
+ *
+ * Per update, a position of weight w in a symbol with edge e earns expected log growth w*e/2, so an
+ * ideal trader with no costs that holds the four strongest edges at 25% each would grow by
+ * `sum(top4 edges)/8` per update. That is the ceiling for any four-slot strategy. The gap to it is
+ * not free: tracking the top four means following a set that changes many times per run, and each
+ * change is a round trip at the symbol's spread. `trackingCostLog` prices that, on 1/positions of
+ * the portfolio per swap, which is what makes the ceiling informative rather than aspirational.
+ */
+export interface HeadroomReport {
+  ticks: number
+  /** Log growth of the ideal frictionless four-slot trader. */
+  top4Log: number
+  /** Log growth of the ideal trader holding only the single strongest edge, full weight. */
+  top1Log: number
+  meanMaxEdge: number
+  meanTop4Edge: number
+  /** Times the top-four set changed: the round trips tracking it would need. */
+  top4Changes: number
+  meanSpread: number
+  /** Spread paid to track the ideal, in log terms, turning over 1/positions each swap. */
+  trackingCostLog: number
+}
+
+export function measureHeadroom(
+  options: Pick<BenchOptions, "seed" | "ticks" | "capital" | "bitNode" | "ownedSf8">,
+  positions = 4,
+): HeadroomReport {
+  const sim = new StockMarketSim({ seed: options.seed, cash: options.capital })
+  const slots = Math.max(1, Math.floor(positions))
+  sim.updatePrices()
+  let top4Log = 0
+  let top1Log = 0
+  let maxEdgeSum = 0
+  let topSum = 0
+  let spreadSum = 0
+  let spreadCount = 0
+  let changes = 0
+  let previous = new Set<string>()
+  for (let i = 0; i < options.ticks; i++) {
+    if (i > 0) sim.updatePrices()
+    const ranked = sim
+      .getSymbols()
+      .map((symbol) => {
+        const stock = sim.getStock(symbol)
+        const volatility = stock.getVolatility()
+        return { symbol, spreadPerc: stock.spreadPerc, edge: volatility > 0 ? (2 * stock.getForecast() - 1) * volatility : 0 }
+      })
+      .sort((a, b) => Math.abs(b.edge) - Math.abs(a.edge))
+    if (ranked.length === 0) continue
+    const best = Math.abs(ranked[0].edge)
+    const top = ranked.slice(0, slots)
+    const topEdges = top.reduce((sum, entry) => sum + Math.abs(entry.edge), 0)
+    // 100% at weight 1 earns edge/2; `slots` equal weights earn sum(edges)/(2*slots).
+    top1Log += best / 2
+    top4Log += topEdges / (2 * slots)
+    maxEdgeSum += best
+    topSum += topEdges
+    for (const entry of top) {
+      spreadSum += entry.spreadPerc / 100
+      spreadCount++
+    }
+    const symbolsNow = new Set(top.map((entry) => entry.symbol))
+    for (const symbol of symbolsNow) if (!previous.has(symbol)) changes++
+    previous = symbolsNow
+  }
+  const meanSpread = spreadCount > 0 ? spreadSum / spreadCount : 0
+  return {
+    ticks: options.ticks,
+    top4Log,
+    top1Log,
+    meanMaxEdge: maxEdgeSum / options.ticks,
+    meanTop4Edge: topSum / options.ticks,
+    top4Changes: changes,
+    meanSpread,
+    // A swap sells one slot and buys another, so 1/slots of the portfolio crosses the spread twice.
+    trackingCostLog: Math.log(1 - Math.min(0.95, (changes * 2 * meanSpread) / slots)),
+  }
+}
+
+/** Mean log growth of a set of runs, i.e. log of the geometric mean multiple. */
+export function logGrowth(results: readonly BenchResult[]): number {
+  if (results.length === 0) return 0
+  let total = 0
+  for (const result of results) {
+    total += Math.log(Math.max(result.finalNetWorth, 1e-9) / Math.max(result.capital, 1))
+  }
+  return total / results.length
+}
+
 /** Seeds actually used by a `--seeds n` run starting at `seed`. */
 export function seedsFor(seed: number, count: number): number[] {
   const seeds: number[] = []
@@ -306,6 +406,26 @@ export function seedsFor(seed: number, count: number): number[] {
 export function seedRange(from: number, count: number): number[] {
   const seeds: number[] = []
   for (let i = 0; i < count; i++) seeds.push(from + i)
+  return seeds
+}
+
+/**
+ * Deterministic pseudo-random seeds: `stream` picks the sequence, `count` how many of it to use.
+ * Same stream and count always give the same seeds, and a shorter run is a prefix of a longer one,
+ * so raising the count only ever adds markets instead of replacing the sample. Contiguous seeds
+ * share too much structure (every run sees market 1, then 2, ...) and a fixed stride keeps whatever
+ * correlation the stride has; drawing from a seeded stream avoids both.
+ */
+export function randomSeeds(stream: number, count: number): number[] {
+  const rng = mulberry32(Math.max(1, Math.floor(stream) || 1))
+  const seeds: number[] = []
+  const seen = new Set<number>()
+  while (seeds.length < Math.max(0, Math.floor(count))) {
+    const candidate = 1 + Math.floor(rng() * 2_000_000_000)
+    if (seen.has(candidate)) continue
+    seen.add(candidate)
+    seeds.push(candidate)
+  }
   return seeds
 }
 
@@ -419,6 +539,7 @@ export {
   defaultsGenome,
   genomeConfig,
   genomeKey,
+  genomeV3Config,
   pairedGain,
   randomGenome,
   scoreGenome,
@@ -432,6 +553,7 @@ export {
   type StockTunerOptions,
   type TuneGeneration,
   type TuneRow,
+  type TuneStrategy,
 } from "./stockTuner.js"
 
 /** Config keys that hold numbers, i.e. everything a grid sweep can vary. */

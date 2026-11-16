@@ -382,8 +382,25 @@ normal approximation on the log ratios, so it is a guide to how much is noise, n
 
 At the default 3000 updates, 20–25 seeds is already plenty (the interval is narrow). Use 100 seeds
 when you want to check something subtle, or when comparing at a long horizon where a single seed can
-lie. The GUI always runs seeds `1..n`, so its *Seeds* box is exactly the range, and it matches
-`--seed-range 1-n` on the command line.
+lie.
+
+### Where the seeds come from
+
+Seeds are not `1, 2, 3, ...`. The benchmark draws them from a **deterministic pseudo-random stream**:
+the *Seed* field picks which sequence, *Seeds* is how many of it to use. Two properties matter:
+
+- **Reproducible.** The same stream and count always produce the same seeds, so a result can be
+  repeated exactly.
+- **Prefix.** Asking for 50 seeds gives the first 50 of what 100 would give, so raising the count
+  only *adds* markets; it never replaces the sample you already measured. Averaging the same custom
+  strategies over different counts stays comparable.
+
+The reason is that contiguous seeds share market structure — every run in `1..100` starts from
+market 1, then 2, and so on — while a fixed stride keeps whatever correlation the stride happens to
+have. A pseudo-random draw avoids both, and the GUI prints the first few seeds it is using under the
+market fields so the sample is never a mystery. On the command line, `--seed-stream <seed> --seeds <n>`
+reproduces exactly what the page ran, and `--seed-range a-b` still runs an explicit contiguous range
+when you want one by name.
 
 ### How the chart averages several seeds
 
@@ -409,7 +426,8 @@ median, worst seed, std dev) for those who want the tail as well as the middle.
 
 - `pnpm run stock:viz` → open `bench/stock/stockTraderViz.html`. **Strategy → edge (current)** with
   **compare with v1** ticked draws both strategies on one chart as the median seed plus a p10–p90 band
-  (log axis), and fills in the same paired ratio and win count as the CLI. *Seeds* is the range `1..n`;
+  (log axis), and fills in the same paired ratio and win count as the CLI. *Seed* picks the seed
+  stream and *Seeds* how many markets to draw from it;
   the default 25 finishes in under a second, 100 in about two.
 - `pnpm run test:stock -- --compare --seed-range 1-100` prints the paired comparison in the terminal.
 - `pnpm run test:stock -- --compare --seeds 25` does the same with 25 seeds spaced 9,973 apart.
@@ -491,22 +509,142 @@ enough to fit noise, and the search will do exactly that if you let it.
 
 ### Running it
 
-- GUI: **Genetic tuning** section. Set Population / Generations / Search seed, press *Tune config*.
-  The chart grows a blue **tuned best** line — the median seed of the incumbent with its p10–p90
-  band, next to the config in the form and the v1 baseline — and the table shows the current
-  generation ranked, with `vs default`. The best genome is kept in the browser, so *Apply best to
-  form* works after a reload, and *Continue from best* (on by default) resumes the search around it.
-  *Stop* ends the run after the current generation; validation still happens.
-- CLI: `pnpm run test:stock -- --tune --seed-range 1-40 --population 8 --generations 6`. The seeds
-  given to `--seed-range` are the training seeds (at least 4, else a contiguous block of 16 starting
-  at `--seed`), `--tune-seed` seeds the search itself, and the winner is printed with its held-back
-  numbers and as JSON when `--json` is set.
+Both v2 and v3 can be tuned, and each keeps its own result. v3's genome carries two extra genes —
+`weight tilt` (0–2) and `cash reserve` (0–2%) — on top of the shared trader config, so a search on v3
+decides its conviction curve and reserve alongside the entry/exit rules.
+
+- GUI: **Genetic tuning** section, with **Strategy** set to v2 or v3. The panel tunes the selected
+  one and says which in its hint; *Apply best to form* loads that strategy's stored genome into the
+  config (including the tilt and reserve fields when it is v3). Each strategy's tuning result and
+  form config are stored under their own keys, so tuning v3 never clobbers v2's best and switching
+  Strategy loads that strategy's own config back.
+- With **Compare with v1** ticked, a run draws the whole comparison at once: **v2 tuned** (green),
+  **v3 tuned** (magenta), **v2** as shipped (blue) and **v1** (amber), each as its median seed with a
+  p10–p90 band, plus the buy-and-hold reference. The status line reports both tuned lines' paired
+  ratio against v2. Any line whose results duplicate another (the form usually equals the shipped
+  config) is dropped rather than drawn twice.
+- CLI: `pnpm run test:stock -- --tune --strategy v3 --seed-range 1-40 --population 8 --generations 6`.
+  The seeds given to `--seed-range` are the training seeds (at least 4, else a contiguous block of 16
+  starting at `--seed`), `--tune-seed` seeds the search itself, and the winner is printed with its
+  held-back numbers and as JSON when `--json` is set.
 - More seeds beat more generations. Twenty-five seeds x 6 genomes x 6 generations takes a few
   seconds with workers and is a reasonable starting point; twelve seeds will overfit.
 - A genome is only meaningful for the market shape it was measured on: capital, update count, BitNode
   and 4S availability all move the answer, so re-tune when those change.
 
-## 11. When there is no 4S data
+### What the search remembers, and why that matters
+
+The search never measures the same genome twice: it caches one score per genome for the whole run,
+which is what the `reused` counts report and what lets a run pick up where it left off. The
+consequence is that **everything a cached score holds is multiplied by every genome ever tried**, and
+a serious search tries hundreds.
+
+It used to hold the whole benchmark result, including each seed's equity curve — one number per stock
+update. Measured, per genome:
+
+| retained | 3 000 updates | 40 000 updates |
+|---|---|---|
+| full results (old) | 680 KB | 7.9 MB |
+| score only (now) | 13 KB | 14 KB |
+
+So 240 genomes cost 158 MB at the short horizon and would have cost several GB at the long one:
+100 seeds x 20 generations x 12 population is about 240 genomes, and the browser tab was being killed
+for exactly that reason. A cached score now keeps only the scalars — growth, drawdown, trade count,
+paired ratios — with the curve and per-symbol tables blank. The curve is measured again, once, for
+the winner whenever it improves, because that is the one line the chart draws; the GUI's workers are
+also told the training jobs are *lite* and never send curves back at all.
+
+Retained memory is now independent of how long the market runs, so the horizon you pick for accuracy
+no longer decides how much RAM a tuning session needs.
+
+## 11. Version 3: conviction sizing and a proportional reserve
+
+v3 (`src/libraries/stock/traderV3.ts`) keeps v2's rules — same entry threshold, same exit at
+edge ≤ 0, same rotation, same share caps, same add-up-to-target — and changes two things:
+
+1. **The cash reserve is a fraction of net worth, not an absolute sum.** v2 keeps `moneyKeep`
+   ($1b), which is 10% of a $10b account and nothing to a $10t one, so a compounding account leaves
+   a tenth of its capital idle for the whole early run (measured: 90.8% invested against a 4 × 34%
+   target). v3 reserves 0.1% of net worth.
+2. **Slot weight follows conviction.** Each slot's weight is `|edge|^tilt` instead of equal, with
+   `tilt = 1` meaning "in proportion to expected return". `tilt = 0` reproduces v2 exactly.
+
+Measured, paired against v2 on the same seeds (3000 updates, $10b):
+
+| idea | paired ratio vs v2 |
+|---|---|
+| Kelly weights (μ/σ²) | 0.83× |
+| Kelly, slots picked by edge | 0.86× |
+| 8 positions at 12.5% each | 0.50× |
+| 2 positions at 50% each | 0.95× |
+| half the share cap | 0.82× |
+| trimming over-weight positions back to target | 0.81× |
+| exit at +0.15%/tick | 1.00× |
+| **tilt 1 + fractional reserve** | **1.07× (1.04–1.11), 75/100 seeds** |
+| same, seeds 201–400 (never used to choose it) | **1.08× (1.05–1.10), 140/200 seeds** |
+
+Two lessons worth keeping:
+
+- **Kelly is too conservative for this market.** It divides by variance, but an edge persists for
+  roughly ten updates, so a volatile position is much less risky over its life than the per-tick
+  variance implies. Weighting linearly in edge beats weighting by edge/variance.
+- **Never trim.** Selling a position back down to its target because the price drifted is a
+  per-tick sell loop: 7× v2's trade count and 0.81× its return. Only the exit rule and the rotation
+  rule take money out.
+
+Result on the default horizon: v2 +5,738% → v3 +6,257% mean, drawdown unchanged (3.15% vs 3.17%),
+fewer trades (550 vs 584), and 6.22× over v1 on 100/100 seeds.
+
+- GUI: **Strategy → conviction sizing (v3)**. The chart adds a `v3 (conviction)` line, the shipped
+  `v2 current` line, `v1 baseline`, and a `vs v2 same seed` paired card.
+- CLI: `pnpm run test:stock -- --strategy v3 --compare --seed-range 1-100` prints the paired
+  comparison against both v2 and v1. Knobs: `--v3-kelly` (tilt), `--v3-reserve`, `--v3-band`,
+  `--v3-gross`.
+
+## 12. Is there anything drastic left?
+
+Short answer: no, and this can be measured rather than argued.
+
+Every update, a position of weight `w` in a symbol with edge `e` earns expected log growth `w·e/2`.
+So an ideal trader with **no costs** that holds the four strongest edges at 25% each grows by
+`sum(top four edges)/8` per update. That is a hard ceiling for any four-slot strategy, and
+`--headroom` prints it next to a run (20 seeds, 3000 updates):
+
+```
+headroom  ideal 4-slot trader with no costs: +50 618.94%   ideal 1-slot: +179 952.09%
+          this run got +6 281.80%, 66.7% of the ideal in log terms
+          mean strongest edge 0.50%/update, mean top-4 sum 1.66%/update, mean spread 0.54%/side
+          tracking the ideal needs 155 swaps at that spread, costing 42.09% of the portfolio
+```
+
+So ~34% of the ceiling is theoretically unclaimed. It is not reachable, and the tool above shows
+why: that ideal holds whatever is momentarily strongest, and the set of four strongest names changes
+155 times per run. Every one of those changes is a round trip at 0.54–0.92% per side, and the
+arithmetic there is optimistic — it ignores commission on every leg and ignores that weights drift
+every update, so a real tracker rebalances constantly.
+
+Measured attempts to close the gap, paired against v2 on the same 100 seeds:
+
+| attempt | result |
+|---|---|
+| rotate to any better candidate (`rotateMargin 1`) | 0.95×, drawdown −47% |
+| no entry threshold, never exit, equal 25%, track the set | **+61% total** instead of +6,257% |
+| same, with a 5% rebalance band | +51% |
+| same, with a 25% share cap | +57% |
+| 8 slots at 12.5% (`maxPositions 8`) | 0.50× |
+| looser entry/exit + slightly faster rotation (entry 0.001, exit −0.002, rotate 1.2, weight 0.30) | 1.04× (1.01–1.07), 68/100 |
+
+Every route toward the ceiling loses, and the one that gains (the last row) is worth about as much
+as v3's tilt. The reason is structural: v2 already does the things that mattered — rank by edge,
+hold few names, trade rarely. v1's problem was 26,000 trades a run; once that was fixed, what was
+left was a few percent in sizing decisions.
+
+**In the game this is moot anyway.** v1 alone turns $10b into $98b in five game hours; v3 turns it
+into $636b. Nothing in a BitNode run needs either number, and the benchmark's own capacity limit
+(section 8) bites long before. The remaining work worth doing is robustness, not return: the no-4S
+path, share caps at extreme wealth, and behaviour in game (crash recovery, partial fills).
+
+## 13. When there is no 4S data
 
 The 4S Market Data TIX API (25b) is what publishes the forecast. Without it the game does not merely
 hide the number — `ns.stock.getForecast()` and `ns.stock.getVolatility()` **throw**
