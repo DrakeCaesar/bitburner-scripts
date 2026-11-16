@@ -417,7 +417,96 @@ median, worst seed, std dev) for those who want the tail as well as the middle.
 - In game, the trader's Positions tab now shows an **Edge** column next to Forecast and Vol, so you can
   see the exact ranking the script is acting on.
 
-## 10. When there is no 4S data
+## 10. Tuning the config by search
+
+The nine knobs in section 5 were set by hand: a grid sweep here, a measurement there. The benchmark
+can also search them itself, using the same genetic algorithm the IPvGO bench uses for its search
+widths (`ipvgo-engine/cpp/game/game_cli.cpp`, `runTune`), ported to `bench/stock/stockTuner.ts`.
+
+### What is a genome, and what is fitness
+
+A **genome** is one candidate config: the entry and exit edge, the rotation margin, max positions,
+max weight per symbol, max share fraction and whether shorts are allowed. Without 4S data three more
+genes join (entry edge, rotation margin and history length for the price estimate) — a gene that
+cannot change the outcome would only be noise. `moneyKeep` and `minShares` stay out: they are
+questions of scale, not strategy.
+
+**Fitness** is the mean of `log(final money / starting money)` over the training seeds — i.e. the
+*geometric* mean growth. Ties break toward the lower drawdown. Not the plain mean return: one
+explosive seed would decide a genome's fate.
+
+### Three ideas that make it work
+
+1. **Common random numbers.** Every genome in a generation is measured on *identical* seeds. A
+   difference between two genomes is then a difference in their behaviour, not in which markets they
+   drew. It is the same trick as the paired comparison in section 8, one level up.
+2. **Fitness is a pure function of the genome.** The same genome on the same seeds always scores the
+   same, so a genome seen in an earlier generation is taken from a cache instead of being re-run.
+   Elitism means at least one such genome exists every generation once the search converges, and the
+   panel prints how many were reused.
+3. **Held-back validation.** A search will happily find a genome that exploits the seeds it was
+   given. So the winner is re-measured against the shipped defaults on 3× as many seeds (at least
+   60) that the search never saw, and reported with the per-seed paired difference. *This is the
+   number that decides whether to keep it*; the training number only says the search is working.
+
+### The loop
+
+```
+population = defaults + random genomes   (or: stored best + mutations around it, on a resume)
+repeat for each generation:
+    measure every genome the cache does not have   (population x seeds runs)
+    rank by geometric mean growth
+    keep the best two   (elitism)
+    fill the rest: tournament-of-2 parents -> uniform crossover per gene
+                   -> 40% chance of nudging each gene, clamped to its range
+                   -> retry duplicates away, then force a fresh gene value
+winner: re-measure against the defaults on held-back seeds, report the paired gain
+```
+
+Gene ranges are deliberately narrow (`entryEdge` 0.0005–0.008, `maxPositions` 1–8, and so on). A wide
+box is worse, not better: an entry edge above ~1.5%/tick never fires on the model, so such a genome
+never trades, scores a flat 0 and teaches the search nothing. Similarly the search clamps
+`exitEdge < entryEdge`: with the exit at or above the entry, every position closes the tick after it
+opens, which is a pure churn loop worth about −90% however good the market is.
+
+### How to read the numbers
+
+```
+gen 2/6  best +6 254.86% (+8.51% vs default)  [2 reused, 4 measured]  <- new best
+rank  entry edge  exit edge  ...   growth      +-se        vs default   maxDD
+   1      0.0025    -0.0015  ...  +6 254.86%  +-15.04%    +8.51% +-7.24%  -4.73%
+   2      0.0025     0.0000  ...  +5 756.66%  +-12.31%    +0.00% +-0.00%  -3.57%
+```
+
+- **growth** is the geometric mean return over the training seeds, **±se** its standard error. A gap
+  smaller than about two standard errors is not yet a gap.
+- **vs default** is the paired difference against the shipped config on the same seeds, with the
+  standard error of *that*. This is the honest "is it better" column: pairing removes the seed-set
+  luck that inflates the ±se above it.
+- **maxDD** is the average worst drawdown, the tie-breaker.
+
+The example above is a real run: +8.5% on the training seeds, then −5.2% ±4.2% on the held-back
+seeds, better on only 27 of 60. That is the tool working. Sixteen training seeds and seven genes is
+enough to fit noise, and the search will do exactly that if you let it.
+
+### Running it
+
+- GUI: **Genetic tuning** section. Set Population / Generations / Search seed, press *Tune config*.
+  The chart grows a blue **tuned best** line — the median seed of the incumbent with its p10–p90
+  band, next to the config in the form and the v1 baseline — and the table shows the current
+  generation ranked, with `vs default`. The best genome is kept in the browser, so *Apply best to
+  form* works after a reload, and *Continue from best* (on by default) resumes the search around it.
+  *Stop* ends the run after the current generation; validation still happens.
+- CLI: `pnpm run test:stock -- --tune --seed-range 1-40 --population 8 --generations 6`. The seeds
+  given to `--seed-range` are the training seeds (at least 4, else a contiguous block of 16 starting
+  at `--seed`), `--tune-seed` seeds the search itself, and the winner is printed with its held-back
+  numbers and as JSON when `--json` is set.
+- More seeds beat more generations. Twenty-five seeds x 6 genomes x 6 generations takes a few
+  seconds with workers and is a reasonable starting point; twelve seeds will overfit.
+- A genome is only meaningful for the market shape it was measured on: capital, update count, BitNode
+  and 4S availability all move the answer, so re-tune when those change.
+
+## 11. When there is no 4S data
 
 The 4S Market Data TIX API (25b) is what publishes the forecast. Without it the game does not merely
 hide the number — `ns.stock.getForecast()` and `ns.stock.getVolatility()` **throw**

@@ -78,6 +78,36 @@
         </div>
       </section>
 
+      <section>
+        <h2>Genetic tuning</h2>
+        <div class="hint">
+          Bred search over the strategy genes. Every genome is measured on the same seeds as the run above
+          (common random numbers), the best survives each generation, and the winner is re-measured against
+          the shipped defaults on held-back seeds the search never saw.
+        </div>
+        <div class="fields">
+          <label class="field"><span>Population</span><input id="tunePopulation" type="text" inputmode="numeric" data-group="1" /></label>
+          <label class="field"><span>Generations</span><input id="tuneGenerations" type="text" inputmode="numeric" data-group="1" /></label>
+          <label class="field"><span>Search seed</span><input id="tuneSeed" type="text" inputmode="numeric" data-group="1" /></label>
+          <label class="field">
+            <span>Continue from best</span>
+            <span class="fieldToggle"><input id="tuneResume" type="checkbox" data-checked="1" checked /></span>
+          </label>
+        </div>
+        <div class="buttons">
+          <button id="tuneBtn" class="primary">Tune config</button>
+          <button id="tuneApply" class="ghost" disabled>Apply best to form</button>
+          <button id="tuneStop" class="ghost">Stop</button>
+        </div>
+        <div class="hint" id="tuneHint"></div>
+        <div class="scrollFrame" style="margin-top: 8px">
+          <table id="tuneTable">
+            <thead><tr id="tuneHead"></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
       <section id="results" class="hidden">
         <h2>Results</h2>
         <div class="cards" id="cards"></div>
@@ -126,6 +156,10 @@
         aggregate,
         aggregateCurves,
         pairResults,
+        StockTuner,
+        stockGeneSpecs,
+        scoreGenome,
+        pairedGain,
       } = StockBench
 
       const LABELS = {
@@ -154,9 +188,11 @@
         historyTicks: "hist",
         minShares: "minSh",
       }
-      const SERIES_COLORS = ["#43bf43", "#893bc8", "#e0b040", "#e05555"]
+      const SERIES_COLORS = ["#43bf43", "#893bc8", "#e0b040", "#e05555", "#3b9fe0"]
       const STORAGE_KEY = "toolui.stockBench.v1"
+      const TUNE_KEY = "toolui.stockBench.tuner.v1"
       const MARKET_DEFAULTS = { capital: 1e10, ticks: 3000, seeds: 25, node: 8, sf8: 3 }
+      const TUNE_DEFAULTS = { tunePopulation: 6, tuneGenerations: 6, tuneSeed: 1 }
       const MAX_WORKERS = 12
 
       const $ = (id) => document.getElementById(id)
@@ -180,6 +216,7 @@
       }
 
       for (const [id, value] of Object.entries(MARKET_DEFAULTS)) prepareNumber($(id), value)
+      for (const [id, value] of Object.entries(TUNE_DEFAULTS)) prepareNumber($(id), value)
 
       const configInputs = {}
       for (const key of NUMERIC_CONFIG_KEYS) {
@@ -250,6 +287,15 @@
       const readWorkerCount = () =>
         Math.max(1, Math.min(MAX_WORKERS, Math.floor(ToolUi.numberOf("workers") || ToolUi.coreCount())))
 
+      /** True when the controls hold something other than the config shipped in config.ts. */
+      function formDiffersFromSaved() {
+        for (const key of NUMERIC_CONFIG_KEYS) {
+          const value = ToolUi.numberOf(configInputs[key])
+          if (Number.isFinite(value) && Math.abs(value - DEFAULT_STOCK_TRADER_CONFIG[key]) > 1e-12) return true
+        }
+        return $("enableShorts").checked !== Boolean(DEFAULT_STOCK_TRADER_CONFIG.enableShorts)
+      }
+
       function readGrid() {
         const grid = {}
         for (const key of NUMERIC_CONFIG_KEYS) {
@@ -272,6 +318,7 @@
         $("runBtn").disabled = busy
         $("gridBtn").disabled = busy
         $("selftestBtn").disabled = busy
+        $("tuneBtn").disabled = busy
       }
 
       function updateGridCount() {
@@ -422,7 +469,7 @@ self.onmessage = function (event) {
         }
 
         usable.forEach((s, index) => {
-          const color = SERIES_COLORS[index % SERIES_COLORS.length]
+          const color = s.color ?? SERIES_COLORS[index % SERIES_COLORS.length]
           if (s.low.some((v, i) => v !== s.high[i])) {
             ctx.beginPath()
             s.high.forEach((v, i) => {
@@ -450,7 +497,7 @@ self.onmessage = function (event) {
 
         $("legend").innerHTML = usable
           .map((s, i) => {
-            const color = SERIES_COLORS[i % SERIES_COLORS.length]
+            const color = s.color ?? SERIES_COLORS[i % SERIES_COLORS.length]
             const base = s.median[0] || 1
             const middle = s.median[s.median.length - 1] / base - 1
             const bottom = s.low[s.low.length - 1] / base - 1
@@ -460,6 +507,39 @@ self.onmessage = function (event) {
             return `<span><i style="background:${color}"></i>${s.label} ${signedPct(middle)}${band}</span>`
           })
           .join("")
+      }
+
+      /** One chart series: a label, the seed results to average, and optionally a fixed colour. */
+      function curveSeries(label, runs, color) {
+        if (!runs || runs.length === 0) return null
+        const curve = aggregateCurves(runs)
+        if (!curve) return null
+        return { label: `${label} ${curve.runs} seed${curve.runs === 1 ? "" : "s"}`, color, ...curve }
+      }
+
+      const TUNED_COLOR = "#3b9fe0"
+      const SAVED_COLOR = "#4f8f4f"
+
+      /**
+       * Draw every layer that is available, so one call serves a plain run and a tuning run.
+       *
+       * `saved` is always the config shipped in src/libraries/stock/config.ts, so the tuned line
+       * and any edited form config are judged against v2 as it actually ships. The form's own
+       * line only appears when it differs from that, otherwise it would be the same curve twice.
+       */
+      function chartAll(layers) {
+        const primary = layers.formDiffers
+          ? curveSeries("form config", layers.current)
+          : curveSeries("v2 current", layers.saved ?? layers.current, layers.formDiffers ? undefined : SAVED_COLOR)
+        const series = [
+          primary,
+          layers.formDiffers ? curveSeries("v2 current", layers.saved, SAVED_COLOR) : null,
+          curveSeries("v1 baseline", layers.v1),
+          curveSeries("tuned best", layers.tuned, TUNED_COLOR),
+          curveSeries("hold (filtered)", layers.holdFiltered ? [layers.holdFiltered] : null),
+          curveSeries("hold (all)", layers.holdAll ? [layers.holdAll] : null),
+        ].filter(Boolean)
+        drawChart(series)
       }
 
       // ---- results ---------------------------------------------------------
@@ -529,6 +609,8 @@ self.onmessage = function (event) {
         const compare = $("compareV1").checked && strategy === "current"
         // v1 reads forecast/volatility directly, so it can only run with 4S data.
         const v1Options = { ...options, marketData: true }
+        // The shipped config is measured too, so an edited form still has v2 itself to sit next to.
+        const formDiffers = strategy === "current" && formDiffersFromSaved()
 
         setBusy(true)
         const started = performance.now()
@@ -543,6 +625,9 @@ self.onmessage = function (event) {
           if (compare) {
             for (const seed of seeds) jobs.push({ kind: "strategy", strategy: "v1", options: { ...v1Options, seed } })
           }
+          if (formDiffers) {
+            for (const seed of seeds) jobs.push({ kind: "strategy", strategy: "current", options: { ...market, seed, config: {} } })
+          }
           if (baseline !== "none") jobs.push({ kind: "hold", filtered: true, options: { ...options, seed: seeds[0] } })
           if (baseline === "all") jobs.push({ kind: "hold", filtered: false, options: { ...options, seed: seeds[0] } })
 
@@ -550,33 +635,285 @@ self.onmessage = function (event) {
           const strategyResults = results.slice(0, seeds.length)
           const v1Results = compare ? results.slice(seeds.length, seeds.length * 2) : null
           const base = seeds.length * (compare ? 2 : 1)
-          const holdFiltered = baseline === "none" ? null : results[base]
-          const holdAll = baseline === "all" ? results[base + 1] : null
+          const savedResults = formDiffers ? results.slice(base, base + seeds.length) : strategyResults
+          const holdBase = base + (formDiffers ? seeds.length : 0)
+          const holdFiltered = baseline === "none" ? null : results[holdBase]
+          const holdAll = baseline === "all" ? results[holdBase + 1] : null
 
           const stats = aggregate(strategyResults)
           const v1Stats = v1Results ? aggregate(v1Results) : null
           const paired = v1Results ? pairResults(strategyResults, v1Results) : null
           renderCards(stats, holdFiltered, holdAll, v1Stats, paired)
           renderSymbols(strategyResults[0].perSymbol)
-
-          const curveSeries = (label, runs) => {
-            if (!runs || runs.length === 0) return null
-            const curve = aggregateCurves(runs)
-            if (!curve) return null
-            return { label: `${label} ${curve.runs} seed${curve.runs === 1 ? "" : "s"}`, ...curve }
-          }
-          const series = [
-            curveSeries(strategy === "v1" ? "v1 baseline" : "edge (current)", strategyResults),
-            curveSeries("v1 baseline", v1Results),
-            curveSeries("hold (filtered)", holdFiltered ? [holdFiltered] : null),
-            curveSeries("hold (all)", holdAll ? [holdAll] : null),
-          ].filter(Boolean)
-          drawChart(series)
+          chartAll({
+            current: strategy === "v1" ? null : strategyResults,
+            saved: strategy === "v1" ? null : savedResults,
+            formDiffers,
+            v1: strategy === "v1" ? strategyResults : v1Results,
+            holdFiltered,
+            holdAll,
+          })
 
           $("results").classList.remove("hidden")
           const seconds = ((performance.now() - started) / 1000).toFixed(2)
           const note = strategy === "v1" ? " (v1 ignores the config form)" : ""
           setStatus(`done in ${seconds}s - ${seeds.length} seed${seeds.length === 1 ? "" : "s"}${note}`)
+        } catch (error) {
+          setStatus(String(error?.stack ?? error), "error")
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      // ---- genetic tuning --------------------------------------------------
+      // The search runs here on the main thread; the seed runs go through the same worker pool
+      // as everything else, so a generation is one `runJobs` call over population x seeds.
+
+      const tuneStore = () => ToolUi.store.read(TUNE_KEY, null)
+
+      const TUNE_GENE_LABELS = {
+        entryEdge: "entry",
+        exitEdge: "exit",
+        rotateMargin: "rot",
+        maxPositions: "pos",
+        maxWeightPerSymbol: "wgt",
+        maxShareFraction: "shf",
+        enableShorts: "sht",
+        no4sEntryEdge: "n4e",
+        no4sRotateMargin: "n4r",
+        historyTicks: "hist",
+      }
+
+      function genomeSummary(genome, specs) {
+        return specs
+          .map((spec) => {
+            const value = genome[spec.key]
+            const text =
+              spec.kind === "bool"
+                ? value
+                  ? "on"
+                  : "off"
+                : spec.kind === "int"
+                  ? ToolUi.format.count(Number(value))
+                  : Number(value).toFixed(spec.digits)
+            return `${TUNE_GENE_LABELS[spec.key] ?? spec.key} ${text}`
+          })
+          .join("  ")
+      }
+
+      function renderTuneHint() {
+        const stored = tuneStore()
+        $("tuneApply").disabled = !stored?.best
+        const seeds = readSeedCount()
+        const population = Math.floor(ToolUi.numberOf("tunePopulation") || 6)
+        const generations = Math.floor(ToolUi.numberOf("tuneGenerations") || 6)
+        const plan = `${population} genomes x ${generations} generations, ${seeds} seed${seeds === 1 ? "" : "s"} each`
+        if (!stored?.best) {
+          $("tuneHint").textContent = `no search yet - ${plan}`
+          return
+        }
+        const specs = stockGeneSpecs($("has4s").checked)
+        $("tuneHint").textContent =
+          `stored best (generation ${stored.generation}/${stored.generations}, growth ${signedPct(stored.growthPct ?? 0)}): ` +
+          `${genomeSummary(stored.best, specs)} - "Apply best to form" loads it into the strategy config`
+      }
+
+      function saveTuneStore(best, report) {
+        ToolUi.store.write(TUNE_KEY, {
+          best: best.genome,
+          growthPct: best.score.growthPct,
+          generation: report.index,
+          generations: report.generations,
+        })
+        renderTuneHint()
+      }
+
+      function renderTuneTable(report, specs) {
+        $("tuneHead").innerHTML = ["#", ...specs.map((spec) => TUNE_GENE_LABELS[spec.key] ?? spec.key), "growth", "vs default", "maxDD"]
+          .map((header) => `<th>${header}</th>`)
+          .join("")
+        $("tuneTable").querySelector("tbody").innerHTML = report.rows
+          .map((row) => {
+            const genes = specs
+              .map((spec) => {
+                const value = row.genome[spec.key]
+                const text =
+                  spec.kind === "bool"
+                    ? value
+                      ? "on"
+                      : "off"
+                    : spec.kind === "int"
+                      ? ToolUi.format.count(Number(value))
+                      : Number(value).toFixed(spec.digits)
+                return `<td>${text}</td>`
+              })
+              .join("")
+            const gain = row.gain
+              ? `${signedPct(Math.expm1(row.gain.diff))} +-${pct(row.gain.se)}`
+              : "-"
+            return (
+              `<tr><td>${row.rank}</td>${genes}` +
+              `<td class="${cls(row.score.growthPct)}">${signedPct(row.score.growthPct)}</td>` +
+              `<td class="${cls(row.gain?.diff ?? 0)}">${gain}</td>` +
+              `<td class="neg">-${pct(row.score.meanDrawdownPct)}</td></tr>`
+            )
+          })
+          .join("")
+      }
+
+      function applyGenome(genome, specs) {
+        for (const spec of specs) {
+          const value = genome[spec.key]
+          if (value === undefined) continue
+          if (spec.key === "enableShorts") $("enableShorts").checked = Boolean(value)
+          else if (configInputs[spec.key]) configInputs[spec.key].value = String(value)
+        }
+        form.save()
+        setStatus("loaded the tuned genome into the strategy config - Run benchmark to see it as its own line")
+      }
+
+      let tuneCancel = false
+
+      async function runTuner() {
+        const market = readMarket()
+        const seeds = readSeeds()
+        const base = readConfig()
+        if ($("strategy").value !== "current") {
+          setStatus("tuning only searches the current strategy; switch Strategy to edge (current)", "error")
+          return
+        }
+        if (seeds.length < 4) {
+          setStatus("tuning needs more than one seed: raise Seeds before tuning", "error")
+          return
+        }
+        const specs = stockGeneSpecs(Boolean(market.marketData))
+        const resumeGenome = $("tuneResume").checked ? (tuneStore()?.best ?? null) : null
+        const tuner = new StockTuner({
+          specs,
+          population: Math.floor(ToolUi.numberOf("tunePopulation") || 6),
+          generations: Math.floor(ToolUi.numberOf("tuneGenerations") || 6),
+          seed: Math.floor(ToolUi.numberOf("tuneSeed") || 1),
+          trainSeeds: seeds,
+          resume: resumeGenome,
+        })
+
+        tuneCancel = false
+        setBusy(true)
+        const started = performance.now()
+        try {
+          // Measure the things the tuned line has to sit next to, once, on the same seeds.
+          const compare = $("compareV1").checked
+          const baseline = $("baseline").value
+          const formDiffers = formDiffersFromSaved()
+          const fixed = seeds.map((seed) => ({ kind: "strategy", strategy: "current", options: { ...market, seed, config: base } }))
+          // v2 as shipped, so the tuned line is judged against the real config, not the form.
+          if (formDiffers) {
+            for (const seed of seeds) {
+              fixed.push({ kind: "strategy", strategy: "current", options: { ...market, seed, config: {} } })
+            }
+          }
+          if (compare) {
+            for (const seed of seeds) {
+              fixed.push({ kind: "strategy", strategy: "v1", options: { ...market, marketData: true, seed, config: base } })
+            }
+          }
+          if (baseline !== "none") fixed.push({ kind: "hold", filtered: true, options: { ...market, seed: seeds[0], config: base } })
+          if (baseline === "all") fixed.push({ kind: "hold", filtered: false, options: { ...market, seed: seeds[0], config: base } })
+          setStatus(`measuring the current config on ${seeds.length} seeds...`)
+          const fixedResults = await runJobs(fixed, () => {})
+          const currentResults = fixedResults.slice(0, seeds.length)
+          const savedResults = formDiffers ? fixedResults.slice(seeds.length, seeds.length * 2) : currentResults
+          const v1Base = seeds.length * (formDiffers ? 2 : 1)
+          const v1Results = compare ? fixedResults.slice(v1Base, v1Base + seeds.length) : null
+          const holdBase = v1Base + (compare ? seeds.length : 0)
+          const holdFiltered = baseline === "none" ? null : fixedResults[holdBase]
+          const holdAll = baseline === "all" ? fixedResults[holdBase + 1] : null
+          renderCards(
+            aggregate(currentResults),
+            holdFiltered,
+            holdAll,
+            v1Results ? aggregate(v1Results) : null,
+            v1Results ? pairResults(currentResults, v1Results) : null,
+          )
+          renderSymbols(currentResults[0].perSymbol)
+          $("results").classList.remove("hidden")
+          chartAll({ current: currentResults, saved: savedResults, formDiffers, v1: v1Results, holdFiltered, holdAll })
+
+          while (!tuner.finished && !tuneCancel) {
+            const pending = tuner.pending()
+            const jobs = []
+            const owners = []
+            for (const item of pending) {
+              const config = tuner.config(item.genome, base)
+              for (const seed of seeds) {
+                jobs.push({ kind: "strategy", strategy: "current", options: { ...market, seed, config } })
+                owners.push(item.key)
+              }
+            }
+            const results = await runJobs(jobs, (done, total) =>
+              setStatus(`generation ${tuner.generation + 1}/${tuner.generations}: ${done}/${total} runs...`),
+            )
+            const grouped = new Map()
+            results.forEach((result, index) => {
+              const key = owners[index]
+              if (!grouped.has(key)) grouped.set(key, [])
+              grouped.get(key).push(result)
+            })
+            const scores = new Map()
+            for (const [key, runs] of grouped) scores.set(key, scoreGenome(key, runs))
+            const report = tuner.commit(scores)
+            renderTuneTable(report, specs)
+            saveTuneStore(report.best, report)
+            chartAll({
+              current: currentResults,
+              saved: savedResults,
+              formDiffers,
+              v1: v1Results,
+              tuned: report.best.score.results,
+              holdFiltered,
+              holdAll,
+            })
+            setStatus(
+              `generation ${report.index}/${report.generations}: best ${signedPct(report.best.score.growthPct)}` +
+                (report.best.gain ? `, ${signedPct(Math.expm1(report.best.gain.diff))} vs default on the same seeds` : "") +
+                ` (${((performance.now() - started) / 1000).toFixed(0)}s)`,
+            )
+          }
+
+          const best = tuner.best
+          if (!best) throw new Error("the search produced no genome")
+          // Re-measure on held-back seeds: this is the number that decides whether to keep it.
+          const validateJobs = []
+          for (const seed of tuner.validationSeeds) {
+            validateJobs.push({ kind: "strategy", strategy: "current", options: { ...market, seed, config: tuner.config(best.genome, base) } })
+            validateJobs.push({ kind: "strategy", strategy: "current", options: { ...market, seed, config: tuner.config(tuner.defaultGenome, base) } })
+          }
+          setStatus(`validating on ${tuner.validationSeeds.length} held-back seeds...`)
+          const validateResults = await runJobs(validateJobs, () => {})
+          const tunedRuns = validateResults.filter((_, index) => index % 2 === 0)
+          const defaultRuns = validateResults.filter((_, index) => index % 2 === 1)
+          const gain = pairedGain(tunedRuns, defaultRuns)
+          const tunedScore = scoreGenome("tuned", tunedRuns)
+          const defaultScore = scoreGenome("default", defaultRuns)
+          renderTuneTable(
+            {
+              index: tuner.generation,
+              generations: tuner.generations,
+              rows: [{ rank: 1, genome: best.genome, score: tunedScore, gain }],
+              best,
+              improved: false,
+              cached: 0,
+              evaluated: 0,
+            },
+            specs,
+          )
+          saveTuneStore({ genome: best.genome, score: tunedScore }, { index: tuner.generation, generations: tuner.generations })
+          setStatus(
+            `tuned ${signedPct(tunedScore.growthPct)} vs default ${signedPct(defaultScore.growthPct)} on ` +
+              `${tuner.validationSeeds.length} held-back seeds` +
+              (gain ? ` - paired ${signedPct(Math.expm1(gain.diff))} +-${pct(gain.se)}, better on ${gain.wins}/${gain.runs}` : ""),
+            gain && gain.diff < 0 ? "error" : undefined,
+          )
         } catch (error) {
           setStatus(String(error?.stack ?? error), "error")
         } finally {
@@ -671,6 +1008,15 @@ self.onmessage = function (event) {
       // ---- wiring ----------------------------------------------------------
       $("runBtn").addEventListener("click", runBenchmark)
       $("gridBtn").addEventListener("click", runGrid)
+      $("tuneBtn").addEventListener("click", runTuner)
+      $("tuneStop").addEventListener("click", () => {
+        tuneCancel = true
+        setStatus("stopping after this generation")
+      })
+      $("tuneApply").addEventListener("click", () => {
+        const stored = tuneStore()
+        if (stored?.best) applyGenome(stored.best, stockGeneSpecs($("has4s").checked))
+      })
       $("resetBtn").addEventListener("click", () => {
         form.clear()
         setStatus("config reset to src/libraries/stock/config.ts defaults")
@@ -694,7 +1040,12 @@ self.onmessage = function (event) {
       }
       $("seeds").addEventListener("input", renderSeedHint)
       $("seeds").addEventListener("change", renderSeedHint)
+      for (const id of ["tunePopulation", "tuneGenerations", "has4s"]) {
+        $(id).addEventListener("input", renderTuneHint)
+        $(id).addEventListener("change", renderTuneHint)
+      }
       renderSeedHint()
+      renderTuneHint()
       updateGridCount()
       ensurePool()
       setStatus("ready")

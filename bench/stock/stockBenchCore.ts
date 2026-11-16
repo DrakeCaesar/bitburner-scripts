@@ -411,6 +411,29 @@ function quantile(sorted: readonly number[], q: number): number {
   return lower === upper ? sorted[lower] : sorted[lower] + (sorted[upper] - sorted[lower]) * (position - lower)
 }
 
+// The genetic search lives in its own module so the GA reads as a GA; both bundles pick it
+// up from here, which is also what puts it on the GUI's `StockBench` global.
+export {
+  StockTuner,
+  clampGenome,
+  defaultsGenome,
+  genomeConfig,
+  genomeKey,
+  pairedGain,
+  randomGenome,
+  scoreGenome,
+  stockGeneSpecs,
+  type GenomeScore,
+  type PairedGain,
+  type PendingGenome,
+  type StockGeneKey,
+  type StockGeneSpec,
+  type StockGenome,
+  type StockTunerOptions,
+  type TuneGeneration,
+  type TuneRow,
+} from "./stockTuner.js"
+
 /** Config keys that hold numbers, i.e. everything a grid sweep can vary. */
 export const NUMERIC_CONFIG_KEYS = [
   "moneyKeep",

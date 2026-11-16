@@ -209,6 +209,7 @@ Everything lives in `bench/stock/`:
 |------|---------|
 | `stockMarketModel.ts` | Local port of the game's market (`../bitburner-src` `stable`: `Stock.ts`, `processStockPrices`/`stockMarketCycle`, `BuyingAndSelling.tsx`, `StockMarketHelpers.ts`, `InitStockMetadata.ts`) |
 | `stockBenchCore.ts` | Shared, environment-free benchmark logic (pure; no CLI/DOM) |
+| `stockTuner.ts` | Genetic search over the strategy config, ported from the ipvgo tuner (`ipvgo-engine/cpp/game/game_cli.cpp`, `runTune`): common random numbers, cached pure fitness, elitism + tournament + uniform crossover, held-back validation, resumable |
 | `stockTraderBench.ts` | CLI front end |
 | `traderV1.ts` | Frozen copy of the original strategy, kept as the baseline the current one is measured against |
 | `stockTraderViz.template.html` | GUI front end (source) |
@@ -229,6 +230,7 @@ The strategy ranks symbols by **edge** = `(2 * forecast - 1) * volatility`, the 
 - The aggregate report includes `capital ... % of net worth in positions`. Below ~60% the share caps and `maxWeightPerSymbol` bind, so extra run length cannot compound and the score is measuring which names happened to be capped during a price run rather than the rules. 3000 updates is the horizon for judging strategy changes; at 30,000 a single seed can suggest the opposite verdict (seed 1337 favours v1 by 2x, while 100 seeds give 84/100 for current at 3.14x). See section 8 of [stock-trader.md](./stock-trader.md).
 - `--grid entry-edge=0.002,0.0025,0.003 --grid max-positions=3,4 --seeds 5` ranks every combination by mean return.
 - `--baseline none|filtered|all` adds a buy-and-hold reference; `--json` emits machine-readable output.
+- `--tune` runs the genetic search instead of one config: it trains on the seeds from `--seed-range`/`--seeds` (a contiguous block of 16 when fewer than 4 were asked for), then re-measures the winner against the shipped defaults on 3x as many held-back seeds. `--population <n>` (default 6), `--generations <n>` (default 6), `--tune-seed <n>`. Fitness is mean log growth (geometric mean return); the `vs default` column is the paired per-seed difference, which is the number to trust. The GUI has the same search in its **Genetic tuning** section and charts the incumbent as a blue `tuned best` line with a p10-p90 band. See section 10 of [stock-trader.md](./stock-trader.md).
 - Edits to `src/libraries/stock/*` take effect on the next run because the bundle is rebuilt first.
 - To benchmark a different strategy, import `runScenario`/`createNsStub`, or point `build/bundleStockTraderBench.cjs` at a new entry file.
 - Keep the model in sync with `../bitburner-src` when the game's stock internals change; the self-test catches formula drift, not missing mechanics.

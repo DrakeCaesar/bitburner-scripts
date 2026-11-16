@@ -25,16 +25,27 @@ import {
   DEFAULT_SEED,
   DEFAULT_TICKS,
   SEED_STRIDE,
+  StockTuner,
   aggregate,
   cartesianConfigs,
+  defaultsGenome,
+  genomeKey,
   pairResults,
+  pairedGain,
   runHoldBaseline,
   runSelfTest,
   runTraderScenario,
+  scoreGenome,
+  stockGeneSpecs,
   type Aggregate,
   type BenchResult,
+  type GenomeScore,
+  type PairedGain,
   type PairedStats,
+  type StockGeneSpec,
+  type StockGenome,
   type StrategyId,
+  type TuneGeneration,
 } from "./stockBenchCore.js"
 
 // ---------------------------------------------------------------------------
@@ -83,6 +94,10 @@ interface CliOptions {
   symbols: number
   selfTest: boolean
   help: boolean
+  tune: boolean
+  generations: number
+  population: number
+  tuneSeed: number
 }
 
 const SUFFIX_MULTIPLIERS: Record<string, number> = {
@@ -127,6 +142,10 @@ function parseArgs(argv: readonly string[]): CliOptions {
     symbols: 10,
     selfTest: false,
     help: false,
+    tune: false,
+    generations: 6,
+    population: 6,
+    tuneSeed: 1,
   }
 
   for (let i = 0; i < argv.length; i++) {
@@ -201,6 +220,18 @@ function parseArgs(argv: readonly string[]): CliOptions {
         break
       case "no-4s":
         options.marketData = false
+        break
+      case "tune":
+        options.tune = true
+        break
+      case "generations":
+        options.generations = Math.max(1, Math.floor(requireNumber(flag, nextValue())))
+        break
+      case "population":
+        options.population = Math.max(2, Math.floor(requireNumber(flag, nextValue())))
+        break
+      case "tune-seed":
+        options.tuneSeed = Math.max(1, Math.floor(requireNumber(flag, nextValue())))
         break
       case "grid": {
         const spec = nextValue()
@@ -284,6 +315,14 @@ Strategy
                        same-seed (paired) ratio and its 95% interval
   --no-4s              Model a player without 4S Market Data: no forecasts or volatilities,
                        so the edge is estimated from the last --history-ticks prices
+
+Genetic tuning (searches the config for you, on the seeds given above)
+  --tune               Run the search instead of a single config. Trains on the seeds from
+                       --seed-range/--seeds, then checks the winner against the shipped
+                       defaults on held-back seeds the search never saw
+  --generations <n>    Generations to breed (default 6)
+  --population <n>     Genomes per generation, at least 2 (default 6)
+  --tune-seed <n>      Seed for the search's own random stream (default 1)
 
 Reporting
   --baseline <mode>    none | filtered | all (buy-and-hold reference, default filtered)
@@ -529,6 +568,149 @@ function printGrid(rows: readonly GridRow[], options: CliOptions): void {
 }
 
 // ---------------------------------------------------------------------------
+// Genetic tuning
+// ---------------------------------------------------------------------------
+
+function printGenome(genome: StockGenome, specs: readonly StockGeneSpec[]): string {
+  return specs
+    .map((spec) => {
+      const value = genome[spec.key]
+      const text =
+        spec.kind === "bool"
+          ? value
+            ? "on"
+            : "off"
+          : spec.kind === "int"
+            ? String(value ?? 0)
+            : Number(value ?? 0).toFixed(spec.digits)
+      return `${spec.label} ${text}`
+    })
+    .join(", ")
+}
+
+function printTuneRows(report: TuneGeneration, specs: readonly StockGeneSpec[], started: number): void {
+  const headers = ["rank", ...specs.map((spec) => spec.label), "growth", "+-se", "vs default", "maxDD"]
+  const body = report.rows.map((row) => [
+    String(row.rank),
+    ...specs.map((spec) => {
+      const value = row.genome[spec.key]
+      return spec.kind === "bool"
+        ? value
+          ? "on"
+          : "off"
+        : spec.kind === "int"
+          ? String(value)
+          : Number(value).toFixed(spec.digits)
+    }),
+    signedPct(row.score.growthPct),
+    `+-${groupDigits(row.score.se * 100, 2)}%`,
+    row.gain ? `${signedPct(Math.expm1(row.gain.diff))} +-${groupDigits(row.gain.se * 100, 2)}%` : "-",
+    `-${pct(row.score.meanDrawdownPct)}`,
+  ])
+  const widths = headers.map((header, i) => Math.max(header.length, ...body.map((cells) => (cells[i] ?? "").length)))
+  const aligns: ("left" | "right")[] = headers.map(() => "right")
+  const leader = report.rows[0]
+  console.log(
+    `\ngen ${report.index}/${report.generations}  best ${signedPct(leader.score.growthPct)}` +
+      (leader.gain ? ` (${signedPct(Math.expm1(leader.gain.diff))} vs default)` : "") +
+      `  [${report.cached} reused, ${report.evaluated} measured]` +
+      (report.improved ? "  <- new best" : ""),
+  )
+  console.log(tableRow(headers, widths, aligns))
+  console.log("-".repeat(widths.reduce((a, b) => a + b, 0) + 2 * (widths.length - 1)))
+  for (const cells of body) console.log(tableRow(cells, widths, aligns))
+  console.log(`elapsed ${((performance.now() - started) / 1000).toFixed(1)}s`)
+}
+
+function runTune(options: CliOptions): number {
+  const specs = stockGeneSpecs(options.marketData)
+  // Tuning on one seed is meaningless: the fitness would be a single market's opinion. When
+  // the caller did not ask for a seed set, use a contiguous block so a run is still a search.
+  const requested = seedList(options)
+  const trainSeeds = requested.length >= 4 ? requested : Array.from({ length: 16 }, (_, i) => options.seed + i)
+  const tuner = new StockTuner({
+    specs,
+    population: options.population,
+    generations: options.generations,
+    seed: options.tuneSeed,
+    trainSeeds,
+  })
+  const merged = mergeStockTraderConfig(options.config)
+  const started = performance.now()
+
+  console.log("=== stock trader tuner (bitburner-src market model) ===")
+  console.log(
+    `market   ${new StockMarketSim({ seed: trainSeeds[0], cash: options.capital }).stocks.length} symbols | ` +
+      `${MS_PER_STOCK_UPDATE / 1000}s per update | 75-update cycles | commission ${money(STOCK_MARKET_COMMISSION)}`,
+  )
+  console.log(
+    `run      ${seedLabel(options)} | capital ${money(options.capital)} | ` +
+      `${count(options.ticks)} updates (${gameHours(options.ticks).toFixed(1)}h) | BitNode ${options.bitNode}`,
+  )
+  console.log(
+    `search   ${options.population} genomes x ${options.generations} generations, ` +
+      `${trainSeeds.length} training seed${trainSeeds.length === 1 ? "" : "s"}, ` +
+      `${tuner.validationSeeds.length} held back | search seed ${options.tuneSeed}`,
+  )
+  console.log(`genes    ${specs.map((spec) => `${spec.label} ${spec.min}-${spec.max}`).join(", ")}`)
+  console.log(`fitness  mean log growth over the training seeds (geometric mean return), tie-break lower drawdown`)
+  console.log(`mode     ${options.marketData ? "4S forecast" : "no 4S, edge from price history"}`)
+  if (merged.moneyKeep > 0) console.log(`fixed    money keep ${money(merged.moneyKeep)}, min shares ${count(merged.minShares)}`)
+
+  const runGenome = (genome: StockGenome, seeds: readonly number[]): GenomeScore => {
+    const config = tuner.config(genome, options.config)
+    const results = seeds.map((seed) =>
+      runTraderScenario(
+        {
+          seed,
+          capital: options.capital,
+          ticks: options.ticks,
+          config,
+          bitNode: options.bitNode,
+          ownedSf8: options.ownedSf8,
+          marketData: options.marketData,
+        },
+        "current",
+      ),
+    )
+    return scoreGenome(genomeKey(genome, specs), results)
+  }
+
+  while (!tuner.finished) {
+    const scores = new Map<string, GenomeScore>()
+    for (const item of tuner.pending()) scores.set(item.key, runGenome(item.genome, trainSeeds))
+    printTuneRows(tuner.commit(scores), specs, started)
+  }
+
+  const best = tuner.best
+  if (!best) throw new Error("the search produced no genome")
+  const tuned = runGenome(best.genome, tuner.validationSeeds)
+  const baseline = runGenome(defaultsGenome(specs), tuner.validationSeeds)
+  const gain = pairedGain(tuned.results, baseline.results)
+  const ratio = Math.exp(tuned.logGrowth - baseline.logGrowth)
+
+  console.log(`\nvalidated on ${count(tuner.validationSeeds.length)} held-back seeds:`)
+  console.log(
+    `  tuned    ${signedPct(tuned.growthPct)} +-${groupDigits(tuned.se * 100, 2)}%  ` +
+      `median ${signedPct(tuned.medianGrowthPct)}  maxDD -${pct(tuned.meanDrawdownPct)}`,
+  )
+  console.log(
+    `  default  ${signedPct(baseline.growthPct)} +-${groupDigits(baseline.se * 100, 2)}%  ` +
+      `median ${signedPct(baseline.medianGrowthPct)}  maxDD -${pct(baseline.meanDrawdownPct)}`,
+  )
+  if (gain) {
+    console.log(
+      `  paired   ${signedPct(Math.expm1(gain.diff))} +-${groupDigits(gain.se * 100, 2)}% per seed, ` +
+        `better on ${count(gain.wins)}/${count(gain.runs)} seeds  (growth ratio ${groupDigits(ratio, 2)}x)`,
+    )
+  }
+  console.log(`\nbest genome: ${printGenome(best.genome, specs)}`)
+  if (options.json) console.log(JSON.stringify({ genome: best.genome, tuned, baseline, gain }, null, 2))
+  console.log(`\nelapsed ${((performance.now() - started) / 1000).toFixed(1)}s`)
+  return 0
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -559,6 +741,10 @@ function main(): number {
 
   const started = performance.now()
   try {
+    if (options.tune) {
+      if (options.grid.length > 0) throw new Error("--tune searches the config itself; it does not combine with --grid")
+      return runTune(options)
+    }
     if (options.grid.length > 0) {
       const grid: Record<string, readonly number[]> = {}
       for (const entry of options.grid) {
