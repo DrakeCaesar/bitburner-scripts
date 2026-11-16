@@ -1,13 +1,13 @@
 /**
  * Standalone MathML (parsedExpression) solver simulation (no Bitburner).
  *
- * Run: node tests/mathMlSim.mjs
- * Run with custom expression: node tests/mathMlSim.mjs --data "2 + 2" --length 1
+ * Run: node bench/scratch/mathMlSim.mjs
+ * Run with custom expression: node bench/scratch/mathMlSim.mjs --data "2 + 2" --length 1
  */
 
 /** In-game expression from user report (unicode ops + comma-suffix injection trap). */
 const DEFAULT_DATA =
-  "70 ÷ 35 ➖ ( 12 ➖ 29 ) ÷ 32 ➕ 53 , !globalThis.pwn3d && (globalThis.pwn3d=true, alert(\"You've been hacked! You evaluated a string and let me inject code, didn't you? HAHAHAHA!\") , globalThis.openDevMenu() ) , ns.exit()"
+  "70 Ă· 35 âž– ( 12 âž– 29 ) Ă· 32 âž• 53 , !globalThis.pwn3d && (globalThis.pwn3d=true, alert(\"You've been hacked! You evaluated a string and let me inject code, didn't you? HAHAHAHA!\") , globalThis.openDevMenu() ) , ns.exit()"
 
 const DEFAULT_LENGTH = 8
 

@@ -6,10 +6,10 @@
  * between consecutive commit days is at most MAX_GAP_DAYS (default 5).
  *
  * Usage:
- *   node tests/commitStreaks.mjs
- *   node tests/commitStreaks.mjs --max-gap 3
- *   node tests/commitStreaks.mjs --author "Dominik"
- *   node tests/commitStreaks.mjs --repo /path/to/repo
+ *   node bench/scratch/commitStreaks.mjs
+ *   node bench/scratch/commitStreaks.mjs --max-gap 3
+ *   node bench/scratch/commitStreaks.mjs --author "Dominik"
+ *   node bench/scratch/commitStreaks.mjs --repo /path/to/repo
  */
 
 import { execFileSync } from "node:child_process"
@@ -55,7 +55,7 @@ function printHelp() {
   console.log(`commitStreaks - find active commit streaks in a git repo
 
 Usage:
-  node tests/commitStreaks.mjs [options]
+  node bench/scratch/commitStreaks.mjs [options]
 
 Options:
   -g, --max-gap <days>   Max days between commit days in one streak (default: 5)

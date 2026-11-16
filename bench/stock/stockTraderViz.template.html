@@ -1,0 +1,584 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Stock trader benchmark</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d0d0d;
+        --panel: #161616;
+        --panel-alt: #1c1c1c;
+        --border: rgba(255, 255, 255, 0.12);
+        --text: #d4d4d4;
+        --muted: #888;
+        --good: #81c784;
+        --bad: #e57373;
+        --warn: #f9a825;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        padding: 16px 20px 40px;
+        font-family: Consolas, "Courier New", monospace;
+        background: var(--bg);
+        color: var(--text);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      h1 { margin: 0 0 2px; font-size: 16px; font-weight: 600; }
+      h2 { margin: 0 0 8px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+      .sub { color: var(--muted); margin-bottom: 14px; }
+
+      section { border: 1px solid var(--border); background: var(--panel); padding: 12px 14px; margin-bottom: 14px; }
+
+      .row { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: end; }
+
+      label { display: flex; flex-direction: column; gap: 3px; color: var(--muted); font-size: 11px; }
+
+      input, select, button { font: inherit; }
+
+      input[type="number"], input[type="text"], select {
+        color: var(--text);
+        background: #111;
+        border: 1px solid var(--border);
+        padding: 4px 6px;
+        width: 104px;
+      }
+
+      input[type="text"] { width: 170px; }
+      input[type="checkbox"] { accent-color: var(--warn); width: 14px; height: 14px; }
+
+      button {
+        color: #000;
+        background: var(--warn);
+        border: 1px solid transparent;
+        padding: 5px 12px;
+        cursor: pointer;
+        font-weight: 600;
+      }
+
+      button.secondary { background: #2a2a2a; color: var(--text); border-color: var(--border); }
+      button:disabled { opacity: 0.5; cursor: default; }
+
+      #status { min-height: 18px; color: var(--muted); margin-bottom: 14px; }
+      #status.error { color: var(--bad); }
+
+      .cards { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+      .card { flex: 1 1 132px; border: 1px solid var(--border); background: var(--panel-alt); padding: 8px 10px; }
+      .card .k { color: var(--muted); font-size: 11px; }
+      .card .v { font-size: 15px; font-weight: 600; margin-top: 2px; }
+
+      .pos { color: var(--good); }
+      .neg { color: var(--bad); }
+
+      canvas { width: 100%; height: 260px; display: block; background: #101010; border: 1px solid var(--border); }
+
+      .legend { display: flex; gap: 16px; color: var(--muted); margin-top: 6px; font-size: 11px; }
+      .legend i { display: inline-block; width: 14px; height: 2px; margin-right: 6px; vertical-align: middle; }
+
+      table { border-collapse: collapse; width: 100%; font-size: 11px; }
+      th, td { padding: 3px 8px; text-align: right; border-bottom: 1px solid rgba(255, 255, 255, 0.06); white-space: nowrap; }
+      th:first-child, td:first-child { text-align: left; }
+      th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
+      tbody tr:hover { background: rgba(79, 195, 247, 0.08); }
+      tbody tr.pickable { cursor: pointer; }
+
+      .scroll { max-height: 360px; overflow: auto; border: 1px solid var(--border); }
+      .grid-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px 16px; margin-bottom: 12px; }
+      .hidden { display: none; }
+      .hint { color: var(--muted); font-size: 11px; margin-bottom: 10px; }
+    </style>
+  </head>
+  <body>
+    <h1>Stock trader benchmark</h1>
+    <div class="sub">
+      Local Bitburner market model (bitburner-src, stable) driving the real strategy from
+      src/libraries/stock/trader.ts. Seeded, so a seed fully determines the market.
+    </div>
+
+    <section>
+      <h2>Market</h2>
+      <div class="row">
+        <label>Capital<input id="capital" type="number" value="10000000000" step="1000000000" min="0" /></label>
+        <label>Updates (6s each)<input id="ticks" type="number" value="3000" step="100" min="1" /></label>
+        <label>Seed<input id="seed" type="number" value="1337" step="1" /></label>
+        <label>Seeds<input id="seeds" type="number" value="3" step="1" min="1" max="50" /></label>
+        <label>BitNode<input id="node" type="number" value="8" step="1" min="1" /></label>
+        <label>SF8 level<input id="sf8" type="number" value="3" step="1" min="0" /></label>
+        <label>
+          Baseline
+          <select id="baseline">
+            <option value="filtered" selected>hold (filtered)</option>
+            <option value="all">hold (all)</option>
+            <option value="none">none</option>
+          </select>
+        </label>
+      </div>
+    </section>
+
+    <section>
+      <h2>Strategy config</h2>
+      <div class="row" id="configFields"></div>
+      <div class="row" style="margin-top: 12px">
+        <label style="flex-direction: row; align-items: center; gap: 6px">
+          <input id="enableShorts" type="checkbox" checked />
+          enable shorts
+        </label>
+        <button id="runBtn">Run benchmark</button>
+        <button id="resetBtn" class="secondary">Reset config</button>
+        <button id="selftestBtn" class="secondary">Self-test model</button>
+      </div>
+    </section>
+
+    <div id="status">loading...</div>
+
+    <section id="results" class="hidden">
+      <h2>Results</h2>
+      <div class="cards" id="cards"></div>
+      <canvas id="chart" width="1200" height="260"></canvas>
+      <div class="legend" id="legend"></div>
+      <div style="margin-top: 14px" class="scroll">
+        <table id="symbolTable">
+          <thead>
+            <tr><th>Symbol</th><th>Trades</th><th>P/L</th><th>Position</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>Grid sweep</h2>
+      <div class="hint">
+        Comma-separated values per field; blank keeps the current value. Every combination runs against
+        every seed, ranked by mean return. Click a result row to load that config into the form.
+      </div>
+      <div class="grid-fields" id="gridFields"></div>
+      <div class="row">
+        <button id="gridBtn">Run grid</button>
+        <span id="gridCount" class="hint" style="margin: 0"></span>
+      </div>
+      <div id="gridResults" class="hidden" style="margin-top: 12px">
+        <div class="scroll">
+          <table id="gridTable"><thead></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <script>/*__BENCH_CORE__*/</script>
+    <script>
+      const {
+        DEFAULT_STOCK_TRADER_CONFIG,
+        NUMERIC_CONFIG_KEYS,
+        cartesianConfigs,
+        formatNumber,
+        seedsFor,
+        runTraderScenario,
+        runHoldBaseline,
+        runSelfTest,
+        aggregate,
+      } = StockBench
+
+      const LABELS = {
+        moneyKeep: "money keep ($)",
+        maxShareFraction: "max share fraction",
+        portfolioFractionPerSymbol: "portfolio %/symbol",
+        trimFractionPerTick: "trim fraction/tick",
+        budgetFractionPerSymbol: "budget %/symbol",
+        minShares: "min shares",
+        longBuyForecast: "long buy forecast",
+        longSellForecast: "long sell forecast",
+        shortBuyForecast: "short buy forecast",
+        shortSellForecast: "short sell forecast",
+        maxVolatility: "max volatility",
+      }
+      const COLS = {
+        moneyKeep: "keep",
+        maxShareFraction: "maxSh",
+        portfolioFractionPerSymbol: "port",
+        trimFractionPerTick: "trim",
+        budgetFractionPerSymbol: "budget",
+        minShares: "minSh",
+        longBuyForecast: "longBuy",
+        longSellForecast: "longSell",
+        shortBuyForecast: "shortBuy",
+        shortSellForecast: "shortSell",
+        maxVolatility: "maxVol",
+      }
+      const SERIES_COLORS = ["#4fc3f7", "#81c784", "#e57373", "#ffb74d"]
+
+      const $ = (id) => document.getElementById(id)
+      const money = (v) => `$${formatNumber(v)}`
+      const pct = (v) => `${(v * 100).toFixed(2)}%`
+      const signedPct = (v) => `${v >= 0 ? "+" : "-"}${(Math.abs(v) * 100).toFixed(2)}%`
+      const signedMoney = (v) => `${v >= 0 ? "+" : "-"}${money(Math.abs(v))}`
+      const cls = (v) => (v >= 0 ? "pos" : "neg")
+
+      const configInputs = {}
+      for (const key of NUMERIC_CONFIG_KEYS) {
+        const label = document.createElement("label")
+        label.textContent = LABELS[key] ?? key
+        const input = document.createElement("input")
+        input.type = "number"
+        input.step = key === "moneyKeep" || key === "minShares" ? "1" : "0.005"
+        input.value = String(DEFAULT_STOCK_TRADER_CONFIG[key])
+        label.appendChild(input)
+        $("configFields").appendChild(label)
+        configInputs[key] = input
+      }
+
+      const gridInputs = {}
+      for (const key of NUMERIC_CONFIG_KEYS) {
+        const label = document.createElement("label")
+        label.textContent = `${LABELS[key] ?? key} [grid]`
+        const input = document.createElement("input")
+        input.type = "text"
+        input.placeholder = "blank = fixed"
+        label.appendChild(input)
+        $("gridFields").appendChild(label)
+        gridInputs[key] = input
+      }
+
+      function readConfig() {
+        const config = {}
+        for (const key of NUMERIC_CONFIG_KEYS) {
+          const raw = configInputs[key].value.trim()
+          const n = Number(raw)
+          if (raw !== "" && Number.isFinite(n)) config[key] = n
+        }
+        config.enableShorts = $("enableShorts").checked
+        return config
+      }
+
+      function readMarket() {
+        return {
+          capital: Math.max(0, Number($("capital").value) || 0),
+          ticks: Math.max(1, Math.floor(Number($("ticks").value) || 1)),
+          bitNode: Math.max(1, Math.floor(Number($("node").value) || 1)),
+          ownedSf8: Math.max(0, Math.floor(Number($("sf8").value) || 0)),
+        }
+      }
+
+      const readSeedCount = () => Math.max(1, Math.floor(Number($("seeds").value) || 1))
+      const readSeeds = () => seedsFor(Number($("seed").value) || 0, readSeedCount())
+
+      function readGrid() {
+        const grid = {}
+        for (const key of NUMERIC_CONFIG_KEYS) {
+          const raw = gridInputs[key].value.trim()
+          if (raw === "") continue
+          const values = raw
+            .split(",")
+            .map((part) => Number(part.trim()))
+            .filter((n) => Number.isFinite(n))
+          if (values.length > 0) grid[key] = values
+        }
+        return grid
+      }
+
+      function setStatus(kind, text) {
+        $("status").className = kind
+        $("status").textContent = text
+      }
+
+      function setBusy(busy) {
+        $("runBtn").disabled = busy
+        $("gridBtn").disabled = busy
+        $("selftestBtn").disabled = busy
+      }
+
+      function updateGridCount() {
+        const grid = readGrid()
+        try {
+          const configs = cartesianConfigs(readConfig(), grid)
+          const swept = Object.keys(grid)
+          $("gridCount").textContent = swept.length
+            ? `${configs.length} configs x ${readSeedCount()} seeds = ${configs.length * readSeedCount()} runs`
+            : "no field filled in yet"
+        } catch (error) {
+          $("gridCount").textContent = String(error.message ?? error)
+        }
+      }
+
+      // ---- chart -----------------------------------------------------------
+      function drawChart(series) {
+        const canvas = $("chart")
+        const dpr = window.devicePixelRatio || 1
+        const width = canvas.clientWidth || 1200
+        const height = 260
+        canvas.width = Math.floor(width * dpr)
+        canvas.height = Math.floor(height * dpr)
+        const ctx = canvas.getContext("2d")
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+        ctx.clearRect(0, 0, width, height)
+
+        const usable = series.filter((s) => s.values.length > 1)
+        $("legend").innerHTML = ""
+        if (usable.length === 0) return
+
+        const padL = 58
+        const padR = 12
+        const padT = 12
+        const padB = 22
+        const plotW = width - padL - padR
+        const plotH = height - padT - padB
+
+        let min = Infinity
+        let max = -Infinity
+        for (const s of usable) {
+          const base = s.values[0] || 1
+          for (const v of s.values) {
+            const p = (v / base - 1) * 100
+            if (p < min) min = p
+            if (p > max) max = p
+          }
+        }
+        if (min === max) {
+          min -= 1
+          max += 1
+        }
+        const span = max - min
+        min -= span * 0.06
+        max += span * 0.06
+
+        const x = (i, n) => padL + (n <= 1 ? 0 : (i / (n - 1)) * plotW)
+        const y = (p) => padT + plotH - ((p - min) / (max - min)) * plotH
+
+        ctx.font = "10px Consolas, monospace"
+        ctx.strokeStyle = "rgba(255,255,255,0.08)"
+        ctx.fillStyle = "#888"
+        ctx.lineWidth = 1
+        ctx.textAlign = "right"
+        for (let i = 0; i <= 4; i++) {
+          const value = min + ((max - min) * i) / 4
+          const py = y(value)
+          ctx.beginPath()
+          ctx.moveTo(padL, py)
+          ctx.lineTo(padL + plotW, py)
+          ctx.stroke()
+          ctx.fillText(`${value >= 0 ? "+" : ""}${value.toFixed(1)}%`, padL - 6, py + 3)
+        }
+
+        const longest = Math.max(...usable.map((s) => s.values.length))
+        ctx.textAlign = "center"
+        for (let i = 0; i <= 4; i++) {
+          const tick = Math.round(((longest - 1) * i) / 4)
+          ctx.fillText(`${(((tick + 1) * 6) / 3600).toFixed(0)}h`, x(tick, longest), height - 6)
+        }
+
+        if (min <= 0 && max >= 0) {
+          ctx.strokeStyle = "rgba(255,255,255,0.25)"
+          ctx.beginPath()
+          ctx.moveTo(padL, y(0))
+          ctx.lineTo(padL + plotW, y(0))
+          ctx.stroke()
+        }
+
+        usable.forEach((s, index) => {
+          const base = s.values[0] || 1
+          ctx.beginPath()
+          ctx.strokeStyle = SERIES_COLORS[index % SERIES_COLORS.length]
+          ctx.lineWidth = 1.5
+          s.values.forEach((v, i) => {
+            const px = x(i, s.values.length)
+            const py = y((v / base - 1) * 100)
+            if (i === 0) ctx.moveTo(px, py)
+            else ctx.lineTo(px, py)
+          })
+          ctx.stroke()
+        })
+
+        $("legend").innerHTML = usable
+          .map((s, i) => {
+            const color = SERIES_COLORS[i % SERIES_COLORS.length]
+            const total = s.values[s.values.length - 1] / (s.values[0] || 1) - 1
+            return `<span><i style="background:${color}"></i>${s.label} ${signedPct(total)}</span>`
+          })
+          .join("")
+      }
+
+      // ---- results ---------------------------------------------------------
+      function renderCards(stats, holdFiltered, holdAll) {
+        const cards = [
+          { k: "mean return", v: signedPct(stats.meanReturnPct), c: cls(stats.meanReturnPct) },
+          { k: "median return", v: signedPct(stats.medianReturnPct), c: cls(stats.medianReturnPct) },
+          { k: "std dev", v: pct(stats.stdReturnPct), c: "" },
+          { k: "worst seed", v: signedPct(stats.minReturnPct), c: cls(stats.minReturnPct) },
+          { k: "mean max DD", v: `-${pct(stats.meanMaxDrawdownPct)}`, c: "neg" },
+          { k: "mean trades", v: stats.meanTrades.toFixed(0), c: "" },
+          { k: "mean commission", v: money(stats.meanCommission), c: "" },
+          { k: "mean net worth", v: money(stats.meanNetWorth), c: "" },
+        ]
+        if (holdFiltered) {
+          const delta = stats.meanReturnPct - holdFiltered.returnPct
+          cards.push({ k: "vs hold (filtered)", v: signedPct(delta), c: cls(delta) })
+        }
+        if (holdAll) {
+          const delta = stats.meanReturnPct - holdAll.returnPct
+          cards.push({ k: "vs hold (all)", v: signedPct(delta), c: cls(delta) })
+        }
+        $("cards").innerHTML = cards
+          .map((card) => `<div class="card"><div class="k">${card.k}</div><div class="v ${card.c}">${card.v}</div></div>`)
+          .join("")
+      }
+
+      function renderSymbols(perSymbol) {
+        $("symbolTable").querySelector("tbody").innerHTML = perSymbol
+          .filter((s) => s.trades > 0)
+          .map((row) => {
+            const position =
+              row.openShares > 0 ? `L ${row.openShares}` : row.openShortShares > 0 ? `S ${row.openShortShares}` : "-"
+            return (
+              `<tr><td>${row.symbol}</td><td>${row.trades}</td>` +
+              `<td class="${cls(row.profit)}">${signedMoney(row.profit)}</td><td>${position}</td></tr>`
+            )
+          })
+          .join("")
+      }
+
+      function runBenchmark() {
+        const market = readMarket()
+        const seeds = readSeeds()
+        const options = { ...market, config: readConfig() }
+        const baseline = $("baseline").value
+
+        setBusy(true)
+        setStatus("", `running ${seeds.length} seed${seeds.length === 1 ? "" : "s"}...`)
+        const started = performance.now()
+        try {
+          const results = seeds.map((seed) => runTraderScenario({ ...options, seed }))
+          const stats = aggregate(results)
+          const holdFiltered = baseline === "none" ? null : runHoldBaseline({ ...options, seed: seeds[0] }, true)
+          const holdAll = baseline === "all" ? runHoldBaseline({ ...options, seed: seeds[0] }, false) : null
+
+          renderCards(stats, holdFiltered, holdAll)
+          renderSymbols(results[0].perSymbol)
+
+          const series = [{ label: `strategy seed ${results[0].seed}`, values: results[0].equityCurve }]
+          if (holdFiltered) series.push({ label: "hold (filtered)", values: holdFiltered.equityCurve })
+          if (holdAll) series.push({ label: "hold (all)", values: holdAll.equityCurve })
+          drawChart(series)
+
+          $("results").classList.remove("hidden")
+          const seconds = ((performance.now() - started) / 1000).toFixed(2)
+          setStatus(
+            "",
+            `done in ${seconds}s - ${seeds.length} seed${seeds.length === 1 ? "" : "s"}, ` +
+              `${stats.meanTrades.toFixed(0)} trades avg`,
+          )
+        } catch (error) {
+          setStatus("error", String(error?.stack ?? error))
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      // ---- grid ------------------------------------------------------------
+      let lastGrid = []
+
+      function runGrid() {
+        const market = readMarket()
+        const grid = readGrid()
+        const seeds = readSeeds()
+        const base = readConfig()
+
+        let configs
+        try {
+          configs = cartesianConfigs(base, grid)
+        } catch (error) {
+          setStatus("error", String(error.message ?? error))
+          return
+        }
+
+        const swept = Object.keys(grid)
+        setBusy(true)
+        const started = performance.now()
+        try {
+          lastGrid = configs
+            .map((config) => {
+              const results = seeds.map((seed) => runTraderScenario({ ...market, config, seed }))
+              return { config, stats: aggregate(results) }
+            })
+            .sort((a, b) => b.stats.meanReturnPct - a.stats.meanReturnPct)
+
+          renderGridTable(swept)
+          $("gridResults").classList.remove("hidden")
+          const seconds = ((performance.now() - started) / 1000).toFixed(2)
+          setStatus("", `grid done in ${seconds}s - ${lastGrid.length} configs x ${seeds.length} seeds`)
+        } catch (error) {
+          setStatus("error", String(error?.stack ?? error))
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      function renderGridTable(swept) {
+        $("gridTable").querySelector("thead").innerHTML =
+          "<tr><th>#</th>" +
+          swept.map((key) => `<th>${COLS[key] ?? key}</th>`).join("") +
+          "<th>mean</th><th>median</th><th>std</th><th>meanDD</th><th>trades</th><th>commission</th><th>net worth</th></tr>"
+
+        const body = $("gridTable").querySelector("tbody")
+        body.innerHTML = lastGrid
+          .map((row, index) => {
+            const cells = swept.map((key) => Number(row.config[key]).toPrecision(3))
+            return (
+              `<tr class="pickable" data-index="${index}"><td>${index + 1}</td>` +
+              cells.map((cell) => `<td>${cell}</td>`).join("") +
+              `<td class="${cls(row.stats.meanReturnPct)}">${signedPct(row.stats.meanReturnPct)}</td>` +
+              `<td class="${cls(row.stats.medianReturnPct)}">${signedPct(row.stats.medianReturnPct)}</td>` +
+              `<td>${pct(row.stats.stdReturnPct)}</td>` +
+              `<td class="neg">-${pct(row.stats.meanMaxDrawdownPct)}</td>` +
+              `<td>${row.stats.meanTrades.toFixed(0)}</td>` +
+              `<td>${money(row.stats.meanCommission)}</td>` +
+              `<td>${money(row.stats.meanNetWorth)}</td></tr>`
+            )
+          })
+          .join("")
+
+        body.querySelectorAll("tr").forEach((tr) => {
+          tr.addEventListener("click", () => {
+            const row = lastGrid[Number(tr.dataset.index)]
+            for (const key of NUMERIC_CONFIG_KEYS) {
+              if (row.config[key] !== undefined) configInputs[key].value = String(row.config[key])
+            }
+            if (row.config.enableShorts !== undefined) $("enableShorts").checked = row.config.enableShorts
+            setStatus("", `loaded grid result #${Number(tr.dataset.index) + 1} into the form`)
+          })
+        })
+      }
+
+      // ---- wiring ----------------------------------------------------------
+      $("runBtn").addEventListener("click", runBenchmark)
+      $("gridBtn").addEventListener("click", runGrid)
+      $("resetBtn").addEventListener("click", () => {
+        for (const key of NUMERIC_CONFIG_KEYS) configInputs[key].value = String(DEFAULT_STOCK_TRADER_CONFIG[key])
+        $("enableShorts").checked = DEFAULT_STOCK_TRADER_CONFIG.enableShorts
+        setStatus("", "config reset to src/libraries/stock/config.ts defaults")
+      })
+      $("selftestBtn").addEventListener("click", () => {
+        setBusy(true)
+        try {
+          const failures = runSelfTest()
+          if (failures.length === 0) setStatus("", "self-test OK - model matches the game formulas")
+          else setStatus("error", `self-test FAILED (${failures.length}): ${failures.join("; ")}`)
+        } catch (error) {
+          setStatus("error", String(error?.stack ?? error))
+        } finally {
+          setBusy(false)
+        }
+      })
+
+      for (const input of Object.values(gridInputs)) input.addEventListener("input", updateGridCount)
+      for (const id of ["capital", "ticks", "seed", "seeds", "node", "sf8"]) $(id).addEventListener("input", updateGridCount)
+      updateGridCount()
+      setStatus("", "ready")
+      if (new URLSearchParams(location.search).has("autorun")) runBenchmark()
+    </script>
+  </body>
+</html>

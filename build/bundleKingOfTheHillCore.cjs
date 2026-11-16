@@ -3,8 +3,8 @@ const fs = require("node:fs")
 const { buildSync } = require("esbuild")
 
 const ROOT = path.join(__dirname, "..")
-const ENTRY = path.join(ROOT, "tests/kingOfTheHillCore.ts")
-const OUT = path.join(ROOT, "tests/kingOfTheHillCore.mjs")
+const ENTRY = path.join(ROOT, "bench/koth/kingOfTheHillCore.ts")
+const OUT = path.join(ROOT, "bench/koth/kingOfTheHillCore.mjs")
 
 /** Bundle test harness + in-game KingOfTheHill solver for browser viz (static serve). */
 function bundleKingOfTheHillCore() {
@@ -21,7 +21,7 @@ function bundleKingOfTheHillCore() {
   const existing = fs.readFileSync(OUT, "utf8")
   fs.writeFileSync(
     OUT,
-    "/* Auto-generated — edit tests/kingOfTheHillCore.ts; run pnpm run test:koth:bundle */\n" + existing,
+    "/* Auto-generated — edit bench/koth/kingOfTheHillCore.ts; run pnpm run test:koth:bundle */\n" + existing,
   )
   return OUT
 }

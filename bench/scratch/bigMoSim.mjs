@@ -1,8 +1,8 @@
 /**
  * Standalone BigMo%od solver simulation (no Bitburner).
  *
- * Run: node tests/bigMoSim.mjs
- * Run with a known password: node tests/bigMoSim.mjs 4895123
+ * Run: node bench/scratch/bigMoSim.mjs
+ * Run with a known password: node bench/scratch/bigMoSim.mjs 4895123
  */
 
 const BIGMO_PRIMES = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31]
@@ -36,7 +36,7 @@ function actualModulus(n) {
   return ((n - 1) % 32) + 1
 }
 
-/** Copied from src/dnet/solvers/impl/all.ts — uses JS Number (same precision limits). */
+/** Copied from src/dnet/solvers/impl/all.ts â€” uses JS Number (same precision limits). */
 function crtCombineNumber(r1, m1, r2, m2) {
   let [old_r, r] = [m1, m2]
   let [old_s, s] = [1, 0]

@@ -1,5 +1,6 @@
 /**
- * KingOfTheHill benchmark — TypeScript equivalent of tests/koth_tune/python/bench.py
+ * KingOfTheHill benchmark — TypeScript equivalent of
+ * bench/koth/koth_tune/python/bench.py
  *
  * Bundle + run:
  *   pnpm run test:koth:bench

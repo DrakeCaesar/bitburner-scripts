@@ -22,11 +22,13 @@
   "include": [
     "src/**/*.ts",
     "src/**/*.js",
-    "tests/kingOfTheHillCore.ts",
+    "bench/koth/kingOfTheHillCore.ts",
+    "bench/stock/stockBenchCore.ts",
+    "bench/stock/stockTraderBench.ts",
     "NetscriptDefinitions.d.ts",
     "stockApi.d.ts",
     "global.d.ts",
-    "viteburner.d.ts",
+    "types/viteburner.d.ts",
     "vite.config.mts"
   ]
 }

@@ -42,4 +42,4 @@ endif()
 add_subdirectory(ipvgo-engine)
 
 # King of the Hill solver tuning harness.
-add_subdirectory(tests/koth_tune)
+add_subdirectory(bench/koth/koth_tune)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-SRC_DIR="$ROOT/tests/koth_tune"
+ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+SRC_DIR="$ROOT/bench/koth/koth_tune"
 BUILD_DIR="$ROOT/out/build/x64-Release"
 
 file_mtime() {

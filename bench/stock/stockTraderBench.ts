@@ -1,0 +1,525 @@
+/**
+ * Stock trader benchmark CLI: runs the real strategy (src/libraries/stock/trader.ts) against
+ * the local Bitburner market model (bench/stock/stockMarketModel.ts).
+ *
+ * Bundle + run:
+ *   pnpm run test:stock
+ *   pnpm run test:stock -- --capital 10b --ticks 3000 --seeds 5
+ *   pnpm run test:stock -- --grid long-buy-forecast=0.55,0.6,0.65 --seeds 3
+ *   pnpm run test:stock -- --selftest
+ *
+ * GUI: pnpm run stock:viz  ->  open bench/stock/stockTraderViz.html
+ */
+
+import { pathToFileURL } from "node:url"
+
+import { mergeStockTraderConfig, type StockTraderConfig } from "@/libraries/stock/config.js"
+import { buildConfigSummary } from "@/libraries/stock/trader.js"
+
+import { MS_PER_STOCK_UPDATE, STOCK_MARKET_COMMISSION, StockMarketSim, createNsStub, formatNumber } from "./stockMarketModel.js"
+import {
+  DEFAULT_CAPITAL,
+  DEFAULT_SEED,
+  DEFAULT_TICKS,
+  SEED_STRIDE,
+  aggregate,
+  cartesianConfigs,
+  runHoldBaseline,
+  runSelfTest,
+  runTraderScenario,
+  type Aggregate,
+  type BenchResult,
+} from "./stockBenchCore.js"
+
+// ---------------------------------------------------------------------------
+// CLI
+// ---------------------------------------------------------------------------
+
+type ConfigKey = keyof StockTraderConfig
+
+interface ConfigFlagSpec {
+  key: ConfigKey
+  kind: "number" | "boolean"
+}
+
+const CONFIG_FLAGS: Record<string, ConfigFlagSpec> = {
+  "money-keep": { key: "moneyKeep", kind: "number" },
+  "max-share-fraction": { key: "maxShareFraction", kind: "number" },
+  "portfolio-fraction": { key: "portfolioFractionPerSymbol", kind: "number" },
+  "trim-fraction": { key: "trimFractionPerTick", kind: "number" },
+  "budget-fraction": { key: "budgetFractionPerSymbol", kind: "number" },
+  "min-shares": { key: "minShares", kind: "number" },
+  "long-buy-forecast": { key: "longBuyForecast", kind: "number" },
+  "long-sell-forecast": { key: "longSellForecast", kind: "number" },
+  "short-buy-forecast": { key: "shortBuyForecast", kind: "number" },
+  "short-sell-forecast": { key: "shortSellForecast", kind: "number" },
+  "max-volatility": { key: "maxVolatility", kind: "number" },
+  shorts: { key: "enableShorts", kind: "boolean" },
+}
+
+interface CliOptions {
+  capital: number
+  ticks: number
+  seed: number
+  seeds: number
+  bitNode: number
+  ownedSf8: number
+  config: Partial<StockTraderConfig>
+  baseline: "none" | "filtered" | "all"
+  grid: { flag: string; key: ConfigKey; values: number[] }[]
+  json: boolean
+  quiet: boolean
+  symbols: number
+  selfTest: boolean
+  help: boolean
+}
+
+const SUFFIX_MULTIPLIERS: Record<string, number> = {
+  k: 1e3,
+  m: 1e6,
+  b: 1e9,
+  t: 1e12,
+  q: 1e15,
+}
+
+export function parseNumberArg(text: string): number {
+  const match = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)([kmbtq])?$/i.exec(text.trim())
+  if (!match) return NaN
+  const value = Number(match[1])
+  const suffix = match[2]?.toLowerCase()
+  return suffix ? value * SUFFIX_MULTIPLIERS[suffix] : value
+}
+
+function requireNumber(flag: string, text: string | undefined): number {
+  const value = text === undefined ? NaN : parseNumberArg(text)
+  if (!Number.isFinite(value)) throw new Error(`--${flag} expects a number, got '${text ?? ""}'`)
+  return value
+}
+
+function parseArgs(argv: readonly string[]): CliOptions {
+  const options: CliOptions = {
+    capital: DEFAULT_CAPITAL,
+    ticks: DEFAULT_TICKS,
+    seed: DEFAULT_SEED,
+    seeds: 1,
+    bitNode: 8,
+    ownedSf8: 3,
+    config: {},
+    baseline: "filtered",
+    grid: [],
+    json: false,
+    quiet: false,
+    symbols: 10,
+    selfTest: false,
+    help: false,
+  }
+
+  for (let i = 0; i < argv.length; i++) {
+    const raw = argv[i]
+    // pnpm 10 forwards a bare `--` separator through `pnpm run`; ignore it.
+    if (raw === "--") continue
+    if (!raw.startsWith("--")) throw new Error(`Unexpected argument '${raw}'`)
+    const eq = raw.indexOf("=")
+    const flag = (eq === -1 ? raw.slice(2) : raw.slice(2, eq)).toLowerCase()
+    const nextValue = (): string => {
+      if (eq !== -1) return raw.slice(eq + 1)
+      const value = argv[++i]
+      if (value === undefined) throw new Error(`--${flag} expects a value`)
+      return value
+    }
+
+    switch (flag) {
+      case "capital":
+        options.capital = requireNumber(flag, nextValue())
+        break
+      case "ticks":
+        options.ticks = Math.floor(requireNumber(flag, nextValue()))
+        break
+      case "seed":
+        options.seed = Math.floor(requireNumber(flag, nextValue()))
+        break
+      case "seeds":
+        options.seeds = Math.max(1, Math.floor(requireNumber(flag, nextValue())))
+        break
+      case "node":
+        options.bitNode = Math.floor(requireNumber(flag, nextValue()))
+        break
+      case "sf8":
+        options.ownedSf8 = Math.floor(requireNumber(flag, nextValue()))
+        break
+      case "baseline": {
+        const value = nextValue().toLowerCase()
+        if (value !== "none" && value !== "filtered" && value !== "all") {
+          throw new Error(`--baseline expects none|filtered|all, got '${value}'`)
+        }
+        options.baseline = value
+        break
+      }
+      case "symbols":
+        options.symbols = Math.max(0, Math.floor(requireNumber(flag, nextValue())))
+        break
+      case "grid": {
+        const spec = nextValue()
+        const eqIdx = spec.indexOf("=")
+        if (eqIdx === -1) throw new Error(`--grid expects <flag>=<v1,v2,...>, got '${spec}'`)
+        const gridFlag = spec.slice(0, eqIdx).toLowerCase()
+        const configFlag = CONFIG_FLAGS[gridFlag]
+        if (!configFlag || configFlag.kind !== "number") {
+          throw new Error(`--grid does not support '${gridFlag}' (numeric config flags only)`)
+        }
+        const values = spec
+          .slice(eqIdx + 1)
+          .split(",")
+          .filter((part) => part.trim() !== "")
+          .map((part) => requireNumber(gridFlag, part))
+        if (values.length === 0) throw new Error(`--grid ${gridFlag} needs at least one value`)
+        options.grid.push({ flag: gridFlag, key: configFlag.key, values })
+        break
+      }
+      case "json":
+        options.json = true
+        break
+      case "quiet":
+        options.quiet = true
+        break
+      case "selftest":
+        options.selfTest = true
+        break
+      case "help":
+        options.help = true
+        break
+      default: {
+        const configFlag = CONFIG_FLAGS[flag]
+        if (!configFlag) throw new Error(`Unknown flag --${flag} (try --help)`)
+        if (configFlag.kind === "boolean") {
+          const text = eq !== -1 ? raw.slice(eq + 1) : argv[i + 1]?.startsWith("--") ? "1" : argv[++i] ?? "1"
+          ;(options.config as Record<string, unknown>)[configFlag.key] = parseNumberArg(text) !== 0
+        } else {
+          ;(options.config as Record<string, unknown>)[configFlag.key] = requireNumber(flag, nextValue())
+        }
+        break
+      }
+    }
+  }
+
+  return options
+}
+
+const HELP = `Stock trader benchmark (local Bitburner market model)
+
+Usage: pnpm run test:stock -- [options]
+
+Market
+  --capital <n>        Starting home cash (suffixes k/m/b/t/q, default 10b)
+  --ticks <n>          Stock updates to simulate, 6s each (default 3000)
+  --node <n>           BitNode number (default 8 so shorts are unlocked)
+  --sf8 <level>        Source-File 8 level when not in BitNode 8 (default 3)
+
+Seeds
+  --seed <n>           First seed (default 1337)
+  --seeds <n>          Number of seeds to run, same config (default 1)
+
+Config overrides (defaults come from src/libraries/stock/config.ts)
+  --money-keep <n>              --max-share-fraction <f>
+  --portfolio-fraction <f>      --trim-fraction <f>
+  --budget-fraction <f>         --min-shares <n>
+  --long-buy-forecast <f>       --long-sell-forecast <f>
+  --short-buy-forecast <f>      --short-sell-forecast <f>
+  --max-volatility <f>          --shorts <0|1>
+
+Reporting
+  --baseline <mode>    none | filtered | all (buy-and-hold reference, default filtered)
+  --symbols <n>        Per-symbol rows in single-seed output (default 10)
+  --json               Machine-readable output
+  --quiet              One line per run, no tables
+  --selftest           Verify the market model against game formulas
+  --help               Show this help
+
+Grid sweeps (runs every combination across all seeds)
+  --grid long-buy-forecast=0.55,0.60,0.65 --grid max-volatility=0.03,0.05
+
+GUI: pnpm run stock:viz  ->  open bench/stock/stockTraderViz.html
+`
+
+function runSeeds(options: CliOptions, config: Partial<StockTraderConfig>): BenchResult[] {
+  const results: BenchResult[] = []
+  for (let i = 0; i < options.seeds; i++) {
+    results.push(
+      runTraderScenario({
+        seed: options.seed + i * SEED_STRIDE,
+        capital: options.capital,
+        ticks: options.ticks,
+        config,
+        bitNode: options.bitNode,
+        ownedSf8: options.ownedSf8,
+      }),
+    )
+  }
+  return results
+}
+
+const money = (value: number): string => `$${formatNumber(value)}`
+const pct = (value: number): string => `${(value * 100).toFixed(2)}%`
+const signedPct = (value: number): string => `${value >= 0 ? "+" : "-"}${(Math.abs(value) * 100).toFixed(2)}%`
+const signedMoney = (value: number): string => `${value >= 0 ? "+" : "-"}${money(Math.abs(value))}`
+const pad = (text: string, width: number, align: "left" | "right" = "right"): string =>
+  align === "right" ? text.padStart(width) : text.padEnd(width)
+const tableRow = (cells: readonly (string | number)[], widths: readonly number[], aligns: readonly ("left" | "right")[]): string =>
+  cells.map((cell, i) => pad(String(cell), widths[i], aligns[i])).join("  ")
+
+function gameHours(ticks: number): number {
+  return (ticks * MS_PER_STOCK_UPDATE) / 3_600_000
+}
+
+function printHeader(options: CliOptions, config: Partial<StockTraderConfig>): void {
+  const sim = new StockMarketSim({ seed: options.seed, cash: options.capital })
+  const ns = createNsStub(sim, { bitNode: options.bitNode, ownedSf8: options.ownedSf8 })
+  const merged = mergeStockTraderConfig(config)
+  console.log("=== stock trader benchmark (bitburner-src market model) ===")
+  console.log(
+    `market   ${sim.stocks.length} symbols | ${MS_PER_STOCK_UPDATE / 1000}s per update | 75-update cycles | ` +
+      `commission ${money(STOCK_MARKET_COMMISSION)}`,
+  )
+  console.log(
+    `run      seed ${options.seed} (${options.seeds} seed${options.seeds === 1 ? "" : "s"}) | capital ${money(options.capital)} | ` +
+      `${options.ticks} updates (${gameHours(options.ticks).toFixed(1)}h) | BitNode ${options.bitNode}`,
+  )
+  console.log(`strategy ${buildConfigSummary(ns as never, merged)}`)
+  const investable = options.capital - merged.moneyKeep
+  if (investable <= 0) {
+    console.log(
+      `warning  capital (${money(options.capital)}) is at or below money-keep (${money(merged.moneyKeep)}); ` +
+        `the strategy cannot open positions. Raise --capital or lower --money-keep.`,
+    )
+  }
+}
+
+function printRun(result: BenchResult, options: CliOptions): void {
+  console.log(`\n--- seed ${result.seed} ---`)
+  console.log(`net worth        ${money(result.finalNetWorth)}  (start ${money(result.capital)})`)
+  console.log(`profit           ${signedMoney(result.profit)}  (${signedPct(result.returnPct)})`)
+  console.log(
+    `max drawdown     -${pct(result.maxDrawdownPct)}  (${signedMoney(-result.maxDrawdown)})  peak ${money(result.peakNetWorth)}`,
+  )
+  console.log(`cash / positions ${money(result.finalCash)} / ${money(result.finalPositionsValue)}`)
+  console.log(
+    `trades           ${result.trades} (${result.buys} buy, ${result.sells} sell, ${result.shorts} short, ${result.covers} cover)`,
+  )
+  console.log(`commission       ${money(result.commissionPaid)}`)
+  console.log(
+    `realized / unreal ${signedMoney(result.realizedProfit)} / ${signedMoney(result.unrealizedProfit)}`,
+  )
+  console.log(
+    `win rate         ${result.winRate === null ? "n/a" : pct(result.winRate)} of ${result.sells + result.covers} closed legs`,
+  )
+  console.log(`avg hold         ${result.avgHoldTicks === null ? "n/a" : `${result.avgHoldTicks.toFixed(1)} updates`}`)
+  console.log(
+    `exposure         ${pct(result.exposureAvgPct)} avg | ${pct(result.flatTickPct)} flat | ${result.avgOpenPositions.toFixed(1)} symbols avg`,
+  )
+
+  const traded = result.perSymbol.filter((s) => s.trades > 0)
+  if (traded.length > 0 && options.symbols > 0) {
+    console.log("\nsymbol   trades         P/L  position")
+    const rows = traded.slice(0, options.symbols)
+    const worst = traded.slice(-Math.min(options.symbols, traded.length)).filter((s) => !rows.includes(s))
+    for (const row of [...rows, ...worst]) {
+      const position =
+        row.openShares > 0
+          ? `L ${row.openShares}`
+          : row.openShortShares > 0
+            ? `S ${row.openShortShares}`
+            : "-"
+      console.log(`${pad(row.symbol, 6, "left")} ${pad(String(row.trades), 7)} ${pad(signedMoney(row.profit), 11)}  ${position}`)
+    }
+  }
+}
+
+function printAggregate(results: readonly BenchResult[], label: string): void {
+  const stats = aggregate(results)
+  console.log(`\n--- ${label} (${stats.runs} run${stats.runs === 1 ? "" : "s"}) ---`)
+  console.log(
+    `return  mean ${signedPct(stats.meanReturnPct)} | median ${signedPct(stats.medianReturnPct)} | ` +
+      `std ${pct(stats.stdReturnPct)} | min ${signedPct(stats.minReturnPct)} | max ${signedPct(stats.maxReturnPct)}`,
+  )
+  console.log(
+    `risk    mean max drawdown -${pct(stats.meanMaxDrawdownPct)} | worst -${pct(stats.worstMaxDrawdownPct)}`,
+  )
+  console.log(
+    `churn   ${stats.meanTrades.toFixed(0)} trades avg | ${money(stats.meanCommission)} commission avg | net worth ${money(stats.meanNetWorth)} avg`,
+  )
+}
+
+function printSeedTable(results: readonly BenchResult[]): void {
+  console.log("\n   seed    return     maxDD   trades   commission     net worth")
+  for (const result of results) {
+    console.log(
+      tableRow(
+        [
+          result.seed,
+          signedPct(result.returnPct),
+          `-${pct(result.maxDrawdownPct)}`,
+          result.trades,
+          money(result.commissionPaid),
+          money(result.finalNetWorth),
+        ],
+        [7, 9, 9, 8, 12, 13],
+        ["right", "right", "right", "right", "right", "right"],
+      ),
+    )
+  }
+}
+
+interface GridRow {
+  config: Partial<StockTraderConfig>
+  stats: Aggregate
+}
+
+function printGrid(rows: readonly GridRow[], options: CliOptions): void {
+  console.log(`\n--- grid sweep: ${rows.length} configs x ${options.seeds} seeds, ranked by mean return ---`)
+  const headers = [...options.grid.map((g) => g.flag), "mean", "median", "std", "meanDD", "trades", "commission"]
+  const aligns: ("left" | "right")[] = headers.map(() => "right")
+  const widths = headers.map((h) => Math.max(h.length, 10))
+  console.log(tableRow(headers, widths, aligns))
+  console.log("-".repeat(widths.reduce((a, b) => a + b, 0) + 2 * (widths.length - 1)))
+
+  rows.forEach((row) => {
+    const cells = [
+      ...options.grid.map((g) => formatNumber(Number(row.config[g.key]))),
+      signedPct(row.stats.meanReturnPct),
+      signedPct(row.stats.medianReturnPct),
+      pct(row.stats.stdReturnPct),
+      `-${pct(row.stats.meanMaxDrawdownPct)}`,
+      row.stats.meanTrades.toFixed(0),
+      money(row.stats.meanCommission),
+    ]
+    console.log(tableRow(cells, widths, aligns))
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
+function main(): number {
+  let options: CliOptions
+  try {
+    options = parseArgs(process.argv.slice(2))
+  } catch (error) {
+    console.error(`error: ${error instanceof Error ? error.message : String(error)}`)
+    return 2
+  }
+
+  if (options.help) {
+    console.log(HELP)
+    return 0
+  }
+
+  if (options.selfTest) {
+    const failures = runSelfTest()
+    if (failures.length > 0) {
+      console.error(`self-test FAILED (${failures.length})`)
+      for (const failure of failures) console.error(`  - ${failure}`)
+      return 1
+    }
+    console.log("self-test OK")
+    return 0
+  }
+
+  const started = performance.now()
+  try {
+    if (options.grid.length > 0) {
+      const grid: Record<string, readonly number[]> = {}
+      for (const entry of options.grid) {
+        const key = entry.key as string
+        grid[key] = [...(grid[key] ?? []), ...entry.values]
+      }
+      const configs = cartesianConfigs(
+        options.config,
+        grid as Parameters<typeof cartesianConfigs>[1],
+      )
+      const rows: GridRow[] = configs.map((config) => ({
+        config,
+        stats: aggregate(runSeeds(options, config)),
+      }))
+      rows.sort((a, b) => b.stats.meanReturnPct - a.stats.meanReturnPct)
+
+      if (options.json) {
+        console.log(JSON.stringify(rows.map((row) => ({ config: row.config, stats: row.stats })), null, 2))
+      } else {
+        if (!options.quiet) printHeader(options, options.config)
+        printGrid(rows, options)
+        console.log(`\nelapsed ${((performance.now() - started) / 1000).toFixed(2)}s`)
+      }
+      return 0
+    }
+
+    const results = runSeeds(options, options.config)
+    const baselineFiltered =
+      options.baseline === "none" ? null : runHoldBaseline({ ...options, seed: options.seed, config: options.config }, true)
+    const baselineAll =
+      options.baseline === "all" ? runHoldBaseline({ ...options, seed: options.seed, config: options.config }, false) : null
+
+    if (options.json) {
+      const stripCurve = ({ equityCurve: _curve, ...rest }: BenchResult): Omit<BenchResult, "equityCurve"> => rest
+      console.log(
+        JSON.stringify(
+          {
+            options,
+            config: mergeStockTraderConfig(options.config),
+            aggregate: aggregate(results),
+            runs: results.map(stripCurve),
+            baselines: {
+              holdFiltered: baselineFiltered ? stripCurve(baselineFiltered) : null,
+              holdAll: baselineAll ? stripCurve(baselineAll) : null,
+            },
+          },
+          null,
+          2,
+        ),
+      )
+      return 0
+    }
+
+    if (!options.quiet) printHeader(options, options.config)
+
+    if (options.quiet) {
+      for (const result of results) {
+        console.log(
+          `seed ${String(result.seed).padStart(6)}  ${signedPct(result.returnPct).padStart(9)}  ` +
+            `dd -${pct(result.maxDrawdownPct)}  trades ${String(result.trades).padStart(5)}  ${money(result.finalNetWorth)}`,
+        )
+      }
+    } else if (results.length === 1) {
+      printRun(results[0], options)
+    } else {
+      printSeedTable(results)
+    }
+
+    if (results.length > 1) printAggregate(results, "all seeds")
+
+    if (baselineFiltered) {
+      console.log(
+        `\nbaseline hold (filtered)  ${signedPct(baselineFiltered.returnPct)}  ` +
+          `max dd -${pct(baselineFiltered.maxDrawdownPct)}  trades ${baselineFiltered.trades}`,
+      )
+    }
+    if (baselineAll) {
+      console.log(
+        `baseline hold (all)       ${signedPct(baselineAll.returnPct)}  ` +
+          `max dd -${pct(baselineAll.maxDrawdownPct)}  trades ${baselineAll.trades}`,
+      )
+    }
+
+    console.log(`\nelapsed ${((performance.now() - started) / 1000).toFixed(2)}s`)
+    return 0
+  } catch (error) {
+    console.error(`error: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`)
+    return 1
+  }
+}
+
+const invokedPath = process.argv[1]
+const isDirectRun = invokedPath !== undefined && import.meta.url === pathToFileURL(invokedPath).href
+if (isDirectRun) {
+  process.exitCode = main()
+}

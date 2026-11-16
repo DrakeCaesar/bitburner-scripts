@@ -6,7 +6,7 @@
  *   pnpm run test:koth:bundle
  *
  * Sim:  pnpm run test:koth
- * Viz:  pnpm dlx serve tests  ->  /kingOfTheHillViz.html
+ * Viz:  pnpm run tools  ->  http://localhost:8123/  (index.html at the repo root)
  */
 
 import {
@@ -19,7 +19,7 @@ import {
   kingOfTheHillGaussianWidth,
   kingOfTheHillHillCount,
   runSolverImproved as runSolverImprovedWithAuth,
-} from "../src/dnet/solvers/kingOfTheHill/solverCore.js"
+} from "../../src/dnet/solvers/kingOfTheHill/solverCore.js"
 
 export { kingOfTheHillGaussianWidth, kingOfTheHillHillCount, KOTH_PEAK_HEIGHT, KOTH_HILL_SPACING_WIDTHS }
 

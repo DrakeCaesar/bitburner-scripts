@@ -58,7 +58,7 @@ export const DEFAULT_LADDER_SNIPE_TUNING: LadderSnipeTuning = {
 }
 
 /**
- * GA-tuned diff-60 constants from tests/koth_tune/ladder_snipe.diff60.best.json.
+ * GA-tuned diff-60 constants from bench/koth/koth_tune/ladder_snipe.diff60.best.json.
  * Regenerate when koth_tune produces a new best file.
  */
 export const TUNED_LADDER_SNIPE_DIFF60: LadderSnipeTuning = {

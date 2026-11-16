@@ -45,7 +45,7 @@ engine at all.
 ## Native server
 
 Native targets are built from the **repo root** into one tree, shared with the
-other native components (`tests/koth_tune`):
+other native components (`bench/koth/koth_tune`):
 
 ```bash
 ./cmake/Build-Native.ps1 -Configure              # configure + build everything (Release)

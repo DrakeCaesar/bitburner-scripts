@@ -31,7 +31,7 @@ The profile build disables inlining by default; use its samples to find hot
 paths, not to measure Release speed. The script's `-ProfileInlining` option
 requires `-Configure`. Visual Studio's CPU profiler can also run
 `ipvgo_game profileworkload 5` with the profile configuration. See
-[README profiling](./README.md#profiling) for details.
+[README profiling]([ipvgo-engine.md](./ipvgo-engine.md#profiling)) for details.
 
 Record the build, commands, environment variables, node counts, moves, values,
 wall time and nodes/second. Compare repeated Release runs with the same seeds

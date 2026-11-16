@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bitburner scripts - HTML tools</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d0d0d;
+        --panel: #161616;
+        --panel-alt: #1c1c1c;
+        --border: rgba(255, 255, 255, 0.12);
+        --text: #d4d4d4;
+        --muted: #888;
+        --accent: #4fc3f7;
+        --warn: #f9a825;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        padding: 24px 20px 48px;
+        font-family: Consolas, "Courier New", monospace;
+        background: var(--bg);
+        color: var(--text);
+        font-size: 12px;
+        line-height: 1.5;
+        max-width: 900px;
+      }
+
+      h1 { margin: 0 0 2px; font-size: 16px; font-weight: 600; }
+      h2 { margin: 24px 0 10px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+      .sub { color: var(--muted); margin-bottom: 6px; }
+
+      .tool {
+        display: block;
+        border: 1px solid var(--border);
+        background: var(--panel);
+        padding: 12px 14px;
+        margin-bottom: 10px;
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .tool:hover { background: var(--panel-alt); border-color: var(--accent); }
+
+      .tool .name { font-size: 13px; font-weight: 600; color: var(--accent); }
+      .tool .desc { color: var(--text); margin-top: 3px; }
+      .tool .meta { color: var(--muted); margin-top: 6px; font-size: 11px; }
+
+      .tool.offline .name { color: var(--muted); }
+
+      code {
+        font: inherit;
+        background: #101010;
+        border: 1px solid var(--border);
+        padding: 0 4px;
+        color: var(--warn);
+      }
+
+      ul.notes { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 11px; }
+      ul.notes li { margin-bottom: 2px; }
+    </style>
+  </head>
+  <body>
+    <h1>Bitburner scripts - HTML tools</h1>
+    <div class="sub">Local tools that run against the game's own models and strategies.</div>
+
+    <h2>Interactive</h2>
+
+    <a class="tool" href="./bench/stock/stockTraderViz.html">
+      <div class="name">Stock trader benchmark</div>
+      <div class="desc">
+        Seeded model of the in-game stock market driving the real strategy from
+        src/libraries/stock/trader.ts. Multi-seed stats, buy-and-hold baseline, config grid sweep.
+      </div>
+      <div class="meta">build: <code>pnpm run stock:viz</code> | self-contained, opens straight from disk</div>
+    </a>
+
+    <a class="tool" href="./bench/koth/kingOfTheHillViz.html">
+      <div class="name">KingOfTheHill altitude profiles</div>
+      <div class="desc">
+        Altitude curves and per-difficulty solve counts for the dnet KingOfTheHill solver, run in browser workers.
+      </div>
+      <div class="meta">
+        build: <code>pnpm run test:koth:bundle</code> | needs to be served over http (module worker)
+      </div>
+    </a>
+
+    <a class="tool" href="http://localhost:3010/bench">
+      <div class="name">IPvGO engine bench</div>
+      <div class="desc">
+        Bench and tuning UI for the native IPvGO engine: run games, stream progress, inspect moves.
+      </div>
+      <div class="meta">
+        run: <code>pnpm run server</code> then open <code>http://localhost:3010/bench</code>
+        (set IPVGO_PORT to change the port) | needs the native engine built
+      </div>
+    </a>
+
+    <h2>Serving this page</h2>
+    <div class="sub">
+      This file is the landing page for the repo root, so any static server rooted here shows it at
+      <code>/</code>. KingOfTheHill needs a real http origin, so use <code>pnpm run tools</code> and open
+      <code>http://localhost:8123/</code>. The stock benchmark works either way - double-clicking it is fine.
+    </div>
+
+    <h2>CLI equivalents</h2>
+    <ul class="notes">
+      <li><code>pnpm run test:stock</code> - stock benchmark, same model without the page</li>
+      <li><code>pnpm run test:stock -- --selftest</code> - verify the market model against the game's formulas</li>
+      <li><code>pnpm run test:koth</code> - KingOfTheHill solver simulation</li>
+      <li><code>pnpm run test:koth:bench</code> - KingOfTheHill benchmark across all difficulties</li>
+    </ul>
+  </body>
+</html>

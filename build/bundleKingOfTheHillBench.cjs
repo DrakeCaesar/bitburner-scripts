@@ -3,8 +3,8 @@ const fs = require("node:fs")
 const { buildSync } = require("esbuild")
 
 const ROOT = path.join(__dirname, "..")
-const ENTRY = path.join(ROOT, "tests/kingOfTheHillBench.ts")
-const OUT = path.join(ROOT, "tests/kingOfTheHillBench.mjs")
+const ENTRY = path.join(ROOT, "bench/koth/kingOfTheHillBench.ts")
+const OUT = path.join(ROOT, "bench/koth/kingOfTheHillBench.mjs")
 
 function bundleKingOfTheHillBench() {
   buildSync({
@@ -21,7 +21,7 @@ function bundleKingOfTheHillBench() {
   const existing = fs.readFileSync(OUT, "utf8")
   fs.writeFileSync(
     OUT,
-    "/* Auto-generated — edit tests/kingOfTheHillBench.ts; run pnpm run test:koth:bench */\n" + existing,
+    "/* Auto-generated — edit bench/koth/kingOfTheHillBench.ts; run pnpm run test:koth:bench */\n" + existing,
   )
   return OUT
 }

@@ -3,7 +3,7 @@ const { execFileSync } = require("node:child_process")
 const fs = require("node:fs")
 
 const ROOT = path.join(__dirname, "..")
-const SRC_DIR = path.join(ROOT, "tests/koth_tune")
+const SRC_DIR = path.join(ROOT, "bench/koth/koth_tune")
 const BUILD_DIR = path.join(ROOT, "out", "build", "x64-Release")
 
 const EXE_CANDIDATES = [

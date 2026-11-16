@@ -4,9 +4,9 @@
  * Game model: divisibility probes return feedback "true"/"false".
  * Password is a product of prime powers (hint: "divisible by 1 ;)").
  *
- * Run: node tests/factoriOsSim.mjs
- * Run with a known password: node tests/factoriOsSim.mjs 9466383360
- * Run with length only (sample password): node tests/factoriOsSim.mjs --length 10
+ * Run: node bench/scratch/factoriOsSim.mjs
+ * Run with a known password: node bench/scratch/factoriOsSim.mjs 9466383360
+ * Run with length only (sample password): node bench/scratch/factoriOsSim.mjs --length 10
  */
 
 const FACTORIOS_PRIMES = [
