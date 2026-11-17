@@ -108,6 +108,12 @@
           <button id="tuneStop" class="ghost">Stop</button>
         </div>
         <div class="hint" id="tuneHint"></div>
+        <div class="buttons" style="margin-top: 10px">
+          <button id="tuneExport" class="ghost" style="margin-left: 0" title="Save the v2 and v3 tuning results together in one dated file">Export both</button>
+          <button id="tuneImport" class="ghost" title="Replace the v2 and v3 tuning results from a file">Import file...</button>
+          <input type="file" id="tuneImportFile" accept=".json,application/json" style="display: none" />
+        </div>
+        <div class="hint" id="tuneFileHint"></div>
         <div class="scrollFrame" style="margin-top: 8px">
           <table id="tuneTable">
             <thead><tr id="tuneHead"></tr></thead>
@@ -934,6 +940,183 @@ self.onmessage = function (event) {
         renderTuneHint()
       }
 
+      // ---- tuning store file: import / export ------------------------------
+      // Both strategies' results travel in one file, the way the ipvgo tuner exports its whole
+      // per-faction store: one snapshot of everything, so a search never has to be repeated on
+      // another machine. Import replaces rather than merges, because an export is a snapshot and
+      // a merge would silently keep a strategy the file does not have.
+
+      /** The strategies the store can hold, and the names they use in the file. */
+      const TUNE_FILE_ENTRIES = [
+        { name: "v2", strategy: "current" },
+        { name: "v3", strategy: "v3" },
+      ]
+      // `current` is the storage id; a file written by hand may use either name.
+      const TUNE_FILE_ALIASES = new Map([["v2", "current"], ["current", "current"], ["v3", "v3"]])
+
+      // Gene ranges come from the search itself, so an imported genome is normalised exactly the
+      // way breeding normalises it (both 4S modes are included: the file does not say which one
+      // produced it, and a no-4S genome carries the history genes).
+      const GENE_SPECS_BY_KEY = new Map(
+        [...stockGeneSpecs(true, "v3"), ...stockGeneSpecs(false, "v2")].map((spec) => [spec.key, spec]),
+      )
+      const V3_CONFIG_KEYS = ["tilt", "reserveFraction"]
+
+      const tuneFileNote = (text) => {
+        $("tuneFileHint").textContent = text
+      }
+
+      /** One genome, clamped to the ranges in play; unknown genes are dropped and counted. */
+      function cleanGenome(raw, counts) {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null
+        const genome = {}
+        for (const [key, value] of Object.entries(raw)) {
+          const spec = GENE_SPECS_BY_KEY.get(key)
+          if (!spec) {
+            counts.dropped++
+            continue
+          }
+          if (spec.kind === "bool") {
+            genome[key] = Boolean(value)
+            continue
+          }
+          const number = Number(value)
+          if (!Number.isFinite(number)) {
+            counts.dropped++
+            continue
+          }
+          const clamped = Math.min(spec.max, Math.max(spec.min, number))
+          genome[key] = spec.kind === "int" ? Math.round(clamped) : Number(clamped.toFixed(spec.digits))
+        }
+        return Object.keys(genome).length > 0 ? genome : null
+      }
+
+      /** The config a genome was measured against, keeping only fields the executor reads. */
+      function cleanStoredConfig(raw, numericKeys) {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined
+        const config = {}
+        for (const [key, value] of Object.entries(raw)) {
+          if (key === "enableShorts") {
+            config.enableShorts = Boolean(value)
+            continue
+          }
+          if (!numericKeys.includes(key)) continue
+          const number = Number(value)
+          if (Number.isFinite(number) && number >= 0) config[key] = number
+        }
+        return Object.keys(config).length > 0 ? config : undefined
+      }
+
+      /**
+       * Rebuilds a tuning store from the fields that are allowed to be there, so an imported file
+       * cannot put anything unexpected on the chart. Anything that cannot be used is dropped and
+       * counted rather than rejecting the whole file, but a file with nothing usable is an error.
+       */
+      function sanitizeTuningStore(raw) {
+        const source = raw && typeof raw === "object" && !Array.isArray(raw) && raw.store ? raw.store : raw
+        if (!source || typeof source !== "object" || Array.isArray(source)) {
+          throw new Error("not a tuning file: expected an object with v2 and/or v3 entries")
+        }
+        const store = {}
+        const counts = { dropped: 0 }
+        for (const [name, entry] of Object.entries(source)) {
+          const strategy = TUNE_FILE_ALIASES.get(name)
+          if (!strategy) {
+            counts.dropped++
+            continue
+          }
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+            counts.dropped++
+            continue
+          }
+          const genome = cleanGenome(entry.genome, counts)
+          if (!genome) {
+            counts.dropped++
+            continue
+          }
+          const finite = (value, fallback = 0) => (Number.isFinite(Number(value)) ? Number(value) : fallback)
+          store[strategy] = {
+            genome,
+            growthPct: finite(entry.growthPct),
+            generation: finite(entry.generation),
+            generations: finite(entry.generations),
+            config: cleanStoredConfig(entry.config, NUMERIC_CONFIG_KEYS),
+            v3Config: cleanStoredConfig(entry.v3Config, V3_CONFIG_KEYS),
+          }
+        }
+        return { store, dropped: counts.dropped, imported: Object.keys(store).length }
+      }
+
+      /** Both strategies' results as one object - the file this page exports. */
+      function tuningSnapshot() {
+        const store = {}
+        for (const { name, strategy } of TUNE_FILE_ENTRIES) {
+          const stored = tuneStore(strategy)
+          if (stored?.genome) store[name] = stored
+        }
+        return store
+      }
+
+      /**
+       * `stock-tune-yyyy-mm-dd-hh-mm.json`, in local time so it matches the clock in the GUI. The
+       * ipvgo export adds the commit hash; a page opened from disk cannot ask git, so this does
+       * not carry one.
+       */
+      function tuningFileName(now = new Date()) {
+        const pad = (n) => String(n).padStart(2, "0")
+        return (
+          `stock-tune-${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-` +
+          `${pad(now.getHours())}-${pad(now.getMinutes())}.json`
+        )
+      }
+
+      function exportTuning() {
+        const store = tuningSnapshot()
+        const names = Object.keys(store)
+        if (names.length === 0) {
+          tuneFileNote("nothing to export yet - tune v2 or v3 first")
+          return
+        }
+        const filename = tuningFileName()
+        const blob = new Blob([JSON.stringify(store, null, 2) + "\n"], { type: "application/json" })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement("a")
+        link.href = url
+        link.download = filename
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+        // Revoked on a timer: revoking straight away can cancel the download.
+        setTimeout(() => URL.revokeObjectURL(url), 10000)
+        tuneFileNote(`exported ${filename} - ${names.join(" and ")} tuning`)
+      }
+
+      async function importTuning(file) {
+        let parsed
+        try {
+          parsed = JSON.parse(await file.text())
+        } catch {
+          tuneFileNote(`${file.name} is not JSON - nothing imported`)
+          return
+        }
+        let result
+        try {
+          result = sanitizeTuningStore(parsed)
+        } catch (error) {
+          tuneFileNote(`${file.name}: ${String(error.message ?? error)}`)
+          return
+        }
+        if (result.imported === 0) {
+          tuneFileNote(`${file.name} had no usable tuning result${result.dropped ? ` (${result.dropped} skipped)` : ""}`)
+          return
+        }
+        for (const { strategy } of TUNE_FILE_ENTRIES) ToolUi.store.remove(TUNE_KEY(strategy))
+        for (const [strategy, entry] of Object.entries(result.store)) ToolUi.store.write(TUNE_KEY(strategy), entry)
+        renderTuneHint()
+        const names = Object.keys(result.store).map((strategy) => (strategy === "v3" ? "v3" : "v2"))
+        tuneFileNote(`imported ${names.join(" and ")} tuning from ${file.name}${result.dropped ? `, skipped ${result.dropped}` : ""}`)
+      }
+
       function renderTuneTable(report, specs) {
         $("tuneHead").innerHTML = ["#", ...specs.map((spec) => TUNE_GENE_LABELS[spec.key] ?? spec.key), "growth", "vs default", "maxDD"]
           .map((header) => `<th>${header}</th>`)
@@ -1248,6 +1431,18 @@ self.onmessage = function (event) {
         if (!stored?.genome) return
         applyGenome(stored.genome, stockGeneSpecs($("has4s").checked, strategy === "v3" ? "v3" : "v2"))
       })
+      $("tuneExport").addEventListener("click", exportTuning)
+      $("tuneImport").addEventListener("click", () => $("tuneImportFile").click())
+      $("tuneImportFile").addEventListener("change", async () => {
+        const file = $("tuneImportFile").files?.[0]
+        if (!file) return
+        try {
+          await importTuning(file)
+        } finally {
+          // Clearing the value allows picking the same file again.
+          $("tuneImportFile").value = ""
+        }
+      })
       $("resetBtn").addEventListener("click", () => {
         form.clear()
         // Resetting means this strategy goes back to the shipped defaults, so drop its copy too.
@@ -1309,6 +1504,7 @@ self.onmessage = function (event) {
 
       renderSeedHint()
       renderTuneHint()
+      tuneFileNote("one file for both strategies: export saves the v2 and v3 tuning results together, import replaces them")
       updateGridCount()
       ensurePool()
 

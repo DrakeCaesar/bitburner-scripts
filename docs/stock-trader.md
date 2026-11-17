@@ -527,6 +527,14 @@ decides its conviction curve and reserve alongside the entry/exit rules.
   The seeds given to `--seed-range` are the training seeds (at least 4, else a contiguous block of 16
   starting at `--seed`), `--tune-seed` seeds the search itself, and the winner is printed with its
   held-back numbers and as JSON when `--json` is set.
+- **Export both** saves the two results in one file, `stock-tune-yyyy-mm-dd-hh-mm.json`, shaped
+  `{"v2": entry, "v3": entry}` where an entry is the genome, the growth it scored, how far the search
+  ran, and the config it was measured against. **Import file...** replaces both strategies with the
+  file's contents — replaces, not merges, so a file holding only v2 clears v3 instead of leaving a
+  stale v3 line on the chart. Imported genes are clamped to the ranges the search itself uses, unknown
+  genes are dropped, and an entry with no usable genome is skipped and counted, so a corrupt or
+  hand-edited file cannot quietly change what is drawn. Each strategy's form config
+  (`toolui.stockBench.config.*`) is separate and is not touched by either button.
 - More seeds beat more generations. Twenty-five seeds x 6 genomes x 6 generations takes a few
   seconds with workers and is a reasonable starting point; twelve seeds will overfit.
 - A genome is only meaningful for the market shape it was measured on: capital, update count, BitNode
