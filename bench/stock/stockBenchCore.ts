@@ -255,7 +255,19 @@ export function runTraderScenario(options: BenchOptions, strategy: StrategyId = 
       marketData: options.marketData,
     })
     if (strategy === "v1") {
-      return { tick: () => runStockTradingTickV1(ns as unknown as NS, TRADER_V1_CONFIG) }
+      // v1 is frozen, but the cash reserve is an account policy rather than part of the strategy,
+      // so a caller-supplied `moneyKeep` is honoured. Without this the baseline keeps its own $1b
+      // reserve, goes inert on any smaller account and reads as "+0.00%" instead of "did nothing".
+      const moneyKeep = options.config?.moneyKeep
+      return {
+        tick: () =>
+          runStockTradingTickV1(
+            ns as unknown as NS,
+            Number.isFinite(moneyKeep) && (moneyKeep as number) >= 0
+              ? { ...TRADER_V1_CONFIG, moneyKeep: moneyKeep as number }
+              : TRADER_V1_CONFIG,
+          ),
+      }
     }
     const config = mergeStockTraderConfig(options.config)
     // Fresh history per run: without 4S the strategy learns from prices it has seen itself.

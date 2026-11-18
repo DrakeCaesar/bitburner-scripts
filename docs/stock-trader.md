@@ -478,14 +478,27 @@ Both are the `aggregateCurves()` helpers in `bench/stock/stockBenchCore.ts`, so 
 compute them identically. The exact end-of-run numbers stay in the cards above the chart (mean,
 median, worst seed, std dev) for those who want the tail as well as the middle.
 
+**Money keep is the account's, not the strategy's.** The comparison draws each line with its own
+config — that is the point — except `moneyKeep`, which every line takes from the form, and which v1's
+frozen config also honours. It is a cash policy (how much you refuse to invest), not a trading rule,
+and leaving it per-line produced a chart where the shipped `$1b` reserve made *every* line except the
+form's a flat `+0.00%` on a `$250m` account: v2 as shipped, v1, and any genome tuned on a `$10b`
+account all silently did nothing. For the same reason a line that made no trades is labelled
+**`(no trades)`** rather than shown as a result, and the status bar says why.
+
 ## 9. How to watch it happen
 
-- `pnpm run stock:viz` → open `bench/stock/stockTraderViz.html`. **Strategy → edge (current)** with
-  **compare with v1** ticked draws both strategies on one chart as the median seed plus a p10–p90 band
-  (log axis), and fills in the same paired ratio and win count as the CLI. *Seed* picks the seed
-  stream and *Seeds* how many markets to draw from it;
-  the default 25 finishes in under a second, 100 in about two.
-- `pnpm run test:stock -- --compare --seed-range 1-100` prints the paired comparison in the terminal.
+- `pnpm run stock:viz` → open `bench/stock/stockTraderViz.html`. One run draws **every strategy and
+  version at once** — v1, v2 and v3 as they ship, each tuned genome that has been stored, the config
+  being edited, and the hold reference — each as the median seed with a p10–p90 band on a log axis.
+  *Seed* picks the seed stream and *Seeds* how many markets to draw from it; the default 25 finishes
+  in under a second, 100 in about two.
+- **Editing** (in the Strategy config panel) only chooses whose config the form edits; it never
+  changes which lines are drawn. Each strategy keeps its own saved config.
+- **The legend is the switchboard.** It is a table — series, seeds, median return, p10, p90 — so the
+  numbers line up, and clicking a row hides that line; clicking again brings it back. The axis rescales
+  to what is still drawn. A line that never traded says `(no trades)` instead of showing a flat result.
+- `pnpm run test:stock -- --compare --seed-range 1-100` prints the same paired comparison in the terminal.
 - `pnpm run test:stock -- --compare --seeds 25` does the same with 25 seeds spaced 9,973 apart.
 - `pnpm run test:stock -- --strategy v1` runs the frozen baseline on its own.
 - In game, the trader's Positions tab now shows an **Edge** column next to Forecast and Vol, so you can
@@ -569,16 +582,17 @@ Both v2 and v3 can be tuned, and each keeps its own result. v3's genome carries 
 `weight tilt` (0–2) and `cash reserve` (0–2%) — on top of the shared trader config, so a search on v3
 decides its conviction curve and reserve alongside the entry/exit rules.
 
-- GUI: **Genetic tuning** section, with **Strategy** set to v2 or v3. The panel tunes the selected
-  one and says which in its hint; *Apply best to form* loads that strategy's stored genome into the
-  config (including the tilt and reserve fields when it is v3). Each strategy's tuning result and
-  form config are stored under their own keys, so tuning v3 never clobbers v2's best and switching
-  Strategy loads that strategy's own config back.
-- With **Compare with v1** ticked, a run draws the whole comparison at once: **v2 tuned** (green),
-  **v3 tuned** (magenta), **v2** as shipped (blue) and **v1** (amber), each as its median seed with a
-  p10–p90 band, plus the buy-and-hold reference. The status line reports both tuned lines' paired
-  ratio against v2. Any line whose results duplicate another (the form usually equals the shipped
-  config) is dropped rather than drawn twice.
+- GUI: **Genetic tuning** section. The **Target** dropdown picks v2, v3, or **v2 and v3**; *both*
+  runs the two searches in lockstep — each generation's genomes go to the worker pool as one batch —
+  so it costs the pool's throughput, not twice the wall clock. The panel shows one table per strategy
+  (each with the gene columns that strategy has) and a hint line for both stored results at once.
+  *Apply best to form* loads the stored genome of whichever strategy the form is **editing**.
+- Every run draws the whole comparison: **v2 tuned** (green), **v3 tuned** (magenta), **v2** as
+  shipped (blue), **v3** as shipped (violet) and **v1** (amber), each as its median seed with a
+  p10–p90 band, plus the buy-and-hold reference and the config being edited. The legend is a table
+  (series, seeds, median return, p10, p90) and each row toggles its line off and on. The status line
+  reports both tuned lines' paired ratio against v2. Any line whose results duplicate another (the
+  form usually equals the shipped config) is dropped rather than drawn twice.
 - CLI: `pnpm run test:stock -- --tune --strategy v3 --seed-range 1-40 --population 8 --generations 6`.
   The seeds given to `--seed-range` are the training seeds (at least 4, else a contiguous block of 16
   starting at `--seed`), `--tune-seed` seeds the search itself, and the winner is printed with its
@@ -659,8 +673,9 @@ Two lessons worth keeping:
 Result on the default horizon: v2 +5,738% → v3 +6,257% mean, drawdown unchanged (3.15% vs 3.17%),
 fewer trades (550 vs 584), and 6.22× over v1 on 100/100 seeds.
 
-- GUI: **Strategy → conviction sizing (v3)**. The chart adds a `v3 (conviction)` line, the shipped
-  `v2 current` line, `v1 baseline`, and a `vs v2 same seed` paired card.
+- GUI: set **Editing** to v3 (the chart draws v3 either way; Editing decides whose config the form
+  edits) and the `v3 (conviction)` line appears with the shipped `v2`, `v3` and `v1` lines, plus a
+  `vs v2 same seed` paired card.
 - CLI: `pnpm run test:stock -- --strategy v3 --compare --seed-range 1-100` prints the paired
   comparison against both v2 and v1. Knobs: `--v3-kelly` (tilt), `--v3-reserve`, `--v3-band`,
   `--v3-gross`.
