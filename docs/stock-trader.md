@@ -347,6 +347,57 @@ before $10b turns into $100t — so 30,000 updates is a stress test of the model
 **Use 3000 updates for judging strategy changes.** Watch `capital` stay above ~60%: below that, extra
 time can no longer compound and you are measuring luck.
 
+### Capital decides the early game
+
+The other axis is capital, and it matters far more at the start of a run than any rule change. The
+commission is a **fixed $100 000 per transaction** — it does not scale with the size of the trade — so
+its cost relative to the position falls only as the account grows. Measured over 1000 updates
+(20 seeds, stream 5, v3):
+
+| starting capital | mode | commission paid | mean return |
+|---|---|---|---|
+| $1b | 4S | 0.7% of capital | +357% |
+| $100m | 4S | 6.9% | +351% |
+| $30m | 4S | 22% | +311% |
+| $10m | 4S | 69% | +176% |
+| $3m | 4S | 133% | **−41%** (median −77%) |
+| $100m | no 4S | 19% | +46% |
+| $30m | no 4S | 56% | **−8%** |
+| $10m | no 4S | 108% | **−96%** |
+| $3m | no 4S | 100% | **−99%** |
+| $1m | no 4S | 101% | **−101%** (net worth goes negative on shorts) |
+
+Three things follow, in order of how much they matter early:
+
+1. **v2 is completely inert at or below $1b**, because `moneyKeep` is an *absolute* $1b and every buy
+   is sized from `cash − moneyKeep`. At `--capital 1b` it makes 0 trades and returns +0.00%; lowering
+   the reserve to 0 on the same run gives +356%. v3 has no such wall (it reserves 0.1% of net worth),
+   and with the reserve removed the two strategies are the same at this size (+356% vs +357%) — the
+   whole v3 advantage at $10b was the reserve and the tilt. For a small account, run v3 or pass
+   `moneyKeep = 0`.
+2. **Small accounts lose money to fees, and the no-4S regime — which is what a fresh BitNode
+   actually has, since the 4S APIs cost $31b — is the worst of it.** Without 4S the run gains nothing
+   below ~$100m and the loss deepens fast ($30m −8%, $10m −96%, $3m −99%); with 4S the break-even is
+   far lower (still a gain at $10m, −41% at $3m). Trading there is worse than idling, and the
+   benchmark prints a warning once commission passes 25% of the starting capital.
+3. **Use fewer positions while the account is small.** Fees scale with trade count, and fewer slots
+   mean bigger positions and fewer rotations:
+
+   | capital | 3 positions | 4 positions |
+   |---|---|---|
+   | $10m (1000 updates) | **+256%** | +174% |
+   | $30m (1000) | **+348%** | +315% |
+   | $100m (1000) | **+376%** | +355% |
+   | $1b (1000) | **+393%** | +366% |
+   | $10b (3000, 40 seeds) | +5,026% | +5,688% (5 positions: +5,859%) |
+
+   The crossover is somewhere between $1b and $10b: above it the extra slot earns more than its fees,
+   below it the fees dominate (1000-update rows are 12–20 seeds; the $10b row is 3000 updates and 40).
+
+The no-4S knobs themselves are already at their best measured values — `historyTicks 40` beats 20
+(+158%) and 10 (−74%) by a wide margin, `no4sEntryEdge 0.004` beats 0.006 and 0.008, and
+`maxPositions 4` beats 3 and 2 at $10b. Improving that path needs a better signal, not better knobs.
+
 ### What counts as a valid number of updates
 
 One update is one 6-second stock tick *and* one strategy decision, so the number is "how many

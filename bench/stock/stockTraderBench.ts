@@ -322,7 +322,9 @@ const HELP = `Stock trader benchmark (local Bitburner market model)
 Usage: pnpm run test:stock -- [options]
 
 Market
-  --capital <n>        Starting home cash (suffixes k/m/b/t/q, default 10b)
+  --capital <n>        Starting home cash (suffixes k/m/b/t/q, default 10b). Commission is a
+                       fixed $100 000 per trade, so small accounts are fee-dominated: see
+                       docs/stock-trader.md section 8 before testing capital below ~$100m
   --ticks <n>          Stock updates to simulate, 6s each, 1 or more (default 3000)
   --node <n>           BitNode number (default 8 so shorts are unlocked)
   --sf8 <level>        Source-File 8 level when not in BitNode 8 (default 3)
@@ -484,13 +486,14 @@ function printHeader(options: CliOptions, config: Partial<StockTraderConfig>): v
 
 /** Guards that explain a run which cannot mean anything. Printed in every mode, including --quiet. */
 function printWarnings(options: CliOptions, merged: StockTraderConfig): void {
-  if (options.capital <= merged.moneyKeep) {
+  // v3 reserves a share of net worth instead of an absolute sum, so money-keep does not gate it.
+  if (options.strategy !== "v3" && options.capital <= merged.moneyKeep) {
     console.log(
       `warning  capital (${money(options.capital)}) is at or below money-keep (${money(merged.moneyKeep)}); ` +
         `the strategy cannot open positions. Raise --capital or lower --money-keep.`,
     )
   }
-  if (!options.marketData && options.strategy === "current" && options.ticks <= merged.historyTicks) {
+  if (!options.marketData && options.strategy !== "v1" && options.ticks <= merged.historyTicks) {
     console.log(
       `warning  the price-history estimate needs ${merged.historyTicks + 1} prices to fill its window; ` +
         (options.ticks < 4
@@ -564,6 +567,26 @@ function printAggregate(results: readonly BenchResult[], label: string): void {
   console.log(
     `churn   ${count(stats.meanTrades)} trades avg | ${money(stats.meanCommission)} commission avg | net worth ${money(stats.meanNetWorth)} avg`,
   )
+}
+
+/**
+ * Fees are a fixed $100k per transaction, so their share of the account falls as capital rises, and
+ * on small-capital runs they decide the result. Measured on the model (1000 updates): $100m with 4S
+ * pays ~7% of capital in fees and gains +350%; $30m without 4S pays ~56% and loses 8%; $10m without
+ * 4S pays ~108% and loses 96%.
+ */
+function warnFeeShare(results: readonly BenchResult[]): void {
+  if (results.length === 0) return
+  const stats = aggregate(results)
+  if (stats.meanTrades === 0) return
+  const share = stats.meanCommission / Math.max(1, results[0].capital)
+  if (share > 0.25) {
+    console.log(
+      `warning  commission averaged ${pct(share)} of the starting capital (${money(stats.meanCommission)}): ` +
+        `at this size the run measures fee drag as much as the strategy. Use more capital, ` +
+        `fewer --max-positions, or a higher entry edge.`,
+    )
+  }
 }
 
 /** Labels matter here: v3 is compared against v2 as well as v1, so the ratio cannot say "current/v1". */
@@ -925,6 +948,7 @@ function main(): number {
     }
 
     if (results.length > 1) printAggregate(results, "all seeds")
+    warnFeeShare(results)
 
     for (const comparison of comparisons) {
       printAggregate(comparison.results, comparison.label)
