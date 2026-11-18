@@ -416,7 +416,12 @@ Per strategy it draws two things:
   by a handful of explosive runs and would not describe anything you would actually experience.
 - **a p10–p90 band** (shaded) — the middle 80% of seeds. Its width *is* the result: a band that fans
   out over time means the outcome is mostly luck, and two strategies whose bands overlap heavily are
-  not meaningfully different. A single run (the buy-and-hold baselines) has no band.
+  not meaningfully different.
+
+Every line on the chart runs on every seed, including the buy-and-hold reference: a hold return varies
+so much between markets that one seed's hold, set against a multi-seed strategy mean, is noise
+wearing a number's clothes (on 1000 seeds the same page showed `hold 1 seed +38.23%` next to a
+`+6 457%` mean). Holding buys once, so a hold run costs a fraction of a strategy run.
 
 Both are the `aggregateCurves()` helpers in `bench/stock/stockBenchCore.ts`, so the CLI and the page
 compute them identically. The exact end-of-run numbers stay in the cards above the chart (mean,

@@ -626,14 +626,14 @@ self.onmessage = function (event) {
           layers.saved ? curveSeries("v2", layers.saved, PALETTE.saved) : null,
           layers.v1 ? curveSeries("v1", layers.v1, PALETTE.v1) : null,
           edited ? curveSeries(layers.editedLabel ?? "form config", edited, PALETTE.edited) : null,
-          layers.holdFiltered ? curveSeries("hold (filtered)", [layers.holdFiltered], PALETTE.hold) : null,
-          layers.holdAll ? curveSeries("hold (all)", [layers.holdAll], PALETTE.holdAll) : null,
+          layers.holdFiltered ? curveSeries("hold (filtered)", layers.holdFiltered, PALETTE.hold) : null,
+          layers.holdAll ? curveSeries("hold (all)", layers.holdAll, PALETTE.holdAll) : null,
         ].filter(Boolean)
         drawChart(series)
       }
 
       // ---- results ---------------------------------------------------------
-      function renderCards(stats, holdFiltered, holdAll, v1Stats, paired, pairedV2) {
+      function renderCards(stats, holdStats, holdStatsAll, v1Stats, paired, pairedV2) {
         const cards = [
           { k: "mean return", v: signedPct(stats.meanReturnPct), tone: cls(stats.meanReturnPct) },
           { k: "median return", v: signedPct(stats.medianReturnPct), tone: cls(stats.medianReturnPct) },
@@ -671,12 +671,13 @@ self.onmessage = function (event) {
           })
           cards.push({ k: "seeds v2 wins", v: `${pairedV2.wins}/${pairedV2.runs}`, tone: verdict })
         }
-        if (holdFiltered) {
-          const delta = stats.meanReturnPct - holdFiltered.returnPct
+        if (holdStats) {
+          const delta = stats.meanReturnPct - holdStats.meanReturnPct
           cards.push({ k: "vs hold (filtered)", v: signedPct(delta), tone: cls(delta) })
+          cards.push({ k: "hold mean return", v: signedPct(holdStats.meanReturnPct), tone: cls(holdStats.meanReturnPct) })
         }
-        if (holdAll) {
-          const delta = stats.meanReturnPct - holdAll.returnPct
+        if (holdStatsAll) {
+          const delta = stats.meanReturnPct - holdStatsAll.meanReturnPct
           cards.push({ k: "vs hold (all)", v: signedPct(delta), tone: cls(delta) })
         }
         ToolUi.setCards($("cards"), cards)
@@ -791,8 +792,19 @@ self.onmessage = function (event) {
             for (const seed of seeds) jobs.push({ kind: "strategy", strategy: entry.strategy, options: { ...entry.options, seed } })
           }
           const holdJobs = []
-          if (baseline !== "none") holdJobs.push({ kind: "hold", filtered: true, options: { ...market, config: readConfig(), seed: seeds[0] } })
-          if (baseline === "all") holdJobs.push({ kind: "hold", filtered: false, options: { ...market, config: readConfig(), seed: seeds[0] } })
+          // One hold run per seed: a buy-and-hold return varies wildly between markets, so a
+          // single seed's hold is noise next to a 1000-seed mean and cannot be subtracted from it.
+          // Holding buys once, so a run costs a fraction of a strategy run.
+          if (baseline !== "none") {
+            for (const seed of seeds) {
+              holdJobs.push({ kind: "hold", filtered: true, options: { ...market, config: readConfig(), seed } })
+            }
+          }
+          if (baseline === "all") {
+            for (const seed of seeds) {
+              holdJobs.push({ kind: "hold", filtered: false, options: { ...market, config: readConfig(), seed } })
+            }
+          }
           const results = await runJobs([...jobs, ...holdJobs], progress)
 
           const layer = (key) => {
@@ -806,8 +818,11 @@ self.onmessage = function (event) {
           const savedResults = layer("saved")
           const v2TunedResults = layer("v2tuned")
           const v3TunedResults = layer("v3tuned")
-          const holdFiltered = baseline === "none" ? null : results[holdStart]
-          const holdAll = baseline === "all" ? results[holdStart + 1] : null
+          // Both baselines were run on every seed, so they are sliced with the same width.
+          const holdFiltered =
+            baseline === "none" ? null : results.slice(holdStart, holdStart + seeds.length)
+          const holdAll =
+            baseline === "all" ? results.slice(holdStart + seeds.length, holdStart + seeds.length * 2) : null
 
           // The form's own line is drawn when it is something other than the shipped v2 config:
           // always for v3 (a different strategy), for v2 only when the form was edited, and as the
@@ -817,8 +832,8 @@ self.onmessage = function (event) {
           const stats = aggregate(strategyResults)
           renderCards(
             stats,
-            holdFiltered,
-            holdAll,
+            holdFiltered ? aggregate(holdFiltered) : null,
+            holdAll ? aggregate(holdAll) : null,
             v1Results ? aggregate(v1Results) : null,
             v1Results ? pairResults(strategyResults, v1Results) : null,
             savedResults && strategy === "v3" ? pairResults(strategyResults, savedResults) : null,

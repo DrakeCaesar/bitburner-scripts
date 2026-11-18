@@ -858,10 +858,25 @@ function main(): number {
       results: runSeeds(options, options.config, opponent.strategy),
     }))
     const v1Results = comparisons.find((entry) => entry.label === "v1 baseline")?.results ?? null
-    const baselineFiltered =
-      options.baseline === "none" ? null : runHoldBaseline({ ...options, seed: options.seed, config: options.config }, true)
-    const baselineAll =
-      options.baseline === "all" ? runHoldBaseline({ ...options, seed: options.seed, config: options.config }, false) : null
+    // The baseline is measured on every seed, not on one: a buy-and-hold return varies enormously
+    // between markets, so one seed's hold cannot be compared with a multi-seed strategy mean.
+    const runHold = (filtered: boolean) =>
+      seedList(options).map((seed) =>
+        runHoldBaseline(
+          {
+            seed,
+            capital: options.capital,
+            ticks: options.ticks,
+            config: options.config,
+            bitNode: options.bitNode,
+            ownedSf8: options.ownedSf8,
+            marketData: options.marketData,
+          },
+          filtered,
+        ),
+      )
+    const baselineFiltered = options.baseline === "none" ? null : runHold(true)
+    const baselineAll = options.baseline === "all" ? runHold(false) : null
 
     if (options.json) {
       const stripCurve = ({ equityCurve: _curve, ...rest }: BenchResult): Omit<BenchResult, "equityCurve"> => rest
@@ -880,8 +895,10 @@ function main(): number {
               paired: results.length > 1 ? pairResults(results, entry.results) : null,
             })),
             baselines: {
-              holdFiltered: baselineFiltered ? stripCurve(baselineFiltered) : null,
-              holdAll: baselineAll ? stripCurve(baselineAll) : null,
+              holdFiltered: baselineFiltered
+                ? { aggregate: aggregate(baselineFiltered), runs: baselineFiltered.map(stripCurve) }
+                : null,
+              holdAll: baselineAll ? { aggregate: aggregate(baselineAll), runs: baselineAll.map(stripCurve) } : null,
             },
           },
           null,
@@ -925,15 +942,19 @@ function main(): number {
     }
 
     if (baselineFiltered) {
+      const hold = aggregate(baselineFiltered)
       console.log(
-        `\nbaseline hold (filtered)  ${signedPct(baselineFiltered.returnPct)}  ` +
-          `max dd -${pct(baselineFiltered.maxDrawdownPct)}  trades ${count(baselineFiltered.trades)}`,
+        `\nbaseline hold (filtered)  mean ${signedPct(hold.meanReturnPct)}  median ${signedPct(hold.medianReturnPct)}  ` +
+          `max dd -${pct(hold.meanMaxDrawdownPct)}  trades ${count(hold.meanTrades)}  ` +
+          `(${baselineFiltered.length} seed${baselineFiltered.length === 1 ? "" : "s"})`,
       )
     }
     if (baselineAll) {
+      const hold = aggregate(baselineAll)
       console.log(
-        `baseline hold (all)       ${signedPct(baselineAll.returnPct)}  ` +
-          `max dd -${pct(baselineAll.maxDrawdownPct)}  trades ${count(baselineAll.trades)}`,
+        `baseline hold (all)       mean ${signedPct(hold.meanReturnPct)}  median ${signedPct(hold.medianReturnPct)}  ` +
+          `max dd -${pct(hold.meanMaxDrawdownPct)}  trades ${count(hold.meanTrades)}  ` +
+          `(${baselineAll.length} seed${baselineAll.length === 1 ? "" : "s"})`,
       )
     }
 
