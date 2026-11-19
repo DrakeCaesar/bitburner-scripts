@@ -31,7 +31,8 @@
       <h1>Stock trader benchmark</h1>
       <span class="sub">
         Seeded Bitburner market model (bitburner-src, stable) driving src/libraries/stock/trader.ts.
-        Symbols are ranked by edge = (2 * forecast - 1) * volatility, the expected move per 6s update.
+        Cash goes to the companies with the best expected move per 6s update, net of the forecast impact
+        of our own trades.
       </span>
       <span id="status" class="pill dim">ready</span>
     </header>
@@ -59,32 +60,17 @@
             <span>4S market data</span>
             <span class="fieldToggle"><input id="has4s" type="checkbox" data-checked="1" checked /></span>
           </label>
-          <label class="field" title="v3 only: slot weight ∝ |edge|^tilt. 0 = v2's equal weight, 1 = in proportion to edge.">
-            <span>v3 weight tilt</span><input id="v3Tilt" type="text" inputmode="decimal" data-nopersist="1" />
-          </label>
-          <label class="field" title="v3 only: cash kept back as a share of net worth (0 = fully invested).">
-            <span>v3 cash reserve</span><input id="v3Reserve" type="text" inputmode="decimal" data-nopersist="1" />
-          </label>
         </div>
         <div class="hint" id="seedHint"></div>
       </section>
 
       <section>
         <h2>Strategy config</h2>
-        <div class="fields">
-          <label class="field" title="Which strategy's config these fields edit. Every strategy is charted regardless.">
-            <span>Editing</span>
-            <select id="configFor" data-value="current">
-              <option value="current">v2 (edge)</option>
-              <option value="v3">v3 (conviction)</option>
-            </select>
-          </label>
-        </div>
         <div class="fields" id="configFields"></div>
         <div class="fields" style="margin-top: 4px">
           <label class="field">
             <span>Enable shorts</span>
-            <span class="fieldToggle"><input id="enableShorts" type="checkbox" data-checked="1" checked data-nopersist="1" /></span>
+            <span class="fieldToggle"><input id="enableShorts" type="checkbox" data-checked="1" checked /></span>
           </label>
         </div>
         <div class="buttons">
@@ -100,9 +86,8 @@
         <div class="hint">
           Bred search over the strategy genes. Every genome is measured on the same seeds as the run above
           (common random numbers), the best survives each generation, and the winner is re-measured against
-          the shipped defaults on held-back seeds the search never saw. <b>Target</b> picks v2, v3, or both
-          at once - both run side by side on the same seeds and cost the pool's throughput, not twice the
-          time. Each strategy keeps its own stored result, charted as "&lt;strategy&gt; tuned".
+          the shipped defaults on held-back seeds the search never saw. The stored result is charted as
+          "tuned".
         </div>
         <div class="fields">
           <label class="field"><span>Population</span><input id="tunePopulation" type="text" inputmode="numeric" data-group="1" /></label>
@@ -114,22 +99,14 @@
           </label>
         </div>
         <div class="buttons">
-          <label class="field" style="margin: 0" title="Which strategy to search. Both runs two searches side by side on the same seeds.">
-            <span>Target</span>
-            <select id="tuneTarget" data-value="both">
-              <option value="current">v2 only</option>
-              <option value="v3">v3 only</option>
-              <option value="both">v2 and v3</option>
-            </select>
-          </label>
           <button id="tuneBtn" class="primary">Tune config</button>
           <button id="tuneApply" class="ghost" disabled>Apply best to form</button>
           <button id="tuneStop" class="ghost">Stop</button>
         </div>
         <div class="hint" id="tuneHint"></div>
         <div class="buttons" style="margin-top: 10px">
-          <button id="tuneExport" class="ghost" style="margin-left: 0" title="Save the v2 and v3 tuning results together in one dated file">Export both</button>
-          <button id="tuneImport" class="ghost" title="Replace the v2 and v3 tuning results from a file">Import file...</button>
+          <button id="tuneExport" class="ghost" style="margin-left: 0" title="Save the tuning result in a dated file">Export</button>
+          <button id="tuneImport" class="ghost" title="Replace the tuning result from a file">Import file...</button>
           <input type="file" id="tuneImportFile" accept=".json,application/json" style="display: none" />
         </div>
         <div class="hint" id="tuneFileHint"></div>
@@ -189,58 +166,54 @@
         scoreGenome,
         pairedGain,
         genomeConfig,
-        genomeV3Config,
       } = StockBench
       const LABELS = {
         moneyKeep: "money keep ($)",
+        reserveFraction: "cash reserve",
         entryEdge: "entry edge",
         exitEdge: "exit edge",
         no4sEntryEdge: "entry edge (no 4S)",
-        no4sRotateMargin: "rotate margin (no 4S)",
-        maxPositions: "max positions",
-        maxWeightPerSymbol: "max weight/symbol",
-        maxShareFraction: "max share fraction",
-        rotateMargin: "rotate margin",
         historyTicks: "history updates",
+        maxOpenPositions: "max positions",
+        maxWeight: "max weight/symbol",
+        maxShareFraction: "max share fraction",
+        minNewWeight: "min new weight",
+        slices: "slices",
+        rotationCostFactor: "rotation hurdle",
+        no4sRotationCostFactor: "rotation hurdle (no 4S)",
+        impactScale: "impact scale",
         minShares: "min shares",
       }
       const COLS = {
         moneyKeep: "keep",
+        reserveFraction: "res",
         entryEdge: "entry",
         exitEdge: "exit",
         no4sEntryEdge: "entry4s",
-        no4sRotateMargin: "rot4s",
-        maxPositions: "pos",
-        maxWeightPerSymbol: "wt",
-        maxShareFraction: "maxSh",
-        rotateMargin: "rot",
         historyTicks: "hist",
+        maxOpenPositions: "pos",
+        maxWeight: "wt",
+        maxShareFraction: "maxSh",
+        minNewWeight: "minW",
+        slices: "slc",
+        rotationCostFactor: "rot",
+        no4sRotationCostFactor: "rot4s",
+        impactScale: "imp",
         minShares: "minSh",
       }
       // One hue per series, never assigned by position, so a line keeps its colour whatever else
-      // is on the chart. The hues are spread around the wheel (and lightness alternates) so the
-      // curves stay apart in greyscale and for the common forms of colour blindness, where
-      // orange/green is the risky pair. No series is red, which the UI already uses for losses.
-      // Worst pair separation in this set is ~1.2 hue-steps, against 0 for the two greens this
-      // replaced (they differed only in brightness).
+      // is on the chart. No series is red, which the UI already uses for losses.
       const PALETTE = {
-        // One hue per line, so every version is told apart by colour alone.
-        v2tuned: "#3ddc84", //  green   - v2 with its own tuned genome
-        v3tuned: "#cc79a7", //  magenta - v3 with its own tuned genome
-        saved: "#4c9df0", //    blue    - v2 as it ships, the reference line
-        v3saved: "#8f7bff", //  violet  - v3 as it ships
-        v1: "#e0a33a", //       amber   - v1, the old baseline
-        edited: "#22d3ee", //   cyan    - the config being edited, only when it is not one of those
-        hold: "#f2e85c", //     yellow  - buy and hold
-        holdAll: "#808080", //  grey    - buy and hold, unfiltered
+        tuned: "#3ddc84", //   green  - the stored tuned genome
+        saved: "#4c9df0", //   blue   - the strategy as it ships, the reference line
+        edited: "#22d3ee", //  cyan   - the config being edited, only when it is not one of those
+        hold: "#f2e85c", //    yellow - buy and hold
+        holdAll: "#808080", // grey   - buy and hold, unfiltered
       }
-      const SERIES_COLORS = [PALETTE.v2tuned, PALETTE.v3tuned, PALETTE.saved, PALETTE.v3saved, PALETTE.v1, PALETTE.hold]
+      const SERIES_COLORS = [PALETTE.tuned, PALETTE.saved, PALETTE.edited, PALETTE.hold]
       const STORAGE_KEY = "toolui.stockBench.v1"
-      // Tuning results and form configs are kept per strategy: v2 and v3 have different genes and
-      // different best values, so sharing one slot would overwrite the other's work.
-      const TUNE_KEY = (strategy) => `toolui.stockBench.tuned.${strategy}.v1`
-      const CONFIG_KEY = (strategy) => `toolui.stockBench.config.${strategy}.v1`
-      const MARKET_DEFAULTS = { capital: 1e10, ticks: 3000, seed: 1, seeds: 25, node: 8, sf8: 3, v3Tilt: 1, v3Reserve: 0.001 }
+      const TUNE_KEY = "toolui.stockBench.tuned.v2"
+      const MARKET_DEFAULTS = { capital: 1e10, ticks: 3000, seed: 1, seeds: 25, node: 8, sf8: 3 }
       const TUNE_DEFAULTS = { tunePopulation: 6, tuneGenerations: 6, tuneSeed: 1 }
       const MAX_WORKERS = 12
 
@@ -275,8 +248,6 @@
         caption.textContent = LABELS[key] ?? key
         const input = document.createElement("input")
         input.id = `cfg_${key}`
-        // Strategy-specific, so it is stored per strategy below rather than in the shared snapshot.
-        input.dataset.nopersist = "1"
         prepareNumber(input, DEFAULT_STOCK_TRADER_CONFIG[key])
         label.append(caption, input)
         $("configFields").appendChild(label)
@@ -322,14 +293,6 @@
           bitNode: Math.max(1, Math.floor(ToolUi.numberOf("node") || 1)),
           ownedSf8: Math.max(0, Math.floor(ToolUi.numberOf("sf8") || 0)),
           marketData: $("has4s").checked,
-        }
-      }
-
-      /** The v3 sizing knobs. Only sent when v3 is the selected strategy. */
-      function readV3() {
-        return {
-          tilt: Math.max(0, ToolUi.numberOf("v3Tilt") || 0),
-          reserveFraction: Math.max(0, ToolUi.numberOf("v3Reserve") || 0),
         }
       }
 
@@ -396,7 +359,7 @@ function runBenchJob(job) {
   const result =
     job.kind === "hold"
       ? StockBench.runHoldBaseline(job.options, job.filtered)
-      : StockBench.runTraderScenario(job.options, job.strategy)
+      : StockBench.runTraderScenario(job.options)
   // A tuning run measures hundreds of runs and only needs the summary numbers. Posting the equity
   // curve of every one of them copies one number per update across the worker boundary for nothing,
   // so a "lite" job drops it here rather than after the transfer.
@@ -447,7 +410,7 @@ self.onmessage = function (event) {
           const result =
             job.kind === "hold"
               ? runHoldBaseline(job.options, job.filtered)
-              : runTraderScenario(job.options, job.strategy)
+              : runTraderScenario(job.options)
           // Same contract as the worker path: a lite job keeps no equity curve.
           if (job.lite && result) result.equityCurve = []
           results.push(result)
@@ -487,7 +450,7 @@ self.onmessage = function (event) {
         ctx.clearRect(0, 0, width, height)
 
         const usable = series.filter((s) => s.median.length > 1)
-        $("legend").innerHTML = ""
+        $("legendBody").innerHTML = ""
         if (usable.length === 0) return
         // The axis follows what is actually drawn, so hiding a line that dwarfs the others makes
         // them readable. With everything hidden, fall back to all of them to keep the axis sane.
@@ -644,10 +607,8 @@ self.onmessage = function (event) {
       }
 
       /**
-       * Draw every layer that is available. The set is fixed - v1, v2 as shipped, v3 as shipped,
-       * each tuned genome that has been stored, the config being edited, and the hold reference -
-       * so the legend always lists every strategy and version and the reader switches lines off by
-       * clicking them rather than by changing which strategy runs.
+       * Draw every layer that is available: the shipped config, the stored tuned genome, the config
+       * being edited, and the hold references. The reader switches lines off by clicking them.
        */
       function chartAll(layers) {
         // Two layers can be the same config measured twice (the form often equals the shipped
@@ -660,19 +621,14 @@ self.onmessage = function (event) {
             const other = b[i].finalNetWorth
             return Math.abs(run.finalNetWorth - other) <= Math.max(1, Math.abs(other)) * 1e-9
           })
-        const edited = [layers.v2tuned, layers.v3tuned, layers.saved, layers.v3saved, layers.v1, layers.holdFiltered].some(
-          (other) => identical(layers.edited, other),
-        )
+        const edited = [layers.tuned, layers.saved, layers.holdFiltered].some((other) => identical(layers.edited, other))
           ? null
           : layers.edited
 
         const series = [
-          layers.v2tuned ? curveSeries("v2tuned", "v2 tuned", layers.v2tuned, PALETTE.v2tuned) : null,
-          layers.v3tuned ? curveSeries("v3tuned", "v3 tuned", layers.v3tuned, PALETTE.v3tuned) : null,
-          layers.saved ? curveSeries("v2", "v2", layers.saved, PALETTE.saved) : null,
-          layers.v3saved ? curveSeries("v3", "v3", layers.v3saved, PALETTE.v3saved) : null,
-          layers.v1 ? curveSeries("v1", "v1", layers.v1, PALETTE.v1) : null,
-          edited ? curveSeries("edited", layers.editedLabel ?? "edited config", edited, PALETTE.edited) : null,
+          layers.tuned ? curveSeries("tuned", "tuned", layers.tuned, PALETTE.tuned) : null,
+          layers.saved ? curveSeries("shipped", "shipped", layers.saved, PALETTE.saved) : null,
+          edited ? curveSeries("edited", "edited config", edited, PALETTE.edited) : null,
           layers.holdFiltered ? curveSeries("hold", "hold (filtered)", layers.holdFiltered, PALETTE.hold) : null,
           layers.holdAll ? curveSeries("holdAll", "hold (all)", layers.holdAll, PALETTE.holdAll) : null,
         ].filter(Boolean)
@@ -680,7 +636,8 @@ self.onmessage = function (event) {
       }
 
       // ---- results ---------------------------------------------------------
-      function renderCards(stats, holdStats, holdStatsAll, v1Stats, paired, pairedV2) {
+      /** Cards for the edited config; `paired` compares it with the shipped defaults on the same seeds. */
+      function renderCards(stats, holdStats, holdStatsAll, paired) {
         const cards = [
           { k: "mean return", v: signedPct(stats.meanReturnPct), tone: cls(stats.meanReturnPct) },
           { k: "median return", v: signedPct(stats.medianReturnPct), tone: cls(stats.medianReturnPct) },
@@ -692,31 +649,15 @@ self.onmessage = function (event) {
           { k: "mean commission", v: money(stats.meanCommission) },
           { k: "mean net worth", v: money(stats.meanNetWorth) },
         ]
-        if (v1Stats) {
-          const ratio = v1Stats.meanReturnPct !== 0 ? stats.meanReturnPct / v1Stats.meanReturnPct : NaN
-          cards.push({ k: "vs v1 baseline", v: ToolUi.format.ratio(ratio), tone: cls(stats.meanReturnPct - v1Stats.meanReturnPct) })
-          cards.push({ k: "v1 mean return", v: signedPct(v1Stats.meanReturnPct), tone: cls(v1Stats.meanReturnPct) })
-          cards.push({ k: "v1 mean trades", v: ToolUi.format.count(v1Stats.meanTrades) })
-        }
         if (paired) {
           const verdict = paired.lowRatio > 1 ? "pos" : paired.highRatio < 1 ? "neg" : "dim"
           const fmt = (value) => (value >= 100 ? ToolUi.format.grouped(Math.round(value), 0) : value.toFixed(2))
           cards.push({
-            k: "vs v1 same seed",
+            k: "vs shipped same seed",
             v: `${fmt(paired.geometricRatio)}x (95% ${fmt(paired.lowRatio)}-${fmt(paired.highRatio)}x)`,
             tone: verdict,
           })
-          cards.push({ k: "seeds current wins", v: `${paired.wins}/${paired.runs}`, tone: verdict })
-        }
-        if (pairedV2) {
-          const verdict = pairedV2.lowRatio > 1 ? "pos" : pairedV2.highRatio < 1 ? "neg" : "dim"
-          const fmt = (value) => (value >= 100 ? ToolUi.format.grouped(Math.round(value), 0) : value.toFixed(2))
-          cards.push({
-            k: "vs v2 same seed",
-            v: `${fmt(pairedV2.geometricRatio)}x (95% ${fmt(pairedV2.lowRatio)}-${fmt(pairedV2.highRatio)}x)`,
-            tone: verdict,
-          })
-          cards.push({ k: "seeds v2 wins", v: `${pairedV2.wins}/${pairedV2.runs}`, tone: verdict })
+          cards.push({ k: "seeds edited wins", v: `${paired.wins}/${paired.runs}`, tone: verdict })
         }
         if (holdStats) {
           const delta = stats.meanReturnPct - holdStats.meanReturnPct
@@ -748,95 +689,30 @@ self.onmessage = function (event) {
           .join("")
       }
 
-      /** Stored tuning result for a strategy: genome, the config it was tuned against, and its score. */
-      const tuneStore = (strategy) => ToolUi.store.read(TUNE_KEY(strategy), null)
+      /** Stored tuning result: genome, the config it was tuned against, and its score. */
+      const tuneStore = () => ToolUi.store.read(TUNE_KEY, null)
 
-      /** Options that reproduce a stored tuned genome: its own config, not whatever the form holds now. */
-      function tunedOptions(strategy, seeds) {
-        const stored = tuneStore(strategy)
+      /** Options that reproduce the stored tuned genome: its own config, not whatever the form holds now. */
+      function tunedOptions() {
+        const stored = tuneStore()
         if (!stored?.genome) return null
-        // The cash reserve is an account policy, not a gene: take it from the form so a genome
-        // tuned on a $10b account still trades on a $250m one (its stored $1b would make it inert).
+        // The cash reserve is an account policy, not a gene: take money keep from the form so a genome
+        // tuned on a large account still means the same thing on a small one.
         const config = { ...(stored.config ?? {}), ...genomeConfig(stored.genome), moneyKeep: readConfig().moneyKeep }
-        const options = { ...readMarket(), config }
-        if (strategy === "v3") options.v3 = { ...(stored.v3Config ?? {}), ...genomeV3Config(stored.genome) }
-        return { stored, options }
+        return { stored, options: { ...readMarket(), config } }
       }
-
-      function readConfigForm() {
-        const state = {}
-        for (const id of CONFIG_FIELDS) {
-          const control = $(id)
-          state[id] = control.type === "checkbox" ? (control.checked ? "1" : "") : control.value
-        }
-        return state
-      }
-
-      function writeConfigForm(state) {
-        if (!state) return
-        for (const id of CONFIG_FIELDS) {
-          const value = state[id]
-          if (value === undefined) continue
-          const control = $(id)
-          if (control.type === "checkbox") control.checked = value === "1"
-          else control.value = value
-        }
-        updateGridCount()
-        renderTuneHint()
-      }
-
-      /** Put every config control back to the shipped defaults (empty field = default). */
-      function resetConfigForm() {
-        for (const id of CONFIG_FIELDS) {
-          const control = $(id)
-          if (control.type === "checkbox") control.checked = control.dataset.checked === "1"
-          else control.value = ""
-        }
-        updateGridCount()
-        renderTuneHint()
-      }
-
-      /** Load a strategy's config, or the shipped defaults when it has none yet. */
-      function loadConfigFor(strategy) {
-        const saved = ToolUi.store.read(CONFIG_KEY(strategy), null)
-        if (saved) writeConfigForm(saved)
-        else resetConfigForm()
-        return Boolean(saved)
-      }
-
-      /** Store the form's config under a strategy (default: the one being edited). */
-      function saveConfigFor(strategy = configStrategy()) {
-        ToolUi.store.write(CONFIG_KEY(strategy), readConfigForm())
-      }
-
-      /** Which strategy's config the form edits. Every strategy is charted whatever this says. */
-      const configStrategy = () => ($("configFor").value === "v3" ? "v3" : "current")
 
       async function runBenchmark() {
         const market = readMarket()
         const seeds = readSeeds()
-        const editing = configStrategy()
         const baseline = $("baseline").value
-        // Every line runs with the form's cash reserve: money keep is the player's account policy,
-        // not part of a strategy, and the shipped $1b would make lines flat +0.00% on a small account.
+        // Every line runs with the form's money keep: it is the player's account policy, not part of
+        // a config, and a line that cannot spend anything would read as a flat +0.00%.
         const account = { moneyKeep: readConfig().moneyKeep }
-        // One entry per line on the chart, always the whole set: v1, both strategies as shipped,
-        // both tuned genomes that have been stored, and the config being edited. Which strategy you
-        // are editing decides the last line, never which lines exist.
-        const plan = [
-          { key: "v1", strategy: "v1", options: { ...market, marketData: true, config: account } },
-          { key: "saved", strategy: "current", options: { ...market, config: account } },
-          { key: "v3saved", strategy: "v3", options: { ...market, config: account } },
-        ]
-        const v2t = tunedOptions("current", seeds)
-        if (v2t) plan.push({ key: "v2tuned", strategy: "current", options: v2t.options })
-        const v3t = tunedOptions("v3", seeds)
-        if (v3t) plan.push({ key: "v3tuned", strategy: "v3", options: v3t.options })
-        plan.push({
-          key: "edited",
-          strategy: editing,
-          options: { ...market, config: readConfig(), ...(editing === "v3" ? { v3: readV3() } : {}) },
-        })
+        const plan = [{ key: "saved", options: { ...market, config: account } }]
+        const tuned = tunedOptions()
+        if (tuned) plan.push({ key: "tuned", options: tuned.options })
+        plan.push({ key: "edited", options: { ...market, config: readConfig() } })
 
         setBusy(true)
         const started = performance.now()
@@ -845,7 +721,7 @@ self.onmessage = function (event) {
         try {
           const jobs = []
           for (const entry of plan) {
-            for (const seed of seeds) jobs.push({ kind: "strategy", strategy: entry.strategy, options: { ...entry.options, seed } })
+            for (const seed of seeds) jobs.push({ kind: "strategy", options: { ...entry.options, seed } })
           }
           const holdJobs = []
           // One hold run per seed: a buy-and-hold return varies wildly between markets, so a
@@ -870,64 +746,41 @@ self.onmessage = function (event) {
           }
           const holdStart = plan.length * seeds.length
           const editedResults = layer("edited")
-          const v1Results = layer("v1")
           const savedResults = layer("saved")
-          const v3SavedResults = layer("v3saved")
-          const v2TunedResults = layer("v2tuned")
-          const v3TunedResults = layer("v3tuned")
+          const tunedResults = layer("tuned")
           // Both baselines were run on every seed, so they are sliced with the same width.
           const holdFiltered =
             baseline === "none" ? null : results.slice(holdStart, holdStart + seeds.length)
           const holdAll =
             baseline === "all" ? results.slice(holdStart + seeds.length, holdStart + seeds.length * 2) : null
 
-          const stats = aggregate(editedResults)
           renderCards(
-            stats,
+            aggregate(editedResults),
             holdFiltered ? aggregate(holdFiltered) : null,
             holdAll ? aggregate(holdAll) : null,
-            v1Results ? aggregate(v1Results) : null,
-            v1Results ? pairResults(editedResults, v1Results) : null,
-            savedResults && editing === "v3" ? pairResults(editedResults, savedResults) : null,
+            pairResults(editedResults, savedResults),
           )
           renderSymbols(editedResults[0].perSymbol)
-          chartAll({
-            v1: v1Results,
-            saved: savedResults,
-            v3saved: v3SavedResults,
-            v2tuned: v2TunedResults,
-            v3tuned: v3TunedResults,
-            edited: editedResults,
-            editedLabel: `v${editing === "v3" ? 3 : 2} config`,
-            holdFiltered,
-            holdAll,
-          })
+          chartAll({ saved: savedResults, tuned: tunedResults, edited: editedResults, holdFiltered, holdAll })
 
           $("results").classList.remove("hidden")
           const seconds = ((performance.now() - started) / 1000).toFixed(2)
-          // The tuned lines are the point of the comparison, so say how they did against v2.
           const notes = []
           // A run that never traded is flat +0.00%, which is easy to misread as a result. Lead with
           // the cause: the usual one is a cash reserve larger than the account.
           if (editedResults.every((run) => run.trades === 0)) {
             const keep = readConfig().moneyKeep
             notes.push(
-              editing === "v3"
-                ? "no trades at all - the entry edge never cleared"
-                : `no trades: money keep ${money(keep)} is at or above capital ${money(market.capital)}`,
+              keep >= market.capital
+                ? `no trades: money keep ${money(keep)} is at or above capital ${money(market.capital)}`
+                : "no trades at all - the entry edge never cleared",
             )
           }
-          for (const [label, tuned] of [
-            ["v2 tuned", v2TunedResults],
-            ["v3 tuned", v3TunedResults],
-          ]) {
-            if (!tuned || !savedResults) continue
-            const paired = pairResults(tuned, savedResults)
-            if (paired) {
-              notes.push(
-                `${label} ${ToolUi.format.ratio(paired.geometricRatio)} vs v2 (${paired.wins}/${paired.runs})`,
-              )
-            }
+          const tunedPaired = tunedResults ? pairResults(tunedResults, savedResults) : null
+          if (tunedPaired) {
+            notes.push(
+              `tuned ${ToolUi.format.ratio(tunedPaired.geometricRatio)} vs shipped (${tunedPaired.wins}/${tunedPaired.runs})`,
+            )
           }
           setStatus(
             `done in ${seconds}s - ${seeds.length} seed${seeds.length === 1 ? "" : "s"}` +
@@ -943,109 +796,74 @@ self.onmessage = function (event) {
       // ---- genetic tuning --------------------------------------------------
       // The search runs here on the main thread; the seed runs go through the same worker pool
       // as everything else, so a generation is one `runJobs` call over population x seeds.
-      // v2 and v3 each keep their own stored result: different genes, different best values.
 
       const TUNE_GENE_LABELS = {
         entryEdge: "entry",
         exitEdge: "exit",
-        rotateMargin: "rot",
-        maxPositions: "pos",
-        maxWeightPerSymbol: "wgt",
+        rotationCostFactor: "rot",
+        maxOpenPositions: "pos",
+        maxWeight: "wgt",
         maxShareFraction: "shf",
+        impactScale: "imp",
+        reserveFraction: "reserve",
         enableShorts: "sht",
         no4sEntryEdge: "n4e",
-        no4sRotateMargin: "n4r",
+        no4sRotationCostFactor: "n4r",
         historyTicks: "hist",
-        tilt: "tilt",
-        reserveFraction: "reserve",
       }
+
+      const geneText = (spec, value) =>
+        spec.kind === "bool"
+          ? value
+            ? "on"
+            : "off"
+          : spec.kind === "int"
+            ? ToolUi.format.count(Number(value))
+            : Number(value).toFixed(spec.digits)
 
       function genomeSummary(genome, specs) {
-        return specs
-          .map((spec) => {
-            const value = genome[spec.key]
-            const text =
-              spec.kind === "bool"
-                ? value
-                  ? "on"
-                  : "off"
-                : spec.kind === "int"
-                  ? ToolUi.format.count(Number(value))
-                  : Number(value).toFixed(spec.digits)
-            return `${TUNE_GENE_LABELS[spec.key] ?? spec.key} ${text}`
-          })
-          .join("  ")
+        return specs.map((spec) => `${TUNE_GENE_LABELS[spec.key] ?? spec.key} ${geneText(spec, genome[spec.key])}`).join("  ")
       }
 
-      /** v1 has no genes; the target select picks v2, v3, or both. */
-      const tuneTargets = () => {
-        const value = $("tuneTarget").value
-        return value === "both" ? ["current", "v3"] : [value === "v3" ? "v3" : "current"]
-      }
-      const familyName = (strategy) => (strategy === "v3" ? "v3" : "v2")
-      const familySpecs = (strategy) => stockGeneSpecs($("has4s").checked, strategy === "v3" ? "v3" : "v2")
+      const currentSpecs = () => stockGeneSpecs($("has4s").checked)
 
-      /** Every control that belongs to a strategy's config, for per-strategy remember/restore. */
-      const CONFIG_FIELDS = [...NUMERIC_CONFIG_KEYS.map((key) => `cfg_${key}`), "enableShorts", "v3Tilt", "v3Reserve"]
-
-      /**
-       * One line per strategy, always both: what was stored, when it was found, and the genes. The
-       * tuning target decides what the next search covers, never what this panel reports.
-       */
+      /** What was stored, when it was found, and the genes. */
       function renderTuneHint() {
         const seeds = readSeedCount()
         const population = Math.floor(ToolUi.numberOf("tunePopulation") || 6)
         const generations = Math.floor(ToolUi.numberOf("tuneGenerations") || 6)
         const plan = `${population} genomes x ${generations} generations, ${seeds} seed${seeds === 1 ? "" : "s"} each`
-        const rows = TUNE_FILE_ENTRIES.map(({ name, strategy }) => {
-          const stored = tuneStore(strategy)
-          if (!stored?.genome) return `${name}: no search yet`
-          return (
-            `${name}: generation ${stored.generation}/${stored.generations}, growth ${signedPct(stored.growthPct ?? 0)} - ` +
-            genomeSummary(stored.genome, familySpecs(strategy))
-          )
-        })
+        const stored = tuneStore()
+        const row = stored?.genome
+          ? `stored: generation ${stored.generation}/${stored.generations}, growth ${signedPct(stored.growthPct ?? 0)} - ` +
+            genomeSummary(stored.genome, currentSpecs())
+          : "no search yet"
         $("tuneHint").textContent =
-          `${rows.join("\n")}\n${plan}; a stored result is charted as "<strategy> tuned", ` +
-          `"Apply best to form" loads ${familyName(configStrategy())}'s best into the config`
-        $("tuneApply").disabled = !tuneStore(configStrategy())?.genome
+          `${row}\n${plan}; the stored result is charted as "tuned", "Apply best to form" loads it into the config`
+        $("tuneApply").disabled = !stored?.genome
       }
 
-      function saveTuneStore(strategy, genome, growthPct, report) {
-        ToolUi.store.write(TUNE_KEY(strategy), {
+      function saveTuneStore(genome, growthPct, report) {
+        ToolUi.store.write(TUNE_KEY, {
           genome,
           growthPct,
           generation: report.index,
           generations: report.generations,
           // The config the search was run against, so the tuned line can be reproduced later even
-          // if the form has moved on (or the other strategy's config is loaded).
+          // if the form has moved on.
           config: readConfig(),
-          v3Config: readV3(),
         })
         renderTuneHint()
       }
 
       // ---- tuning store file: import / export ------------------------------
-      // Both strategies' results travel in one file, the way the ipvgo tuner exports its whole
-      // per-faction store: one snapshot of everything, so a search never has to be repeated on
-      // another machine. Import replaces rather than merges, because an export is a snapshot and
-      // a merge would silently keep a strategy the file does not have.
-
-      /** The strategies the store can hold, and the names they use in the file. */
-      const TUNE_FILE_ENTRIES = [
-        { name: "v2", strategy: "current" },
-        { name: "v3", strategy: "v3" },
-      ]
-      // `current` is the storage id; a file written by hand may use either name.
-      const TUNE_FILE_ALIASES = new Map([["v2", "current"], ["current", "current"], ["v3", "v3"]])
+      // The stored result travels as one file, so a search never has to be repeated on another
+      // machine. Import replaces rather than merges.
 
       // Gene ranges come from the search itself, so an imported genome is normalised exactly the
       // way breeding normalises it (both 4S modes are included: the file does not say which one
       // produced it, and a no-4S genome carries the history genes).
-      const GENE_SPECS_BY_KEY = new Map(
-        [...stockGeneSpecs(true, "v3"), ...stockGeneSpecs(false, "v2")].map((spec) => [spec.key, spec]),
-      )
-      const V3_CONFIG_KEYS = ["tilt", "reserveFraction"]
+      const GENE_SPECS_BY_KEY = new Map(stockGeneSpecs(false).map((spec) => [spec.key, spec]))
 
       const tuneFileNote = (text) => {
         $("tuneFileHint").textContent = text
@@ -1076,8 +894,8 @@ self.onmessage = function (event) {
         return Object.keys(genome).length > 0 ? genome : null
       }
 
-      /** The config a genome was measured against, keeping only fields the executor reads. */
-      function cleanStoredConfig(raw, numericKeys) {
+      /** The config a genome was measured against, keeping only fields the strategy reads. */
+      function cleanStoredConfig(raw) {
         if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined
         const config = {}
         for (const [key, value] of Object.entries(raw)) {
@@ -1085,7 +903,7 @@ self.onmessage = function (event) {
             config.enableShorts = Boolean(value)
             continue
           }
-          if (!numericKeys.includes(key)) continue
+          if (!NUMERIC_CONFIG_KEYS.includes(key)) continue
           const number = Number(value)
           if (Number.isFinite(number) && number >= 0) config[key] = number
         }
@@ -1093,59 +911,31 @@ self.onmessage = function (event) {
       }
 
       /**
-       * Rebuilds a tuning store from the fields that are allowed to be there, so an imported file
-       * cannot put anything unexpected on the chart. Anything that cannot be used is dropped and
-       * counted rather than rejecting the whole file, but a file with nothing usable is an error.
+       * Rebuilds a tuning result from the fields that are allowed to be there, so an imported file
+       * cannot put anything unexpected on the chart. Unusable genes are dropped and counted; a file
+       * with no usable genome is an error.
        */
-      function sanitizeTuningStore(raw) {
-        const source = raw && typeof raw === "object" && !Array.isArray(raw) && raw.store ? raw.store : raw
-        if (!source || typeof source !== "object" || Array.isArray(source)) {
-          throw new Error("not a tuning file: expected an object with v2 and/or v3 entries")
-        }
-        const store = {}
+      function sanitizeTuningEntry(raw) {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("not a tuning file: expected an object")
         const counts = { dropped: 0 }
-        for (const [name, entry] of Object.entries(source)) {
-          const strategy = TUNE_FILE_ALIASES.get(name)
-          if (!strategy) {
-            counts.dropped++
-            continue
-          }
-          if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-            counts.dropped++
-            continue
-          }
-          const genome = cleanGenome(entry.genome, counts)
-          if (!genome) {
-            counts.dropped++
-            continue
-          }
-          const finite = (value, fallback = 0) => (Number.isFinite(Number(value)) ? Number(value) : fallback)
-          store[strategy] = {
+        const genome = cleanGenome(raw.genome, counts)
+        if (!genome) throw new Error("not a tuning file: no usable genome")
+        const finite = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0)
+        return {
+          entry: {
             genome,
-            growthPct: finite(entry.growthPct),
-            generation: finite(entry.generation),
-            generations: finite(entry.generations),
-            config: cleanStoredConfig(entry.config, NUMERIC_CONFIG_KEYS),
-            v3Config: cleanStoredConfig(entry.v3Config, V3_CONFIG_KEYS),
-          }
+            growthPct: finite(raw.growthPct),
+            generation: finite(raw.generation),
+            generations: finite(raw.generations),
+            config: cleanStoredConfig(raw.config),
+          },
+          dropped: counts.dropped,
         }
-        return { store, dropped: counts.dropped, imported: Object.keys(store).length }
-      }
-
-      /** Both strategies' results as one object - the file this page exports. */
-      function tuningSnapshot() {
-        const store = {}
-        for (const { name, strategy } of TUNE_FILE_ENTRIES) {
-          const stored = tuneStore(strategy)
-          if (stored?.genome) store[name] = stored
-        }
-        return store
       }
 
       /**
-       * `stock-tune-yyyy-mm-dd-hh-mm.json`, in local time so it matches the clock in the GUI. The
-       * ipvgo export adds the commit hash; a page opened from disk cannot ask git, so this does
-       * not carry one.
+       * `stock-tune-yyyy-mm-dd-hh-mm.json`, in local time so it matches the clock in the GUI. A page
+       * opened from disk cannot ask git, so the file carries no commit hash.
        */
       function tuningFileName(now = new Date()) {
         const pad = (n) => String(n).padStart(2, "0")
@@ -1156,14 +946,13 @@ self.onmessage = function (event) {
       }
 
       function exportTuning() {
-        const store = tuningSnapshot()
-        const names = Object.keys(store)
-        if (names.length === 0) {
-          tuneFileNote("nothing to export yet - tune v2 or v3 first")
+        const stored = tuneStore()
+        if (!stored?.genome) {
+          tuneFileNote("nothing to export yet - tune first")
           return
         }
         const filename = tuningFileName()
-        const blob = new Blob([JSON.stringify(store, null, 2) + "\n"], { type: "application/json" })
+        const blob = new Blob([JSON.stringify(stored, null, 2) + "\n"], { type: "application/json" })
         const url = URL.createObjectURL(blob)
         const link = document.createElement("a")
         link.href = url
@@ -1173,7 +962,7 @@ self.onmessage = function (event) {
         link.remove()
         // Revoked on a timer: revoking straight away can cancel the download.
         setTimeout(() => URL.revokeObjectURL(url), 10000)
-        tuneFileNote(`exported ${filename} - ${names.join(" and ")} tuning`)
+        tuneFileNote(`exported ${filename}`)
       }
 
       async function importTuning(file) {
@@ -1186,75 +975,50 @@ self.onmessage = function (event) {
         }
         let result
         try {
-          result = sanitizeTuningStore(parsed)
+          result = sanitizeTuningEntry(parsed)
         } catch (error) {
           tuneFileNote(`${file.name}: ${String(error.message ?? error)}`)
           return
         }
-        if (result.imported === 0) {
-          tuneFileNote(`${file.name} had no usable tuning result${result.dropped ? ` (${result.dropped} skipped)` : ""}`)
-          return
-        }
-        for (const { strategy } of TUNE_FILE_ENTRIES) ToolUi.store.remove(TUNE_KEY(strategy))
-        for (const [strategy, entry] of Object.entries(result.store)) ToolUi.store.write(TUNE_KEY(strategy), entry)
+        ToolUi.store.write(TUNE_KEY, result.entry)
         renderTuneHint()
-        const names = Object.keys(result.store).map((strategy) => (strategy === "v3" ? "v3" : "v2"))
-        tuneFileNote(`imported ${names.join(" and ")} tuning from ${file.name}${result.dropped ? `, skipped ${result.dropped}` : ""}`)
+        tuneFileNote(`imported tuning from ${file.name}${result.dropped ? `, skipped ${result.dropped}` : ""}`)
       }
 
-      /**
-       * One table per strategy, so a two-target search shows both searches at once with the gene
-       * columns each strategy actually has (v3 carries the weight tilt and cash reserve).
-       */
-      function renderTuneTables(entries) {
+      /** The search's current generation, with one column per gene. */
+      function renderTuneTable(specs, report) {
         const container = $("tuneTables")
         container.innerHTML = ""
-        for (const { strategy, specs, report } of entries) {
-          if (!report) continue
-          const name = familyName(strategy)
-          const table = document.createElement("table")
-          table.className = "tuneTable"
-          const caption = document.createElement("caption")
-          caption.textContent =
-            `${name} - generation ${report.index}/${report.generations}` +
-            (report.best ? `, best ${signedPct(report.best.score.growthPct)}` : "")
-          const thead = document.createElement("thead")
-          const head = document.createElement("tr")
-          head.innerHTML = ["#", ...specs.map((spec) => TUNE_GENE_LABELS[spec.key] ?? spec.key), "growth", "vs default", "maxDD"]
-            .map((header) => `<th>${header}</th>`)
-            .join("")
-          thead.appendChild(head)
-          const body = document.createElement("tbody")
-          body.innerHTML = report.rows
-            .map((row) => {
-              const genes = specs
-                .map((spec) => {
-                  const value = row.genome[spec.key]
-                  const text =
-                    spec.kind === "bool"
-                      ? value
-                        ? "on"
-                        : "off"
-                      : spec.kind === "int"
-                        ? ToolUi.format.count(Number(value))
-                        : Number(value).toFixed(spec.digits)
-                  return `<td>${text}</td>`
-                })
-                .join("")
-              const gain = row.gain ? `${signedPct(Math.expm1(row.gain.diff))} +-${pct(row.gain.se)}` : "-"
-              return (
-                `<tr><td>${row.rank}</td>${genes}` +
-                `<td class="${cls(row.score.growthPct)}">${signedPct(row.score.growthPct)}</td>` +
-                `<td class="${cls(row.gain?.diff ?? 0)}">${gain}</td>` +
-                `<td class="neg">-${pct(row.score.meanDrawdownPct)}</td></tr>`
-              )
-            })
-            .join("")
-          table.appendChild(caption)
-          table.appendChild(thead)
-          table.appendChild(body)
-          container.appendChild(table)
-        }
+        if (!report) return
+        const table = document.createElement("table")
+        table.className = "tuneTable"
+        const caption = document.createElement("caption")
+        caption.textContent =
+          `generation ${report.index}/${report.generations}` +
+          (report.best ? `, best ${signedPct(report.best.score.growthPct)}` : "")
+        const thead = document.createElement("thead")
+        const head = document.createElement("tr")
+        head.innerHTML = ["#", ...specs.map((spec) => TUNE_GENE_LABELS[spec.key] ?? spec.key), "growth", "vs default", "maxDD"]
+          .map((header) => `<th>${header}</th>`)
+          .join("")
+        thead.appendChild(head)
+        const body = document.createElement("tbody")
+        body.innerHTML = report.rows
+          .map((row) => {
+            const genes = specs.map((spec) => `<td>${geneText(spec, row.genome[spec.key])}</td>`).join("")
+            const gain = row.gain ? `${signedPct(Math.expm1(row.gain.diff))} +-${pct(row.gain.se)}` : "-"
+            return (
+              `<tr><td>${row.rank}</td>${genes}` +
+              `<td class="${cls(row.score.growthPct)}">${signedPct(row.score.growthPct)}</td>` +
+              `<td class="${cls(row.gain?.diff ?? 0)}">${gain}</td>` +
+              `<td class="neg">-${pct(row.score.meanDrawdownPct)}</td></tr>`
+            )
+          })
+          .join("")
+        table.appendChild(caption)
+        table.appendChild(thead)
+        table.appendChild(body)
+        container.appendChild(table)
       }
 
       function applyGenome(genome, specs) {
@@ -1262,232 +1026,131 @@ self.onmessage = function (event) {
           const value = genome[spec.key]
           if (value === undefined) continue
           if (spec.key === "enableShorts") $("enableShorts").checked = Boolean(value)
-          else if (spec.key === "tilt") $("v3Tilt").value = String(value)
-          else if (spec.key === "reserveFraction") $("v3Reserve").value = String(value)
           else if (configInputs[spec.key]) configInputs[spec.key].value = String(value)
         }
         // Setting values programmatically fires no input event, so store it explicitly.
         form.save()
-        saveConfigFor()
+        updateGridCount()
         setStatus("loaded the tuned genome into the config - Run benchmark charts it as its own line")
       }
 
       let tuneCancel = false
 
-      /**
-       * One search per selected target, in lockstep: each generation collects the pending genomes
-       * from every tuner into a single batch, so "v2 and v3" costs the pool's throughput rather
-       * than twice the wall clock. Charts and tables update for every target as the searches run.
-       */
-      async function runTuners() {
+      /** Breed, measure, and keep the best genome; the chart and table update every generation. */
+      async function runTuner() {
         const market = readMarket()
         const seeds = readSeeds()
         const base = readConfig()
-        const baseV3 = readV3()
         if (seeds.length < 4) {
           setStatus("tuning needs several seeds: raise Seeds before tuning", "error")
           return
         }
-        const population = Math.floor(ToolUi.numberOf("tunePopulation") || 6)
-        const generations = Math.floor(ToolUi.numberOf("tuneGenerations") || 6)
-        const searchSeed = Math.floor(ToolUi.numberOf("tuneSeed") || 1)
-        const editing = configStrategy()
-        const resume = $("tuneResume").checked
-        const runners = tuneTargets().map((strategy) => {
-          const specs = familySpecs(strategy)
-          const tuner = new StockTuner({
-            specs,
-            population,
-            generations,
-            seed: searchSeed,
-            trainSeeds: seeds,
-            resume: resume ? (tuneStore(strategy)?.genome ?? null) : null,
-          })
-          return {
-            strategy,
-            specs,
-            tuner,
-            chartRuns: null,
-            report: null,
-            // One genome on one seed, merged through this tuner so the search's own clamped values win.
-            options: (genome, seed) => ({
-              ...market,
-              seed,
-              config: tuner.config(genome, base),
-              ...(strategy === "v3" ? { v3: tuner.v3Config(genome, baseV3) } : {}),
-            }),
-          }
+        const specs = currentSpecs()
+        const tuner = new StockTuner({
+          specs,
+          population: Math.floor(ToolUi.numberOf("tunePopulation") || 6),
+          generations: Math.floor(ToolUi.numberOf("tuneGenerations") || 6),
+          seed: Math.floor(ToolUi.numberOf("tuneSeed") || 1),
+          trainSeeds: seeds,
+          resume: $("tuneResume").checked ? (tuneStore()?.genome ?? null) : null,
         })
-        const runnerFor = (strategy) => runners.find((runner) => runner.strategy === strategy) ?? null
-        // Stored genomes of strategies that are not being tuned keep their line on the chart too.
-        const storedRuns = { current: null, v3: null }
+        // One genome on one seed, merged through the tuner so the search's own clamped values win.
+        const optionsFor = (genome, seed) => ({ ...market, seed, config: tuner.config(genome, base) })
+        let chartRuns = null
+        let report = null
 
         tuneCancel = false
         setBusy(true)
         const started = performance.now()
-        const reference = { v1: null, saved: null, v3saved: null, edited: null }
-        const chart = () =>
-          chartAll({
-            ...reference,
-            editedLabel: `v${editing === "v3" ? 3 : 2} config`,
-            v2tuned: runnerFor("current")?.chartRuns ?? storedRuns.current,
-            v3tuned: runnerFor("v3")?.chartRuns ?? storedRuns.v3,
-            holdFiltered: null,
-            holdAll: null,
-          })
+        const reference = { saved: null, edited: null }
+        const chart = () => chartAll({ ...reference, tuned: chartRuns, holdFiltered: null, holdAll: null })
         try {
-          // Reference lines once, on the same seeds, so the tuned lines sit next to something
-          // stable while the searches run.
-          const account = { moneyKeep: base.moneyKeep }
+          // Reference lines once, on the same seeds, so the tuned line sits next to something
+          // stable while the search runs.
           const fixed = []
-          const fixedSpecs = []
-          const addFixed = (key, strategy, options) => {
-            fixedSpecs.push({ key })
-            for (const seed of seeds) fixed.push({ kind: "strategy", strategy, options: { ...options, seed } })
+          for (const config of [{ moneyKeep: base.moneyKeep }, base]) {
+            for (const seed of seeds) fixed.push({ kind: "strategy", options: { ...market, config, seed } })
           }
-          addFixed("v1", "v1", { ...market, marketData: true, config: account })
-          addFixed("v2", "current", { ...market, config: account })
-          addFixed("v3", "v3", { ...market, config: account })
-          for (const strategy of ["current", "v3"]) {
-            const stored = runnerFor(strategy) ? null : tunedOptions(strategy, seeds)
-            if (stored) addFixed(`stored:${strategy}`, strategy, stored.options)
-          }
-          addFixed("edited", editing, { ...market, config: base, ...(editing === "v3" ? { v3: baseV3 } : {}) })
           setStatus(`measuring the reference lines on ${seeds.length} seeds...`)
           const fixedResults = await runJobs(fixed, () => {})
-          const runsFor = (key) => {
-            const index = fixedSpecs.findIndex((entry) => entry.key === key)
-            if (index === -1) return null
-            return fixedResults.slice(index * seeds.length, (index + 1) * seeds.length)
-          }
-          reference.v1 = runsFor("v1")
-          reference.saved = runsFor("v2")
-          reference.v3saved = runsFor("v3")
-          reference.edited = runsFor("edited")
-          storedRuns.current = runsFor("stored:current")
-          storedRuns.v3 = runsFor("stored:v3")
-          renderCards(
-            aggregate(reference.edited),
-            null,
-            null,
-            aggregate(reference.v1),
-            pairResults(reference.edited, reference.v1),
-            editing === "v3" ? pairResults(reference.edited, reference.saved) : null,
-          )
+          reference.saved = fixedResults.slice(0, seeds.length)
+          reference.edited = fixedResults.slice(seeds.length)
+          renderCards(aggregate(reference.edited), null, null, pairResults(reference.edited, reference.saved))
           renderSymbols(reference.edited[0].perSymbol)
           $("results").classList.remove("hidden")
           chart()
 
-          const showTables = () =>
-            renderTuneTables(
-              runners.map((runner) => ({ strategy: runner.strategy, specs: runner.specs, report: runner.report })),
-            )
-
-          while (runners.some((runner) => !runner.tuner.finished) && !tuneCancel) {
+          while (!tuner.finished && !tuneCancel) {
             const jobs = []
             const owners = []
-            for (const runner of runners) {
-              if (runner.tuner.finished) continue
-              for (const item of runner.tuner.pending()) {
-                for (const seed of seeds) {
-                  // lite: the search needs the score, not the equity curve of every run.
-                  jobs.push({ kind: "strategy", strategy: runner.strategy, options: runner.options(item.genome, seed), lite: true })
-                  owners.push({ runner, key: item.key })
-                }
+            for (const item of tuner.pending()) {
+              for (const seed of seeds) {
+                // lite: the search needs the score, not the equity curve of every run.
+                jobs.push({ kind: "strategy", options: optionsFor(item.genome, seed), lite: true })
+                owners.push(item.key)
               }
             }
-            if (jobs.length === 0) break
-            const label = runners.filter((runner) => !runner.tuner.finished).map((runner) => familyName(runner.strategy)).join(" + ")
             const results = await runJobs(jobs, (done, total) =>
-              setStatus(`${label} generation ${Math.max(...runners.map((runner) => runner.tuner.generation + 1))}: ${done}/${total} runs...`),
+              setStatus(`generation ${tuner.generation + 1}: ${done}/${total} runs...`),
             )
-            const grouped = new Map()
+            const perKey = new Map()
             results.forEach((result, index) => {
-              const { runner, key } = owners[index]
-              if (!grouped.has(runner)) grouped.set(runner, new Map())
-              const perKey = grouped.get(runner)
+              const key = owners[index]
               if (!perKey.has(key)) perKey.set(key, [])
               perKey.get(key).push(result)
             })
-            for (const [runner, perKey] of grouped) {
-              const scores = new Map()
-              for (const [key, runs] of perKey) scores.set(key, scoreGenome(key, runs))
-              const report = runner.tuner.commit(scores)
-              runner.report = report
-              saveTuneStore(runner.strategy, report.best.genome, report.best.score.growthPct, report)
-              // Scores carry no curve now, so a charted line is one extra pass over the incumbent,
-              // and only when it actually changed - which stops once the search converges.
-              if (report.improved || !runner.chartRuns) {
-                const refresh = []
-                for (const seed of seeds) {
-                  refresh.push({ kind: "strategy", strategy: runner.strategy, options: runner.options(report.best.genome, seed) })
-                }
-                runner.chartRuns = await runJobs(refresh, () => {})
-              }
+            const scores = new Map()
+            for (const [key, runs] of perKey) scores.set(key, scoreGenome(key, runs))
+            report = tuner.commit(scores)
+            renderTuneTable(specs, report)
+            if (report.improved) {
+              // The incumbent's curve: re-run it with curves, since the scored runs were lite.
+              chartRuns = await runJobs(
+                seeds.map((seed) => ({ kind: "strategy", options: optionsFor(report.best.genome, seed) })),
+                () => {},
+              )
+              chart()
             }
-            showTables()
-            chart()
             setStatus(
-              runners
-                .filter((runner) => runner.report)
-                .map(
-                  (runner) =>
-                    `${familyName(runner.strategy)} ${runner.report.index}/${runner.tuner.generations}: ` +
-                    `best ${signedPct(runner.report.best.score.growthPct)}`,
-                )
-                .join(" | ") + ` (${((performance.now() - started) / 1000).toFixed(0)}s)`,
+              `generation ${report.index}/${tuner.generations}: best ${signedPct(report.best.score.growthPct)} ` +
+                `(${((performance.now() - started) / 1000).toFixed(0)}s)`,
             )
           }
 
-          // Re-measure every winner on held-back seeds the search never saw: that is the number
-          // that decides whether to keep it.
+          // Re-measure the winner on held-back seeds the search never saw: that is the number that
+          // decides whether to keep it.
+          const best = tuner.best
+          if (!best) throw new Error("the search produced no genome")
           const validateJobs = []
-          for (const runner of runners) {
-            const best = runner.tuner.best
-            if (!best) throw new Error(`the ${familyName(runner.strategy)} search produced no genome`)
-            for (const seed of runner.tuner.validationSeeds) {
-              validateJobs.push({ kind: "strategy", strategy: runner.strategy, options: runner.options(best.genome, seed), lite: true })
-              validateJobs.push({ kind: "strategy", strategy: runner.strategy, options: runner.options(runner.tuner.defaultGenome, seed), lite: true })
-            }
+          for (const seed of tuner.validationSeeds) {
+            validateJobs.push({ kind: "strategy", options: optionsFor(best.genome, seed), lite: true })
+            validateJobs.push({ kind: "strategy", options: optionsFor(tuner.defaultGenome, seed), lite: true })
           }
-          const heldBack = Math.max(...runners.map((runner) => runner.tuner.validationSeeds.length))
-          setStatus(`validating on ${heldBack} held-back seeds...`)
+          setStatus(`validating on ${tuner.validationSeeds.length} held-back seeds...`)
           const validateResults = await runJobs(validateJobs, () => {})
-          const summaries = []
-          let offset = 0
-          for (const runner of runners) {
-            const best = runner.tuner.best
-            const width = runner.tuner.validationSeeds.length * 2
-            const slice = validateResults.slice(offset, offset + width)
-            offset += width
-            const tunedRuns = slice.filter((_, index) => index % 2 === 0)
-            const defaultRuns = slice.filter((_, index) => index % 2 === 1)
-            const gain = pairedGain(tunedRuns, defaultRuns)
-            const tunedScore = scoreGenome("tuned", tunedRuns)
-            const defaultScore = scoreGenome("default", defaultRuns)
-            runner.report = {
-              index: runner.tuner.generation,
-              generations: runner.tuner.generations,
-              rows: [{ rank: 1, genome: best.genome, score: tunedScore, gain }],
-              best,
-              improved: false,
-              cached: 0,
-              evaluated: 0,
-            }
-            saveTuneStore(runner.strategy, best.genome, tunedScore.growthPct, runner.report)
-            summaries.push(
-              `${familyName(runner.strategy)} tuned ${signedPct(tunedScore.growthPct)} vs ${familyName(runner.strategy)} default ` +
-                `${signedPct(defaultScore.growthPct)}` +
-                (gain ? ` - paired ${signedPct(Math.expm1(gain.diff))} +-${pct(gain.se)}, better on ${gain.wins}/${gain.runs}` : ""),
-            )
+          const tunedRuns = validateResults.filter((_, index) => index % 2 === 0)
+          const defaultRuns = validateResults.filter((_, index) => index % 2 === 1)
+          const gain = pairedGain(tunedRuns, defaultRuns)
+          const tunedScore = scoreGenome("tuned", tunedRuns)
+          const defaultScore = scoreGenome("default", defaultRuns)
+          report = {
+            index: tuner.generation,
+            generations: tuner.generations,
+            rows: [{ rank: 1, genome: best.genome, score: tunedScore, gain }],
+            best,
+            improved: false,
+            cached: 0,
+            evaluated: 0,
           }
-          showTables()
+          saveTuneStore(best.genome, tunedScore.growthPct, report)
+          renderTuneTable(specs, report)
           chart()
-          const negative = runners.some((runner) => {
-            const row = runner.report.rows[0]
-            return row.gain ? row.gain.diff < 0 : false
-          })
-          setStatus(`${summaries.join(" | ")} (${heldBack} held-back seeds)`, negative ? "error" : undefined)
+          setStatus(
+            `tuned ${signedPct(tunedScore.growthPct)} vs default ${signedPct(defaultScore.growthPct)}` +
+              (gain ? ` - paired ${signedPct(Math.expm1(gain.diff))} +-${pct(gain.se)}, better on ${gain.wins}/${gain.runs}` : "") +
+              ` (${tuner.validationSeeds.length} held-back seeds)`,
+            gain && gain.diff < 0 ? "error" : undefined,
+          )
         } catch (error) {
           setStatus(String(error?.stack ?? error), "error")
         } finally {
@@ -1519,7 +1182,7 @@ self.onmessage = function (event) {
           const jobs = []
           for (const config of configs) {
             for (const seed of seeds) {
-              jobs.push({ kind: "strategy", strategy: "current", options: { ...market, config, seed } })
+              jobs.push({ kind: "strategy", options: { ...market, config, seed } })
             }
           }
           const results = await runJobs(jobs, (done, total) => setStatus(`grid ${done}/${total}...`))
@@ -1574,7 +1237,7 @@ self.onmessage = function (event) {
             }
             if (row.config.enableShorts !== undefined) $("enableShorts").checked = row.config.enableShorts
             form.save()
-            saveConfigFor()
+            updateGridCount()
             setStatus(`loaded grid result #${Number(tr.dataset.index) + 1} into the form`)
           })
         })
@@ -1583,16 +1246,15 @@ self.onmessage = function (event) {
       // ---- wiring ----------------------------------------------------------
       $("runBtn").addEventListener("click", runBenchmark)
       $("gridBtn").addEventListener("click", runGrid)
-      $("tuneBtn").addEventListener("click", runTuners)
+      $("tuneBtn").addEventListener("click", runTuner)
       $("tuneStop").addEventListener("click", () => {
         tuneCancel = true
         setStatus("stopping after this generation")
       })
       $("tuneApply").addEventListener("click", () => {
-        const strategy = configStrategy()
-        const stored = tuneStore(strategy)
+        const stored = tuneStore()
         if (!stored?.genome) return
-        applyGenome(stored.genome, familySpecs(strategy))
+        applyGenome(stored.genome, stockGeneSpecs(false))
       })
       $("tuneExport").addEventListener("click", exportTuning)
       $("tuneImport").addEventListener("click", () => $("tuneImportFile").click())
@@ -1608,8 +1270,8 @@ self.onmessage = function (event) {
       })
       $("resetBtn").addEventListener("click", () => {
         form.clear()
-        // Resetting means this strategy goes back to the shipped defaults, so drop its copy too.
-        ToolUi.store.remove(CONFIG_KEY(configStrategy()))
+        updateGridCount()
+        renderTuneHint()
         setStatus("config reset to src/libraries/stock/config.ts defaults")
       })
       $("selftestBtn").addEventListener("click", () => {
@@ -1626,6 +1288,7 @@ self.onmessage = function (event) {
       })
 
       for (const input of Object.values(gridInputs)) input.addEventListener("input", updateGridCount)
+      for (const input of Object.values(configInputs)) input.addEventListener("input", updateGridCount)
       for (const id of ["capital", "ticks", "seed", "seeds", "node", "sf8", "workers", "baseline"]) {
         $(id).addEventListener("input", updateGridCount)
       }
@@ -1633,41 +1296,14 @@ self.onmessage = function (event) {
         $(id).addEventListener("input", renderSeedHint)
         $(id).addEventListener("change", renderSeedHint)
       }
-      for (const id of ["tunePopulation", "tuneGenerations", "has4s", "tuneTarget"]) {
+      for (const id of ["tunePopulation", "tuneGenerations", "has4s"]) {
         $(id).addEventListener("input", renderTuneHint)
         $(id).addEventListener("change", renderTuneHint)
       }
 
-      // Configs are remembered per strategy. The config fields opt out of the shared snapshot
-      // (data-nopersist), so this is the only place they are stored: each strategy keeps its own
-      // values and switching or reloading loads that strategy's copy, not the last one typed into.
-      let lastStrategy = configStrategy()
-      // Load the restored strategy's own config, never another strategy's.
-      loadConfigFor(lastStrategy)
-
-      for (const id of CONFIG_FIELDS) {
-        const control = $(id)
-        control.addEventListener("input", () => saveConfigFor())
-        control.addEventListener("change", () => saveConfigFor())
-      }
-
-      $("configFor").addEventListener("change", () => {
-        const next = configStrategy()
-        if (next === lastStrategy) return
-        lastStrategy = next
-        // The previous strategy's values were already saved as they were typed, so this only has
-        // to load the new one - and to clear the form when the new one has nothing saved yet,
-        // otherwise switching looks like the two strategies share a config.
-        const had = loadConfigFor(next)
-        form.save()
-        renderTuneHint()
-        const name = familyName(next)
-        setStatus(had ? `editing ${name} - its own saved config is loaded` : `editing ${name} - starting from the shipped defaults`)
-      })
-
       renderSeedHint()
       renderTuneHint()
-      tuneFileNote("one file for both strategies: export saves the v2 and v3 tuning results together, import replaces them")
+      tuneFileNote("export saves the stored tuning result in one file, import replaces it")
       updateGridCount()
       ensurePool()
 

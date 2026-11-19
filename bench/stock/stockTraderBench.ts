@@ -5,10 +5,8 @@
  * Bundle + run:
  *   pnpm run test:stock
  *   pnpm run test:stock -- --capital 10b --ticks 3000 --seeds 5
- *   pnpm run test:stock -- --compare                   (current strategy vs the frozen v1 baseline)
- *   pnpm run test:stock -- --compare --seed-range 1-100 (paired, same-seed comparison)
- *   pnpm run test:stock -- --strategy v1 --seeds 5     (baseline on its own)
- *   pnpm run test:stock -- --grid entry-edge=0.002,0.003 --grid max-positions=3,4
+ *   pnpm run test:stock -- --rotation 4 --compare --seed-range 1-100 (a config vs the shipped defaults)
+ *   pnpm run test:stock -- --grid entry-edge=0.002,0.003 --grid max-positions=3,8
  *   pnpm run test:stock -- --selftest
  *
  * GUI: pnpm run stock:viz  ->  open bench/stock/stockTraderViz.html
@@ -16,9 +14,8 @@
 
 import { pathToFileURL } from "node:url"
 
-import { mergeStockTraderConfig, type StockTraderConfig } from "@/libraries/stock/config.js"
+import { DEFAULT_STOCK_TRADER_CONFIG, mergeStockTraderConfig, type StockTraderConfig } from "@/libraries/stock/config.js"
 import { buildConfigSummary } from "@/libraries/stock/trader.js"
-import { buildConfigSummaryV3, type StockTraderV3Config } from "@/libraries/stock/traderV3.js"
 
 import { MS_PER_STOCK_UPDATE, STOCK_MARKET_COMMISSION, StockMarketSim, createNsStub } from "./stockMarketModel.js"
 import {
@@ -31,7 +28,6 @@ import {
   cartesianConfigs,
   defaultsGenome,
   genomeKey,
-  genomeV3Config,
   logGrowth,
   measureHeadroom,
   pairResults,
@@ -49,7 +45,6 @@ import {
   type PairedStats,
   type StockGeneSpec,
   type StockGenome,
-  type StrategyId,
   type TuneGeneration,
 } from "./stockBenchCore.js"
 
@@ -66,15 +61,19 @@ interface ConfigFlagSpec {
 
 const CONFIG_FLAGS: Record<string, ConfigFlagSpec> = {
   "money-keep": { key: "moneyKeep", kind: "number" },
+  reserve: { key: "reserveFraction", kind: "number" },
   "entry-edge": { key: "entryEdge", kind: "number" },
   "exit-edge": { key: "exitEdge", kind: "number" },
   "no4s-entry-edge": { key: "no4sEntryEdge", kind: "number" },
-  "no4s-rotate-margin": { key: "no4sRotateMargin", kind: "number" },
-  "max-positions": { key: "maxPositions", kind: "number" },
-  "max-weight": { key: "maxWeightPerSymbol", kind: "number" },
-  "max-share-fraction": { key: "maxShareFraction", kind: "number" },
-  "rotate-margin": { key: "rotateMargin", kind: "number" },
   "history-ticks": { key: "historyTicks", kind: "number" },
+  "max-positions": { key: "maxOpenPositions", kind: "number" },
+  "max-weight": { key: "maxWeight", kind: "number" },
+  "max-share-fraction": { key: "maxShareFraction", kind: "number" },
+  "min-new-weight": { key: "minNewWeight", kind: "number" },
+  slices: { key: "slices", kind: "number" },
+  rotation: { key: "rotationCostFactor", kind: "number" },
+  "no4s-rotation": { key: "no4sRotationCostFactor", kind: "number" },
+  impact: { key: "impactScale", kind: "number" },
   "min-shares": { key: "minShares", kind: "number" },
   shorts: { key: "enableShorts", kind: "boolean" },
 }
@@ -91,7 +90,7 @@ interface CliOptions {
   bitNode: number
   ownedSf8: number
   config: Partial<StockTraderConfig>
-  strategy: StrategyId
+  /** Also run the shipped defaults on the same seeds and print the paired difference. */
   compare: boolean
   marketData: boolean
   baseline: "none" | "filtered" | "all"
@@ -107,8 +106,6 @@ interface CliOptions {
   tuneSeed: number
   /** Print the ideal-frictionless ceiling next to the run and say how much of it the run captured. */
   headroom: boolean
-  /** v3 sizing knobs; empty means the v3 defaults. */
-  v3: Partial<StockTraderV3Config>
 }
 
 const SUFFIX_MULTIPLIERS: Record<string, number> = {
@@ -144,7 +141,6 @@ function parseArgs(argv: readonly string[]): CliOptions {
     bitNode: 8,
     ownedSf8: 3,
     config: {},
-    strategy: "current",
     compare: false,
     marketData: true,
     baseline: "filtered",
@@ -159,7 +155,6 @@ function parseArgs(argv: readonly string[]): CliOptions {
     population: 6,
     tuneSeed: 1,
     headroom: false,
-    v3: {},
   }
 
   for (let i = 0; i < argv.length; i++) {
@@ -223,31 +218,6 @@ function parseArgs(argv: readonly string[]): CliOptions {
       }
       case "symbols":
         options.symbols = Math.max(0, Math.floor(requireNumber(flag, nextValue())))
-        break
-      case "strategy": {
-        const raw = nextValue().toLowerCase()
-        // "v2" is the name used everywhere in the docs and the GUI; "current" is the old spelling.
-        const value = raw === "v2" ? "current" : raw
-        if (value !== "current" && value !== "v1" && value !== "v3") {
-          throw new Error(`--strategy expects v2|current|v1|v3, got '${raw}'`)
-        }
-        options.strategy = value
-        break
-      }
-      case "v3-kelly":
-        options.v3.tilt = requireNumber(flag, nextValue())
-        break
-      case "v3-band":
-        options.v3.rebalanceBand = requireNumber(flag, nextValue())
-        break
-      case "v3-gross":
-        options.v3.maxGrossWeight = requireNumber(flag, nextValue())
-        break
-      case "v3-reserve":
-        options.v3.reserveFraction = requireNumber(flag, nextValue())
-        break
-      case "v3-select":
-        nextValue()
         break
       case "compare":
         options.compare = true
@@ -324,7 +294,7 @@ Usage: pnpm run test:stock -- [options]
 Market
   --capital <n>        Starting home cash (suffixes k/m/b/t/q, default 10b). Commission is a
                        fixed $100 000 per trade, so small accounts are fee-dominated: see
-                       docs/stock-trader.md section 8 before testing capital below ~$100m
+                       docs/stock-trader.md section 7 before testing capital below ~$10m
   --ticks <n>          Stock updates to simulate, 6s each, 1 or more (default 3000)
   --node <n>           BitNode number (default 8 so shorts are unlocked)
   --sf8 <level>        Source-File 8 level when not in BitNode 8 (default 3)
@@ -338,36 +308,31 @@ Seeds
   --seed-range <a-b>   Run exactly seeds a..b inclusive, e.g. --seed-range 1-100
 
 Config overrides (defaults come from src/libraries/stock/config.ts)
-  --entry-edge <f>        Min |(2*forecast-1)*volatility| to open (default 0.0025)
-  --exit-edge <f>         Close when the edge falls to this (default 0)
-  --no4s-entry-edge <f>   Entry threshold when there is no 4S data (default 0.004)
-  --no4s-rotate-margin <f>  Rotation margin when there is no 4S data (default 100 = never)
-  --max-positions <n>     Symbols held at once (default 4)
-  --max-weight <f>        Cap on one symbol's share of net worth (default 0.34)
-  --max-share-fraction <f>  Fraction of getMaxShares() per symbol (default 1)
-  --rotate-margin <f>     Swap the weakest holding at this edge ratio (default 1.5)
-  --history-ticks <n>     Updates averaged to estimate the edge without 4S (default 40)
-  --min-shares <n>        Skip orders below this size (default 50)
-  --money-keep <n>        Cash left untouched (default 1b)
-  --shorts <0|1>          Enable short positions
-
-Strategy
-  --strategy <id>      v2 (alias current) | v1 (frozen baseline from traderV1.ts) | v3 (conviction sizing)
-  --compare            Also run the earlier versions on the same seeds and print the difference,
-                       plus the same-seed (paired) ratio and its 95% interval. v3 compares
-                       against v2 and v1; v2 against v1
-  --v3-kelly <f>       v3: weight tilt, 0 = equal weight, 1 = in proportion to edge (default 0)
-  --v3-band <f>        v3: rebalance dead band as a share of net worth (default 0)
-  --v3-gross <f>       v3: cap on the sum of position weights (default 1)
-  --v3-reserve <f>     v3: cash reserve as a share of net worth (default 0.01)
-  --no-4s              Model a player without 4S Market Data: no forecasts or volatilities,
-                       so the edge is estimated from the last --history-ticks prices
+  --entry-edge <f>          Min |(2*forecast-1)*volatility| for a company to get money (default 0.0025)
+  --exit-edge <f>           Close when the edge falls to this (default 0)
+  --max-positions <n>       Most companies held at once (default 8)
+  --max-weight <f>          Most of net worth in one company (default 1)
+  --max-share-fraction <f>  Fraction of getMaxShares() per company (default 1)
+  --rotation <f>            A swap must earn back this many round trips (default 8)
+  --impact <f>              Scale on the modelled forecast impact of our own trades, 0 = ignore (default 1)
+  --min-new-weight <f>      Smallest share of net worth worth opening a position for (default 0.02)
+  --slices <n>              Cash is handed out in this many slices per update (default 40)
+  --reserve <f>             Cash kept back as a share of net worth (default 0.001)
+  --money-keep <n>          Cash kept back in dollars; the larger reserve wins (default 0)
+  --min-shares <n>          Skip orders below this size (default 50)
+  --shorts <0|1>            Enable short positions
+  --no4s-entry-edge <f>     Entry threshold when there is no 4S data (default 0.003)
+  --no4s-rotation <f>       Rotation hurdle when there is no 4S data (default 64)
+  --history-ticks <n>       Updates used to estimate edge and volatility without 4S (default 40)
+  --no-4s                   Model a player without 4S Market Data: no forecasts or volatilities,
+                            so they are estimated from the last --history-ticks prices
+  --compare                 Also run the shipped defaults on the same seeds and print the
+                            difference, plus the same-seed (paired) ratio and its 95% interval
 
 Genetic tuning (searches the config for you, on the seeds given above)
-  --tune               Run the search instead of a single config, for --strategy v2 (default) or
-                       v3. Trains on the seeds from --seed-range/--seed-stream/--seeds, then
-                       checks the winner against the shipped defaults on held-back seeds the
-                       search never saw. v1 is frozen and has no genes
+  --tune               Run the search instead of a single config. Trains on the seeds from
+                       --seed-range/--seed-stream/--seeds, then checks the winner against the
+                       shipped defaults on held-back seeds the search never saw
   --generations <n>    Generations to breed (default 6)
   --population <n>     Genomes per generation, at least 2 (default 6)
   --tune-seed <n>      Seed for the search's own random stream (default 1)
@@ -401,21 +366,17 @@ function seedList(options: CliOptions): number[] {
   return Array.from({ length: options.seeds }, (_, i) => options.seed + i * SEED_STRIDE)
 }
 
-function runSeeds(options: CliOptions, config: Partial<StockTraderConfig>, strategy: StrategyId): BenchResult[] {
+function runSeeds(options: CliOptions, config: Partial<StockTraderConfig>): BenchResult[] {
   return seedList(options).map((seed) =>
-    runTraderScenario(
-      {
-        seed,
-        capital: options.capital,
-        ticks: options.ticks,
-        config,
-        bitNode: options.bitNode,
-        ownedSf8: options.ownedSf8,
-        marketData: options.marketData,
-        v3: options.v3,
-      },
-      strategy,
-    ),
+    runTraderScenario({
+      seed,
+      capital: options.capital,
+      ticks: options.ticks,
+      config,
+      bitNode: options.bitNode,
+      ownedSf8: options.ownedSf8,
+      marketData: options.marketData,
+    }),
   )
 }
 
@@ -443,11 +404,6 @@ function gameHours(ticks: number): number {
   return (ticks * MS_PER_STOCK_UPDATE) / 3_600_000
 }
 
-/** Human name for a strategy id, used in the comparison lines. */
-function strategyLabel(strategy: StrategyId): string {
-  return strategy === "v3" ? "v3" : strategy === "v1" ? "v1 baseline" : "v2 (current)"
-}
-
 function seedLabel(options: CliOptions): string {
   const count = `${options.seeds} seed${options.seeds === 1 ? "" : "s"}`
   if (options.seedRange) return `seeds ${options.seedRange.from}-${options.seedRange.to} (${count})`
@@ -472,28 +428,18 @@ function printHeader(options: CliOptions, config: Partial<StockTraderConfig>): v
     `run      ${seedLabel(options)} | capital ${money(options.capital)} | ` +
       `${count(options.ticks)} updates (${gameHours(options.ticks).toFixed(1)}h) | BitNode ${options.bitNode}`,
   )
-  if (options.strategy === "v1") {
-    console.log("strategy v1 baseline (frozen in bench/stock/traderV1.ts): long fcst 0.6/0.5, short 0.35/0.5, port 12%/sym")
-    if (!options.marketData) {
-      console.log("warning  v1 reads forecast/volatility directly and cannot run without 4S data")
-    }
-  } else if (options.strategy === "v3") {
-    console.log(`strategy v3 ${buildConfigSummaryV3(ns as never, merged, options.v3)}`)
-  } else {
-    console.log(`strategy ${buildConfigSummary(ns as never, merged)}`)
-  }
+  console.log(`strategy ${buildConfigSummary(ns as never, merged)}`)
 }
 
 /** Guards that explain a run which cannot mean anything. Printed in every mode, including --quiet. */
 function printWarnings(options: CliOptions, merged: StockTraderConfig): void {
-  // v3 reserves a share of net worth instead of an absolute sum, so money-keep does not gate it.
-  if (options.strategy !== "v3" && options.capital <= merged.moneyKeep) {
+  if (options.capital <= merged.moneyKeep) {
     console.log(
       `warning  capital (${money(options.capital)}) is at or below money-keep (${money(merged.moneyKeep)}); ` +
         `the strategy cannot open positions. Raise --capital or lower --money-keep.`,
     )
   }
-  if (!options.marketData && options.strategy !== "v1" && options.ticks <= merged.historyTicks) {
+  if (!options.marketData && options.ticks <= merged.historyTicks) {
     console.log(
       `warning  the price-history estimate needs ${merged.historyTicks + 1} prices to fill its window; ` +
         (options.ticks < 4
@@ -589,7 +535,7 @@ function warnFeeShare(results: readonly BenchResult[]): void {
   }
 }
 
-/** Labels matter here: v3 is compared against v2 as well as v1, so the ratio cannot say "current/v1". */
+/** `better` and `baseline` name the two configs, so the ratio reads in the right direction. */
 function printPaired(stats: PairedStats, better: string, baseline: string): void {
   const ratio = (value: number): string => `${value >= 100 ? groupDigits(Math.round(value)) : value.toFixed(2)}x`
   const verdict =
@@ -710,11 +656,7 @@ function printTuneRows(report: TuneGeneration, specs: readonly StockGeneSpec[], 
 }
 
 function runTune(options: CliOptions): number {
-  if (options.strategy === "v1") {
-    throw new Error("--tune searches v2 or v3; v1 is frozen in bench/stock/traderV1.ts and has no genes")
-  }
-  const family = options.strategy === "v3" ? "v3" : "v2"
-  const specs = stockGeneSpecs(options.marketData, family)
+  const specs = stockGeneSpecs(options.marketData)
   // Tuning on one seed is meaningless: the fitness would be a single market's opinion. When
   // the caller did not ask for a seed set, use a contiguous block so a run is still a search.
   const requested = seedList(options)
@@ -743,7 +685,6 @@ function runTune(options: CliOptions): number {
       `${trainSeeds.length} training seed${trainSeeds.length === 1 ? "" : "s"}, ` +
       `${tuner.validationSeeds.length} held back | search seed ${options.tuneSeed}`,
   )
-  console.log(`strategy ${strategyLabel(options.strategy)}`)
   console.log(`genes    ${specs.map((spec) => `${spec.label} ${spec.min}-${spec.max}`).join(", ")}`)
   console.log(`fitness  mean log growth over the training seeds (geometric mean return), tie-break lower drawdown`)
   console.log(`mode     ${options.marketData ? "4S forecast" : "no 4S, edge from price history"}`)
@@ -751,21 +692,16 @@ function runTune(options: CliOptions): number {
 
   const runGenome = (genome: StockGenome, seeds: readonly number[]): GenomeScore => {
     const config = tuner.config(genome, options.config)
-    const v3 = family === "v3" ? tuner.v3Config(genome, options.v3) : undefined
     const results = seeds.map((seed) =>
-      runTraderScenario(
-        {
-          seed,
-          capital: options.capital,
-          ticks: options.ticks,
-          config,
-          bitNode: options.bitNode,
-          ownedSf8: options.ownedSf8,
-          marketData: options.marketData,
-          ...(v3 ? { v3 } : {}),
-        },
-        family === "v3" ? "v3" : "current",
-      ),
+      runTraderScenario({
+        seed,
+        capital: options.capital,
+        ticks: options.ticks,
+        config,
+        bitNode: options.bitNode,
+        ownedSf8: options.ownedSf8,
+        marketData: options.marketData,
+      }),
     )
     return scoreGenome(genomeKey(genome, specs), results)
   }
@@ -851,7 +787,7 @@ function main(): number {
       )
       const rows: GridRow[] = configs.map((config) => ({
         config,
-        stats: aggregate(runSeeds(options, config, options.strategy)),
+        stats: aggregate(runSeeds(options, config)),
       }))
       rows.sort((a, b) => b.stats.meanReturnPct - a.stats.meanReturnPct)
 
@@ -865,22 +801,12 @@ function main(): number {
       return 0
     }
 
-    const results = runSeeds(options, options.config, options.strategy)
-    // v3 is judged against both earlier versions; v2 against v1; nothing compares to itself.
-    const opponents: { label: string; strategy: StrategyId }[] =
-      options.compare && options.strategy === "v3"
-        ? [
-            { label: "v2 (current)", strategy: "current" },
-            { label: "v1 baseline", strategy: "v1" },
-          ]
-        : options.compare && options.strategy === "current"
-          ? [{ label: "v1 baseline", strategy: "v1" }]
-          : []
-    const comparisons = opponents.map((opponent) => ({
-      label: opponent.label,
-      results: runSeeds(options, options.config, opponent.strategy),
-    }))
-    const v1Results = comparisons.find((entry) => entry.label === "v1 baseline")?.results ?? null
+    const results = runSeeds(options, options.config)
+    // --compare measures the shipped defaults on the same seeds, so a config change can be judged
+    // by the paired ratio instead of two noisy means.
+    const comparisons = options.compare
+      ? [{ label: "shipped defaults", results: runSeeds(options, DEFAULT_STOCK_TRADER_CONFIG) }]
+      : []
     // The baseline is measured on every seed, not on one: a buy-and-hold return varies enormously
     // between markets, so one seed's hold cannot be compared with a multi-seed strategy mean.
     const runHold = (filtered: boolean) =>
@@ -910,8 +836,6 @@ function main(): number {
             config: mergeStockTraderConfig(options.config),
             aggregate: aggregate(results),
             runs: results.map(stripCurve),
-            v1: v1Results ? { aggregate: aggregate(v1Results), runs: v1Results.map(stripCurve) } : null,
-            paired: v1Results && results.length > 1 ? pairResults(results, v1Results) : null,
             comparisons: comparisons.map((entry) => ({
               label: entry.label,
               aggregate: aggregate(entry.results),
@@ -955,13 +879,13 @@ function main(): number {
       const mine = aggregate(results)
       const theirs = aggregate(comparison.results)
       console.log(
-        `\n${comparison.label} -> ${options.strategy}: mean ${signedPct(theirs.meanReturnPct)} -> ${signedPct(mine.meanReturnPct)} ` +
+        `\n${comparison.label} -> this config: mean ${signedPct(theirs.meanReturnPct)} -> ${signedPct(mine.meanReturnPct)} ` +
           `(${theirs.meanReturnPct !== 0 ? `${(mine.meanReturnPct / theirs.meanReturnPct).toFixed(2)}x` : "n/a"}), ` +
           `trades ${count(theirs.meanTrades)} -> ${count(mine.meanTrades)}`,
       )
       if (results.length > 1) {
         const paired = pairResults(results, comparison.results)
-        if (paired) printPaired(paired, strategyLabel(options.strategy), comparison.label)
+        if (paired) printPaired(paired, "this config", comparison.label)
       }
     }
 
@@ -983,7 +907,8 @@ function main(): number {
     }
 
     if (options.headroom) {
-      const slots = mergeStockTraderConfig(options.config).maxPositions
+      // A fixed reference: four equal slots holding the strongest edges, and one slot at full weight.
+      const slots = 4
       const report = measureHeadroom(
         {
           seed: options.seed,

@@ -6,49 +6,59 @@
  * With 4S data the forecast is the probability that the next update is an up move
  * (`chc = (50 + otlkMag) / 100` in the game's processStockPrices), so `2 * forecast - 1` is the
  * sign bias of the move and `volatility` is its size. Their product is the per-update expected
- * return, which is what the entry threshold and the candidate ranking compare against.
+ * return. See docs/stock-trader.md for how every field below was measured.
  */
 export interface StockTraderConfig {
-  /** Cash left on home; not used for new purchases. */
+  /** Cash never invested, in dollars. The reserve is the larger of this and `reserveFraction`. */
   moneyKeep: number
-  /** Minimum |edge| required to open a position. */
+  /** Cash never invested, as a share of net worth (pays commissions at any account size). */
+  reserveFraction: number
+  /** Minimum |edge| for a company to receive money. */
   entryEdge: number
   /** Close a position once its |edge| falls to this (0 = when the expected move turns negative). */
   exitEdge: number
   /** Entry threshold used instead of entryEdge when there is no 4S data. */
   no4sEntryEdge: number
-  /** Rotation margin used instead of rotateMargin when there is no 4S data. */
-  no4sRotateMargin: number
-  /** Maximum number of symbols held at the same time. */
-  maxPositions: number
-  /** Cap on one symbol's share of net worth (only binds when few candidates qualify). */
-  maxWeightPerSymbol: number
-  /** Fraction of getMaxShares() we allow ourselves to hold (limits our market impact). */
-  maxShareFraction: number
-  /** Swap the weakest holding for a candidate when its edge is this many times larger. */
-  rotateMargin: number
-  /** Updates of price history averaged to estimate the edge when there is no 4S data. */
+  /** Updates of price history used to estimate edge and volatility when there is no 4S data. */
   historyTicks: number
+  /** Most companies held at once. The allocation decides how many are worth it below this. */
+  maxOpenPositions: number
+  /** Most of net worth in one company. */
+  maxWeight: number
+  /** Fraction of getMaxShares() we allow ourselves to hold. */
+  maxShareFraction: number
+  /** Smallest share of net worth worth opening a new position for. */
+  minNewWeight: number
+  /** Investable cash is handed out in this many slices per update. */
+  slices: number
+  /** A swap must earn back this many of the candidate's round trips over the expected horizon. */
+  rotationCostFactor: number
+  /** Rotation hurdle used instead of rotationCostFactor when there is no 4S data. */
+  no4sRotationCostFactor: number
+  /** Scale on the modelled forecast impact of our own trades (0 ignores it). */
+  impactScale: number
   /** Skip orders smaller than this (commission is $100k per transaction). */
   minShares: number
   enableShorts: boolean
 }
 
 export const DEFAULT_STOCK_TRADER_CONFIG: StockTraderConfig = {
-  moneyKeep: 1e9,
+  moneyKeep: 0,
+  reserveFraction: 0.001,
   entryEdge: 0.0025,
   exitEdge: 0,
-  // Without 4S the edge is estimated from price history: it correlates ~0.55 with the real edge,
-  // so a higher bar is needed to clear the same cost, and swapping positions on that estimate
-  // mostly trades noise. Measured on the model (15 seeds, 3000 updates, $10b):
-  // entryEdge 0.004 + no rotation 555% mean return, versus 50% at the 4S defaults.
-  no4sEntryEdge: 0.004,
-  no4sRotateMargin: 100,
-  maxPositions: 4,
-  maxWeightPerSymbol: 0.34,
-  maxShareFraction: 1,
-  rotateMargin: 1.5,
+  // Without 4S the edge is an estimate that correlates ~0.55 with the real one, so it needs a
+  // higher bar and a much higher rotation hurdle: swapping on two noisy numbers mostly trades noise.
+  no4sEntryEdge: 0.003,
   historyTicks: 40,
+  maxOpenPositions: 8,
+  maxWeight: 1,
+  maxShareFraction: 1,
+  minNewWeight: 0.02,
+  slices: 40,
+  rotationCostFactor: 8,
+  no4sRotationCostFactor: 64,
+  impactScale: 1,
   minShares: 50,
   enableShorts: true,
 }
@@ -58,21 +68,27 @@ function finiteOrDefault(value: unknown, fallback: number): number {
   return Number.isFinite(n) ? n : fallback
 }
 
+const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value))
+
 /** Merge partial config and fill any missing/stale fields from defaults. */
 export function mergeStockTraderConfig(partial?: Partial<StockTraderConfig>): StockTraderConfig {
   const d = DEFAULT_STOCK_TRADER_CONFIG
   const merged = { ...d, ...partial }
   return {
-    moneyKeep: finiteOrDefault(merged.moneyKeep, d.moneyKeep),
+    moneyKeep: Math.max(0, finiteOrDefault(merged.moneyKeep, d.moneyKeep)),
+    reserveFraction: clamp(finiteOrDefault(merged.reserveFraction, d.reserveFraction), 0, 0.5),
     entryEdge: finiteOrDefault(merged.entryEdge, d.entryEdge),
     exitEdge: finiteOrDefault(merged.exitEdge, d.exitEdge),
     no4sEntryEdge: finiteOrDefault(merged.no4sEntryEdge, d.no4sEntryEdge),
-    no4sRotateMargin: finiteOrDefault(merged.no4sRotateMargin, d.no4sRotateMargin),
-    maxPositions: Math.max(1, Math.round(finiteOrDefault(merged.maxPositions, d.maxPositions))),
-    maxWeightPerSymbol: finiteOrDefault(merged.maxWeightPerSymbol, d.maxWeightPerSymbol),
-    maxShareFraction: finiteOrDefault(merged.maxShareFraction, d.maxShareFraction),
-    rotateMargin: finiteOrDefault(merged.rotateMargin, d.rotateMargin),
     historyTicks: Math.max(3, Math.round(finiteOrDefault(merged.historyTicks, d.historyTicks))),
+    maxOpenPositions: Math.max(1, Math.round(finiteOrDefault(merged.maxOpenPositions, d.maxOpenPositions))),
+    maxWeight: clamp(finiteOrDefault(merged.maxWeight, d.maxWeight), 0, 1),
+    maxShareFraction: clamp(finiteOrDefault(merged.maxShareFraction, d.maxShareFraction), 0, 1),
+    minNewWeight: clamp(finiteOrDefault(merged.minNewWeight, d.minNewWeight), 0, 1),
+    slices: Math.max(1, Math.round(finiteOrDefault(merged.slices, d.slices))),
+    rotationCostFactor: Math.max(0, finiteOrDefault(merged.rotationCostFactor, d.rotationCostFactor)),
+    no4sRotationCostFactor: Math.max(0, finiteOrDefault(merged.no4sRotationCostFactor, d.no4sRotationCostFactor)),
+    impactScale: Math.max(0, finiteOrDefault(merged.impactScale, d.impactScale)),
     minShares: Math.max(0, Math.round(finiteOrDefault(merged.minShares, d.minShares))),
     enableShorts: merged.enableShorts ?? d.enableShorts,
   }

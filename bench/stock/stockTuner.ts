@@ -21,28 +21,24 @@
  */
 
 import { DEFAULT_STOCK_TRADER_CONFIG, type StockTraderConfig } from "@/libraries/stock/config.js"
-import { DEFAULT_STOCK_TRADER_V3_CONFIG, type StockTraderV3Config } from "@/libraries/stock/traderV3.js"
 
 import { mulberry32 } from "./stockMarketModel.js"
 import type { BenchResult } from "./stockBenchCore.js"
 
-/** Which sizing family the search is tuning. v3 has extra genes the v2 config has no field for. */
-export type TuneStrategy = "v2" | "v3"
-
-/** Config keys the search moves. Each one is a number in `StockTraderConfig`, or in v3's config. */
+/** Config keys the search moves. Each one is a field of `StockTraderConfig`. */
 export type StockGeneKey =
   | "entryEdge"
   | "exitEdge"
-  | "rotateMargin"
-  | "maxPositions"
-  | "maxWeightPerSymbol"
+  | "rotationCostFactor"
+  | "maxOpenPositions"
+  | "maxWeight"
   | "maxShareFraction"
+  | "impactScale"
+  | "reserveFraction"
   | "enableShorts"
   | "no4sEntryEdge"
-  | "no4sRotateMargin"
+  | "no4sRotationCostFactor"
   | "historyTicks"
-  | "tilt"
-  | "reserveFraction"
 
 export interface StockGeneSpec {
   key: StockGeneKey
@@ -67,10 +63,12 @@ export interface StockGeneSpec {
 const PRICE_GENES: readonly StockGeneSpec[] = [
   { key: "entryEdge", label: "entry edge", kind: "float", min: 0.0005, max: 0.008, step: 0.0005, digits: 4 },
   { key: "exitEdge", label: "exit edge", kind: "float", min: -0.002, max: 0.002, step: 0.0005, digits: 4 },
-  { key: "rotateMargin", label: "rotate margin", kind: "float", min: 1, max: 4, step: 0.25, digits: 2 },
-  { key: "maxPositions", label: "max positions", kind: "int", min: 1, max: 8, step: 1, digits: 0 },
-  { key: "maxWeightPerSymbol", label: "max weight/symbol", kind: "float", min: 0.1, max: 1, step: 0.05, digits: 2 },
+  { key: "rotationCostFactor", label: "rotation hurdle", kind: "int", min: 1, max: 32, step: 1, digits: 0 },
+  { key: "maxOpenPositions", label: "max positions", kind: "int", min: 1, max: 12, step: 1, digits: 0 },
+  { key: "maxWeight", label: "max weight/symbol", kind: "float", min: 0.2, max: 1, step: 0.05, digits: 2 },
   { key: "maxShareFraction", label: "max share fraction", kind: "float", min: 0.1, max: 1, step: 0.1, digits: 2 },
+  { key: "impactScale", label: "impact scale", kind: "float", min: 0, max: 3, step: 0.25, digits: 2 },
+  { key: "reserveFraction", label: "cash reserve", kind: "float", min: 0, max: 0.02, step: 0.0025, digits: 4 },
   { key: "enableShorts", label: "shorts", kind: "bool", min: 0, max: 1, step: 1, digits: 0 },
 ]
 
@@ -78,15 +76,8 @@ const PRICE_GENES: readonly StockGeneSpec[] = [
 // change the outcome would just be noise the search has to carry.
 const HISTORY_GENES: readonly StockGeneSpec[] = [
   { key: "no4sEntryEdge", label: "entry edge (no 4S)", kind: "float", min: 0.001, max: 0.01, step: 0.001, digits: 3 },
-  { key: "no4sRotateMargin", label: "rotate margin (no 4S)", kind: "float", min: 1, max: 200, step: 10, digits: 0 },
+  { key: "no4sRotationCostFactor", label: "rotation hurdle (no 4S)", kind: "int", min: 8, max: 256, step: 8, digits: 0 },
   { key: "historyTicks", label: "history updates", kind: "int", min: 5, max: 120, step: 5, digits: 0 },
-]
-
-// v3's own knobs. Ranges come from the measured sweep: tilt 1 beat 0, 0.5, 1.5 and 2, and the
-// reserve mattered only between 0 and 1%, so the box is centred on that rather than "any number".
-const V3_GENES: readonly StockGeneSpec[] = [
-  { key: "tilt", label: "weight tilt", kind: "float", min: 0, max: 2, step: 0.25, digits: 2 },
-  { key: "reserveFraction", label: "cash reserve", kind: "float", min: 0, max: 0.02, step: 0.0025, digits: 4 },
 ]
 
 /**
@@ -97,31 +88,20 @@ const V3_GENES: readonly StockGeneSpec[] = [
  */
 const MIN_ENTRY_EXIT_GAP = 0.0005
 
-export function stockGeneSpecs(marketData: boolean, strategy: TuneStrategy = "v2"): StockGeneSpec[] {
-  const specs = marketData ? [...PRICE_GENES] : [...PRICE_GENES, ...HISTORY_GENES]
-  return strategy === "v3" ? [...specs, ...V3_GENES] : specs
+export function stockGeneSpecs(marketData: boolean): StockGeneSpec[] {
+  return marketData ? [...PRICE_GENES] : [...PRICE_GENES, ...HISTORY_GENES]
 }
 
 /** The genes in play, as a partial config plus booleans. */
 export type StockGenome = Partial<Record<StockGeneKey, number | boolean>>
 
-const V3_GENE_KEYS: ReadonlySet<string> = new Set(V3_GENES.map((spec) => spec.key))
-
-/** The trader-config half of a genome: v3's own genes are dropped, they are not config fields. */
+/** A genome as a partial trader config: every gene is a config field. */
 export function genomeConfig(genome: StockGenome): Partial<StockTraderConfig> {
   const config: Record<string, number | boolean> = {}
   for (const [key, value] of Object.entries(genome)) {
-    if (value !== undefined && !V3_GENE_KEYS.has(key)) config[key] = value
+    if (value !== undefined) config[key] = value
   }
   return config as Partial<StockTraderConfig>
-}
-
-/** The v3 half of a genome, for strategies that have one. */
-export function genomeV3Config(genome: StockGenome): Partial<StockTraderV3Config> {
-  const config: Partial<StockTraderV3Config> = {}
-  if (genome.tilt !== undefined) config.tilt = Number(genome.tilt)
-  if (genome.reserveFraction !== undefined) config.reserveFraction = Number(genome.reserveFraction)
-  return config
 }
 
 function geneValue(spec: StockGeneSpec, genome: StockGenome): number {
@@ -148,7 +128,7 @@ function snap(spec: StockGeneSpec, value: number): number {
   const clamped = Math.min(spec.max, Math.max(spec.min, value))
   if (spec.kind === "int") return Math.round(clamped)
   // Round to the display precision only. Snapping to the step grid here would quietly move the
-  // shipped defaults (maxWeightPerSymbol 0.34 -> 0.35) and make "vs default" compare against a
+  // shipped defaults (reserveFraction 0.001 -> 0) and make "vs default" compare against a
   // config that does not exist; mutations add whole steps anyway, so they stay on the grid.
   return Number(clamped.toFixed(spec.digits))
 }
@@ -177,9 +157,9 @@ export function clampGenome(genome: StockGenome, specs: readonly StockGeneSpec[]
   return out
 }
 
-/** The shipped defaults for whichever family is being tuned, so a run has a status quo to beat. */
+/** The shipped defaults, so a run has a status quo to beat. */
 export function defaultsGenome(specs: readonly StockGeneSpec[]): StockGenome {
-  const shipped: StockGenome = { ...DEFAULT_STOCK_TRADER_CONFIG, ...DEFAULT_STOCK_TRADER_V3_CONFIG }
+  const shipped: StockGenome = { ...DEFAULT_STOCK_TRADER_CONFIG }
   return clampGenome(shipped, specs)
 }
 
@@ -499,11 +479,6 @@ export class StockTuner {
     const out: Record<string, number | boolean> = { ...base }
     for (const [key, value] of Object.entries(genes)) out[key] = value
     return out as Partial<StockTraderConfig>
-  }
-
-  /** Apply a genome's v3 genes (empty for a v2-only genome). */
-  v3Config(genome: StockGenome, base: Partial<StockTraderV3Config> = {}): Partial<StockTraderV3Config> {
-    return { ...base, ...genomeV3Config(genome) }
   }
 
   private initialPopulation(resume: StockGenome | null): StockGenome[] {

@@ -12,8 +12,14 @@ import {
   mergeStockTraderConfig,
   type StockTraderConfig,
 } from "@/libraries/stock/config.js"
-import { createStockTraderState, runStockTradingTick } from "@/libraries/stock/trader.js"
-import { DEFAULT_STOCK_TRADER_V3_CONFIG, runStockTradingTickV3, type StockTraderV3Config } from "@/libraries/stock/traderV3.js"
+import {
+  allocateWithImpact,
+  cashReserve,
+  createStockTraderState,
+  observeCycle,
+  runStockTradingTick,
+  type ImpactProfile,
+} from "@/libraries/stock/trader.js"
 
 import {
   STOCK_MARKET_COMMISSION,
@@ -22,7 +28,6 @@ import {
   mulberry32,
   type SimTrade,
 } from "./stockMarketModel.js"
-import { TRADER_V1_CONFIG, runStockTradingTickV1 } from "./traderV1.js"
 
 // Re-exported so the GUI bundle gets the config defaults and money formatter.
 export { DEFAULT_STOCK_TRADER_CONFIG } from "@/libraries/stock/config.js"
@@ -43,8 +48,6 @@ export interface BenchOptions {
   ownedSf8: number
   /** Set false to model a player without the 4S Market Data TIX API (no forecasts, no volatilities). */
   marketData?: boolean
-  /** v3-only sizing knobs (Kelly fraction, rebalance dead band, gross cap). */
-  v3?: Partial<StockTraderV3Config>
 }
 
 export interface SymbolStats {
@@ -243,41 +246,17 @@ export function runScenario(
   }
 }
 
-/** Which strategy implementation a scenario runs. `v1` is frozen in traderV1.ts, `current` is v2. */
-export type StrategyId = "current" | "v1" | "v3"
-
 /** Runs src/libraries/stock/trader.ts against the market model, one call per stock update. */
-export function runTraderScenario(options: BenchOptions, strategy: StrategyId = "current"): BenchResult {
+export function runTraderScenario(options: BenchOptions): BenchResult {
   return runScenario(options, (sim) => {
     const ns = createNsStub(sim, {
       bitNode: options.bitNode,
       ownedSf8: options.ownedSf8,
       marketData: options.marketData,
     })
-    if (strategy === "v1") {
-      // v1 is frozen, but the cash reserve is an account policy rather than part of the strategy,
-      // so a caller-supplied `moneyKeep` is honoured. Without this the baseline keeps its own $1b
-      // reserve, goes inert on any smaller account and reads as "+0.00%" instead of "did nothing".
-      const moneyKeep = options.config?.moneyKeep
-      return {
-        tick: () =>
-          runStockTradingTickV1(
-            ns as unknown as NS,
-            Number.isFinite(moneyKeep) && (moneyKeep as number) >= 0
-              ? { ...TRADER_V1_CONFIG, moneyKeep: moneyKeep as number }
-              : TRADER_V1_CONFIG,
-          ),
-      }
-    }
     const config = mergeStockTraderConfig(options.config)
-    // Fresh history per run: without 4S the strategy learns from prices it has seen itself.
+    // Fresh state per run: the strategy learns prices and the market cycle from what it has seen.
     const state = createStockTraderState()
-    if (strategy === "v3") {
-      return {
-        tick: () =>
-          runStockTradingTickV3(ns as unknown as NS, config, state, options.v3 ?? DEFAULT_STOCK_TRADER_V3_CONFIG),
-      }
-    }
     return { tick: () => runStockTradingTick(ns as unknown as NS, config, state) }
   })
 }
@@ -301,7 +280,7 @@ export function runHoldBaseline(options: BenchOptions, filtered: boolean): Bench
         if (picks.length === 0) picks = sim.getSymbols()
       }
 
-      const budget = Math.max(0, sim.cash - config.moneyKeep)
+      const budget = Math.max(0, sim.cash - cashReserve(config, sim.cash))
       const budgetPerSymbol = budget / picks.length
       for (const symbol of picks) {
         const stock = sim.getStock(symbol)
@@ -551,7 +530,6 @@ export {
   defaultsGenome,
   genomeConfig,
   genomeKey,
-  genomeV3Config,
   pairedGain,
   randomGenome,
   scoreGenome,
@@ -565,21 +543,24 @@ export {
   type StockTunerOptions,
   type TuneGeneration,
   type TuneRow,
-  type TuneStrategy,
 } from "./stockTuner.js"
 
 /** Config keys that hold numbers, i.e. everything a grid sweep can vary. */
 export const NUMERIC_CONFIG_KEYS = [
   "moneyKeep",
+  "reserveFraction",
   "entryEdge",
   "exitEdge",
   "no4sEntryEdge",
-  "no4sRotateMargin",
-  "maxPositions",
-  "maxWeightPerSymbol",
-  "maxShareFraction",
-  "rotateMargin",
   "historyTicks",
+  "maxOpenPositions",
+  "maxWeight",
+  "maxShareFraction",
+  "minNewWeight",
+  "slices",
+  "rotationCostFactor",
+  "no4sRotationCostFactor",
+  "impactScale",
   "minShares",
 ] as const satisfies readonly (keyof StockTraderConfig)[]
 
@@ -747,13 +728,13 @@ export function runSelfTest(): string[] {
     check(close(result.finalCash + result.finalPositionsValue, result.finalNetWorth), "self-test: net worth identity")
   }
 
-  // Strategy invariants: never more than maxPositions open, and an unreachable edge gate blocks all trading.
+  // Strategy invariants: never more than maxOpenPositions open, and an unreachable edge gate blocks all trading.
   {
     const base: BenchOptions = {
       seed: 11,
       capital: 1e10,
       ticks: 300,
-      config: DEFAULT_STOCK_TRADER_CONFIG,
+      config: { ...DEFAULT_STOCK_TRADER_CONFIG, maxOpenPositions: 3 },
       bitNode: 8,
       ownedSf8: 3,
     }
@@ -772,8 +753,8 @@ export function runSelfTest(): string[] {
     })
     check(result.trades > 0, "self-test: the strategy should trade at $10b")
     check(
-      maxOpen <= config.maxPositions,
-      `self-test: strategy held ${maxOpen} symbols, above maxPositions ${config.maxPositions}`,
+      maxOpen <= config.maxOpenPositions,
+      `self-test: strategy held ${maxOpen} symbols, above maxOpenPositions ${config.maxOpenPositions}`,
     )
 
     const blocked = runTraderScenario({
@@ -787,6 +768,41 @@ export function runSelfTest(): string[] {
     check(blind.trades > 0, "self-test: the strategy should still trade without 4S data")
     const blindAgain = runTraderScenario({ ...base, ticks: 600, marketData: false })
     check(blind.finalNetWorth === blindAgain.finalNetWorth, "self-test: price-history estimation must be deterministic")
+  }
+
+  // The cycle inferred from forecasts matches the market's, and money a capped company cannot take
+  // goes to the next one instead of staying idle.
+  {
+    const sim = new StockMarketSim({ seed: 21, cash: 1e10 })
+    const state = createStockTraderState()
+    let mismatches = 0
+    let known = 0
+    for (let tick = 0; tick < 400; tick++) {
+      sim.updatePrices()
+      const toCycle = observeCycle(state, new Map(sim.stocks.map((s) => [s.symbol, s.getForecast()])))
+      if (toCycle === null) continue
+      known++
+      if (toCycle !== sim.ticksUntilCycle) mismatches++
+    }
+    check(known > 0 && mismatches === 0, `self-test: cycle tracking was wrong on ${mismatches}/${known} updates`)
+
+    const profile = (symbol: string, outlook: number, capacity: number): ImpactProfile => ({
+      symbol,
+      side: "L",
+      volatility: 0.01,
+      outlook,
+      impact: 0,
+      held: 0,
+      capacity,
+      roundTrip: 0.002,
+    })
+    const plan = allocateWithImpact([profile("BEST", 20, 0.3), profile("NEXT", 10, 1)], 1, {
+      slices: 20,
+      maxWeight: 1,
+      openSlots: 2,
+    })
+    check(close(plan.get("BEST") ?? 0, 0.3, 1e-9), "self-test: allocation should fill the best company up to its share cap")
+    check(close(plan.get("NEXT") ?? 0, 0.7, 1e-9), "self-test: allocation should spill what a capped company cannot hold")
   }
 
   // Seeded RNG sanity: the market is always initialized and deterministic.

@@ -1,16 +1,15 @@
 # How the stock trader works, from zero
 
 A ground-up explanation of `stockTrader.ts`: what the game's stock market actually does, where the
-profit comes from, and how the two versions of the strategy (v1 and the current one) decide what to
-trade. Written to be readable with no prior knowledge of the script or of trading.
+profit comes from, and how the strategy decides what to trade. Written to be readable with no prior
+knowledge of the script or of trading.
 
 Code references:
 
-- [`../src/libraries/stock/trader.ts`](../src/libraries/stock/trader.ts) — the current strategy
+- [`../src/libraries/stock/trader.ts`](../src/libraries/stock/trader.ts) — the strategy
 - [`../src/libraries/stock/config.ts`](../src/libraries/stock/config.ts) — its tunables and defaults
-- [`../bench/stock/traderV1.ts`](../bench/stock/traderV1.ts) — v1 frozen as the comparison baseline
 - [`../bench/stock/stockMarketModel.ts`](../bench/stock/stockMarketModel.ts) — the local copy of the
-  game's market used to measure both
+  game's market used to measure it
 
 ## 1. The vocabulary
 
@@ -27,6 +26,7 @@ those 33.
 | **Spread** | A fee baked into the price. To buy you pay the **ask** = price × (1 + spread). To sell you receive the **bid** = price × (1 − spread). Spread is 0.1%–2% depending on the company. |
 | **Commission** | A flat **$100,000** the game charges on *every* transaction (buy, sell, short, cover). |
 | **Forecast** | A number between 0.00 and 1.00 published by the "4S Market Data" upgrade. It is *literally the probability that the next price change is upward*. 0.70 = 70% chance up. |
+| **Outlook** | How far the forecast leans, in points: `|forecast − 0.50| × 100`. A forecast of 0.70 has outlook 20. The game calls it `otlkMag`. |
 | **Volatility** | A number like 0.004 (calm) to 0.04 (wild). It controls **how far** the price jumps, regardless of direction. |
 | **Max shares** | The game refuses to let you hold more than 20% of a company's shares (long and short counted together). `ns.stock.getMaxShares()`. |
 | **Tick / update** | The game recalculates all prices every **6 seconds**. One tick = one price update. "3000 updates" = 5 hours of game time. |
@@ -50,12 +50,17 @@ So with volatility 0.02 and an "up" tick where `v = 0.5`, the price rises 1%. Be
 0.5, **the average move is half the volatility** (1% for a 2% volatility), and the same `v` is used
 for every company, so all prices tend to move together on a given tick.
 
-Two more facts that matter:
+Three more facts decide how to trade:
 
-- Every tick, the forecast itself drifts (it is "popular opinion" and it changes). It tends to wander
-  between 0 and 1 and spends time near 0.5.
-- **Trading moves the forecast against you.** Buying a lot of shares pushes the forecast toward 0.5.
-  So a huge order makes its own edge worse.
+- **The forecast drifts slowly.** Each tick it moves by a few percent of its own outlook, wandering
+  toward a hidden target (the "second-order forecast"). A company with a strong lean keeps it for a
+  long time: the edge's tick-to-tick correlation is 0.987.
+- **Every 75 ticks there is a cycle.** Each company independently flips direction with probability
+  0.45: the forecast is mirrored around 0.50 (0.70 becomes 0.30), and so is its hidden target. Between
+  cycles a strong forecast cannot cross 0.50, so with 4S data the cycle is visible exactly.
+- **Trading moves the forecast against you.** Every `shareTxForMovement` shares bought *or sold*
+  (30 000 to 216 000 depending on the company) take 0.006 off the outlook, down to a floor of 5, and
+  nudge the hidden target toward 0.50 too. A big order erodes the very edge it was bought for.
 
 ## 3. Where the profit comes from: "edge"
 
@@ -67,10 +72,10 @@ expected move per tick = (2 × forecast − 1) × (average move size)
                        = (2 × 0.70 − 1) × (volatility / 2)
 ```
 
-Both strategies are built on the first half of that expression, which the code calls **edge**:
+The strategy is built on the first half of that expression, which the code calls **edge**:
 
 ```
-edge = (2 × forecast − 1) × volatility
+edge = (2 × forecast − 1) × volatility  =  outlook / 50 × volatility
 ```
 
 - `(2 × forecast − 1)` = how one-sided the coin is: +0.4 when forecast is 0.70, 0 when forecast is
@@ -86,455 +91,245 @@ stock:
 | calm | 0.65 | 0.30 | 0.004 | 0.0012 | 0.06% |
 | wild | 0.62 | 0.24 | 0.020 | 0.0048 | 0.24% |
 
-The wild company has the *worse* forecast but **4× the edge**. Any strategy that ranks by forecast
-alone will pick the calm one. That single observation is most of the difference between the two
-versions.
+The wild company has the *worse* forecast but **4× the edge**. Ranking by forecast alone picks the
+calm one; that mistake was most of what the first version of this script got wrong (section 12).
 
-Two measured properties of the model, both important:
+**Edge must beat the round trip.** Buying and selling the same shares costs
+`2 × spread + 2 × $100k commission`, plus the edge the trade itself removes. A position has to be held
+long enough to earn that back, so the strategy trades rarely and holds for many ticks.
 
-1. **Edge persists** — its tick-to-tick correlation is 0.987. If a company has a big edge now, it very
-   probably still has it next tick. So you hold positions for many ticks rather than flipping them.
-2. **Edge must beat the round trip.** Buying and selling the same shares costs
-   `2 × spread + 2 × $100k commission`. On $10m that is about $240k (2.4%) for a 0.2%-spread stock —
-   roughly **6 ticks of a 0.4%-per-tick edge**. So the strategy must hold long enough to earn back the
-   entry+exit cost, and must not churn.
+## 4. The strategy
 
-## 4. Version 1 (the original, frozen in traderV1.ts)
-
-It runs one function every tick. In plain terms: *sell anything the forecast has turned against, trim
-anything too big, then buy every company whose forecast is high enough, spending at most 12% of the
-cash per company.*
+One call per stock update (`runStockTradingTick`):
 
 ```
-CONFIG: keep $1b cash, buy at forecast ≥ 0.60, sell at < 0.50
-        short at ≤ 0.35, cover at > 0.50
-        max 25% of a company's allowed shares
-        each position ≤ 12% of net worth, trimmed 5% per tick if bigger
-        each company gets ≤ 12% of this tick's cash, minimum order 50 shares
+note which forecasts crossed 0.50 from a clear lean  -> ticks until the next cycle
 
-TICK:
-  netWorth = cash + Σ(shares × price) + Σ(short value)
+1. exits: close any position whose edge has fallen to exitEdge (0: the expected move turned against it)
 
-  ── step A: walk all 33 companies, deal with what we already hold ──
-  for each company s:
-      f = forecast(s)
-      if we are LONG s:
-          if f < 0.50:  sell everything           // the coin is no longer favourable
-          else:         trim(s)                    // (see below)
-      if we are SHORT s:
-          if f > 0.50:  buy back everything        // the coin turned against the short
-          else:         trim(s)
+2. rotation: compare the best company not held with the weakest holding
+     candidate edge = its edge after the impact of buying it at the holding's size
+     horizon        = ticks until the cycle + 0.55/0.45 cycles   (each survives a cycle with p = 0.55)
+     swap if (candidate edge − holding edge) / 2 × horizon > rotationCostFactor × candidate round trip
 
-  trim(s):                                     // only if the position got too big
-      if shares < 50: return
-      if shares × price ≤ 12% of netWorth: return
-      target = floor(12% of netWorth / price)
-      sell   = min(shares − target,  max(50, 5% of shares))   // at most 5% per tick
-      if sell ≥ 50: sell(s, sell)
+3. allocation: hand the investable cash out in `slices` equal slices; each slice goes to the company
+   whose expected growth rises most from it, counting that
+     - buying lowers the outlook of every share already held there (until the floor of 5),
+     - a company at its share cap gains nothing,
+     - only companies with edge >= entryEdge, at most maxOpenPositions held, maxWeight each,
+     - a new position needs at least minNewWeight of net worth.
 
-  ── step B: build the shopping list ──
-  cashForBuying = cash − $1b
-  longs = []; shorts = []
-  for each company s:
-      if volatility(s) > 0.05: skip            // (never true: max volatility is 0.04)
-      if forecast(s) ≥ 0.60: longs  += s
-      if forecast(s) ≤ 0.35: shorts += s
-  sort longs by forecast, best first
-  sort shorts by forecast, worst first
-  list = longs followed by shorts              // ALL longs are funded before any short
-
-  ── step C: buy, in list order, until the money runs out ──
-  for each candidate in list:
-      if cashForBuying ≤ 0: stop
-      allowance = min(cashForBuying, 12% of (cash − $1b))     // per-company slice
-      room      = floor(maxShares(s) × 0.25) − shares we hold
-      shares    = min(room, floor((allowance − $100k) / ask price))
-      while shares ≥ 50 and true cost(shares) > allowance: shares -= 1
-      if shares < 50: skip this company
-      buy(s, shares);  cashForBuying -= what we actually spent
+never trim: only exits and rotation sell
 ```
 
-**Where the money leaks, in plain words:**
+The allocation is the heart of it. Expected growth from holding weight `w` of a company is
+`w × volatility × outlook / 100`, and buying `w` removes `impact × w` points of outlook, where
+`impact` = 0.006 × net worth ÷ (price × shares per movement). So:
 
-1. **It ranks by forecast but ignores jump size** — see the calm-vs-wild table. It systematically
-   prefers stocks that barely move.
-2. **It spreads money wide and keeps cutting winners.** Every position is forced to 12% of net worth,
-   so the portfolio becomes ~8 equally-sized bets no matter how good each one is. A winner that grows
-   past 12% is sold 5% at a time.
-3. **It flips in and out.** Sell at forecast < 0.50, buy again at ≥ 0.60. A company drifting between
-   those two numbers gets sold and rebought over and over, paying $200k in commission plus the spread
-   every single time. Measured: **26,334 trades and $2.63b of commission per 5h run** — that is 25% of
-   the starting capital handed back in fees.
+- **A small account concentrates.** Its trades barely move anything, so every slice goes to the
+  strongest edge until that company's share cap, then to the next strongest.
+- **A large account spreads out.** Each further slice in the same company costs edge on every share
+  already held there, so at some point the second-best company pays more.
+- **Share caps cost nothing extra.** The strongest edges belong to small, jumpy companies whose 20%
+  is worth little; once one is full, the money flows to the next company instead of waiting as cash.
 
-## 5. Version 2 (current, trader.ts)
+No slot count or weight cap has to be chosen for the account size: `maxOpenPositions` (8) is a limit,
+and `maxWeight` defaults to 100%.
 
-In plain terms: *score all 33 companies by edge, drop anything whose edge is gone, keep at most 4
-positions, each about a quarter of net worth, and always make room for a company that is much better
-than what you hold.*
+The game does not report `shareTxForMovement`, so the strategy uses the midpoint of each company's
+range from the game's `InitStockMetadata` (`SHARES_PER_MOVEMENT` in `trader.ts`), which is within a
+factor of two of the drawn value. Pricing the impact matters: with it switched off (`impactScale 0`)
+the same rules return 1.34× v3 instead of 1.70×.
 
-```
-CONFIG: keep $1b cash, open at |edge| ≥ 0.0025, close at edge ≤ 0
-        at most 4 positions, each ~1/positions of net worth, never more than 34%
-        may hold up to 100% of a company's allowed shares
-        swap a holding only if a new company's edge is ≥ 1.5× better
-        minimum order 50 shares
+**The reserve** is the larger of `moneyKeep` (dollars, default 0, the in-game script's first
+argument) and `reserveFraction` of net worth (0.1%, enough to pay commissions at any size).
 
-TICK:
-  ── step A: score everything ──
-  for each company s:
-      edge[s] = (2 × forecast(s) − 1) × volatility(s)
+**Without 4S data** the game throws from `getForecast`/`getVolatility`, so both are estimated from the
+last `historyTicks` prices (section 11) and the same rules run on the estimates, with a higher entry
+bar (`no4sEntryEdge`) and a much higher rotation hurdle (`no4sRotationCostFactor`): swapping on two
+noisy numbers mostly trades noise.
 
-  ── step B: drop positions whose expectation is gone ──
-  held = empty set
-  for each company s:
-      if we are LONG s:
-          if edge[s] ≤ 0: sell everything
-          else:           held += s              // still positive: keep it
-      if we are SHORT s:
-          if edge[s] ≥ 0: buy back everything
-          else:           held += s
+## 5. Why it is built this way
 
-  ── step C: what is worth owning now? (one ranked list, longs and shorts together) ──
-  candidates = []
-  for each company s:
-      if edge[s] ≥ +0.0025:  candidates += {s, side: long,  strength: edge[s]}
-      if edge[s] ≤ −0.0025:  candidates += {s, side: short, strength: |edge[s]|}
-  sort candidates by strength, best first
+These measurements, on 30 seeds × 3000 updates at $10b, decided the design. The previous best
+strategy (v3, four equal-ish slots, section 12) earned log growth 4.11 per run against 4.48 expected
+from what it held, while a cost-free trader limited only by share caps would expect 5.99. Three leaks:
 
-  netWorth = cash + Σ(shares × price) + Σ(short value)
-  weight   = min(0.34, 1 / min(4, count(candidates)))
-              // 4 candidates → 25% each, 3 → 33%, 1 → 34% and 66% stays in cash
-  cashForBuying = cash − $1b
+1. **Idle money behind full share caps.** v3's deployment fell from 100% in the first tenth of a run
+   to 72% in the last: slots full of every share they may own, while their target weight sat as cash.
+2. **Our own trades.** Switching the forecast impact off in the model shows its size directly (40
+   seeds, each side paired against v3 in the same market):
 
-  ── step D: fill empty slots, best edge first ──
-  for each candidate c in candidates:
-      if count(held) ≥ 4 or cashForBuying ≤ 0: stop
-      if c is already held: skip
-      if grow(c):  held += c                 // grow() is defined below
+   | | with impact (the real game) | impact switched off |
+   |---|---|---|
+   | one position, cheap rotation (cost × 2) | 1.44× | 2.45× |
+   | one position, strict rotation (cost × 8) | 1.71× | 2.26× |
 
-  ── step E: rotation — is something much better sitting idle? ──
-  for each candidate c in candidates:
-      if count(held) < 4: stop              // there was room, nothing to swap
-      if c is already held: skip
-      weakest = the held company with the smallest |edge|
-      if strength(c) ≤ 1.5 × |edge[weakest]|: skip     // not better enough
-      sell the whole weakest position
-      held -= weakest
-      cashForBuying = cash − $1b            // money is free again
-      if grow(c): held += c
+   The cost grows with order size, which is why concentrating and fast rotation used to lose: both
+   trade bigger blocks, and each block erodes the edge it was bought for.
+3. **The cycle is visible.** Detecting it from forecasts that cross 0.50 caught 1199 of 1199 cycles
+   with no false positives, which gives the rotation test a real horizon.
 
-  ── step F: top up the keepers with whatever cash is left ──
-  for each candidate c in candidates:
-      if cashForBuying ≤ 0: stop
-      if c is held: grow(c)
+How the design got there, paired against v3 on seeds 1-40:
 
-  grow(c):
-      target = floor(netWorth × weight / price(c))
-      room   = floor(maxShares(c) × 1.0) − (shares held long + shares held short)
-      want   = min(target − shares we already hold on c's side, room)
-      shares = largest number ≤ want whose cost still fits in cashForBuying
-      if shares < 50: return false
-      buy;  cashForBuying -= spent;  return true
-```
+| step | vs v3 | trades | capital deployed |
+|---|---|---|---|
+| v3 | 1.00× | 552 | 91.5% |
+| weights follow actual holdings and share caps | 1.12× | 446 | 95.2% |
+| + spill money a capped slot cannot hold into the next candidates | 1.25× | 340 | 99.9% |
+| + concentrate (3 slots, 50% cap, rotation on value) | 1.49× | 238 | 99.9% |
+| + one slot at 100% with spill | 1.71× | 135 | 99.9% |
+| impact-aware allocation (shipped) | 1.71× | 170 | 98.9% |
 
-## 6. The same tick, both versions
+The last two score the same at $10b; the allocation is shipped because it lowers mean drawdown (4.2%
+against 5.2%) and does not depend on a slot count chosen for one account size.
 
-One tick, $10,000,000 cash, $1,000,000 kept aside, three companies on offer:
+Ideas that did nothing: not entering in the last 2-5 updates before a cycle (±0.01×), a lower or
+higher spill threshold, more spill positions, more open positions, finer slices, a higher exit bar.
+The cycle tick itself is cheap (0.05 log per run), because the edge still averages 0.1× its usual
+value on the flip update. Exiting before a cycle to dodge the 45% flip cannot pay either (by
+arithmetic, not measured): it saves at most 0.45 of one update's edge and pays a round trip on the
+55% that would have kept their edge.
 
-| | price | volatility | forecast | edge = (2f−1)×vol | expected profit/tick |
+## 6. Results
+
+`pnpm run test:stock -- --seed-range 1-100` ($10b, 3000 updates = 5 hours):
+
+| | mean return | median | trades | mean max drawdown | worst drawdown |
 |---|---|---|---|---|---|
-| calm | $100 | 0.004 | 0.65 | 0.0012 | 0.06% |
-| wild | $500 | 0.020 | 0.62 | **0.0048** | **0.24%** |
-| dull | $50 | 0.010 | 0.45 | −0.0010 | −0.05% |
+| with 4S | +11,300% | +9,890% | 180 | 4.70% | 27.80% |
+| without 4S (seeds 201-300) | +834% | +483% | 336 | 23.50% | 58.64% |
 
-**Version 1** — forecast is what matters, so `calm` (0.65) is the top pick and `wild` (0.62) comes
-second. Its per-company slice is 12% of $9m = $1.08m:
+Against the earlier versions on the same seeds (section 12 describes them), paired net worth:
 
-- buys 9,800 `calm` = $1.08m
-- buys 1,960 `wild` = $1.08m
-- `dull` fails both thresholds, ignored
-- **Result: $2.16m invested, $6.84m left idle.** It bought the *worse* company first, gave it the same
-  money, and had no way to spend the rest.
+| | v1 | v2 | v3 |
+|---|---|---|---|
+| seeds 1-100 | 10.76× (100/100) | 1.86× (95/100) | 1.73× (93/100) |
+| seeds 201-400, never used to choose anything | — | — | 1.81× (194/200) |
+| without 4S, seeds 201-300 | — | — | 1.33× (67/100) |
 
-**Version 2** — `calm`'s edge (0.0012) is below the 0.0025 threshold, so it is not a candidate at all.
-`wild` (0.0048) is the only candidate:
+Robustness, seeds 201-240, paired against v3: $100m 1.53×, $1b 1.44×, $100b 1.53×, $1t 1.05×; 1000
+updates 1.14×, 10 000 updates 1.29×. At $1t the market is the limit rather than the rules: only ~40%
+of the money can be placed in companies that clear the entry edge.
 
-- weight = min(0.34, 1/1) = 0.34 → target = 34% of $10m / $500 = 6,800 shares
-- buys 6,800 `wild` = $3.4m
-- `dull`: −0.0010 does not reach −0.0025, ignored
-- **Result: $3.4m in the one company with a real edge, $6.6m left idle.**
+**Concentration has a tail.** A small account holds one or two companies, so a cycle flip on that
+company hits most of the portfolio: the worst of 100 seeds draws down 27.8% (v3: 10.2%). `maxWeight
+0.6` trades some return for less of this (1.56× v3 instead of 1.71×, mean drawdown 3.6% on seeds
+1-40). Without 4S the drawdowns are deeper still, because the estimated edge is often wrong about
+which company deserves the concentration.
 
-Leaving money idle is intentional: if no company's edge is large enough to pay for the round trip,
-holding cash is the better trade. Version 1 could never do that — its only cash rule was "buy whatever
-clears 0.60".
-
-Then, on the following ticks, the two diverge further:
-
-- If `wild`'s edge falls to 0.001, version 2 keeps it (still positive) but stops adding. When the
-  forecast eventually crosses 0.50 and the edge turns negative, it sells the whole thing at once —
-  **2 transactions for the whole stay in the position**.
-- Version 1 would sell at forecast < 0.50 and buy again the moment it crossed 0.60, so a wobbling
-  company costs it 2 transactions per wobble. That is the entire explanation for 26,334 trades vs 597.
-
-## 7. Why the numbers moved so much
-
-| | v1 | current |
-|---|---|---|
-| which companies | forecast ≥ 0.60, i.e. calm ones first | largest edge first, i.e. jump size counted |
-| how many | up to ~8, forced equal weight, trimmed when big | 4, equal weight, never trimmed |
-| when to sell | forecast < 0.50 | expected move ≤ 0 |
-| switching | none | only when a new company is 1.5× better |
-| trades per 5h run | 26,307 | 584 |
-| commission paid | $2.63b | $58m |
-| $10b start, 100 seeds | +881% | **+5738%** |
-| same-seed ratio (paired) | — | **5.79×** (95% 5.44×–6.17×) |
-| worst drawdown | −1.4% | −3.2% (worst seed −9.1%) |
-
-Fewer, bigger, longer positions in the jumpiest favourable names; ~45× fewer fees; ~6.5× the return,
-for roughly twice the drawdown.
-
-## 8. How long you run it changes the answer
-
-The comparison in section 7 is measured over **3000 updates** (5 hours). Keep running and it stops
-meaning the same thing, because the market has a *fixed size* and your money does not.
-
-Two hard limits:
-
-- **`getMaxShares`** — you may never own more than 20% of a company's shares, and that share count
-  never grows.
-- **`maxWeightPerSymbol`** — the strategy aims for at most 34% of net worth in one name.
-
-Starting with $10b, a 34% target is a few billion dollars, far below those caps, so the rules decide
-everything. Start compounding and the target grows past the caps instead: every position becomes
-"all the shares there are", the strategy turns away new ideas because its 4 slots are full of shares
-it cannot sell without giving up a good name, and the cash pile grows faster than anything can be
-bought with it.
-
-`capital ... % of net worth in positions` (the new line in the aggregate report) is how you see it:
-
-| updates | game time | v1 capital deployed | current capital deployed | current vs v1 |
-|---|---|---|---|---|
-| 3000 | 5h | 95% | 91% | **5.79×** (100 seeds, 100/100 better) |
-| 10000 | 17h | — | — | 6.0× (one seed) |
-| 20000 | 33h | — | — | 2.3× (one seed) |
-| 30000 | 50h | 32% | 22% | **3.14×** (100 seeds, 84/100 better) |
-
-The last row is why you have to average over many seeds. At 30,000 updates roughly three quarters of
-both portfolios is idle cash, so which names happened to be at their cap during a price run is most of
-the outcome. One seed therefore proves nothing:
-
-- seed 1337 — v1 wins, $105.9t vs $51.9t
-- seed 11310 — current wins, $101.1t vs $29.7t
-- seed 21283 — current wins, $268.8t vs $59.5t
-- **100 seeds** — current wins on 84 of them; geometric mean ratio 3.14×, 95% interval
-  2.45×–4.03×. The spread is so wide that the standard deviation of the mean return (±6,649,063%)
-  is *larger than the mean itself* (+4,321,255%). Even the losing seeds lose big: seed 1337 alone
-  suggests v1 is twice as good, which is not true on average.
-
-One knob moves that number further than the gap between the strategies (30k updates, 3 seeds):
-
-| change | mean net worth |
-|---|---|
-| `entryEdge` 0.0025 → 0.006 (fewer, pickier entries) | $186t |
-| `maxPositions` 4 → 1 | $320t |
-| `maxShareFraction` 1.0 → 0.25 | $287t |
-| nothing (defaults) | $141t |
-
-Smaller positions are *easier to roll over*: a capped-out $50t holding cannot be rotated into the
-next winner, but a $12t one can. None of this is reachable in the game — a BitNode run ends long
-before $10b turns into $100t — so 30,000 updates is a stress test of the model, not a target.
-
-**Use 3000 updates for judging strategy changes.** Watch `capital` stay above ~60%: below that, extra
-time can no longer compound and you are measuring luck.
+## 7. Capital and horizon
 
 ### Capital decides the early game
 
-The other axis is capital, and it matters far more at the start of a run than any rule change. The
-commission is a **fixed $100 000 per transaction** — it does not scale with the size of the trade — so
-its cost relative to the position falls only as the account grows. Measured over 1000 updates
-(20 seeds, stream 5, v3):
+The commission is a **fixed $100 000 per transaction**, so its cost relative to the position falls
+only as the account grows. Measured over 1000 updates (20 seeds, `--seed-stream 5`):
 
-| starting capital | mode | commission paid | mean return |
-|---|---|---|---|
-| $1b | 4S | 0.7% of capital | +357% |
-| $100m | 4S | 6.9% | +351% |
-| $30m | 4S | 22% | +311% |
-| $10m | 4S | 69% | +176% |
-| $3m | 4S | 133% | **−41%** (median −77%) |
-| $100m | no 4S | 19% | +46% |
-| $30m | no 4S | 56% | **−8%** |
-| $10m | no 4S | 108% | **−96%** |
-| $3m | no 4S | 100% | **−99%** |
-| $1m | no 4S | 101% | **−101%** (net worth goes negative on shorts) |
+| starting capital | with 4S | without 4S |
+|---|---|---|
+| $1b | +433% | +68% |
+| $100m | +418% | +67% |
+| $30m | +419% | +69% |
+| $10m | +388% | +23% |
+| $3m | +305% | **−76%** (median −97%) |
 
-Three things follow, in order of how much they matter early:
+With 4S the strategy trades rarely enough (15–25 trades in 1000 updates) that even $3m comes out
+well ahead; the old four-slot strategy lost 41% there. Without 4S — which is what a fresh BitNode
+has, since the 4S Market Data TIX API costs $25b — it needs roughly $10m before trading beats idling. The benchmark
+prints a warning once commission passes 25% of the starting capital.
 
-1. **v2 is completely inert at or below $1b**, because `moneyKeep` is an *absolute* $1b and every buy
-   is sized from `cash − moneyKeep`. At `--capital 1b` it makes 0 trades and returns +0.00%; lowering
-   the reserve to 0 on the same run gives +356%. v3 has no such wall (it reserves 0.1% of net worth),
-   and with the reserve removed the two strategies are the same at this size (+356% vs +357%) — the
-   whole v3 advantage at $10b was the reserve and the tilt. For a small account, run v3 or pass
-   `moneyKeep = 0`.
-2. **Small accounts lose money to fees, and the no-4S regime — which is what a fresh BitNode
-   actually has, since the 4S APIs cost $31b — is the worst of it.** Without 4S the run gains nothing
-   below ~$100m and the loss deepens fast ($30m −8%, $10m −96%, $3m −99%); with 4S the break-even is
-   far lower (still a gain at $10m, −41% at $3m). Trading there is worse than idling, and the
-   benchmark prints a warning once commission passes 25% of the starting capital.
-3. **Use fewer positions while the account is small.** Fees scale with trade count, and fewer slots
-   mean bigger positions and fewer rotations:
+### How long you run it changes the answer
 
-   | capital | 3 positions | 4 positions |
-   |---|---|---|
-   | $10m (1000 updates) | **+256%** | +174% |
-   | $30m (1000) | **+348%** | +315% |
-   | $100m (1000) | **+376%** | +355% |
-   | $1b (1000) | **+393%** | +366% |
-   | $10b (3000, 40 seeds) | +5,026% | +5,688% (5 positions: +5,859%) |
-
-   The crossover is somewhere between $1b and $10b: above it the extra slot earns more than its fees,
-   below it the fees dominate (1000-update rows are 12–20 seeds; the $10b row is 3000 updates and 40).
-
-The no-4S knobs themselves are already at their best measured values — `historyTicks 40` beats 20
-(+158%) and 10 (−74%) by a wide margin, `no4sEntryEdge 0.004` beats 0.006 and 0.008, and
-`maxPositions 4` beats 3 and 2 at $10b. Improving that path needs a better signal, not better knobs.
+The market has a *fixed size* and your money does not. `getMaxShares` is 20% of a company and never
+grows, so as the account compounds, more and more of it cannot be placed above the entry edge. The
+aggregate report's `capital ... % of net worth in positions` shows it: below ~60%, extra time can no
+longer compound and the score measures which companies happened to be capped during a price run.
+**Use 3000 updates for judging changes**; at very long horizons a single seed can suggest the opposite
+verdict, and only many seeds are trustworthy.
 
 ### What counts as a valid number of updates
 
-One update is one 6-second stock tick *and* one strategy decision, so the number is "how many
-decisions, and how much time". Requirements, from strict to advisory:
-
 | rule | why |
 |---|---|
-| whole number, **1 or more** | The CLI rejects anything else (`--ticks 0` is an error); the GUI clamps to 1. Fractional values are truncated. |
-| **4 or more** for the no-4S estimate | The estimator needs at least 3 log returns, i.e. 4 recorded prices before it can make its first decision. Under that the run never trades and ends flat. |
-| **41 or more** for the no-4S estimate to be at full strength | `historyTicks` defaults to 40, so the window only fills at update 41. Shorter runs trade on a partial window and behave more erratically. |
+| whole number, **1 or more** | The CLI rejects anything else (`--ticks 0` is an error); the GUI clamps to 1. |
+| **4 or more** for the no-4S estimate | The estimator needs at least 3 log returns before its first decision. Under that the run never trades. |
+| **41 or more** for the no-4S estimate to be at full strength | `historyTicks` defaults to 40, so the window only fills at update 41. |
 | **2 or more** to draw a chart | A single point has no line. |
-| multiples of 75 if you care about cycle boundaries | The game's forecast drift runs in 75-update cycles; the model wraps them, so nothing breaks, but a run that stops mid-cycle ends on an arbitrary forecast state. |
-| **~20,000 or less** for a meaningful comparison | Past that the market's share caps bind and the score turns into a draw from a wide distribution (section 8's table). |
+| **~20,000 or less** for a meaningful comparison | Past that the share caps bind and the score turns into a draw from a wide distribution. |
 
-In 4S mode there is no warm-up at all: one update already buys four names, which is why `--ticks 1`
-shows a real (fee-dominated) loss rather than nothing.
+## 8. Measuring a change honestly
 
 ### How many seeds is enough
 
-One seed cannot separate two strategies whose results differ by 5× on average, because the spread
-between seeds is comparable to the mean. The benchmark therefore reports a **paired** comparison: both
-strategies are run on the *same* seeds, so each seed contributes one ratio (current net worth ÷ v1 net
-worth) instead of two independent noisy numbers.
+One seed cannot separate two configs, because the spread between seeds is comparable to the mean.
+`--compare` (CLI) and the GUI's cards therefore report a **paired** comparison: both configs run on
+the *same* seeds, so each seed contributes one ratio instead of two independent noisy numbers.
 
 ```
-paired  net worth ratio current/v1, same seed: 100/100 seeds better | geometric mean 5.79x (95% 5.44x - 6.17x) | median 5.83x
-verdict current is better on average (95% interval excludes 1x)
+paired  net worth ratio this config / shipped defaults, same seed: 93/100 seeds better | geometric mean 1.73x (95% 1.61x - 1.86x)
+verdict this config is better on average (95% interval excludes 1x)
 ```
 
-Read it as: on a typical seed the current strategy ends with ~5.8× more money, and the interval says
-that even in the worst case for the measurement it is above 5.4×. The interval is 95% by the usual
-normal approximation on the log ratios, so it is a guide to how much is noise, not a guarantee.
-
-At the default 3000 updates, 20–25 seeds is already plenty (the interval is narrow). Use 100 seeds
-when you want to check something subtle, or when comparing at a long horizon where a single seed can
-lie.
+At 3000 updates, 20–25 seeds is enough to see a real difference; use 100 for something subtle.
 
 ### Where the seeds come from
 
-Seeds are not `1, 2, 3, ...`. The benchmark draws them from a **deterministic pseudo-random stream**:
-the *Seed* field picks which sequence, *Seeds* is how many of it to use. Two properties matter:
-
-- **Reproducible.** The same stream and count always produce the same seeds, so a result can be
-  repeated exactly.
-- **Prefix.** Asking for 50 seeds gives the first 50 of what 100 would give, so raising the count
-  only *adds* markets; it never replaces the sample you already measured. Averaging the same custom
-  strategies over different counts stays comparable.
-
-The reason is that contiguous seeds share market structure — every run in `1..100` starts from
-market 1, then 2, and so on — while a fixed stride keeps whatever correlation the stride happens to
-have. A pseudo-random draw avoids both, and the GUI prints the first few seeds it is using under the
-market fields so the sample is never a mystery. On the command line, `--seed-stream <seed> --seeds <n>`
-reproduces exactly what the page ran, and `--seed-range a-b` still runs an explicit contiguous range
-when you want one by name.
+Seeds are drawn from a **deterministic pseudo-random stream**: the *Seed* field picks the sequence,
+*Seeds* is how many of it to use. The same stream and count always produce the same seeds, and asking
+for 50 gives the first 50 of what 100 would give, so raising the count only adds markets. Contiguous
+seeds share market structure; a pseudo-random draw does not. `--seed-stream <seed> --seeds <n>`
+reproduces exactly what the page ran, and `--seed-range a-b` still runs an explicit range.
 
 ### How the chart averages several seeds
 
-The graph plots **net worth on a logarithmic axis**: money compounds, so equal vertical distance is an
-equal multiple ($10b → $100b is the same height as $100b → $1t). On the old linear "% return" axis a
-5,000% and a 10,000% run were plotted wildly far apart, which made the band unreadable.
-
-Per strategy it draws two things:
-
-- **the median seed** (solid line) — the middle of the pack, i.e. what a typical run looks like. The
-  *mean* is not used for the line because compounding has a long right tail: at 30,000 updates the
-  mean return (+4,321,255%) is almost 3× the median (+1,472,872%), so a mean line would be dragged up
-  by a handful of explosive runs and would not describe anything you would actually experience.
-- **a p10–p90 band** (shaded) — the middle 80% of seeds. Its width *is* the result: a band that fans
-  out over time means the outcome is mostly luck, and two strategies whose bands overlap heavily are
-  not meaningfully different.
-
-Every line on the chart runs on every seed, including the buy-and-hold reference: a hold return varies
-so much between markets that one seed's hold, set against a multi-seed strategy mean, is noise
-wearing a number's clothes (on 1000 seeds the same page showed `hold 1 seed +38.23%` next to a
-`+6 457%` mean). Holding buys once, so a hold run costs a fraction of a strategy run.
-
-Both are the `aggregateCurves()` helpers in `bench/stock/stockBenchCore.ts`, so the CLI and the page
-compute them identically. The exact end-of-run numbers stay in the cards above the chart (mean,
-median, worst seed, std dev) for those who want the tail as well as the middle.
-
-**Money keep is the account's, not the strategy's.** The comparison draws each line with its own
-config — that is the point — except `moneyKeep`, which every line takes from the form, and which v1's
-frozen config also honours. It is a cash policy (how much you refuse to invest), not a trading rule,
-and leaving it per-line produced a chart where the shipped `$1b` reserve made *every* line except the
-form's a flat `+0.00%` on a `$250m` account: v2 as shipped, v1, and any genome tuned on a `$10b`
-account all silently did nothing. For the same reason a line that made no trades is labelled
-**`(no trades)`** rather than shown as a result, and the status bar says why.
+The chart plots **net worth on a logarithmic axis** (money compounds, so equal height is an equal
+multiple). Each line is the **median seed** with a **p10–p90 band**: the median because compounding
+has a long right tail that drags a mean upward, the band because its width is the result — two lines
+whose bands overlap heavily are not meaningfully different. Every line, including buy-and-hold, runs
+on every seed. `moneyKeep` comes from the form for every line, because it is the account's cash
+policy rather than part of a config; a line that never traded is labelled `(no trades)`.
 
 ## 9. How to watch it happen
 
-- `pnpm run stock:viz` → open `bench/stock/stockTraderViz.html`. One run draws **every strategy and
-  version at once** — v1, v2 and v3 as they ship, each tuned genome that has been stored, the config
-  being edited, and the hold reference — each as the median seed with a p10–p90 band on a log axis.
-  *Seed* picks the seed stream and *Seeds* how many markets to draw from it; the default 25 finishes
-  in under a second, 100 in about two.
-- **Editing** (in the Strategy config panel) only chooses whose config the form edits; it never
-  changes which lines are drawn. Each strategy keeps its own saved config.
-- **The legend is the switchboard.** It is a table — series, seeds, median return, p10, p90 — so the
-  numbers line up, and clicking a row hides that line; clicking again brings it back. The axis rescales
-  to what is still drawn. A line that never traded says `(no trades)` instead of showing a flat result.
-- `pnpm run test:stock -- --compare --seed-range 1-100` prints the same paired comparison in the terminal.
-- `pnpm run test:stock -- --compare --seeds 25` does the same with 25 seeds spaced 9,973 apart.
-- `pnpm run test:stock -- --strategy v1` runs the frozen baseline on its own.
-- In game, the trader's Positions tab now shows an **Edge** column next to Forecast and Vol, so you can
-  see the exact ranking the script is acting on.
+- `pnpm run stock:viz` → open `bench/stock/stockTraderViz.html`. One run draws the config **as
+  shipped**, the stored **tuned** genome, the **edited config** (only when it differs from both), and
+  the buy-and-hold references, each as the median seed with a p10–p90 band. The cards compare the
+  edited config with the shipped one on the same seeds.
+- **The legend is the switchboard.** It is a table — series, seeds, median return, p10, p90 — and
+  clicking a row hides that line; clicking again brings it back. The axis rescales to what is drawn.
+- `pnpm run test:stock -- --rotation 4 --compare --seed-range 1-100` prints a changed config's paired
+  comparison against the shipped defaults in the terminal.
+- In game, the trader's Positions tab shows an **Edge** column next to Forecast and Vol, so you can
+  see what the script is acting on.
 
 ## 10. Tuning the config by search
 
-The nine knobs in section 5 were set by hand: a grid sweep here, a measurement there. The benchmark
-can also search them itself, using the same genetic algorithm the IPvGO bench uses for its search
-widths (`ipvgo-engine/cpp/game/game_cli.cpp`, `runTune`), ported to `bench/stock/stockTuner.ts`.
+The benchmark can search the config itself, using the same genetic algorithm the IPvGO bench uses for
+its search widths (`ipvgo-engine/cpp/game/game_cli.cpp`, `runTune`), ported to
+`bench/stock/stockTuner.ts`.
 
 ### What is a genome, and what is fitness
 
-A **genome** is one candidate config: the entry and exit edge, the rotation margin, max positions,
-max weight per symbol, max share fraction and whether shorts are allowed. Without 4S data three more
-genes join (entry edge, rotation margin and history length for the price estimate) — a gene that
-cannot change the outcome would only be noise. `moneyKeep` and `minShares` stay out: they are
-questions of scale, not strategy.
+A **genome** is one candidate config: entry and exit edge, rotation hurdle, max positions, max weight,
+max share fraction, impact scale, cash reserve, and whether shorts are allowed. Without 4S data three
+more genes join (entry edge, rotation hurdle and history length for the estimates) — a gene that
+cannot change the outcome would only be noise. `moneyKeep`, `minShares`, `minNewWeight` and `slices`
+stay out: they are questions of scale or precision, not strategy.
 
-**Fitness** is the mean of `log(final money / starting money)` over the training seeds — i.e. the
+**Fitness** is the mean of `log(final money / starting money)` over the training seeds — the
 *geometric* mean growth. Ties break toward the lower drawdown. Not the plain mean return: one
 explosive seed would decide a genome's fate.
 
 ### Three ideas that make it work
 
-1. **Common random numbers.** Every genome in a generation is measured on *identical* seeds. A
-   difference between two genomes is then a difference in their behaviour, not in which markets they
-   drew. It is the same trick as the paired comparison in section 8, one level up.
-2. **Fitness is a pure function of the genome.** The same genome on the same seeds always scores the
-   same, so a genome seen in an earlier generation is taken from a cache instead of being re-run.
-   Elitism means at least one such genome exists every generation once the search converges, and the
-   panel prints how many were reused.
-3. **Held-back validation.** A search will happily find a genome that exploits the seeds it was
-   given. So the winner is re-measured against the shipped defaults on 3× as many seeds (at least
-   60) that the search never saw, and reported with the per-seed paired difference. *This is the
-   number that decides whether to keep it*; the training number only says the search is working.
+1. **Common random numbers.** Every genome in a generation is measured on *identical* seeds, so a
+   difference between two genomes is a difference in their behaviour, not in which markets they drew.
+2. **Fitness is a pure function of the genome.** A genome seen in an earlier generation is taken from
+   a cache instead of being re-run.
+3. **Held-back validation.** A search will happily find a genome that exploits the seeds it was given.
+   The winner is re-measured against the shipped defaults on 3× as many seeds (at least 60) that the
+   search never saw, with the per-seed paired difference. *That is the number that decides whether to
+   keep it.*
 
 ### The loop
 
@@ -546,207 +341,66 @@ repeat for each generation:
     keep the best two   (elitism)
     fill the rest: tournament-of-2 parents -> uniform crossover per gene
                    -> 40% chance of nudging each gene, clamped to its range
-                   -> retry duplicates away, then force a fresh gene value
 winner: re-measure against the defaults on held-back seeds, report the paired gain
 ```
 
-Gene ranges are deliberately narrow (`entryEdge` 0.0005–0.008, `maxPositions` 1–8, and so on). A wide
-box is worse, not better: an entry edge above ~1.5%/tick never fires on the model, so such a genome
-never trades, scores a flat 0 and teaches the search nothing. Similarly the search clamps
-`exitEdge < entryEdge`: with the exit at or above the entry, every position closes the tick after it
-opens, which is a pure churn loop worth about −90% however good the market is.
+Gene ranges are deliberately narrow. An entry edge above ~1.5%/tick never fires on the model, so such
+a genome never trades and teaches the search nothing; and the search clamps `exitEdge < entryEdge`,
+because an exit at or above the entry closes every position the tick after it opens.
 
 ### How to read the numbers
 
-```
-gen 2/6  best +6 254.86% (+8.51% vs default)  [2 reused, 4 measured]  <- new best
-rank  entry edge  exit edge  ...   growth      +-se        vs default   maxDD
-   1      0.0025    -0.0015  ...  +6 254.86%  +-15.04%    +8.51% +-7.24%  -4.73%
-   2      0.0025     0.0000  ...  +5 756.66%  +-12.31%    +0.00% +-0.00%  -3.57%
-```
-
 - **growth** is the geometric mean return over the training seeds, **±se** its standard error. A gap
   smaller than about two standard errors is not yet a gap.
-- **vs default** is the paired difference against the shipped config on the same seeds, with the
-  standard error of *that*. This is the honest "is it better" column: pairing removes the seed-set
-  luck that inflates the ±se above it.
+- **vs default** is the paired difference against the shipped config on the same seeds. This is the
+  honest "is it better" column.
 - **maxDD** is the average worst drawdown, the tie-breaker.
 
-The example above is a real run: +8.5% on the training seeds, then −5.2% ±4.2% on the held-back
-seeds, better on only 27 of 60. That is the tool working. Sixteen training seeds and seven genes is
-enough to fit noise, and the search will do exactly that if you let it.
+Sixteen training seeds and nine genes is enough to fit noise, and the search will do exactly that if
+you let it: a training gain that turns negative on the held-back seeds is the tool working.
 
 ### Running it
 
-Both v2 and v3 can be tuned, and each keeps its own result. v3's genome carries two extra genes —
-`weight tilt` (0–2) and `cash reserve` (0–2%) — on top of the shared trader config, so a search on v3
-decides its conviction curve and reserve alongside the entry/exit rules.
+- GUI: **Genetic tuning** section. The result is stored and charted as **tuned**; *Apply best to
+  form* loads it into the config. **Export** saves it as `stock-tune-yyyy-mm-dd-hh-mm.json` (the
+  genome, the growth it scored, how far the search ran, and the config it was measured against);
+  **Import file...** replaces the stored result. Imported genes are clamped to the search's own
+  ranges and unknown genes dropped, so a hand-edited file cannot quietly change what is drawn. Files
+  from the old v2/v3 tuner are refused: their genes no longer exist.
+- CLI: `pnpm run test:stock -- --tune --seed-range 1-40 --population 8 --generations 6`. The seeds
+  given are the training seeds (at least 4, else a block of 16 from `--seed`), `--tune-seed` seeds
+  the search itself.
+- More seeds beat more generations, and a genome is only meaningful for the market it was measured
+  on: capital, update count, BitNode and 4S availability all move the answer.
 
-- GUI: **Genetic tuning** section. The **Target** dropdown picks v2, v3, or **v2 and v3**; *both*
-  runs the two searches in lockstep — each generation's genomes go to the worker pool as one batch —
-  so it costs the pool's throughput, not twice the wall clock. The panel shows one table per strategy
-  (each with the gene columns that strategy has) and a hint line for both stored results at once.
-  *Apply best to form* loads the stored genome of whichever strategy the form is **editing**.
-- Every run draws the whole comparison: **v2 tuned** (green), **v3 tuned** (magenta), **v2** as
-  shipped (blue), **v3** as shipped (violet) and **v1** (amber), each as its median seed with a
-  p10–p90 band, plus the buy-and-hold reference and the config being edited. The legend is a table
-  (series, seeds, median return, p10, p90) and each row toggles its line off and on. The status line
-  reports both tuned lines' paired ratio against v2. Any line whose results duplicate another (the
-  form usually equals the shipped config) is dropped rather than drawn twice.
-- CLI: `pnpm run test:stock -- --tune --strategy v3 --seed-range 1-40 --population 8 --generations 6`.
-  The seeds given to `--seed-range` are the training seeds (at least 4, else a contiguous block of 16
-  starting at `--seed`), `--tune-seed` seeds the search itself, and the winner is printed with its
-  held-back numbers and as JSON when `--json` is set.
-- **Export both** saves the two results in one file, `stock-tune-yyyy-mm-dd-hh-mm.json`, shaped
-  `{"v2": entry, "v3": entry}` where an entry is the genome, the growth it scored, how far the search
-  ran, and the config it was measured against. **Import file...** replaces both strategies with the
-  file's contents — replaces, not merges, so a file holding only v2 clears v3 instead of leaving a
-  stale v3 line on the chart. Imported genes are clamped to the ranges the search itself uses, unknown
-  genes are dropped, and an entry with no usable genome is skipped and counted, so a corrupt or
-  hand-edited file cannot quietly change what is drawn. Each strategy's form config
-  (`toolui.stockBench.config.*`) is separate and is not touched by either button.
-- More seeds beat more generations. Twenty-five seeds x 6 genomes x 6 generations takes a few
-  seconds with workers and is a reasonable starting point; twelve seeds will overfit.
-- A genome is only meaningful for the market shape it was measured on: capital, update count, BitNode
-  and 4S availability all move the answer, so re-tune when those change.
+### What the search remembers
 
-### What the search remembers, and why that matters
+The search caches one score per genome for the whole run, so **everything a cached score holds is
+multiplied by every genome ever tried**. Holding each seed's equity curve cost 680 KB per genome at
+3000 updates and 7.9 MB at 40 000, which killed the browser tab on long searches. A cached score now
+keeps only the scalars (13–14 KB at any horizon); the curve is re-measured once for the winner
+whenever it improves, and the GUI's workers never send training curves back at all.
 
-The search never measures the same genome twice: it caches one score per genome for the whole run,
-which is what the `reused` counts report and what lets a run pick up where it left off. The
-consequence is that **everything a cached score holds is multiplied by every genome ever tried**, and
-a serious search tries hundreds.
+## 11. When there is no 4S data
 
-It used to hold the whole benchmark result, including each seed's equity curve — one number per stock
-update. Measured, per genome:
-
-| retained | 3 000 updates | 40 000 updates |
-|---|---|---|
-| full results (old) | 680 KB | 7.9 MB |
-| score only (now) | 13 KB | 14 KB |
-
-So 240 genomes cost 158 MB at the short horizon and would have cost several GB at the long one:
-100 seeds x 20 generations x 12 population is about 240 genomes, and the browser tab was being killed
-for exactly that reason. A cached score now keeps only the scalars — growth, drawdown, trade count,
-paired ratios — with the curve and per-symbol tables blank. The curve is measured again, once, for
-the winner whenever it improves, because that is the one line the chart draws; the GUI's workers are
-also told the training jobs are *lite* and never send curves back at all.
-
-Retained memory is now independent of how long the market runs, so the horizon you pick for accuracy
-no longer decides how much RAM a tuning session needs.
-
-## 11. Version 3: conviction sizing and a proportional reserve
-
-v3 (`src/libraries/stock/traderV3.ts`) keeps v2's rules — same entry threshold, same exit at
-edge ≤ 0, same rotation, same share caps, same add-up-to-target — and changes two things:
-
-1. **The cash reserve is a fraction of net worth, not an absolute sum.** v2 keeps `moneyKeep`
-   ($1b), which is 10% of a $10b account and nothing to a $10t one, so a compounding account leaves
-   a tenth of its capital idle for the whole early run (measured: 90.8% invested against a 4 × 34%
-   target). v3 reserves 0.1% of net worth.
-2. **Slot weight follows conviction.** Each slot's weight is `|edge|^tilt` instead of equal, with
-   `tilt = 1` meaning "in proportion to expected return". `tilt = 0` reproduces v2 exactly.
-
-Measured, paired against v2 on the same seeds (3000 updates, $10b):
-
-| idea | paired ratio vs v2 |
-|---|---|
-| Kelly weights (μ/σ²) | 0.83× |
-| Kelly, slots picked by edge | 0.86× |
-| 8 positions at 12.5% each | 0.50× |
-| 2 positions at 50% each | 0.95× |
-| half the share cap | 0.82× |
-| trimming over-weight positions back to target | 0.81× |
-| exit at +0.15%/tick | 1.00× |
-| **tilt 1 + fractional reserve** | **1.07× (1.04–1.11), 75/100 seeds** |
-| same, seeds 201–400 (never used to choose it) | **1.08× (1.05–1.10), 140/200 seeds** |
-
-Two lessons worth keeping:
-
-- **Kelly is too conservative for this market.** It divides by variance, but an edge persists for
-  roughly ten updates, so a volatile position is much less risky over its life than the per-tick
-  variance implies. Weighting linearly in edge beats weighting by edge/variance.
-- **Never trim.** Selling a position back down to its target because the price drifted is a
-  per-tick sell loop: 7× v2's trade count and 0.81× its return. Only the exit rule and the rotation
-  rule take money out.
-
-Result on the default horizon: v2 +5,738% → v3 +6,257% mean, drawdown unchanged (3.15% vs 3.17%),
-fewer trades (550 vs 584), and 6.22× over v1 on 100/100 seeds.
-
-- GUI: set **Editing** to v3 (the chart draws v3 either way; Editing decides whose config the form
-  edits) and the `v3 (conviction)` line appears with the shipped `v2`, `v3` and `v1` lines, plus a
-  `vs v2 same seed` paired card.
-- CLI: `pnpm run test:stock -- --strategy v3 --compare --seed-range 1-100` prints the paired
-  comparison against both v2 and v1. Knobs: `--v3-kelly` (tilt), `--v3-reserve`, `--v3-band`,
-  `--v3-gross`.
-
-## 12. Is there anything drastic left?
-
-Short answer: no, and this can be measured rather than argued.
-
-Every update, a position of weight `w` in a symbol with edge `e` earns expected log growth `w·e/2`.
-So an ideal trader with **no costs** that holds the four strongest edges at 25% each grows by
-`sum(top four edges)/8` per update. That is a hard ceiling for any four-slot strategy, and
-`--headroom` prints it next to a run (20 seeds, 3000 updates):
+The 4S Market Data TIX API is what publishes the forecast. Without it the game does not merely hide
+the number — `ns.stock.getForecast()` and `ns.stock.getVolatility()` **throw**. Everything else still
+works: prices, ask/bid, positions, `getMaxShares`, purchase costs, buying and selling. So the strategy
+estimates both from the prices it records itself:
 
 ```
-headroom  ideal 4-slot trader with no costs: +50 618.94%   ideal 1-slot: +179 952.09%
-          this run got +6 281.80%, 66.7% of the ideal in log terms
-          mean strongest edge 0.50%/update, mean top-4 sum 1.66%/update, mean spread 0.54%/side
-          tracking the ideal needs 155 swaps at that spread, costing 42.09% of the portfolio
+every tick, for each company: remember the price (the last historyTicks + 1, default 41)
+
+edge estimate       = 2 × (average log return per update over the window)
+volatility estimate = 2 × (average absolute log return per update)
+outlook estimate    = edge estimate ÷ volatility estimate × 50
 ```
 
-So ~34% of the ceiling is theoretically unclaimed. It is not reachable, and the tool above shows
-why: that ideal holds whatever is momentarily strongest, and the set of four strongest names changes
-155 times per run. Every one of those changes is a round trip at 0.54–0.92% per side, and the
-arithmetic there is optimistic — it ignores commission on every leg and ignores that weights drift
-every update, so a real tracker rebalances constantly.
+Both follow from section 2: one update moves the price by `± v × volatility` with `v` uniform on
+[0, 1], so the mean log return is half the edge and the mean absolute log return is half the
+volatility.
 
-Measured attempts to close the gap, paired against v2 on the same 100 seeds:
-
-| attempt | result |
-|---|---|
-| rotate to any better candidate (`rotateMargin 1`) | 0.95×, drawdown −47% |
-| no entry threshold, never exit, equal 25%, track the set | **+61% total** instead of +6,257% |
-| same, with a 5% rebalance band | +51% |
-| same, with a 25% share cap | +57% |
-| 8 slots at 12.5% (`maxPositions 8`) | 0.50× |
-| looser entry/exit + slightly faster rotation (entry 0.001, exit −0.002, rotate 1.2, weight 0.30) | 1.04× (1.01–1.07), 68/100 |
-
-Every route toward the ceiling loses, and the one that gains (the last row) is worth about as much
-as v3's tilt. The reason is structural: v2 already does the things that mattered — rank by edge,
-hold few names, trade rarely. v1's problem was 26,000 trades a run; once that was fixed, what was
-left was a few percent in sizing decisions.
-
-**In the game this is moot anyway.** v1 alone turns $10b into $98b in five game hours; v3 turns it
-into $636b. Nothing in a BitNode run needs either number, and the benchmark's own capacity limit
-(section 8) bites long before. The remaining work worth doing is robustness, not return: the no-4S
-path, share caps at extreme wealth, and behaviour in game (crash recovery, partial fills).
-
-## 13. When there is no 4S data
-
-The 4S Market Data TIX API (25b) is what publishes the forecast. Without it the game does not merely
-hide the number — `ns.stock.getForecast()` and `ns.stock.getVolatility()` **throw**
-(`NetscriptFunctions/StockMarket.ts`). Everything else still works with only the TIX API: prices,
-ask/bid, positions, `getMaxShares`, purchase costs, buying and selling.
-
-So the strategy switches to estimating the edge from the price history it collects itself:
-
-```
-every tick, for each company:
-    remember the price (keep the last `historyTicks` prices, default 40 = 4 minutes)
-
-    edge estimate = 2 × (average log return per update over that window)
-```
-
-That is not a heuristic picked out of the air: over one update the price moves by `± v × volatility`
-and the up/down coin is biased by the forecast, so the **average log return per update is exactly
-half the edge**. Doubling it estimates the same quantity the 4S forecast gives, in the same units —
-which is why the same threshold means the same thing in both modes.
-
-### How good is the estimate?
-
-Measured over 3 seeds × 4000 updates × 33 companies:
+The edge estimate is real but soft. Measured over 3 seeds × 4000 updates × 33 companies:
 
 | window | corr(estimate, real edge) | corr(estimate, next move) | top 5% realised edge | bottom 5% |
 |---|---|---|---|---|
@@ -756,38 +410,50 @@ Measured over 3 seeds × 4000 updates × 33 companies:
 | 160 | 0.35 | 0.053 | +0.177% | −0.176% |
 | 320 | 0.24 | 0.037 | +0.140% | −0.101% |
 
-So the signal is real but soft: it ranks companies in roughly the right order (top picks really do go
-up, bottom picks really do go down) yet it is far weaker than the real forecast, and it degrades if the
-window is too long because the forecast regime moves on while the average is still remembering the old
-one.
+It ranks companies in roughly the right order, but far less reliably than the real forecast, and it
+degrades if the window is too long because the forecast moves on while the average still remembers
+the old one. Hence the stricter `no4sEntryEdge` (0.3%) and a rotation hurdle of 64 round trips: on
+100 held-out seeds those two settings beat no rotation at all by 1.15× and the old four-slot fallback
+by 1.33×. The cycle cannot be seen without forecasts, so the
+rotation horizon uses half a cycle instead.
 
-### What that changes in the strategy
+The honest summary: blind mode works and is worth running from about $10m, but it is ~13× worse than
+having the forecast, with drawdowns around 24% instead of 5%. Buying 4S is worth far more than any
+tuning here. In game the script prints a warning at startup, the dashboard's Edge column is labelled
+**Edge est**, and Forecast/Vol show `-`.
 
-Two of the four decision rules become unreliable, so both are tightened automatically while running
-blind (the values are in the config, `no4sEntryEdge` and `no4sRotateMargin`):
+## 12. History
 
-- **Entry threshold** 0.0025 → **0.004**. A noisier estimate needs a higher bar to clear the same
-  round-trip cost.
-- **Rotation** 1.5× → **100×**, i.e. effectively off. Comparing two noisy numbers and swapping on the
-  result mostly trades noise, and every swap pays two spreads.
-- Exits and position sizing are unchanged: hold while the estimate stays positive, 4 positions at a
-  quarter of net worth each.
-- Until a company has at least 3 price samples the estimate is `null`: no entry, and existing positions
-  are left alone.
+Four strategies were measured on the same model; only the last remains in the code.
 
-Effect of those two changes alone (15 seeds, 3000 updates, $10b):
+| version | idea | $10b, 3000 updates, 100 seeds |
+|---|---|---|
+| v1 | buy forecast ≥ 0.60, up to ~8 names at equal weight, trim when over-weight | +881%, 26,307 trades |
+| v2 | rank by edge, 4 equal slots, swap at 1.5× the weakest edge, never trim | +5,738%, 584 trades |
+| v3 | v2 with weight ∝ edge and a reserve of 0.1% of net worth instead of $1b | +6,257%, 550 trades |
+| current | impact-aware allocation, cycle-aware value rotation | +11,300%, 180 trades |
 
-| | trades | mean return | mean max DD |
-|---|---|---|---|
-| blind, 4S defaults | 1,663 | +49.6% | −31.6% |
-| blind, tuned | **622** | **+554.7%** | **−12.5%** |
-| with 4S | 583 | +6,689.3% | −3.7% |
-| hold everything (no cost, no decisions) | 33 | +99.6% | −11.8% |
+Lessons that carried forward:
 
-Blind mode beats owning the whole market by ~5.5×, but it is ~12× worse than having the forecast. The
-honest summary: it works, it is worth running if you have no 4S, and buying 4S is worth far more than
-any tuning here.
+- **Rank by edge, not forecast** (v1 → v2, 6.5×): forecast alone prefers calm companies with tiny
+  moves.
+- **Trade rarely and never trim** (v1 → v2): v1 paid $2.6b in commission per run; trimming a
+  position back to target every tick was later measured at 0.81× on v2.
+- **Reserves should be proportional** (v2 → v3): an absolute $1b reserve is 10% of a $10b account and
+  made v2 completely inert at $1b.
+- **Kelly sizing loses** (0.83× on v2): it divides by per-tick variance, but an edge persists for many
+  ticks, so a volatile position is far less risky over its life than its per-tick variance suggests.
+- **What looked like "concentration loses" was impact.** With four fixed slots, 2 positions at 50%
+  measured 0.95× and faster rotation 0.95×; both trade bigger blocks, and the forecast impact of those
+  blocks was not in the cost model. Once allocation priced it, and capped money spilled to the next
+  company, concentrating became the largest single gain.
 
-In game it says so: with no 4S the script prints a warning at startup, the dashboard's Edge column is
-labelled **Edge est** and Forecast/Vol show `-` instead of numbers.
+## 13. Caveats
 
+- **The impact table is game data.** If `InitStockMetadata` changes upstream, update
+  `SHARES_PER_MOVEMENT` in `trader.ts` along with the model.
+- **Missed updates** only blur the cycle count until the next detected cycle resynchronises it.
+- **The game offers a lever the model leaves out.** `hack()` and `grow()` with `{ stock: true }` move a
+  company's hidden forecast target (`PlayerInfluencing.ts`), so a script that grows the servers of
+  companies the trader is long on would push their forecasts the other way from our own trading. The
+  benchmark does not model hacking, so this is untested.

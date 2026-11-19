@@ -1,3 +1,28 @@
+/**
+ * Stock trader: allocate by the edge that will be left *after* our own trades.
+ *
+ * The game moves a stock's forecast toward 50% whenever anyone trades it
+ * (`processTransactionForecastMovement`): every `shareTxForMovement` shares bought or sold take 0.006
+ * off the outlook magnitude, down to a floor of 5. That cost grows with position size, so the right
+ * portfolio changes with the account: a small one should concentrate in the best edge, a large one
+ * should spread out because each further dollar in the same company erodes the edge of every share
+ * already held there. One rule produces both: investable cash goes, one slice at a time, to whichever
+ * company gains the most expected growth from that slice once the slice's own impact is paid. Share
+ * caps fall out of the same rule (a company with no room left gains nothing), so money a capped
+ * company cannot hold flows to the next one instead of idling.
+ *
+ * Positions are closed when their edge turns, and swapped when a candidate's edge, net of the impact
+ * of buying it, earns back its round trip over the time both can be expected to keep their edge.
+ * That horizon uses the market cycle: every 75 updates each company flips direction with probability
+ * 0.45, and with 4S the cycle is detected exactly because a strong forecast cannot cross 50% in an
+ * ordinary update.
+ *
+ * Without 4S the forecast and volatility are estimated from price history and the same rules run on
+ * the estimates, with a higher entry bar and a much higher rotation hurdle.
+ *
+ * docs/stock-trader.md has the derivation and the measurements behind every choice here.
+ */
+
 import { NS } from "@ns"
 import { DEFAULT_STOCK_TRADER_CONFIG, mergeStockTraderConfig, type StockTraderConfig } from "@/libraries/stock/config.js"
 import type { StockPositionSide, StockSymbolSnapshot, StockTraderSnapshot } from "@/libraries/stock/types.js"
@@ -5,17 +30,53 @@ import type { StockPositionSide, StockSymbolSnapshot, StockTraderSnapshot } from
 const POS_LONG: StockPositionSide = "L"
 const POS_SHORT: StockPositionSide = "S"
 
+/** Updates between market cycles (StockMarketConstants.TicksPerCycle). */
+export const STOCK_TICKS_PER_CYCLE = 75
+/** Chance that a company keeps its direction through a cycle (the game flips with probability 0.45). */
+const CYCLE_SURVIVAL = 0.55
+/** Outlook magnitude lost per `shareTxForMovement` shares traded (forecastChangePerPriceMovement). */
+const IMPACT_PER_MOVEMENT = 0.006
+/** Trading cannot push the outlook magnitude below this. */
+const IMPACT_FLOOR = 5
+
+/**
+ * Shares per forecast movement: the midpoint of each company's `shareTxForMovement` range in the
+ * game's InitStockMetadata. The game does not report the drawn value, and the midpoint is within
+ * a factor of two of it, which is enough to tell a cheap company to trade from an expensive one.
+ * Keep in sync with ../bitburner-src/src/StockMarket/data/InitStockMetadata.ts.
+ */
+const SHARES_PER_MOVEMENT: Record<string, number> = {
+  ECP: 60e3, MGCP: 60e3, BLD: 60e3, CLRK: 60e3, OMTK: 60e3, FSIG: 60e3, KGI: 60e3, FLCM: 60e3,
+  STM: 72e3, DCOMM: 72e3, HLS: 72e3, VITA: 72e3, ICRS: 72e3, UNV: 72e3,
+  AERO: 84e3, OMN: 84e3, SLRS: 84e3, GPH: 84e3, NVMD: 84e3,
+  WDS: 33e3, LXO: 72e3, RHOC: 93e3, APHE: 60e3, SYSC: 52.5e3, CTK: 93e3, NTLK: 36e3, OMGA: 60e3,
+  FNS: 120e3, JGN: 33.5e3, SGC: 45e3, CTYS: 48e3, MDYN: 153e3, TITN: 153e3,
+}
+const DEFAULT_SHARES_PER_MOVEMENT = 60e3
+
 function formatMoney(ns: NS, value: number): string {
   return `$${ns.format.number(value)}`
 }
 
-function portfolioValue(ns: NS, symbols: string[]): number {
+/** Positions at market price, shorts marked as (2 * avgShort - price) per share, as the game does. */
+function markedPortfolioValue(ns: NS, symbols: readonly string[]): number {
   let total = 0
   for (const sym of symbols) {
     const [longShares, , shortShares, avgShortPrice] = ns.stock.getPosition(sym)
     const price = ns.stock.getPrice(sym)
     if (longShares > 0) total += longShares * price
     if (shortShares > 0) total += shortShares * (2 * avgShortPrice - price)
+  }
+  return total
+}
+
+/** What the positions would actually fetch now: longs at the bid and shorts at the ask. */
+function liquidationValue(ns: NS, symbols: readonly string[]): number {
+  let total = 0
+  for (const sym of symbols) {
+    const [longShares, , shortShares] = ns.stock.getPosition(sym)
+    if (longShares > 0) total += ns.stock.getSaleGain(sym, longShares, POS_LONG)
+    if (shortShares > 0) total += ns.stock.getSaleGain(sym, shortShares, POS_SHORT)
   }
   return total
 }
@@ -33,20 +94,20 @@ export function hasMarketData(ns: NS): boolean {
   return ns.stock.has4SDataTixApi()
 }
 
-/**
- * Memory the strategy needs between ticks when there is no 4S data.
- *
- * Without 4S the game refuses to report forecasts or volatilities, so the only signal left is the
- * price history the script collects itself. This holds the recent prices per symbol; the bench
- * creates one per scenario so runs never share state.
- */
+/** Memory the strategy needs between updates. One per running trader (the bench makes one per run). */
 export interface StockTraderState {
   /** Prices per symbol, oldest first, at most `historyTicks + 1` entries. */
   prices: Map<string, number[]>
+  /** Updates seen so far (one call per stock update). */
+  tick: number
+  /** Tick on which the last cycle was observed, or null until one has been seen. */
+  lastCycleTick: number | null
+  /** Forecast per symbol on the previous update. */
+  forecasts: Map<string, number>
 }
 
 export function createStockTraderState(): StockTraderState {
-  return { prices: new Map() }
+  return { prices: new Map(), tick: 0, lastCycleTick: null, forecasts: new Map() }
 }
 
 function recordPrice(state: StockTraderState, symbol: string, price: number, historyTicks: number): void {
@@ -77,11 +138,24 @@ export function estimateEdge(prices: readonly number[], ticks: number): number |
   return (2 * total) / samples
 }
 
+/**
+ * Volatility estimated from price history. One update moves the price by a factor of
+ * `1 ± v * volatility` with `v` uniform on [0, 1], so the mean absolute log return is half the
+ * volatility.
+ */
+export function estimateVolatility(prices: readonly number[], ticks: number): number {
+  const samples = Math.min(ticks, prices.length - 1)
+  if (samples < 3) return 0
+  let total = 0
+  for (let i = prices.length - samples; i < prices.length; i++) total += Math.abs(Math.log(prices[i] / prices[i - 1]))
+  return (2 * total) / samples
+}
+
 /** The thresholds actually in force, which depend on whether 4S data is available. */
 export interface ResolvedStockThresholds {
   entryEdge: number
   exitEdge: number
-  rotateMargin: number
+  rotationCostFactor: number
   fromPrices: boolean
 }
 
@@ -91,9 +165,130 @@ export function resolveStockThresholds(ns: NS, config: StockTraderConfig): Resol
   return {
     entryEdge: fromPrices ? cfg.no4sEntryEdge : cfg.entryEdge,
     exitEdge: cfg.exitEdge,
-    rotateMargin: fromPrices ? cfg.no4sRotateMargin : cfg.rotateMargin,
+    rotationCostFactor: fromPrices ? cfg.no4sRotationCostFactor : cfg.rotationCostFactor,
     fromPrices,
   }
+}
+
+/**
+ * Edge for every symbol, from the 4S forecast when it is available and from the price history
+ * recorded here when it is not. Records this update's prices unless `record` is false.
+ */
+export function estimateEdges(
+  ns: NS,
+  config: StockTraderConfig,
+  state: StockTraderState,
+  symbols: readonly string[],
+  marketData: boolean,
+  record = true
+): Map<string, number> {
+  const edges = new Map<string, number>()
+  for (const sym of symbols) {
+    if (record) recordPrice(state, sym, ns.stock.getPrice(sym), config.historyTicks)
+    if (marketData) {
+      edges.set(sym, stockEdge(ns.stock.getForecast(sym), ns.stock.getVolatility(sym)))
+      continue
+    }
+    const estimate = estimateEdge(state.prices.get(sym) ?? [], config.historyTicks)
+    if (estimate !== null) edges.set(sym, estimate)
+  }
+  return edges
+}
+
+/**
+ * Updates until the next cycle, or null while it is unknown. Between cycles a forecast moves by
+ * a few percent of its own distance from 50% per update, so a forecast that was clearly on one side
+ * and is now clearly on the other can only have been flipped by the cycle. Missed updates only blur
+ * the count until the next cycle resynchronises it.
+ */
+export function observeCycle(state: StockTraderState, forecasts: ReadonlyMap<string, number>): number | null {
+  state.tick++
+  let flipped = false
+  for (const [symbol, forecast] of forecasts) {
+    const previous = state.forecasts.get(symbol)
+    if (previous !== undefined && Math.abs(previous - 0.5) > 0.02 && Math.abs(forecast - 0.5) > 0.02) {
+      if (previous > 0.5 !== forecast > 0.5) flipped = true
+    }
+    state.forecasts.set(symbol, forecast)
+  }
+  if (flipped) state.lastCycleTick = state.tick
+  if (state.lastCycleTick === null) return null
+  const since = (state.tick - state.lastCycleTick) % STOCK_TICKS_PER_CYCLE
+  return STOCK_TICKS_PER_CYCLE - since
+}
+
+/** One company as the allocator sees it. All weights are shares of net worth. */
+export interface ImpactProfile {
+  symbol: string
+  side: StockPositionSide
+  /** Volatility as getVolatility() reports it. */
+  volatility: number
+  /** Outlook magnitude now, in forecast points: |forecast - 50%| * 100. */
+  outlook: number
+  /** Outlook points our own trading removes per unit of weight bought. */
+  impact: number
+  /** Weight already held on `side`. */
+  held: number
+  /** Most weight the share cap allows on `side`, including what is held. */
+  capacity: number
+  /** Round trip as a fraction of the position: two spreads. */
+  roundTrip: number
+}
+
+/**
+ * Expected log growth per update from holding `held + added` of a company once `added` has been
+ * bought. Buying lowers the outlook of every share held, not just the new ones, until the floor.
+ */
+export function impactedGrowth(p: ImpactProfile, added: number): number {
+  const floor = Math.min(p.outlook, IMPACT_FLOOR)
+  const outlook = Math.max(floor, p.outlook - p.impact * added)
+  // edge = (2f - 1) * volatility = outlook / 50 * volatility; growth per update is edge / 2.
+  return ((p.held + added) * p.volatility * outlook) / 100
+}
+
+/** Edge per unit of weight of a position of size `weight` opened now, net of its own impact. */
+export function impactedEdge(p: ImpactProfile, weight: number): number {
+  const floor = Math.min(p.outlook, IMPACT_FLOOR)
+  return (Math.max(floor, p.outlook - p.impact * weight) / 50) * p.volatility
+}
+
+/**
+ * Hand out `budget` (a share of net worth) in equal slices, each to the company whose expected
+ * growth rises most from it. Returns the weight to add per symbol. `pool` holds every company that
+ * may receive money; new ones only count against `openSlots` once they actually get a slice.
+ */
+export function allocateWithImpact(
+  pool: readonly ImpactProfile[],
+  budget: number,
+  options: { slices: number; maxWeight: number; openSlots: number }
+): Map<string, number> {
+  const added = new Map<string, number>()
+  if (!(budget > 0) || pool.length === 0) return added
+  const slice = budget / options.slices
+  let opened = 0
+  for (let step = 0; step < options.slices; step++) {
+    let best: ImpactProfile | null = null
+    let bestGain = 0
+    for (const p of pool) {
+      const now = added.get(p.symbol) ?? 0
+      if (now === 0 && p.held === 0 && opened >= options.openSlots) continue
+      const room = Math.min(options.maxWeight, p.capacity) - p.held - now
+      if (room <= 1e-12) continue
+      const size = Math.min(slice, room)
+      // Gain per unit of weight, so a slice cut short by the cap is compared fairly.
+      const gain = (impactedGrowth(p, now + size) - impactedGrowth(p, now)) / size
+      if (gain > bestGain) {
+        bestGain = gain
+        best = p
+      }
+    }
+    if (best === null) break
+    const now = added.get(best.symbol) ?? 0
+    if (now === 0 && best.held === 0) opened++
+    const room = Math.min(options.maxWeight, best.capacity) - best.held - now
+    added.set(best.symbol, now + Math.min(slice, room))
+  }
+  return added
 }
 
 function signalForSnapshot(
@@ -157,6 +352,11 @@ export function shortsActive(ns: NS, config: StockTraderConfig): boolean {
   return mergeStockTraderConfig(config).enableShorts && canUseStockShorts(ns)
 }
 
+/** Cash kept back: the larger of the absolute floor and the share of net worth. */
+export function cashReserve(config: StockTraderConfig, netWorth: number): number {
+  return Math.max(config.moneyKeep, config.reserveFraction * netWorth)
+}
+
 export function buildConfigSummary(ns: NS, config: StockTraderConfig): string {
   const cfg = mergeStockTraderConfig(config)
   let shortLabel: string
@@ -167,13 +367,13 @@ export function buildConfigSummary(ns: NS, config: StockTraderConfig): string {
   } else {
     shortLabel = "on"
   }
-  const source = hasMarketData(ns) ? "4S forecast" : `prices (${cfg.historyTicks} updates)`
-  const entry = hasMarketData(ns) ? cfg.entryEdge : cfg.no4sEntryEdge
-  const rotate = hasMarketData(ns) ? cfg.rotateMargin : cfg.no4sRotateMargin
+  const thresholds = resolveStockThresholds(ns, cfg)
+  const source = thresholds.fromPrices ? `prices (${cfg.historyTicks} updates)` : "4S forecast"
   return (
-    `edge>=${(entry * 100).toFixed(2)}%/tick from ${source}, exit at ${(cfg.exitEdge * 100).toFixed(2)}%, ` +
-    `${cfg.maxPositions} pos, ${(cfg.maxWeightPerSymbol * 100).toFixed(0)}%/sym, ` +
-    `${(cfg.maxShareFraction * 100).toFixed(0)}% of max shares, rotate x${rotate}, shorts ${shortLabel}`
+    `impact-aware, edge>=${(thresholds.entryEdge * 100).toFixed(2)}%/tick from ${source}, ` +
+    `exit at ${(cfg.exitEdge * 100).toFixed(2)}%, up to ${cfg.maxOpenPositions} pos, ` +
+    `${(cfg.maxWeight * 100).toFixed(0)}%/sym, rotate at ${thresholds.rotationCostFactor}x round trip, ` +
+    `shorts ${shortLabel}`
   )
 }
 
@@ -189,19 +389,19 @@ export function collectTraderSnapshot(
   const allowShorts = shortsActive(ns, cfg)
   const symbolNames = ns.stock.getSymbols()
   const homeCash = ns.getServerMoneyAvailable("home")
-  const portfolio = portfolioValue(ns, symbolNames)
+  const portfolio = markedPortfolioValue(ns, symbolNames)
   const totalNetWorth = homeCash + portfolio
   const thresholds = resolveStockThresholds(ns, cfg)
-  const edges = estimateEdges(ns, cfg, state, symbolNames, !thresholds.fromPrices)
-  const symbols = symbolNames.map((sym) =>
-    collectSymbolSnapshot(ns, sym, thresholds, allowShorts, edges.get(sym))
-  )
+  // Read-only: the trading tick already recorded this update's prices.
+  const edges = estimateEdges(ns, cfg, state, symbolNames, !thresholds.fromPrices, false)
+  const symbols = symbolNames.map((sym) => collectSymbolSnapshot(ns, sym, thresholds, allowShorts, edges.get(sym)))
+  const reserve = cashReserve(cfg, totalNetWorth)
 
   return {
     symbols,
     homeCash,
-    moneyKeep: cfg.moneyKeep,
-    investableCash: Math.max(0, homeCash - cfg.moneyKeep),
+    moneyKeep: reserve,
+    investableCash: Math.max(0, homeCash - reserve),
     portfolioValue: portfolio,
     totalNetWorth,
     sessionStartNetWorth,
@@ -221,71 +421,25 @@ export function hasAnyStockPosition(ns: NS): boolean {
   return false
 }
 
+function sell(ns: NS, symbol: string, shares: number, side: StockPositionSide, actions: string[], label: string): void {
+  if (shares < 1) return
+  if (side === POS_LONG) ns.stock.sellStock(symbol, shares)
+  else ns.stock.sellShort(symbol, shares)
+  actions.push(`${label} ${symbol} x${shares}`)
+}
+
 /** Sell all longs and cover all shorts (one pass over every symbol). */
 export function liquidateAllPositions(ns: NS): string[] {
   const actions: string[] = []
   for (const sym of ns.stock.getSymbols()) {
     const [longShares, , shortShares] = ns.stock.getPosition(sym)
-    if (longShares > 0) {
-      sellPartial(ns, sym, longShares, POS_LONG, actions, "SELL")
-    }
-    if (shortShares > 0) {
-      sellPartial(ns, sym, shortShares, POS_SHORT, actions, "COVER")
-    }
+    if (longShares > 0) sell(ns, sym, longShares, POS_LONG, actions, "SELL")
+    if (shortShares > 0) sell(ns, sym, shortShares, POS_SHORT, actions, "COVER")
   }
   if (actions.length === 0) {
     actions.push(hasAnyStockPosition(ns) ? "(no trades this pass)" : "(flat — no positions)")
   }
   return actions
-}
-
-function buyShares(
-  ns: NS,
-  symbol: string,
-  shares: number,
-  side: StockPositionSide,
-  actions: string[]
-): void {
-  if (shares < 1) return
-  const cost = ns.stock.getPurchaseCost(symbol, shares, side)
-  const cash = ns.getServerMoneyAvailable("home")
-  if (cost > cash) return
-
-  const price = side === POS_LONG ? ns.stock.buyStock(symbol, shares) : ns.stock.buyShort(symbol, shares)
-  if (price > 0) {
-    actions.push(`${side === POS_LONG ? "BUY" : "SHORT"} ${symbol} x${shares} @ $${ns.format.number(price)}`)
-  }
-}
-
-function sellPartial(
-  ns: NS,
-  symbol: string,
-  shares: number,
-  side: StockPositionSide,
-  actions: string[],
-  label: "SELL" | "COVER"
-): void {
-  if (shares < 1) return
-  if (side === POS_LONG) {
-    ns.stock.sellStock(symbol, shares)
-    actions.push(`${label} ${symbol} x${shares}`)
-  } else {
-    ns.stock.sellShort(symbol, shares)
-    actions.push(`${label} ${symbol} x${shares}`)
-  }
-}
-
-interface Candidate {
-  symbol: string
-  edge: number
-  side: StockPositionSide
-}
-
-/** Shares we may still add before hitting our own share cap (long + short count together). */
-function shareRoom(ns: NS, symbol: string, maxShareFraction: number): number {
-  const [longShares, , shortShares] = ns.stock.getPosition(symbol)
-  const cap = Math.floor(ns.stock.getMaxShares(symbol) * maxShareFraction)
-  return Math.max(0, cap - longShares - shortShares)
 }
 
 function sharesAffordable(
@@ -301,77 +455,16 @@ function sharesAffordable(
   const commission = ns.stock.getConstants().StockMarketCommission
   let shares = Math.min(maxShares, Math.floor((budget - commission) / ask))
   while (shares >= minShares) {
-    const cost = ns.stock.getPurchaseCost(symbol, shares, side)
-    if (cost <= budget) return shares
+    if (ns.stock.getPurchaseCost(symbol, shares, side) <= budget) return shares
     shares--
   }
   return 0
 }
 
-interface Budget {
-  remaining: number
-}
-
-/** Adds to a position up to `targetShares`, capped by our share allowance and the remaining budget. */
-function growPosition(
-  ns: NS,
-  candidate: Candidate,
-  config: StockTraderConfig,
-  targetShares: number,
-  budget: Budget,
-  actions: string[]
-): boolean {
-  if (budget.remaining <= 0) return false
-  const [longShares, , shortShares] = ns.stock.getPosition(candidate.symbol)
-  const held = candidate.side === POS_LONG ? longShares : shortShares
-  const wanted = Math.min(targetShares - held, shareRoom(ns, candidate.symbol, config.maxShareFraction))
-  const shares = sharesAffordable(
-    ns,
-    candidate.symbol,
-    candidate.side,
-    budget.remaining,
-    config.minShares,
-    wanted
-  )
-  if (shares <= 0) return false
-
-  const before = ns.getServerMoneyAvailable("home")
-  buyShares(ns, candidate.symbol, shares, candidate.side, actions)
-  budget.remaining -= before - ns.getServerMoneyAvailable("home")
-  return true
-}
-
-/** Edge per symbol: from 4S when available, otherwise estimated from the prices we have seen. */
 /**
- * Edge for every symbol, from the 4S forecast when it is available and from the price history
- * we have recorded ourselves when it is not. Shared with v3 so both strategies act on the same
- * signal and a comparison measures the decision rules, not the input.
- */
-export function estimateEdges(
-  ns: NS,
-  config: StockTraderConfig,
-  state: StockTraderState,
-  symbols: string[],
-  marketData: boolean
-): Map<string, number> {
-  const edges = new Map<string, number>()
-  for (const sym of symbols) {
-    const price = ns.stock.getPrice(sym)
-    recordPrice(state, sym, price, config.historyTicks)
-    if (marketData) {
-      edges.set(sym, stockEdge(ns.stock.getForecast(sym), ns.stock.getVolatility(sym)))
-      continue
-    }
-    const estimate = estimateEdge(state.prices.get(sym) ?? [], config.historyTicks)
-    if (estimate !== null) edges.set(sym, estimate)
-  }
-  return edges
-}
-
-/**
- * One market tick. Ranks every symbol by edge, closes positions whose edge has turned,
- * fills open slots with the strongest candidates, rotates capital out of the weakest holding
- * when something much better appears, then tops the remaining holdings up to target weight.
+ * One market update: close what has turned, swap the weakest holding when a candidate is worth the
+ * round trip, then hand out the investable cash by impact-adjusted expected growth. Never trims:
+ * selling a position back to a target every update pays the impact twice for nothing.
  */
 export function runStockTradingTick(
   ns: NS,
@@ -379,99 +472,141 @@ export function runStockTradingTick(
   state: StockTraderState = createStockTraderState()
 ): string[] {
   const cfg = mergeStockTraderConfig(config)
+  const thresholds = resolveStockThresholds(ns, cfg)
+  const blind = thresholds.fromPrices
   const allowShorts = shortsActive(ns, cfg)
   const actions: string[] = []
   const symbols = ns.stock.getSymbols()
-  const thresholds = resolveStockThresholds(ns, cfg)
+  const edges = estimateEdges(ns, cfg, state, symbols, !blind)
+  const toCycle = blind ? null : observeCycle(state, new Map(symbols.map((sym) => [sym, ns.stock.getForecast(sym)])))
 
-  const edges = estimateEdges(ns, cfg, state, symbols, !thresholds.fromPrices)
-
-  const held = new Set<string>()
+  // Phase 1: close anything whose edge has turned.
   for (const sym of symbols) {
     const [longShares, , shortShares] = ns.stock.getPosition(sym)
     const edge = edges.get(sym)
-    let longLeft = longShares
-    let shortLeft = shortShares
-    // No estimate yet (warm-up, or no 4S and too few samples): leave the position alone.
-    if (edge !== undefined) {
-      if (longShares > 0 && edge <= cfg.exitEdge) {
-        sellPartial(ns, sym, longShares, POS_LONG, actions, "SELL")
-        longLeft = 0
-      }
-      if (allowShorts && shortShares > 0 && -edge <= cfg.exitEdge) {
-        sellPartial(ns, sym, shortShares, POS_SHORT, actions, "COVER")
-        shortLeft = 0
-      }
-    }
-    if (longLeft > 0 || shortLeft > 0) held.add(sym)
-  }
-
-  const candidates: Candidate[] = []
-  for (const sym of symbols) {
-    const edge = edges.get(sym)
+    // No estimate yet (no 4S and too few samples): leave the position alone.
     if (edge === undefined) continue
-    if (edge >= thresholds.entryEdge) candidates.push({ symbol: sym, edge, side: POS_LONG })
-    else if (allowShorts && -edge >= thresholds.entryEdge) candidates.push({ symbol: sym, edge, side: POS_SHORT })
+    if (longShares > 0 && edge <= cfg.exitEdge) sell(ns, sym, longShares, POS_LONG, actions, "SELL")
+    if (allowShorts && shortShares > 0 && -edge <= cfg.exitEdge) sell(ns, sym, shortShares, POS_SHORT, actions, "COVER")
   }
-  candidates.sort((a, b) => Math.abs(b.edge) - Math.abs(a.edge))
 
-  const netWorth = ns.getServerMoneyAvailable("home") + portfolioValue(ns, symbols)
-  const weight = Math.min(cfg.maxWeightPerSymbol, 1 / Math.max(1, Math.min(cfg.maxPositions, candidates.length)))
-  const targetShares = (candidate: Candidate): number => {
-    const price = ns.stock.getPrice(candidate.symbol)
-    return price > 0 ? Math.floor((netWorth * weight) / price) : 0
-  }
-  const budget: Budget = { remaining: Math.max(0, ns.getServerMoneyAvailable("home") - cfg.moneyKeep) }
+  const netWorth = ns.getServerMoneyAvailable("home") + liquidationValue(ns, symbols)
+  if (!(netWorth > 0)) return actions
 
-  for (const candidate of candidates) {
-    if (held.size >= cfg.maxPositions || budget.remaining <= 0) break
-    if (held.has(candidate.symbol)) continue
-    if (growPosition(ns, candidate, cfg, targetShares(candidate), budget, actions)) {
-      held.add(candidate.symbol)
+  // Forecasts are read again: the sales above moved them. Without 4S the forecast and volatility
+  // are estimated from the price history instead.
+  const profile = (symbol: string): ImpactProfile => {
+    let forecast: number
+    let volatility: number
+    if (blind) {
+      const edge = edges.get(symbol) ?? 0
+      volatility = estimateVolatility(state.prices.get(symbol) ?? [], cfg.historyTicks)
+      const lean = volatility > 0 ? Math.min(0.5, Math.abs(edge) / volatility / 2) : 0
+      forecast = 0.5 + Math.sign(edge) * lean
+    } else {
+      forecast = ns.stock.getForecast(symbol)
+      volatility = ns.stock.getVolatility(symbol)
+    }
+    const side = forecast >= 0.5 ? POS_LONG : POS_SHORT
+    const price = ns.stock.getPrice(symbol)
+    const [longShares, , shortShares] = ns.stock.getPosition(symbol)
+    const heldShares = side === POS_LONG ? longShares : shortShares
+    const capShares = Math.floor(ns.stock.getMaxShares(symbol) * cfg.maxShareFraction)
+    const perMovement = SHARES_PER_MOVEMENT[symbol] ?? DEFAULT_SHARES_PER_MOVEMENT
+    return {
+      symbol,
+      side,
+      volatility,
+      outlook: Math.abs(forecast - 0.5) * 100,
+      impact: price > 0 ? (cfg.impactScale * IMPACT_PER_MOVEMENT * netWorth) / (price * perMovement) : 0,
+      held: (heldShares * price) / netWorth,
+      capacity: ((capShares - (side === POS_LONG ? shortShares : longShares)) * price) / netWorth,
+      roundTrip: price > 0 ? 2 * (ns.stock.getAskPrice(symbol) / price - 1) : 0,
     }
   }
+  const edgeOf = (p: ImpactProfile): number => (p.outlook / 50) * p.volatility
+  const isHeld = (symbol: string): boolean => {
+    const [longShares, , shortShares] = ns.stock.getPosition(symbol)
+    return longShares > 0 || shortShares > 0
+  }
 
-  for (const candidate of candidates) {
-    if (held.size < cfg.maxPositions) break
-    if (held.has(candidate.symbol)) continue
+  const held = symbols.filter(isHeld)
+  const eligible = (p: ImpactProfile): boolean => edgeOf(p) >= thresholds.entryEdge && (p.side === POS_LONG || allowShorts)
+  const fresh = symbols
+    .filter((sym) => !isHeld(sym))
+    .map(profile)
+    .filter(eligible)
+    .sort((a, b) => edgeOf(b) - edgeOf(a))
 
-    let weakest: string | null = null
-    let weakestEdge = Infinity
+  // Phase 2: rotation. The candidate's edge is what is left after the impact of buying it at the
+  // weakest holding's size; the gain has to pay back the candidate's round trip over the expected
+  // time both keep their edge (until the cycle, then each survives it with probability 0.55, so the
+  // tail is worth 0.55/0.45 cycles). Money that is already invested only moves through this rule
+  // or the exit rule.
+  if (held.length > 0 && fresh.length > 0) {
+    const horizon =
+      (toCycle ?? STOCK_TICKS_PER_CYCLE / 2) + (STOCK_TICKS_PER_CYCLE * CYCLE_SURVIVAL) / (1 - CYCLE_SURVIVAL)
+    let weakest: ImpactProfile | null = null
+    let weakestWeight = 0
     for (const sym of held) {
-      const magnitude = Math.abs(edges.get(sym) ?? 0)
-      if (magnitude < weakestEdge) {
-        weakestEdge = magnitude
-        weakest = sym
+      const p = profile(sym)
+      const [longShares, , shortShares] = ns.stock.getPosition(sym)
+      const weight = ((longShares + shortShares) * ns.stock.getPrice(sym)) / netWorth
+      if (weakest === null || edgeOf(p) < edgeOf(weakest)) {
+        weakest = p
+        weakestWeight = weight
       }
     }
-    if (weakest === null || Math.abs(candidate.edge) <= weakestEdge * thresholds.rotateMargin) continue
-
-    const [weakLong, , weakShort] = ns.stock.getPosition(weakest)
-    if (weakLong > 0) sellPartial(ns, weakest, weakLong, POS_LONG, actions, "SELL")
-    if (weakShort > 0) sellPartial(ns, weakest, weakShort, POS_SHORT, actions, "COVER")
-    held.delete(weakest)
-    budget.remaining = Math.max(0, ns.getServerMoneyAvailable("home") - cfg.moneyKeep)
-    if (growPosition(ns, candidate, cfg, targetShares(candidate), budget, actions)) {
-      held.add(candidate.symbol)
+    if (weakest !== null) {
+      const candidate = fresh[0]
+      const gain = ((impactedEdge(candidate, weakestWeight) - edgeOf(weakest)) / 2) * horizon
+      if (gain > thresholds.rotationCostFactor * candidate.roundTrip) {
+        const [weakLong, , weakShort] = ns.stock.getPosition(weakest.symbol)
+        if (weakLong > 0) sell(ns, weakest.symbol, weakLong, POS_LONG, actions, "SELL")
+        if (weakShort > 0) sell(ns, weakest.symbol, weakShort, POS_SHORT, actions, "COVER")
+      }
     }
   }
 
-  for (const candidate of candidates) {
-    if (budget.remaining <= 0) break
-    if (!held.has(candidate.symbol)) continue
-    growPosition(ns, candidate, cfg, targetShares(candidate), budget, actions)
+  // Phase 3: hand out the investable cash. Holdings still worth entering may be topped up; a
+  // holding whose edge has sagged below the entry bar is left alone until the exit rule takes it.
+  const holdingsNow = symbols.filter(isHeld)
+  const pool = [
+    ...holdingsNow.map(profile).filter((p) => p.held > 0 && eligible(p)),
+    ...fresh.filter((p) => !isHeld(p.symbol)),
+  ]
+  const cash = Math.max(0, ns.getServerMoneyAvailable("home") - cashReserve(cfg, netWorth))
+  const plan = allocateWithImpact(pool, cash / netWorth, {
+    slices: cfg.slices,
+    maxWeight: cfg.maxWeight,
+    openSlots: Math.max(0, cfg.maxOpenPositions - holdingsNow.length),
+  })
+
+  let budget = cash
+  for (const p of pool) {
+    const add = plan.get(p.symbol) ?? 0
+    if (add <= 0 || budget <= 0) continue
+    if (p.held === 0 && add < cfg.minNewWeight) continue
+    const price = ns.stock.getPrice(p.symbol)
+    const [longShares, , shortShares] = ns.stock.getPosition(p.symbol)
+    const capShares = Math.floor(ns.stock.getMaxShares(p.symbol) * cfg.maxShareFraction)
+    const wanted = Math.min(Math.floor((add * netWorth) / price), capShares - longShares - shortShares)
+    const shares = sharesAffordable(ns, p.symbol, p.side, budget, cfg.minShares, wanted)
+    if (shares <= 0) continue
+    const before = ns.getServerMoneyAvailable("home")
+    const filled = p.side === POS_LONG ? ns.stock.buyStock(p.symbol, shares) : ns.stock.buyShort(p.symbol, shares)
+    if (filled > 0) {
+      actions.push(`${p.side === POS_LONG ? "BUY" : "SHORT"} ${p.symbol} x${shares} @ $${ns.format.number(filled)}`)
+      budget -= before - ns.getServerMoneyAvailable("home")
+    }
   }
 
   if (actions.length === 0) {
-    if (budget.remaining <= 0) {
-      actions.push("(no trades: no investable cash above reserve)")
-    } else if (candidates.length === 0) {
+    if (cash <= 0) actions.push("(no trades: no investable cash above reserve)")
+    else if (pool.length === 0) {
       actions.push(`(no trades: no symbol reaches edge ${(thresholds.entryEdge * 100).toFixed(2)}%)`)
-    } else {
-      actions.push("(no trades: positions already at target weight)")
-    }
+    } else actions.push("(no trades: holdings at target)")
   }
-
   return actions
 }
 
