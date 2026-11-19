@@ -21,6 +21,8 @@ export interface StockTraderConfig {
   no4sEntryEdge: number
   /** Updates of price history used to estimate edge and volatility when there is no 4S data. */
   historyTicks: number
+  /** Without 4S, find the market cycle from prices and track each company's sign across it. */
+  no4sCycleAware: boolean
   /** Most companies held at once. The allocation decides how many are worth it below this. */
   maxOpenPositions: number
   /** Most of net worth in one company. */
@@ -37,6 +39,14 @@ export interface StockTraderConfig {
   no4sRotationCostFactor: number
   /** Scale on the modelled forecast impact of our own trades (0 ignores it). */
   impactScale: number
+  /** Entry bar for cash that would otherwise sit idle, as a fraction of the entry bar (1 disables it). */
+  idleEntryFraction: number
+  /** Extra positions the idle-cash pass may open. */
+  idleExtraPositions: number
+  /** Minimum outlook (|forecast - 50%| * 100) for the idle-cash pass. */
+  idleMinOutlook: number
+  /** Weight on the variance drag of log growth in the allocation (0 ignores risk, 1 is log-optimal). */
+  varianceScale: number
   /** Skip orders smaller than this (commission is $100k per transaction). */
   minShares: number
   enableShorts: boolean
@@ -51,6 +61,7 @@ export const DEFAULT_STOCK_TRADER_CONFIG: StockTraderConfig = {
   // higher bar and a much higher rotation hurdle: swapping on two noisy numbers mostly trades noise.
   no4sEntryEdge: 0.003,
   historyTicks: 40,
+  no4sCycleAware: true,
   maxOpenPositions: 8,
   maxWeight: 1,
   maxShareFraction: 1,
@@ -59,6 +70,10 @@ export const DEFAULT_STOCK_TRADER_CONFIG: StockTraderConfig = {
   rotationCostFactor: 8,
   no4sRotationCostFactor: 64,
   impactScale: 1,
+  idleEntryFraction: 0.6,
+  idleExtraPositions: 8,
+  idleMinOutlook: 10,
+  varianceScale: 1,
   minShares: 50,
   enableShorts: true,
 }
@@ -81,6 +96,7 @@ export function mergeStockTraderConfig(partial?: Partial<StockTraderConfig>): St
     exitEdge: finiteOrDefault(merged.exitEdge, d.exitEdge),
     no4sEntryEdge: finiteOrDefault(merged.no4sEntryEdge, d.no4sEntryEdge),
     historyTicks: Math.max(3, Math.round(finiteOrDefault(merged.historyTicks, d.historyTicks))),
+    no4sCycleAware: merged.no4sCycleAware ?? d.no4sCycleAware,
     maxOpenPositions: Math.max(1, Math.round(finiteOrDefault(merged.maxOpenPositions, d.maxOpenPositions))),
     maxWeight: clamp(finiteOrDefault(merged.maxWeight, d.maxWeight), 0, 1),
     maxShareFraction: clamp(finiteOrDefault(merged.maxShareFraction, d.maxShareFraction), 0, 1),
@@ -89,6 +105,10 @@ export function mergeStockTraderConfig(partial?: Partial<StockTraderConfig>): St
     rotationCostFactor: Math.max(0, finiteOrDefault(merged.rotationCostFactor, d.rotationCostFactor)),
     no4sRotationCostFactor: Math.max(0, finiteOrDefault(merged.no4sRotationCostFactor, d.no4sRotationCostFactor)),
     impactScale: Math.max(0, finiteOrDefault(merged.impactScale, d.impactScale)),
+    idleEntryFraction: clamp(finiteOrDefault(merged.idleEntryFraction, d.idleEntryFraction), 0, 1),
+    idleExtraPositions: Math.max(0, Math.round(finiteOrDefault(merged.idleExtraPositions, d.idleExtraPositions))),
+    idleMinOutlook: Math.max(0, finiteOrDefault(merged.idleMinOutlook, d.idleMinOutlook)),
+    varianceScale: Math.max(0, finiteOrDefault(merged.varianceScale, d.varianceScale)),
     minShares: Math.max(0, Math.round(finiteOrDefault(merged.minShares, d.minShares))),
     enableShorts: merged.enableShorts ?? d.enableShorts,
   }

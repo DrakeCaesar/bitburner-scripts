@@ -113,25 +113,35 @@ note which forecasts crossed 0.50 from a clear lean  -> ticks until the next cyc
      swap if (candidate edge − holding edge) / 2 × horizon > rotationCostFactor × candidate round trip
 
 3. allocation: hand the investable cash out in `slices` equal slices; each slice goes to the company
-   whose expected growth rises most from it, counting that
+   whose expected log growth rises most from it, counting that
      - buying lowers the outlook of every share already held there (until the floor of 5),
+     - a bigger position swings net worth more, which costs log growth (variance drag),
      - a company at its share cap gains nothing,
      - only companies with edge >= entryEdge, at most maxOpenPositions held, maxWeight each,
      - a new position needs at least minNewWeight of net worth.
 
+4. idle cash: if every eligible company is at its cap and cash is left, run the same allocation
+   once more for companies with edge >= 0.6 × entryEdge and outlook >= 10, at most 8 more positions
+
 never trim: only exits and rotation sell
 ```
 
-The allocation is the heart of it. Expected growth from holding weight `w` of a company is
-`w × volatility × outlook / 100`, and buying `w` removes `impact × w` points of outlook, where
-`impact` = 0.006 × net worth ÷ (price × shares per movement). So:
+The allocation is the heart of it. Expected log growth from holding weight `w` of a company is
+`w × volatility × outlook / 100 − w² × volatility² / 6`, and buying `w` removes `impact × w` points
+of outlook, where `impact` = 0.006 × net worth ÷ (price × shares per movement). The second term is
+the variance drag: one update moves the price by `v × volatility` with `v` uniform on [0, 1], so the
+per-update variance is `volatility² / 3` and log growth loses half of it times `w²`. So:
 
 - **A small account concentrates.** Its trades barely move anything, so every slice goes to the
   strongest edge until that company's share cap, then to the next strongest.
 - **A large account spreads out.** Each further slice in the same company costs edge on every share
   already held there, so at some point the second-best company pays more.
+- **A jumpy company with a weak lean gets less.** Without the variance term, a very volatile company
+  pinned near the impact floor (forecast 0.55) still cleared the entry bar and could take 70% of the
+  account; the drag keeps that in proportion.
 - **Share caps cost nothing extra.** The strongest edges belong to small, jumpy companies whose 20%
-  is worth little; once one is full, the money flows to the next company instead of waiting as cash.
+  is worth little; once one is full, the money flows to the next company instead of waiting as cash,
+  and once every eligible company is full the idle-cash pass finds somewhere weaker but safe for it.
 
 No slot count or weight cap has to be chosen for the account size: `maxOpenPositions` (8) is a limit,
 and `maxWeight` defaults to 100%.
@@ -144,10 +154,13 @@ the same rules return 1.34× v3 instead of 1.70×.
 **The reserve** is the larger of `moneyKeep` (dollars, default 0, the in-game script's first
 argument) and `reserveFraction` of net worth (0.1%, enough to pay commissions at any size).
 
-**Without 4S data** the game throws from `getForecast`/`getVolatility`, so both are estimated from the
-last `historyTicks` prices (section 11) and the same rules run on the estimates, with a higher entry
-bar (`no4sEntryEdge`) and a much higher rotation hurdle (`no4sRotationCostFactor`): swapping on two
-noisy numbers mostly trades noise.
+**Without 4S data** the game throws from `getForecast`/`getVolatility`, so both are estimated from
+prices (section 11): the market cycle is found from the prices themselves, each company's edge is
+tracked across cycles, and the same rules run on the estimates with a higher entry bar
+(`no4sEntryEdge`) and a much higher rotation hurdle (`no4sRotationCostFactor`).
+
+**Hacking can push forecasts our way** (section 12): the script tells hack/grow workers which
+company servers to influence, at no RAM cost to them.
 
 ## 5. Why it is built this way
 
@@ -191,32 +204,54 @@ value on the flip update. Exiting before a cycle to dodge the 45% flip cannot pa
 arithmetic, not measured): it saves at most 0.45 of one update's edge and pays a round trip on the
 55% that would have kept their edge.
 
+### Refinements after v4
+
+A second round targeted the bend in the growth curve around 5 hours, where share caps start to bind,
+and the remaining weak spots. Each idea was measured on seeds 1-40, then kept only if it held on
+held-out seeds 201+. Paired against the v4 rules:
+
+| idea | result | kept |
+|---|---|---|
+| idle-cash pass: when every eligible company is capped, allow edges ≥ 0.6 × entry with outlook ≥ 10 | with the next row: $100b 1.12×, $1t 1.09×, 10 000 updates 1.12×, $10b 1.01× | yes |
+| variance drag in the allocation (`varianceScale 1`) | worst drawdown down at every scale; the idle pass alone produced 85–95% tail drawdowns without it | yes |
+| cycle-aware estimate without 4S (section 11) | **3.58×** without 4S (192/200), mean drawdown 9.4% instead of 22.7% | yes |
+| hacking influence (section 12) | 2× at one push per 20 updates, 17× at one per update, in the model | yes (game side) |
+| learn each company's true impact rate | oracle with the exact value: 0.99–1.03×, nothing to learn | no |
+| rank by where the forecast is heading | oracle with the hidden target: 0.93–1.01× | no |
+| trim concentrated positions before a known cycle | 0.76–0.98×, no drawdown gain | no |
+
+Two traps found on the way. The idle pass at first bought back, in the same update, the holding that
+rotation had just sold (it was now a weak-but-eligible edge), paying spread and impact every update;
+a company rotated out is now excluded for that update. And lowering the entry bar further (0.1% or
+0.05%) won more on average but blew up on some seeds: companies whose outlook sits near 5, where the
+game moves the forecast ten times faster, flip back and forth across 50%. The outlook floor of 10 on
+the idle pass is what keeps them out.
+
 ## 6. Results
 
 `pnpm run test:stock -- --seed-range 1-100` ($10b, 3000 updates = 5 hours):
 
 | | mean return | median | trades | mean max drawdown | worst drawdown |
 |---|---|---|---|---|---|
-| with 4S | +11,300% | +9,890% | 180 | 4.70% | 27.80% |
-| without 4S (seeds 201-300) | +834% | +483% | 336 | 23.50% | 58.64% |
+| with 4S | +11,471% | +10,086% | 203 | 4.51% | 28.66% |
+| without 4S (seeds 201-300) | +2,960% | +2,192% | 168 | 9.46% | 33.12% |
 
-Against the earlier versions on the same seeds (section 12 describes them), paired net worth:
+Against the earlier versions on the same seeds (section 13 describes them), paired net worth. The v1,
+v2 and v3 columns were measured with the v4 rules; the refinements add the last column:
 
-| | v1 | v2 | v3 |
-|---|---|---|---|
-| seeds 1-100 | 10.76× (100/100) | 1.86× (95/100) | 1.73× (93/100) |
-| seeds 201-400, never used to choose anything | — | — | 1.81× (194/200) |
-| without 4S, seeds 201-300 | — | — | 1.33× (67/100) |
+| | v1 | v2 | v3 | v4 rules |
+|---|---|---|---|---|
+| seeds 1-100 | 10.76× (100/100) | 1.86× (95/100) | 1.73× (93/100) | — |
+| seeds 201-400, never used to choose anything | — | — | 1.81× (194/200) | 1.014× (122/200) |
+| without 4S | — | — | 1.33× (67/100, seeds 201-300) | 3.58× (192/200, seeds 201-400) |
 
-Robustness, seeds 201-240, paired against v3: $100m 1.53×, $1b 1.44×, $100b 1.53×, $1t 1.05×; 1000
-updates 1.14×, 10 000 updates 1.29×. At $1t the market is the limit rather than the rules: only ~40%
-of the money can be placed in companies that clear the entry edge.
+Robustness, seeds 201-260, paired against the v4 rules: $100m (1000 updates) 1.01×, $100b 1.12×,
+$1t 1.09×, 10 000 updates 1.12×; without 4S at $100m 1.53×. At $1t the market is still the limit
+rather than the rules: about half the money can be placed above the entry bars.
 
 **Concentration has a tail.** A small account holds one or two companies, so a cycle flip on that
-company hits most of the portfolio: the worst of 100 seeds draws down 27.8% (v3: 10.2%). `maxWeight
-0.6` trades some return for less of this (1.56× v3 instead of 1.71×, mean drawdown 3.6% on seeds
-1-40). Without 4S the drawdowns are deeper still, because the estimated edge is often wrong about
-which company deserves the concentration.
+company hits most of the portfolio: the worst of 100 seeds draws down 28.7% (v3: 10.2%). `maxWeight
+0.6` trades some return for less of this.
 
 ## 7. Capital and horizon
 
@@ -227,16 +262,17 @@ only as the account grows. Measured over 1000 updates (20 seeds, `--seed-stream 
 
 | starting capital | with 4S | without 4S |
 |---|---|---|
-| $1b | +433% | +68% |
-| $100m | +418% | +67% |
-| $30m | +419% | +69% |
-| $10m | +388% | +23% |
-| $3m | +305% | **−76%** (median −97%) |
+| $1b | +435% | +172% |
+| $100m | +447% | +174% |
+| $30m | +432% | +151% |
+| $10m | +390% | +103% |
+| $3m | +252% | **−58%** (median −75%) |
 
-With 4S the strategy trades rarely enough (15–25 trades in 1000 updates) that even $3m comes out
+With 4S the strategy trades rarely enough (20–30 trades in 1000 updates) that even $3m comes out
 well ahead; the old four-slot strategy lost 41% there. Without 4S — which is what a fresh BitNode
-has, since the 4S Market Data TIX API costs $25b — it needs roughly $10m before trading beats idling. The benchmark
-prints a warning once commission passes 25% of the starting capital.
+has, since the 4S Market Data TIX API costs $25b — it needs somewhere between $3m and $10m before
+trading beats idling. The benchmark prints a warning once commission passes 25% of the starting
+capital.
 
 ### How long you run it changes the answer
 
@@ -254,6 +290,7 @@ verdict, and only many seeds are trustworthy.
 | whole number, **1 or more** | The CLI rejects anything else (`--ticks 0` is an error); the GUI clamps to 1. |
 | **4 or more** for the no-4S estimate | The estimator needs at least 3 log returns before its first decision. Under that the run never trades. |
 | **41 or more** for the no-4S estimate to be at full strength | `historyTicks` defaults to 40, so the window only fills at update 41. |
+| **150 or more** for the no-4S cycle-aware estimate | The cycle phase is only trusted after 150 updates of prices; before that the moving average is used. |
 | **2 or more** to draw a chart | A single point has no line. |
 | **~20,000 or less** for a meaningful comparison | Past that the share caps bind and the score turns into a draw from a wide distribution. |
 
@@ -291,10 +328,11 @@ policy rather than part of a config; a line that never traded is labelled `(no t
 
 ## 9. How to watch it happen
 
-- `pnpm run stock:viz` → open `bench/stock/stockTraderViz.html`. One run draws the config **as
-  shipped**, the stored **tuned** genome, the **edited config** (only when it differs from both), and
-  the buy-and-hold references, each as the median seed with a p10–p90 band. The cards compare the
-  edited config with the shipped one on the same seeds.
+- `pnpm run stock:viz` → open `bench/stock/stockTraderViz.html`. One run draws the strategy **as
+  shipped (v5)**, the same code with the v5 additions switched off (**v4**), the stored **tuned**
+  genome, the **edited config** (only when it differs from all of those), and the buy-and-hold
+  references, each as the median seed with a p10–p90 band. The status line reports v5 against v4 on
+  the same seeds, and the cards compare the edited config with the shipped one.
 - **The legend is the switchboard.** It is a table — series, seeds, median return, p10, p90 — and
   clicking a row hides that line; clicking again brings it back. The axis rescales to what is drawn.
 - `pnpm run test:stock -- --rotation 4 --compare --seed-range 1-100` prints a changed config's paired
@@ -412,17 +450,88 @@ The edge estimate is real but soft. Measured over 3 seeds × 4000 updates × 33 
 
 It ranks companies in roughly the right order, but far less reliably than the real forecast, and it
 degrades if the window is too long because the forecast moves on while the average still remembers
-the old one. Hence the stricter `no4sEntryEdge` (0.3%) and a rotation hurdle of 64 round trips: on
-100 held-out seeds those two settings beat no rotation at all by 1.15× and the old four-slot fallback
-by 1.33×. The cycle cannot be seen without forecasts, so the
-rotation horizon uses half a cycle instead.
+the old one. The reason is the cycle: every 75 updates about 45% of companies reverse, and a moving
+average needs a full window to notice.
 
-The honest summary: blind mode works and is worth running from about $10m, but it is ~13× worse than
-having the forecast, with drawdowns around 24% instead of 5%. Buying 4S is worth far more than any
-tuning here. In game the script prints a warning at startup, the dashboard's Edge column is labelled
-**Edge est**, and Forecast/Vol show `-`.
+### Finding the cycle from prices
 
-## 12. History
+The cycle is invisible without forecasts, but not undetectable. It has a fixed period of exactly 75
+updates, and at a cycle ~45% of drifts reverse at the *same* update while inside a cycle they persist
+(`blindCycle.ts`):
+
+```
+for every update b with a full window W (20) of returns on each side:
+    for every company: (sum of the W returns before b) × (sum of the W returns after b) ÷ (W² × variance)
+    add the total to score[b mod 75]
+
+phase = the b mod 75 with the lowest score      (trusted after 150 updates)
+```
+
+The true boundary is the *lowest* score, not a negative one: 55% of drifts persist through a cycle, so
+even there the products are positive on balance, just smaller than anywhere else. (The first version
+required a negative score and so almost never switched on.) Measured: the phase is within 2 updates
+of the truth on 33/40 seeds after 300 updates and 40/40 after 1500.
+
+With the phase known, a cycle only flips the sign of each company's edge, never its size, so the
+estimator keeps the size and re-decides the sign:
+
+```
+at each cycle: prior = the company's edge estimate at the end of the last cycle
+after n returns summing to S (variance v per update):
+    odds that it kept its direction = 0.55/0.45 × exp(prior × S / v)
+    edge = weight × (2S / n) + (1 − weight) × prior × (2P − 1),   weight = n / (n + 150)
+```
+
+Measured paired against the moving average alone (all other rules the same):
+
+| | cycle-aware |
+|---|---|
+| $10b, 3000 updates, seeds 201-400 | **3.58×** (192/200), mean drawdown 9.4% instead of 22.7% |
+| $100m, 1000 updates | 1.53× |
+| $10b, 10 000 updates | 1.25× |
+
+For scale, an oracle that knew exactly which companies flipped at each cycle scored 3.67×: the
+estimator recovers almost all of what that information is worth. Re-tuning the no-4S entry bar and
+rotation hurdle for the better signal changed nothing measurable, so they keep their values
+(`no4sEntryEdge` 0.3%, rotation hurdle 64).
+
+The honest summary: blind mode now earns about a fifth of what 4S does (+2,192% against +10,086%
+median at $10b) instead of a twentieth, and is worth running from somewhere between $3m and $10m.
+Buying 4S is still worth more than any tuning here. In game the script prints a warning at startup,
+the dashboard's Edge column is labelled **Edge est**, and Forecast/Vol show `-`.
+
+## 12. Pushing forecasts by hacking
+
+`grow(host, { stock: true })` raises the hidden forecast target of the company that owns `host` by 0.1
+with probability *money grown ÷ max money*, and `hack(host, { stock: true })` lowers it the same way
+(bitburner-src `PlayerInfluencing.ts`). The forecast drifts toward that target, so growing the server
+of a company we are long on — or hacking one we are short on — pushes its forecast our way: the
+opposite of what our own trading does to it.
+
+In the model (`--influence <n>`: `n` such events per update on each held company's server, as the
+expected 0.1 × n shift), $10b, 3000 updates, seeds 201-260:
+
+| events per update per held company | median return | mean max drawdown |
+|---|---|---|
+| 0 | +11,712% | 3.96% |
+| 0.05 (one every 20 updates, i.e. every 2 minutes) | +23,699% | 2.40% |
+| 0.2 | +82,334% | 2.15% |
+| 1 | +202,156% | 2.84% |
+
+How it is wired, at no RAM cost to the workers:
+
+- `stockTrader.ts` publishes, every update, which side it holds per company server
+  (`stockInfluenceFor` / `publishStockInfluence` in `libraries/stock/influence.ts`, port 31), and
+  clears the message when it exits or liquidates.
+- The hack/grow workers (`hacking/hack.ts`, `hacking/grow.ts`, `hacking/grindLoop.ts`) `peek` that
+  port and set `{ stock: true }` only when it helps: grow on a long, hack on a short. The check is
+  inlined in each worker because workers are copied to other hosts without their imports. With no
+  message every flag stays off, exactly as before.
+- The effect only happens where the hacking already goes: the batcher and the XP grinder pick their
+  targets for money and experience, not for the stock. Pointing some hacking at the servers of held
+  companies is what turns this on in earnest. Watchdog Security (WDS) has no server.
+
+## 13. History
 
 Four strategies were measured on the same model; only the last remains in the code.
 
@@ -431,29 +540,37 @@ Four strategies were measured on the same model; only the last remains in the co
 | v1 | buy forecast ≥ 0.60, up to ~8 names at equal weight, trim when over-weight | +881%, 26,307 trades |
 | v2 | rank by edge, 4 equal slots, swap at 1.5× the weakest edge, never trim | +5,738%, 584 trades |
 | v3 | v2 with weight ∝ edge and a reserve of 0.1% of net worth instead of $1b | +6,257%, 550 trades |
-| current | impact-aware allocation, cycle-aware value rotation | +11,300%, 180 trades |
+| v4 | impact-aware allocation, cycle-aware value rotation | +11,300%, 180 trades |
+| current | v4 + variance drag + idle-cash pass + cycle-aware no-4S estimate + hacking influence | +11,471%, 203 trades |
 
 Lessons that carried forward:
 
 - **Rank by edge, not forecast** (v1 → v2, 6.5×): forecast alone prefers calm companies with tiny
   moves.
 - **Trade rarely and never trim** (v1 → v2): v1 paid $2.6b in commission per run; trimming a
-  position back to target every tick was later measured at 0.81× on v2.
+  position back to target every tick was later measured at 0.81× on v2, and trimming before a cycle
+  at 0.76–0.98×.
 - **Reserves should be proportional** (v2 → v3): an absolute $1b reserve is 10% of a $10b account and
   made v2 completely inert at $1b.
-- **Kelly sizing loses** (0.83× on v2): it divides by per-tick variance, but an edge persists for many
-  ticks, so a volatile position is far less risky over its life than its per-tick variance suggests.
+- **Kelly sizing loses, variance drag does not** (0.83× on v2): sizing *by* edge ÷ variance throws
+  away the edge's persistence. Subtracting the variance drag inside the impact-aware allocation only
+  stops a jumpy, weak-lean company from taking most of the account, and that cut tail drawdowns.
 - **What looked like "concentration loses" was impact.** With four fixed slots, 2 positions at 50%
   measured 0.95× and faster rotation 0.95×; both trade bigger blocks, and the forecast impact of those
   blocks was not in the cost model. Once allocation priced it, and capped money spilled to the next
   company, concentrating became the largest single gain.
+- **Measure the ceiling before building.** Learning the exact impact rate and predicting the
+  forecast's drift both looked promising; oracles with perfect information gained nothing, so neither
+  was built. The cycle oracle without 4S showed 3.67×, and the estimator built for it reached 3.58×.
 
-## 13. Caveats
+## 14. Caveats
 
 - **The impact table is game data.** If `InitStockMetadata` changes upstream, update
-  `SHARES_PER_MOVEMENT` in `trader.ts` along with the model.
-- **Missed updates** only blur the cycle count until the next detected cycle resynchronises it.
-- **The game offers a lever the model leaves out.** `hack()` and `grow()` with `{ stock: true }` move a
-  company's hidden forecast target (`PlayerInfluencing.ts`), so a script that grows the servers of
-  companies the trader is long on would push their forecasts the other way from our own trading. The
-  benchmark does not model hacking, so this is untested.
+  `SHARES_PER_MOVEMENT` in `trader.ts` along with the model; likewise `STOCK_SERVERS` in
+  `influence.ts` if company servers change.
+- **Missed updates** only blur the 4S cycle count until the next detected cycle resynchronises it.
+  Without 4S, a missed update shifts the learnt phase by one; the score keeps accumulating, so it
+  should drift back to the true boundary (not measured).
+- **Influence is an estimate of hacking you control elsewhere.** The model assumes a steady number of
+  stock-flagged events per update on every held company; the real rate depends on which servers the
+  batcher targets and how much money each grow restores.

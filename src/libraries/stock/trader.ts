@@ -25,6 +25,7 @@
 
 import { NS } from "@ns"
 import { DEFAULT_STOCK_TRADER_CONFIG, mergeStockTraderConfig, type StockTraderConfig } from "@/libraries/stock/config.js"
+import { createBlindCycleState, observeBlindCycle, type BlindCycleState } from "@/libraries/stock/blindCycle.js"
 import type { StockPositionSide, StockSymbolSnapshot, StockTraderSnapshot } from "@/libraries/stock/types.js"
 
 const POS_LONG: StockPositionSide = "L"
@@ -104,6 +105,10 @@ export interface StockTraderState {
   lastCycleTick: number | null
   /** Forecast per symbol on the previous update. */
   forecasts: Map<string, number>
+  /** Without 4S: the cycle phase and per-company sign tracking learnt from prices. */
+  blindCycle?: BlindCycleState
+  /** Without 4S: the last cycle-aware edges, or null while the phase is unknown. */
+  blindEdges?: Map<string, number> | null
 }
 
 export function createStockTraderState(): StockTraderState {
@@ -192,6 +197,15 @@ export function estimateEdges(
     const estimate = estimateEdge(state.prices.get(sym) ?? [], config.historyTicks)
     if (estimate !== null) edges.set(sym, estimate)
   }
+  // Without 4S, once the cycle phase is known from prices, the cycle-aware estimate replaces the
+  // moving average (blindCycle.ts). The dashboard reads the last one instead of recording again.
+  if (!marketData && config.no4sCycleAware) {
+    if (record) {
+      state.blindCycle ??= createBlindCycleState()
+      state.blindEdges = observeBlindCycle(state.blindCycle, new Map(symbols.map((sym) => [sym, ns.stock.getPrice(sym)])))
+    }
+    for (const [sym, edge] of state.blindEdges ?? []) edges.set(sym, edge)
+  }
   return edges
 }
 
@@ -238,12 +252,16 @@ export interface ImpactProfile {
 /**
  * Expected log growth per update from holding `held + added` of a company once `added` has been
  * bought. Buying lowers the outlook of every share held, not just the new ones, until the floor.
+ * `varianceScale` subtracts the variance drag of log growth: one update moves the price by
+ * `v * volatility` with `v` uniform on [0, 1], so the per-update variance is `volatility^2 / 3`
+ * and the drag on a weight `w` is `w^2 * volatility^2 / 6`.
  */
-export function impactedGrowth(p: ImpactProfile, added: number): number {
+export function impactedGrowth(p: ImpactProfile, added: number, varianceScale = 0): number {
   const floor = Math.min(p.outlook, IMPACT_FLOOR)
   const outlook = Math.max(floor, p.outlook - p.impact * added)
+  const weight = p.held + added
   // edge = (2f - 1) * volatility = outlook / 50 * volatility; growth per update is edge / 2.
-  return ((p.held + added) * p.volatility * outlook) / 100
+  return (weight * p.volatility * outlook) / 100 - (varianceScale * weight * weight * p.volatility * p.volatility) / 6
 }
 
 /** Edge per unit of weight of a position of size `weight` opened now, net of its own impact. */
@@ -260,11 +278,12 @@ export function impactedEdge(p: ImpactProfile, weight: number): number {
 export function allocateWithImpact(
   pool: readonly ImpactProfile[],
   budget: number,
-  options: { slices: number; maxWeight: number; openSlots: number }
+  options: { slices: number; maxWeight: number; openSlots: number; varianceScale?: number }
 ): Map<string, number> {
   const added = new Map<string, number>()
   if (!(budget > 0) || pool.length === 0) return added
   const slice = budget / options.slices
+  const varianceScale = options.varianceScale ?? 0
   let opened = 0
   for (let step = 0; step < options.slices; step++) {
     let best: ImpactProfile | null = null
@@ -276,7 +295,7 @@ export function allocateWithImpact(
       if (room <= 1e-12) continue
       const size = Math.min(slice, room)
       // Gain per unit of weight, so a slice cut short by the cap is compared fairly.
-      const gain = (impactedGrowth(p, now + size) - impactedGrowth(p, now)) / size
+      const gain = (impactedGrowth(p, now + size, varianceScale) - impactedGrowth(p, now, varianceScale)) / size
       if (gain > bestGain) {
         bestGain = gain
         best = p
@@ -492,7 +511,6 @@ export function runStockTradingTick(
 
   const netWorth = ns.getServerMoneyAvailable("home") + liquidationValue(ns, symbols)
   if (!(netWorth > 0)) return actions
-
   // Forecasts are read again: the sales above moved them. Without 4S the forecast and volatility
   // are estimated from the price history instead.
   const profile = (symbol: string): ImpactProfile => {
@@ -543,6 +561,7 @@ export function runStockTradingTick(
   // time both keep their edge (until the cycle, then each survives it with probability 0.55, so the
   // tail is worth 0.55/0.45 cycles). Money that is already invested only moves through this rule
   // or the exit rule.
+  const rotatedOut = new Set<string>()
   if (held.length > 0 && fresh.length > 0) {
     const horizon =
       (toCycle ?? STOCK_TICKS_PER_CYCLE / 2) + (STOCK_TICKS_PER_CYCLE * CYCLE_SURVIVAL) / (1 - CYCLE_SURVIVAL)
@@ -564,6 +583,7 @@ export function runStockTradingTick(
         const [weakLong, , weakShort] = ns.stock.getPosition(weakest.symbol)
         if (weakLong > 0) sell(ns, weakest.symbol, weakLong, POS_LONG, actions, "SELL")
         if (weakShort > 0) sell(ns, weakest.symbol, weakShort, POS_SHORT, actions, "COVER")
+        rotatedOut.add(weakest.symbol)
       }
     }
   }
@@ -579,8 +599,37 @@ export function runStockTradingTick(
   const plan = allocateWithImpact(pool, cash / netWorth, {
     slices: cfg.slices,
     maxWeight: cfg.maxWeight,
-    openSlots: Math.max(0, cfg.maxOpenPositions - holdingsNow.length),
+    openSlots: Math.max(0, cfg.maxOpenPositions - holdingsNow.length), varianceScale: cfg.varianceScale,
   })
+
+  // Cash the entry bar leaves idle (every eligible company is at its cap) may go to weaker edges.
+  let leftover = cash / netWorth
+  for (const add of plan.values()) leftover -= add
+  const idleEntryEdge = cfg.idleEntryFraction * thresholds.entryEdge
+  if (cfg.idleEntryFraction < 1 && leftover > cfg.minNewWeight) {
+    // A holding rotated out this update is never bought back by the idle pass in the same update.
+    const idlePool = symbols
+      .filter((sym) => !isHeld(sym) && !plan.has(sym) && !rotatedOut.has(sym))
+      .map(profile)
+      .filter(
+        (p) =>
+          edgeOf(p) >= idleEntryEdge &&
+          edgeOf(p) < thresholds.entryEdge &&
+          p.outlook >= cfg.idleMinOutlook &&
+          (p.side === POS_LONG || allowShorts),
+      )
+    const idlePlan = allocateWithImpact(idlePool, leftover, {
+      slices: cfg.slices,
+      maxWeight: cfg.maxWeight,
+      openSlots: cfg.idleExtraPositions, varianceScale: cfg.varianceScale,
+    })
+    for (const p of idlePool) {
+      const add = idlePlan.get(p.symbol)
+      if (!add) continue
+      plan.set(p.symbol, add)
+      pool.push(p)
+    }
+  }
 
   let budget = cash
   for (const p of pool) {

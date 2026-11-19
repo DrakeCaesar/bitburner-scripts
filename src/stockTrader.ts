@@ -3,6 +3,7 @@ import { killOtherInstances } from "@/libraries/batchCalculations.js"
 import { parseStockTraderArgs } from "@/libraries/stock/args.js"
 import { mergeStockTraderConfig } from "@/libraries/stock/config.js"
 import { STOCK_TABS, renderStockTraderDashboard } from "@/libraries/stock/display.js"
+import { publishStockInfluence, stockInfluenceFor } from "@/libraries/stock/influence.js"
 import {
   collectTraderSnapshot,
   createStockTraderState,
@@ -22,6 +23,8 @@ async function runLiquidateMode(ns: NS): Promise<void> {
     ns.tprint("No stock positions to close.")
     return
   }
+  // Nothing is held after this, so hack/grow workers should stop influencing stocks.
+  publishStockInfluence(ns, {})
 
   let tickCount = 0
   const symbols = ns.stock.getSymbols()
@@ -67,6 +70,8 @@ async function runTradeMode(ns: NS): Promise<void> {
   openTailLog(ns, "WSE Trader")
   const tabbedLog = createTabbedTailLog(STOCK_TABS)
   const state = createStockTraderState()
+  // A stale broadcast would keep workers pushing forecasts for positions this script no longer manages.
+  ns.atExit(() => publishStockInfluence(ns, {}))
 
   let sessionStartNetWorth = 0
   let tickCount = 0
@@ -88,6 +93,8 @@ async function runTradeMode(ns: NS): Promise<void> {
 
       const actions = runStockTradingTick(ns, config, state)
       tickCount++
+      // Tell hack/grow workers which company servers to push in our favour (see influence.ts).
+      publishStockInfluence(ns, stockInfluenceFor(ns))
 
       const snapshot = collectTraderSnapshot(ns, config, sessionStartNetWorth, tickCount, actions, state)
       await renderStockTraderDashboard(ns, tabbedLog, snapshot)

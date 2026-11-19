@@ -3,6 +3,7 @@
  *
  * Ports are assigned in blocks to prevent accidental collisions:
  *   Batch hacking      — 21
+ *   Stock trading      — 31
  *   Darknet crawl      — 45108–46121
  */
 
@@ -13,6 +14,14 @@ export const BATCH_HACK_INCOME_PORT = 21
 
 /** Bitburner port queue capacity; one hack completion = one write. */
 export const HACK_INCOME_PORT_CAPACITY = 50
+
+// ---- stock trading ----
+
+/**
+ * Trader-to-worker broadcast: which company servers to influence and in which direction
+ * (single JSON message, hack/grow workers peek). See libraries/stock/influence.ts.
+ */
+export const STOCK_INFLUENCE_PORT = 31
 
 // ---- darknet crawl ----
 

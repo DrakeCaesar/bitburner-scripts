@@ -74,6 +74,8 @@ const CONFIG_FLAGS: Record<string, ConfigFlagSpec> = {
   rotation: { key: "rotationCostFactor", kind: "number" },
   "no4s-rotation": { key: "no4sRotationCostFactor", kind: "number" },
   impact: { key: "impactScale", kind: "number" },
+  "idle-fraction": { key: "idleEntryFraction", kind: "number" },
+  variance: { key: "varianceScale", kind: "number" },
   "min-shares": { key: "minShares", kind: "number" },
   shorts: { key: "enableShorts", kind: "boolean" },
 }
@@ -93,6 +95,8 @@ interface CliOptions {
   /** Also run the shipped defaults on the same seeds and print the paired difference. */
   compare: boolean
   marketData: boolean
+  /** Modelled stock-flagged hack/grow events per update on each held company's server. */
+  influence: number
   baseline: "none" | "filtered" | "all"
   grid: { flag: string; key: ConfigKey; values: number[] }[]
   json: boolean
@@ -143,6 +147,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
     config: {},
     compare: false,
     marketData: true,
+    influence: 0,
     baseline: "filtered",
     grid: [],
     json: false,
@@ -224,6 +229,9 @@ function parseArgs(argv: readonly string[]): CliOptions {
         break
       case "no-4s":
         options.marketData = false
+        break
+      case "influence":
+        options.influence = Math.max(0, requireNumber(flag, nextValue()))
         break
       case "tune":
         options.tune = true
@@ -324,8 +332,13 @@ Config overrides (defaults come from src/libraries/stock/config.ts)
   --no4s-entry-edge <f>     Entry threshold when there is no 4S data (default 0.003)
   --no4s-rotation <f>       Rotation hurdle when there is no 4S data (default 64)
   --history-ticks <n>       Updates used to estimate edge and volatility without 4S (default 40)
+  --idle-fraction <f>       Entry bar for otherwise idle cash, as a fraction of the entry bar (default 0.6)
+  --variance <f>            Weight on the variance drag of log growth in the allocation (default 1)
   --no-4s                   Model a player without 4S Market Data: no forecasts or volatilities,
                             so they are estimated from the last --history-ticks prices
+  --influence <n>           Model hacking influence: n stock-flagged grow (long) or hack (short)
+                            events per update on each held company's server, each moving its hidden
+                            forecast target 0.1 our way (default 0; see libraries/stock/influence.ts)
   --compare                 Also run the shipped defaults on the same seeds and print the
                             difference, plus the same-seed (paired) ratio and its 95% interval
 
@@ -376,6 +389,7 @@ function runSeeds(options: CliOptions, config: Partial<StockTraderConfig>): Benc
       bitNode: options.bitNode,
       ownedSf8: options.ownedSf8,
       marketData: options.marketData,
+      influence: options.influence,
     }),
   )
 }
@@ -429,6 +443,9 @@ function printHeader(options: CliOptions, config: Partial<StockTraderConfig>): v
       `${count(options.ticks)} updates (${gameHours(options.ticks).toFixed(1)}h) | BitNode ${options.bitNode}`,
   )
   console.log(`strategy ${buildConfigSummary(ns as never, merged)}`)
+  if (options.influence > 0) {
+    console.log(`hacking  ${options.influence} stock-flagged grow/hack events per update on each held company's server`)
+  }
 }
 
 /** Guards that explain a run which cannot mean anything. Printed in every mode, including --quiet. */
@@ -701,6 +718,7 @@ function runTune(options: CliOptions): number {
         bitNode: options.bitNode,
         ownedSf8: options.ownedSf8,
         marketData: options.marketData,
+        influence: options.influence,
       }),
     )
     return scoreGenome(genomeKey(genome, specs), results)
@@ -820,6 +838,7 @@ function main(): number {
             bitNode: options.bitNode,
             ownedSf8: options.ownedSf8,
             marketData: options.marketData,
+            influence: options.influence,
           },
           filtered,
         ),

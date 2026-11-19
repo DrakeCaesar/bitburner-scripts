@@ -20,6 +20,8 @@ import {
   runStockTradingTick,
   type ImpactProfile,
 } from "@/libraries/stock/trader.js"
+import { STOCK_SERVERS } from "@/libraries/stock/influence.js"
+import { createBlindCycleState, observeBlindCycle } from "@/libraries/stock/blindCycle.js"
 
 import {
   STOCK_MARKET_COMMISSION,
@@ -48,6 +50,12 @@ export interface BenchOptions {
   ownedSf8: number
   /** Set false to model a player without the 4S Market Data TIX API (no forecasts, no volatilities). */
   marketData?: boolean
+  /**
+   * Hacking influence: expected `grow`/`hack` `{ stock: true }` events per update on the server of
+   * every held company, each moving its second-order forecast 0.1 toward the held side. 0 = none.
+   * The real rate depends on how much hacking targets those servers (libraries/stock/influence.ts).
+   */
+  influence?: number
 }
 
 export interface SymbolStats {
@@ -257,8 +265,24 @@ export function runTraderScenario(options: BenchOptions): BenchResult {
     const config = mergeStockTraderConfig(options.config)
     // Fresh state per run: the strategy learns prices and the market cycle from what it has seen.
     const state = createStockTraderState()
-    return { tick: () => runStockTradingTick(ns as unknown as NS, config, state) }
+    const influence = Math.max(0, options.influence ?? 0)
+    return {
+      tick: () => {
+        runStockTradingTick(ns as unknown as NS, config, state)
+        if (influence > 0) applyInfluence(sim, influence)
+      },
+    }
   })
+}
+
+/** The expected effect of `events` stock-flagged hacks/grows per update on each held company's server. */
+function applyInfluence(sim: StockMarketSim, events: number): void {
+  for (const stock of sim.stocks) {
+    const long = stock.playerShares > 0
+    const short = stock.playerShortShares > 0
+    if (long === short || !(STOCK_SERVERS[stock.symbol]?.length > 0)) continue
+    stock.changeForecastForecast(stock.otlkMagForecast + (long ? 0.1 : -0.1) * events)
+  }
 }
 
 /**
@@ -561,6 +585,10 @@ export const NUMERIC_CONFIG_KEYS = [
   "rotationCostFactor",
   "no4sRotationCostFactor",
   "impactScale",
+  "varianceScale",
+  "idleEntryFraction",
+  "idleMinOutlook",
+  "idleExtraPositions",
   "minShares",
 ] as const satisfies readonly (keyof StockTraderConfig)[]
 
@@ -803,6 +831,23 @@ export function runSelfTest(): string[] {
     })
     check(close(plan.get("BEST") ?? 0, 0.3, 1e-9), "self-test: allocation should fill the best company up to its share cap")
     check(close(plan.get("NEXT") ?? 0, 0.7, 1e-9), "self-test: allocation should spill what a capped company cannot hold")
+  }
+
+  // Without 4S the cycle phase is found from prices alone: within 2 updates after 900 updates.
+  {
+    const sim = new StockMarketSim({ seed: 7, cash: 0 })
+    const blind = createBlindCycleState()
+    let boundary = -1
+    for (let t = 0; t <= 900; t++) {
+      const before = sim.ticksUntilCycle
+      sim.updatePrices()
+      // Return number t - 1 (0-based) is the first one made after this cycle.
+      if (t > 0 && sim.ticksUntilCycle > before) boundary = (t - 1) % 75
+      observeBlindCycle(blind, new Map(sim.stocks.map((s) => [s.symbol, s.price])))
+    }
+    const phase = blind.phase
+    const error = phase === null ? Infinity : Math.min(Math.abs(phase - boundary), 75 - Math.abs(phase - boundary))
+    check(error <= 2, `self-test: no-4S cycle phase ${phase} should be within 2 updates of ${boundary}`)
   }
 
   // Seeded RNG sanity: the market is always initialized and deterministic.

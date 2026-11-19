@@ -48,6 +48,12 @@
           <label class="field"><span>BitNode</span><input id="node" type="text" inputmode="numeric" data-group="1" /></label>
           <label class="field"><span>SF8 level</span><input id="sf8" type="text" inputmode="numeric" data-group="1" /></label>
           <label class="field"><span>Workers</span><input id="workers" type="text" inputmode="numeric" data-group="1" /></label>
+          <label
+            class="field"
+            title="Stock-flagged grow (long) or hack (short) events per update on each held company's server, each moving its hidden forecast target 0.1 our way. 0 = no hacking influence. See src/libraries/stock/influence.ts."
+          >
+            <span>Hack influence</span><input id="influence" type="text" inputmode="decimal" />
+          </label>
           <label class="field">
             <span>Baseline</span>
             <select id="baseline" data-value="filtered">
@@ -71,6 +77,10 @@
           <label class="field">
             <span>Enable shorts</span>
             <span class="fieldToggle"><input id="enableShorts" type="checkbox" data-checked="1" checked /></span>
+          </label>
+          <label class="field" title="Without 4S: find the market cycle from prices and track each company's direction across it. Off = plain moving average (the v4 behaviour).">
+            <span>Cycle-aware (no 4S)</span>
+            <span class="fieldToggle"><input id="no4sCycleAware" type="checkbox" data-checked="1" checked /></span>
           </label>
         </div>
         <div class="buttons">
@@ -182,6 +192,10 @@
         rotationCostFactor: "rotation hurdle",
         no4sRotationCostFactor: "rotation hurdle (no 4S)",
         impactScale: "impact scale",
+        varianceScale: "variance drag",
+        idleEntryFraction: "idle entry fraction",
+        idleMinOutlook: "idle min outlook",
+        idleExtraPositions: "idle extra positions",
         minShares: "min shares",
       }
       const COLS = {
@@ -199,21 +213,31 @@
         rotationCostFactor: "rot",
         no4sRotationCostFactor: "rot4s",
         impactScale: "imp",
+        varianceScale: "var",
+        idleEntryFraction: "idleF",
+        idleMinOutlook: "idleO",
+        idleExtraPositions: "idleP",
         minShares: "minSh",
       }
       // One hue per series, never assigned by position, so a line keeps its colour whatever else
       // is on the chart. No series is red, which the UI already uses for losses.
       const PALETTE = {
         tuned: "#3ddc84", //   green  - the stored tuned genome
-        saved: "#4c9df0", //   blue   - the strategy as it ships, the reference line
+        saved: "#4c9df0", //   blue   - the strategy as it ships (v5), the reference line
+        v4: "#ff8a65", //      coral  - the v4 rules, for comparison
         edited: "#22d3ee", //  cyan   - the config being edited, only when it is not one of those
         hold: "#f2e85c", //    yellow - buy and hold
         holdAll: "#808080", // grey   - buy and hold, unfiltered
       }
-      const SERIES_COLORS = [PALETTE.tuned, PALETTE.saved, PALETTE.edited, PALETTE.hold]
+      const SERIES_COLORS = [PALETTE.tuned, PALETTE.saved, PALETTE.v4, PALETTE.edited, PALETTE.hold]
+      /**
+       * v4 is the same code with the v5 additions switched off: no variance drag, no idle-cash pass,
+       * and the plain moving average without 4S. Charted so every run shows what v5 changed.
+       */
+      const V4_RULES = { varianceScale: 0, idleEntryFraction: 1, no4sCycleAware: false }
       const STORAGE_KEY = "toolui.stockBench.v1"
       const TUNE_KEY = "toolui.stockBench.tuned.v2"
-      const MARKET_DEFAULTS = { capital: 1e10, ticks: 3000, seed: 1, seeds: 25, node: 8, sf8: 3 }
+      const MARKET_DEFAULTS = { capital: 1e10, ticks: 3000, seed: 1, seeds: 25, node: 8, sf8: 3, influence: 0 }
       const TUNE_DEFAULTS = { tunePopulation: 6, tuneGenerations: 6, tuneSeed: 1 }
       const MAX_WORKERS = 12
 
@@ -283,6 +307,7 @@
           if (Number.isFinite(value)) config[key] = value
         }
         config.enableShorts = $("enableShorts").checked
+        config.no4sCycleAware = $("no4sCycleAware").checked
         return config
       }
 
@@ -293,6 +318,7 @@
           bitNode: Math.max(1, Math.floor(ToolUi.numberOf("node") || 1)),
           ownedSf8: Math.max(0, Math.floor(ToolUi.numberOf("sf8") || 0)),
           marketData: $("has4s").checked,
+          influence: Math.max(0, ToolUi.numberOf("influence") || 0),
         }
       }
 
@@ -621,13 +647,14 @@ self.onmessage = function (event) {
             const other = b[i].finalNetWorth
             return Math.abs(run.finalNetWorth - other) <= Math.max(1, Math.abs(other)) * 1e-9
           })
-        const edited = [layers.tuned, layers.saved, layers.holdFiltered].some((other) => identical(layers.edited, other))
+        const edited = [layers.tuned, layers.saved, layers.v4, layers.holdFiltered].some((other) => identical(layers.edited, other))
           ? null
           : layers.edited
 
         const series = [
           layers.tuned ? curveSeries("tuned", "tuned", layers.tuned, PALETTE.tuned) : null,
-          layers.saved ? curveSeries("shipped", "shipped", layers.saved, PALETTE.saved) : null,
+          layers.saved ? curveSeries("shipped", "v5 (shipped)", layers.saved, PALETTE.saved) : null,
+          layers.v4 ? curveSeries("v4", "v4", layers.v4, PALETTE.v4) : null,
           edited ? curveSeries("edited", "edited config", edited, PALETTE.edited) : null,
           layers.holdFiltered ? curveSeries("hold", "hold (filtered)", layers.holdFiltered, PALETTE.hold) : null,
           layers.holdAll ? curveSeries("holdAll", "hold (all)", layers.holdAll, PALETTE.holdAll) : null,
@@ -709,7 +736,10 @@ self.onmessage = function (event) {
         // Every line runs with the form's money keep: it is the player's account policy, not part of
         // a config, and a line that cannot spend anything would read as a flat +0.00%.
         const account = { moneyKeep: readConfig().moneyKeep }
-        const plan = [{ key: "saved", options: { ...market, config: account } }]
+        const plan = [
+          { key: "saved", options: { ...market, config: account } },
+          { key: "v4", options: { ...market, config: { ...account, ...V4_RULES } } },
+        ]
         const tuned = tunedOptions()
         if (tuned) plan.push({ key: "tuned", options: tuned.options })
         plan.push({ key: "edited", options: { ...market, config: readConfig() } })
@@ -761,7 +791,7 @@ self.onmessage = function (event) {
             pairResults(editedResults, savedResults),
           )
           renderSymbols(editedResults[0].perSymbol)
-          chartAll({ saved: savedResults, tuned: tunedResults, edited: editedResults, holdFiltered, holdAll })
+          chartAll({ saved: savedResults, v4: layer("v4"), tuned: tunedResults, edited: editedResults, holdFiltered, holdAll })
 
           $("results").classList.remove("hidden")
           const seconds = ((performance.now() - started) / 1000).toFixed(2)
@@ -775,6 +805,10 @@ self.onmessage = function (event) {
                 ? `no trades: money keep ${money(keep)} is at or above capital ${money(market.capital)}`
                 : "no trades at all - the entry edge never cleared",
             )
+          }
+          const v5Paired = pairResults(savedResults, layer("v4"))
+          if (v5Paired) {
+            notes.push(`v5 ${ToolUi.format.ratio(v5Paired.geometricRatio)} vs v4 (${v5Paired.wins}/${v5Paired.runs})`)
           }
           const tunedPaired = tunedResults ? pairResults(tunedResults, savedResults) : null
           if (tunedPaired) {
@@ -899,8 +933,8 @@ self.onmessage = function (event) {
         if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined
         const config = {}
         for (const [key, value] of Object.entries(raw)) {
-          if (key === "enableShorts") {
-            config.enableShorts = Boolean(value)
+          if (key === "enableShorts" || key === "no4sCycleAware") {
+            config[key] = Boolean(value)
             continue
           }
           if (!NUMERIC_CONFIG_KEYS.includes(key)) continue
@@ -1062,19 +1096,20 @@ self.onmessage = function (event) {
         tuneCancel = false
         setBusy(true)
         const started = performance.now()
-        const reference = { saved: null, edited: null }
+        const reference = { saved: null, v4: null, edited: null }
         const chart = () => chartAll({ ...reference, tuned: chartRuns, holdFiltered: null, holdAll: null })
         try {
           // Reference lines once, on the same seeds, so the tuned line sits next to something
           // stable while the search runs.
           const fixed = []
-          for (const config of [{ moneyKeep: base.moneyKeep }, base]) {
+          for (const config of [{ moneyKeep: base.moneyKeep }, base, { moneyKeep: base.moneyKeep, ...V4_RULES }]) {
             for (const seed of seeds) fixed.push({ kind: "strategy", options: { ...market, config, seed } })
           }
           setStatus(`measuring the reference lines on ${seeds.length} seeds...`)
           const fixedResults = await runJobs(fixed, () => {})
           reference.saved = fixedResults.slice(0, seeds.length)
-          reference.edited = fixedResults.slice(seeds.length)
+          reference.edited = fixedResults.slice(seeds.length, seeds.length * 2)
+          reference.v4 = fixedResults.slice(seeds.length * 2)
           renderCards(aggregate(reference.edited), null, null, pairResults(reference.edited, reference.saved))
           renderSymbols(reference.edited[0].perSymbol)
           $("results").classList.remove("hidden")
@@ -1289,7 +1324,7 @@ self.onmessage = function (event) {
 
       for (const input of Object.values(gridInputs)) input.addEventListener("input", updateGridCount)
       for (const input of Object.values(configInputs)) input.addEventListener("input", updateGridCount)
-      for (const id of ["capital", "ticks", "seed", "seeds", "node", "sf8", "workers", "baseline"]) {
+      for (const id of ["capital", "ticks", "seed", "seeds", "node", "sf8", "workers", "baseline", "influence"]) {
         $(id).addEventListener("input", updateGridCount)
       }
       for (const id of ["seed", "seeds"]) {
