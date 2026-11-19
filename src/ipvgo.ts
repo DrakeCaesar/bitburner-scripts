@@ -51,9 +51,18 @@ import {
   type IpvgoBoardSize,
   type IpvgoMove,
   type IpvgoMoveRequest,
+  type IpvgoSeedChoice,
   type IpvgoValidMoves,
 } from "./libraries/ipvgo/types.js"
 import { formatIpvgoPoint } from "./libraries/ipvgo/coords.js"
+import {
+  readSeedClock,
+  SEED_TICK_MS,
+  tickForSeed,
+  upcomingSeeds,
+  waitForTick,
+  type SeedClock,
+} from "./libraries/ipvgo/seedTiming.js"
 import { isInfiltrationUiBlockingNavigation } from "./libraries/infiltration/infiltrationNavigation.js"
 import { createAdaptiveTailLog, createTailLog, openTailLog } from "./libraries/scriptLogUiLayout.js"
 
@@ -80,6 +89,13 @@ const IPVGO_SEARCH = {
   cheatLosingGate: true,
   /** Stop the script when White plays a move the engine's reply model does not contain. */
   parityCheck: true,
+  /**
+   * Time our moves to White's RNG (see seedTiming.ts): the engine values every move at the
+   * tick that gives White's best reply for us, and we wait for that tick before moving.
+   */
+  seedTiming: true,
+  /** Ticks (200 ms each) we are willing to wait past the end of the search for a better seed. */
+  seedWindow: 10,
 } as const
 
 /** Per-faction widths from the same Run pane: beam, replies kept, reply mass cap. */
@@ -227,10 +243,13 @@ function buildEngineRequest(
   history: IpvgoBoard[],
   validMoves: IpvgoValidMoves,
   komi: number,
-  cheatsAvailable: boolean
+  cheatsAvailable: boolean,
+  seedClock: SeedClock | null
 ): IpvgoMoveRequest {
   const width = IPVGO_FACTION_SEARCH[snapshot.opponent] ?? IPVGO_DEFAULT_WIDTH
   const cheat = cheatsAvailable ? readCheatContext(ns) : null
+  // The ticks the search may still finish before, then the ones we are willing to wait for.
+  const leadTicks = Math.ceil(thinkEstimateMs / SEED_TICK_MS) + 1
   return {
     board,
     history,
@@ -256,7 +275,79 @@ function buildEngineRequest(
     cheatMargin: IPVGO_SEARCH.cheatMargin,
     cheatMaxAttempts: IPVGO_SEARCH.cheatMaxAttempts,
     cheatLosingGate: IPVGO_SEARCH.cheatLosingGate,
+    ...(seedClock
+      ? {
+          whiteSeeds: upcomingSeeds(seedClock, leadTicks + IPVGO_SEARCH.seedWindow),
+          whiteChoice: IPVGO_SEARCH.seedWindow,
+        }
+      : {}),
   }
+}
+
+/** Recent search time, so the seeds we send start at ticks the search can still make. */
+let thinkEstimateMs = 1000
+
+function noteThinkTime(ms: number): void {
+  // Rises at once and decays slowly: an underestimate wastes the plan's best ticks.
+  thinkEstimateMs = Math.max(ms, 0.8 * thinkEstimateMs + 0.2 * ms)
+}
+
+/** How often the engine's predicted White reply was the one White played. */
+const seedStats = { predicted: 0, hits: 0 }
+
+/**
+ * Seed timing only pays while its predictions hold. A background tab throttles the game's
+ * timers, and a game update could change the AI; either shows up as misses, and then planning
+ * around a reply White will not play is worse than not planning at all.
+ */
+function seedTimingActive(): boolean {
+  if (!IPVGO_SEARCH.seedTiming) return false
+  return seedStats.predicted < 6 || seedStats.hits >= 0.8 * seedStats.predicted
+}
+
+/**
+ * The plan entry to aim for: the best one whose tick is far enough ahead that the dashboard can
+ * render before it starts.
+ */
+function pickSeedChoice(
+  ns: NS,
+  plan: IpvgoSeedChoice[] | undefined,
+  clock: SeedClock | null
+): IpvgoSeedChoice | null {
+  if (!plan || !clock) return null
+  const now = ns.getPlayer().totalPlaytime
+  return plan.find((choice) => tickForSeed(choice.seed, clock.bonus) > now + SEED_TICK_MS) ?? null
+}
+
+/**
+ * Waits for the chosen tick and returns the entry that will actually be played: the chosen one,
+ * or - when its tick slipped by - the best later one still ahead. Null = no timing, move now.
+ */
+async function landOnSeedTick(
+  ns: NS,
+  plan: IpvgoSeedChoice[] | undefined,
+  clock: SeedClock | null,
+  chosen: IpvgoSeedChoice | null
+): Promise<IpvgoSeedChoice | null> {
+  if (!plan || !clock || !chosen) return null
+  const candidates = [chosen, ...plan.filter((choice) => choice !== chosen)]
+  for (const choice of candidates) {
+    const tick = tickForSeed(choice.seed, clock.bonus)
+    if (tick <= ns.getPlayer().totalPlaytime) continue
+    if (await waitForTick(ns, tick)) return choice
+  }
+  return null
+}
+
+function sameMove(a: IpvgoMove | null, b: IpvgoMove): boolean {
+  if (!a) return false
+  if (a.type === "pass" || b.type === "pass") return a.type === b.type
+  return a.x === b.x && a.y === b.y
+}
+
+function formatMove(move: IpvgoMove | null): string {
+  if (!move) return "?"
+  return move.type === "pass" ? "pass" : formatIpvgoPoint(move.x, move.y)
 }
 
 function formatOpponentTurn(result: { type: string; x: number | null; y: number | null }): string {
@@ -720,6 +811,7 @@ export async function main(ns: NS): Promise<void> {
       // the game will actually let us play one.
       const cheatStats = readCheatStats(ns)
       const cheatsAvailable = IPVGO_SEARCH.cheats && cheatStats.available
+      const seedClock = seedTimingActive() ? readSeedClock(ns) : null
       const request = buildEngineRequest(
         ns,
         snapshot,
@@ -727,7 +819,8 @@ export async function main(ns: NS): Promise<void> {
         history,
         validMoves,
         komi,
-        cheatsAvailable
+        cheatsAvailable,
+        seedClock
       )
       const started = performance.now()
       const analysis = await requestIpvgoEngineMoveInterruptible(
@@ -745,6 +838,7 @@ export async function main(ns: NS): Promise<void> {
         continue gameLoop
       }
       const thinkMs = performance.now() - started
+      noteThinkTime(thinkMs)
       const sims = analysis.nodes ?? analysis.iterations ?? 0
 
       if (analysis.cheatPreferred && analysis.cheat) {
@@ -837,11 +931,14 @@ export async function main(ns: NS): Promise<void> {
         }
       }
 
-      const move = pickLegalMove(validMoves, analysis.move)
+      // With seed timing the move comes from the plan entry we will aim for; it can still change
+      // below if that tick slips by before we get to it.
+      const plannedChoice = pickSeedChoice(ns, analysis.seedPlan, seedClock)
+      let move = pickLegalMove(validMoves, plannedChoice?.move ?? analysis.move)
       snapshot = recordOurMove(snapshot, moveNumber, move, {
         thinkMs,
         sims,
-        value: analysis.value,
+        value: plannedChoice?.value ?? analysis.value,
         depth: analysis.depth,
       })
 
@@ -859,14 +956,20 @@ export async function main(ns: NS): Promise<void> {
       }
       await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
 
+      if (move.type === "move") {
+        // The game takes a while to answer; let the engine use that time.
+        ponderIpvgoEngine(request, move, plannedChoice?.reply)
+        ns.go.analysis.highlightPoint(move.x, move.y, "hack", "MCTS")
+      }
+      // Nothing may run between landing on the tick and submitting, or the seed moves.
+      const landed = await landOnSeedTick(ns, analysis.seedPlan, seedClock, plannedChoice)
+      if (landed && !sameMove(landed.move, move)) move = pickLegalMove(validMoves, landed.move)
+
       const oppStarted = performance.now()
       let result
       if (move.type === "pass") {
         result = await ns.go.passTurn()
       } else {
-        // The game takes a while to answer; let the engine use that time.
-        ponderIpvgoEngine(request, move)
-        ns.go.analysis.highlightPoint(move.x, move.y, "hack", "MCTS")
         result = await ns.go.makeMove(move.x, move.y)
         ns.go.analysis.clearAllPointHighlights()
       }
@@ -879,6 +982,17 @@ export async function main(ns: NS): Promise<void> {
         result.type === "move" && result.x !== null && result.y !== null
           ? { type: "move", x: result.x, y: result.y }
           : { type: "pass" }
+      if (landed && landed.replyProb >= 1) {
+        seedStats.predicted++
+        if (sameMove(landed.reply, whitePlayed)) {
+          seedStats.hits++
+        } else {
+          ns.print(
+            `WARN seed miss: predicted ${formatMove(landed.reply)}, White played ${formatMove(whitePlayed)}` +
+              ` (seed ${landed.seed}, bonus cycles ${seedClock?.bonus ? "yes" : "no"})`
+          )
+        }
+      }
       const opponentParity = await checkWhiteReplyParity(ns, snapshot, whitePlayed)
       if (opponentParity) {
         await stopOnParityError(ns, snapshot, tailLog, adaptiveLog, opponentParity)
@@ -920,7 +1034,10 @@ export async function main(ns: NS): Promise<void> {
         thinkMs,
         sims,
         thinking: false,
-        phase: "Our move played",
+        phase:
+          seedStats.predicted > 0
+            ? `Our move played (White predicted ${seedStats.hits}/${seedStats.predicted})`
+            : "Our move played",
       }
       await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
       await sleepUntilIpvgoSetupChange(ns, LOOP_SLEEP_MS)

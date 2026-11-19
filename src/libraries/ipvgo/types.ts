@@ -46,6 +46,13 @@ export type IpvgoSearchSettings = {
   crimeSuccessMult: number
   /** Source-File 14 level; 3 adds the flat +25 points. */
   sourceFile14Level: number
+  /**
+   * White's RNG seeds (playtime in ms) for the ticks our move can still land in, earliest
+   * first. The engine then knows White's exact reply per tick and answers with `seedPlan`.
+   */
+  whiteSeeds: number[]
+  /** Ticks we will be able to choose between at White's later replies (1 = no choice). */
+  whiteChoice: number
 }
 
 export type IpvgoMoveRequest = {
@@ -125,6 +132,18 @@ export type IpvgoMoveResponse = {
   /** The search would rather cheat than play any legal move. */
   cheatPreferred?: boolean
   cheat?: IpvgoCheatProposal
+  /** With `whiteSeeds`: the move for each tick, best first (then the earliest tick). */
+  seedPlan?: IpvgoSeedChoice[]
+}
+
+/** One tick's choice: land `move` in the tick whose seed is `seed`, and White plays `reply`. */
+export type IpvgoSeedChoice = {
+  seed: number
+  move: IpvgoMove
+  value: number
+  /** White's predicted reply; `replyProb` is below 1 only when a defend tie-break splits it. */
+  reply: IpvgoMove | null
+  replyProb: number
 }
 
 export const IPVGO_BOARD_SIZES = [5, 7, 9, 13] as const

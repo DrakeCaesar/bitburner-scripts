@@ -50,4 +50,12 @@ struct ReplyDist {
 
 ReplyDist opponentReplyDistribution(const GameState& state, Color player, Opponent opponent);
 
+// White's reply for each of the given RNG seeds (Player.totalPlaytime in ms, as getMove()
+// reads it). The game draws everything from that seed except getDefendMove()'s Math.random()
+// tie-break, so each entry is exact: a single reply, or a uniform split over the defend
+// candidates when there are several. Built for many seeds of one position at a time - the
+// move pools are computed once and only the picks are redone per seed.
+std::vector<ReplyDist> seededReplyDistributions(const GameState& state, Color player, Opponent opponent,
+                                                const std::vector<double>& seedsMs);
+
 }  // namespace ipvgo::game

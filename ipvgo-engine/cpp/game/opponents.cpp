@@ -436,6 +436,44 @@ class MoveGen {
 
   AiMove corner() { return cached(kCorner, [&] { return getCornerMove(board_); }); }
 
+  // A new moveRng (getMove's second draw) for the same position. The pools do not depend
+  // on it, only the uniform pick inside each one does, so a seeded caller evaluating many
+  // ticks builds the generator once and reseeds it per tick.
+  void reseed(double rng) {
+    rng_ = rng;
+    for (const Kind k : {kPattern, kGrowth, kExpansion, kJump, kRandom}) computed_[k] = false;
+  }
+
+  // How many points getDefendMove()'s Math.random() pick chooses between. That pick is the
+  // one draw the game does not take from the seeded WHRNG, so a seeded reply is exact only
+  // up to it; with two or more choices the caller enumerates them through forceDefend().
+  int defendChoices() const { return static_cast<int>(defendPointList(false).size()); }
+
+  // Pins the defend pick to candidate `index`, in getDefendMove()'s scan order.
+  void forceDefend(int index) {
+    const std::vector<GrowthCandidate>& growthMoves = growthList();
+    int maxDelta = 0;
+    for (const auto& m : growthMoves) {
+      if (m.oldLibertyCount > 1 || m.newLibertyCount - m.oldLibertyCount <= 0) continue;
+      maxDelta = std::max(maxDelta, m.newLibertyCount - m.oldLibertyCount);
+    }
+    AiMove pick;
+    int seen = 0;
+    for (const auto& m : growthMoves) {
+      if (m.oldLibertyCount > 1 || m.newLibertyCount - m.oldLibertyCount != maxDelta || maxDelta < 1) continue;
+      if (seen++ != index) continue;
+      pick.valid = true;
+      pick.x = m.x;
+      pick.y = m.y;
+      pick.oldLibertyCount = m.oldLibertyCount;
+      pick.newLibertyCount = m.newLibertyCount;
+      break;
+    }
+    cache_[kDefend] = pick;
+    computed_[kDefend] = true;
+  }
+  void reseedDefend() { computed_[kDefend] = false; }
+
   AiMove random() {
     return cached(kRandom, [&] {
       if (contestedPoints_.empty()) return AiMove{};
@@ -1246,13 +1284,13 @@ bool isSmart(Opponent faction, double rng) {
   return true;
 }
 
-Play getMove(const GameState& state, Color player, Opponent opponent, double seedMs, MathRandom& mathRng) {
-  WHRNG rng(seedMs);
-  const bool smart = isSmart(opponent, rng.random());  // draw 1
-  const double moveRng = rng.random();                 // draw 2
-  MoveGen moves(state, player, moveRng, smart, mathRng);
-  const double factionRng = rng.random();              // draw 3
+namespace {
 
+// getMove() after its draws: the faction's priority table on the third draw, then the
+// uniform pick over the reasonable moves on the fourth. Shared with the seeded batch below
+// so the two can never disagree.
+Play resolvePlay(MoveGen& moves, const GameState& state, Color player, Opponent opponent, double factionRng,
+                 double fallbackRng) {
   const std::optional<Pt> priority = factionMove(moves, opponent, factionRng);
   if (priority) return Play{PlayType::Move, priority->first, priority->second};
 
@@ -1269,7 +1307,6 @@ Play getMove(const GameState& state, Color player, Opponent opponent, double see
   consider(moves.eyeMove());
   consider(moves.eyeBlock());
 
-  const double fallbackRng = rng.random();  // draw 4
   if (!options.empty()) {
     const int idx = floorIndex(fallbackRng, options.size());
     if (idx >= 0 && idx < static_cast<int>(options.size())) {
@@ -1277,6 +1314,73 @@ Play getMove(const GameState& state, Color player, Opponent opponent, double see
     }
   }
   return Play{PlayType::Pass, -1, -1};
+}
+
+}  // namespace
+
+Play getMove(const GameState& state, Color player, Opponent opponent, double seedMs, MathRandom& mathRng) {
+  WHRNG rng(seedMs);
+  const bool smart = isSmart(opponent, rng.random());  // draw 1
+  const double moveRng = rng.random();                 // draw 2
+  MoveGen moves(state, player, moveRng, smart, mathRng);
+  const double factionRng = rng.random();              // draw 3
+  // Draw 4 is only consumed when no priority move is found, but it is the last draw, so
+  // taking it up front changes nothing.
+  const double fallbackRng = rng.random();
+  return resolvePlay(moves, state, player, opponent, factionRng, fallbackRng);
+}
+
+std::vector<ReplyDist> seededReplyDistributions(const GameState& state, Color player, Opponent opponent,
+                                                const std::vector<double>& seedsMs) {
+  std::vector<ReplyDist> out(seedsMs.size());
+  if (seedsMs.empty() || state.gameOver || whoseTurn(state) == Color::Empty) return out;
+
+  MathRandom mathRng(1ULL);
+  std::optional<MoveGen> gens[2];
+  for (size_t i = 0; i < seedsMs.size(); ++i) {
+    WHRNG rng(seedsMs[i]);
+    const bool smart = isSmart(opponent, rng.random());
+    const double moveRng = rng.random();
+    const double factionRng = rng.random();
+    const double fallbackRng = rng.random();
+    std::optional<MoveGen>& slot = gens[smart ? 1 : 0];
+    if (!slot) slot.emplace(state, player, moveRng, smart, mathRng);
+    MoveGen& gen = *slot;
+    gen.reseed(moveRng);
+
+    // The defend pick is Math.random(), not the seed: with several candidates every one of
+    // them is equally likely, so the reply is a small distribution rather than a point.
+    const int choices = gen.defendChoices();
+    const int variants = std::max(1, choices);
+    std::vector<WeightedReply>& replies = out[i].replies;
+    for (int v = 0; v < variants; ++v) {
+      if (choices >= 2) gen.forceDefend(v);
+      const Play play = resolvePlay(gen, state, player, opponent, factionRng, fallbackRng);
+      const bool pass = play.type != PlayType::Move;
+      const double weight = 1.0 / static_cast<double>(variants);
+      bool merged = false;
+      for (WeightedReply& r : replies) {
+        if (r.passMove == pass && (pass || (r.x == play.x && r.y == play.y))) {
+          r.prob += weight;
+          merged = true;
+          break;
+        }
+      }
+      if (!merged) {
+        WeightedReply r;
+        r.passMove = pass;
+        r.x = pass ? -1 : play.x;
+        r.y = pass ? -1 : play.y;
+        r.prob = weight;
+        replies.push_back(r);
+      }
+    }
+    // Clear the pin so the next seed's single-choice case computes defend() normally.
+    if (choices >= 2) gen.reseedDefend();
+    std::sort(replies.begin(), replies.end(),
+              [](const WeightedReply& a, const WeightedReply& b) { return a.prob > b.prob; });
+  }
+  return out;
 }
 
 }  // namespace ipvgo::game

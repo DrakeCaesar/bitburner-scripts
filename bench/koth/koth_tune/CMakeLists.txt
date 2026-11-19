@@ -12,7 +12,7 @@ endif()
 
 # Release (performance) and RelWithDebInfo (profiling) flags, shared with the
 # rest of the repository when built from the root project.
-include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/BuildTypes.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/BuildTypes.cmake")
 
 set(KOTH_COMMON_SOURCES
   src/koth_game.cpp

@@ -968,6 +968,12 @@ json computeExploitMoveJson(const json& req, ipvgo::search::SearchSession* sessi
   cfg.cheatMargin = req.value("cheatMargin", 0.1);
   cfg.cheatMaxAttempts = std::clamp(req.value("cheatMaxAttempts", 2), 0, 99);
   cfg.cheatOnlyWhenLosing = req.value("cheatLosingGate", true);
+  if (req.contains("whiteSeeds") && req.at("whiteSeeds").is_array()) {
+    for (const auto& seed : req.at("whiteSeeds")) {
+      if (seed.is_number()) cfg.whiteSeeds.push_back(seed.get<double>());
+    }
+  }
+  cfg.whiteChoice = std::max(1, req.value("whiteChoice", 1));
 
   const auto t0 = std::chrono::steady_clock::now();
   const ExploitResult result = runExploiter(state, cfg, nullptr, session);
@@ -1013,6 +1019,18 @@ json computeExploitMoveJson(const json& req, ipvgo::search::SearchSession* sessi
     out["cheatPreferred"] = result.cheatPreferred;
   }
   out["engine"] = "exploit";
+  if (!result.seedPlan.empty()) {
+    json plan = json::array();
+    for (const auto& choice : result.seedPlan) {
+      plan.push_back(json{{"seed", choice.seedMs},
+                          {"move", actionToMoveJson(state.size, choice.action)},
+                          {"value", reportedValue(choice.value)},
+                          {"reply", choice.replyAction < 0 ? json(nullptr)
+                                                           : actionToMoveJson(state.size, choice.replyAction)},
+                          {"replyProb", choice.replyProb}});
+    }
+    out["seedPlan"] = plan;
+  }
   return out;
 }
 
@@ -1376,7 +1394,24 @@ class Ponderer {
     }
     if (afterBlack.gameOver || whoseTurn(afterBlack) != Color::White) return;
 
-    const ipvgo::game::ReplyDist dist = opponentReplyDistribution(afterBlack, Color::White, afterBlack.ai);
+    const ipvgo::game::ReplyDist policy = opponentReplyDistribution(afterBlack, Color::White, afterBlack.ai);
+    // With seed timing the client knows White's reply in advance (`expectReply`), so that
+    // position is searched first; the policy's likely replies follow.
+    ipvgo::game::ReplyDist dist;
+    if (req.contains("expectReply") && req.at("expectReply").is_object()) {
+      const json& expect = req.at("expectReply");
+      ipvgo::game::WeightedReply first;
+      first.passMove = expect.value("type", "") != "move";
+      first.x = first.passMove ? -1 : expect.value("x", -1);
+      first.y = first.passMove ? -1 : expect.value("y", -1);
+      first.prob = 0.0;
+      dist.replies.push_back(first);
+    }
+    for (const auto& reply : policy.replies) {
+      const bool duplicate = !dist.replies.empty() && dist.replies.front().passMove == reply.passMove &&
+                             (reply.passMove || (dist.replies.front().x == reply.x && dist.replies.front().y == reply.y));
+      if (!duplicate) dist.replies.push_back(reply);
+    }
     const int maxReplies = req.value("ponderReplies", 4);
     const double massGoal = req.value("ponderMass", 0.95);
     double mass = 0.0;
@@ -1398,7 +1433,9 @@ class Ponderer {
       }
 
       json next = req;
-      for (const char* field : {"ponder", "ourMove", "validMoves", "passCount", "requestId", "whiteReplyCheck"})
+      // The seeds were for the move just made; the next move gets its own from the client.
+      for (const char* field :
+           {"ponder", "ourMove", "validMoves", "passCount", "requestId", "whiteReplyCheck", "whiteSeeds", "expectReply"})
         next.erase(field);
       next["board"] = boardToJson(afterWhite.board);
       next["history"] = std::move(history);
@@ -1503,8 +1540,12 @@ int runEngineServer() {
       playoutPonderer.stop();
       ponderer.stop();
       try {
+        // A seeded request needs a plan for its own ticks, which a pondered answer cannot have.
+        // It is searched again; the carry memo the ponder filled makes that cheap.
+        const bool seeded = req.contains("whiteSeeds") && req.at("whiteSeeds").is_array() &&
+                            !req.at("whiteSeeds").empty();
         const auto hit = ponderer.results.find(ponderKey(req));
-        if (hit != ponderer.results.end() && servedMoveAllowed(req, hit->second)) {
+        if (!seeded && hit != ponderer.results.end() && servedMoveAllowed(req, hit->second)) {
           out = hit->second;
           out["ponderHit"] = true;
           if (req.contains("history") && req.at("history").is_array()) {
@@ -1695,6 +1736,9 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
     if (parsed > 0) cfg.nodeLimit = parsed;
   }
   if (nodeLimitOverride > 0) cfg.nodeLimit = nodeLimitOverride;
+  if (const char* mass = std::getenv("IPVGO_WHITE_MASS")) cfg.whiteMass = std::atof(mass);
+  // The in-game client verifies the root against every modelled reply.
+  cfg.verifyRootReplies = std::getenv("IPVGO_VERIFY_ROOT") != nullptr;
   if (const char* threads = std::getenv("IPVGO_THREADS")) cfg.threads = std::atoi(threads);
   // Play uses the faster dynamic root scheduler. Set IPVGO_DETERMINISTIC=1 to pin the
   // round-robin split instead, which makes a run repeatable for an A/B or a trace.
@@ -1702,6 +1746,17 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
   cfg.carry = std::getenv("IPVGO_CARRY") != nullptr;
   // Simulated White delay, and whether the idle time also keeps deepening.
   const int ponderMs = std::getenv("IPVGO_PONDER_MS") ? std::atoi(std::getenv("IPVGO_PONDER_MS")) : 0;
+  // Seed play (IPVGO_SEED_WINDOW=K): Black knows White's RNG seed - the game seeds it from the
+  // play clock, which only moves in 200 ms ticks - and picks which of the next K ticks its
+  // move lands in. Later White replies are valued as the best of IPVGO_SEED_CHOICE draws
+  // (default K): Black will get to pick a tick again then. 0 = the seed is unknown.
+  const int seedWindow = std::getenv("IPVGO_SEED_WINDOW") ? std::max(0, std::atoi(std::getenv("IPVGO_SEED_WINDOW"))) : 0;
+  if (seedWindow > 0) {
+    const char* choice = std::getenv("IPVGO_SEED_CHOICE");
+    cfg.whiteChoice = std::max(1, choice != nullptr ? std::atoi(choice) : seedWindow);
+  }
+  long seedPredictions = 0;
+  long seedHits = 0;
   const int ponderReplies = std::getenv("IPVGO_PONDER_REPLIES") ? std::atoi(std::getenv("IPVGO_PONDER_REPLIES")) : 4;
   SimPonder ponder;
   long ponderHits = 0;
@@ -1734,6 +1789,8 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
     const uint64_t mathSeed = rng();
     MathRandom mathRng(mathSeed);
     GameState state = newBoardState(size, ai, true, clockMs, mathRng);
+    // The play clock in seed play, in whole ticks like Player.totalPlaytime.
+    double playtimeMs = seedWindow > 0 ? 200.0 * static_cast<double>(rng() % 150000u) : 0.0;
     // IPVGO_MOVECAP overrides the built-in size*size*4 cap (100 Black moves on 5x5).
     // A game that reaches the cap is scored as if it had ended, so the default silently
     // decides long games on the spot score; the override exists to measure that.
@@ -1748,6 +1805,12 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
       }
 
       if (useSession) session.noteRequest(static_cast<size_t>(state.previousBoards.size()));
+
+      // Seed play: the ticks our move could land in, as the in-game client would offer them.
+      if (seedWindow > 0) {
+        cfg.whiteSeeds.clear();
+        for (int j = 1; j <= seedWindow; ++j) cfg.whiteSeeds.push_back(playtimeMs + 200.0 * j);
+      }
 
       const auto t0 = std::chrono::steady_clock::now();
       ExploitResult search;
@@ -1839,9 +1902,24 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
         std::this_thread::sleep_for(std::chrono::milliseconds(ponderMs));
         ponder.stop();
       }
-      // A real game reseeds the faction AI from Player.totalPlaytime every move.
-      const double whiteSeed = fixedWhiteSeed ? 0.0 : static_cast<double>(rng() % 30000000u);
+      // A real game reseeds the faction AI from Player.totalPlaytime every move. In seed play
+      // that is the tick Black chose to land in; the clock then moves on by the time White and
+      // the next search take, a few ticks.
+      double whiteSeed = fixedWhiteSeed ? 0.0 : static_cast<double>(rng() % 30000000u);
+      int predicted = -2;
+      if (seedWindow > 0) {
+        whiteSeed = search.seedPlan.empty() ? playtimeMs + 200.0 : search.seedPlan.front().seedMs;
+        if (!search.seedPlan.empty() && search.seedPlan.front().replyProb >= 1.0) {
+          predicted = search.seedPlan.front().replyAction;
+        }
+        playtimeMs = whiteSeed + 200.0 * static_cast<double>(1 + rng() % 5);
+      }
       const Play wp = getMove(state, Color::White, ai, whiteSeed, mathRng);
+      if (predicted != -2) {
+        const int actual = wp.type == PlayType::Pass ? ipvgo::search::passAction(size) : wp.x * size + wp.y;
+        ++seedPredictions;
+        if (actual == predicted) ++seedHits;
+      }
       if (explain) {
         double actual = 0.0;
         for (const auto& r : afterBlack.replies) {
@@ -1896,6 +1974,10 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
             << " avgBlackThinkMs=" << avgMs << " avgMargin=" << avgMargin
             << " avgDepth=" << (totalMoves > 0 ? static_cast<double>(totalDepth) / static_cast<double>(totalMoves) : 0.0)
             << " ponderHits=" << ponderHits << "/" << totalMoves << "\n";
+  if (seedWindow > 0) {
+    std::cout << "exploitplay: seedWindow=" << seedWindow << " whiteChoice=" << cfg.whiteChoice
+              << " predicted=" << seedHits << "/" << seedPredictions << "\n";
+  }
   if (std::getenv("IPVGO_CACHE_STATS")) {
     const double hitPct = totalNodes > 0 ? 100.0 * static_cast<double>(totalMemoHits) / static_cast<double>(totalNodes) : 0.0;
     const double reusePct =
@@ -2176,6 +2258,83 @@ int runFuzz(int games, uint64_t seed) {
 // summary of the position before it. That is only sound if it agrees with the
 // board-wide analysis on every point of every position, so this walks seeded
 // games and compares the two for both colours at every empty point.
+// seedcheck: the seeded reply model against getMove() and against the policy distribution.
+// For random positions and random tick seeds, getMove()'s move (with a random defend tie-break)
+// must be one of the seeded replies for that seed, and every seeded reply must be in the policy
+// distribution - otherwise the search would plan around a reply the game cannot play, or the
+// two models of the same AI would disagree.
+int runSeedCheck(int games, uint64_t seed) {
+  std::mt19937_64 rng(seed);
+  const std::vector<int> sizes = {5, 7, 9, 13};
+  const std::vector<Opponent> factions = {Opponent::Netburners, Opponent::SlumSnakes, Opponent::TheBlackHand,
+                                          Opponent::Tetrads,    Opponent::Daedalus,   Opponent::Illuminati};
+  long checked = 0;
+  long notSeeded = 0;
+  long notInPolicy = 0;
+  long split = 0;
+  for (int g = 0; g < games; ++g) {
+    const int size = sizes[rng() % sizes.size()];
+    const Opponent ai = factions[rng() % factions.size()];
+    MathRandom mr(rng());
+    GameState state = newBoardState(size, ai, true, static_cast<double>(rng() % 30000000), mr);
+    const int moveCap = size * size * 4;
+    for (int m = 0; m < moveCap && !state.gameOver; ++m) {
+      if (whoseTurn(state) == Color::Black) {
+        const std::vector<std::pair<int, int>> moves = getAllValidMoves(state, Color::Black);
+        if (moves.empty()) {
+          passTurn(state, Color::Black);
+        } else {
+          const auto [bx, by] = moves[rng() % moves.size()];
+          if (!makeMove(state, bx, by, Color::Black)) passTurn(state, Color::Black);
+        }
+        continue;
+      }
+      std::vector<double> seeds;
+      const double base = 200.0 * static_cast<double>(rng() % 150000u);
+      for (int t = 0; t < 8; ++t) seeds.push_back(base + 200.0 * t);
+      const std::vector<ReplyDist> seeded = seededReplyDistributions(state, Color::White, ai, seeds);
+      const ReplyDist policy = opponentReplyDistribution(state, Color::White, ai);
+      const auto inDist = [](const ReplyDist& dist, bool pass, int x, int y) {
+        for (const auto& r : dist.replies) {
+          if (r.passMove == pass && (pass || (r.x == x && r.y == y))) return true;
+        }
+        return false;
+      };
+      for (size_t t = 0; t < seeds.size(); ++t) {
+        MathRandom tie(rng());
+        const Play play = getMove(state, Color::White, ai, seeds[t], tie);
+        const bool pass = play.type != PlayType::Move;
+        ++checked;
+        if (seeded[t].replies.size() > 1) ++split;
+        if (!inDist(seeded[t], pass, play.x, play.y)) {
+          if (++notSeeded <= 5) {
+            std::cerr << "seedcheck: getMove " << (pass ? std::string("pass") : std::to_string(play.x) + "," + std::to_string(play.y))
+                      << " missing from the seeded replies, " << opponentName(ai) << " " << size << "x" << size
+                      << " seed " << seeds[t] << "\n"
+                      << boardString(state.board) << "\n";
+          }
+        }
+        for (const auto& r : seeded[t].replies) {
+          if (inDist(policy, r.passMove, r.x, r.y)) continue;
+          if (++notInPolicy <= 5) {
+            std::cerr << "seedcheck: seeded reply " << (r.passMove ? std::string("pass") : std::to_string(r.x) + "," + std::to_string(r.y))
+                      << " missing from the policy distribution, " << opponentName(ai) << " " << size << "x"
+                      << size << "\n"
+                      << boardString(state.board) << "\n";
+          }
+        }
+      }
+      // Advance with the reply of the first seed, as a game would.
+      MathRandom tie(rng());
+      const Play wp = getMove(state, Color::White, ai, seeds[0], tie);
+      if (wp.type != PlayType::Move || !makeMove(state, wp.x, wp.y, Color::White)) passTurn(state, Color::White);
+    }
+  }
+  std::cout << "seedcheck: " << checked << " seeded replies, " << notSeeded << " getMove misses, " << notInPolicy
+            << " outside the policy distribution, " << split << " split by a defend tie\n";
+  return notSeeded == 0 && notInPolicy == 0 ? 0 : 1;
+}
+
 int runEyeTest(int games, uint64_t seed) {
   std::mt19937_64 rng(seed);
   const std::vector<int> sizes = {5, 7, 9, 13};
@@ -2956,7 +3115,7 @@ int runTune(const std::string& faction, int generations, int populationSize, int
 int main(int argc, char** argv) {
   if (argc < 2) {
     std::cerr << "usage: ipvgo_game "
-                 "<selftest|fuzz|parity|aimove|mcgsmove|mcgsplay|exploitmove|exploitplay|"
+                 "<selftest|fuzz|parity|seedcheck|aimove|mcgsmove|mcgsplay|exploitmove|exploitplay|"
                  "playoutmove|playoutplay|baselineplay|refparity|profileworkload|prof|serve|policycheck|optbench|gen|tune> ...\n";
     return 2;
   }
@@ -2967,6 +3126,7 @@ int main(int argc, char** argv) {
   if (cmd == "replies" && argc >= 3) return runReplies(argv[2]);
   if (cmd == "fuzz") return runFuzz(argc >= 3 ? std::stoi(argv[2]) : 200, argc >= 4 ? std::stoull(argv[3]) : 1u);
   if (cmd == "eyetest") return runEyeTest(argc >= 3 ? std::stoi(argv[2]) : 8, argc >= 4 ? std::stoull(argv[3]) : 1u);
+  if (cmd == "seedcheck") return runSeedCheck(argc >= 3 ? std::stoi(argv[2]) : 20, argc >= 4 ? std::stoull(argv[3]) : 1u);
   if (cmd == "parity" && argc >= 3) return runParity(argv[2]);
   if (cmd == "aimove" && argc >= 3) return runAiMove(argv[2], argc >= 4 ? argv[3] : "");
   if (cmd == "mcgsmove" && argc >= 3) return runMcgsMove(argv[2], argc >= 4 ? argv[3] : "");

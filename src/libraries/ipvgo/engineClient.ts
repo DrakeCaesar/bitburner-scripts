@@ -76,12 +76,14 @@ export async function cancelIpvgoEngineRequest(
 export function ponderIpvgoEngine(
   request: IpvgoMoveRequest,
   ourMove: IpvgoMove,
+  expectReply?: IpvgoMove | null,
   baseUrl = getIpvgoEngineUrl()
 ): void {
   fetch(`${baseUrl}/api/ipvgo/move`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...request, ourMove, ponder: true }),
+    // With seed timing White's reply is known in advance; the engine ponders it first.
+    body: JSON.stringify({ ...request, ourMove, ponder: true, ...(expectReply ? { expectReply } : {}) }),
   }).catch(() => {
     /* best effort */
   })
