@@ -53,6 +53,7 @@
     "trailingComma": "es5"
   },
   "devDependencies": {
+    "@eslint/js": "^9.38.0",
     "@types/node": "^24.9.1",
     "@typescript-eslint/eslint-plugin": "^8.46.2",
     "@typescript-eslint/parser": "^8.46.2",
@@ -68,6 +69,7 @@
     "eslint-plugin-prettier": "^5.5.4",
     "eslint-plugin-promise": "^7.2.1",
     "fast-glob": "^3.3.3",
+    "globals": "^17.14.0",
     "prettier": "^3.6.2",
     "sort-package-json": "^3.4.0",
     "sync-directory": "^6.0.5",

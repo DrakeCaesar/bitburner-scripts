@@ -11,6 +11,7 @@ Context for AI coding assistants working in this repository.
 ### Code quality
 
 - `pnpm run lint` — Run prettier, eslint, and sort-package-json (auto-fixes)
+- ESLint uses the flat config in `eslint.config.mjs`. `src/` and the bench TS cores are linted type-aware (TS project service), Node tooling gets Node globals, and prettier runs last as an ESLint rule. A new file that needs type info but sits outside `tsconfig.json` must be added to its `include` or to the config's `allowDefaultProject`.
 
 ### Legacy watch scripts
 
