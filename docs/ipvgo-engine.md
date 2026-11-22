@@ -2569,6 +2569,88 @@ A third does too, though deliberately: **`adaptiveWidth`** decides the beam and
 the reply count from the budget and the measured concentration of White's policy,
 so the depth actually reached depends on both.
 
+### 5x5 measurements on Linux: seed play, wait cost, reply depth cost
+
+Everything here is simulated (`exploitplay`), on 5x5, all six factions. **Nothing in this
+section was checked in the real game**; in particular the seed timing the client assumes (see
+`src/libraries/ipvgo/seedTiming.ts`) is still unconfirmed, so the seeded rows describe what
+the engine does *if* that timing holds.
+
+**The bench.** `bench/ipvgo/factionBench.mjs <exe> <label> [games=400] [size=5] [nodes=10000]
+[seed=1] [KEY=VALUE...]` runs every faction with the client's per-faction widths, carry and
+root verification on, one search thread per game process, all cores busy. Each game draws from
+its own random stream (run seed + game index), so game *k* starts from the same board in every
+run and two runs can be compared game by game: `--compare <labelA> <labelB>` prints paired
+differences with standard errors, `--show <label>` reprints a run. Runs are stored in
+`bench/ipvgo/runs/` (ignored by git).
+
+It reports what the game pays for, not only wins: Black's final score (node power is
+`score x difficulty x streak`), the game's length on the 200 ms play clock, and `pay/h`, the
+score times the win-streak multiplier per hour of play. The clock is a model read off the game
+source: White answers two ticks after our move, three when it falls through to its fallback
+pool, our next move misses a tick 15% of the time (`IPVGO_SEED_SLIP`), every tick we choose to
+wait counts, and a game costs one more second between games. It leaves out the client's own
+per-move overhead, so `pay/h` is good for comparing configurations and not as an absolute.
+`ms` is search time per move with 20 single-thread games running at once; one game alone is
+about three times faster (10 to 35 ms per move at 10 000 nodes).
+
+**Results**, 400 games per faction, 10 000 nodes unless stated; wins are out of 2400.
+
+| configuration | wins | score | ticks | pay/h |
+|---|---|---|---|---|
+| no seed, engine as committed in `e37881c` | 2324 (96.8%) | 19.26 | 31.1 | 27 042 |
+| no seed, `replyDepthCost` 0.5 | 2349 (97.9%) | 19.96 | 31.3 | 28 553 |
+| seed window 1 (exact reply, never waits) | 2384 (99.3%) | 20.08 | 30.2 | 30 644 |
+| seed window 10, best of 10, no wait cost (the old client setting) | 2391 (99.6%) | 20.44 | 38.2 | 25 394 |
+| seed window 5, `seedWaitCost` 0.01, choice 1 | 2397 (99.9%) | 20.27 | 30.8 | 30 744 |
+| the same with `replyDepthCost` 0.5 (what the client now sends) | 2396 (99.8%) | 20.49 | 31.5 | 30 454 |
+
+- **Seed play is the big one**: +3.0 ±0.4 points of win rate over no seed, paired, and +14%
+  `pay/h`. Almost all of it is the exact prediction; choosing among ticks adds little.
+- **Waiting has to be paid for.** Taking the best of ten ticks whatever it costs waits 7.7
+  ticks per game and loses 17% `pay/h` against never waiting. `seedWaitCost` ranks tick *t* by
+  `value - cost x t`. At 0.01 a game waits 1.2 ticks, wins as often as the free-waiting plan
+  and keeps the pace of window 1 (0.003: 31.5 ticks, 0.03: 30.3 ticks, wins 2395 and 2390).
+- **`replyDepthCost`** (plies of depth a White reply costs per halving of its probability, so
+  the budget goes down the lines White is likely to play). Without seeds, paired: score
+  +0.70 ±0.12 and wins +1.0 ±0.4 points on seed 1, score +0.54 ±0.11 and wins +0.4 ±0.4 on
+  seed 2, wins +1.9 ±0.5 points at 3 000 nodes (2277 -> 2322). At 3 000 nodes it wins as
+  often as the old search at 10 000 (96.8%), about a third of the time. The gain is in Slum
+  Snakes (91.3% -> 95.5%) and The Black Hand (97.0% -> 99.5%); the other four are unchanged.
+  Costs 0.25, 0.75 and 1.0 gave 2355, 2358 and 2349 wins, so the value is not sensitive.
+  With seeds it changes nothing measurable (score +0.22, games 0.6 ticks longer).
+- **Node budget, with seeds**: 1 000 nodes 94.8%, 3 000 nodes 99.8%, 10 000 nodes 99.9%,
+  30 000 nodes 99.9%. More nodes buy score and longer games in step (18.7 points in 27.3 ticks
+  at 3 000, 20.7 in 32.3 at 30 000), so `pay/h` is flat from 3 000 up. Without seeds nodes
+  still buy wins: 96.8% / 98.3% / 98.6% at 3 000 / 10 000 / 30 000 (with `replyDepthCost` 0.5
+  and `IPVGO_VORONOI=0.3`).
+- **Widths.** Slum Snakes on 5x5 does better narrower than the client's 4/4/0.76: beam 4 with
+  2 replies 96.8%, with 1 reply 97.3%, against 93.3% (no seed, `IPVGO_VORONOI=0.3`, 400 games
+  each). `replyDepthCost` gets the same gain without retuning, so the widths were left alone.
+- **`IPVGO_VORONOI`** (leaf eval: open points credited to the nearer colour at a fraction of a
+  point) is **not established**. At 0.3 without seeds it gave +15 wins at 10 000 nodes and -4
+  at 3 000; with seeds -2 and -5. It stays off.
+- The existing knobs on 5x5 without seeds, Netburners + Slum Snakes + The Black Hand (1133 of
+  1200 at baseline): `IPVGO_MOYO=0.5` 1157 but 30% slower, `IPVGO_MOYO=1.0` 1151,
+  `IPVGO_CONC=0.3` 1138, `IPVGO_REGS=0.5` 1122, `IPVGO_SETTLE=0.5` 1133.
+- Losses are wipe-outs: 72 of the 76 lost games without seeds end with Black on 0 points
+  (median 23 Black moves). The one traced (Slum Snakes) opened in a corner at an eval near
+  0.5 and lost its groups in the middle game, so the cause there is the opening, not the end.
+
+**First pass** (older bench: 200 games per faction, not paired, 7x7 included), kept for the
+A/B of the four exploiter fixes against `4ac7487`. Wins out of 1200:
+
+| config | 7x7 | 5x5 |
+|---|---|---|
+| baseline `4ac7487` | 1072 | 1146 |
+| four exploiter fixes | 1094 | 1155 |
+| fixes + `IPVGO_ORDER=eval` | 1080 | 1150 |
+
+The fixes are a small gain and cost depth at 7x7 (about 55 ms a move against 15 ms).
+`IPVGO_ORDER=eval` is no better than the static prior and slower; leave it off.
+`seedcheck 40 1` reports 16296 seeded replies, 0 `getMove` misses and 0 outside the policy
+distribution, which shows the seeded model matches the port of `getMove`, not the game.
+
 ### Known limits and open questions
 
 Recorded so they are not rediscovered from scratch. Every number here was

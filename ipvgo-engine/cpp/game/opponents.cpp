@@ -1290,8 +1290,9 @@ namespace {
 // uniform pick over the reasonable moves on the fourth. Shared with the seeded batch below
 // so the two can never disagree.
 Play resolvePlay(MoveGen& moves, const GameState& state, Color player, Opponent opponent, double factionRng,
-                 double fallbackRng) {
+                 double fallbackRng, bool* usedFallback = nullptr) {
   const std::optional<Pt> priority = factionMove(moves, opponent, factionRng);
+  if (usedFallback != nullptr) *usedFallback = !priority;
   if (priority) return Play{PlayType::Move, priority->first, priority->second};
 
   // Fallback: pick a random valid move from the reasonable options.
@@ -1318,7 +1319,8 @@ Play resolvePlay(MoveGen& moves, const GameState& state, Color player, Opponent 
 
 }  // namespace
 
-Play getMove(const GameState& state, Color player, Opponent opponent, double seedMs, MathRandom& mathRng) {
+Play getMove(const GameState& state, Color player, Opponent opponent, double seedMs, MathRandom& mathRng,
+             bool* usedFallback) {
   WHRNG rng(seedMs);
   const bool smart = isSmart(opponent, rng.random());  // draw 1
   const double moveRng = rng.random();                 // draw 2
@@ -1327,7 +1329,7 @@ Play getMove(const GameState& state, Color player, Opponent opponent, double see
   // Draw 4 is only consumed when no priority move is found, but it is the last draw, so
   // taking it up front changes nothing.
   const double fallbackRng = rng.random();
-  return resolvePlay(moves, state, player, opponent, factionRng, fallbackRng);
+  return resolvePlay(moves, state, player, opponent, factionRng, fallbackRng, usedFallback);
 }
 
 std::vector<ReplyDist> seededReplyDistributions(const GameState& state, Color player, Opponent opponent,

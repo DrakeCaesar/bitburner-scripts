@@ -117,6 +117,7 @@ function engineBuildFields() {
 function binaryCandidates(name) {
   const dirs = [
     ...releaseConfigs().flatMap((config) => binDirs(config)),
+    path.join(__dirname, "..", "out", "linux", "bin"),
     path.join(__dirname, "build", "Release"),
     path.join(__dirname, "build"),
   ]

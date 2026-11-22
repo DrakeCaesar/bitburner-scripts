@@ -974,6 +974,8 @@ json computeExploitMoveJson(const json& req, ipvgo::search::SearchSession* sessi
     }
   }
   cfg.whiteChoice = std::max(1, req.value("whiteChoice", 1));
+  cfg.seedWaitCost = std::max(0.0, req.value("seedWaitCost", 0.0));
+  cfg.replyDepthCost = std::max(0.0, req.value("replyDepthCost", 0.0));
 
   const auto t0 = std::chrono::steady_clock::now();
   const ExploitResult result = runExploiter(state, cfg, nullptr, session);
@@ -1720,7 +1722,25 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
                    bool fixedWhiteSeed, int beam = 0, int whiteChildren = 0, long nodeLimitOverride = 0,
                    bool progressOverride = false) {
   const Opponent ai = parseOpponent(opponentName).value_or(Opponent::Netburners);
-  std::mt19937_64 rng(seed ? seed : 1);
+  // Every game draws from its own stream, derived from the run seed and the game's index, so
+  // game k starts from the same board whatever the engine did in games 0..k-1 - which is what
+  // lets two builds be compared on the same openings - and IPVGO_GAME_OFFSET lets one run be
+  // split over several processes.
+  const uint64_t gameOffset =
+      std::getenv("IPVGO_GAME_OFFSET") ? std::strtoull(std::getenv("IPVGO_GAME_OFFSET"), nullptr, 10) : 0u;
+  const auto gameStream = [&](uint64_t gameIndex, uint64_t salt) {
+    uint64_t z = (seed ? seed : 1) * 0x9E3779B97F4A7C15ull + gameIndex * 0xBF58476D1CE4E5B9ull + salt;
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    return z ^ (z >> 31);
+  };
+  // IPVGO_GAMELOG prints one line per game (result, score, moves, clock ticks) for a script
+  // to aggregate.
+  const bool gameLog = std::getenv("IPVGO_GAMELOG") != nullptr;
+  // The play clock. White answers two game ticks after our move (three when it falls through
+  // to its "reasonable move" pool, which sleeps once more), and with probability
+  // IPVGO_SEED_SLIP our next move misses the first tick it could have landed in.
+  const double slipProb = std::getenv("IPVGO_SEED_SLIP") ? std::atof(std::getenv("IPVGO_SEED_SLIP")) : 0.15;
 
   ExploitConfig cfg;
   cfg.depth = depth;
@@ -1744,6 +1764,8 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
   // round-robin split instead, which makes a run repeatable for an A/B or a trace.
   cfg.deterministic = std::getenv("IPVGO_DETERMINISTIC") != nullptr;
   cfg.carry = std::getenv("IPVGO_CARRY") != nullptr;
+  if (const char* cost = std::getenv("IPVGO_REPLY_DEPTH_COST")) cfg.replyDepthCost = std::max(0.0, std::atof(cost));
+  if (const char* ceiling = std::getenv("IPVGO_MAXDEPTH")) cfg.maxDepth = std::max(1, std::atoi(ceiling));
   // Simulated White delay, and whether the idle time also keeps deepening.
   const int ponderMs = std::getenv("IPVGO_PONDER_MS") ? std::atoi(std::getenv("IPVGO_PONDER_MS")) : 0;
   // Seed play (IPVGO_SEED_WINDOW=K): Black knows White's RNG seed - the game seeds it from the
@@ -1754,6 +1776,7 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
   if (seedWindow > 0) {
     const char* choice = std::getenv("IPVGO_SEED_CHOICE");
     cfg.whiteChoice = std::max(1, choice != nullptr ? std::atoi(choice) : seedWindow);
+    if (const char* cost = std::getenv("IPVGO_SEED_WAITCOST")) cfg.seedWaitCost = std::atof(cost);
   }
   long seedPredictions = 0;
   long seedHits = 0;
@@ -1765,6 +1788,9 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
   int wins = 0;
   double totalBlackMs = 0.0;
   double totalMargin = 0.0;
+  double totalBlackScore = 0.0;
+  long totalTicks = 0;
+  long totalWaits = 0;
   long totalMoves = 0;
   long totalNodes = 0;
   long totalMemoHits = 0;
@@ -1785,12 +1811,19 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
   const auto runStart = std::chrono::steady_clock::now();
 
   for (int g = 0; g < games; ++g) {
+    const uint64_t gameIndex = gameOffset + static_cast<uint64_t>(g);
+    std::mt19937_64 rng(gameStream(gameIndex, 0));
+    std::mt19937_64 clockRng(gameStream(gameIndex, 0x5eedc10cull));
     const double clockMs = static_cast<double>(rng() % 30000000u);
     const uint64_t mathSeed = rng();
     MathRandom mathRng(mathSeed);
     GameState state = newBoardState(size, ai, true, clockMs, mathRng);
-    // The play clock in seed play, in whole ticks like Player.totalPlaytime.
-    double playtimeMs = seedWindow > 0 ? 200.0 * static_cast<double>(rng() % 150000u) : 0.0;
+    // The play clock, in whole ticks like Player.totalPlaytime: `nowTick` is the first tick
+    // our next move can land in.
+    long nowTick = static_cast<long>(clockRng() % 150000u);
+    const long startTick = nowTick;
+    long gameWaits = 0;
+    const double gameMsBefore = totalBlackMs;
     // IPVGO_MOVECAP overrides the built-in size*size*4 cap (100 Black moves on 5x5).
     // A game that reaches the cap is scored as if it had ended, so the default silently
     // decides long games on the spot score; the override exists to measure that.
@@ -1809,7 +1842,8 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
       // Seed play: the ticks our move could land in, as the in-game client would offer them.
       if (seedWindow > 0) {
         cfg.whiteSeeds.clear();
-        for (int j = 1; j <= seedWindow; ++j) cfg.whiteSeeds.push_back(playtimeMs + 200.0 * j);
+        // A move landing in tick t is answered with the next tick's playtime as the seed.
+        for (int j = 0; j < seedWindow; ++j) cfg.whiteSeeds.push_back(200.0 * static_cast<double>(nowTick + j + 1));
       }
 
       const auto t0 = std::chrono::steady_clock::now();
@@ -1907,14 +1941,22 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
       // the next search take, a few ticks.
       double whiteSeed = fixedWhiteSeed ? 0.0 : static_cast<double>(rng() % 30000000u);
       int predicted = -2;
+      long submitTick = nowTick;
       if (seedWindow > 0) {
-        whiteSeed = search.seedPlan.empty() ? playtimeMs + 200.0 : search.seedPlan.front().seedMs;
+        whiteSeed = search.seedPlan.empty() ? 200.0 * static_cast<double>(nowTick + 1) : search.seedPlan.front().seedMs;
         if (!search.seedPlan.empty() && search.seedPlan.front().replyProb >= 1.0) {
           predicted = search.seedPlan.front().replyAction;
         }
-        playtimeMs = whiteSeed + 200.0 * static_cast<double>(1 + rng() % 5);
+        submitTick = std::lround(whiteSeed / 200.0) - 1;
       }
-      const Play wp = getMove(state, Color::White, ai, whiteSeed, mathRng);
+      bool usedFallback = false;
+      const Play wp = getMove(state, Color::White, ai, whiteSeed, mathRng, &usedFallback);
+      gameWaits += submitTick - nowTick;
+      {
+        const long whiteTicks = (wp.type != PlayType::Pass && usedFallback) ? 3 : 2;
+        const bool slip = std::uniform_real_distribution<double>(0.0, 1.0)(clockRng) < slipProb;
+        nowTick = submitTick + whiteTicks + (slip ? 1 : 0);
+      }
       if (predicted != -2) {
         const int actual = wp.type == PlayType::Pass ? ipvgo::search::passAction(size) : wp.x * size + wp.y;
         ++seedPredictions;
@@ -1949,6 +1991,14 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
     const Score sc = getScore(state);
     if (blackWins(sc)) ++wins;
     totalMargin += sc.blackSum - sc.whiteSum;
+    totalBlackScore += sc.blackSum;
+    totalTicks += nowTick - startTick;
+    totalWaits += gameWaits;
+    if (gameLog) {
+      std::printf("game idx=%llu win=%d black=%g white=%g moves=%d ticks=%ld waits=%ld ms=%.2f\n",
+                  static_cast<unsigned long long>(gameIndex), blackWins(sc) ? 1 : 0, sc.blackSum, sc.whiteSum,
+                  gameMoves, nowTick - startTick, gameWaits, totalBlackMs - gameMsBefore);
+    }
     if (progress) {
       const double elapsed =
           std::chrono::duration<double>(std::chrono::steady_clock::now() - runStart).count();
@@ -1973,7 +2023,11 @@ int runExploitPlay(const std::string& opponentName, int size, int games, int dep
             << "depth=" << depth << " beam=" << cfg.beam << " whiteChildren=" << cfg.whiteChildren
             << " avgBlackThinkMs=" << avgMs << " avgMargin=" << avgMargin
             << " avgDepth=" << (totalMoves > 0 ? static_cast<double>(totalDepth) / static_cast<double>(totalMoves) : 0.0)
-            << " ponderHits=" << ponderHits << "/" << totalMoves << "\n";
+            << " ponderHits=" << ponderHits << "/" << totalMoves
+            << " avgBlackScore=" << (games > 0 ? totalBlackScore / static_cast<double>(games) : 0.0)
+            << " avgMoves=" << (games > 0 ? static_cast<double>(totalMoves) / static_cast<double>(games) : 0.0)
+            << " avgTicks=" << (games > 0 ? static_cast<double>(totalTicks) / static_cast<double>(games) : 0.0)
+            << " avgWaits=" << (games > 0 ? static_cast<double>(totalWaits) / static_cast<double>(games) : 0.0) << "\n";
   if (seedWindow > 0) {
     std::cout << "exploitplay: seedWindow=" << seedWindow << " whiteChoice=" << cfg.whiteChoice
               << " predicted=" << seedHits << "/" << seedPredictions << "\n";

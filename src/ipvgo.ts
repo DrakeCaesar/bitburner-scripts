@@ -95,7 +95,21 @@ const IPVGO_SEARCH = {
    */
   seedTiming: true,
   /** Ticks (200 ms each) we are willing to wait past the end of the search for a better seed. */
-  seedWindow: 10,
+  seedWindow: 5,
+  /**
+   * What a tick of waiting has to buy, in search value (about win probability). Waiting for the
+   * best of ten ticks whatever it cost made games 7 ticks longer for no more wins; at 0.01 a
+   * game waits about one tick in total. Later White replies are valued as plain expectations
+   * (`seedChoice` 1), which is the right model once we rarely wait.
+   */
+  seedWaitCost: 0.01,
+  seedChoice: 1,
+  /**
+   * Depth a White reply costs per halving of its probability (5x5 only, where it was measured:
+   * +0.5 to +1 point of score and up to +2 points of win rate without seed timing, nothing
+   * either way with it).
+   */
+  replyDepthCost: 0.5,
 } as const
 
 /** Per-faction widths from the same Run pane: beam, replies kept, reply mass cap. */
@@ -268,6 +282,7 @@ function buildEngineRequest(
     threads: IPVGO_SEARCH.threads,
     carry: IPVGO_SEARCH.carry,
     verifyRootReplies: IPVGO_SEARCH.verifyRootReplies,
+    replyDepthCost: board.length === 5 ? IPVGO_SEARCH.replyDepthCost : 0,
     cheats: cheat !== null,
     cheatCount: cheat?.count ?? 0,
     crimeSuccessMult: cheat?.crimeSuccessMult ?? 1,
@@ -278,7 +293,8 @@ function buildEngineRequest(
     ...(seedClock
       ? {
           whiteSeeds: upcomingSeeds(seedClock, leadTicks + IPVGO_SEARCH.seedWindow),
-          whiteChoice: IPVGO_SEARCH.seedWindow,
+          whiteChoice: IPVGO_SEARCH.seedChoice,
+          seedWaitCost: IPVGO_SEARCH.seedWaitCost,
         }
       : {}),
   }

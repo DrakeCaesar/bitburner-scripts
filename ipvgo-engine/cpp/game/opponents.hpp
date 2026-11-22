@@ -12,7 +12,10 @@ namespace ipvgo::game {
 // Compute the faction AI's move for `player` (always white in normal games),
 // faithfully porting src/Go/boardAnalysis/goAI.ts. seedMs seeds the WHRNG used
 // for the four rng.random() draws; mathRng backs the getDefendMove tie-break.
-Play getMove(const GameState& state, Color player, Opponent opponent, double seedMs, MathRandom& mathRng);
+// `usedFallback` reports whether no priority move was found: the game then sleeps one more
+// cycle before it answers (a fallback move takes three cycles, a priority move or a pass two).
+Play getMove(const GameState& state, Color player, Opponent opponent, double seedMs, MathRandom& mathRng,
+             bool* usedFallback = nullptr);
 
 // Whether the given faction uses "smart" failsafes for this move (isSmart),
 // given a uniform draw in [0,1).

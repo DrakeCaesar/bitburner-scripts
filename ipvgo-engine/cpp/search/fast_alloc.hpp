@@ -17,6 +17,7 @@
 // spare tail to a process-wide pool on exit, and a thread that needs a block or a
 // chunk takes it from there before asking the C runtime.
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>

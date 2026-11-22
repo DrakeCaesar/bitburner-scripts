@@ -32,6 +32,11 @@ export type IpvgoSearchSettings = {
   carry: boolean
   /** Check the played move against White's whole reply model at the first ply. */
   verifyRootReplies: boolean
+  /**
+   * Plies of depth a White reply costs per halving of its probability, so unlikely replies are
+   * searched shallower and forced ones at full depth. 0 = every reply to the same depth.
+   */
+  replyDepthCost: number
   /** Let the engine value (and play) the ns.go.cheat moves. */
   cheats: boolean
   /** Cheat attempts already spent this game. */
@@ -53,6 +58,8 @@ export type IpvgoSearchSettings = {
   whiteSeeds: number[]
   /** Ticks we will be able to choose between at White's later replies (1 = no choice). */
   whiteChoice: number
+  /** What waiting one tick costs, in search value: a later tick must beat an earlier one by it. */
+  seedWaitCost: number
 }
 
 export type IpvgoMoveRequest = {

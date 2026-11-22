@@ -191,3 +191,5 @@ Trace-*.json
 *.pyc
 __pycache__/
 ipvgo-engine/build-game/
+# IPvGO bench output (bench/ipvgo/factionBench.mjs)
+bench/ipvgo/runs/
