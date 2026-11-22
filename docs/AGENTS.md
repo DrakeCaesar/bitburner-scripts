@@ -175,22 +175,41 @@ Useful paths for infiltration automation in this repo:
 
 #### HTML tools index
 
-`index.html` at the repo root is the landing page for every browser tool, so any static server rooted at the repo serves it at `/`. `pnpm run tools` provides one (port 8123, `HTML_TOOLS_PORT` overrides); it is needed for pages that load module workers:
+`index.html` at the repo root is the landing page for every browser tool. **`pnpm run tools` is the
+one command that serves them all** — it starts the Vite dev server (`http://localhost:5173/`,
+`HTML_TOOLS_PORT` overrides) *and* the IPvGO backend, and stops both on ctrl-c:
 
-| Tool | Path | Needs |
+| Tool | Path | Notes |
 |------|------|-------|
-| Stock trader benchmark | `bench/stock/stockTraderViz.html` | nothing (self-contained page) |
-| KingOfTheHill profiles | `bench/koth/kingOfTheHillViz.html` | http origin, `pnpm run test:koth:bundle` |
-| IPvGO engine bench | `ipvgo-engine/web/bench.html` | `pnpm run server` (port 3010) |
+| Stock trader benchmark | `bench/stock/stockTraderViz.html` | imports `stockBenchCore.ts`, module workers |
+| KingOfTheHill profiles | `bench/koth/kingOfTheHillViz.html` | imports `kingOfTheHillCore.ts`, module workers |
+| IPvGO engine bench | `ipvgo-engine/web/bench.html` (also `/bench`) | `/api` + `/health` proxied to the backend it starts |
 
-Add a card to `index.html` when adding a new HTML tool.
+How the pages stay current while you edit them: every page is served through Vite, so the injected
+client reloads the tab when the HTML changes **and when any module it imports changes** — the `.ts`
+model, a worker, or `webui/toolUi.js`. There is no per-tool build step in the way: pages import the
+TypeScript model directly (`import * as StockBench from "./stockBenchCore.ts"`), Vite resolves the
+`@/…` alias and `.js`→`.ts` specifiers, and a worker is
+`new Worker(new URL("./xWorker.ts", import.meta.url), { type: "module" })`. `vite.tools.config.mts`
+holds the manifest (rollup inputs, the `/api` proxy, the `/bench` alias).
+
+`pnpm run tools:build` writes the same pages as a static site to `dist/tools/` (`tools:preview`
+serves it with the backend attached). Nothing is generated per tool any more, and no page is
+expected to work from `file://`: ES module imports and module workers need an http origin.
+
+Add a card to `index.html` and, if the page is a new file, an entry to `rollupOptions.input` in
+`vite.tools.config.mts`.
+
+`pnpm run server` still runs the IPvGO server alone on port 3010, serving its own copy of
+`/bench` — that is the path for using the bench without the tools dev server (and the only one
+that exists outside the repo, since it needs the native engine).
 
 #### Shared UI kit (`webui/`)
 
 All three pages link `webui/toolUi.css` (before their own `<style>`, so a page can override anything) and `webui/toolUi.js`:
 
 - **`toolUi.css`** — the in-game tail look: `#141414` background, monospace 12px, 1px translucent borders, square corners. Carries the tokens (`--text`, `--dim`, `--line`, `--accent`, `--bad`, …), the shell (`header`/`main`/`section h2` with `=== ` prefixes), form controls (`label.field`, 150px inputs, drawn checkboxes, `button.primary`/`.ghost`), tables, `.cards`/`.card` stat cards, `.tabs`/`.tab`, and the text tones (`.pos`/`.neg`, `.dim`, `.hint`, `.err`).
-- **`toolUi.js`** — `ToolUi.el`, `ToolUi.store` (guarded localStorage JSON), `ToolUi.numberOf`/`textOf`, `ToolUi.persist(key, scope)` (save/restore/clear every control with an id; opt out with `data-nopersist`), `ToolUi.format`, `ToolUi.setCards`, `ToolUi.setStatus`, and `ToolUi.pool(source, size)` (blob-URL worker pool).
+- **`toolUi.js`** — `ToolUi.el`, `ToolUi.store` (guarded localStorage JSON), `ToolUi.numberOf`/`textOf`, `ToolUi.persist(key, scope)` (save/restore/clear every control with an id; opt out with `data-nopersist`), `ToolUi.format`, `ToolUi.setCards`, `ToolUi.setStatus`, `ToolUi.poolFrom(createWorker, size)` (any worker: this is what module workers use) and `ToolUi.pool(source, size)` (workers built from a blob of script text). Both return the same pool object — `.size`, `.map(jobs, onProgress)`, `.terminate()`.
 - **Numbers are written out in full with a space every three digits** (`10 000 000`, `+12 502 852.61%`), not with k/m/b/t suffixes — at this game's scales `$1.25q` hides the magnitude. `ToolUi.format.money`/`signedMoney`/`pct`/`signedPct`/`grouped`/`count` all do this; `ToolUi.format.number` is the compact suffix form and is only for width-constrained spots such as chart axis ticks. Seed values are identifiers, so they stay ungrouped.
 - **Inputs show grouped numbers too.** A numeric input opts in with `type="text" inputmode="numeric" data-group="1"` (a `type="number"` input cannot hold spaces); a document-level `focusout` handler rewrites it via `ToolUi.groupedInput`. Typing the default back in clears the field instead, so "empty means default" and the grey/white convention still hold. `ToolUi.numberOf` strips the separators.
 
@@ -199,7 +218,7 @@ Conventions both bench pages follow:
 - **Defaults are grey, overrides are white.** An input starts empty and shows its default as its grey `placeholder`; `ToolUi.numberOf` reads the typed value or falls back to `data-default`/the placeholder. Nothing else tracks "is this default?".
 - **Settings survive reloads.** `ToolUi.persist("toolui.<tool>.v1", document)` on load, and it saves on every `input`/`change`.
 - **Seeds come from a deterministic pseudo-random stream, not a range.** `randomSeeds(stream, count)` in `stockBenchCore.ts` (mulberry32) is the single source: the *Seed* field picks the sequence, *Seeds* is the count, and a shorter run is a prefix of a longer one. Contiguous `1..n` was the old behaviour and shared market structure across seeds; keep explicit ranges on the CLI (`--seed-range`) where they are asked for by name.
-- **Workers come from the page text.** A page that needs threads keeps its bundle in `<script id="…">` and builds the worker script from `thatScript.textContent`, so there is one copy of the code and it still works from `file://` (blob workers are allowed there; ES module imports are not). The stock page caps at 12 workers (measured on a 12-thread CPU: 1 worker 960 ms, 6 → 310 ms, 8 → 285 ms, 12 → 335 ms for 25 seeds × 3000 updates, so mid single digits is the sweet spot).
+- **Workers are modules loaded from the page's own sources.** A page that needs threads writes `new Worker(new URL("./xWorker.ts", import.meta.url), { type: "module" })`, and the worker imports the same model the page does — one copy of the code on disk. Vite rewrites the URL in dev and bundles it for a build; a plain static server cannot serve it, which is why the pages require `pnpm run tools`. `ToolUi.poolFrom` wraps a set of them into a job pool; `ToolUi.pool(source, size)` remains for anything that still builds a worker from script text. The stock page caps at 12 workers (measured on a 12-thread CPU: 1 worker 960 ms, 6 → 310 ms, 8 → 285 ms, 12 → 335 ms for 25 seeds × 3000 updates, so mid single digits is the sweet spot).
 - The shared colours replace the older ad-hoc palettes; the KingOfTheHill plot colours are remapped to the same accent/red/warn tokens.
 - Chart series get one hue each, never a positional colour, and the stock page's comparison view is fixed: **tuned** (green `#3ddc84`, the stored genome), **v5 (shipped)** (blue `#4c9df0`), **v4** (coral `#ff8a65`: the same code with `V4_RULES` — no variance drag, no idle-cash pass, moving-average estimate without 4S), an **edited config** (cyan `#22d3ee`, drawn only when its results differ from every other line), **hold (filtered)** (yellow `#f2e85c`) and **hold (all)** (grey `#808080`). Rules learned the hard way: never give two series the same hue (an early palette had `#43bf43` and `#4f8f4f`, distinguishable only by brightness), and avoid red for a positive-return curve because `.neg` already means loss in the UI. Each line is drawn with a dark 4px casing under a 2px colour stroke so overlapping bands stay readable.
 - **The legend is a `<table class="legend">`, one row per series, built as elements (not one innerHTML blob) so each row owns a click handler** that adds its series id to `hiddenSeries` and redraws. Columns are series, seeds, median return, p10, p90 so the numbers line up; a hidden row keeps its place with `tr.off`. The y-axis rescales to the visible series only. `drawChart` clears `#legendBody`, never `#legend` itself: emptying the table deletes the body `renderLegend` fills.
@@ -214,8 +233,9 @@ Everything lives in `bench/stock/`:
 | `stockBenchCore.ts` | Shared, environment-free benchmark logic (pure; no CLI/DOM) |
 | `stockTuner.ts` | Genetic search over the strategy config, ported from the ipvgo tuner (`ipvgo-engine/cpp/game/game_cli.cpp`, `runTune`): common random numbers, cached pure fitness, elitism + tournament + uniform crossover, held-back validation, resumable |
 | `stockTraderBench.ts` | CLI front end |
-| `stockTraderViz.template.html` | GUI front end (source) |
-| `stockTraderBench.mjs`, `stockTraderViz.html` | Generated artifacts (gitignored; do not edit) |
+| `stockTraderViz.html` | GUI front end (imports `stockBenchCore.ts` directly) |
+| `stockVizWorker.ts` | GUI worker (imports the same core) |
+| `stockTraderBench.mjs` | Generated CLI bundle (gitignored; do not edit) |
 
 The model uses a seeded RNG, so a seed fully determines the market. Both front ends run the real strategy from `src/libraries/stock/trader.ts` via a fake `NS`, one `runStockTradingTick` per 6s stock update. There is one strategy; earlier versions were removed once it beat them (history and measurements in [stock-trader.md](./stock-trader.md)).
 
@@ -234,7 +254,7 @@ Commands and flags:
 
 - `pnpm run test:stock` — bundles `stockTraderBench.ts` (`build/bundleStockTraderBench.cjs`) and runs it. Defaults: `$10b` capital, 3000 updates (~5h of game time), seed 1337, BitNode 8 (shorts unlocked).
 - `pnpm run test:stock -- --selftest` — verify the port and the strategy: buy/sell/short formulas, commission and spread, share caps, forecast influence, determinism, up-move rate vs. published forecast, P/L identity, open-position cap, cycle tracking (4S and price-only), allocation spill past a share cap.
-- `pnpm run stock:viz` — builds `stockTraderViz.html` from the template, inlining the core into the page. Open the file directly (VS Code browser or any browser): the page links `webui/toolUi.css` + `toolUi.js` and spawns its seeds as blob workers, both of which work from `file://`. Seeds come from the **Seed** stream and **Seeds** count (`randomSeeds(stream, count)`: reproducible, and a shorter run is a prefix of a longer one); the chart is `aggregateCurves()`: median seed on a log net-worth axis plus a p10–p90 band, so the mean is not distorted by the long right tail of compounding.
+- `pnpm run tools` — the stock GUI, and every other HTML tool. One command serves all of them from Vite (`http://localhost:5173/`) and starts the IPvGO backend the bench page needs; editing a page or a model source reloads it. The page imports `stockBenchCore.ts` and runs its seeds in module workers. Seeds come from the **Seed** stream and **Seeds** count (`randomSeeds(stream, count)`: reproducible, and a shorter run is a prefix of a longer one); the chart is `aggregateCurves()`: median seed on a log net-worth axis plus a p10–p90 band, so the mean is not distorted by the long right tail of compounding.
 - `--capital <k|m|b|t>`, `--ticks <n>`, `--seed <n>`, `--seeds <n>` (seed `n + i * 9973`).
 - Config overrides mirror `src/libraries/stock/config.ts`: `--entry-edge`, `--exit-edge`, `--max-positions`, `--max-weight`, `--max-share-fraction`, `--rotation`, `--impact`, `--min-new-weight`, `--slices`, `--reserve`, `--money-keep`, `--min-shares`, `--shorts 0|1`, and for no-4S runs `--no4s-entry-edge`, `--no4s-rotation`, `--history-ticks`.
 - `--no-4s` models a player without the 4S Market Data TIX API. Measured on seeds 201-300: +2,192% median (9.5% mean drawdown) against +10,086% with 4S on seeds 1-100.
@@ -258,7 +278,7 @@ Commands and flags:
 
 #### KingOfTheHill benchmark
 
-`bench/koth/` holds the simulation (`kingOfTheHillSim.mjs`), the parallel benchmark (`kingOfTheHillBench.mjs`), the browser viz, and `koth_tune/` (C++ tuner plus Python harness). `kingOfTheHillCore.ts` is the shared core; the `.mjs` files next to it are esbuild output from `build/bundleKingOfTheHill*.cjs`, so edit the `.ts` and re-run `pnpm run test:koth:bundle`.
+`bench/koth/` holds the simulation (`kingOfTheHillSim.mjs`), the parallel benchmark (`kingOfTheHillBench.mjs`), the browser viz, and `koth_tune/` (C++ tuner plus Python harness). `kingOfTheHillCore.ts` is the shared core; the browser pages import it directly (Vite, via `pnpm run tools`), while the Node entry points import the esbuild output from `build/bundleKingOfTheHill*.cjs`, so edit the `.ts` and re-run `pnpm run test:koth:bundle` (or `test:koth:bench`) before running a CLI benchmark.
 
 **Near-peak check** (`withNearPeakCheck` in `src/dnet/solvers/kingOfTheHill/ladderSnipeSolver.ts`). Within 3% of the password the game returns the main hill alone, so one reading `(x, alt)` taken there puts the password at `x + d` or `x - d` with `d = width * sqrt(ln(10000 / alt))`, whatever the altitude. After every reading the ladder takes, the wrapper guesses a candidate that is in range, untried, and reproduces every reading inside its own 3% zone to rounding error (readings outside the zone are a sum of hills and do not reproduce as one Gaussian around an integer). Candidate guesses count as guesses but are hidden from the ladder and do not move its best point, so the ladder takes exactly the probes it took before and the GA-tuned constants still apply. It needs the full-precision altitude from the response `data`; with only the five-decimal message it practically never fires. The C++ tuner (`koth_tune/src/koth_solver.cpp`) does not have the check, so its guess counts are the ladder's alone.
 

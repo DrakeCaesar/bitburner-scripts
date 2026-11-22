@@ -1,10 +1,9 @@
 /*
  * Shared JS helpers for the browser tools (see toolUi.css for the matching styles).
  *
- * Plain script, no modules: the pages are opened straight from disk, where ES module
- * imports are blocked by CORS but classic scripts, blob workers and <link> styles work.
- *
- * Exposes window.ToolUi.
+ * Loaded as a module by the tool pages (`<script type="module" src=".../toolUi.js">`), so it is
+ * bundled with the page and reloaded when it changes. Exposes window.ToolUi, so anything that
+ * still runs as a classic script keeps working.
  */
 ;(function (global) {
   "use strict"
@@ -257,82 +256,103 @@
   ToolUi.coreCount = () => Math.max(1, Math.min(12, global.navigator?.hardwareConcurrency || 4))
 
   /**
-   * Blob-backed worker pool. `source` is the full worker script text. Jobs are handed out
-   * one at a time as workers free up, so uneven run times stay balanced.
+   * Worker pool over any worker constructor. `createWorker` is called once per worker and
+   * may throw when the environment has none; the pool then shrinks or returns null, and the
+   * caller falls back to doing the work on this thread. Module workers come from here too:
+   *
+   *   ToolUi.poolFrom(() => new Worker(new URL("./xWorker.ts", import.meta.url), { type: "module" }), 8)
+   *   ToolUi.pool(sourceText, 8)   // same pool, workers built from a blob of source
+   */
+  ToolUi.poolFrom = (createWorker, requestedSize) => {
+    if (typeof global.Worker !== "function") return null
+    const size = Math.max(1, Math.floor(requestedSize) || 1)
+    const workers = []
+    for (let i = 0; i < size; i++) {
+      try {
+        workers.push(createWorker())
+      } catch {
+        break
+      }
+    }
+    return workers.length === 0 ? null : ToolUi.poolOf(workers)
+  }
+
+  /**
+   * The scheduling half of a pool: jobs are handed out one at a time as workers free up,
+   * so uneven run times stay balanced. `map` resolves with one result per job, in order.
+   */
+  ToolUi.poolOf = (workers) => ({
+    size: workers.length,
+    map(jobs, onProgress) {
+      if (jobs.length === 0) return Promise.resolve([])
+      const results = new Array(jobs.length)
+      let next = 0
+      let done = 0
+      let settled = false
+
+      return new Promise((resolve, reject) => {
+        const start = (worker) => {
+          if (settled || next >= jobs.length) return
+          const index = next++
+          worker.postMessage({ index, job: jobs[index] })
+        }
+        for (const worker of workers) {
+          worker.onmessage = (event) => {
+            if (settled) return
+            const { index, result, error } = event.data ?? {}
+            if (error) {
+              settled = true
+              reject(new Error(error))
+              return
+            }
+            results[index] = result
+            done++
+            if (onProgress) onProgress(done, jobs.length)
+            if (done === jobs.length) {
+              settled = true
+              resolve(results)
+            } else {
+              start(worker)
+            }
+          }
+          worker.onerror = (event) => {
+            if (settled) return
+            settled = true
+            reject(event.error ?? new Error(event.message || "worker failed"))
+          }
+          start(worker)
+        }
+      })
+    },
+    terminate() {
+      for (const worker of workers) worker.terminate()
+    },
+  })
+
+  /**
+   * Blob-backed worker pool. `source` is the full worker script text, so the page carries one
+   * copy of the model and no second URL to keep in sync.
    *
    *   const pool = ToolUi.pool(source, 8)   // null when workers are unavailable
    *   const results = await pool.map(jobs, (done, total) => ...)
    */
   ToolUi.pool = (source, requestedSize) => {
     if (typeof global.Worker !== "function" || typeof global.Blob !== "function") return null
-    const size = Math.max(1, Math.floor(requestedSize) || 1)
     let url
     try {
       url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }))
     } catch {
       return null
     }
-
-    const workers = []
-    for (let i = 0; i < size; i++) {
-      try {
-        workers.push(new Worker(url))
-      } catch {
-        break
-      }
-    }
-    if (workers.length === 0) {
+    const pool = ToolUi.poolFrom(() => new Worker(url), requestedSize)
+    if (!pool) {
       URL.revokeObjectURL(url)
       return null
     }
-
-    const pool = {
-      size: workers.length,
-      map(jobs, onProgress) {
-        if (jobs.length === 0) return Promise.resolve([])
-        const results = new Array(jobs.length)
-        let next = 0
-        let done = 0
-        let settled = false
-
-        return new Promise((resolve, reject) => {
-          const start = (worker) => {
-            if (settled || next >= jobs.length) return
-            const index = next++
-            worker.postMessage({ index, job: jobs[index] })
-          }
-          for (const worker of workers) {
-            worker.onmessage = (event) => {
-              if (settled) return
-              const { index, result, error } = event.data ?? {}
-              if (error) {
-                settled = true
-                reject(new Error(error))
-                return
-              }
-              results[index] = result
-              done++
-              if (onProgress) onProgress(done, jobs.length)
-              if (done === jobs.length) {
-                settled = true
-                resolve(results)
-              } else {
-                start(worker)
-              }
-            }
-            worker.onerror = (event) => {
-              if (settled) return
-              settled = true
-              reject(event.error ?? new Error(event.message || "worker failed"))
-            }
-            start(worker)
-          }
-        })
-      },
-      terminate() {
-        for (const worker of workers) worker.terminate()
-        URL.revokeObjectURL(url)
-      },
+    const terminate = pool.terminate
+    pool.terminate = () => {
+      terminate()
+      URL.revokeObjectURL(url)
     }
     return pool
   }

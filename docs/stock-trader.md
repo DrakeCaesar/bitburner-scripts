@@ -328,7 +328,7 @@ policy rather than part of a config; a line that never traded is labelled `(no t
 
 ## 9. How to watch it happen
 
-- `pnpm run stock:viz` → open `bench/stock/stockTraderViz.html`. One run draws the strategy **as
+- `pnpm run tools` → open `http://localhost:5173/bench/stock/stockTraderViz.html`. One run draws the strategy **as
   shipped (v5)**, the same code with the v5 additions switched off (**v4**), the stored **tuned**
   genome, the **edited config** (only when it differs from all of those), and the buy-and-hold
   references, each as the median seed with a p10–p90 band. The status line reports v5 against v4 on

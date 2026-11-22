@@ -54,7 +54,7 @@
         src/libraries/stock/trader.ts. Seeds run in parallel workers; multi-seed stats, buy-and-hold
         baselines, genetic tuning, config grid sweep. Settings persist in localStorage.
       </div>
-      <div class="meta">build: <code>pnpm run stock:viz</code> | opens straight from disk, up to 12 workers</div>
+      <div class="meta">run: <code>pnpm run tools</code> | up to 12 parallel workers</div>
     </a>
 
     <a class="tool" href="./bench/koth/kingOfTheHillViz.html">
@@ -62,19 +62,17 @@
       <div class="desc">
         Altitude curves and per-difficulty solve counts for the dnet KingOfTheHill solver, run in browser workers.
       </div>
-      <div class="meta">
-        build: <code>pnpm run test:koth:bundle</code> | needs to be served over http (module worker)
-      </div>
+      <div class="meta">run: <code>pnpm run tools</code> | solver edits reload the page</div>
     </a>
 
-    <a class="tool" href="http://localhost:3010/bench">
+    <a class="tool" href="/bench">
       <div class="name">IPvGO engine bench</div>
       <div class="desc">
         Bench and tuning UI for the native IPvGO engine: run games, stream progress, inspect moves.
       </div>
       <div class="meta">
-        run: <code>pnpm run server</code> then open <code>http://localhost:3010/bench</code>
-        (set IPVGO_PORT to change the port) | needs the native engine built
+        run: <code>pnpm run tools</code> then open <code>/bench</code> | starts the engine server too
+        (set IPVGO_PORT to change its port) | needs the native engine built
       </div>
     </a>
 
@@ -83,9 +81,11 @@
     <section>
     <h2>Serving this page</h2>
     <p class="hint">
-      This file is the landing page for the repo root, so any static server rooted here shows it at
-      <code>/</code>. KingOfTheHill needs a real http origin, so use <code>pnpm run tools</code> and open
-      <code>http://localhost:8123/</code>. The stock benchmark works either way - double-clicking it is fine.
+      <code>pnpm run tools</code> serves every page from <code>http://localhost:5173/</code>
+      (<code>HTML_TOOLS_PORT</code> overrides) and reloads whichever one you edit, together with
+      the model sources it imports. It also starts the IPvGO engine server that the bench page
+      needs, proxied as <code>/api</code>, so one command is enough for all of them. Pages import
+      their TypeScript sources directly - there is no per-tool build step.
       All these pages share the look and controls in <code>webui/toolUi.css</code>.
     </p>
     </section>

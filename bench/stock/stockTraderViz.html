@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -157,9 +157,12 @@
       </section>
     </main>
 
-    <script id="benchCore">/*__BENCH_CORE__*/</script>
-    <script src="../../webui/toolUi.js"></script>
-    <script>
+    <script type="module" src="../../webui/toolUi.js"></script>
+    <script type="module">
+      // One copy of the model on disk: the page and its worker both import the core, and Vite
+      // resolves it from source in dev (so editing bench/stock reloads the page) and bundles it
+      // for a build. No inlined copy to keep in sync.
+      import * as StockBench from "./stockBenchCore"
       const {
         DEFAULT_STOCK_TRADER_CONFIG,
         NUMERIC_CONFIG_KEYS,
@@ -377,30 +380,8 @@
       }
 
       // ---- workers ---------------------------------------------------------
-      // The core is already in the page as a script tag, so its own text is all a worker
-      // needs: no second copy of the bundle, and it works from file:// as well as http://.
-
-      const WORKER_SOURCE = `${$("benchCore").textContent}
-function runBenchJob(job) {
-  const result =
-    job.kind === "hold"
-      ? StockBench.runHoldBaseline(job.options, job.filtered)
-      : StockBench.runTraderScenario(job.options)
-  // A tuning run measures hundreds of runs and only needs the summary numbers. Posting the equity
-  // curve of every one of them copies one number per update across the worker boundary for nothing,
-  // so a "lite" job drops it here rather than after the transfer.
-  if (job.lite && result) result.equityCurve = []
-  return result
-}
-self.onmessage = function (event) {
-  const data = event.data || {}
-  try {
-    self.postMessage({ index: data.index, result: runBenchJob(data.job) })
-  } catch (error) {
-    self.postMessage({ index: data.index, error: String((error && error.stack) || error) })
-  }
-}
-`
+      // A module worker that imports the same core this page does: one copy of the model,
+      // and Vite resolves it from source so an edit reloads both sides.
 
       let pool = null
       let poolSize = 0
@@ -409,7 +390,10 @@ self.onmessage = function (event) {
         const wanted = readWorkerCount()
         if (pool && poolSize === wanted) return pool
         if (pool) pool.terminate()
-        pool = ToolUi.pool(WORKER_SOURCE, wanted)
+        pool = ToolUi.poolFrom(
+          () => new Worker(new URL("./stockVizWorker.ts", import.meta.url), { type: "module" }),
+          wanted
+        )
         poolSize = pool ? pool.size : 0
         $("workersNote").textContent = pool
           ? `${pool.size} worker${pool.size === 1 ? "" : "s"}`

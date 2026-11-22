@@ -183,7 +183,8 @@ cmake --build out/base --target ipvgo_game
 ## Running the real game against WSL
 
 The game runs in the Windows browser and talks to `ipvgo-engine/server.js` over HTTP. Run the
-server in WSL with `pnpm run tools` / `node ipvgo-engine/server.js`. WSL2 forwards `localhost`
+server in WSL with `pnpm run server` (or `pnpm run tools`, which starts it alongside the HTML
+tools). WSL2 forwards `localhost`
 ports to Windows by default, so the client's URL should keep working. Check the port in
 `src/libraries/ipvgo/engineClient.ts` (`getIpvgoEngineUrl`).
 

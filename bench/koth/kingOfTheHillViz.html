@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -156,13 +156,13 @@
   <div id="grid" class="grid"></div>
 
   <p class="hint" style="margin-top: 10px">
-    Regenerate the browser bundle after solver changes (<code>pnpm run test:koth:bundle</code>).
-    Needs an http origin for its module imports: <code>pnpm run tools</code>, then
-    <code>http://localhost:8123/bench/koth/kingOfTheHillViz.html</code>.
+    Served by <code>pnpm run tools</code>, which reloads this page and its worker when the
+    solver sources change: <code>http://localhost:5173/bench/koth/kingOfTheHillViz.html</code>.
+    The CLI equivalents still bundle their own copies (<code>pnpm run test:koth</code>).
   </p>
   </main>
 
-  <script src="../../webui/toolUi.js"></script>
+  <script type="module" src="../../webui/toolUi.js"></script>
   <script type="module">
     import {
       DEFAULT_SEED,
@@ -171,7 +171,7 @@
       generateAssignmentAt,
       runSolver,
       sampleAltitudeProfile,
-    } from "./kingOfTheHillCore.mjs"
+    } from "./kingOfTheHillCore"
 
     const grid = document.getElementById("grid")
     const summaryEl = document.getElementById("summary")
@@ -232,7 +232,7 @@
         this.ready = new Promise((resolve, reject) => {
           let warmed = 0
           for (let i = 0; i < SOLVER_WORKERS; i++) {
-            const worker = new Worker(new URL("./kingOfTheHillVizWorker.mjs", import.meta.url), { type: "module" })
+            const worker = new Worker(new URL("./kingOfTheHillVizWorker.ts", import.meta.url), { type: "module" })
             const slot = { worker, onDone: null }
             worker.onerror = reject
             worker.onmessage = (e) => {

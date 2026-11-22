@@ -7,6 +7,10 @@
 // advertises IPVGO_SUPERVISED=1, which enables POST /api/server/restart (the GUI's
 // "Restart server" button) and lets the page reload itself when the server
 // instance changes.
+//
+// IPVGO_WATCH_WEB=0 drops web/ from the watch list: `pnpm run tools` serves the page
+// through Vite, which reloads the tab on an edit, so restarting the server for it
+// would only cost a reconnect.
 import { spawn } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
@@ -16,7 +20,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, "..")
 const ENTRY = path.join(ROOT, "server.js")
 
-const WATCH = [ENTRY, path.join(ROOT, "lib"), path.join(ROOT, "web"), path.join(ROOT, "scripts")]
+const WATCH = [ENTRY, path.join(ROOT, "lib"), path.join(ROOT, "scripts")]
+// The bench page is watched too, unless the caller owns page reloads itself (build/toolsDev.mjs
+// serves it through Vite, where an edit reloads the tab instead of restarting the server).
+if (process.env.IPVGO_WATCH_WEB !== "0") WATCH.push(path.join(ROOT, "web"))
 const DEBOUNCE_MS = 200
 const RESTART_DELAY_MS = 400
 // server.js exits with this code when it wants to be restarted (GUI button).

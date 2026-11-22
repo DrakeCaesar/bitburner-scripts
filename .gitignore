@@ -48,9 +48,11 @@ build/Debug/
 !/data/.gitkeep
 !/data/darknet-lore.json
 
-# Generated stock benchmark artifacts (pnpm run test:stock / pnpm run stock:viz)
+# Generated benchmark artifacts (pnpm run test:stock / pnpm run test:koth*).
+# The browser pages import the .ts sources directly, so only the Node CLI copies are built.
 /bench/stock/stockTraderBench.mjs
-/bench/stock/stockTraderViz.html
+/bench/koth/kingOfTheHillCore.mjs
+/bench/koth/kingOfTheHillBench.mjs
 
 NetScriptDefinitions.d.ts
 
