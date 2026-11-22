@@ -260,6 +260,21 @@ Commands and flags:
 
 `bench/koth/` holds the simulation (`kingOfTheHillSim.mjs`), the parallel benchmark (`kingOfTheHillBench.mjs`), the browser viz, and `koth_tune/` (C++ tuner plus Python harness). `kingOfTheHillCore.ts` is the shared core; the `.mjs` files next to it are esbuild output from `build/bundleKingOfTheHill*.cjs`, so edit the `.ts` and re-run `pnpm run test:koth:bundle`.
 
+**Near-peak check** (`withNearPeakCheck` in `src/dnet/solvers/kingOfTheHill/ladderSnipeSolver.ts`). Within 3% of the password the game returns the main hill alone, so one reading `(x, alt)` taken there puts the password at `x + d` or `x - d` with `d = width * sqrt(ln(10000 / alt))`, whatever the altitude. After every reading the ladder takes, the wrapper guesses a candidate that is in range, untried, and reproduces every reading inside its own 3% zone to rounding error (readings outside the zone are a sum of hills and do not reproduce as one Gaussian around an integer). Candidate guesses count as guesses but are hidden from the ladder and do not move its best point, so the ladder takes exactly the probes it took before and the GA-tuned constants still apply. It needs the full-precision altitude from the response `data`; with only the five-decimal message it practically never fires. The C++ tuner (`koth_tune/src/koth_solver.cpp`) does not have the check, so its guess counts are the ladder's alone.
+
+Measured at difficulty 60 (the first row is the viz default seed, `Tests` = 100 000):
+
+| Seed / count | Mean guesses | p99 | Worst | Runs taking 20+ |
+|---|---:|---:|---:|---:|
+| 1265595496 / 100 000 | 7.194 -> 6.441 | 16 -> 13 | 54 -> 31 | 399 -> 187 |
+| 789123 / 10 000 | 7.163 -> 6.414 | 17 -> 14 | 32 -> 29 | 46 -> 19 |
+
+Over difficulties 1-60 (seed 4242, 2000 each) total guesses fell 9.4%; no difficulty got worse, and difficulties 1-11 (passwords of up to two digits) are unchanged. What the old worst cases had in common: the ladder read the main hill, left it, and refined a ~7400 m neighbour down to adjacent integers (#35696, #78376, #50258: 54, 53, 52 guesses, now 11, 13, 13). What is left: once a reading lands in the zone the solve ends in one more guess (55%) or two (45%, the `x + d` candidate is tried first and was the wrong side), so every remaining long run is spent reaching the zone. Where the ladder samples is the open question, not how it refines.
+
+**The bench must take the game's probes.** The bench runs the solver straight through (`createAuthProbeSession`); the game replays it from the stored samples for every guess (`solverModule.ts` -> `runUntilNextProbe` -> `createReplayProbeSession`). Until this change the two disagreed on 928 of 10 000 assignments and the game averaged 7.95 guesses where the bench reported 7.20. Two causes, both fixed: the replay session started from the best of all stored samples and let the ladder read samples it had not asked for yet, and `crest` wrapped its probes in a `try/catch` that swallowed the `STOP_PROBE` signal the replay session throws to request a probe. Keep both rules: nothing between the solver and the session may catch `STOP_PROBE`, and the solver reads samples only through the session it is given. `pnpm run test:koth -- --parity --count 10000` compares the two paths probe by probe and exits non-zero on any difference.
+
+The game itself runs `src/dnet/solvers/solverWorker.js`, a gitignored bundle that `pnpm run dev` builds at start-up (`pnpm run bundle:solver-worker` rebuilds it alone), so a solver edit reaches the game only after one of those.
+
 ### Special considerations
 
 - Game environment restrictions require careful DOM access patterns

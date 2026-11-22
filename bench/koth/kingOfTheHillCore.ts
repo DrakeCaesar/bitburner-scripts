@@ -16,9 +16,12 @@ import {
   KOTH_HILL_DIFFICULTY_DIVISOR,
   KOTH_HILL_SPACING_WIDTHS,
   KOTH_PEAK_HEIGHT,
+  buildSolverContext,
   kingOfTheHillGaussianWidth,
   kingOfTheHillHillCount,
+  parseKingOfTheHillAltitude,
   runSolverImproved as runSolverImprovedWithAuth,
+  runUntilNextProbe,
 } from "../../src/dnet/solvers/kingOfTheHill/solverCore.js"
 
 export { kingOfTheHillGaussianWidth, kingOfTheHillHillCount, KOTH_PEAK_HEIGHT, KOTH_HILL_SPACING_WIDTHS }
@@ -265,4 +268,35 @@ export function runSolver(
     result.probes = [...raw.samples.entries()].map(([x, alt]) => ({ x, alt }))
   }
   return result
+}
+
+/**
+ * The same solve the way the game runs it: one probe per call, the solver replayed from the stored
+ * samples each time (solverModule.ts). Must take the same probes in the same order as runSolver.
+ */
+export function runSolverStepwise(assignment: KingOfTheHillAssignment): SolverResult {
+  const server = toServer(assignment)
+  const ctx = buildSolverContext(assignment)
+  const samples = new Map<number, number>()
+  const probes: SolverProbe[] = []
+  let solved = false
+  for (;;) {
+    const next = runUntilNextProbe(samples, ctx)
+    if (next.type === "done") break
+    const result = authKingOfTheHill(server, String(next.x))
+    if (result.success) {
+      probes.push({ x: next.x, alt: Infinity })
+      solved = true
+      break
+    }
+    const alt = parseKingOfTheHillAltitude(result.feedback, result.message)
+    if (alt === null) break
+    samples.set(next.x, alt)
+    probes.push({ x: next.x, alt })
+  }
+  let best: SolverProbe | null = null
+  for (const probe of probes) {
+    if (best === null || probe.alt > best.alt) best = probe
+  }
+  return { guesses: probes.length, solved, bestVal: best?.x ?? ctx.min, bestAlt: best?.alt ?? null, probes }
 }

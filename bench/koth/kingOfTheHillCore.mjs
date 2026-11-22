@@ -41,6 +41,64 @@ var HEIGHT_OFFSET = 2600;
 function clamp(x, lo, hi) {
   return Math.max(lo, Math.min(hi, Math.round(x)));
 }
+var NEAR_PEAK_REL_TOLERANCE = 8 * Number.EPSILON;
+function inPureZone(x, p) {
+  return Math.abs((x - p) / p) < KOTH_NEAR_ZONE_FRACTION;
+}
+function withNearPeakCheck(inner, w, lo, hi) {
+  const visited = /* @__PURE__ */ new Map();
+  const extra = /* @__PURE__ */ new Map();
+  const explainsReadings = (p) => {
+    for (const readings of [visited, extra]) {
+      for (const [z, a] of readings) {
+        if (!inPureZone(z, p)) continue;
+        const expected = H_PEAK * Math.exp((z - p) ** 2 / w ** 2 * -1);
+        if (!(Math.abs(a - expected) <= NEAR_PEAK_REL_TOLERANCE * expected)) return false;
+      }
+    }
+    return true;
+  };
+  const tryCandidates = (x, a) => {
+    if (!(a > 0 && a <= H_PEAK)) return;
+    const d = Math.round(w * Math.sqrt(Math.log(H_PEAK / a)));
+    for (const p of [x + d, x - d]) {
+      if (p < lo || p > hi || visited.has(p) || extra.has(p) || !inPureZone(x, p)) continue;
+      if (!explainsReadings(p)) continue;
+      const bestVal = inner.bestVal;
+      const bestAlt = inner.bestAlt;
+      const ap = inner.probe(p);
+      if (inner.solved) return;
+      if (ap === null) continue;
+      extra.set(p, ap);
+      inner.restoreBest(bestVal, bestAlt);
+    }
+  };
+  return {
+    get solved() {
+      return inner.solved;
+    },
+    get bestVal() {
+      return inner.bestVal;
+    },
+    get bestAlt() {
+      return inner.bestAlt;
+    },
+    samples: visited,
+    restoreBest(x, a) {
+      inner.restoreBest(x, a);
+    },
+    probe(x) {
+      const xi = Math.round(x);
+      if (visited.has(xi)) return inner.probe(xi);
+      const a = inner.probe(xi);
+      if (a === null || inner.solved) return a;
+      if (extra.delete(xi) && a > inner.bestAlt) inner.restoreBest(xi, a);
+      visited.set(xi, a);
+      tryCandidates(xi, a);
+      return a;
+    }
+  };
+}
 function invertCenter(x1, a1, x2, a2, w) {
   return (x1 + x2) / 2 - w * w * Math.log(a1 / a2) / (2 * (x2 - x1));
 }
@@ -107,51 +165,45 @@ function crest(sess, xSeed, w, lo, hi) {
   let ab = sess.probe(xb);
   if (sess.solved) return [xb, ab ?? Infinity];
   if (a !== null && ab !== null && a > 0 && ab > 0 && xb !== x) {
-    try {
-      const c = invertCenter(x, a, xb, ab, w);
-      const cx = clamp(c, lo, hi);
-      let ac2 = sess.samples.get(cx) ?? null;
-      if (ac2 === null) {
-        ac2 = sess.probe(cx);
-        if (sess.solved) return [cx, ac2 ?? Infinity];
-      }
-      const cand2 = [
-        [a, x],
-        [ab, xb],
-        [ac2 ?? -1e18, cx]
-      ];
-      let best2 = cand2[0];
-      for (const pair of cand2.slice(1)) {
-        if (pair[0] > best2[0]) best2 = pair;
-      }
-      if (best2[1] !== x && best2[0] > a * 1.02) {
-        const bx = best2[1];
-        let xb2 = bx + Math.max(1, Math.floor(off / 2));
-        if (xb2 > hi) xb2 = bx - Math.max(1, Math.floor(off / 2));
-        const ab2 = sess.probe(xb2);
-        if (sess.solved) return [xb2, ab2 ?? Infinity];
-        if (ab2 !== null && ab2 > 0 && xb2 !== bx && best2[0] > 0) {
-          try {
-            const c2 = invertCenter(bx, best2[0], xb2, ab2, w);
-            const cx2 = clamp(c2, lo, hi);
-            let ac22 = sess.samples.get(cx2) ?? null;
-            if (ac22 === null) {
-              ac22 = sess.probe(cx2);
-              if (sess.solved) return [cx2, ac22 ?? Infinity];
-            }
-            const cand22 = [best2, [ab2, xb2], [ac22 ?? -1e18, cx2]];
-            let best22 = cand22[0];
-            for (const pair of cand22.slice(1)) {
-              if (pair[0] > best22[0]) best22 = pair;
-            }
-            return [best22[1], best22[0]];
-          } catch {
-          }
-        }
-      }
-      return [best2[1], best2[0]];
-    } catch {
+    const c = invertCenter(x, a, xb, ab, w);
+    const cx = clamp(c, lo, hi);
+    let ac2 = sess.samples.get(cx) ?? null;
+    if (ac2 === null) {
+      ac2 = sess.probe(cx);
+      if (sess.solved) return [cx, ac2 ?? Infinity];
     }
+    const cand2 = [
+      [a, x],
+      [ab, xb],
+      [ac2 ?? -1e18, cx]
+    ];
+    let best2 = cand2[0];
+    for (const pair of cand2.slice(1)) {
+      if (pair[0] > best2[0]) best2 = pair;
+    }
+    if (best2[1] !== x && best2[0] > a * 1.02) {
+      const bx = best2[1];
+      let xb2 = bx + Math.max(1, Math.floor(off / 2));
+      if (xb2 > hi) xb2 = bx - Math.max(1, Math.floor(off / 2));
+      const ab2 = sess.probe(xb2);
+      if (sess.solved) return [xb2, ab2 ?? Infinity];
+      if (ab2 !== null && ab2 > 0 && xb2 !== bx && best2[0] > 0) {
+        const c2 = invertCenter(bx, best2[0], xb2, ab2, w);
+        const cx2 = clamp(c2, lo, hi);
+        let ac22 = sess.samples.get(cx2) ?? null;
+        if (ac22 === null) {
+          ac22 = sess.probe(cx2);
+          if (sess.solved) return [cx2, ac22 ?? Infinity];
+        }
+        const cand22 = [best2, [ab2, xb2], [ac22 ?? -1e18, cx2]];
+        let best22 = cand22[0];
+        for (const pair of cand22.slice(1)) {
+          if (pair[0] > best22[0]) best22 = pair;
+        }
+        return [best22[1], best22[0]];
+      }
+    }
+    return [best2[1], best2[0]];
   }
   const xc = clamp(x - off >= lo ? x - off : x + 2 * off, lo, hi);
   const ac = sess.probe(xc);
@@ -484,7 +536,8 @@ function runSolverCoreBaseline(sess, lo, hi, w, hc, tune) {
   if (sess.solved) return;
   runPostCoarsePipeline(sess, lo, hi, w, hc, tune, false);
 }
-function runSolverCoreLadderSnipe(sess, lo, hi, w, hc, tune) {
+function runSolverCoreLadderSnipe(session, lo, hi, w, hc, tune) {
+  const sess = withNearPeakCheck(session, w, lo, hi);
   if (hc < 5) {
     runSolverCoreBaseline(sess, lo, hi, w, hc, tune);
     return;
@@ -530,6 +583,7 @@ var KOTH_HILL_DIFFICULTY_CAP = 4;
 var KOTH_GAUSS_WIDTH_LENGTH_OFFSET = 2;
 var KOTH_GAUSS_WIDTH_PLUS = 1;
 var SOLVER_MAX_PROBES = 600;
+var STOP_PROBE = /* @__PURE__ */ Symbol("koth-stop-probe");
 function parseKingOfTheHillAltitude(feedback, message) {
   if (typeof feedback === "number" && Number.isFinite(feedback)) return feedback;
   if (typeof feedback === "string") {
@@ -605,6 +659,60 @@ function createAuthProbeSession(min, max, auth) {
   };
   return session;
 }
+function createReplayProbeSession(min, max, samples, onNeedProbe) {
+  const visited = /* @__PURE__ */ new Set();
+  const session = {
+    min,
+    max,
+    guesses: 0,
+    solved: false,
+    exhausted: false,
+    bestVal: min,
+    bestAlt: -Infinity,
+    samples,
+    restoreBest(x, a) {
+      session.bestVal = x;
+      session.bestAlt = a;
+    },
+    probe(x) {
+      if (session.exhausted || session.solved) return null;
+      const xi = Math.round(x);
+      if (xi < min || xi > max) return null;
+      if (visited.has(xi)) return samples.get(xi);
+      if (session.guesses >= SOLVER_MAX_PROBES) {
+        session.exhausted = true;
+        return null;
+      }
+      if (!samples.has(xi)) {
+        onNeedProbe(xi);
+        throw STOP_PROBE;
+      }
+      session.guesses++;
+      visited.add(xi);
+      const alt = samples.get(xi);
+      if (alt > session.bestAlt) {
+        session.bestAlt = alt;
+        session.bestVal = xi;
+      }
+      return alt;
+    }
+  };
+  return session;
+}
+function runUntilNextProbe(samples, ctx) {
+  let needProbe = null;
+  const session = createReplayProbeSession(ctx.min, ctx.max, samples, (x) => {
+    needProbe = x;
+  });
+  try {
+    runSolverCoreLadderSnipe(session, ctx.min, ctx.max, ctx.gaussWidth, ctx.hillCount, ctx.tuning);
+    return { type: "done", solved: session.solved };
+  } catch (e) {
+    if (e !== STOP_PROBE) throw e;
+  }
+  if (needProbe != null) return { type: "probe", x: needProbe };
+  return { type: "done", solved: session.solved };
+}
 function runSolverImproved(assignment, options) {
   const { min, max } = numericRange(assignment.passwordLength);
   const tuning = options.tuning ?? TUNED_LADDER_SNIPE_DIFF60;
@@ -618,6 +726,17 @@ function runSolverImproved(assignment, options) {
   };
   if (options.returnSamples === true) result.samples = session.samples;
   return result;
+}
+function buildSolverContext(assignment, tuning) {
+  const { min, max } = numericRange(assignment.passwordLength);
+  return {
+    min,
+    max,
+    hillCount: kingOfTheHillHillCount(assignment.difficulty),
+    passwordLength: assignment.passwordLength,
+    gaussWidth: kingOfTheHillGaussianWidth(assignment.passwordLength),
+    tuning: tuning ?? TUNED_LADDER_SNIPE_DIFF60
+  };
 }
 
 // bench/koth/kingOfTheHillCore.ts
@@ -795,6 +914,32 @@ function runSolver(assignment, options = {}) {
   }
   return result;
 }
+function runSolverStepwise(assignment) {
+  const server = toServer(assignment);
+  const ctx = buildSolverContext(assignment);
+  const samples = /* @__PURE__ */ new Map();
+  const probes = [];
+  let solved = false;
+  for (; ; ) {
+    const next = runUntilNextProbe(samples, ctx);
+    if (next.type === "done") break;
+    const result = authKingOfTheHill(server, String(next.x));
+    if (result.success) {
+      probes.push({ x: next.x, alt: Infinity });
+      solved = true;
+      break;
+    }
+    const alt = parseKingOfTheHillAltitude(result.feedback, result.message);
+    if (alt === null) break;
+    samples.set(next.x, alt);
+    probes.push({ x: next.x, alt });
+  }
+  let best = null;
+  for (const probe of probes) {
+    if (best === null || probe.alt > best.alt) best = probe;
+  }
+  return { guesses: probes.length, solved, bestVal: best?.x ?? ctx.min, bestAlt: best?.alt ?? null, probes };
+}
 export {
   ASSIGNMENT_MAX_SAFE_PASSWORD_DIGITS,
   ASSIGNMENT_PASSWORD_LENGTH_CAP,
@@ -826,6 +971,7 @@ export {
   kingOfTheHillHillCount,
   mulberry32,
   runSolver,
+  runSolverStepwise,
   sampleAltitudeProfile,
   toServer
 };

@@ -20,6 +20,83 @@ function clamp(x: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, Math.round(x)))
 }
 
+const NEAR_PEAK_REL_TOLERANCE = 8 * Number.EPSILON
+
+function inPureZone(x: number, p: number): boolean {
+  return Math.abs((x - p) / p) < KOTH_NEAR_ZONE_FRACTION
+}
+
+/**
+ * Near-peak check, wrapped around the session the ladder runs on.
+ *
+ * Within 3% of the password the game returns the main hill alone, so a reading (x, a) taken there
+ * puts the password at x + d or x - d with d = w * sqrt(ln(10000 / a)), whatever the altitude is.
+ * Readings outside that zone are a sum of hills and do not reproduce as one Gaussian around an
+ * integer, so a candidate is only guessed when it reproduces every reading in its own zone to
+ * rounding error. That needs the full-precision altitude, not the five-decimal message.
+ *
+ * The ladder's own trajectory is unchanged: candidate guesses are kept out of the samples it sees
+ * and do not move its best point. `samples` holds only what the ladder asked for in this run,
+ * which also keeps a replayed run from seeing readings it had not taken yet.
+ */
+function withNearPeakCheck(inner: LadderProbeSession, w: number, lo: number, hi: number): LadderProbeSession {
+  const visited = new Map<number, number>()
+  const extra = new Map<number, number>()
+
+  const explainsReadings = (p: number): boolean => {
+    for (const readings of [visited, extra]) {
+      for (const [z, a] of readings) {
+        if (!inPureZone(z, p)) continue
+        const expected = H_PEAK * Math.exp(((z - p) ** 2 / w ** 2) * -1)
+        if (!(Math.abs(a - expected) <= NEAR_PEAK_REL_TOLERANCE * expected)) return false
+      }
+    }
+    return true
+  }
+
+  const tryCandidates = (x: number, a: number): void => {
+    if (!(a > 0 && a <= H_PEAK)) return
+    const d = Math.round(w * Math.sqrt(Math.log(H_PEAK / a)))
+    for (const p of [x + d, x - d]) {
+      if (p < lo || p > hi || visited.has(p) || extra.has(p) || !inPureZone(x, p)) continue
+      if (!explainsReadings(p)) continue
+      const bestVal = inner.bestVal
+      const bestAlt = inner.bestAlt
+      const ap = inner.probe(p)
+      if (inner.solved) return
+      if (ap === null) continue
+      extra.set(p, ap)
+      inner.restoreBest(bestVal, bestAlt)
+    }
+  }
+
+  return {
+    get solved() {
+      return inner.solved
+    },
+    get bestVal() {
+      return inner.bestVal
+    },
+    get bestAlt() {
+      return inner.bestAlt
+    },
+    samples: visited,
+    restoreBest(x: number, a: number) {
+      inner.restoreBest(x, a)
+    },
+    probe(x: number): number | null {
+      const xi = Math.round(x)
+      if (visited.has(xi)) return inner.probe(xi)
+      const a = inner.probe(xi)
+      if (a === null || inner.solved) return a
+      if (extra.delete(xi) && a > inner.bestAlt) inner.restoreBest(xi, a)
+      visited.set(xi, a)
+      tryCandidates(xi, a)
+      return a
+    },
+  }
+}
+
 function invertCenter(x1: number, a1: number, x2: number, a2: number, w: number): number {
   return (x1 + x2) / 2 - ((w * w) * Math.log(a1 / a2)) / (2 * (x2 - x1))
 }
@@ -91,53 +168,45 @@ function crest(sess: LadderProbeSession, xSeed: number, w: number, lo: number, h
   let ab = sess.probe(xb)
   if (sess.solved) return [xb, ab ?? Infinity]
   if (a !== null && ab !== null && a > 0 && ab > 0 && xb !== x) {
-    try {
-      const c = invertCenter(x, a, xb, ab, w)
-      const cx = clamp(c, lo, hi)
-      let ac = sess.samples.get(cx) ?? null
-      if (ac === null) {
-        ac = sess.probe(cx)
-        if (sess.solved) return [cx, ac ?? Infinity]
-      }
-      const cand: [number, number][] = [
-        [a, x],
-        [ab, xb],
-        [ac ?? -1e18, cx],
-      ]
-      let best = cand[0]!
-      for (const pair of cand.slice(1)) {
-        if (pair[0] > best[0]) best = pair
-      }
-      if (best[1] !== x && best[0] > a * 1.02) {
-        const bx = best[1]
-        let xb2 = bx + Math.max(1, Math.floor(off / 2))
-        if (xb2 > hi) xb2 = bx - Math.max(1, Math.floor(off / 2))
-        const ab2 = sess.probe(xb2)
-        if (sess.solved) return [xb2, ab2 ?? Infinity]
-        if (ab2 !== null && ab2 > 0 && xb2 !== bx && best[0] > 0) {
-          try {
-            const c2 = invertCenter(bx, best[0], xb2, ab2, w)
-            const cx2 = clamp(c2, lo, hi)
-            let ac2 = sess.samples.get(cx2) ?? null
-            if (ac2 === null) {
-              ac2 = sess.probe(cx2)
-              if (sess.solved) return [cx2, ac2 ?? Infinity]
-            }
-            const cand2: [number, number][] = [best, [ab2, xb2], [ac2 ?? -1e18, cx2]]
-            let best2 = cand2[0]!
-            for (const pair of cand2.slice(1)) {
-              if (pair[0] > best2[0]) best2 = pair
-            }
-            return [best2[1], best2[0]]
-          } catch {
-            // fall through
-          }
-        }
-      }
-      return [best[1], best[0]]
-    } catch {
-      // fall through
+    const c = invertCenter(x, a, xb, ab, w)
+    const cx = clamp(c, lo, hi)
+    let ac = sess.samples.get(cx) ?? null
+    if (ac === null) {
+      ac = sess.probe(cx)
+      if (sess.solved) return [cx, ac ?? Infinity]
     }
+    const cand: [number, number][] = [
+      [a, x],
+      [ab, xb],
+      [ac ?? -1e18, cx],
+    ]
+    let best = cand[0]!
+    for (const pair of cand.slice(1)) {
+      if (pair[0] > best[0]) best = pair
+    }
+    if (best[1] !== x && best[0] > a * 1.02) {
+      const bx = best[1]
+      let xb2 = bx + Math.max(1, Math.floor(off / 2))
+      if (xb2 > hi) xb2 = bx - Math.max(1, Math.floor(off / 2))
+      const ab2 = sess.probe(xb2)
+      if (sess.solved) return [xb2, ab2 ?? Infinity]
+      if (ab2 !== null && ab2 > 0 && xb2 !== bx && best[0] > 0) {
+        const c2 = invertCenter(bx, best[0], xb2, ab2, w)
+        const cx2 = clamp(c2, lo, hi)
+        let ac2 = sess.samples.get(cx2) ?? null
+        if (ac2 === null) {
+          ac2 = sess.probe(cx2)
+          if (sess.solved) return [cx2, ac2 ?? Infinity]
+        }
+        const cand2: [number, number][] = [best, [ab2, xb2], [ac2 ?? -1e18, cx2]]
+        let best2 = cand2[0]!
+        for (const pair of cand2.slice(1)) {
+          if (pair[0] > best2[0]) best2 = pair
+        }
+        return [best2[1], best2[0]]
+      }
+    }
+    return [best[1], best[0]]
   }
   const xc = clamp(x - off >= lo ? x - off : x + 2 * off, lo, hi)
   const ac = sess.probe(xc)
@@ -507,15 +576,16 @@ function runSolverCoreBaseline(sess: LadderProbeSession, lo: number, hi: number,
   runPostCoarsePipeline(sess, lo, hi, w, hc, tune, false)
 }
 
-/** ladder_snipe / ladder_snipe_tuned entry (C++ runSolverCoreLadder). */
+/** ladder_snipe / ladder_snipe_tuned entry (C++ runSolverCoreLadder), plus the near-peak check. */
 export function runSolverCoreLadderSnipe(
-  sess: LadderProbeSession,
+  session: LadderProbeSession,
   lo: number,
   hi: number,
   w: number,
   hc: number,
   tune: LadderSnipeTuning,
 ): void {
+  const sess = withNearPeakCheck(session, w, lo, hi)
   if (hc < 5) {
     runSolverCoreBaseline(sess, lo, hi, w, hc, tune)
     return

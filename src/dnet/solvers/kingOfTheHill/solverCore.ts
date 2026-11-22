@@ -141,22 +141,18 @@ export function createReplayProbeSession(
   samples: Map<number, number>,
   onNeedProbe: (x: number) => void,
 ): ProbeSession {
-  let bestVal = min
-  let bestAlt = -Infinity
-  for (const [x, alt] of samples) {
-    if (alt > bestAlt) {
-      bestAlt = alt
-      bestVal = x
-    }
-  }
+  // Mirrors createAuthProbeSession step for step: a stored sample counts as a guess and can move
+  // the best point only the first time this run asks for it, so a replay never knows more than
+  // the original run did at the same point.
+  const visited = new Set<number>()
   const session: ProbeSession = {
     min,
     max,
     guesses: 0,
     solved: false,
     exhausted: false,
-    bestVal,
-    bestAlt,
+    bestVal: min,
+    bestAlt: -Infinity,
     samples,
     restoreBest(x: number, a: number) {
       session.bestVal = x
@@ -166,20 +162,23 @@ export function createReplayProbeSession(
       if (session.exhausted || session.solved) return null
       const xi = Math.round(x)
       if (xi < min || xi > max) return null
-      if (samples.has(xi)) {
-        const alt = samples.get(xi)!
-        if (alt > session.bestAlt) {
-          session.bestAlt = alt
-          session.bestVal = xi
-        }
-        return alt
-      }
+      if (visited.has(xi)) return samples.get(xi)!
       if (session.guesses >= SOLVER_MAX_PROBES) {
         session.exhausted = true
         return null
       }
-      onNeedProbe(xi)
-      throw STOP_PROBE
+      if (!samples.has(xi)) {
+        onNeedProbe(xi)
+        throw STOP_PROBE
+      }
+      session.guesses++
+      visited.add(xi)
+      const alt = samples.get(xi)!
+      if (alt > session.bestAlt) {
+        session.bestAlt = alt
+        session.bestVal = xi
+      }
+      return alt
     },
   }
   return session

@@ -4,6 +4,7 @@
  * Run: pnpm run test:koth
  *      pnpm run test:koth -- --seed 42 --count 10 --difficulty 60
  *      pnpm run test:koth -- --all-difficulties --count 1000
+ *      pnpm run test:koth -- --parity --count 10000   (bench path vs the game's stepwise path)
  */
 
 import {
@@ -15,6 +16,7 @@ import {
   generateAssignments,
   kingOfTheHillHillCount,
   runSolver,
+  runSolverStepwise,
 } from "./kingOfTheHillCore.mjs"
 
 function parseArgs(argv) {
@@ -22,13 +24,15 @@ function parseArgs(argv) {
   let count = DEFAULT_COUNT
   let difficulty = DEFAULT_DIFFICULTY
   let allDifficulties = false
+  let parity = false
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === "--seed" && argv[i + 1]) seed = Number(argv[++i])
     else if (argv[i] === "--count" && argv[i + 1]) count = Number(argv[++i])
     else if (argv[i] === "--difficulty" && argv[i + 1]) difficulty = Number(argv[++i])
     else if (argv[i] === "--all-difficulties") allDifficulties = true
+    else if (argv[i] === "--parity") parity = true
   }
-  return { seed, count, difficulty, allDifficulties }
+  return { seed, count, difficulty, allDifficulties, parity }
 }
 
 function summarize(rows) {
@@ -50,7 +54,27 @@ function runDifficulty(seed, count, difficulty) {
   return { difficulty, rows, stats: summarize(rows) }
 }
 
-const { seed, count, difficulty, allDifficulties } = parseArgs(process.argv)
+const { seed, count, difficulty, allDifficulties, parity } = parseArgs(process.argv)
+
+if (parity) {
+  let different = 0
+  let direct = 0
+  let stepwise = 0
+  for (const { index, assignment } of generateAssignments(seed, count, difficulty)) {
+    const a = runSolver(assignment, { returnSamples: true })
+    const b = runSolverStepwise(assignment)
+    direct += a.guesses
+    stepwise += b.guesses
+    if (a.probes.length === b.probes.length && a.probes.every((probe, i) => probe.x === b.probes[i].x)) continue
+    if (different++ < 5) {
+      console.log(`#${index} password ${assignment.password}: direct ${a.guesses} guesses, stepwise ${b.guesses}`)
+    }
+  }
+  console.log(`=== KingOfTheHill parity  N=${count}  seed=${seed}  difficulty=${difficulty} ===`)
+  console.log(`avg direct=${(direct / count).toFixed(3)} stepwise=${(stepwise / count).toFixed(3)}`)
+  console.log(`probe sequences differ: ${different}/${count}`)
+  process.exit(different > 0 ? 1 : 0)
+}
 
 if (allDifficulties) {
   console.log(`=== KingOfTheHill all difficulties  N=${count} per diff  seed=${seed} ===\n`)
