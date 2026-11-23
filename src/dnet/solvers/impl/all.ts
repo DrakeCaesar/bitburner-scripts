@@ -1,11 +1,20 @@
 import type { ServerDetails } from '../../types.js'
-import type { SolverModule, SolverState } from '../types.js'
+import type { GuessResult, SolverModule, SolverState } from '../types.js'
 import { kingOfTheHillImprovedSolver } from '../kingOfTheHill/solverModule.js'
 import { COMMON_PASSWORDS, DEFAULT_FACTORY_PASSWORDS } from '../data/commonPasswords.js'
+import { bigMoSolver } from './bigMo.js'
+import { factoriOs } from './factoriOs.js'
+import { php54 } from './php54.js'
+import { guessWasEvaluated } from './shared.js'
+import { nilSolver, timingAttack } from './positional.js'
+import { accountsManager, bellaCuoreRange, romanToDecimal } from './rangeSearch.js'
 
-/** Mark a single-shot solver done after a real auth attempt reaches the target. */
-function finishSingleShot(state: { dispatched: boolean }): void {
-  state.dispatched = true
+/**
+ * Mark a single-shot solver done once the server has judged its guess. A guess that never got
+ * there (request timeout) leaves it armed, so the same guess goes out again.
+ */
+function finishSingleShot(state: { dispatched: boolean }, result: GuessResult): void {
+  if (guessWasEvaluated(result)) state.dispatched = true
 }
 
 /** Drop a list candidate after a failed auth (pop-from-end iterators). */
@@ -44,8 +53,8 @@ const zeroLogon: SolverModule<ZeroLogonState> = {
     if (state.dispatched) return null
     return { guess: "", detail: "zeroLogon" }
   },
-  applyResult(state, _guess, _result) {
-    finishSingleShot(state)
+  applyResult(state, _guess, result) {
+    finishSingleShot(state, result)
     return state
   },
 }
@@ -70,8 +79,8 @@ const cloudBlare: SolverModule<CloudBlareState> = {
     if (state.dispatched || !state.guess) return null
     return { guess: state.guess, detail: "cloudBlare" }
   },
-  applyResult(state, _guess, _result) {
-    finishSingleShot(state)
+  applyResult(state, _guess, result) {
+    finishSingleShot(state, result)
     return state
   },
 }
@@ -93,8 +102,8 @@ const deskMemo: SolverModule<DeskMemoState> = {
     if (state.dispatched || !state.guess) return null
     return { guess: state.guess, detail: "deskMemo" }
   },
-  applyResult(state, _guess, _result) {
-    finishSingleShot(state)
+  applyResult(state, _guess, result) {
+    finishSingleShot(state, result)
     return state
   },
 }
@@ -103,25 +112,7 @@ const deskMemo: SolverModule<DeskMemoState> = {
 
 // #region BellaCuore single-value
 
-// #region BellaCuore helpers
 
-function romanToDecimal(roman: string): number | null {
-  const trimmed = roman.trim()
-  if (trimmed.toLowerCase() === "nulla") return 0
-  const values: Record<string, number> = { I: 1, V: 5, X: 10, L: 50, C: 100, D: 500, M: 1000 }
-  const upper = trimmed.toUpperCase()
-  if (!upper || !/^[IVXLCDM]+$/.test(upper)) return null
-  let total = 0
-  for (let i = 0; i < upper.length; i++) {
-    const current = values[upper[i]!]
-    const next = values[upper[i + 1]!]
-    if (current === undefined) return null
-    total += next !== undefined && current < next ? -current : current
-  }
-  return total
-}
-
-// #endregion
 
 
 interface BellaCuoreSingleState extends SolverState { type: "bellaCuoreSingle"; dispatched: boolean; guess: string | null }
@@ -143,8 +134,8 @@ const bellaCuoreSingle: SolverModule<BellaCuoreSingleState> = {
     if (state.dispatched || !state.guess) return null
     return { guess: state.guess, detail: "bellaCuore" }
   },
-  applyResult(state, _guess, _result) {
-    finishSingleShot(state)
+  applyResult(state, _guess, result) {
+    finishSingleShot(state, result)
     return state
   },
 }
@@ -176,8 +167,8 @@ const octantVoxel: SolverModule<OctantVoxelState> = {
     if (state.dispatched || !state.guess) return null
     return { guess: state.guess, detail: "octantVoxel" }
   },
-  applyResult(state, _guess, _result) {
-    finishSingleShot(state)
+  applyResult(state, _guess, result) {
+    finishSingleShot(state, result)
     return state
   },
 }
@@ -298,8 +289,8 @@ const mathML: SolverModule<MathMLState> = {
     if (state.dispatched || !state.guess) return null
     return { guess: state.guess, detail: "mathML" }
   },
-  applyResult(state, _guess, _result) {
-    finishSingleShot(state)
+  applyResult(state, _guess, result) {
+    finishSingleShot(state, result)
     return state
   },
 }
@@ -370,6 +361,7 @@ const primeTime2: SolverModule<PrimeTime2State> = {
       state.dispatched = true
       return state
     }
+    if (!guessWasEvaluated(result)) return state
     state.factorIdx++
     if (state.factorIdx >= state.factors.length) state.dispatched = true
     return state
@@ -400,8 +392,8 @@ const binaryToText: SolverModule<BinaryToTextState> = {
     if (state.dispatched || !state.guess) return null
     return { guess: state.guess, detail: "110100100" }
   },
-  applyResult(state, _guess, _result) {
-    finishSingleShot(state)
+  applyResult(state, _guess, result) {
+    finishSingleShot(state, result)
     return state
   },
 }
@@ -435,8 +427,8 @@ const ordoXenos: SolverModule<OrdoXenosState> = {
     if (state.dispatched || !state.guess) return null
     return { guess: state.guess, detail: "ordoXenos" }
   },
-  applyResult(state, _guess, _result) {
-    finishSingleShot(state)
+  applyResult(state, _guess, result) {
+    finishSingleShot(state, result)
     return state
   },
 }
@@ -457,8 +449,8 @@ const proverFlo: SolverModule<ProverFloState> = {
     if (state.dispatched || !state.guess) return null
     return { guess: state.guess, detail: "proverFlo" }
   },
-  applyResult(state, _guess, _result) {
-    finishSingleShot(state)
+  applyResult(state, _guess, result) {
+    finishSingleShot(state, result)
     return state
   },
 }
@@ -483,7 +475,7 @@ const laika4: SolverModule<Laika4State> = {
     return { guess, detail: `laika4 (${state.remaining.length} left)` }
   },
   applyResult(state, guess, result) {
-    consumeFromEnd(state.remaining, guess, result.success)
+    if (guessWasEvaluated(result)) consumeFromEnd(state.remaining, guess, result.success)
     return state
   },
 }
@@ -579,70 +571,8 @@ function multisetPermutationAt(
 
 // #endregion
 
-// #region PHP 5.4 helpers
-
-function php54SortedCounts(digits: string): { chars: string[]; counts: number[] } {
-  return sortedCharsToMultiset(digits.split("").sort())
-}
-
-/** Extract sorted hint digits; null when hint does not match password length. */
-function php54HintDigits(hint: string, length: number): string | null {
-  const digits = hint.replace(/\D/g, "")
-  if (digits.length !== length) return null
-  return digits
-}
-
-/** Number of distinct permutations of PHP 5.4 sorted hint digits. */
-function php54PermutationCount(hint: string, length: number): number {
-  const digits = php54HintDigits(hint, length)
-  if (digits === null) return 0
-  return multisetPermutationCount(php54SortedCounts(digits).counts)
-}
-
-/** Nth permutation (0-based) in lexicographic multiset order, without enumerating all. */
-function php54PermutationAt(hint: string, length: number, index: number): string | null {
-  const digits = php54HintDigits(hint, length)
-  if (digits === null) return null
-  const { chars, counts } = php54SortedCounts(digits)
-  return multisetPermutationAt(chars, counts, index)
-}
-
-// #endregion
 
 
-interface Php54State extends SolverState {
-  type: "php54"
-  /** Sorted hint digits (small string, not a candidate list). */
-  digits: string
-  index: number
-  total: number
-}
-
-const php54: SolverModule<Php54State> = {
-  init(details) {
-    const digits = php54HintDigits(details.passwordHint, details.passwordLength)
-    if (digits === null) {
-      return { type: "php54", digits: "", index: 0, total: 0 }
-    }
-    return {
-      type: "php54",
-      digits,
-      index: 0,
-      total: php54PermutationCount(details.passwordHint, details.passwordLength),
-    }
-  },
-  nextGuess(state) {
-    if (state.total === 0 || state.index >= state.total) return null
-    const guess = php54PermutationAt(state.digits, state.digits.length, state.index)
-    if (guess === null) return null
-    return { guess, detail: `php54 (${state.total - state.index - 1} left)` }
-  },
-  applyResult(state, _guess, result) {
-    if (result.success) state.index = state.total
-    else state.index++
-    return state
-  },
-}
 
 // #endregion
 
@@ -692,7 +622,7 @@ const euroZone: SolverModule<EuroZoneState> = {
     return { guess, detail: `euroZone (${state.remaining.length} left)` }
   },
   applyResult(state, guess, result) {
-    consumeFromEnd(state.remaining, guess, result.success)
+    if (guessWasEvaluated(result)) consumeFromEnd(state.remaining, guess, result.success)
     return state
   },
 }
@@ -715,7 +645,7 @@ const topPass: SolverModule<TopPassState> = {
     return { guess, detail: `topPass (${state.remaining.length} left)` }
   },
   applyResult(state, guess, result) {
-    consumeFromEnd(state.remaining, guess, result.success)
+    if (guessWasEvaluated(result)) consumeFromEnd(state.remaining, guess, result.success)
     return state
   },
 }
@@ -738,145 +668,14 @@ const freshInstall: SolverModule<FreshInstallState> = {
     return { guess, detail: `default (${state.remaining.length} left)` }
   },
   applyResult(state, guess, result) {
-    consumeFromFront(state.remaining, guess, result.success)
+    if (guessWasEvaluated(result)) consumeFromFront(state.remaining, guess, result.success)
     return state
   },
 }
 
 // #endregion
 
-// #region NIL
 
-
-interface NilState extends SolverState {
-  type: "nil"
-  chars: (string | null)[]
-  charset: string
-  charIdx: number
-  retries: number   // count retries of current char (unparseable feedback)
-  finalDispatched: boolean
-}
-
-const nilSolver: SolverModule<NilState> = {
-  init(details) {
-    const charset =
-      details.passwordFormat === "alphabetic" ? "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-      : details.passwordFormat === "alphanumeric" ? "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-      : "0123456789"
-    return {
-      type: "nil",
-      chars: Array.from({ length: details.passwordLength }, () => null),
-      charset, charIdx: 0, retries: 0, finalDispatched: false,
-    }
-  },
-  nextGuess(state) {
-    if (state.chars.every((d) => d !== null)) {
-      if (state.finalDispatched) return null
-      return { guess: state.chars.join(""), detail: "NIL final" }
-    }
-    if (state.charIdx < state.charset.length) {
-      const ch = state.charset[state.charIdx]!
-      return { guess: ch.repeat(state.chars.length), detail: `NIL char ${ch}` }
-    }
-    // Charset exhausted but some positions still null — fill with first char and dispatch
-    for (let i = 0; i < state.chars.length; i++) {
-      if (state.chars[i] === null) state.chars[i] = state.charset[0]!
-    }
-    if (state.finalDispatched) return null
-    return { guess: state.chars.join(""), detail: "NIL final (fallback)" }
-  },
-  applyResult(state, guess, result) {
-    if (result.success) return state
-    if (guess.length > 1 && !state.finalDispatched) {
-      const feedback = result.feedback ?? ""
-      const parts = feedback.split(",")
-      if (parts.length === state.chars.length) {
-        state.retries = 0
-        let any = false
-        for (let i = 0; i < parts.length; i++) {
-          if (parts[i] === "yes") { state.chars[i] = guess[0]!; any = true }
-        }
-        state.charIdx++
-      } else {
-        // Unparseable feedback — retry up to 3 times, then advance anyway
-        state.retries++
-        if (state.retries > 3) {
-          state.retries = 0
-          state.charIdx++
-        }
-      }
-    } else {
-      state.finalDispatched = true
-    }
-    return state
-  },
-}
-
-// #endregion
-
-// #region AccountsManager_4.2
-
-
-interface AccountsManagerState extends SolverState { type: "accountsManager"; lo: number; hi: number; length: number }
-
-const accountsManager: SolverModule<AccountsManagerState> = {
-  init(details) {
-    // Hint format: "The password is a number between 0 and NNN"
-    // Take the LAST number (the upper bound), not the first (which would be 0).
-    const matches = [...details.passwordHint.matchAll(/\d+/g)]
-    const upper = matches.length >= 2 ? Number(matches[matches.length - 1]![0]) : 100
-    return { type: "accountsManager", lo: 0, hi: upper - 1, length: details.passwordLength }
-  },
-  nextGuess(state) {
-    if (state.lo > state.hi) return null
-    const mid = Math.floor((state.lo + state.hi) / 2)
-    const raw = String(mid)
-    const padded = raw.length < state.length ? "0".repeat(state.length - raw.length) + raw : raw
-    return { guess: padded, detail: `bin ${mid}` }
-  },
-  applyResult(state, guess, result) {
-    if (result.success) return state
-    const g = Number(guess)
-    const fb = result.feedback
-    if (fb === "Lower") state.hi = g - 1
-    else if (fb === "Higher") state.lo = g + 1
-    else { state.lo = state.hi + 1 }
-    return state
-  },
-}
-
-// #endregion
-
-// #region BellaCuore range
-
-
-interface BellaCuoreRangeState extends SolverState { type: "bellaCuoreRange"; lo: number; hi: number; length: number }
-
-const bellaCuoreRange: SolverModule<BellaCuoreRangeState> = {
-  init(details) {
-    const parts = details.data.split(",")
-    if (parts.length !== 2) return { type: "bellaCuoreRange", lo: 1, hi: 0, length: details.passwordLength }
-    const lo = romanToDecimal(parts[0]!)
-    const hi = romanToDecimal(parts[1]!)
-    if (lo === null || hi === null || lo > hi) return { type: "bellaCuoreRange", lo: 1, hi: 0, length: details.passwordLength }
-    return { type: "bellaCuoreRange", lo, hi, length: details.passwordLength }
-  },
-  nextGuess(state) {
-    if (state.lo > state.hi) return null
-    const mid = Math.floor((state.lo + state.hi) / 2)
-    return { guess: String(mid).padStart(state.length, "0"), detail: `bc ${mid}` }
-  },
-  applyResult(state, guess, result) {
-    if (result.success) return state
-    const g = Number(guess)
-    const fb = result.feedback
-    if (fb === "ALTUS NIMIS") state.hi = g - 1
-    else if (fb === "PARUM BREVIS") state.lo = g + 1
-    return state
-  },
-}
-
-// #endregion
 
 // #region DeepGreen (Mastermind)
 
@@ -1517,159 +1316,6 @@ const deepGreen: SolverModule<DeepGreenState> = {
 
 // #region Factori-Os
 
-// #region Factori-Os helpers
-
-function parseBoolFeedback(data: unknown): boolean | null {
-  if (data === true || data === "true") return true
-  if (data === false || data === "false") return false
-  return null
-}
-
-// #endregion
-
-
-/** Matches ServerGenerator.smallPrimes — tested first. */
-const FACTORIOS_PRIMES = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97]
-/** Matches ServerGenerator.largePrimes — appended at difficulty > 12 (and twice at > 24). */
-const FACTORIOS_LARGE_PRIMES = [
-  1069, 1409, 1471, 1567, 1597, 1601, 1697, 1747, 1801, 1889, 1979, 1999, 2063, 2207, 2371, 2503, 2539, 2693, 2741,
-  2753, 2801, 2819, 2837, 2909, 2939, 3169, 3389, 3571, 3761, 3881, 4217, 4289, 4547, 4729, 4789, 4877, 4943, 4951,
-  4957, 5393, 5417, 5419, 5441, 5519, 5527, 5647, 5779, 5881, 6007, 6089, 6133, 6389, 6451, 6469, 6547, 6661, 6719,
-  6841, 7103, 7549, 7559, 7573, 7691, 7753, 7867, 8053, 8081, 8221, 8329, 8599, 8677, 8761, 8839, 8963, 9103, 9199,
-  9343, 9467, 9551, 9601, 9739, 9749, 9859,
-]
-
-interface FactoriOsState extends SolverState {
-  type: "factoriOs"
-  primeIdx: number
-  product: number
-  phase: "prime" | "power"
-  currentPower: number
-  nextPower: number
-  length: number
-  finalDispatched: boolean
-  needsRecheck: boolean
-  /** Probe with 0 first; game reports bogus "divisible" (password % 0 is NaN). */
-  probedZero: boolean
-  /** After small primes, continue with largePrimes when product is still too short. */
-  largePhase: boolean
-}
-
-function factoriOsPrimeList(state: FactoriOsState): readonly number[] {
-  return state.largePhase ? FACTORIOS_LARGE_PRIMES : FACTORIOS_PRIMES
-}
-
-function factoriOsPrimeAt(state: FactoriOsState): number {
-  return factoriOsPrimeList(state)[state.primeIdx]!
-}
-
-function factoriOsExhaustPrimeSearch(state: FactoriOsState): void {
-  state.primeIdx = factoriOsPrimeList(state).length
-}
-
-const factoriOs: SolverModule<FactoriOsState> = {
-  init(details) {
-    return {
-      type: "factoriOs",
-      primeIdx: 0, product: 1,
-      phase: "prime", currentPower: 0, nextPower: 0,
-      length: details.passwordLength, finalDispatched: false,
-      needsRecheck: false,
-      probedZero: false,
-      largePhase: false,
-    }
-  },
-  nextGuess(state) {
-    if (state.finalDispatched) return null
-    if (!state.probedZero) {
-      return { guess: "0", detail: "factoriOs discard" }
-    }
-
-    for (;;) {
-      if (state.phase === "prime" || state.needsRecheck) {
-        state.needsRecheck = false
-        const primes = factoriOsPrimeList(state)
-        while (state.primeIdx < primes.length) {
-          const p = primes[state.primeIdx]!
-          const pStr = String(p)
-          if (pStr.length > state.length) {
-            factoriOsExhaustPrimeSearch(state)
-            break
-          }
-          return { guess: pStr, detail: `prime ${p}` }
-        }
-        if (!state.largePhase && String(state.product).length < state.length) {
-          state.largePhase = true
-          state.primeIdx = 0
-          continue
-        }
-        const pw = String(state.product)
-        if (pw.length !== state.length) return null
-        return { guess: pw, detail: "factor product" }
-      }
-
-      if (String(state.nextPower).length <= state.length) {
-        return { guess: String(state.nextPower), detail: `pow ${state.nextPower}` }
-      }
-      state.product *= state.currentPower
-      if (String(state.product).length > state.length) return null
-      state.phase = "prime"
-      state.primeIdx++
-      state.needsRecheck = true
-    }
-  },
-  applyResult(state, guess, result) {
-    if (result.success) return state
-
-    // Divisor 0 always bogus; discard even if feedback says "true" or guess was lost on timeout.
-    if (guess === "0" || guess === "") {
-      if (!state.probedZero) state.probedZero = true
-      return state
-    }
-
-    if (guess === String(state.product) && String(state.product).length === state.length) {
-      state.finalDispatched = true
-      return state
-    }
-
-    if (state.phase === "prime") {
-      const fb = parseBoolFeedback(result.feedback)
-      if (fb === null) return state // unparseable — retry same guess
-      if (fb) {
-        // Prime divides — enter power phase
-        const p = Number(guess)
-        state.currentPower = p
-        state.nextPower = p * p
-        state.phase = "power"
-      } else {
-        // Prime doesn't divide — advance
-        state.primeIdx++
-      }
-    } else {
-      // Power phase
-      const fb = parseBoolFeedback(result.feedback)
-      if (fb === null) return state // unparseable — retry same guess
-      if (fb) {
-        // This power divides — accumulate and try next
-        state.currentPower = state.nextPower
-        state.nextPower = state.currentPower * factoriOsPrimeAt(state)
-      } else {
-        // Power doesn't divide — done with this prime
-        state.product *= state.currentPower
-        if (String(state.product).length > state.length) {
-          factoriOsExhaustPrimeSearch(state)
-          return state
-        }
-        state.phase = "prime"
-        state.primeIdx++
-      }
-    }
-    return state
-  },
-}
-
-// #endregion
-
 // #region KingOfTheHill
 
 const kingOfTheHill = kingOfTheHillImprovedSolver
@@ -1766,15 +1412,31 @@ function rateMyPixBuildPlaceGuess(
   state: RateMyPixState,
   probeChar: string,
   probeOn: ReadonlySet<number>,
+  secondChar?: string,
+  secondOn?: ReadonlySet<number>,
 ): string {
   const out: string[] = []
   for (let i = 0; i < state.length; i++) {
     const fixed = state.solved[i]
     if (fixed !== null) out.push(fixed)
     else if (probeOn.has(i)) out.push(probeChar)
+    else if (secondChar !== undefined && secondOn?.has(i)) out.push(secondChar)
     else out.push(state.filler)
   }
   return out.join("")
+}
+
+function rateMyPixPendingGuess(state: RateMyPixState, pending: RateMyPixPlacePending): string {
+  if (pending.second && pending.settle === undefined) {
+    return rateMyPixBuildPlaceGuess(
+      state,
+      pending.char,
+      new Set(pending.left),
+      pending.second.char,
+      new Set(pending.second.left),
+    )
+  }
+  return rateMyPixBuildPlaceGuess(state, pending.char, new Set(pending.left))
 }
 
 interface RateMyPixPlaceTask {
@@ -1789,6 +1451,14 @@ interface RateMyPixPlacePending {
   left: number[]
   right: number[]
   baseline: number
+  /**
+   * A second character probed in the same guess on positions disjoint from `left`. The reply is
+   * the sum of both counts: 0 and the maximum are unambiguous (half the time for two single
+   * characters); anything between is settled by repeating the first probe alone (`settle`).
+   */
+  second?: { char: string; need: number; left: number[]; right: number[] }
+  /** Sum reported for the paired probe, while the first probe is being repeated alone. */
+  settle?: number
 }
 
 function rateMyPixEnterPlacePhase(state: RateMyPixState): void {
@@ -1843,6 +1513,7 @@ function rateMyPixPlaceResolve(state: RateMyPixState): void {
   while (state.placeStack.length > 0) {
     const task = state.placeStack[state.placeStack.length - 1]!
     rateMyPixPlaceEnsurePool(state, task)
+    task.pool = task.pool.filter((i) => state.solved[i] === null)
     if (task.need <= 0 || task.pool.length === 0) {
       state.placeStack.pop()
       continue
@@ -1872,9 +1543,8 @@ function rateMyPixPlaceNextGuess(state: RateMyPixState): { guess: string; detail
 
   if (state.placePending) {
     const pending = state.placePending
-    const guess = rateMyPixBuildPlaceGuess(state, pending.char, new Set(pending.left))
     return {
-      guess,
+      guess: rateMyPixPendingGuess(state, pending),
       detail: `place ${pending.char} ${pending.need}/${pending.left.length + pending.right.length}`,
     }
   }
@@ -1887,7 +1557,7 @@ function rateMyPixPlaceNextGuess(state: RateMyPixState): { guess: string; detail
   const left = task.pool.slice(0, mid)
   const right = task.pool.slice(mid)
 
-  state.placePending = {
+  const pending: RateMyPixPlacePending = {
     char: task.char,
     need: task.need,
     left,
@@ -1895,11 +1565,45 @@ function rateMyPixPlaceNextGuess(state: RateMyPixState): { guess: string; detail
     baseline: rateMyPixSolvedCount(state),
   }
 
-  const guess = rateMyPixBuildPlaceGuess(state, task.char, new Set(left))
-  return {
-    guess,
-    detail: `place ${task.char} ${task.need}/${task.pool.length}`,
+  // Pair it with the next task down the stack, probed on half of its own pool outside `left`.
+  const other = state.placeStack[state.placeStack.length - 2]
+  if (other && other.need > 0 && other.char !== task.char) {
+    rateMyPixPlaceEnsurePool(state, other)
+    other.pool = other.pool.filter((i) => state.solved[i] === null)
+    const taken = new Set(left)
+    const free = other.pool.filter((i) => !taken.has(i))
+    const want = Math.ceil(other.pool.length / 2)
+    if (other.need < other.pool.length && free.length >= want && want > 0) {
+      const otherLeft = free.slice(0, want)
+      const inLeft = new Set(otherLeft)
+      pending.second = {
+        char: other.char,
+        need: other.need,
+        left: otherLeft,
+        right: other.pool.filter((i) => !inLeft.has(i)),
+      }
+    }
   }
+  state.placePending = pending
+
+  return {
+    guess: rateMyPixPendingGuess(state, pending),
+    detail: `place ${task.char} ${task.need}/${task.pool.length}${pending.second ? ` + ${pending.second.char}` : ""}`,
+  }
+}
+
+/** Replace the task for `char` on top of the stack by its two halves (the non-empty ones). */
+function rateMyPixPushSplit(
+  state: RateMyPixState,
+  char: string,
+  need: number,
+  left: number[],
+  right: number[],
+  leftCount: number,
+): void {
+  const rightCount = need - leftCount
+  if (rightCount > 0) state.placeStack.push({ char, need: rightCount, pool: [...right] })
+  if (leftCount > 0) state.placeStack.push({ char, need: leftCount, pool: [...left] })
 }
 
 interface RateMyPixState extends SolverState {
@@ -1975,6 +1679,14 @@ const rateMyPix: SolverModule<RateMyPixState> = {
       const emojiCount = rateMyPixPepperCount(fb)
       if (emojiCount > 0) state.freq[guess[0]!] = emojiCount
       state.charIdx++
+      // Every position accounted for: the remaining characters are absent. One character left:
+      // it holds whatever is still missing. Either way the rest of the alphabet needs no guess.
+      const counted = Object.values(state.freq).reduce((a, b) => a + b, 0)
+      if (counted >= state.length) state.charIdx = state.charset.length
+      else if (state.charIdx === state.charset.length - 1) {
+        state.freq[state.charset[state.charIdx]!] = state.length - counted
+        state.charIdx = state.charset.length
+      }
       if (state.charIdx >= state.charset.length) rateMyPixNormalizeFreq(state)
       return state
     }
@@ -1983,29 +1695,47 @@ const rateMyPix: SolverModule<RateMyPixState> = {
       const fb = result.feedback ?? ""
       if (!fb || !state.placePending) return state
       const pending = state.placePending
+      const peppers = rateMyPixPepperCount(fb)
+      let count = peppers - pending.baseline
+      if (!Number.isFinite(count)) count = 0
+      const firstMax = Math.min(pending.need, pending.left.length)
+      const firstMin = Math.max(0, pending.need - pending.right.length)
+
+      if (pending.second && pending.settle === undefined) {
+        const second = pending.second
+        const secondMax = Math.min(second.need, second.left.length)
+        const secondMin = Math.max(0, second.need - second.right.length)
+        // The sum pins both counts only at its extremes; otherwise repeat the first probe alone.
+        let firstCount: number
+        if (count <= firstMin + secondMin) firstCount = firstMin
+        else if (count >= firstMax + secondMax) firstCount = firstMax
+        else if (firstMin === firstMax) firstCount = firstMin
+        else if (secondMin === secondMax) firstCount = Math.max(firstMin, Math.min(firstMax, count - secondMin))
+        else {
+          pending.settle = count
+          return state
+        }
+        const secondCount = Math.max(secondMin, Math.min(secondMax, count - firstCount))
+        state.placePending = null
+        state.placeStack.pop()
+        state.placeStack.pop()
+        rateMyPixPushSplit(state, second.char, second.need, second.left, second.right, secondCount)
+        rateMyPixPushSplit(state, pending.char, pending.need, pending.left, pending.right, firstCount)
+        return state
+      }
+
       state.placePending = null
       if (state.placeStack.length > 0) state.placeStack.pop()
-
-      const peppers = rateMyPixPepperCount(fb)
-      let leftCount = peppers - pending.baseline
-      if (!Number.isFinite(leftCount)) leftCount = 0
-      leftCount = Math.max(0, Math.min(leftCount, pending.need, pending.left.length))
-      const rightCount = pending.need - leftCount
-
-      if (rightCount > 0) {
-        state.placeStack.push({
-          char: pending.char,
-          need: rightCount,
-          pool: [...pending.right],
-        })
+      const leftCount = Math.max(firstMin, Math.min(count, firstMax))
+      if (pending.second && pending.settle !== undefined) {
+        const second = pending.second
+        const secondMax = Math.min(second.need, second.left.length)
+        const secondMin = Math.max(0, second.need - second.right.length)
+        const secondCount = Math.max(secondMin, Math.min(secondMax, pending.settle - leftCount))
+        if (state.placeStack.length > 0) state.placeStack.pop()
+        rateMyPixPushSplit(state, second.char, second.need, second.left, second.right, secondCount)
       }
-      if (leftCount > 0) {
-        state.placeStack.push({
-          char: pending.char,
-          need: leftCount,
-          pool: [...pending.left],
-        })
-      }
+      rateMyPixPushSplit(state, pending.char, pending.need, pending.left, pending.right, leftCount)
       if (state.solved.every((ch) => ch !== null) && guess === state.solved.join("")) {
         state.finalDispatched = true
       }
@@ -2031,78 +1761,7 @@ const rateMyPix: SolverModule<RateMyPixState> = {
 
 // #endregion
 
-// #region TimingAttack (2G_cellular)
 
-
-interface TimingAttackState extends SolverState {
-  type: "timingAttack"
-  chars: (string | null)[]
-  charset: string
-  pos: number
-  charIdx: number
-  length: number
-  finalDispatched: boolean
-}
-
-const timingAttack: SolverModule<TimingAttackState> = {
-  init(details) {
-    const charset =
-      details.passwordFormat === "alphabetic" ? "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-      : details.passwordFormat === "alphanumeric" ? "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-      : "0123456789"
-    return {
-      type: "timingAttack",
-      chars: Array.from({ length: details.passwordLength }, () => null),
-      charset, pos: 0, charIdx: 0, length: details.passwordLength, finalDispatched: false,
-    }
-  },
-  nextGuess(state) {
-    if (state.finalDispatched) return null
-    while (state.pos < state.length) {
-      if (state.charIdx >= state.charset.length) {
-        // Failed to find char at this position
-        return null
-      }
-      const ch = state.charset[state.charIdx]!
-      // Build guess: known chars + candidate + padding for rest
-      let guess = ""
-      for (let j = 0; j < state.length; j++) {
-        if (j < state.pos) guess += state.chars[j]!
-        else if (j === state.pos) guess += ch
-        else guess += state.charset[0]!
-      }
-      return { guess, detail: `pos ${state.pos} try ${ch}` }
-    }
-    return { guess: state.chars.join(""), detail: "final" }
-  },
-  applyResult(state, guess, result) {
-    if (result.success) return state
-    if (state.pos >= state.length) {
-      state.finalDispatched = true
-      return state
-    }
-    if (state.finalDispatched) return state
-
-    const msg = result.message ?? ""
-    if (!msg) return state
-    const match = msg.match(/Found a mismatch while checking each character \((\d+)\)/)
-    if (!match) return state
-    const mismatchIdx = Number(match[1])
-
-    if (mismatchIdx !== state.pos) {
-      // Mismatch at later position => current char is correct
-      state.chars[state.pos] = state.charset[state.charIdx]!
-      state.pos++
-      state.charIdx = 0
-    } else {
-      // Mismatch at current position => try next char
-      state.charIdx++
-    }
-    return state
-  },
-}
-
-// #endregion
 
 // #region OpenWebAccessPoint (packetSniffer)
 
@@ -2306,151 +1965,6 @@ const openWebAccessPoint: SolverModule<OpenWebAccessPointState> = {
 
 // #endregion
 
-// #region BigMo%od (triple modulo)
-
-// #region BigMo helpers
-
-function crtCombineBigInt(r1: bigint, m1: bigint, r2: bigint, m2: bigint): { r: bigint; m: bigint } | null {
-  let a = m1
-  let b = m2
-  let s0 = 1n
-  let s1 = 0n
-  while (b !== 0n) {
-    const q = a / b
-    ;[a, b] = [b, a - q * b]
-    ;[s0, s1] = [s1, s0 - q * s1]
-  }
-  const g = a
-  if ((r2 - r1) % g !== 0n) return null
-  const lcm = (m1 / g) * m2
-  const x = (r1 + ((r2 - r1) / g) * s0 * m1) % lcm
-  return { r: ((x % lcm) + lcm) % lcm, m: lcm }
-}
-
-function bigMoPasswordFromProbes(
-  resolved: { d: number; r: number }[],
-  pwMin: number,
-  pwMax: number,
-  length: number,
-): string | null {
-  if (resolved.length === 0) return null
-  let r = BigInt(resolved[0]!.r)
-  let m = BigInt(resolved[0]!.d)
-  for (let i = 1; i < resolved.length; i++) {
-    const combined = crtCombineBigInt(r, m, BigInt(resolved[i]!.r), BigInt(resolved[i]!.d))
-    if (!combined) return null
-    r = combined.r
-    m = combined.m
-  }
-  const pwMinB = BigInt(pwMin)
-  const pwMaxB = BigInt(pwMax)
-  let candidate = r
-  if (candidate < pwMinB) {
-    const k = (pwMinB - r + m - 1n) / m
-    candidate = r + k * m
-  }
-  if (candidate > pwMaxB) return null
-  const raw = candidate.toString()
-  if (raw.length > length) return null
-  if (raw.length < length) return raw.padStart(length, "0")
-  return raw
-}
-
-// #endregion
-
-//
-// Game formula: (password % n) % (((n - 1) % 32) + 1)
-// Probe with n > password so feedback equals password % d for d = ((n-1)%32)+1.
-// CRT over those remainders recovers the password. Use BigInt — Number CRT overflows
-// once the product of moduli exceeds ~2^53 (length 7 needs product ~2e11).
-
-// Primes usable as inner modulus d = ((n-1)%32)+1 (each ≤ 31)
-const BIGMO_PRIMES = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31]
-
-/** Smallest prefix of BIGMO_PRIMES whose product covers the password range. */
-function bigMoPrimeModuliForLength(len: number): number[] {
-  const span = 10 ** len - 10 ** (len - 1) + 1
-  const moduli: number[] = []
-  let product = 1
-  for (const p of BIGMO_PRIMES) {
-    moduli.push(p)
-    product *= p
-    if (product >= span) break
-  }
-  return moduli
-}
-
-function bigMoProbeN(pwMax: number, d: number): number {
-  const target = d % 32
-  let n = pwMax + 1
-  while (n % 32 !== target) n++
-  return n
-}
-
-interface BigMoState extends SolverState {
-  type: "bigMo"
-  phase: "probe" | "solve"
-  probes: { n: number; d: number; r: number | null }[]
-  probeIdx: number
-  finalDispatched: boolean
-  pwMin: number
-  pwMax: number
-  length: number
-}
-
-const bigMoSolver: SolverModule<BigMoState> = {
-  init(details) {
-    const len = details.passwordLength
-    const pwMin = 10 ** (len - 1)
-    const pwMax = 10 ** len - 1
-    const probes: { n: number; d: number; r: number | null }[] = []
-    for (const d of bigMoPrimeModuliForLength(len)) {
-      probes.push({ n: bigMoProbeN(pwMax, d), d, r: null })
-    }
-    return {
-      type: "bigMo",
-      phase: probes.length > 0 ? "probe" : "solve",
-      probes, probeIdx: 0, finalDispatched: false,
-      pwMin, pwMax, length: len,
-    }
-  },
-  nextGuess(state) {
-    if (state.finalDispatched) return null
-    if (state.phase === "probe") {
-      if (state.probeIdx < state.probes.length) {
-        const p = state.probes[state.probeIdx]!
-        return { guess: String(p.n), detail: `bigMo d=${p.d}` }
-      }
-    }
-    if (state.phase === "solve") {
-      const resolved = state.probes.filter((p) => p.r !== null) as { d: number; r: number }[]
-      if (resolved.length === 0) return null
-      const padded = bigMoPasswordFromProbes(resolved, state.pwMin, state.pwMax, state.length)
-      if (!padded) return null
-      return { guess: padded, detail: "bigMo CRT" }
-    }
-    return null
-  },
-  applyResult(state, guess, result) {
-    if (result.success) return state
-    if (state.phase === "probe" && state.probeIdx < state.probes.length) {
-      const fb = typeof result.feedback === "string" ? Number(result.feedback) : NaN
-      if (Number.isFinite(fb) && fb >= 0) {
-        state.probes[state.probeIdx]!.r = fb
-      }
-      state.probeIdx++
-      if (state.probeIdx >= state.probes.length) state.phase = "solve"
-      return state
-    }
-    if (state.phase === "solve") {
-      state.finalDispatched = true
-    }
-    return state
-  },
-}
-
-// #endregion
-
 // #region Solver registry
 
 export const SOLVER_MODULES: Record<string, SolverModule> = {
@@ -2464,7 +1978,7 @@ export const SOLVER_MODULES: Record<string, SolverModule> = {
   'MathML|ASCII': mathML, 'MathML|numeric': mathML, 'MathML|alphabetic': mathML, 'MathML|alphanumeric': mathML,
   'PrimeTime 2|numeric': primeTime2,
   'BigMo%od|numeric': bigMoSolver,
-  '110100100|alphanumeric': binaryToText, '110100100|alphabetic': binaryToText, '110100100|ASCII': binaryToText,
+  '110100100|numeric': binaryToText, '110100100|alphanumeric': binaryToText, '110100100|alphabetic': binaryToText, '110100100|ASCII': binaryToText,
   'OrdoXenos|alphanumeric': ordoXenos, 'OrdoXenos|alphabetic': ordoXenos, 'OrdoXenos|ASCII': ordoXenos,
   'Pr0verFl0|numeric': proverFlo, 'Pr0verFl0|alphabetic': proverFlo, 'Pr0verFl0|alphanumeric': proverFlo, 'Pr0verFl0|ASCII': proverFlo,
   'Laika4|alphabetic': laika4,

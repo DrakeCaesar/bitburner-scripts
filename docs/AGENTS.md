@@ -350,6 +350,30 @@ Gene ranges are part of the contract: loading a JSON clamps every value to its `
 
 The game itself runs `src/dnet/solvers/solverWorker.js`, a gitignored bundle that `pnpm run dev` builds at start-up (`pnpm run bundle:solver-worker` rebuilds it alone), so a solver edit reaches the game only after one of those.
 
+#### Darknet solver benchmark
+
+`pnpm run test:dnet-solvers` (`bench/dnet/`) runs every other password solver in `src/dnet/solvers` against a port of the game's generators and feedback (`ServerGenerator.ts`, `checkPassword` in `authentication.ts`, `capturePackets`), seeded, and prints mean / worst guesses per model and difficulty; unsolved servers are listed with a password to reproduce and make the run exit non-zero. `--count`, `--difficulties 10,30,60`, `--models "PHP 5.4,NIL"` narrow it. `--loss 0.2` makes 20% of the guesses time out before they reach the server, which every solver has to survive. KingOfTheHill keeps its own bench; the labyrinth is not a password model. DeepGreen and RateMyPix.Auth take seconds per solve at high difficulty, so give those a small `--count`.
+
+What the bench found and what changed (guesses at difficulty 60 unless noted, mean / worst):
+
+| Model | Before | After | Why |
+|---|---:|---:|---|
+| PHP 5.4 (sorted digits) | 470 / cap, 90% unsolved | 3.6 / 4 | From 5 digits up the game returns the RMS deviation between guess and password digits. That is `sum((g_i - p_i)^2)`, hence the dot product `sum(g_i p_i)`, and the guess may be any digit string: two spread-weight guesses cut 9! arrangements to a handful. The old solver walked the permutations and ignored the feedback. |
+| BigMo%od | unsolved from 12 digits | 12.2 / 13 | Moduli 32, 31, 29, 27, 25, ... (pairwise coprime, product lcm(1..32) = 1.44e14) instead of the primes 2, 3, 5, ... (product 2e11); the last few candidates are split by one probe *below* the password. Difficulty 30: 10.9 -> 7.3. |
+| Factori-Os | 119 / 124 | 72 / 116 | Password length bounds the large-prime part once the small part is known; a single missing large prime is guessed as the finished password; with two missing, the prime in the most surviving pairs is asked first. The pointless first probe "0" is gone. Difficulty 20: 117 -> 53. |
+| 2G_cellular (timing) | 108 / 320 | 97 / 330 | Every position keeps its own next untried character, so the reply "mismatch at m" always rules one character out; nothing is re-tested and there is no separate final guess. Numeric passwords: ~52 -> ~36. |
+| AccountsManager_4.2 | 7.2 / 10 | 5.6 / 7 | The draw is `floor(rand * 10 * (difficulty + 3) / 3)` and the length fixes the decade: at difficulty 60 the range is 100..209, not 0..999. |
+| BellaCuore (range) | 9.4 / 13 | 7.7 / 10 | The bounds are derived from the password (`max - 10 d - 9 <= p <= max - 10`, `min / 0.8 <= p <= (min + 1) / 0.6`). |
+| RateMyPix.Auth | 132 / 139 | 114 / 122 | Frequency phase stops when every position is accounted for; placement probes two characters per guess. |
+| NIL | 61.5 / 63 | 60.6 / 62 | Known positions ride along, so the guess that settles the last position is the password. This one is at its floor: ~half the alphabet per position, in parallel. |
+| 110100100 | no solver for numeric passwords (difficulty <= 8) | 1 / 1 | Missing registry key. |
+
+**A timed-out guess is not a wrong guess.** The coordinator passes every failed result to `applyResult`, including the game's random request timeouts, where the guess never reached the password check. All single-shot and dictionary solvers treated that as "tried and wrong" and gave up until the coordinator's retry timer; with `--loss 0.2` they failed on 15-25% of the servers. `guessWasEvaluated` (`impl/shared.ts`) now decides: the response code when present (`GuessResult.code`, 401 = judged wrong), otherwise the message. Feedback cannot be the test — models without hint data report a judged guess with no feedback at all.
+
+Rules the generator-derived bounds follow: anything inferred from the generator rather than answered by the server is soft. The range solvers reopen to the hint's own bounds if the bisection runs dry, and Factori-Os reopens the large-prime count and redoes the small part, so a server whose `difficulty` does not match its password still gets solved, only slower.
+
+Left as found: the dictionaries (TopPass 19 / 53, EuroZone 3.4 / 10) get no feedback, so walking the list is all there is; OpenWebAccessPoint (2 or 3 guesses) is at its floor. **DeepGreen** (Mastermind: 18 guesses for 10 digits, 51 for 10 alphanumeric characters) and the placement half of **RateMyPix.Auth** are the two with real room left — a consistent-candidate strategy might reach ~13 and ~25 for DeepGreen (estimates, not measured) — but both need a sampler for huge constrained spaces, which a first prototype did not make reliable.
+
 ### Special considerations
 
 - Game environment restrictions require careful DOM access patterns

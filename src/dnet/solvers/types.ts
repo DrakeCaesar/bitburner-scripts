@@ -13,6 +13,8 @@ export interface GuessResult {
   success: boolean
   feedback?: string
   message?: string
+  /** Response code of the auth call when known: 401 means the server judged the guess wrong. */
+  code?: number
 }
 
 export interface SolverContext {

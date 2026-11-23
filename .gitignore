@@ -53,6 +53,7 @@ build/Debug/
 /bench/stock/stockTraderBench.mjs
 /bench/koth/kingOfTheHillCore.mjs
 /bench/koth/kingOfTheHillBench.mjs
+/bench/dnet/dnetSolverBenchCore.mjs
 
 NetScriptDefinitions.d.ts
 

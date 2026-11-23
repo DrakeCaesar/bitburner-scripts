@@ -1313,7 +1313,7 @@ async function onAuthResult(
   const ctx = details
     ? { target: target.host, details, workerHost: msg.workerHost || undefined }
     : undefined
-  const failResult = { success: false, feedback: msg.feedback, message: msg.message }
+  const failResult = { success: false, feedback: msg.feedback, message: msg.message, code: msg.code }
   const workerKey = solverWorkerKeyForTarget(target, details)
   try {
     if (solverBridge.usesWorkerSolver(workerKey)) {
