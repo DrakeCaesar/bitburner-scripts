@@ -31,17 +31,27 @@ struct TuneEvalResult {
   int maxGuesses = 0;
   int unsolved = 0;
   int count = 0;
+  /** Sum of max(0, guesses - tailThreshold): the cost that the average hides. */
+  int tailMass = 0;
 };
 
 LadderSnipeTuning tuningFromGenome(const LadderSnipeGenome& genome);
 LadderSnipeGenome genomeFromTuning(const LadderSnipeTuning& tuning);
 LadderSnipeGenome randomGenome(std::mt19937& rng);
-LadderSnipeGenome mutateGenome(const LadderSnipeGenome& parent, std::mt19937& rng, double mutationRate);
+/** Clamp gene `idx` to its spec (rounding integer genes). */
+void setGenomeGene(LadderSnipeGenome* genome, int idx, double value);
+/**
+ * Per-gene mutation: each gene moves with probability `mutationRate`, by a normal step of
+ * `stepScale` times its range. `stepScale` is the annealing knob — a fixed 0.12 jumps around the
+ * whole range forever and can never fine-tune a good genome.
+ */
+LadderSnipeGenome mutateGenome(const LadderSnipeGenome& parent, std::mt19937& rng, double mutationRate,
+                               double stepScale = 0.12);
 LadderSnipeGenome crossoverGenomes(const LadderSnipeGenome& a, const LadderSnipeGenome& b, std::mt19937& rng);
 
 TuneEvalResult evaluateLadderSnipeTuning(const LadderSnipeTuning& tuning,
                                          const std::vector<Assignment>& assignments, int cap,
-                                         double maxGuessPenalty);
+                                         double maxGuessPenalty, double tailPenalty = 0.0);
 
 std::string tuningToJson(const LadderSnipeTuning& tuning, const TuneEvalResult* stats = nullptr);
 bool tuningFromJsonFile(const std::string& path, LadderSnipeTuning* out, TuneEvalResult* statsOut = nullptr);

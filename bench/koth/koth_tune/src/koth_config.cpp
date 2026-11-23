@@ -48,20 +48,22 @@ void setGene(LadderSnipeGenome* genome, int idx, double value) {
 }  // namespace
 
 const std::array<GeneSpec, LADDER_SNIPE_GENE_COUNT> LADDER_SNIPE_GENE_SPECS = {{
-    {"farTailAnchorMaxAbs", 80.0, 400.0, false},
+    // The ranges bracket what the solver has been measured to want, so loading a JSON never clamps
+    // a value it cannot reproduce (farTailAnchorMaxAbs 1000 used to come back as 400).
+    {"farTailAnchorMaxAbs", 80.0, 1500.0, false},
     {"ladderEntryMaxAbs", 4000.0, 9000.0, false},
-    {"positiveLadderSkipRangeFraction", 0.0, 0.75, false},
-    {"pairProbeOffsetW", 0.15, 0.45, false},
+    {"positiveLadderSkipRangeFraction", 0.0, 1.0, false},
+    {"pairProbeOffsetW", 0.05, 0.45, false},
     {"signCrossMarchW", 0.75, 2.5, false},
     {"centerSanityMaxDistW", 12.0, 45.0, false},
     {"ladderMaxIters", 4, 12, true},
-    {"orbitDistW", 0.5, 2.0, false},
-    {"heightBandSlack", 50.0, 300.0, false},
+    {"orbitDistW", 0.25, 2.0, false},
+    {"heightBandSlack", 20.0, 400.0, false},
     {"logResidualMax", 0.03, 0.35, false},
     {"logResidualMaxDistW", 1.0, 6.0, false},
-    {"halfStepW", 0.75, 2.5, false},
-    {"outsideClusterDistW", 1.0, 4.0, false},
-    {"bareTailFrac", 0.002, 0.05, false},
+    {"halfStepW", 0.5, 3.0, false},
+    {"outsideClusterDistW", 0.25, 4.0, false},
+    {"bareTailFrac", 0.001, 0.05, false},
     {"postJumpCapScale", 0.1, 0.6, false},
     {"postJumpCapBias", 0.3, 1.5, false},
     {"sqrtSnipeMinAlt", 7400.0, 7900.0, false},
@@ -71,6 +73,10 @@ const std::array<GeneSpec, LADDER_SNIPE_GENE_COUNT> LADDER_SNIPE_GENE_SPECS = {{
     {"clusterReachW", 18.0, 36.0, false},
     {"clusterStepW", 0.8, 1.8, false},
 }};
+
+void setGenomeGene(LadderSnipeGenome* genome, int idx, double value) {
+  (*genome)[static_cast<size_t>(idx)] = clampGene(value, LADDER_SNIPE_GENE_SPECS[static_cast<size_t>(idx)]);
+}
 
 LadderSnipeTuning tuningFromGenome(const LadderSnipeGenome& genome) {
   LadderSnipeTuning t = defaultLadderSnipeTuning();
@@ -140,15 +146,16 @@ LadderSnipeGenome randomGenome(std::mt19937& rng) {
   return g;
 }
 
-LadderSnipeGenome mutateGenome(const LadderSnipeGenome& parent, std::mt19937& rng, double mutationRate) {
+LadderSnipeGenome mutateGenome(const LadderSnipeGenome& parent, std::mt19937& rng, double mutationRate,
+                               double stepScale) {
   LadderSnipeGenome child = parent;
   std::uniform_real_distribution<double> unit(0.0, 1.0);
-  std::normal_distribution<double> jitter(0.0, 0.12);
+  std::normal_distribution<double> jitter(0.0, 1.0);
   for (size_t i = 0; i < child.size(); ++i) {
     if (unit(rng) > mutationRate) continue;
     const GeneSpec& spec = LADDER_SNIPE_GENE_SPECS[i];
     const double span = spec.maxValue - spec.minValue;
-    child[i] = clampGene(child[i] + jitter(rng) * span, spec);
+    setGenomeGene(&child, static_cast<int>(i), child[i] + jitter(rng) * stepScale * span);
   }
   return child;
 }
@@ -165,11 +172,12 @@ LadderSnipeGenome crossoverGenomes(const LadderSnipeGenome& a, const LadderSnipe
 
 TuneEvalResult evaluateLadderSnipeTuning(const LadderSnipeTuning& tuning,
                                          const std::vector<Assignment>& assignments, int cap,
-                                         double maxGuessPenalty) {
+                                         double maxGuessPenalty, double tailPenalty) {
   TuneEvalResult out;
   out.count = static_cast<int>(assignments.size());
   setActiveLadderSnipeTuning(&tuning);
   int maxG = 0;
+  constexpr int kTailThreshold = 12;
   for (const Assignment& assignment : assignments) {
     const SolveResult result = solve(assignment, cap, SolverVariant::LadderSnipe);
     if (!result.solved) {
@@ -179,12 +187,14 @@ TuneEvalResult evaluateLadderSnipeTuning(const LadderSnipeTuning& tuning,
       continue;
     }
     out.totalGuesses += result.guesses;
+    out.tailMass += std::max(0, result.guesses - kTailThreshold);
     maxG = std::max(maxG, result.guesses);
   }
   setActiveLadderSnipeTuning(nullptr);
   out.maxGuesses = maxG;
   out.avgGuesses = out.count > 0 ? static_cast<double>(out.totalGuesses) / static_cast<double>(out.count) : 0.0;
   out.fitness = static_cast<double>(out.totalGuesses) + maxGuessPenalty * static_cast<double>(maxG) +
+                tailPenalty * static_cast<double>(out.tailMass) +
                 static_cast<double>(out.unsolved) * static_cast<double>(cap) * 10.0;
   return out;
 }
@@ -211,8 +221,13 @@ std::string tuningToJson(const LadderSnipeTuning& tuning, const TuneEvalResult* 
     } else {
       oss << g[i];
     }
-    oss << (i + 1 < g.size() ? ",\n" : "\n");
+    oss << (i + 1 < g.size() ? ",\n" : ",\n");
   }
+  // Not part of the searched genome, but part of the tuning struct: write them so the file is a
+  // complete mirror instead of falling back to defaults on the next load.
+  oss << "    \"pinpointRounds\": " << tuning.pinpointRounds << ",\n";
+  oss << "    \"pinpointFinalRadius\": " << tuning.pinpointFinalRadius << ",\n";
+  oss << "    \"pinpointFinalRadiusWide\": " << tuning.pinpointFinalRadiusWide << "\n";
   oss << "  }\n";
   oss << "}\n";
   return oss.str();

@@ -30,7 +30,21 @@ struct Args {
   int eliteCount = 2;
   int threads = 0;
   double maxPenalty = 5.0;
+  double tailPenalty = 0.0;
   int cap = 600;
+  // Annealing: the mutation step starts at sigma0 of each gene's range and decays by 1/e every
+  // annealGenerations, but never below sigmaMin. A fixed step (the old behaviour) keeps jumping the
+  // whole range, so a population that finds a good basin can never settle inside it.
+  double sigma0 = 0.12;
+  double sigmaMin = 0.004;
+  double annealGenerations = 60.0;
+  // Start from mutations of the loaded genome instead of uniform genomes: 22 dimensions of uniform
+  // noise are hopeless, and the loaded genome is usually already better than anything the GA can
+  // reach from scratch in a few hundred generations.
+  bool seedAroundLoad = true;
+  // Pattern-search pass over the final best (each round halves the step).
+  int refineRounds = 4;
+  double refineSigma = 0.03;
   std::string loadPath;
   std::string outPath = koth::defaultTunedJsonPath();
 };
@@ -55,7 +69,14 @@ void printHelp() {
       << "  --elite N          Elites copied each generation (default 2)\n"
       << "  --threads N        Worker threads (0 = hardware concurrency)\n"
       << "  --max-penalty F    Fitness += F * maxGuesses (default 5)\n"
+      << "  --tail-penalty F   Fitness += F * sum(max(0, guesses - 12)) (default 0)\n"
       << "  --cap N            Probe cap per assignment (default 600)\n"
+      << "  --sigma0 F         Initial mutation step, as a fraction of each gene's range (default 0.12)\n"
+      << "  --sigma-min F      Smallest mutation step (default 0.004)\n"
+      << "  --anneal N         Generations for the step to decay by 1/e (default 60)\n"
+      << "  --no-seed-around   Start from uniform random genomes even when --load is given\n"
+      << "  --refine N         Pattern-search rounds over the final best (default 4, 0 = off)\n"
+      << "  --refine-sigma F   First pattern-search step (default 0.03)\n"
       << "  --load PATH        Seed population from JSON\n"
       << "  --out PATH         Output JSON (default " << koth::defaultTunedJsonPath() << ")\n";
 }
@@ -111,8 +132,22 @@ bool parseArgs(int argc, char** argv, Args* args) {
       parseInt(need("--threads"), &args->threads);
     } else if (arg == "--max-penalty") {
       parseDouble(need("--max-penalty"), &args->maxPenalty);
+    } else if (arg == "--tail-penalty") {
+      parseDouble(need("--tail-penalty"), &args->tailPenalty);
     } else if (arg == "--cap") {
       parseInt(need("--cap"), &args->cap);
+    } else if (arg == "--sigma0") {
+      parseDouble(need("--sigma0"), &args->sigma0);
+    } else if (arg == "--sigma-min") {
+      parseDouble(need("--sigma-min"), &args->sigmaMin);
+    } else if (arg == "--anneal") {
+      parseDouble(need("--anneal"), &args->annealGenerations);
+    } else if (arg == "--no-seed-around") {
+      args->seedAroundLoad = false;
+    } else if (arg == "--refine") {
+      parseInt(need("--refine"), &args->refineRounds);
+    } else if (arg == "--refine-sigma") {
+      parseDouble(need("--refine-sigma"), &args->refineSigma);
     } else if (arg == "--load") {
       args->loadPath = need("--load");
     } else if (arg == "--out") {
@@ -194,7 +229,7 @@ int main(int argc, char** argv) {
 
   const koth::LadderSnipeTuning baseline = koth::defaultLadderSnipeTuning();
   const koth::TuneEvalResult baselineEval =
-      koth::evaluateLadderSnipeTuning(baseline, assignments, args.cap, args.maxPenalty);
+      koth::evaluateLadderSnipeTuning(baseline, assignments, args.cap, args.maxPenalty, args.tailPenalty);
   std::cout << "Baseline defaults: fitness=" << baselineEval.fitness << " avg=" << baselineEval.avgGuesses
             << " max=" << baselineEval.maxGuesses << "\n";
 
@@ -205,21 +240,32 @@ int main(int argc, char** argv) {
   globalBest.genome = koth::genomeFromTuning(baseline);
   globalBest.eval = baselineEval;
 
+  koth::LadderSnipeGenome seedGenome{};
+  bool haveSeed = false;
   if (!args.loadPath.empty()) {
     koth::LadderSnipeTuning loaded{};
     koth::TuneEvalResult loadedStats{};
     if (koth::tuningFromJsonFile(args.loadPath, &loaded, &loadedStats)) {
       population[0].genome = koth::genomeFromTuning(loaded);
-      population[0].eval = koth::evaluateLadderSnipeTuning(loaded, assignments, args.cap, args.maxPenalty);
+      population[0].eval = koth::evaluateLadderSnipeTuning(loaded, assignments, args.cap, args.maxPenalty, args.tailPenalty);
       globalBest = population[0];
-      std::cout << "Loaded seed from " << args.loadPath << " fitness=" << population[0].eval.fitness << "\n";
+      seedGenome = population[0].genome;
+      haveSeed = true;
+      std::cout << "Loaded seed from " << args.loadPath << " fitness=" << population[0].eval.fitness
+                << " avg=" << population[0].eval.avgGuesses << " max=" << population[0].eval.maxGuesses << "\n";
     } else {
       std::cerr << "Could not load " << args.loadPath << "\n";
     }
   }
 
-  for (int i = args.loadPath.empty() ? 0 : 1; i < args.population; ++i) {
-    population[static_cast<size_t>(i)].genome = koth::randomGenome(rng);
+  if (haveSeed && args.seedAroundLoad) {
+    for (int i = 1; i < args.population; ++i) {
+      population[static_cast<size_t>(i)].genome = koth::mutateGenome(seedGenome, rng, 1.0, args.sigma0);
+    }
+  } else {
+    for (int i = haveSeed ? 1 : 0; i < args.population; ++i) {
+      population[static_cast<size_t>(i)].genome = koth::randomGenome(rng);
+    }
   }
 
   auto evaluateAll = [&](std::vector<Individual>& pop) -> bool {
@@ -233,7 +279,7 @@ int main(int argc, char** argv) {
           if (idx >= args.population) break;
           const koth::LadderSnipeTuning tuning = koth::tuningFromGenome(pop[static_cast<size_t>(idx)].genome);
           pop[static_cast<size_t>(idx)].eval =
-              koth::evaluateLadderSnipeTuning(tuning, assignments, args.cap, args.maxPenalty);
+              koth::evaluateLadderSnipeTuning(tuning, assignments, args.cap, args.maxPenalty, args.tailPenalty);
         }
       });
     }
@@ -252,11 +298,17 @@ int main(int argc, char** argv) {
   printProgress(0, population.front(), population[population.size() / 2],
                 std::chrono::steady_clock::now() - t0);
 
+  auto sigmaAt = [&](int gen) -> double {
+    if (args.annealGenerations <= 0.0) return std::max(args.sigmaMin, args.sigma0);
+    return std::max(args.sigmaMin, args.sigma0 * std::exp(-static_cast<double>(gen) / args.annealGenerations));
+  };
+
   int generation = 0;
   while (!gStop.load()) {
     ++generation;
     if (args.generations > 0 && generation > args.generations) break;
 
+    const double sigma = sigmaAt(generation);
     std::vector<Individual> nextPop(static_cast<size_t>(args.population));
     for (int i = 0; i < args.eliteCount; ++i) nextPop[static_cast<size_t>(i)] = population[static_cast<size_t>(i)];
 
@@ -266,7 +318,7 @@ int main(int argc, char** argv) {
       koth::LadderSnipeGenome child =
           koth::crossoverGenomes(population[static_cast<size_t>(p1)].genome,
                                  population[static_cast<size_t>(p2)].genome, rng);
-      child = koth::mutateGenome(child, rng, args.mutationRate);
+      child = koth::mutateGenome(child, rng, args.mutationRate, sigma);
       nextPop[static_cast<size_t>(i)].genome = child;
     }
 
@@ -277,9 +329,60 @@ int main(int argc, char** argv) {
     } else if (generation % kStatusEveryGenerations == 0) {
       printProgress(generation, globalBest, population[population.size() / 2],
                     std::chrono::steady_clock::now() - t0);
+      std::cout << "      sigma=" << std::setprecision(4) << sigma << "\n";
     }
   }
 
+  // Pattern search over the final best: one gene at a time, both directions, step halved each
+  // round. The annealed GA can only get near the basin; this settles inside it.
+  if (args.refineRounds > 0 && !gStop.load()) {
+    double sigma = args.refineSigma;
+    for (int round = 0; round < args.refineRounds; ++round) {
+      std::vector<Individual> candidates;
+      candidates.reserve(static_cast<size_t>(2 * koth::LADDER_SNIPE_GENE_COUNT + 1));
+      candidates.push_back(globalBest);
+      for (size_t g = 0; g < globalBest.genome.size(); ++g) {
+        const koth::GeneSpec& spec = koth::LADDER_SNIPE_GENE_SPECS[g];
+        const double span = spec.maxValue - spec.minValue;
+        for (const double dir : {1.0, -1.0}) {
+          Individual cand;
+          cand.genome = globalBest.genome;
+          koth::setGenomeGene(&cand.genome, static_cast<int>(g), cand.genome[g] + dir * sigma * span);
+          candidates.push_back(cand);
+        }
+      }
+      std::atomic<int> next{0};
+      std::vector<std::thread> workers;
+      workers.reserve(static_cast<size_t>(args.threads));
+      for (int t = 0; t < args.threads; ++t) {
+        workers.emplace_back([&]() {
+          for (;;) {
+            const int idx = next.fetch_add(1);
+            if (idx >= static_cast<int>(candidates.size())) break;
+            const koth::LadderSnipeTuning tuning =
+                koth::tuningFromGenome(candidates[static_cast<size_t>(idx)].genome);
+            candidates[static_cast<size_t>(idx)].eval =
+                koth::evaluateLadderSnipeTuning(tuning, assignments, args.cap, args.maxPenalty, args.tailPenalty);
+          }
+        });
+      }
+      for (auto& th : workers) th.join();
+      std::sort(candidates.begin(), candidates.end(),
+                [](const Individual& a, const Individual& b) { return a.eval.fitness < b.eval.fitness; });
+      const bool improved = candidates.front().eval.fitness < globalBest.eval.fitness;
+      if (improved) {
+        globalBest = candidates.front();
+        saveBest(args, globalBest);
+      }
+      std::cout << "  refine round " << (round + 1) << " sigma=" << std::setprecision(4) << sigma
+                << " best fitness=" << std::fixed << std::setprecision(1) << globalBest.eval.fitness
+                << " avg=" << std::setprecision(2) << globalBest.eval.avgGuesses
+                << " max=" << globalBest.eval.maxGuesses << (improved ? "  (improved)\n" : "\n");
+      sigma *= 0.5;
+    }
+  }
+
+  saveBest(args, globalBest);
   std::cout << "\nBest config: " << args.outPath << "\n";
   std::cout << "fitness=" << globalBest.eval.fitness << " avg=" << globalBest.eval.avgGuesses
             << " max=" << globalBest.eval.maxGuesses << "\n";
