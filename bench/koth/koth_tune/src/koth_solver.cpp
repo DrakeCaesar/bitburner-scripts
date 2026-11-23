@@ -160,11 +160,6 @@ double invertCenter(double x1, double a1, double x2, double a2, int64_t w) {
   return (x1 + x2) / 2.0 - (wd * wd) * std::log(a1 / a2) / (2.0 * (x2 - x1));
 }
 
-/** A pair that inverts to a centre further than this from its anchor was not a single-hill read. */
-constexpr double kPairMaxDistW = 0.7;
-/** Below this the pair sits in a tail or a gap, where the inversion is a coincidence, not a hill. */
-constexpr double kPairMinReading = 1000.0;
-
 /** Height of the hill that a pair of same-sign readings was inverted against. */
 double pairHeight(int64_t x, double a, int64_t center, int64_t w) {
   const double dx = static_cast<double>(x - center);
@@ -211,6 +206,7 @@ int hopK(double H) {
 }
 
 std::pair<int64_t, double> crest(ProbeSession& sess, int64_t xSeed, int64_t w, int64_t lo, int64_t hi) {
+  const LadderSnipeTuning& tune = activeLadderSnipeTuning();
   int64_t x = clampProbe(static_cast<double>(xSeed), lo, hi);
   std::optional<double> aOpt = sess.sampleAt(x);
   double a = aOpt.value_or(0.0);
@@ -219,7 +215,7 @@ std::pair<int64_t, double> crest(ProbeSession& sess, int64_t xSeed, int64_t w, i
     if (sess.solved()) return {x, aOpt.value_or(std::numeric_limits<double>::infinity())};
     a = aOpt.value_or(-1e18);
   }
-  const int64_t off = std::max<int64_t>(1, std::llround(0.5 * static_cast<double>(w)));
+  const int64_t off = std::max<int64_t>(1, std::llround(tune.crestPairOffsetW * static_cast<double>(w)));
   int64_t xb = (x + off <= hi) ? x + off : x - off;
   std::optional<double> abOpt = sess.probe(xb);
   if (sess.solved()) return {xb, abOpt.value_or(std::numeric_limits<double>::infinity())};
@@ -236,10 +232,11 @@ std::pair<int64_t, double> crest(ProbeSession& sess, int64_t xSeed, int64_t w, i
       auto best = std::make_pair(*aOpt, x);
       if (abOpt && *abOpt > best.first) best = {*abOpt, xb};
       if (acOpt && *acOpt > best.first) best = {*acOpt, cx};
-      if (best.second != x && best.first > *aOpt * 1.02) {
+      if (best.second != x && best.first > *aOpt * tune.crestRerunMargin) {
         const int64_t bx = best.second;
-        int64_t xb2 = bx + std::max<int64_t>(1, off / 2);
-        if (xb2 > hi) xb2 = bx - std::max<int64_t>(1, off / 2);
+        const int64_t rerunOff = std::max<int64_t>(1, static_cast<int64_t>(std::floor(tune.crestRerunScale * static_cast<double>(off))));
+        int64_t xb2 = bx + rerunOff;
+        if (xb2 > hi) xb2 = bx - rerunOff;
         std::optional<double> ab2Opt = sess.probe(xb2);
         if (sess.solved()) return {xb2, ab2Opt.value_or(std::numeric_limits<double>::infinity())};
         if (ab2Opt && *ab2Opt > 0 && xb2 != bx && best.first > 0) {
@@ -308,6 +305,7 @@ std::pair<int64_t, double> gallop(ProbeSession& sess, int64_t xSeed, int64_t w, 
 
 void pinpoint(ProbeSession& sess, int64_t seedX, int64_t w, int64_t lo, int64_t hi, int rounds, int finalRadius,
               bool snipe) {
+  const LadderSnipeTuning& tune = activeLadderSnipeTuning();
   int64_t pc = clampProbe(static_cast<double>(seedX), lo, hi);
   if (snipe) {
     std::optional<double> aSeed = sess.sampleAt(pc);
@@ -334,11 +332,11 @@ void pinpoint(ProbeSession& sess, int64_t seedX, int64_t w, int64_t lo, int64_t 
       const int64_t nc = clampProbe(c, lo, hi);
       if (nc == pc) {
         if (off == 1) break;
-        off = std::max<int64_t>(1, off / 4);
+        off = std::max<int64_t>(1, static_cast<int64_t>(std::floor(static_cast<double>(off) / tune.pinpointOffsetShrink)));
         continue;
       }
       pc = nc;
-      off = std::max<int64_t>(1, std::min(off, std::llround(0.25 * static_cast<double>(w))));
+      off = std::max<int64_t>(1, std::min(off, std::llround(tune.pinpointPairOffsetCapW * static_cast<double>(w))));
     } catch (...) {
       break;
     }
@@ -402,13 +400,14 @@ void clusterSweepSmart(ProbeSession& sess, int64_t w, int64_t lo, int64_t hi) {
 
 void backstop(ProbeSession& sess, int64_t w, int64_t lo, int64_t hi) {
   const LadderSnipeTuning& tune = activeLadderSnipeTuning();
-  const int64_t step = std::max<int64_t>(1, std::llround(0.7 * static_cast<double>(w)));
+  const int64_t step = std::max<int64_t>(1, std::llround(tune.backstopStepW * static_cast<double>(w)));
   int64_t x = lo;
   while (x <= hi && !sess.solved()) {
     sess.probe(x);
     x += step;
   }
-  if (!sess.solved()) pinpoint(sess, sess.bestX(), w, lo, hi, tune.pinpointRounds, 30, false);
+  if (!sess.solved())
+    pinpoint(sess, sess.bestX(), w, lo, hi, tune.pinpointRounds, tune.backstopFinalRadius, false);
 }
 
 std::vector<int> spreadOrder(int m) {
@@ -443,10 +442,11 @@ std::vector<int64_t> scanGrid(int64_t lo, int64_t hi, int64_t w, int hc) {
   const int64_t span = hi - lo;
   if (span <= 0) return {lo};
   int64_t spacing;
+  const double pitchScale = activeLadderSnipeTuning().scanPitchScale;
   if (hc > 1) {
-    spacing = std::max<int64_t>(1, static_cast<int64_t>((hc - 1) * 3 * w * 0.9 * 0.98));
+    spacing = std::max<int64_t>(1, static_cast<int64_t>((hc - 1) * 3 * w * 0.9 * 0.98 * pitchScale));
   } else {
-    spacing = std::max<int64_t>(1, 3 * w);
+    spacing = std::max<int64_t>(1, static_cast<int64_t>(3 * w * pitchScale));
   }
   const int64_t m = std::max<int64_t>(1, (span + spacing - 1) / spacing);
   std::vector<int64_t> xs;
@@ -467,7 +467,7 @@ bool walkAndPinpoint(ProbeSession& sess, int64_t w, int64_t lo, int64_t hi, bool
   if (x <= lo) lastDir = 1;
   else if (x >= hi) lastDir = -1;
 
-  for (int hop = 0; hop < 10; ++hop) {
+  for (int hop = 0; hop < activeLadderSnipeTuning().walkMaxHops; ++hop) {
     if (a >= kMainTh) break;
     const int k = hopK(a);
     std::vector<int> order;
@@ -492,7 +492,7 @@ bool walkAndPinpoint(ProbeSession& sess, int64_t w, int64_t lo, int64_t hi, bool
         if (kk < 1) continue;
         auto [nx, na] = crest(sess, x + d * kk * step, w, lo, hi);
         if (sess.solved()) return true;
-        if (na > a + 1.0) {
+        if (na > a + activeLadderSnipeTuning().walkImproveEps) {
           best = std::make_tuple(na, nx, d);
           break;
         }
@@ -594,7 +594,7 @@ void ladderClimb(ProbeSession& sess, int64_t x0, double a0, int64_t w, int hc, i
     // not on the generator's height ladder, i.e. when the pair was not a clean single-hill read.
     double ac;
     const double derived = pairHeight(x0, a0, ci, w);
-    if (std::abs(a0) >= kPairMinReading && std::abs(static_cast<double>(ci - x0)) <= kPairMaxDistW * wd &&
+    if (std::abs(a0) >= tune.pairMinReading && std::abs(static_cast<double>(ci - x0)) <= tune.pairMaxDistW * wd &&
         onHeightLadder(derived, hc, tune.heightBandSlack)) {
       ac = derived;
     } else {

@@ -18,7 +18,7 @@ struct GeneSpec {
   bool isInt;
 };
 
-inline constexpr int LADDER_SNIPE_GENE_COUNT = 22;
+inline constexpr int LADDER_SNIPE_GENE_COUNT = 34;
 
 extern const std::array<GeneSpec, LADDER_SNIPE_GENE_COUNT> LADDER_SNIPE_GENE_SPECS;
 

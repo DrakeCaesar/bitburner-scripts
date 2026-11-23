@@ -22,7 +22,11 @@ import {
   parseKingOfTheHillAltitude,
   runSolverImproved as runSolverImprovedWithAuth,
   runUntilNextProbe,
+  type LadderSnipeTuning,
 } from "../../src/dnet/solvers/kingOfTheHill/solverCore.js"
+
+export type { LadderSnipeTuning }
+export { TUNED_LADDER_SNIPE_DIFF60 } from "../../src/dnet/solvers/kingOfTheHill/solverCore.js"
 
 export { kingOfTheHillGaussianWidth, kingOfTheHillHillCount, KOTH_PEAK_HEIGHT, KOTH_HILL_SPACING_WIDTHS }
 
@@ -251,12 +255,13 @@ export function generateAssignments(seed: number, count: number, difficulty: num
 
 export function runSolver(
   assignment: KingOfTheHillAssignment,
-  options: { returnSamples?: boolean } = {},
+  options: { returnSamples?: boolean; tuning?: LadderSnipeTuning } = {}
 ): SolverResult {
   const server = toServer(assignment)
   const raw = runSolverImprovedWithAuth(assignment, {
     auth: (guess) => authKingOfTheHill(server, guess),
     returnSamples: options.returnSamples === true,
+    tuning: options.tuning,
   })
   const result: SolverResult = {
     guesses: raw.guesses,

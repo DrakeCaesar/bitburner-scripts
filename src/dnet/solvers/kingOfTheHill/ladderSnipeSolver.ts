@@ -151,10 +151,11 @@ function spreadOrder(m: number): number[] {
   return order
 }
 
-function scanGrid(lo: number, hi: number, w: number, hc: number): number[] {
+function scanGrid(lo: number, hi: number, w: number, hc: number, tune: LadderSnipeTuning): number[] {
   const span = hi - lo
   if (span <= 0) return [lo]
-  const spacing = hc > 1 ? Math.max(1, Math.floor((hc - 1) * 3 * w * 0.9 * 0.98)) : Math.max(1, 3 * w)
+  const base = hc > 1 ? (hc - 1) * 3 * w * 0.9 * 0.98 : 3 * w
+  const spacing = Math.max(1, Math.floor(base * tune.scanPitchScale))
   const m = Math.max(1, Math.ceil(span / spacing))
   const xs = new Set<number>()
   for (let i = 0; i <= m; i++) xs.add(lo + Math.round((span * i) / m))
@@ -182,14 +183,21 @@ function sqrtSnipe(
   return sess.solved
 }
 
-function crest(sess: LadderProbeSession, xSeed: number, w: number, lo: number, hi: number): [number, number] {
+function crest(
+  sess: LadderProbeSession,
+  xSeed: number,
+  w: number,
+  lo: number,
+  hi: number,
+  tune: LadderSnipeTuning
+): [number, number] {
   const x = clamp(xSeed, lo, hi)
   let a = sess.samples.get(x) ?? null
   if (a === null) {
     a = sess.probe(x)
     if (sess.solved) return [x, a ?? Infinity]
   }
-  const off = Math.max(1, Math.round(0.5 * w))
+  const off = Math.max(1, Math.round(tune.crestPairOffsetW * w))
   const xb = x + off <= hi ? x + off : x - off
   const ab = sess.probe(xb)
   if (sess.solved) return [xb, ab ?? Infinity]
@@ -210,10 +218,11 @@ function crest(sess: LadderProbeSession, xSeed: number, w: number, lo: number, h
     for (const pair of cand.slice(1)) {
       if (pair[0] > best[0]) best = pair
     }
-    if (best[1] !== x && best[0] > a * 1.02) {
+    if (best[1] !== x && best[0] > a * tune.crestRerunMargin) {
       const bx = best[1]
-      let xb2 = bx + Math.max(1, Math.floor(off / 2))
-      if (xb2 > hi) xb2 = bx - Math.max(1, Math.floor(off / 2))
+      const rerunOff = Math.max(1, Math.floor(off * tune.crestRerunScale))
+      let xb2 = bx + rerunOff
+      if (xb2 > hi) xb2 = bx - rerunOff
       const ab2 = sess.probe(xb2)
       if (sess.solved) return [xb2, ab2 ?? Infinity]
       if (ab2 !== null && ab2 > 0 && xb2 !== bx && best[0] > 0) {
@@ -328,11 +337,11 @@ function pinpoint(
       const nc = clamp(c, lo, hi)
       if (nc === pc) {
         if (off === 1) break
-        off = Math.max(1, Math.floor(off / 4))
+        off = Math.max(1, Math.floor(off / tune.pinpointOffsetShrink))
         continue
       }
       pc = nc
-      off = Math.max(1, Math.min(off, Math.round(0.25 * w)))
+      off = Math.max(1, Math.min(off, Math.round(tune.pinpointPairOffsetCapW * w)))
     } catch {
       break
     }
@@ -363,13 +372,13 @@ function clusterSweep(sess: LadderProbeSession, w: number, lo: number, hi: numbe
 }
 
 function backstop(sess: LadderProbeSession, w: number, lo: number, hi: number, tune: LadderSnipeTuning): void {
-  const step = Math.max(1, Math.round(0.7 * w))
+  const step = Math.max(1, Math.round(tune.backstopStepW * w))
   let x = lo
   while (x <= hi && !sess.solved) {
     sess.probe(x)
     x += step
   }
-  if (!sess.solved) pinpoint(sess, sess.bestVal, w, lo, hi, tune, tune.pinpointRounds, 30, false)
+  if (!sess.solved) pinpoint(sess, sess.bestVal, w, lo, hi, tune, tune.pinpointRounds, tune.backstopFinalRadius, false)
 }
 
 function walkAndPinpoint(
@@ -381,10 +390,10 @@ function walkAndPinpoint(
   snipe: boolean
 ): boolean {
   const step = STEP_W * w
-  let [x, a] = crest(sess, sess.bestVal, w, lo, hi)
+  let [x, a] = crest(sess, sess.bestVal, w, lo, hi, tune)
   if (sess.solved) return true
   let lastDir: number | null = x <= lo ? 1 : x >= hi ? -1 : null
-  for (let hop = 0; hop < 10; hop++) {
+  for (let hop = 0; hop < tune.walkMaxHops; hop++) {
     if (a >= MAIN_TH) break
     const k = hopK(a)
     let order: number[]
@@ -404,9 +413,9 @@ function walkAndPinpoint(
       const ks = lastDir === null ? [k] : [k, k - 1, k + 1, 1]
       for (const kk of ks) {
         if (kk < 1) continue
-        const [nx, na] = crest(sess, x + d * kk * step, w, lo, hi)
+        const [nx, na] = crest(sess, x + d * kk * step, w, lo, hi, tune)
         if (sess.solved) return true
-        if (na > a + 1) {
+        if (na > a + tune.walkImproveEps) {
           best = [na, nx, d]
           break
         }
@@ -440,7 +449,7 @@ function ladderCoarseScan(
   hc: number,
   tune: LadderSnipeTuning
 ): LadderCoarseHit | null {
-  const xs = scanGrid(lo, hi, w, hc)
+  const xs = scanGrid(lo, hi, w, hc, tune)
   const order = spreadOrder(xs.length)
   for (const idx of order) {
     const x = xs[idx]!
@@ -453,8 +462,15 @@ function ladderCoarseScan(
   return null
 }
 
-function runInitialCoarseScanPositive(sess: LadderProbeSession, lo: number, hi: number, w: number, hc: number): void {
-  const xs = scanGrid(lo, hi, w, hc)
+function runInitialCoarseScanPositive(
+  sess: LadderProbeSession,
+  lo: number,
+  hi: number,
+  w: number,
+  hc: number,
+  tune: LadderSnipeTuning
+): void {
+  const xs = scanGrid(lo, hi, w, hc, tune)
   const order = spreadOrder(xs.length)
   for (const idx of order) {
     const a = sess.probe(xs[idx]!)
@@ -462,11 +478,6 @@ function runInitialCoarseScanPositive(sess: LadderProbeSession, lo: number, hi: 
     if (a !== null && a > 0) break
   }
 }
-
-/** A pair that inverts to a centre further than this from its anchor was not a single-hill read. */
-const PAIR_MAX_DIST_W = 0.7
-/** Below this the pair sits in a tail or a gap, where the inversion is a coincidence, not a hill. */
-const PAIR_MIN_READING = 1000
 
 /** Height of the hill that a pair of same-sign readings was inverted against. */
 function pairHeight(x: number, a: number, center: number, w: number): number {
@@ -546,8 +557,8 @@ function ladderClimb(
     let ac: number
     const derived = pairHeight(x0, a0, ci, w)
     if (
-      Math.abs(a0) >= PAIR_MIN_READING &&
-      Math.abs(ci - x0) <= PAIR_MAX_DIST_W * wd &&
+      Math.abs(a0) >= tune.pairMinReading &&
+      Math.abs(ci - x0) <= tune.pairMaxDistW * wd &&
       onHeightLadder(derived, hc, tune.heightBandSlack)
     ) {
       ac = derived
@@ -663,7 +674,7 @@ function runPostCoarsePipeline(
 ): void {
   walkAndPinpoint(sess, w, lo, hi, tune, snipe)
   if (sess.solved) return
-  const xs = scanGrid(lo, hi, w, hc)
+  const xs = scanGrid(lo, hi, w, hc, tune)
   for (const x of xs) {
     sess.probe(x)
     if (sess.solved) return
@@ -689,7 +700,7 @@ function runSolverCoreBaseline(
   hc: number,
   tune: LadderSnipeTuning
 ): void {
-  runInitialCoarseScanPositive(sess, lo, hi, w, hc)
+  runInitialCoarseScanPositive(sess, lo, hi, w, hc, tune)
   if (sess.solved) return
   runPostCoarsePipeline(sess, lo, hi, w, hc, tune, false)
 }
@@ -733,7 +744,7 @@ export function runSolverCoreLadderSnipe(
     if (sess.solved) return
   }
   if (!havePositiveRestore) {
-    runInitialCoarseScanPositive(sess, lo, hi, w, hc)
+    runInitialCoarseScanPositive(sess, lo, hi, w, hc, tune)
     if (sess.solved) return
     if (sess.bestAlt > 0) {
       restoreX = sess.bestVal

@@ -60,7 +60,7 @@ const std::array<GeneSpec, LADDER_SNIPE_GENE_COUNT> LADDER_SNIPE_GENE_SPECS = {{
     {"orbitDistW", 0.25, 2.0, false},
     {"heightBandSlack", 20.0, 400.0, false},
     {"logResidualMax", 0.03, 0.35, false},
-    {"logResidualMaxDistW", 1.0, 6.0, false},
+    {"logResidualMaxDistW", 0.4, 6.0, false},
     {"halfStepW", 0.5, 3.0, false},
     {"outsideClusterDistW", 0.25, 4.0, false},
     {"bareTailFrac", 0.001, 0.05, false},
@@ -72,6 +72,18 @@ const std::array<GeneSpec, LADDER_SNIPE_GENE_COUNT> LADDER_SNIPE_GENE_SPECS = {{
     {"gallopStopW", 0.05, 0.25, false},
     {"clusterReachW", 18.0, 36.0, false},
     {"clusterStepW", 0.8, 1.8, false},
+    {"scanPitchScale", 0.55, 1.6, false},
+    {"crestPairOffsetW", 0.25, 1.5, false},
+    {"crestRerunScale", 0.2, 1.0, false},
+    {"crestRerunMargin", 1.0, 1.15, false},
+    {"pinpointPairOffsetCapW", 0.1, 0.8, false},
+    {"pinpointOffsetShrink", 1.5, 10.0, false},
+    {"walkMaxHops", 4, 20, true},
+    {"walkImproveEps", 0.5, 50.0, false},
+    {"backstopStepW", 0.3, 2.0, false},
+    {"backstopFinalRadius", 8, 60, true},
+    {"pairMaxDistW", 0.3, 2.0, false},
+    {"pairMinReading", 100.0, 5000.0, false},
 }};
 
 void setGenomeGene(LadderSnipeGenome* genome, int idx, double value) {
@@ -102,6 +114,18 @@ LadderSnipeTuning tuningFromGenome(const LadderSnipeGenome& genome) {
   t.gallopStopW = genome[19];
   t.clusterReachW = genome[20];
   t.clusterStepW = genome[21];
+  t.scanPitchScale = genome[22];
+  t.crestPairOffsetW = genome[23];
+  t.crestRerunScale = genome[24];
+  t.crestRerunMargin = genome[25];
+  t.pinpointPairOffsetCapW = genome[26];
+  t.pinpointOffsetShrink = genome[27];
+  t.walkMaxHops = static_cast<int>(genome[28]);
+  t.walkImproveEps = genome[29];
+  t.backstopStepW = genome[30];
+  t.backstopFinalRadius = static_cast<int>(genome[31]);
+  t.pairMaxDistW = genome[32];
+  t.pairMinReading = genome[33];
   return t;
 }
 
@@ -129,6 +153,18 @@ LadderSnipeGenome genomeFromTuning(const LadderSnipeTuning& t) {
   g[19] = t.gallopStopW;
   g[20] = t.clusterReachW;
   g[21] = t.clusterStepW;
+  g[22] = t.scanPitchScale;
+  g[23] = t.crestPairOffsetW;
+  g[24] = t.crestRerunScale;
+  g[25] = t.crestRerunMargin;
+  g[26] = t.pinpointPairOffsetCapW;
+  g[27] = t.pinpointOffsetShrink;
+  g[28] = static_cast<double>(t.walkMaxHops);
+  g[29] = t.walkImproveEps;
+  g[30] = t.backstopStepW;
+  g[31] = static_cast<double>(t.backstopFinalRadius);
+  g[32] = t.pairMaxDistW;
+  g[33] = t.pairMinReading;
   for (size_t i = 0; i < g.size(); ++i) {
     g[i] = clampGene(g[i], LADDER_SNIPE_GENE_SPECS[i]);
   }
