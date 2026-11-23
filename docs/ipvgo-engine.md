@@ -36,9 +36,10 @@ nothing served it, and a tree built with only that target looked built while hav
 engine at all.
 ## Prerequisites
 
-- CMake 3.18+
-- C++17 compiler
-- **clang-cl** (the "C++ Clang tools for Windows" component of Visual Studio)
+- CMake 3.18+ (3.21+ for presets)
+- A C++17 compiler: **clang-cl** on Windows (the "C++ Clang tools for Windows"
+  component of Visual Studio), or **g++** for the Linux preset
+- Ninja for preset builds
 
 `nlohmann/json` is fetched automatically via CMake if not installed.
 
@@ -83,6 +84,19 @@ loaded:
 cmake --preset x64-Release        # configure
 cmake --build --preset x64-Release
 ```
+
+**On Linux** select the `linux-Release` configure preset in VS Code's CMake Tools,
+or run:
+
+```bash
+cmake --preset linux-Release
+cmake --build --preset linux-Release
+```
+
+This uses `g++` and writes the engine to `out/build/x64-Release/bin/`, where the
+server looks for it. If that tree was already configured with another compiler,
+use CMake Tools' **Delete Cache and Reconfigure** command after selecting the
+Linux preset. The `x64-*` presets use Windows' `clang-cl` and are not for Linux.
 
 **On macOS** use `macos-Release` instead. It configures the same
 `out/build/x64-Release` tree - the one `server.js` serves - with Apple clang

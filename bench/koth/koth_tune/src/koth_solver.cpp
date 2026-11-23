@@ -336,7 +336,7 @@ void pinpoint(ProbeSession& sess, int64_t seedX, int64_t w, int64_t lo, int64_t 
         continue;
       }
       pc = nc;
-      off = std::max<int64_t>(1, std::min(off, std::llround(tune.pinpointPairOffsetCapW * static_cast<double>(w))));
+      off = std::max<int64_t>(1, std::min<int64_t>(off, std::llround(tune.pinpointPairOffsetCapW * static_cast<double>(w))));
     } catch (...) {
       break;
     }
