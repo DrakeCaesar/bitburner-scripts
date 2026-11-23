@@ -352,7 +352,7 @@ The game itself runs `src/dnet/solvers/solverWorker.js`, a gitignored bundle tha
 
 #### Darknet solver benchmark
 
-`pnpm run test:dnet-solvers` (`bench/dnet/`) runs every other password solver in `src/dnet/solvers` against a port of the game's generators and feedback (`ServerGenerator.ts`, `checkPassword` in `authentication.ts`, `capturePackets`), seeded, and prints mean / worst guesses per model and difficulty; unsolved servers are listed with a password to reproduce and make the run exit non-zero. `--count`, `--difficulties 10,30,60`, `--models "PHP 5.4,NIL"` narrow it. `--loss 0.2` makes 20% of the guesses time out before they reach the server, which every solver has to survive. KingOfTheHill keeps its own bench; the labyrinth is not a password model. DeepGreen and RateMyPix.Auth take seconds per solve at high difficulty, so give those a small `--count`.
+`pnpm run test:dnet-solvers` (`bench/dnet/`) runs every other password solver in `src/dnet/solvers` against a port of the game's generators and feedback (`ServerGenerator.ts`, `checkPassword` in `authentication.ts`, `capturePackets`), seeded, and prints mean / worst guesses per model and difficulty; unsolved servers are listed with a password to reproduce and make the run exit non-zero. `--count`, `--difficulties 10,30,60`, `--models "PHP 5.4,NIL"` narrow it. `--loss 0.2` makes 20% of the guesses time out before they reach the server, which every solver has to survive. KingOfTheHill has its own bench above, the labyrinth its own below. DeepGreen and RateMyPix.Auth take seconds per solve at high difficulty, so give those a small `--count`.
 
 What the bench found and what changed (guesses at difficulty 60 unless noted, mean / worst):
 
@@ -373,6 +373,35 @@ What the bench found and what changed (guesses at difficulty 60 unless noted, me
 Rules the generator-derived bounds follow: anything inferred from the generator rather than answered by the server is soft. The range solvers reopen to the hint's own bounds if the bisection runs dry, and Factori-Os reopens the large-prime count and redoes the small part, so a server whose `difficulty` does not match its password still gets solved, only slower.
 
 Left as found: the dictionaries (TopPass 19 / 53, EuroZone 3.4 / 10) get no feedback, so walking the list is all there is; OpenWebAccessPoint (2 or 3 guesses) is at its floor. **DeepGreen** (Mastermind: 18 guesses for 10 digits, 51 for 10 alphanumeric characters) and the placement half of **RateMyPix.Auth** are the two with real room left — a consistent-candidate strategy might reach ~13 and ~25 for DeepGreen (estimates, not measured) — but both need a sampler for huge constrained spaces, which a first prototype did not make reliable.
+
+#### Labyrinth benchmark
+
+`pnpm run test:labyrinth` (`bench/dnet/labyrinthBench.mjs`, core in `labyrinthBenchCore.ts`) runs the labyrinth solver (`src/dnet/solvers/labyrinth/`) against a seeded port of the game's maze generator and of what `authenticate` / `labreport` / `labradar` answer (`../bitburner-src/src/DarkNet/effects/labyrinth.ts`). Every one of those calls takes the same time in the game, so the bench counts actions: *ticks* is wall clock (each connected worker acts once per tick), the number in brackets the total over all workers. `--workers 1,4,8`, `--count`, `--seed`; `--disconnect 0.005` (chance per tick that a worker loses the labyrinth; half of the returning ones are new scripts, which the game puts back at the start), `--loss 0.1` (answers that never arrive), `--stagger 10` (workers join one by one), `--unknown-host` (solver not told which labyrinth it is), `--rebuildAt 30` (the game swaps the maze mid-run). An unsolved run makes it exit non-zero.
+
+Ticks until some worker reaches the end, mean / worst:
+
+| Labyrinth | Shortest route | 1 worker, before | 1 worker | 4 workers, before | 4 workers | 8 workers |
+|---|---:|---:|---:|---:|---:|---:|
+| `th3_l4byr1nth` 20x14 | 17 | 98 / 160 | 21.7 / 33 | 50 / 71 | 19.4 / 29 | 19.1 / 29 |
+| `cru3l_l4byr1nth` 30x20 | 34 | 177 / 380 | 45.4 / 77 | 104 / 167 | 38.0 / 65 | 37.3 / 65 |
+| `m3rc1l3ss_l4byr1nth` 40x26 | 53 | 384 / 756 | 70.3 / 145 | 213 / 313 | 60.9 / 97 | 59.3 / 97 |
+| `ub3r_l4byr1nth` 60x40 (and the four after it) | 112 | ~800 / 1436 | 174 / 361 | ~420 / 638 | 135 / 226 | 125 / 207 |
+
+("Before" was measured on 40 mazes, 6 for the 60x40 one, because the old solver was slow to simulate.) Every worker starts at the start, so the shortest route is the floor for wall clock no matter how many workers there are.
+
+What the solver relies on, all of it from the game source:
+
+- **A move's reply carries the new position and the walls around it** (`message`: "You have moved to x,y." / "... still at x,y.", `data`: the 3x3 tiles around the worker). The old solver called `labreport` after every move, which was half of all actions. `labreport` is now only used when a worker's position is unknown: when it joins, and after an answer that could not be read. A request timeout leaves the worker where it was and costs nothing but the retry.
+- **The end is known up front.** It is the bottom-right cell; from the fourth labyrinth on it is moved inwards by 0, 2 or 4 tiles per axis, which leaves nine cells, and one `labradar` near the corner settles which. `geometry.ts` gets the size from the host name. The old solver found the end by scanning with `labradar` every six tiles.
+- **A labyrinth is four perfect mazes in a 2x2 block** with exactly one gap in each wall between them, each gap from a short list of positions (`geometry.ts`). So there are two routes, through the top-right or the bottom-left quadrant, and the estimate of the remaining distance runs through the gaps: where a gap is not found yet, through the mean of where it can still be.
+- **Each quadrant is a tree**, so whatever lies behind an unexplored cell stays inside the pocket of unexplored cells it is in. A pocket holding no cell that leads on (one next to a possible gap, or one the end can be) is never entered.
+- Workers walk to the reachable unexplored cell with the lowest `moves to get there + 2 x estimated moves from there to the end`, one worker per cell, cheapest pair first. All of them share one map; a worker that leaves loses only its session.
+
+Swept and not adopted: scanning for walls with `labradar` (one scan shows nine cells, but a worker has to walk the route anyway and the mazes' dead ends are long; 1-5% slower), spreading workers over quadrants (no effect), weights other than 2 (2..5 within noise, 1 about 30% slower on the big labyrinth).
+
+Rules the layout knowledge follows: it is soft. An observation that cannot happen in the layout switches `geometry.ts` off for that labyrinth (`geometryOff`); an observation that contradicts the map (the game builds a new maze without notice) throws the map away and reads every worker's position again. Without geometry (`--unknown-host`, or a labyrinth name the table in `geometry.ts` lacks) the solver heads bottom-right and scans with `labradar` every six tiles until the end shows up: 221 / 481 for one worker on the 60x40 labyrinth.
+
+Under churn (`--disconnect 0.005 --loss 0.1 --stagger 10`) the 60x40 labyrinth takes 269 / 772 ticks with one worker and 188 / 363 with four. A worker that comes back as a new script starts over at the start and has to walk the known route again, which the solver cannot shorten: a stasis-linked neighbour is what keeps a walk of 100+ moves alive.
 
 ### Special considerations
 

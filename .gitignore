@@ -54,6 +54,7 @@ build/Debug/
 /bench/koth/kingOfTheHillCore.mjs
 /bench/koth/kingOfTheHillBench.mjs
 /bench/dnet/dnetSolverBenchCore.mjs
+/bench/dnet/labyrinthBenchCore.mjs
 
 NetScriptDefinitions.d.ts
 

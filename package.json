@@ -20,6 +20,7 @@
     "dev": "node build/bundleSolverWorker.cjs && node build/dev.cjs",
     "bundle:solver-worker": "node build/bundleSolverWorker.cjs",
     "test:dnet-solvers": "node build/bundleDnetSolverBench.cjs && node bench/dnet/dnetSolverBench.mjs",
+    "test:labyrinth": "node build/bundleLabyrinthBench.cjs && node bench/dnet/labyrinthBench.mjs",
     "test:koth": "node build/bundleKingOfTheHillCore.cjs && node bench/koth/kingOfTheHillSim.mjs",
     "test:koth:bench": "node build/bundleKingOfTheHillCore.cjs && node build/bundleKingOfTheHillBench.cjs && node bench/koth/kingOfTheHillBench.mjs",
     "test:koth:bench:cpp": "node build/runKothBenchCpp.cjs",

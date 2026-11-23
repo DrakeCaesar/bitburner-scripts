@@ -1,13 +1,9 @@
 import { LABYRINTH_MODEL } from "../constants.js"
 import type { AttemptLog } from "../history/attemptLog.js"
 import {
-  assignFrontierClaims,
   buildLabyrinthSnapshots,
-  ensureWorkerSession,
   labyrinthWorkerPending,
-  needsLabradar,
-  needsLabreport,
-  planMove,
+  planLabyrinthAction,
   pruneLabyrinthWorkers,
   repairState,
   setLabyrinthPending,
@@ -110,115 +106,53 @@ export function dispatchLabyrinth(deps: LabyrinthDispatchDeps): void {
       continue
     }
 
-    assignFrontierClaims(
-      lab,
-      explorers.map((wi) => wi.host),
-      stasisLinked,
-    )
-
+    // The labyrinth's size and layout follow from its name (solvers/labyrinth/geometry.ts).
+    lab.host = target.host
+    const solverId = target.solverId ?? "labyrinth"
+    // Busy workers stay in the plan so that each keeps the cell it is walking to.
+    const planHosts = [...adjacentHosts]
     let dispatchedThisLoop = false
 
     for (const wi of explorers) {
       const workerHost = wi.host
       if (labyrinthWorkerPending(lab, workerHost)) continue
 
-      const sess = lab.sessions[workerHost]
+      const action = planLabyrinthAction(lab, workerHost, planHosts, stasisLinked)
+      if (!action) continue
 
-      if (needsLabreport(lab, workerHost)) {
-        ensureWorkerSession(lab, workerHost)
-        if (
-          !sendCommand(wi, {
-            type: "labreport",
-            target: target.host,
-            solverId: target.solverId ?? "labyrinth",
-          })
-        ) {
-          continue
-        }
-        setLabyrinthPending(lab, workerHost, "labreport")
-        target.workerHost = workerHost
-        target.pendingGuess = "labreport"
-        target.pendingDetail = `labreport@${workerHost}`
-        target.status = "active"
-        dispatchedThisLoop = true
-        attemptLog.append({
-          host: target.host,
-          session: target.session,
-          kind: "guess_dispatch",
-          solverId: target.solverId ?? "labyrinth",
-          modelId: target.modelId,
-          workerHost,
-          guess: "labreport",
-          detail: `labreport@${workerHost}`,
-          solverState: cloneState(lab),
-        })
-        continue
+      let payload: WorkerCommandPayload
+      let command: string
+      let detail: string
+      if (action.type === "labreport") {
+        payload = { type: "labreport", target: target.host, solverId }
+        command = "labreport"
+        detail = `labreport@${workerHost}`
+      } else if (action.type === "labradar") {
+        payload = { type: "labradar", target: target.host, solverId, origin: action.origin }
+        command = "labradar"
+        detail = `labradar@${workerHost}`
+      } else {
+        detail = `move ${action.dir}@${workerHost}`
+        payload = { type: "auth", target: target.host, solverId, guess: action.dir, detail }
+        command = action.dir
       }
+      if (!sendCommand(wi, payload)) continue
 
-      if (needsLabradar(lab, workerHost) && sess?.coords) {
-        if (
-          !sendCommand(wi, {
-            type: "labradar",
-            target: target.host,
-            solverId: target.solverId ?? "labyrinth",
-            origin: sess.coords,
-          })
-        ) {
-          continue
-        }
-        setLabyrinthPending(lab, workerHost, "labradar")
-        target.workerHost = workerHost
-        target.pendingGuess = "labradar"
-        target.pendingDetail = `labradar@${workerHost}`
-        target.status = "active"
-        dispatchedThisLoop = true
-        attemptLog.append({
-          host: target.host,
-          session: target.session,
-          kind: "guess_dispatch",
-          solverId: target.solverId ?? "labyrinth",
-          modelId: target.modelId,
-          workerHost,
-          guess: "labradar",
-          detail: `labradar@${workerHost}`,
-          solverState: cloneState(lab),
-        })
-        continue
-      }
-
-      if (sess?.phase === "done") continue
-      if (sess?.phase !== "move" || !sess.coords || !sess.walls) continue
-
-      const dir = planMove(lab, workerHost)
-      if (!dir) continue
-
-      if (
-        !sendCommand(wi, {
-          type: "auth",
-          target: target.host,
-          solverId: target.solverId ?? "labyrinth",
-          guess: dir,
-          detail: `move ${dir}@${workerHost}`,
-        })
-      ) {
-        continue
-      }
-
-      setLabyrinthPending(lab, workerHost, dir)
+      setLabyrinthPending(lab, workerHost, command)
       target.workerHost = workerHost
-      target.pendingGuess = dir
-      target.pendingDetail = `move ${dir}@${workerHost}`
+      target.pendingGuess = command
+      target.pendingDetail = detail
       target.status = "active"
       dispatchedThisLoop = true
       attemptLog.append({
         host: target.host,
         session: target.session,
         kind: "guess_dispatch",
-        solverId: target.solverId ?? "labyrinth",
+        solverId,
         modelId: target.modelId,
         workerHost,
-        guess: dir,
-        detail: `move ${dir}@${workerHost}`,
+        guess: command,
+        detail,
         solverState: cloneState(lab),
       })
     }
@@ -232,9 +166,7 @@ export function dispatchLabyrinth(deps: LabyrinthDispatchDeps): void {
   }
 }
 
-export function snapshotLabyrinths(
-  targets: Map<string, AuthTarget>,
-): ReturnType<typeof buildLabyrinthSnapshots> {
+export function snapshotLabyrinths(targets: Map<string, AuthTarget>): ReturnType<typeof buildLabyrinthSnapshots> {
   const mapped = new Map<
     string,
     {

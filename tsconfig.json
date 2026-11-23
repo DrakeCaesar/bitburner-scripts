@@ -22,7 +22,7 @@
   "include": [
     "src/**/*.ts",
     "src/**/*.js",
-    "bench/dnet/dnetSolverBenchCore.ts",
+    "bench/dnet/dnetSolverBenchCore.ts", "bench/dnet/labyrinthBenchCore.ts",
     "bench/koth/kingOfTheHillCore.ts",
     "bench/koth/kingOfTheHillVizWorker.ts",
     "bench/stock/stockBenchCore.ts",

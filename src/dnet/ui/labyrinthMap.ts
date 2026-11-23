@@ -424,7 +424,7 @@ function renderLegend(React: ReturnType<typeof getReact>, workerRows: WorkerRow[
     "space corridor",
     "? unknown / open frontier",
     "! claim target (no letter)",
-    "X goal (labradar)",
+    "X end of the labyrinth",
     "A-Z explorer at current position",
     "colored line route to claim",
   ]

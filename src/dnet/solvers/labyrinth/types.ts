@@ -5,7 +5,7 @@ export type LabyrinthDir = "n" | "e" | "s" | "w"
 export type LabyrinthPhase = "labreport" | "move" | "done"
 
 export interface LabyrinthCellWalls {
-  /** True only after labreport() at this cell. */
+  /** True once all four walls are known. */
   seen: boolean
   north: boolean | null
   east: boolean | null
@@ -35,12 +35,24 @@ export interface LabyrinthState extends SolverState {
   sessions: Record<string, LabyrinthSession>
   /** workerHost -> in-flight command (labreport or move dir) awaiting a reply. */
   pending: Record<string, string>
-  /** unexplored cell key -> workerHost exploring that frontier cell. */
+  /** Target cell key -> workerHost walking to it. */
   claims: Record<string, string>
-  /** Goal cell from labradar "X" (shared across workers). */
+  /** The end cell, once it is known (from the labyrinth's size or from labradar's "X"). */
   goal?: [number, number] | null
-  /** Radar bucket keys already scanned while goal was unknown. */
-  radarBuckets?: Record<string, true>
+  /** The labyrinth's host name; its size and layout follow from it (geometry.ts). */
+  host?: string
+  /** Cells known not to be the end: stood on, or scanned by labradar without an "X". */
+  notGoal?: Record<string, true>
+  /** The layout's fixed walls (geometry.ts) have been written into the map. */
+  prefilled?: boolean
+  /** Times an observation contradicted the map and it was started over. */
+  resets?: number
+  /** Set after repeated contradictions: stop relying on geometry.ts. */
+  geometryOff?: boolean
+  /** Bumped whenever the map or a session changes; lets planning reuse its last answer. */
+  revision?: number
+  /** Positions (and, for labyrinths of unknown size, 6-tile buckets) already scanned by labradar. */
+  radared?: Record<string, true>
 }
 
 export interface LabreportPayload {
