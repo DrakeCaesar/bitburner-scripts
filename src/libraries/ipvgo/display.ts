@@ -100,6 +100,8 @@ export type IpvgoDashboardSnapshot = {
   factionGains: Partial<Record<GoOpponent, IpvgoFactionGain>>
   /** Faction with the largest expected gain (auto target for next game). */
   autoOpponent: GoOpponent
+  /** When set, the run always returns to this faction instead of auto-rotating. */
+  lockedOpponent?: GoOpponent
 }
 
 export function createIpvgoSnapshot(
@@ -282,7 +284,7 @@ function buildSetupTableConfig(snapshot: IpvgoDashboardSnapshot): ReactTableConf
     : playingKey
 
   return {
-    title: "Setup (A=auto, On=click)",
+    title: snapshot.lockedOpponent ? "Setup (A=target, On=click)" : "Setup (A=auto, On=click)",
     columns: [
       col("On", "center", 3),
       col("Faction", "left", 22),
@@ -295,7 +297,7 @@ function buildSetupTableConfig(snapshot: IpvgoDashboardSnapshot): ReactTableConf
     rows: IPVGO_OPPONENTS.map((faction) => [
       snapshot.factionEnabled[faction] === false ? "off" : "on",
       factionRecordLabel(faction, snapshot, {
-        auto: faction === snapshot.autoOpponent && snapshot.factionEnabled[faction] !== false,
+        auto: faction === snapshot.autoOpponent && (snapshot.lockedOpponent != null || snapshot.factionEnabled[faction] !== false),
       }),
       factionRewardLabel(faction, snapshot),
       String(snapshot.factionSims[faction] ?? "-"),
@@ -339,7 +341,7 @@ function IpvgoSetupPicker(props: { snapshot: IpvgoDashboardSnapshot }): ReactNod
 
   const bodyRows = IPVGO_OPPONENTS.map((faction, rowIdx) => {
     const enabled = snapshot.factionEnabled[faction] !== false
-    const autoTarget = enabled && faction === snapshot.autoOpponent
+    const autoTarget = (enabled || snapshot.lockedOpponent != null) && faction === snapshot.autoOpponent
     const cells = [
       React.createElement(
         "td",
@@ -513,7 +515,7 @@ function buildStatusTable(snapshot: IpvgoDashboardSnapshot): ReactTableConfig {
     ],
     rows: [
       ["Match", `${snapshot.opponent} ${snapshot.boardSize}x${snapshot.boardSize} / ${snapshot.iterations} sims`],
-      ["Auto", `${snapshot.autoOpponent} (x${factionPayLabel(snapshot, snapshot.autoOpponent)})`],
+      [snapshot.lockedOpponent ? "Locked" : "Auto", `${snapshot.autoOpponent} (x${factionPayLabel(snapshot, snapshot.autoOpponent)})`],
       ["Turn", snapshot.currentPlayer],
       ["Score", `B ${snapshot.blackScore.toFixed(1)} / W ${snapshot.whiteScore.toFixed(1)} (${scoreLeadText(snapshot.blackScore, snapshot.whiteScore)})`],
       ["Move", String(snapshot.moveNumber)],

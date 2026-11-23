@@ -19,6 +19,19 @@ In Bitburner:
 run ipvgo.js
 ```
 
+To play only one faction for the run, pass its name (quote names with spaces):
+
+```bash
+run ipvgo.js "Slum Snakes"
+run ipvgo.js Illuminati 5 10000
+```
+
+The optional second argument is the board size (5, 7, 9, or 13); it defaults to
+5 for faction-locked games. A number of at least 100 sets the per-move node
+budget. A game already in progress is finished before switching factions. The
+lock does not change saved faction settings; restart without a faction to resume
+automatic rotation.
+
 Then open **http://localhost:3010/bench** for the benchmark GUI.
 
 ## Engine modes

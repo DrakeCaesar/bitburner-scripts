@@ -37,6 +37,7 @@ import {
   consumeDeferUiWake,
   consumeFactionEnabledToggle,
   consumeImmediateSetup,
+  getDeferredSetup,
   hasIpvgoSetupPending,
   sleepUntilIpvgoSetupChange,
   takeDeferredSetup,
@@ -137,11 +138,9 @@ const IPVGO_DEFAULT_WIDTH = { beam: 12, whiteChildren: 6, whiteMass: 0.9 }
  */
 let nodeLimitOverride: number | undefined
 
-function parseOpponent(value: string | number | undefined): GoOpponent {
-  // The node limit can be the first argument, so anything that is not a faction name is left
-  // to the defaults (and to auto-setup) instead of being an error.
-  if (typeof value !== "string" || value.trim() === "") return DEFAULT_OPPONENT
-  const match = IPVGO_OPPONENTS.find((name) => name.toLowerCase() === value.toLowerCase())
+function parseOpponent(value: string | number | boolean | undefined): GoOpponent | undefined {
+  if (typeof value !== "string" || value.trim() === "" || Number.isFinite(Number(value))) return undefined
+  const match = IPVGO_OPPONENTS.find((name) => name.toLowerCase() === value.trim().toLowerCase())
   if (!match) {
     throw new Error(`Unknown opponent "${value}". Valid: ${IPVGO_OPPONENTS.join(", ")}`)
   }
@@ -157,8 +156,7 @@ function parseBoardSize(value: string | number | undefined): IpvgoBoardSize {
 }
 
 /**
- * `run ipvgo.js <nodes>`: the only parameter the script needs. A number anywhere in the
- * arguments sets the per-move node budget for this run, overriding the stored one.
+ * A number of at least 100 anywhere in the arguments overrides the per-move node budget.
  */
 function parseNodeLimit(args: ReadonlyArray<string | number | boolean>): number | undefined {
   for (const arg of args) {
@@ -173,21 +171,19 @@ function buildAutoSetup(
   ns: NS,
   snapshot: ReturnType<typeof createIpvgoSnapshot>,
   config: IpvgoFactionConfig,
+  lockedOpponent?: GoOpponent,
+  lockedBoardSize?: IpvgoBoardSize
 ) {
-  const nodePowerByFaction = estimateNodePowerByFaction(ns, snapshot.opponentStats)
   // The auto rotation plays the smallest board: a 5x5 game is a fraction of the moves and
   // searches of a 13x13 one, and 5x5 against the Illuminati pays eight times the node power
   // of any other board, so the target is chosen for that board.
-  const smallestBoardSize = Math.min(...IPVGO_BOARD_SIZES) as IpvgoBoardSize
-  const opponent = pickHighestGainFaction(
-    nodePowerByFaction,
-    snapshot.opponentStats,
-    config,
-    smallestBoardSize,
-  )
+  const boardSize = lockedBoardSize ?? (Math.min(...IPVGO_BOARD_SIZES) as IpvgoBoardSize)
+  const opponent =
+    lockedOpponent ??
+    pickHighestGainFaction(estimateNodePowerByFaction(ns, snapshot.opponentStats), snapshot.opponentStats, config, boardSize)
   return {
     opponent,
-    boardSize: smallestBoardSize,
+    boardSize,
     iterations: nodeLimitOverride ?? getFactionSims(config, opponent),
   }
 }
@@ -195,9 +191,11 @@ function buildAutoSetup(
 function withFactionConfig(
   ns: NS,
   snapshot: ReturnType<typeof createIpvgoSnapshot>,
-  config: IpvgoFactionConfig
-) {
-  const enriched = enrichSnapshotWithFactionConfig(ns, refreshFactionStats(snapshot, ns), config)
+  config: IpvgoFactionConfig,
+  lockedOpponent?: GoOpponent
+): ReturnType<typeof createIpvgoSnapshot> {
+  const configured = enrichSnapshotWithFactionConfig(ns, refreshFactionStats(snapshot, ns), config)
+  const enriched = { ...configured, lockedOpponent, autoOpponent: lockedOpponent ?? configured.autoOpponent }
   if (nodeLimitOverride == null) return enriched
   // The run-wide node budget replaces the stored per-faction Sims for this run only; showing it
   // in the Sims column keeps the tail UI honest about what is actually being spent.
@@ -582,21 +580,22 @@ function applyOurMoveToBoard(board: IpvgoBoard, x: number, y: number): IpvgoBoar
 }
 
 export async function main(ns: NS): Promise<void> {
+  const lockedOpponent = parseOpponent(ns.args[0])
+  const boardArg = ns.args[1]
+  const boardSizeArg = typeof boardArg === "boolean" || Number(boardArg) >= 100 ? undefined : boardArg
+  const boardSize = parseBoardSize(boardSizeArg)
+  const lockedBoardSize = lockedOpponent && boardSizeArg !== undefined ? boardSize : undefined
+  nodeLimitOverride = parseNodeLimit(ns.args)
+
   ns.disableLog("sleep")
   openTailLog(ns, "IPvGO Bot")
 
   await killOtherInstances(ns)
 
-  // One runtime parameter: a number anywhere in the arguments is this run's node budget.
-  nodeLimitOverride = parseNodeLimit(ns.args)
-
-  const opponent = parseOpponent(ns.args[0] as string | number | undefined)
-  const boardSize = parseBoardSize(ns.args[1] as string | number | undefined)
-
   let factionConfig = loadFactionConfig(ns)
 
   const inProgress = detectInProgressGame(ns)
-  let activeOpponent = inProgress?.opponent ?? opponent
+  let activeOpponent = inProgress?.opponent ?? lockedOpponent ?? DEFAULT_OPPONENT
   let activeBoardSize = inProgress?.boardSize ?? boardSize
 
   const adaptiveLog = createAdaptiveTailLog(createTailLog(), {
@@ -612,6 +611,8 @@ export async function main(ns: NS): Promise<void> {
       ns,
       createIpvgoSnapshot(activeOpponent, activeBoardSize, IPVGO_DEFAULT_ITERATIONS),
       factionConfig,
+      lockedOpponent,
+      lockedBoardSize
     )
     activeOpponent = autoSetup.opponent
     activeBoardSize = autoSetup.boardSize as IpvgoBoardSize
@@ -627,7 +628,8 @@ export async function main(ns: NS): Promise<void> {
           phase: `Resumed ${activeOpponent} ${activeBoardSize}x${activeBoardSize}`,
         }
       : { ...baseSnapshot, phase: "Initializing" },
-    factionConfig
+    factionConfig,
+    lockedOpponent
   )
   let pendingGameResult: boolean | null = null
   await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
@@ -648,8 +650,14 @@ export async function main(ns: NS): Promise<void> {
     try {
       const immediate = consumeImmediateSetup()
       if (immediate) {
+        if (lockedOpponent && immediate.opponent !== lockedOpponent) {
+          ns.print(`Faction locked to ${lockedOpponent}; ignoring selection of ${immediate.opponent}.`)
+          snapshot = { ...syncDeferredSetupSnapshot(snapshot), phase: `Faction locked to ${lockedOpponent}` }
+          await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
+          continue
+        }
         const setupApplied = applyIpvgoSetupChange(ns, snapshot, immediate, { forceReset: true })
-        snapshot = withFactionConfig(ns, setupApplied.snapshot, factionConfig)
+        snapshot = withFactionConfig(ns, setupApplied.snapshot, factionConfig, lockedOpponent)
         activeOpponent = snapshot.opponent
         activeBoardSize = snapshot.boardSize as IpvgoBoardSize
         moveNumber = snapshot.moveNumber
@@ -661,11 +669,20 @@ export async function main(ns: NS): Promise<void> {
       if (enabledToggle) {
         factionConfig = toggleFactionEnabled(factionConfig, enabledToggle)
         saveFactionConfig(ns, factionConfig)
-        snapshot = withFactionConfig(ns, snapshot, factionConfig)
+        snapshot = withFactionConfig(ns, snapshot, factionConfig, lockedOpponent)
         await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
         continue
       }
 
+      const queuedSetup = getDeferredSetup()
+      if (lockedOpponent && queuedSetup && queuedSetup.opponent !== lockedOpponent) {
+        takeDeferredSetup()
+        ns.print(`Faction locked to ${lockedOpponent}; ignoring selection of ${queuedSetup.opponent}.`)
+        consumeDeferUiWake()
+        snapshot = { ...syncDeferredSetupSnapshot(snapshot), phase: `Faction locked to ${lockedOpponent}` }
+        await renderIpvgoDashboard(ns, tailLog, snapshot, adaptiveLog)
+        continue
+      }
       const syncedDeferred = syncDeferredSetupSnapshot(snapshot)
       if (syncedDeferred !== snapshot) {
         consumeDeferUiWake()
@@ -685,14 +702,14 @@ export async function main(ns: NS): Promise<void> {
         const deferred = takeDeferredSetup()
         if (deferred) {
           const setupApplied = applyIpvgoSetupChange(ns, snapshot, deferred, { forceReset: true })
-          snapshot = withFactionConfig(ns, setupApplied.snapshot, factionConfig)
+          snapshot = withFactionConfig(ns, setupApplied.snapshot, factionConfig, lockedOpponent)
           activeOpponent = snapshot.opponent
           activeBoardSize = snapshot.boardSize as IpvgoBoardSize
           } else {
-          snapshot = withFactionConfig(ns, refreshFactionStats(snapshot, ns), factionConfig)
-          const autoSetup = buildAutoSetup(ns, snapshot, factionConfig)
+          snapshot = withFactionConfig(ns, refreshFactionStats(snapshot, ns), factionConfig, lockedOpponent)
+          const autoSetup = buildAutoSetup(ns, snapshot, factionConfig, lockedOpponent, lockedBoardSize)
           const setupApplied = applyIpvgoSetupChange(ns, snapshot, autoSetup, { forceReset: true })
-          snapshot = withFactionConfig(ns, setupApplied.snapshot, factionConfig)
+          snapshot = withFactionConfig(ns, setupApplied.snapshot, factionConfig, lockedOpponent)
           activeOpponent = snapshot.opponent
           activeBoardSize = snapshot.boardSize as IpvgoBoardSize
           }
