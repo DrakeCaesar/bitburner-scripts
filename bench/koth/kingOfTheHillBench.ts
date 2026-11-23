@@ -110,13 +110,17 @@ export interface BenchOptions {
   onProgress?: (done: number, total: number) => void
 }
 
-function runDifficultyInWorker(
+/** Assignments per worker task: one difficulty is split so a single-difficulty run uses every core. */
+const SLICE_SIZE = 2000
+
+function runSliceInWorker(
   seed: number,
-  count: number,
   difficulty: number,
+  startIndex: number,
+  endIndex: number
 ): Promise<BenchDifficultyResult> {
   return new Promise((resolve, reject) => {
-    const worker = new Worker(WORKER_PATH, { workerData: { seed, count, difficulty } })
+    const worker = new Worker(WORKER_PATH, { workerData: { seed, difficulty, startIndex, endIndex } })
     worker.on("message", (msg: BenchDifficultyResult) => resolve(msg))
     worker.on("error", reject)
     worker.on("exit", (code) => {
@@ -150,19 +154,41 @@ export async function runBenchmark(options: BenchOptions = {}): Promise<{
       report()
     }
   } else {
+    const slices: { difficulty: number; startIndex: number; endIndex: number }[] = []
+    const pending = new Map<number, number>()
+    const merged = new Map<number, BenchDifficultyResult>()
+    for (const difficulty of difficulties) {
+      merged.set(difficulty, { difficulty, guesses: [], unsolved: 0, seconds: 0 })
+      let parts = 0
+      for (let start = 1; start <= count; start += SLICE_SIZE) {
+        slices.push({ difficulty, startIndex: start, endIndex: Math.min(count, start + SLICE_SIZE - 1) })
+        parts++
+      }
+      pending.set(difficulty, parts)
+    }
     let next = 0
     await Promise.all(
-      Array.from({ length: Math.min(workers, total) }, async () => {
+      Array.from({ length: Math.min(workers, slices.length) }, async () => {
         for (;;) {
           const i = next++
-          if (i >= total) break
-          const difficulty = difficulties[i]!
-          const row = await runDifficultyInWorker(seed, count, difficulty)
-          results.push(row)
-          done++
-          report()
+          if (i >= slices.length) break
+          const slice = slices[i]!
+          const part = await runSliceInWorker(seed, slice.difficulty, slice.startIndex, slice.endIndex)
+          const row = merged.get(slice.difficulty)!
+          for (const g of part.guesses) row.guesses.push(g)
+          row.unsolved += part.unsolved
+          // CPU seconds over all slices, not wall time.
+          row.seconds += part.seconds
+          const left = pending.get(slice.difficulty)! - 1
+          pending.set(slice.difficulty, left)
+          if (left === 0) {
+            row.guesses.sort((a, b) => a - b)
+            results.push(row)
+            done++
+            report()
+          }
         }
-      }),
+      })
     )
   }
 

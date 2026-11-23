@@ -199,14 +199,16 @@ export function toServer(assignment: Pick<KingOfTheHillAssignment, "password" | 
 
 export function sampleAltitudeProfile(
   assignment: KingOfTheHillAssignment,
-  options: { pointCount?: number } = {},
+  options: { pointCount?: number; from?: number; to?: number } = {},
 ) {
   const pointCount = options.pointCount ?? PROFILE_DEFAULT_POINT_COUNT
   const password = Number(assignment.password)
   const { min, max } = assignmentNumericRange(assignment)
   const server = toServer(assignment)
-  const start = min
-  const end = max
+  // The game answers for any number, and the solver probes outside the numeric range (its
+  // left-tail hunt reads below `min`, even below zero), so the profile can be asked to cover that.
+  const start = Math.min(min, Math.floor(options.from ?? min))
+  const end = Math.max(max, Math.ceil(options.to ?? max))
   const nearLo = Math.max(min, Math.ceil(password * (1 - KOTH_NEAR_ZONE_FRACTION)))
   const nearHi = Math.min(max, Math.floor(password * (1 + KOTH_NEAR_ZONE_FRACTION)))
 
@@ -216,7 +218,7 @@ export function sampleAltitudeProfile(
 
   function addPoint(x: number) {
     const xi = Math.round(x)
-    if (xi < min || xi > max) return
+    if (xi < start || xi > end) return
     pointByX.set(xi, {
       x: xi,
       altitude: getKingOfTheHillAltitude(server, String(xi)),

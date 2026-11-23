@@ -7,8 +7,9 @@
  * height. That makes a *candidate* password checkable against readings the solver has already
  * taken — a wrong candidate shifts the entire ensemble and cannot reproduce them.
  *
- * Only used to accept or reject a candidate that came from a reading inside the near zone; the
- * solver never uses the generator's numbers to decide where to probe.
+ * Used to accept or reject candidates: the two a near-zone reading gives (ladderSnipeSolver.ts)
+ * and the shortlist a left-tail reading is inverted to (tailInversion.ts, which works from the
+ * closed form of the first RNG draws and leaves the exact check to this module).
  */
 
 export const HILL_PEAK_HEIGHT = 10000
@@ -106,9 +107,14 @@ export function reproducesReadings(
  * A wrong candidate rebuilds the whole ensemble and misses by orders of magnitude. A candidate that
  * is *derived* from a reading agrees with that one reading to about 1e-8 (the distance is rounded to
  * an integer), so the tolerance has to sit well below that — and it can, because re-deriving the
- * true password's ensemble reproduces each reading bit for bit.
+ * true password's ensemble reproduces each reading bit for bit (checked on 275 000 random readings,
+ * in and out of the numeric range: zero mismatches at tolerance 0).
+ *
+ * 1e-14 rather than 1e-12: about once in 12 000 readings the derived distance happens to land
+ * within 4e-5 of an integer, and at 1e-12 both near-peak candidates of such a reading "confirm"
+ * themselves and cost two guesses. Two decimal digits above bit-exact is still ample slack.
  */
-const RELATIVE_TOLERANCE = 1e-12
+const RELATIVE_TOLERANCE = 1e-14
 
 function matches(predicted: number, observed: number): boolean {
   if (observed === predicted) return true

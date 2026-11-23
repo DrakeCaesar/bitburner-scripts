@@ -49,6 +49,12 @@ export interface LadderSnipeTuning {
   pairMaxDistW: number
   /** Below this the pair sits in a tail or gap, where the derived height is a coincidence. */
   pairMinReading: number
+  /** 0 disables the left-tail hunt (leftTailHunt.ts) and runs the ladder alone. Default on. */
+  leftTailHunt?: number
+  /** Hunt: where the first clean window starts in the initial c0 range, as a fraction of its slack. */
+  huntFirstWindowFraction?: number
+  /** Hunt: on a coverage tie take the leftmost placement (1, default) or the rightmost (0). */
+  huntPreferLeft?: number
 }
 
 /** Default ladder_snipe constants (matches C++ LadderSnipeTuning defaults). */
@@ -94,6 +100,9 @@ export const DEFAULT_LADDER_SNIPE_TUNING: LadderSnipeTuning = {
 
 /**
  * Tuned diff-60 constants, mirrored in bench/koth/koth_tune/ladder_snipe.diff60.best.json.
+ *
+ * These tune the LADDER, which since the left-tail hunt (leftTailHunt.ts) only runs as its fallback;
+ * the numbers below are the ladder alone (`leftTailHunt: 0`), which is also all the C++ tuner knows.
  *
  * Every heuristic constant the solver has is a gene, so the tuner decides what matters; only the
  * generator's own structure (peak height, rung, hill spacing, near zone) is fixed. The current values

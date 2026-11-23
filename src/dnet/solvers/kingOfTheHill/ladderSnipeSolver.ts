@@ -1,5 +1,6 @@
 import type { LadderSnipeTuning } from "./tuning.js"
 import { HILL_NEAR_ZONE_FRACTION, reproducesReadings } from "./hillModel.js"
+import { DEFAULT_HUNT_TUNING, huntLeftTail, type HuntSession } from "./leftTailHunt.js"
 
 export const KOTH_NEAR_ZONE_FRACTION = HILL_NEAR_ZONE_FRACTION
 
@@ -13,7 +14,8 @@ export interface LadderProbeSession {
   bestVal: number
   bestAlt: number
   samples: Map<number, number>
-  probe(x: number): number | null
+  /** `free` lifts the numeric-range clamp: the game computes an altitude for any number. */
+  probe(x: number, free?: boolean): number | null
   restoreBest(x: number, a: number): void
 }
 
@@ -46,7 +48,7 @@ function withNearPeakCheck(
   hi: number,
   passwordLength: number,
   hills: number
-): LadderProbeSession {
+): LadderProbeSession & HuntSession {
   const visited = new Map<number, number>()
   const extra = new Map<number, number>()
 
@@ -101,6 +103,26 @@ function withNearPeakCheck(
     samples: visited,
     restoreBest(x: number, a: number) {
       inner.restoreBest(x, a)
+    },
+    // The hunt's probes: unclamped, kept as evidence, hidden from the ladder like candidate guesses.
+    scout(x: number): number | null {
+      const xi = Math.round(x)
+      const known = visited.get(xi) ?? extra.get(xi)
+      if (known !== undefined) return known
+      const bestVal = inner.bestVal
+      const bestAlt = inner.bestAlt
+      const a = inner.probe(xi, true)
+      if (a === null || inner.solved) return a
+      extra.set(xi, a)
+      inner.restoreBest(bestVal, bestAlt)
+      tryCandidates(xi, a)
+      return a
+    },
+    accepts(p: number, lead: readonly [number, number]): boolean {
+      if (p < lo || p > hi || visited.has(p) || extra.has(p)) return false
+      // The reading being inverted goes first: near-miss candidates differ on it by ~1e-6.
+      if (!confirms(p, [lead])) return false
+      return confirms(p, evidence())
     },
     probe(x: number): number | null {
       const xi = Math.round(x)
@@ -705,7 +727,13 @@ function runSolverCoreBaseline(
   runPostCoarsePipeline(sess, lo, hi, w, hc, tune, false)
 }
 
-/** ladder_snipe / ladder_snipe_tuned entry (C++ runSolverCoreLadder), plus the near-peak check. */
+/**
+ * Solver entry. The left-tail hunt (leftTailHunt.ts) runs first and solves all but a handful of
+ * layouts per hundred thousand from one tail reading; what it cannot read falls through to the
+ * ladder below (ladder_snipe / ladder_snipe_tuned, C++ runSolverCoreLadder), which starts from
+ * scratch — the hunt's probes stay available to the near-peak check as evidence but are hidden
+ * from the ladder's own bookkeeping.
+ */
 export function runSolverCoreLadderSnipe(
   session: LadderProbeSession,
   lo: number,
@@ -716,6 +744,16 @@ export function runSolverCoreLadderSnipe(
   passwordLength: number
 ): void {
   const sess = withNearPeakCheck(session, w, lo, hi, passwordLength, hc)
+  // With fewer than three hills there is one hill (the password itself) and the near-peak check
+  // already solves it from a single reading.
+  if (hc >= 3 && tune.leftTailHunt !== 0) {
+    const huntTuning = {
+      firstWindowFraction: tune.huntFirstWindowFraction ?? DEFAULT_HUNT_TUNING.firstWindowFraction,
+      preferLeft: (tune.huntPreferLeft ?? (DEFAULT_HUNT_TUNING.preferLeft ? 1 : 0)) !== 0,
+    }
+    if (huntLeftTail(sess, lo, hi, w, hc, huntTuning)) return
+    if (sess.solved) return
+  }
   if (hc < 5) {
     runSolverCoreBaseline(sess, lo, hi, w, hc, tune)
     return

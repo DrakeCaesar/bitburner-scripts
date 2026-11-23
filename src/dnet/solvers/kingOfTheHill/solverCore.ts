@@ -24,7 +24,8 @@ export interface ProbeSession {
   bestVal: number
   bestAlt: number
   samples: Map<number, number>
-  probe(x: number): number | null
+  /** `free` lifts the [min, max] clamp (the game computes an altitude for any number). */
+  probe(x: number, free?: boolean): number | null
   restoreBest(x: number, a: number): void
 }
 
@@ -104,10 +105,10 @@ export function createAuthProbeSession(
       session.bestVal = x
       session.bestAlt = a
     },
-    probe(x: number): number | null {
+    probe(x: number, free = false): number | null {
       if (session.exhausted || session.solved) return null
       const xi = Math.round(x)
-      if (xi < min || xi > max) return null
+      if (!free && (xi < min || xi > max)) return null
       if (samples.has(xi)) return samples.get(xi)!
       if (session.guesses >= SOLVER_MAX_PROBES) {
         session.exhausted = true
@@ -158,10 +159,10 @@ export function createReplayProbeSession(
       session.bestVal = x
       session.bestAlt = a
     },
-    probe(x: number): number | null {
+    probe(x: number, free = false): number | null {
       if (session.exhausted || session.solved) return null
       const xi = Math.round(x)
-      if (xi < min || xi > max) return null
+      if (!free && (xi < min || xi > max)) return null
       if (visited.has(xi)) return samples.get(xi)!
       if (session.guesses >= SOLVER_MAX_PROBES) {
         session.exhausted = true
