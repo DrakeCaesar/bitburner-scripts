@@ -43,6 +43,11 @@ class ProbeSession {
   int64_t bestX() const { return bestX_; }
   double bestAlt() const { return bestAlt_; }
 
+  /** Near-peak candidates: enabled for the ladder_snipe variants (see tryNearPeak). */
+  void enableNearPeak() { nearPeak_ = true; }
+  /** Readings the ladder itself took (candidate guesses are kept out of both maps for it). */
+  const std::unordered_map<int64_t, double>& ladderReadings() const { return ladderReadings_; }
+
   std::optional<double> probe(int64_t x) {
     const int64_t xi = clampProbe(static_cast<double>(x), lo_, hi_);
     if (xi < lo_ || xi > hi_) return std::nullopt;
@@ -63,6 +68,10 @@ class ProbeSession {
       bestAlt_ = a;
       bestX_ = xi;
     }
+    if (nearPeak_ && !probingCandidate_) {
+      ladderReadings_[xi] = a;
+      tryNearPeak(xi, a);
+    }
     return a;
   }
 
@@ -78,6 +87,58 @@ class ProbeSession {
   }
 
  private:
+  /**
+   * Within 3% of the password the game returns the main hill alone, so a reading (x, a) taken there
+   * puts the password at x + d or x - d with d = w*sqrt(ln(10000/a)). Both candidates reproduce that
+   * reading by construction, so the choice comes from the other readings: the hill ensemble is a
+   * deterministic function of the password, and a candidate that does not reproduce every reading
+   * already taken is not the password.
+   */
+  void tryNearPeak(int64_t x, double a) {
+    if (!(a > 0.0) || !(a < kHPeak)) return;
+    const double wd = static_cast<double>(kingOfTheHillGaussianWidth(static_cast<int>(server_.password.size())));
+    const double d = static_cast<double>(std::llround(wd * std::sqrt(std::log(kHPeak / a))));
+    int64_t candidates[2] = {x + static_cast<int64_t>(d), x - static_cast<int64_t>(d)};
+    std::vector<int64_t> viable;
+    for (const int64_t p : candidates) {
+      if (p < lo_ || p > hi_) continue;
+      if (ladderReadings_.count(p) || extra_.count(p)) continue;
+      if (std::abs(static_cast<double>(x - p) / static_cast<double>(p)) >= KOTH_NEAR_ZONE_FRACTION) continue;
+      if (reproducesReadings(p)) viable.push_back(p);
+    }
+    if (viable.empty()) return;
+    const int64_t bestX = bestX_;
+    const double bestAlt = bestAlt_;
+    for (const int64_t p : viable) {
+      probingCandidate_ = true;
+      const std::optional<double> ap = probe(p);
+      probingCandidate_ = false;
+      if (solved_) return;
+      if (!ap) continue;
+      extra_[p] = *ap;
+      bestX_ = bestX;
+      bestAlt_ = bestAlt;
+    }
+  }
+
+  /** True when `p` reproduces every reading taken so far. */
+  bool reproducesReadings(int64_t p) const {
+    Server candidateServer = server_;
+    candidateServer.password = std::to_string(p);
+    auto matches = [](double predicted, double observed) {
+      if (predicted == observed) return true;
+      const double scale = std::max(std::abs(predicted), std::abs(observed));
+      return std::abs(predicted - observed) <= 1e-12 * scale;
+    };
+    for (const auto* readings : {&ladderReadings_, &extra_}) {
+      for (const auto& entry : *readings) {
+        const double predicted = getKingOfTheHillAltitude(candidateServer, entry.first);
+        if (!matches(predicted, entry.second)) return false;
+      }
+    }
+    return true;
+  }
+
   const Server& server_;
   int64_t password_;
   int64_t lo_;
@@ -85,14 +146,43 @@ class ProbeSession {
   int cap_;
   int guesses_ = 0;
   bool solved_ = false;
+  bool nearPeak_ = false;
+  bool probingCandidate_ = false;
   int64_t bestX_;
   double bestAlt_;
   std::unordered_map<int64_t, double> samples_;
+  std::unordered_map<int64_t, double> ladderReadings_;
+  std::unordered_map<int64_t, double> extra_;
 };
 
 double invertCenter(double x1, double a1, double x2, double a2, int64_t w) {
   const double wd = static_cast<double>(w);
   return (x1 + x2) / 2.0 - (wd * wd) * std::log(a1 / a2) / (2.0 * (x2 - x1));
+}
+
+/** A pair that inverts to a centre further than this from its anchor was not a single-hill read. */
+constexpr double kPairMaxDistW = 0.7;
+/** Below this the pair sits in a tail or a gap, where the inversion is a coincidence, not a hill. */
+constexpr double kPairMinReading = 1000.0;
+
+/** Height of the hill that a pair of same-sign readings was inverted against. */
+double pairHeight(int64_t x, double a, int64_t center, int64_t w) {
+  const double dx = static_cast<double>(x - center);
+  const double wd = static_cast<double>(w);
+  return std::abs(a) * std::exp((dx * dx) / (wd * wd));
+}
+
+/**
+ * True when `h` is a height the generator can produce: hills sit on 10000 - k * 2600 * v with
+ * v in [0.95, 1.05], k rungs from the peak.
+ */
+bool onHeightLadder(double h, int hc, double slack) {
+  if (!std::isfinite(h) || h > kHPeak) return false;
+  const int k = static_cast<int>(std::llround((kHPeak - h) / KOTH_HEIGHT_OFFSET_BASE));
+  if (k < 1 || k > hc - 1) return false;
+  const double ladderLo = kHPeak - k * KOTH_HEIGHT_OFFSET_BASE * 1.05;
+  const double ladderHi = kHPeak - k * KOTH_HEIGHT_OFFSET_BASE * 0.95;
+  return h >= ladderLo - slack && h <= ladderHi + slack;
 }
 
 /**
@@ -255,6 +345,10 @@ void pinpoint(ProbeSession& sess, int64_t seedX, int64_t w, int64_t lo, int64_t 
   }
   sess.probe(pc);
   if (sess.solved()) return;
+  // Integer scanning only pays off on the peak itself: from a side hill the password is millions of
+  // integers away, and repeating the neighbourhood just burns guesses.
+  const std::optional<double> aFinal = sess.sampleAt(pc);
+  if (!aFinal || *aFinal < kMainTh) return;
   for (int d = 1; d <= finalRadius; ++d) {
     for (const int sgn : {-1, 1}) {
       sess.probe(pc + sgn * d);
@@ -495,14 +589,28 @@ void ladderClimb(ProbeSession& sess, int64_t x0, double a0, int64_t w, int hc, i
       if (std::abs(ci - seen) < static_cast<int64_t>(std::llround(tune.orbitDistW * wd))) return;
     }
     seenCenters.push_back(ci);
-    const std::optional<double> acOpt = sess.probe(ci);
-    if (sess.solved()) return;
-    if (!acOpt) return;
-    const double ac = *acOpt;
-
-    // Possibly on the main hill flank already; near-zone sqrt candidates are cheap.
-    if (ac > tune.ladderEntryMaxAbs && sqrtSnipe(sess, ci, ac, w, lo, hi)) return;
+    // The pair already fixes the hill: its inversion gives the centre and the same two readings give
+    // the height (h = a * exp(dx^2 / w^2)). The centre only needs a probe when the derived height is
+    // not on the generator's height ladder, i.e. when the pair was not a clean single-hill read.
+    double ac;
+    const double derived = pairHeight(x0, a0, ci, w);
+    if (std::abs(a0) >= kPairMinReading && std::abs(static_cast<double>(ci - x0)) <= kPairMaxDistW * wd &&
+        onHeightLadder(derived, hc, tune.heightBandSlack)) {
+      ac = derived;
+    } else {
+      const std::optional<double> acOpt = sess.probe(ci);
+      if (sess.solved()) return;
+      if (!acOpt) return;
+      ac = *acOpt;
+    }
+    const bool centerSampled = sess.sampleAt(ci).has_value();
+    if (ac > tune.ladderEntryMaxAbs && centerSampled && sqrtSnipe(sess, ci, ac, w, lo, hi)) return;
     if (ac >= kMainTh) {
+      if (!centerSampled) {
+        const std::optional<double> acOpt = sess.probe(ci);
+        if (sess.solved()) return;
+        if (!acOpt) return;
+      }
       pinpoint(sess, sess.bestX(), w, lo, hi, tune.pinpointRounds, tune.pinpointFinalRadius, snipe);
       return;
     }
@@ -566,54 +674,45 @@ void ladderClimb(ProbeSession& sess, int64_t x0, double a0, int64_t w, int hc, i
       prevK = k;
     }
 
-    int dir;
     const int64_t step3 = 3 * w;
-    if (std::abs(static_cast<double>(ci) - static_cast<double>(x0)) > tune.outsideClusterDistW * wd) {
-      // Anchor was farther from the hill center than any intra-cluster point can
-      // be (max ~1.7w), so we approached from outside: main lies deeper inward.
+    auto rankOf = [](double a) { return static_cast<int>(std::llround((kHPeak - a) / KOTH_HEIGHT_OFFSET_BASE)); };
+    auto looksLikeHill = [&](double a) { return a > 0.0 && a >= tune.bareTailFrac * (std::abs(ac) + KOTH_HEIGHT_OFFSET_BASE); };
+    // Direction. Approaching from outside the cluster (the inversion landed far from its anchor) the
+    // main hill lies inward; otherwise at rank 1 the neighbour test is the jump target itself, so it
+    // costs nothing. Every jump is verified by the rank its landing reads, so the guess only has to
+    // be free.
+    std::optional<int> dir;
+    if (std::abs(static_cast<double>(ci - x0)) > tune.outsideClusterDistW * wd) {
       dir = (ci >= x0) ? 1 : -1;
-    } else if (ci + step3 > hi) {
-      dir = -1;
-    } else if (ci - step3 < lo) {
-      dir = 1;
-    } else {
+    } else if (k == 1 && ci + step3 <= hi && ci - step3 >= lo) {
       const std::optional<double> arOpt = sess.probe(ci + step3);
       if (sess.solved()) return;
-      if (!arOpt) {
-        dir = -1;
-      } else {
-        // Off the cluster edge the reading collapses to the anchor hill's own tail
-        // (~1e-4 of |ac|), which would read "higher" than a negative center and
-        // fake a toward-main signal; any real neighbor hill reads far larger.
-        const bool bareTail = std::abs(*arOpt) < tune.bareTailFrac * (std::abs(ac) + KOTH_HEIGHT_OFFSET_BASE);
-        if (bareTail) dir = -1;
-        else dir = (*arOpt > ac) ? 1 : -1;  // heights increase monotonically toward the main hill
-      }
+      if (arOpt) dir = (looksLikeHill(*arOpt) && *arOpt > ac) ? 1 : -1;
     }
+    if (!dir) dir = (ci + step3 > hi) ? -1 : 1;
 
+    const int d0 = *dir;
     int64_t target =
-        clampProbe(static_cast<double>(ci) + static_cast<double>(dir) * static_cast<double>(k) * 3.0 * wd, lo, hi);
-    if (ladderTraceEnabled()) {
-      std::fprintf(stderr, "[ladder]   k=%d dir=%d target=%lld\n", k, dir, static_cast<long long>(target));
-    }
+        clampProbe(static_cast<double>(ci) + static_cast<double>(d0) * static_cast<double>(k) * 3.0 * wd, lo, hi);
     std::optional<double> atOpt = sess.probe(target);
     if (sess.solved()) return;
     if (!atOpt) return;
-    if (*atOpt <= 0.0) {
-      // A correct jump lands within ~2w of the main peak, which always reads
-      // positive; a non-positive landing means the direction (or rank) was wrong.
+    if (!looksLikeHill(*atOpt) || rankOf(*atOpt) >= k) {
       const int64_t target2 =
-          clampProbe(static_cast<double>(ci) - static_cast<double>(dir) * static_cast<double>(k) * 3.0 * wd, lo, hi);
-      if (ladderTraceEnabled()) {
-        std::fprintf(stderr, "[ladder]   flip -> target=%lld\n", static_cast<long long>(target2));
-      }
-      const std::optional<double> at2Opt = sess.probe(target2);
-      if (sess.solved()) return;
-      // Keep climbing from the higher landing even if both are negative:
-      // less-negative means fewer rungs from the main hill on the height ladder.
-      if (at2Opt && *at2Opt > *atOpt) {
-        target = target2;
-        atOpt = at2Opt;
+          clampProbe(static_cast<double>(ci) - static_cast<double>(d0) * static_cast<double>(k) * 3.0 * wd, lo, hi);
+      if (target2 != target) {
+        const std::optional<double> at2Opt = sess.probe(target2);
+        if (sess.solved()) return;
+        if (at2Opt) {
+          const bool better = looksLikeHill(*at2Opt) != looksLikeHill(*atOpt)
+                                  ? looksLikeHill(*at2Opt)
+                                  : rankOf(*at2Opt) != rankOf(*atOpt) ? rankOf(*at2Opt) < rankOf(*atOpt)
+                                                                     : *at2Opt > *atOpt;
+          if (better) {
+            target = target2;
+            atOpt = at2Opt;
+          }
+        }
       }
       if (*atOpt == 0.0) return;
     }
@@ -773,7 +872,18 @@ void runSolverCoreLadder(ProbeSession& sess, int64_t lo, int64_t hi, int64_t w, 
     }
   }
 
-  if (havePositiveRestore) sess.restoreBest(restoreX, restoreA);
+  if (havePositiveRestore) {
+    // Start the generic pipeline from the best positive reading the ladder saw, not from the coarse
+    // anchor it happened to enter on: the anchor can be a deep tail thousands of widths away from
+    // the cluster, and crest() would then invert against it.
+    for (const auto& entry : sess.ladderReadings()) {
+      if (entry.second > restoreA && entry.second > 0.0 && std::isfinite(entry.second)) {
+        restoreX = entry.first;
+        restoreA = entry.second;
+      }
+    }
+    sess.restoreBest(restoreX, restoreA);
+  }
   runPostCoarsePipeline(sess, lo, hi, w, hc, snipe);
 }
 
@@ -801,6 +911,9 @@ SolveResult solveInternal(const Assignment& assignment, int cap, SolverVariant v
 
   ProbeSession sess(server, password, range.min, range.max, cap);
   if (password < range.min || password > range.max) return out;
+  if (variant == SolverVariant::LadderSnipe || variant == SolverVariant::LadderSnipeTuned) {
+    sess.enableNearPeak();
+  }
 
   switch (variant) {
     case SolverVariant::Baseline:

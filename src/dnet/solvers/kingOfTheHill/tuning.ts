@@ -58,24 +58,30 @@ export const DEFAULT_LADDER_SNIPE_TUNING: LadderSnipeTuning = {
 }
 
 /**
- * GA-tuned diff-60 constants from bench/koth/koth_tune/ladder_snipe.diff60.best.json.
- * Regenerate when koth_tune produces a new best file.
+ * GA-tuned diff-60 constants from bench/koth/koth_tune/ladder_snipe.diff60.best.json, with four of
+ * them re-measured (2026-11) after the pair-derived centre, the model-verified near-peak candidates
+ * and the rank-verified jump changed what the ladder spends guesses on:
+ *   positiveLadderSkipRangeFraction 0.737 -> 0   (a positive coarse hit no longer needs skipping)
+ *   heightBandSlack                 272.6 -> 600
+ *   outsideClusterDistW             1     -> 0.5
+ *   bareTailFrac                    0.0218 -> 0.01
+ * The rest is the GA genome. Regenerate with koth_tune when it is brought up to date.
  */
 export const TUNED_LADDER_SNIPE_DIFF60: LadderSnipeTuning = {
   farTailAnchorMaxAbs: 397.16,
   ladderEntryMaxAbs: 7418.48,
-  positiveLadderSkipRangeFraction: 0.737109,
+  positiveLadderSkipRangeFraction: 0,
   pairProbeOffsetW: 0.154316,
   signCrossMarchW: 1.0245,
   centerSanityMaxDistW: 38.425,
   ladderMaxIters: 8,
   orbitDistW: 0.5,
-  heightBandSlack: 272.627,
+  heightBandSlack: 600,
   logResidualMax: 0.271547,
   logResidualMaxDistW: 1,
   halfStepW: 1.93344,
-  outsideClusterDistW: 1,
-  bareTailFrac: 0.021817,
+  outsideClusterDistW: 0.5,
+  bareTailFrac: 0.01,
   postJumpCapScale: 0.224271,
   postJumpCapBias: 0.911711,
   sqrtSnipeMinAlt: 7555.23,

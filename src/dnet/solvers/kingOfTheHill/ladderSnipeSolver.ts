@@ -1,6 +1,7 @@
 import type { LadderSnipeTuning } from "./tuning.js"
+import { HILL_NEAR_ZONE_FRACTION, reproducesReadings } from "./hillModel.js"
 
-export const KOTH_NEAR_ZONE_FRACTION = 0.03
+export const KOTH_NEAR_ZONE_FRACTION = HILL_NEAR_ZONE_FRACTION
 
 const H_PEAK = 10000
 const STEP_W = 3
@@ -20,8 +21,6 @@ function clamp(x: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, Math.round(x)))
 }
 
-const NEAR_PEAK_REL_TOLERANCE = 8 * Number.EPSILON
-
 function inPureZone(x: number, p: number): boolean {
   return Math.abs((x - p) / p) < KOTH_NEAR_ZONE_FRACTION
 }
@@ -31,37 +30,56 @@ function inPureZone(x: number, p: number): boolean {
  *
  * Within 3% of the password the game returns the main hill alone, so a reading (x, a) taken there
  * puts the password at x + d or x - d with d = w * sqrt(ln(10000 / a)), whatever the altitude is.
- * Readings outside that zone are a sum of hills and do not reproduce as one Gaussian around an
- * integer, so a candidate is only guessed when it reproduces every reading in its own zone to
- * rounding error. That needs the full-precision altitude, not the five-decimal message.
+ * Both candidates reproduce that reading by construction, so the choice between them comes from
+ * the other readings: the hill ensemble is a deterministic function of the password (hillModel),
+ * and a candidate that does not reproduce *every* reading already taken is not the password.
+ * That saves the wrong-side guess; when neither candidate survives, both are tried as before.
  *
  * The ladder's own trajectory is unchanged: candidate guesses are kept out of the samples it sees
  * and do not move its best point. `samples` holds only what the ladder asked for in this run,
  * which also keeps a replayed run from seeing readings it had not taken yet.
  */
-function withNearPeakCheck(inner: LadderProbeSession, w: number, lo: number, hi: number): LadderProbeSession {
+function withNearPeakCheck(
+  inner: LadderProbeSession,
+  w: number,
+  lo: number,
+  hi: number,
+  passwordLength: number,
+  hills: number
+): LadderProbeSession {
   const visited = new Map<number, number>()
   const extra = new Map<number, number>()
 
-  const explainsReadings = (p: number): boolean => {
-    for (const readings of [visited, extra]) {
-      for (const [z, a] of readings) {
-        if (!inPureZone(z, p)) continue
-        const expected = H_PEAK * Math.exp(((z - p) ** 2 / w ** 2) * -1)
-        if (!(Math.abs(a - expected) <= NEAR_PEAK_REL_TOLERANCE * expected)) return false
-      }
+  const confirms = (p: number, readings: (readonly [number, number])[]): boolean =>
+    reproducesReadings(p, passwordLength, hills, readings)
+
+  /** Every reading taken so far, strongest first: a wrong candidate contradicts the first one. */
+  const evidence = (): (readonly [number, number])[] => {
+    const readings: (readonly [number, number])[] = []
+    for (const map of [visited, extra]) {
+      for (const entry of map) readings.push(entry)
     }
-    return true
+    readings.sort((l, r) => Math.abs(r[1]) - Math.abs(l[1]))
+    return readings
   }
 
   const tryCandidates = (x: number, a: number): void => {
     if (!(a > 0 && a <= H_PEAK)) return
     const d = Math.round(w * Math.sqrt(Math.log(H_PEAK / a)))
+    const inRange: number[] = []
     for (const p of [x + d, x - d]) {
       if (p < lo || p > hi || visited.has(p) || extra.has(p) || !inPureZone(x, p)) continue
-      if (!explainsReadings(p)) continue
-      const bestVal = inner.bestVal
-      const bestAlt = inner.bestAlt
+      inRange.push(p)
+    }
+    if (inRange.length === 0) return
+    // Every candidate has to reproduce the readings already taken: the hill ensemble is a
+    // deterministic function of the password, and a wrong candidate shifts every hill at once.
+    // This also drops candidates that come from a reading outside the true near zone.
+    const viable = inRange.filter((p) => confirms(p, evidence()))
+    if (viable.length === 0) return
+    const bestVal = inner.bestVal
+    const bestAlt = inner.bestAlt
+    for (const p of viable) {
       const ap = inner.probe(p)
       if (inner.solved) return
       if (ap === null) continue
@@ -98,7 +116,7 @@ function withNearPeakCheck(inner: LadderProbeSession, w: number, lo: number, hi:
 }
 
 function invertCenter(x1: number, a1: number, x2: number, a2: number, w: number): number {
-  return (x1 + x2) / 2 - ((w * w) * Math.log(a1 / a2)) / (2 * (x2 - x1))
+  return (x1 + x2) / 2 - (w * w * Math.log(a1 / a2)) / (2 * (x2 - x1))
 }
 
 function hopK(H: number): number {
@@ -143,7 +161,15 @@ function scanGrid(lo: number, hi: number, w: number, hc: number): number[] {
   return [...xs].sort((a, b) => a - b)
 }
 
-function sqrtSnipe(sess: LadderProbeSession, x: number, a: number, w: number, lo: number, hi: number, tune: LadderSnipeTuning): boolean {
+function sqrtSnipe(
+  sess: LadderProbeSession,
+  x: number,
+  a: number,
+  w: number,
+  lo: number,
+  hi: number,
+  tune: LadderSnipeTuning
+): boolean {
   if (!(a > tune.sqrtSnipeMinAlt) || !(a < H_PEAK)) return false
   const d = w * Math.sqrt(Math.log(H_PEAK / a))
   if (!Number.isFinite(d)) return false
@@ -157,15 +183,15 @@ function sqrtSnipe(sess: LadderProbeSession, x: number, a: number, w: number, lo
 }
 
 function crest(sess: LadderProbeSession, xSeed: number, w: number, lo: number, hi: number): [number, number] {
-  let x = clamp(xSeed, lo, hi)
+  const x = clamp(xSeed, lo, hi)
   let a = sess.samples.get(x) ?? null
   if (a === null) {
     a = sess.probe(x)
     if (sess.solved) return [x, a ?? Infinity]
   }
   const off = Math.max(1, Math.round(0.5 * w))
-  let xb = x + off <= hi ? x + off : x - off
-  let ab = sess.probe(xb)
+  const xb = x + off <= hi ? x + off : x - off
+  const ab = sess.probe(xb)
   if (sess.solved) return [xb, ab ?? Infinity]
   if (a !== null && ab !== null && a > 0 && ab > 0 && xb !== x) {
     const c = invertCenter(x, a, xb, ab, w)
@@ -223,7 +249,14 @@ function crest(sess: LadderProbeSession, xSeed: number, w: number, lo: number, h
   return [best[1], best[0]]
 }
 
-function gallop(sess: LadderProbeSession, xSeed: number, w: number, lo: number, hi: number, tune: LadderSnipeTuning): [number, number] {
+function gallop(
+  sess: LadderProbeSession,
+  xSeed: number,
+  w: number,
+  lo: number,
+  hi: number,
+  tune: LadderSnipeTuning
+): [number, number] {
   let x = clamp(xSeed, lo, hi)
   let a: number = sess.samples.get(x) ?? -1e18
   if (!sess.samples.has(x)) {
@@ -232,7 +265,7 @@ function gallop(sess: LadderProbeSession, xSeed: number, w: number, lo: number, 
     if (probed !== null) a = probed
   }
   let step = Math.max(1, Math.round(tune.gallopStepW * w))
-  let stop = Math.max(1, Math.round(tune.gallopStopW * w))
+  const stop = Math.max(1, Math.round(tune.gallopStopW * w))
   while (step >= stop) {
     let bd = 0
     let ba = a
@@ -267,7 +300,7 @@ function pinpoint(
   tune: LadderSnipeTuning,
   rounds: number,
   finalRadius: number,
-  snipe: boolean,
+  snipe: boolean
 ): void {
   let pc = clamp(seedX, lo, hi)
   if (snipe) {
@@ -304,8 +337,11 @@ function pinpoint(
       break
     }
   }
-  sess.probe(pc)
+  const aFinal = sess.samples.get(pc) ?? sess.probe(pc)
   if (sess.solved) return
+  // Integer scanning only pays off on the peak itself: from a side hill the password is millions
+  // of integers away, and repeating the neighbourhood just burns guesses.
+  if (aFinal === null || aFinal < MAIN_TH) return
   for (let d = 1; d <= finalRadius; d++) {
     for (const sgn of [-1, 1]) {
       sess.probe(pc + sgn * d)
@@ -336,7 +372,14 @@ function backstop(sess: LadderProbeSession, w: number, lo: number, hi: number, t
   if (!sess.solved) pinpoint(sess, sess.bestVal, w, lo, hi, tune, tune.pinpointRounds, 30, false)
 }
 
-function walkAndPinpoint(sess: LadderProbeSession, w: number, lo: number, hi: number, tune: LadderSnipeTuning, snipe: boolean): boolean {
+function walkAndPinpoint(
+  sess: LadderProbeSession,
+  w: number,
+  lo: number,
+  hi: number,
+  tune: LadderSnipeTuning,
+  snipe: boolean
+): boolean {
   const step = STEP_W * w
   let [x, a] = crest(sess, sess.bestVal, w, lo, hi)
   if (sess.solved) return true
@@ -389,7 +432,14 @@ interface LadderCoarseHit {
   a: number
 }
 
-function ladderCoarseScan(sess: LadderProbeSession, lo: number, hi: number, w: number, hc: number, tune: LadderSnipeTuning): LadderCoarseHit | null {
+function ladderCoarseScan(
+  sess: LadderProbeSession,
+  lo: number,
+  hi: number,
+  w: number,
+  hc: number,
+  tune: LadderSnipeTuning
+): LadderCoarseHit | null {
   const xs = scanGrid(lo, hi, w, hc)
   const order = spreadOrder(xs.length)
   for (const idx of order) {
@@ -413,6 +463,31 @@ function runInitialCoarseScanPositive(sess: LadderProbeSession, lo: number, hi: 
   }
 }
 
+/** A pair that inverts to a centre further than this from its anchor was not a single-hill read. */
+const PAIR_MAX_DIST_W = 0.7
+/** Below this the pair sits in a tail or a gap, where the inversion is a coincidence, not a hill. */
+const PAIR_MIN_READING = 1000
+
+/** Height of the hill that a pair of same-sign readings was inverted against. */
+function pairHeight(x: number, a: number, center: number, w: number): number {
+  const dx = x - center
+  return Math.abs(a) * Math.exp((dx * dx) / (w * w))
+}
+
+/**
+ * True when `h` is a height the generator can produce: hills sit on 10000 - k * 2600 * v with
+ * v in [0.95, 1.05], k rungs from the peak, so a height off the ladder means the pair was not a
+ * clean read of one hill.
+ */
+function onHeightLadder(h: number, hc: number, slack: number): boolean {
+  if (!Number.isFinite(h) || h > H_PEAK) return false
+  const k = Math.round((H_PEAK - h) / HEIGHT_OFFSET)
+  if (k < 1 || k > hc - 1) return false
+  const ladderLo = H_PEAK - k * HEIGHT_OFFSET * 1.05
+  const ladderHi = H_PEAK - k * HEIGHT_OFFSET * 0.95
+  return h >= ladderLo - slack && h <= ladderHi + slack
+}
+
 function ladderClimb(
   sess: LadderProbeSession,
   x0: number,
@@ -422,7 +497,7 @@ function ladderClimb(
   lo: number,
   hi: number,
   tune: LadderSnipeTuning,
-  snipe: boolean,
+  snipe: boolean
 ): void {
   const wd = w
   let prevK = 1 << 20
@@ -435,9 +510,9 @@ function ladderClimb(
     if (x1 === x0) return
     let a1Opt = sess.probe(x1)
     if (sess.solved) return
-    if (a1Opt !== null && a1Opt !== 0 && (a0 > 0) !== (a1Opt > 0)) {
+    if (a1Opt !== null && a1Opt !== 0 && a0 > 0 !== a1Opt > 0) {
       const a1Positive = a1Opt > 0
-      const dirIn = (a1Positive === (x1 > x0)) ? 1 : -1
+      const dirIn = a1Positive === x1 > x0 ? 1 : -1
       const base = a1Positive ? x1 : x0
       const xn = clamp(base + dirIn * Math.max(1, Math.round(tune.signCrossMarchW * wd)), lo, hi)
       const anOpt = sess.probe(xn)
@@ -454,7 +529,7 @@ function ladderClimb(
       a1Opt = sess.probe(x1)
       if (sess.solved) return
       if (a1Opt === null || a1Opt === 0) return
-      if ((a0 > 0) !== (a1Opt > 0)) return
+      if (a0 > 0 !== a1Opt > 0) return
     }
     const a1 = a1Opt
     const c = invertCenter(x0, a0, x1, a1, w)
@@ -464,17 +539,36 @@ function ladderClimb(
       if (Math.abs(ci - seen) < Math.round(tune.orbitDistW * wd)) return
     }
     seenCenters.push(ci)
-    const acOpt = sess.probe(ci)
-    if (sess.solved) return
-    if (acOpt === null) return
-    const ac = acOpt
-    if (ac > tune.ladderEntryMaxAbs && sqrtSnipe(sess, ci, ac, w, lo, hi, tune)) return
+    // The pair already fixes the hill: inverting the two readings gives its centre, and the same
+    // two readings give its height (h = a * exp(dx^2 / w^2)), so the centre only needs a probe when
+    // the derived height is not on the generator's height ladder — i.e. when the pair was not a
+    // clean single-hill read.
+    let ac: number
+    const derived = pairHeight(x0, a0, ci, w)
+    if (
+      Math.abs(a0) >= PAIR_MIN_READING &&
+      Math.abs(ci - x0) <= PAIR_MAX_DIST_W * wd &&
+      onHeightLadder(derived, hc, tune.heightBandSlack)
+    ) {
+      ac = derived
+    } else {
+      const acOpt = sess.probe(ci)
+      if (sess.solved) return
+      if (acOpt === null) return
+      ac = acOpt
+    }
+    if (ac > tune.ladderEntryMaxAbs && sess.samples.has(ci) && sqrtSnipe(sess, ci, ac, w, lo, hi, tune)) return
     if (ac >= MAIN_TH) {
+      if (!sess.samples.has(ci)) {
+        const acOpt = sess.probe(ci)
+        if (sess.solved) return
+        if (acOpt === null) return
+      }
       pinpoint(sess, sess.bestVal, w, lo, hi, tune, tune.pinpointRounds, tune.pinpointFinalRadius, snipe)
       return
     }
     const dxa = x0 - ci
-    let trusted = ac !== 0 && (a0 > 0) === (ac > 0) && c >= lo && c <= hi
+    let trusted = ac !== 0 && a0 > 0 === ac > 0 && c >= lo && c <= hi
     let k = Math.round((H_PEAK - ac) / HEIGHT_OFFSET)
     if (k < 1) k = 1
     if (k > hc - 1) k = hc - 1
@@ -491,7 +585,7 @@ function ladderClimb(
     }
     if (!trusted && ac > 0) {
       const half = Math.max(1, Math.round(tune.halfStepW * wd))
-      const gradDir = (a1 > a0) === (x1 > x0) ? 1 : -1
+      const gradDir = a1 > a0 === x1 > x0 ? 1 : -1
       let stepped = false
       for (const sgn of [gradDir, -gradDir]) {
         const xs = clamp(ci + sgn * half, lo, hi)
@@ -512,34 +606,43 @@ function ladderClimb(
       prevK = k
     }
     const step3 = 3 * w
-    let dir: number
+    const rankOf = (a: number): number => Math.round((H_PEAK - a) / HEIGHT_OFFSET)
+    const looksLikeHill = (a: number): boolean => a > 0 && a >= tune.bareTailFrac * (Math.abs(ac) + HEIGHT_OFFSET)
+    // Direction. Approaching from outside the cluster (the inversion landed far from its anchor) the
+    // main hill lies inward; otherwise at rank 1 the neighbour test is the jump target itself, so it
+    // costs nothing. Every jump is verified by the rank its landing reads — a hop that does not move
+    // closer to the peak went the wrong way and is flipped below — so the guess only has to be free.
+    let dir: number | null = null
     if (Math.abs(ci - x0) > tune.outsideClusterDistW * wd) {
       dir = ci >= x0 ? 1 : -1
-    } else if (ci + step3 > hi) {
-      dir = -1
-    } else if (ci - step3 < lo) {
-      dir = 1
-    } else {
+    } else if (k === 1 && ci + step3 <= hi && ci - step3 >= lo) {
       const arOpt = sess.probe(ci + step3)
       if (sess.solved) return
-      if (arOpt === null) {
-        dir = -1
-      } else {
-        const bareTail = Math.abs(arOpt) < tune.bareTailFrac * (Math.abs(ac) + HEIGHT_OFFSET)
-        dir = bareTail ? -1 : arOpt > ac ? 1 : -1
-      }
+      if (arOpt !== null) dir = looksLikeHill(arOpt) && arOpt > ac ? 1 : -1
     }
+    if (dir === null) dir = ci + step3 > hi ? -1 : 1
+
     let target = clamp(ci + dir * k * 3 * wd, lo, hi)
     let atOpt = sess.probe(target)
     if (sess.solved) return
     if (atOpt === null) return
-    if (atOpt <= 0) {
+    if (!looksLikeHill(atOpt) || rankOf(atOpt) >= k) {
       const target2 = clamp(ci - dir * k * 3 * wd, lo, hi)
-      const at2Opt = sess.probe(target2)
-      if (sess.solved) return
-      if (at2Opt !== null && at2Opt > atOpt) {
-        target = target2
-        atOpt = at2Opt
+      if (target2 !== target) {
+        const at2Opt = sess.probe(target2)
+        if (sess.solved) return
+        if (at2Opt !== null) {
+          const better =
+            looksLikeHill(at2Opt) !== looksLikeHill(atOpt)
+              ? looksLikeHill(at2Opt)
+              : rankOf(at2Opt) !== rankOf(atOpt)
+                ? rankOf(at2Opt) < rankOf(atOpt)
+                : at2Opt > atOpt
+          if (better) {
+            target = target2
+            atOpt = at2Opt
+          }
+        }
       }
       if (atOpt === 0) return
     }
@@ -549,7 +652,15 @@ function ladderClimb(
   }
 }
 
-function runPostCoarsePipeline(sess: LadderProbeSession, lo: number, hi: number, w: number, hc: number, tune: LadderSnipeTuning, snipe: boolean): void {
+function runPostCoarsePipeline(
+  sess: LadderProbeSession,
+  lo: number,
+  hi: number,
+  w: number,
+  hc: number,
+  tune: LadderSnipeTuning,
+  snipe: boolean
+): void {
   walkAndPinpoint(sess, w, lo, hi, tune, snipe)
   if (sess.solved) return
   const xs = scanGrid(lo, hi, w, hc)
@@ -570,7 +681,14 @@ function runPostCoarsePipeline(sess: LadderProbeSession, lo: number, hi: number,
   backstop(sess, w, lo, hi, tune)
 }
 
-function runSolverCoreBaseline(sess: LadderProbeSession, lo: number, hi: number, w: number, hc: number, tune: LadderSnipeTuning): void {
+function runSolverCoreBaseline(
+  sess: LadderProbeSession,
+  lo: number,
+  hi: number,
+  w: number,
+  hc: number,
+  tune: LadderSnipeTuning
+): void {
   runInitialCoarseScanPositive(sess, lo, hi, w, hc)
   if (sess.solved) return
   runPostCoarsePipeline(sess, lo, hi, w, hc, tune, false)
@@ -584,8 +702,9 @@ export function runSolverCoreLadderSnipe(
   w: number,
   hc: number,
   tune: LadderSnipeTuning,
+  passwordLength: number
 ): void {
-  const sess = withNearPeakCheck(session, w, lo, hi)
+  const sess = withNearPeakCheck(session, w, lo, hi, passwordLength, hc)
   if (hc < 5) {
     runSolverCoreBaseline(sess, lo, hi, w, hc, tune)
     return
@@ -622,6 +741,17 @@ export function runSolverCoreLadderSnipe(
       havePositiveRestore = true
     }
   }
-  if (havePositiveRestore) sess.restoreBest(restoreX, restoreA)
+  // Start the generic pipeline from the best positive reading the ladder saw, not from the
+  // coarse anchor it happened to enter on: the anchor can be a deep tail thousands of widths
+  // away from the cluster, and crest() would then invert against it.
+  if (havePositiveRestore) {
+    for (const [x, a] of sess.samples) {
+      if (a > restoreA && a > 0 && Number.isFinite(a)) {
+        restoreX = x
+        restoreA = a
+      }
+    }
+    sess.restoreBest(restoreX, restoreA)
+  }
   runPostCoarsePipeline(sess, lo, hi, w, hc, tune, true)
 }

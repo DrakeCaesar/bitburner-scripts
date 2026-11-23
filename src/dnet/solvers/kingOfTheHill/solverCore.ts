@@ -88,7 +88,7 @@ function numericRange(passwordLength: number): { min: number; max: number } {
 export function createAuthProbeSession(
   min: number,
   max: number,
-  auth: (guess: string) => { success: boolean; feedback?: unknown; message?: string },
+  auth: (guess: string) => { success: boolean; feedback?: unknown; message?: string }
 ): ProbeSession {
   const samples = new Map<number, number>()
   const session: ProbeSession = {
@@ -139,7 +139,7 @@ export function createReplayProbeSession(
   min: number,
   max: number,
   samples: Map<number, number>,
-  onNeedProbe: (x: number) => void,
+  onNeedProbe: (x: number) => void
 ): ProbeSession {
   // Mirrors createAuthProbeSession step for step: a stored sample counts as a guess and can move
   // the best point only the first time this run asks for it, so a replay never knows more than
@@ -186,14 +186,14 @@ export function createReplayProbeSession(
 
 export function runUntilNextProbe(
   samples: Map<number, number>,
-  ctx: SolverContext,
+  ctx: SolverContext
 ): { type: "probe"; x: number } | { type: "done"; solved: boolean } {
   let needProbe: number | null = null
   const session = createReplayProbeSession(ctx.min, ctx.max, samples, (x) => {
     needProbe = x
   })
   try {
-    runSolverCoreLadderSnipe(session, ctx.min, ctx.max, ctx.gaussWidth, ctx.hillCount, ctx.tuning)
+    runSolverCoreLadderSnipe(session, ctx.min, ctx.max, ctx.gaussWidth, ctx.hillCount, ctx.tuning, ctx.passwordLength)
     return { type: "done", solved: session.solved }
   } catch (e) {
     if (e !== STOP_PROBE) throw e
@@ -220,12 +220,20 @@ export function runSolverImproved(
     auth: (guess: string) => SolverAuthResult
     returnSamples?: boolean
     tuning?: LadderSnipeTuning
-  },
+  }
 ): SolverRunResult {
   const { min, max } = numericRange(assignment.passwordLength)
   const tuning = options.tuning ?? TUNED_LADDER_SNIPE_DIFF60
   const session = createAuthProbeSession(min, max, options.auth)
-  runSolverCoreLadderSnipe(session, min, max, kingOfTheHillGaussianWidth(assignment.passwordLength), kingOfTheHillHillCount(assignment.difficulty), tuning)
+  runSolverCoreLadderSnipe(
+    session,
+    min,
+    max,
+    kingOfTheHillGaussianWidth(assignment.passwordLength),
+    kingOfTheHillHillCount(assignment.difficulty),
+    tuning,
+    assignment.passwordLength
+  )
   const result: SolverRunResult = {
     guesses: session.guesses,
     solved: session.solved,
