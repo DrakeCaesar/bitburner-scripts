@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>KingOfTheHill altitude profiles</title>
+  <title>Darknet solver benches</title>
   <link rel="stylesheet" href="../../webui/toolUi.css" />
   <style>
     /* Page-specific layout only; the shared kit (webui/toolUi.css) carries the shell,
@@ -113,15 +113,28 @@
     .meta-row span { color: var(--dim); }
     .meta-row .label { color: var(--text); min-width: 58px; }
     code { color: var(--text); }
+
+    #asModels, #asLabs { width: auto; min-width: 50%; }
+    #asModels td, #asLabs td { padding: 0 1.5ch; }
+    /* The in-game view brings its own inline styles; keep the kit's table rules out of it. */
+    #labView { margin-top: 8px; overflow-x: auto; }
+    #labView table { width: auto; }
+    #labView th, #labView td { height: auto; border: none; background: none; }
   </style>
 </head>
 <body>
   <header>
-    <h1>KingOfTheHill altitude profiles</h1>
-    <span class="sub">Altitude profile of each solver assignment, with the probes the search took.</span>
+    <h1>Darknet solver benches</h1>
+    <span class="sub">The shipped solvers against seeded ports of the game's servers.</span>
   </header>
 
   <main>
+  <div class="tabs" data-nopersist="1">
+    <button type="button" class="tab on" data-panel="panelKoth">KingOfTheHill profiles</button>
+    <button type="button" class="tab" data-panel="panelAll">All solvers</button>
+  </div>
+
+  <div id="panelKoth">
   <div class="fields">
     <label class="field"><span>Seed</span><input id="seed" type="number" /></label>
     <label class="field"><span>Difficulty</span><input id="difficulty" type="number" min="1" max="60" /></label>
@@ -160,6 +173,67 @@
     solver sources change: <code>http://localhost:5173/bench/koth/kingOfTheHillViz.html</code>.
     The CLI equivalents still bundle their own copies (<code>pnpm run test:koth</code>).
   </p>
+  </div>
+
+  <div id="panelAll" hidden>
+    <section>
+      <h2>Every solver, by difficulty</h2>
+      <div class="fields">
+        <label class="field"><span>Seed</span><input id="asSeed" type="number" placeholder="20260101" /></label>
+        <label class="field"><span>Tests per cell</span><input id="asCount" type="number" min="1" placeholder="200" /></label>
+        <label class="field" title="DeepGreen and RateMyPix.Auth take seconds per solve at high difficulty"><span>Tests, slow models</span><input id="asSlowCount" type="number" min="1" placeholder="5" /></label>
+        <label class="field"><span>Difficulties</span><input id="asDifficulties" type="text" placeholder="4,10,20,30,45,60" /></label>
+        <label class="field" title="Share of guesses that time out before the server judges them"><span>Lost guesses</span><input id="asLoss" type="number" min="0" max="0.9" step="0.05" placeholder="0" /></label>
+      </div>
+      <div class="buttons">
+        <button id="asRun" type="button" class="primary">Run</button>
+        <button id="asStop" type="button" class="ghost">Stop</button>
+        <span id="asStatus" class="dim">not run yet</span>
+      </div>
+      <p class="hint">Guesses until solved, mean / worst. A red <span class="neg">!n</span> counts unsolved servers; hover a cell for details.</p>
+      <table id="asModels"></table>
+    </section>
+
+    <section>
+      <h2>Labyrinth</h2>
+      <div class="fields">
+        <label class="field"><span>Mazes per cell</span><input id="labCount" type="number" min="1" placeholder="100" /></label>
+        <label class="field"><span>Worker counts</span><input id="labWorkers" type="text" placeholder="1,4,8" /></label>
+        <label class="field" title="Chance per tick that a worker loses the labyrinth for 20 ticks; half come back as new scripts at the start"><span>Disconnect</span><input id="labDisconnect" type="number" min="0" max="1" step="0.005" placeholder="0" /></label>
+        <label class="field" title="Share of answers that never arrive"><span>Lost answers</span><input id="labLoss" type="number" min="0" max="0.9" step="0.05" placeholder="0" /></label>
+        <label class="field" title="Workers join one by one, this many ticks apart"><span>Stagger</span><input id="labStagger" type="number" min="0" placeholder="0" /></label>
+        <label class="field" title="The solver is not told which labyrinth it is, so it knows neither its size nor where the end is"><span>Unknown host</span><input id="labUnknownHost" type="checkbox" /></label>
+      </div>
+      <p class="hint">Ticks until some worker reaches the end, mean / worst (every action takes one tick; all connected workers act each tick). Runs with the table above.</p>
+      <table id="asLabs"></table>
+    </section>
+
+    <section>
+      <h2>Labyrinth replay</h2>
+      <div class="fields">
+        <label class="field">
+          <span>Labyrinth</span>
+          <select id="labPick">
+            <option value="0">th3_l4byr1nth 20x14</option>
+            <option value="1">cru3l_l4byr1nth 30x20</option>
+            <option value="2">m3rc1l3ss_l4byr1nth 40x26</option>
+            <option value="3" selected>ub3r_l4byr1nth 60x40</option>
+          </select>
+        </label>
+        <label class="field" title="Which maze of the bench's seed stream (1 = the first one the table runs)"><span>Maze #</span><input id="labMaze" type="number" min="1" placeholder="1" /></label>
+        <label class="field"><span>Workers</span><input id="labReplayWorkers" type="number" min="1" max="26" placeholder="4" /></label>
+        <label class="field"><span>Ticks per second</span><input id="labSpeed" type="number" min="1" max="60" placeholder="10" /></label>
+      </div>
+      <div class="buttons">
+        <button id="labPlay" type="button" class="primary">Play</button>
+        <button id="labStep" type="button" class="ghost">Step</button>
+        <button id="labReset" type="button" class="ghost">Restart</button>
+        <span id="labReplayStatus" class="dim"></span>
+      </div>
+      <p class="hint">What the solver knows, drawn by the view the game's dnet dashboard uses (<code>src/dnet/ui/labyrinthMap.ts</code>). Disconnect, lost answers, stagger and unknown host above apply here too.</p>
+      <div id="labView"></div>
+    </section>
+  </div>
   </main>
 
   <script type="module" src="../../webui/toolUi.js"></script>
@@ -172,6 +246,7 @@
       runSolver,
       sampleAltitudeProfile,
     } from "./kingOfTheHillCore"
+    import { initAllSolversTab } from "../dnet/allSolversTab.ts"
 
     const grid = document.getElementById("grid")
     const summaryEl = document.getElementById("summary")
@@ -667,12 +742,34 @@
     window.addEventListener("resize", () => {
       clearTimeout(window._kothResize)
       window._kothResize = setTimeout(() => {
-        if (cachedResults) renderAll({ rerunTests: false })
+        if (cachedResults && !document.getElementById("panelKoth").hidden) renderAll({ rerunTests: false })
       }, 150)
     })
 
-    renderAll({ rerunTests: true })
-    solverPool.ensure().catch(() => {})
+    // Tabs. The KingOfTheHill sweep starts the first time its tab is shown, not on every load.
+    const TAB_KEY = "toolui.kothViz.tab"
+    const tabButtons = [...document.querySelectorAll(".tabs .tab")]
+    let kothStarted = false
+    function showPanel(panelId) {
+      for (const button of tabButtons) {
+        const on = button.dataset.panel === panelId
+        button.classList.toggle("on", on)
+        document.getElementById(button.dataset.panel).hidden = !on
+      }
+      ToolUi.store.write(TAB_KEY, panelId)
+      if (panelId === "panelAll") {
+        initAllSolversTab(
+          () => new Worker(new URL("../dnet/allSolversWorker.ts", import.meta.url), { type: "module" })
+        )
+      }
+      else if (!kothStarted) {
+        kothStarted = true
+        renderAll({ rerunTests: true })
+        solverPool.ensure().catch(() => {})
+      } else if (cachedResults) renderAll({ rerunTests: false })
+    }
+    for (const button of tabButtons) button.addEventListener("click", () => showPanel(button.dataset.panel))
+    showPanel(ToolUi.store.read(TAB_KEY, "panelKoth") === "panelAll" ? "panelAll" : "panelKoth")
   </script>
 </body>
 </html>

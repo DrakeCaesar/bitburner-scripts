@@ -253,42 +253,70 @@ export interface RunResult {
   resets: number
 }
 
-export function runLab(spec: LabSpec, seed: number, opts: RunOptions): RunResult {
-  const rng = mulberry32(seed)
-  const events = mulberry32(seed ^ 0x9e3779b9)
-  let sim = new LabSim(spec, rng)
-  const state: LabyrinthState = labyrinthSolver.init({} as never)
-  if (opts.knownHost) state.host = spec.name
-  const hosts = Array.from({ length: opts.workers }, (_, i) => `w${String(i).padStart(2, "0")}`)
-  const awayUntil = new Map<string, number>()
-  const result: RunResult = {
-    solved: false,
-    ticks: 0,
-    actions: 0,
-    moves: 0,
-    reports: 0,
-    radars: 0,
-    shortest: sim.shortestPath(sim.position(hosts[0]!)),
-    resets: 0,
+/**
+ * One labyrinth being solved, a tick at a time. runLab() runs it to the end; the bench page steps
+ * it and draws `state` (what the solver knows) between ticks.
+ */
+export class LabRun {
+  sim: LabSim
+  readonly state: LabyrinthState
+  readonly hosts: string[]
+  /** Workers that could reach the labyrinth in the last tick. */
+  active: string[] = []
+  /** What each worker did in the last tick. */
+  lastActions = new Map<string, string>()
+  readonly result: RunResult
+  done = false
+  private readonly rng: Rng
+  private readonly events: Rng
+  private readonly awayUntil = new Map<string, number>()
+
+  constructor(
+    readonly spec: LabSpec,
+    seed: number,
+    readonly opts: RunOptions
+  ) {
+    this.rng = mulberry32(seed)
+    this.events = mulberry32(seed ^ 0x9e3779b9)
+    this.sim = new LabSim(spec, this.rng)
+    this.state = labyrinthSolver.init({} as never)
+    if (opts.knownHost) this.state.host = spec.name
+    this.hosts = Array.from({ length: opts.workers }, (_, i) => `w${String(i).padStart(2, "0")}`)
+    this.result = {
+      solved: false,
+      ticks: 0,
+      actions: 0,
+      moves: 0,
+      reports: 0,
+      radars: 0,
+      shortest: this.sim.shortestPath(this.sim.position(this.hosts[0]!)),
+      resets: 0,
+    }
   }
 
-  for (let tick = 1; tick <= opts.maxTicks; tick++) {
-    result.ticks = tick
-    if (tick === opts.rebuildAt) sim = new LabSim(spec, rng)
+  /** Run one tick: every connected worker plans and performs one action. Returns true when finished. */
+  step(): boolean {
+    if (this.done) return true
+    const { opts, state, result, events } = this
+    const tick = ++result.ticks
+    if (tick === opts.rebuildAt) this.sim = new LabSim(this.spec, this.rng)
+    const sim = this.sim
     const active: string[] = []
-    hosts.forEach((host, i) => {
+    this.hosts.forEach((host, i) => {
       if (opts.stagger > 0 && tick <= i * opts.stagger) return
-      const until = awayUntil.get(host)
+      const until = this.awayUntil.get(host)
       if (until !== undefined) {
         if (tick < until) return
-        awayUntil.delete(host)
+        this.awayUntil.delete(host)
         if (events() < opts.restart) sim.restart(host)
       } else if (opts.disconnect > 0 && events() < opts.disconnect) {
-        awayUntil.set(host, tick + opts.awayTicks)
+        this.awayUntil.set(host, tick + opts.awayTicks)
         return
       }
       active.push(host)
     })
+    this.active = active
+    this.lastActions = new Map()
     pruneLabyrinthWorkers(state, new Set(active))
 
     const planned: [string, LabyrinthAction][] = []
@@ -301,9 +329,11 @@ export function runLab(spec: LabSpec, seed: number, opts: RunOptions): RunResult
       if (action.type === "move") result.moves++
       else if (action.type === "labreport") result.reports++
       else result.radars++
+      this.lastActions.set(host, action.type === "move" ? `move ${action.dir}` : action.type)
       if (opts.loss > 0 && events() < opts.loss) {
         // Half of the lost answers are timeouts the worker can tell apart (nothing happened).
         applyLabyrinthResult(state, host, action, { kind: events() < 0.5 ? "timeout" : "lost" })
+        this.lastActions.set(host, `${this.lastActions.get(host)} (lost)`)
         continue
       }
       if (action.type === "labreport") {
@@ -313,16 +343,32 @@ export function runLab(spec: LabSpec, seed: number, opts: RunOptions): RunResult
       } else {
         const res = sim.move(host, action.dir)
         if (res.success) {
-          result.resets = state.resets ?? 0
           result.solved = true
-          return result
+          // The solver is not told about the winning move in the game either; place the worker for the picture.
+          const sess = state.sessions[host]
+          if (sess) sess.coords = sess.lastCoords = [...sim.position(host)]
+          break
         }
         applyLabyrinthResult(state, host, action, { kind: "move", message: res.message, data: res.data })
       }
     }
+    result.resets = state.resets ?? 0
+    this.done = result.solved || tick >= opts.maxTicks
+    return this.done
   }
-  result.resets = state.resets ?? 0
-  return result
+}
+
+export function runLab(spec: LabSpec, seed: number, opts: RunOptions): RunResult {
+  const run = new LabRun(spec, seed, opts)
+  while (!run.step()) {
+    // step() does the work
+  }
+  return run.result
+}
+
+/** Seed of the i-th maze of a bench run (0-based), as benchLab uses it. */
+export function labSeedAt(seed: number, index: number): number {
+  return seed + index * 7919
 }
 
 export interface BenchSummary {
@@ -350,9 +396,9 @@ export function benchLab(spec: LabSpec, count: number, seed: number, opts: RunOp
     firstFailure: null,
   }
   for (let i = 0; i < count; i++) {
-    const r = runLab(spec, seed + i * 7919, opts)
+    const r = runLab(spec, labSeedAt(seed, i), opts)
     if (!r.solved) {
-      s.firstFailure ??= seed + i * 7919
+      s.firstFailure ??= labSeedAt(seed, i)
       continue
     }
     s.solved++

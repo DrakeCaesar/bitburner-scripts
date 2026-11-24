@@ -559,7 +559,8 @@ function renderLegend(React: ReturnType<typeof getReact>, workerRows: WorkerRow[
   )
 }
 
-function buildLabyrinthMapReact(
+/** One labyrinth: stats line, map, explorer table and legend. Also drawn by the bench page (bench/dnet). */
+export function buildLabyrinthMapReact(
   snapshot: LabyrinthMapSnapshot,
   ctx: LabyrinthOverviewContext,
 ): ReactNode {

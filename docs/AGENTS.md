@@ -183,7 +183,7 @@ one command that serves them all** — it starts the Vite dev server (`http://lo
 | Tool | Path | Notes |
 |------|------|-------|
 | Stock trader benchmark | `bench/stock/stockTraderViz.html` | imports `stockBenchCore.ts`, module workers |
-| KingOfTheHill profiles | `bench/koth/kingOfTheHillViz.html` | imports `kingOfTheHillCore.ts`, module workers |
+| Darknet solver benches | `bench/koth/kingOfTheHillViz.html` | two tabs: KingOfTheHill profiles (`kingOfTheHillCore.ts`) and All solvers (`bench/dnet/allSolversTab.ts`); module workers |
 | IPvGO engine bench | `ipvgo-engine/web/bench.html` (also `/bench`) | `/api` + `/health` proxied to the backend it starts |
 
 How the pages stay current while you edit them: every page is served through Vite, so the injected
@@ -373,6 +373,12 @@ What the bench found and what changed (guesses at difficulty 60 unless noted, me
 Rules the generator-derived bounds follow: anything inferred from the generator rather than answered by the server is soft. The range solvers reopen to the hint's own bounds if the bisection runs dry, and Factori-Os reopens the large-prime count and redoes the small part, so a server whose `difficulty` does not match its password still gets solved, only slower.
 
 Left as found: the dictionaries (TopPass 19 / 53, EuroZone 3.4 / 10) get no feedback, so walking the list is all there is; OpenWebAccessPoint (2 or 3 guesses) is at its floor. **DeepGreen** (Mastermind: 18 guesses for 10 digits, 51 for 10 alphanumeric characters) and the placement half of **RateMyPix.Auth** are the two with real room left — a consistent-candidate strategy might reach ~13 and ~25 for DeepGreen (estimates, not measured) — but both need a sampler for huge constrained spaces, which a first prototype did not make reliable.
+
+#### All-solvers tab (browser)
+
+The second tab of `bench/koth/kingOfTheHillViz.html` runs the two CLI benches above in the browser, from the same cores (`dnetSolverBenchCore.ts`, `labyrinthBenchCore.ts`, plus `kingOfTheHillCore.ts` for a KingOfTheHill row). `bench/dnet/allSolversTab.ts` builds the tables and hands one cell at a time (model x difficulty, or labyrinth x worker count) to `allSolversWorker.ts` workers, cheapest cells first; DeepGreen and RateMyPix.Auth get their own, smaller test count. A cell shows `mean / worst`, a red `!n` for unsolved runs, and the details on hover. The page creates the workers and passes the factory in (`initAllSolversTab(() => new Worker(new URL(...), { type: "module" }))`), because `import.meta.url` only type-checks in a page script. The KingOfTheHill sweep starts when its tab is first shown, not on every load.
+
+**Labyrinth replay.** `LabRun` in `labyrinthBenchCore.ts` is `runLab` one tick at a time; the replay steps it and draws the solver's state with `buildLabyrinthMapReact` from `src/dnet/ui/labyrinthMap.ts`, the view the game's dnet dashboard shows. That view gets React from `window.React` (`getReact()`), and it only calls `createElement` with plain tags, so the page installs `bench/dnet/domReact.ts` there: a `createElement` that builds DOM nodes (style objects, SVG attributes, nested child arrays; no components, no hooks). A change to the in-game view therefore shows up in the page unchanged, and a view that starts using components or hooks needs a real React on the page instead. "Maze #" picks the n-th maze of the table's seed stream (`labSeedAt`), so a bad cell can be replayed.
 
 #### Labyrinth benchmark
 
